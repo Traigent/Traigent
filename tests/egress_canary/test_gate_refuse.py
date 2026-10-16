@@ -59,3 +59,50 @@ def test_legacy_fields_are_refused_before_send(
 
     # No canary value appears in the gate's own record.
     assert not any(v in repr(refusals) for v in CANARIES.values() if isinstance(v, str))
+
+
+def _sessions_refusal(log: list[tuple[str, dict[str, int]]]) -> dict[str, int]:
+    counts = [c for t, c in log if t == "/api/v1/sessions"]
+    assert counts, f"no session-create refusal in {[t for t, _ in log]}"
+    return counts[0]
+
+
+def test_content_less_create_drops_group1_fields_but_later_groups_stay_refused(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """Phase 3 group 1: the content-less create no longer trips the gate on identity fields.
+
+    The refuse-mode gate still refuses it, but only for the later-group fields (knob and
+    choice names, metric names, prompt templates, run narrative, ...), which stay recorded
+    as open in leak_manifest.json. The legacy create's gate counts are strictly higher:
+    the difference is the group-1 identity fields (agent key/id, dataset id, dataset and
+    evaluation-set names, evaluator id, display names).
+    """
+
+    gate.set_mode("refuse")
+    try:
+        gate.clear_refusals()
+        run_scenario(
+            Path(tmp_path_factory.mktemp("gate-legacy")),
+            direct_paths=False,
+        )
+        legacy = _sessions_refusal(gate.refusal_log())
+
+        gate.clear_refusals()
+        result = run_scenario(
+            Path(tmp_path_factory.mktemp("gate-content-less")),
+            direct_paths=False,
+            content_less=True,
+        )
+        content_less = _sessions_refusal(gate.refusal_log())
+    finally:
+        gate.set_mode(None)
+
+    # still refused for the later groups, before send
+    assert content_less.get("legacy_content", 0) > 0
+    assert not [
+        r for r in result.requests if r.method == "POST" and r.path.endswith("/sessions")
+    ], "a refused content-less create reached the transport"
+    # but strictly less legacy content than the legacy create: group-1 fields are gone
+    assert content_less["legacy_content"] < legacy["legacy_content"]
+    assert content_less.get("unclassified", 0) < legacy.get("unclassified", 0)

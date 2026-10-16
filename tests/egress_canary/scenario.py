@@ -185,9 +185,18 @@ def _run_offline_optimize_and_sync(
 
 
 def run_scenario(
-    workdir: Path, trials: int = 3, direct_paths: bool = True
+    workdir: Path,
+    trials: int = 3,
+    direct_paths: bool = True,
+    content_less: bool = False,
+    advertise_content_less: bool = True,
 ) -> ScenarioResult:
-    """Run the optimization under capture; never raises for SDK-side failures."""
+    """Run the optimization under capture; never raises for SDK-side failures.
+
+    ``content_less`` runs the main optimization with ``optimize(content_less=True)``
+    (phase 3 group 1); ``advertise_content_less=False`` makes the fake Backend one that
+    predates the ``content_less_v1`` capability.
+    """
 
     from traigent import get_config, optimize
     from traigent.evaluators.base import Dataset
@@ -213,6 +222,7 @@ def run_scenario(
     capture = EgressCapture()
     error: str | None = None
     source: str | None = None
+    capture.backend.advertise_content_less = advertise_content_less
     with scenario_env(results_dir, dataset_root), capture:
         dataset = Dataset.from_jsonl(str(dataset_path))
         dataset.name = c["evaluation_set"]
@@ -247,6 +257,7 @@ def run_scenario(
             max_trials=trials,
             offline=False,
             local_storage_path=str(results_dir),
+            **({"content_less": True} if content_less else {}),
         )
         def canary_app(example: dict[str, Any]) -> str:
             get_config()

@@ -280,6 +280,32 @@ class FakeBackend:
         self._session_counter = 0
         self.faults: list[Fault] = []
         self.fault_log: list[Fault] = []
+        #: A Backend that predates content_less_v1 advertises nothing.
+        self.advertise_content_less = True
+        #: Opaque references issued to content-less creates (stable per fake backend).
+        self.issued_refs = {
+            "agent_ref": "agentref_" + "a1" * 16,
+            "dataset_ref": "datasetref_" + "d2" * 16,
+            "evaluator_ref": "evaluatorref_" + "e3" * 16,
+        }
+
+    @staticmethod
+    def _content_less_shape_ok(payload: dict[str, Any]) -> bool:
+        """The Backend refuses a content-less create that still carries legacy identity."""
+        forbidden = (
+            "agent_id", "agent_key", "agent_id_source", "dataset_id", "dataset_id_source",
+            "hosted_dataset_ref", "evaluator_id", "evaluator_id_source",
+            "evaluator_definition_id", "user_id", "billing_tier",
+        )
+        if any(payload.get(k) is not None for k in forbidden):
+            return False
+        if (payload.get("dataset_metadata") or {}).get("name") is not None:
+            return False
+        meta = payload.get("metadata") or {}
+        return not any(
+            meta.get(k) is not None
+            for k in ("evaluation_set", "function_display_name", "function_slug")
+        )
 
     @staticmethod
     def _pick(spec: Any, trial_number: int) -> Any:
@@ -357,6 +383,14 @@ class FakeBackend:
                     "optimizer_endpoint": "https://backend.example.test/api/v1/hybrid/optimizer",
                 }
             if method == "POST" and re.search(r"/sessions$", p) and "/hybrid/" not in p:
+                content_less = "content_less_v1" in (payload.get("capabilities") or [])
+                if content_less and not self._content_less_shape_ok(payload):
+                    return 400, {
+                        "success": False,
+                        "error": "invalid_request",
+                        "error_code": "invalid_request_shape",
+                        "message": "Invalid request.",
+                    }
                 self._session_counter += 1
                 sid = f"sess-canary-{self._session_counter}"
                 self.sessions[sid] = {
@@ -366,7 +400,7 @@ class FakeBackend:
                     "suggested": 0,
                     "results": 0,
                 }
-                return 201, {
+                created: dict[str, Any] = {
                     "session_id": sid,
                     "status": "active",
                     "metadata": {
@@ -379,6 +413,11 @@ class FakeBackend:
                     "tenant_id": "ten-canary",
                     "agent_id": "agent-canary",
                 }
+                if content_less and self.advertise_content_less:
+                    created.pop("agent_id")  # a content-less create never returns agents.id
+                    created["capabilities"] = ["content_less_v1"]
+                    created.update(self.issued_refs)
+                return 201, created
             if m:
                 sid, verb = m.group(1), m.group(2)
                 state = self.sessions.setdefault(

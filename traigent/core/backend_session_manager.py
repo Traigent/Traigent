@@ -1534,6 +1534,7 @@ class BackendSessionManager:
         dataset_id: str | None = None,
         content_identity: dict[str, Any] | None = None,
         head_environment: str | None = None,
+        content_less: Any = None,
     ) -> SessionContext:
         """Create backend session and return context.
 
@@ -1667,13 +1668,26 @@ class BackendSessionManager:
                 session_metadata["warm_start_from"] = warm_start_from
 
             # Build the portal display name (see compute_portal_name).
+            from traigent.cloud import content_less as content_less_session
+
+            content_less_active = content_less_session.is_enabled(content_less)
             portal_name = compute_portal_name(
-                experiment_display_name=experiment_display_name,
+                # Content-less: the agent is named by its code identifier, never by the
+                # customer-chosen display name, objectives or knobs (group 1).
+                experiment_display_name=(
+                    function_descriptor.display_name or function_identifier
+                    if content_less_active
+                    else experiment_display_name
+                ),
                 objectives=self._objectives,
                 knob_names=list(
                     (getattr(self._optimizer, "config_space", {}) or {}).keys()
                 ),
-                function_display_name=function_display_name,
+                function_display_name=(
+                    function_descriptor.display_name
+                    if content_less_active
+                    else function_display_name
+                ),
                 function_identifier=function_identifier,
                 function_slug=function_slug,
             )
@@ -1704,6 +1718,8 @@ class BackendSessionManager:
             # privacy-mode run has not agreed to. Only passed when present, so
             # clients (and fakes) predating the field keep their exact call shape.
             identity_kwargs = self._content_identity_kwargs(content_identity)
+            if content_less is not None:
+                identity_kwargs["content_less"] = content_less
             raw_result = self._backend_client.create_session(
                 function_name=portal_name,
                 agent_key=declared_agent_key,

@@ -19,6 +19,7 @@ from traigent.cloud.client import (
     SessionContractError,
     raise_if_cloud_egress_disabled,
 )
+from traigent.cloud import content_less as content_less_session
 from traigent.cloud.governance import promotion_policy_to_wire, tvl_governance_to_wire
 from traigent.cloud.models import (
     AgentExecutionRequest,
@@ -501,9 +502,12 @@ class ApiOperations:
                 # (governed sessions must fail loudly; the legacy contract
                 # cannot carry strict mode and silently degrading would
                 # launder it — RFC 0001 P7).
-                if self._session_contract() != "auto" or self._is_governed_request(
-                    session_request
+                if (
+                    self._session_contract() != "auto"
+                    or self._is_governed_request(session_request)
+                    or "capabilities" in session_payload
                 ):
+                    # A content-less create never falls back to the legacy shape.
                     raise
                 # A quota/limit refusal is a definitive answer from a reachable
                 # backend: the legacy contract would be refused the same way, so
@@ -623,6 +627,16 @@ class ApiOperations:
         """
         contract = self._session_contract()
         optimization_strategy = self._session_optimization_strategy(session_request)
+        content_less_options = content_less_session.options_of(session_request)
+        if content_less_session.is_enabled(content_less_options):
+            if contract == "legacy":
+                raise SessionContractError(
+                    "Content-less sessions require the typed session contract; "
+                    "TRAIGENT_SESSION_CONTRACT=legacy cannot carry them."
+                )
+            return self._build_content_less_session_payload(
+                session_request, max_trials, content_less_options
+            )
         if contract == "legacy":
             if optimization_strategy:
                 raise SessionContractError(
@@ -645,6 +659,46 @@ class ApiOperations:
             )
             return self._build_legacy_session_payload(session_request, max_trials)
         return self._build_typed_session_payload(session_request, max_trials)
+
+    def _build_content_less_session_payload(
+        self,
+        session_request: SessionCreationRequest,
+        max_trials: int,
+        options: Any,
+    ) -> dict[str, Any]:
+        """The typed payload rewritten to the content-less identity shape (group 1).
+
+        Legacy identity fields are removed and capabilities / environment / refs added.
+        The cache context for the response is parked on ``self`` for
+        ``_post_session_creation`` (consumed once, then cleared).
+        """
+        payload = self._build_typed_session_payload(session_request, max_trials)
+        local_keys = content_less_session.local_keys_for(
+            session_request, payload.get("metadata") or {}
+        )
+        cache = content_less_session.RefCache()
+        principal = self._content_less_principal()
+        cached = cache.lookup(principal, local_keys)
+        used_cache = content_less_session.apply_to_payload(
+            payload, options=options, cached_refs=cached
+        )
+        self._content_less_ctx = (cache, principal, local_keys, used_cache)
+        return payload
+
+    def _content_less_principal(self) -> str:
+        """Digest of (backend URL, credential preview): scopes the local ref cache."""
+        try:
+            url = (
+                self.client.backend_config.api_base_url
+                or BackendConfig.get_backend_api_url()
+            )
+            preview = self.client.auth_manager.get_api_key_preview()
+        except Exception:  # noqa: BLE001 - scope only; an unknown scope finds no refs
+            url, preview = None, None
+        return content_less_session.RefCache.principal(
+            url if isinstance(url, str) else None,
+            preview if isinstance(preview, str) else None,
+        )
 
     @staticmethod
     def _session_optimization_strategy(
@@ -837,6 +891,10 @@ class ApiOperations:
         """Send the session creation request and handle responses."""
 
         self._raise_if_backend_egress_disabled("create session")
+        content_less_ctx = None
+        if "capabilities" in payload:
+            content_less_ctx = getattr(self, "_content_less_ctx", None)
+            self._content_less_ctx = None
         async with gate_session(
             cast(Any, aiohttp).ClientSession(
                 connector=connector,
@@ -857,17 +915,30 @@ class ApiOperations:
                 timeout=timeout,
             ) as response:
                 if response.status == 201:
+                    if content_less_ctx is not None:
+                        return await self._parse_session_response(
+                            response, content_less_ctx=content_less_ctx
+                        )
                     return await self._parse_session_response(response)
 
+                if content_less_ctx is not None and response.status == 404:
+                    # A cached reference was refused (foreign / unknown): forget the scope.
+                    cache, principal, _keys, used_cache = content_less_ctx
+                    if used_cache:
+                        cache.forget(principal)
                 error_msg = await response.text()
                 self._handle_session_error(response.status, error_msg)
 
         raise CloudServiceError("Unexpected session creation failure")
 
-    async def _parse_session_response(self, response: Any) -> TraigentSessionApiResult:
+    async def _parse_session_response(
+        self, response: Any, content_less_ctx: Any = None
+    ) -> TraigentSessionApiResult:
         """Parse the JSON success payload returned by the session endpoint."""
 
         result = await response.json()
+        if content_less_ctx is not None:
+            self._accept_content_less_response(result, content_less_ctx)
         metadata = result.get("metadata", {})
         if not isinstance(metadata, dict):
             metadata = {}
@@ -920,6 +991,25 @@ class ApiOperations:
             # Disclosed by the backend for API-key callers; null/absent otherwise.
             agent_id=self._optional_context_id(metadata.get("agent_id")),
         )
+
+    @staticmethod
+    def _accept_content_less_response(result: Any, ctx: Any) -> None:
+        """Refuse a Backend without ``content_less_v1``; cache the refs it issued."""
+        if not isinstance(result, dict):
+            raise content_less_session.ContentLessRefusal(
+                content_less_session.BACKEND_UPGRADE_REQUIRED
+            )
+        content_less_session.require_capability(result)
+        cache, principal, local_keys, _used = ctx
+        tenant_id = result.get("tenant_id") or (result.get("metadata") or {}).get(
+            "tenant_id"
+        )
+        project_id = result.get("project_id") or (result.get("metadata") or {}).get(
+            "project_id"
+        )
+        refs = content_less_session.refs_from_response(result)
+        if refs and tenant_id and project_id:
+            cache.store(principal, str(tenant_id), str(project_id), local_keys, refs)
 
     @staticmethod
     def _optional_context_id(value: Any) -> str | None:

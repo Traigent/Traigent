@@ -960,6 +960,9 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "agent_name": None,
     "run_title": None,
     "run_description": None,
+    "content_less": None,
+    "agent_ref": None,
+    "environment": None,
     "default_config": None,
     "warm_start_from": None,
     "constraints": None,
@@ -2511,6 +2514,9 @@ def optimize(  # NOSONAR(S107)
     agent_name: str | None = None,
     run_title: str | None = None,
     run_description: str | None = None,
+    content_less: bool | None = None,
+    agent_ref: str | None = None,
+    environment: str | None = None,
     default_config: dict[str, Any] | None = None,
     warm_start_from: str | None = None,
     constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None = None,
@@ -2596,6 +2602,20 @@ def optimize(  # NOSONAR(S107)
         run_description: Optional description of what this run is testing and why —
             the hypothesis or intent, recorded before results are known. Trimmed to
             4000 characters. Like ``run_title`` it is a label only.
+        content_less: Opt in to content-less session create (default off; env
+            ``TRAIGENT_CONTENT_LESS=1`` does the same process-wide). The session
+            declares capability ``content_less_v1``, a closed ``environment`` and opaque
+            references instead of customer-chosen names; a Backend that does not
+            advertise the capability is refused locally with ``backend_upgrade_required``
+            (no plaintext fallback). ``agent_name`` is not sent in this mode.
+        agent_ref: Opaque agent reference (``agentref_<32 hex>``, copied from the portal)
+            that names the agent independent of code. Also read from
+            ``TRAIGENT_AGENT_REF``. Only used with ``content_less``; an invalid value is
+            refused locally. Without it the function-derived code identifier is used.
+        environment: Run environment for a content-less session, one of
+            ``production|staging|development|test|default``. Precedence: this argument >
+            ``TRAIGENT_ENVIRONMENT`` > OpenTelemetry ``deployment.environment.name`` >
+            ``ENVIRONMENT`` > ``TRAIGENT_ENV`` > ``default``. Production is never guessed.
         default_config: Baseline configuration materialized before the first trial.
             In seamless/attribute modes these override literal values during the
             initial run. In parameter mode the dict is converted to a TraigentConfig
@@ -2887,6 +2907,9 @@ def optimize(  # NOSONAR(S107)
         "agent_name": agent_name,
         "run_title": run_title,
         "run_description": run_description,
+        "content_less": content_less,
+        "agent_ref": agent_ref,
+        "environment": environment,
         "default_config": default_config,
         "warm_start_from": warm_start_from,
         "constraints": constraints,
@@ -3056,6 +3079,19 @@ def optimize(  # NOSONAR(S107)
     # fragments an agent's optimization history into one-run cohorts.
     run_title_value: str | None = combined_settings.get("run_title") or None
     run_description_value: str | None = combined_settings.get("run_description") or None
+    # Content-less session options: None unless the caller set one (legacy/env then).
+    content_less_value: Any = None
+    if any(
+        combined_settings.get(key) is not None
+        for key in ("content_less", "agent_ref", "environment")
+    ):
+        from traigent.cloud.content_less import ContentLessOptions
+
+        content_less_value = ContentLessOptions(
+            enabled=combined_settings.get("content_less"),
+            agent_ref=combined_settings.get("agent_ref"),
+            environment=combined_settings.get("environment"),
+        )
     # Warm-start: prior experiment id to seed this run (empty string -> None).
     warm_start_from_value: str | None = combined_settings.get("warm_start_from") or None
     # Tuned variable auto-detection
@@ -3457,6 +3493,7 @@ def optimize(  # NOSONAR(S107)
             # Per-run narrative — labels only, never identity.
             run_title=run_title_value,
             run_description=run_description_value,
+            content_less=content_less_value,
             # Warm-start: seed this run from a prior experiment's learned configs.
             warm_start_from=warm_start_from_value,
             # Guided-generation defaults (consumed by optimize_with_guidance)

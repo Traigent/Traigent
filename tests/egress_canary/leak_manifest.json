@@ -786,12 +786,6 @@
   {
    "route": "POST /api/v1/sessions",
    "location": "body.value",
-   "field_path": "$.agent_id",
-   "kind": "agent_name"
-  },
-  {
-   "route": "POST /api/v1/sessions",
-   "location": "body.value",
    "field_path": "$.agent_key",
    "kind": "agent_name"
   },
@@ -841,12 +835,6 @@
    "route": "POST /api/v1/sessions",
    "location": "body.value",
    "field_path": "$.dataset_metadata.name",
-   "kind": "evaluation_set"
-  },
-  {
-   "route": "POST /api/v1/sessions",
-   "location": "body.value",
-   "field_path": "$.dataset_metadata.name",
    "kind": "function_name"
   },
   {
@@ -854,12 +842,6 @@
    "location": "body.value",
    "field_path": "$.default_config.cnryKnob_Dh7S-2bVn4Xe9",
    "kind": "default_config_value"
-  },
-  {
-   "route": "POST /api/v1/sessions",
-   "location": "body.value",
-   "field_path": "$.evaluator_id",
-   "kind": "evaluator_id"
   },
   {
    "route": "POST /api/v1/sessions",

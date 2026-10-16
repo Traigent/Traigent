@@ -191,6 +191,11 @@ class TestPrivacyCompliance:
             # SDK holds a purpose-key grant, and never in privacy mode -- asserted
             # below on the value, not just the key.
             "content_identity",
+            # Content-less options (opt-in flag, agent_ref, environment): a local
+            # settings object the request dataclass carries. It is never serialized as
+            # such; the wire only gets `capabilities`, a closed `environment` enum and
+            # opaque `*_ref` values (tests/unit/cloud/test_content_less_session.py).
+            "content_less",
         }
 
         for req in dummy_server.received_data:

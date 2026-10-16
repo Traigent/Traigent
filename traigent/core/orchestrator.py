@@ -451,6 +451,8 @@ class OptimizationOrchestrator:
         self._run_title: str | None = kwargs.pop("run_title", None)
         self._run_description: str | None = kwargs.pop("run_description", None)
         self._agent_key: str | None = kwargs.pop("agent_key", None)
+        # Content-less session options (group 1); None unless optimize() set them.
+        self._content_less: Any = kwargs.pop("content_less", None)
         # Best-config environment whose agent head is captured at step start,
         # and the promotion precondition captured for the current run.
         self.head_environment: str | None = None
@@ -3103,6 +3105,7 @@ class OptimizationOrchestrator:
             task_type=getattr(self, "task_type", None),
             dataset_id=getattr(self, "dataset_id", None),
             **head_environment_kwargs,
+            **({"content_less": self._content_less} if self._content_less else {}),
         )
         session_id: str | None = session_context.session_id
         self._active_session_id = session_id

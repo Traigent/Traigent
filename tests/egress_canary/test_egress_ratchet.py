@@ -38,7 +38,30 @@ REQUIRED_ROUTES = (
 
 @pytest.fixture(scope="module")
 def scenario(tmp_path_factory: pytest.TempPathFactory) -> ScenarioResult:
-    return run_scenario(Path(tmp_path_factory.mktemp("egress-canary")))
+    # Phase 3 group 1: the main optimization runs content-less (opt-in). The direct-path
+    # exercisers and the offline replay keep the legacy shape and still pin their leaks.
+    return run_scenario(Path(tmp_path_factory.mktemp("egress-canary")), content_less=True)
+
+
+@pytest.fixture(scope="module")
+def legacy_scenario(tmp_path_factory: pytest.TempPathFactory) -> ScenarioResult:
+    """Default (opt-in off) main optimization: the legacy request shape."""
+    return run_scenario(
+        Path(tmp_path_factory.mktemp("egress-canary-legacy")), direct_paths=False
+    )
+
+
+#: Canary kinds that are group-1 identity on POST /api/v1/sessions (CHECKLIST S1 rows).
+G1_IDENTITY_KINDS = frozenset(
+    {
+        "agent_name",
+        "evaluation_set",
+        "dataset_identity",
+        "evaluator_id",
+        "function_name",
+        "dataset_file_name",
+    }
+)
 
 
 def _fmt(ids: set[tuple[str, str, str, str]]) -> str:
@@ -189,3 +212,38 @@ def test_disposition_references_are_validated() -> None:
         assert (
             reference_problem(entry.get("reference", ""), identity=identity) is None
         ), entry
+
+
+def test_content_less_create_carries_no_group1_identity(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """A content-less run sends no agent/dataset/evaluation-set/evaluator identity, anywhere."""
+
+    result = run_scenario(
+        Path(tmp_path_factory.mktemp("egress-canary-cl")),
+        direct_paths=False,
+        content_less=True,
+    )
+    assert result.optimization_error is None, result.optimization_error
+    g1 = sorted(
+        leak.identity for leak in result.leaks if leak.kind in G1_IDENTITY_KINDS
+    )
+    assert not g1, f"group-1 identity on the wire in content-less mode:\n{_fmt(set(g1))}"
+    # later groups stay explicitly open: still recorded in the register, never reclassified
+    open_ids = distinct_identities(result.leaks)
+    assert open_ids, "later-group leaks vanished from the capture (vacuous run?)"
+    assert open_ids <= REGISTER, f"new identities:\n{_fmt(open_ids - REGISTER)}"
+    assert {kind for _r, _l, _f, kind in open_ids} >= {"knob_name", "metric_name"}
+
+
+def test_legacy_default_run_leaks_stay_inside_the_baseline(
+    legacy_scenario: ScenarioResult,
+) -> None:
+    """Opt-in off keeps the legacy request: its leaks are all known (baseline) identities."""
+
+    assert legacy_scenario.optimization_error is None
+    unknown = distinct_identities(legacy_scenario.leaks) - BASELINE
+    assert not unknown, f"legacy shape grew leaks:\n{_fmt(unknown)}"
+    # and it still carries the G1 fields the content-less path drops
+    kinds = {leak.kind for leak in legacy_scenario.leaks}
+    assert {"agent_name", "evaluation_set", "evaluator_id"} <= kinds

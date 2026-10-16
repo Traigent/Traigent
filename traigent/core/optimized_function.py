@@ -1245,6 +1245,8 @@ class OptimizedFunction(Generic[_P, _R]):
         # identity is exactly what fragments an agent's history into one-run cohorts.
         self._run_title: str | None = kwargs.pop("run_title", None)
         self._run_description: str | None = kwargs.pop("run_description", None)
+        # Content-less session options (``ContentLessOptions`` or None = legacy/env).
+        self._content_less: Any = kwargs.pop("content_less", None)
 
         self.timeout = kwargs.pop("timeout", None)
         kwargs["timeout"] = self.timeout
@@ -2727,6 +2729,7 @@ class OptimizedFunction(Generic[_P, _R]):
             warm_start_from=getattr(self, "warm_start_from", None),
             run_title=self._run_title,
             run_description=self._run_description,
+            content_less=self._content_less,
         )
         orchestrator_kwargs["agent_key"] = self.declared_agent_name
         orchestrator_kwargs["requested_algorithm"] = requested_algorithm
