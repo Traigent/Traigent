@@ -495,7 +495,6 @@ class LegendRunBinder:
         trial_id: str,
         trial_block: LegendBlock,
         observed: Mapping[str, Pillar],
-        suggested: Mapping[str, str] | None = None,
     ) -> None:
         """Re-check what this trial will actually execute, then admit it.
 
@@ -508,7 +507,6 @@ class LegendRunBinder:
             raise LegendError("invalid_request", "trial id must be an opaque id")
         if trial_block.trial_ref is None:
             raise LegendError("invalid_request", "trial block carries no trial ref")
-        suggested = suggested or {}
         if not self.run_admitted:
             return  # the run base never froze; a trial cannot be admitted (reason kept)
         for key, _ref in trial_block.bindings:
@@ -518,7 +516,10 @@ class LegendRunBinder:
                 if key not in self._run_observed:
                     self._incomplete(CODE_INCOMPLETE)
                     return
-            elif not (TRIAL_ROLE_BY_KIND.get(kind) == role and kind in observed):
+            elif (
+                not (TRIAL_ROLE_BY_KIND.get(kind) == role and kind in observed)
+                or trial_block.entity_of(key) is None
+            ):
                 self._incomplete(CODE_INCOMPLETE)
                 return
         trial_observed: dict[SlotKey, str] = {}
@@ -540,18 +541,9 @@ class LegendRunBinder:
                     pillar, DeclaredVersion(advertised, entity)
                 )
                 trial_observed[key] = result.version_ref
-            elif suggested.get(kind) is not None:
-                if pillar.fingerprint == suggested[kind]:
-                    # Entity not named: the identity is CONFIRMED by digest equality with
-                    # the very suggestion the Backend digested, so its version stands.
-                    trial_observed[key] = advertised
-                elif self._mode == MODE_STRICT:
-                    raise LegendError(CODE_DRIFT, "trial differs from its suggestion")
-                else:
-                    result = self._declare(pillar, entity=self._run_entities.get(kind))
-                    trial_observed[key] = result.version_ref
             else:
-                # no entity and no suggestion fingerprint: cannot be compared
+                # no advertised entity: the observation cannot be tied to the proposal's
+                # version, and the proposal is never copied -> stays unadmitted
                 self._incomplete(CODE_INCOMPLETE)
                 return
         self._post(
@@ -632,7 +624,6 @@ def admit_trial_config(
     raw_trial_block: Any,
     evaluation_config: Mapping[str, Any],
     candidate: Pillar | None = None,
-    suggested_fingerprint: str | None = None,
 ) -> None:
     """Re-check and admit one trial's ACTUAL configuration and executed candidate.
 
@@ -652,14 +643,7 @@ def admit_trial_config(
         pass
     if candidate is not None:
         observed[c.KIND_AGENT] = candidate
-    suggested = (
-        {c.KIND_CONFIGURATION: suggested_fingerprint}
-        if isinstance(suggested_fingerprint, str)
-        else None
-    )
-    binder.admit_trial(
-        trial_id=trial_id, trial_block=block, observed=observed, suggested=suggested
-    )
+    binder.admit_trial(trial_id=trial_id, trial_block=block, observed=observed)
 
 
 class LegendTrialRefused(LegendError):

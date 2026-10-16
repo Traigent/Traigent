@@ -596,7 +596,6 @@ class TrialLifecycle:
                 raw_block,
                 evaluation_config,
                 candidate,
-                config.get("_traigent_legend_suggested"),
             )
         except LegendError as refusal:
             # Pre-evaluation refusal: keep the ISSUED backend trial id so it can be

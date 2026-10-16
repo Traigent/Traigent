@@ -406,21 +406,25 @@ async def test_strict_refusal_leaves_the_evaluator_uncalled() -> None:
 
 
 # ----------------------------------------------------------------------- per trial
-def sugg(cfg: dict[str, Any]) -> str:
-    """Fingerprint of a suggested config, as the interactive optimizer records it."""
-    return compute_pillar(c.KIND_CONFIGURATION, ConfigurationSource(cfg)).fingerprint
-
-
 def _trial_block(
-    trial_n: int, cfg_ref: str, extra_run: list[tuple[str, str]]
+    trial_n: int,
+    cfg_ref: str,
+    extra_run: list[tuple[str, str]],
+    entity: str | None = None,
 ) -> dict[str, Any]:
-    return block(
+    """A trial legend block; ``entity`` is the ``entity_ref`` the Backend advertises."""
+    blk = block(
         extra_run,
         trial=(
             f"trialref_{trial_n:032x}",
             [("trial_configuration", "trial", cfg_ref)],
         ),
     )
+    if entity is not None:
+        for b in blk["bindings"]:
+            if b["binding_role"] == "trial_configuration":
+                b["entity_ref"] = entity
+    return blk
 
 
 @pytest.mark.asyncio
@@ -434,17 +438,15 @@ async def test_multi_trial_observations_are_distinct_and_complete() -> None:
         {
             "param1": 1,
             "_traigent_backend_trial_id": "t_1",
-            "_traigent_legend_suggested": sugg({"param1": 1}),
             "_traigent_legend_trial": _trial_block(
-                1, s1.version_ref, [("run_base_configuration", run_cfg)]
+                1, s1.version_ref, [("run_base_configuration", run_cfg)], s1.entity_ref
             ),
         },
         {
             "param1": 2,
             "_traigent_backend_trial_id": "t_2",
-            "_traigent_legend_suggested": sugg({"param1": 2}),
             "_traigent_legend_trial": _trial_block(
-                2, s2.version_ref, [("run_base_configuration", run_cfg)]
+                2, s2.version_ref, [("run_base_configuration", run_cfg)], s2.entity_ref
             ),
         },
     ]
@@ -487,9 +489,11 @@ async def test_per_trial_recheck_catches_a_config_changed_after_suggestion() -> 
         {
             "param1": 2,  # what actually runs differs from what was suggested (param1=1)
             "_traigent_backend_trial_id": "t_1",
-            "_traigent_legend_suggested": sugg({"param1": 1}),
             "_traigent_legend_trial": _trial_block(
-                1, suggested.version_ref, [("run_base_configuration", vref(7))]
+                1,
+                suggested.version_ref,
+                [("run_base_configuration", vref(7))],
+                suggested.entity_ref,
             ),
         }
     ]
@@ -584,13 +588,16 @@ async def test_privacy_mode_withholds_identity() -> None:
 @pytest.mark.asyncio
 async def test_no_names_or_paths_cross_the_wire(tmp_path: Path) -> None:
     server = FakeServer()
+    prop = _config_ref(server, {"param1": 1})
     plan = [
         {
             "param1": 1,
             "_traigent_backend_trial_id": "t_1",
-            "_traigent_legend_suggested": sugg({"param1": 1}),
             "_traigent_legend_trial": _trial_block(
-                1, vref(3), [("run_base_configuration", vref(7))]
+                1,
+                prop.version_ref,
+                [("run_base_configuration", vref(7))],
+                prop.entity_ref,
             ),
         }
     ]
@@ -687,7 +694,6 @@ async def test_unobserved_slot_leaves_the_run_unadmitted_when_permitted() -> Non
         {
             "param1": 1,
             "_traigent_backend_trial_id": "t_1",
-            "_traigent_legend_suggested": sugg({"param1": 1}),
             "_traigent_legend_trial": _trial_block(
                 1, vref(3), [("run_base_configuration", vref(7)), ("dataset", vref(8))]
             ),
@@ -757,14 +763,12 @@ def test_trial_candidate_is_derived_from_the_executed_build_never_the_suggestion
     assert [a for a in server.admissions if "trial_id" in a] == []
     assert binder.unadmitted_reason == "local_observation_incomplete"
     binder.unadmitted_reason = None
-    # derivable now, but the Backend names no entity and gave no candidate suggestion to
-    # compare with: still not admitted (the proposal is never copied)
-    suggested = {c.KIND_CONFIGURATION: sugg({"param1": 2})}
+    # derivable now, but the Backend names no entity: still not admitted (the proposal
+    # is never copied)
     binder.admit_trial(
         trial_id="t_1",
         trial_block=tb,
         observed={**cfg, c.KIND_AGENT: pillar},
-        suggested=suggested,
     )
     assert [a for a in server.admissions if "trial_id" in a] == []
     # with the advertised entity named, the executed candidate is declared under it
@@ -788,12 +792,13 @@ def test_trial_candidate_is_derived_from_the_executed_build_never_the_suggestion
         }
     )
     assert tb2 is not None
+    cfg_proposal = _config_ref(server, {"param1": 2})
     raw = block(
         [("run_base_configuration", vref(7))],
         trial=(
             f"trialref_{1:032x}",
             [
-                ("trial_configuration", "trial", vref(3)),
+                ("trial_configuration", "trial", cfg_proposal.version_ref),
                 ("trial_candidate", "trial", proposal.version_ref),
             ],
         ),
@@ -801,13 +806,14 @@ def test_trial_candidate_is_derived_from_the_executed_build_never_the_suggestion
     for b in raw["bindings"]:
         if b["binding_role"] == "trial_candidate":
             b["entity_ref"] = proposal.entity_ref
+        if b["binding_role"] == "trial_configuration":
+            b["entity_ref"] = cfg_proposal.entity_ref
     tb3 = parse_block(raw)
     assert tb3 is not None
     binder.admit_trial(
         trial_id="t_1",
         trial_block=tb3,
         observed={**cfg, c.KIND_AGENT: pillar},
-        suggested=suggested,
     )
     sent = [a for a in server.admissions if "trial_id" in a][0]["trial_observed"]
     roles = {o["binding_role"]: o["version_ref"] for o in sent}
@@ -851,9 +857,11 @@ async def test_parallel_refusal_finalizes_the_issued_trial_as_not_executed() -> 
         {
             "param1": 2,  # differs from the suggestion => strict refusal pre-evaluation
             "_traigent_backend_trial_id": "issued_1",
-            "_traigent_legend_suggested": sugg({"param1": 1}),
             "_traigent_legend_trial": _trial_block(
-                1, suggested.version_ref, [("run_base_configuration", vref(7))]
+                1,
+                suggested.version_ref,
+                [("run_base_configuration", vref(7))],
+                suggested.entity_ref,
             ),
         }
     ]
@@ -1006,9 +1014,11 @@ async def test_sequential_refusal_finalizes_the_issued_trial_as_not_executed() -
         {
             "param1": 2,
             "_traigent_backend_trial_id": "issued_1",
-            "_traigent_legend_suggested": sugg({"param1": 1}),
             "_traigent_legend_trial": _trial_block(
-                1, suggested.version_ref, [("run_base_configuration", vref(7))]
+                1,
+                suggested.version_ref,
+                [("run_base_configuration", vref(7))],
+                suggested.entity_ref,
             ),
         }
     ]
@@ -1075,7 +1085,7 @@ def _admit_one(
     )
     assert binder is not None
     binder.admit_run(pillars_from_content_identity(None, {"param1": 1}))
-    admit_trial_config(binder, "t_1", blk, cfg, None, sugg(cfg))
+    admit_trial_config(binder, "t_1", blk, cfg, None)
 
 
 def test_declared_under_the_advertised_entity_matches_in_strict_mode() -> None:
@@ -1118,22 +1128,41 @@ def test_genuine_drift_under_the_advertised_entity_is_refused_or_recorded_as_a_c
     assert link and link[0]["version_ref"] == ref  # the drift is recorded, not silent
 
 
-def test_without_a_named_entity_a_matching_suggestion_stands_and_drift_is_not_silent() -> (
-    None
-):
+def test_without_an_advertised_entity_the_slot_stays_unadmitted_never_copied() -> None:
     server = FakeServer()
     proposal = _config_ref(server, {"param1": 3})
     blk = _trial_block(1, proposal.version_ref, [("run_base_configuration", vref(7))])
-    n_declares = server.calls.count("declare")
-    _admit_one(server, "strict", blk, {"param1": 3})
-    # match confirmed by fingerprint equality with the suggestion: no extra trial declare
-    sent = [a for a in server.admissions if "trial_id" in a][0]["trial_observed"]
-    assert {o["version_ref"] for o in sent if o["slot_scope"] == "trial"} == {
-        proposal.version_ref
-    }
-    assert server.calls.count("declare") == n_declares + 1  # only the run base's
-    with pytest.raises(LegendError):
+    _admit_one(
+        server, "permitted", blk, {"param1": 3}
+    )  # permitted: skipped, run goes on
+    assert [a for a in server.admissions if "trial_id" in a] == []
+    with pytest.raises(LegendError) as err:  # strict: closed refusal
         _admit_drift_strict(server, blk)
+    assert err.value.code == "local_observation_incomplete"
+
+
+def test_repeated_drifted_trials_reuse_the_advertised_entity() -> None:
+    server = FakeServer()
+    proposal, blk = _entity_block(server, {"param1": 3})
+    for n in (4, 5, 4, 5):
+        _admit_one(server, "permitted", blk, {"param1": n})
+    for n in (4, 5):
+        fp = compute_pillar(
+            c.KIND_CONFIGURATION, ConfigurationSource({"param1": n})
+        ).fingerprint
+        homes = {
+            v["entity_ref"]
+            for v in server.versions.values()
+            if v["fingerprint"] == fp and v["entity_ref"] == proposal.entity_ref
+        }
+        # the drifted identity lives in the advertised entity (once), not in a fresh one per trial
+        assert homes == {proposal.entity_ref}
+        in_advertised = [
+            v
+            for v in server.versions.values()
+            if v["fingerprint"] == fp and v["entity_ref"] == proposal.entity_ref
+        ]
+        assert len(in_advertised) == 1
 
 
 def _admit_drift_strict(server: FakeServer, blk: dict[str, Any]) -> None:
@@ -1150,7 +1179,7 @@ def _admit_drift_strict(server: FakeServer, blk: dict[str, Any]) -> None:
     )
     assert binder is not None
     binder.admit_run(pillars_from_content_identity(None, {"param1": 1}))
-    admit_trial_config(binder, "t_1", blk, {"param1": 4}, None, sugg({"param1": 3}))
+    admit_trial_config(binder, "t_1", blk, {"param1": 4}, None)
 
 
 def test_entity_reuse_via_the_alias_map_dedupes_across_declares(tmp_path: Path) -> None:

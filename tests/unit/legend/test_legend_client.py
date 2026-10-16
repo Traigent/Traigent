@@ -411,7 +411,9 @@ def test_store_failed_publish_leaves_nothing_visible(tmp_path, monkeypatch):
     assert store.put(c.KIND_AGENT, fp, io.BytesIO(b"payload")) == "unreachable"
     monkeypatch.setattr(os, "link", real_link)
     # no entry, no header, no temp file: nothing of the failed put is visible
-    assert [p for p in (tmp_path / "s").rglob("*") if p.is_file()] == []
+    assert [
+        p for p in (tmp_path / "s").rglob("*") if p.is_file() and p.suffix != ""
+    ] == []
     assert store.has(c.KIND_AGENT, fp) == "missing"
     assert store.get(c.KIND_AGENT, fp, tmp_path / "out") == "missing"
     # the retry, even with different bytes, is a clean first write
@@ -477,3 +479,41 @@ def test_source_bundle_skips_sdk_runtime_dirs_and_agent_source_refuses_clearly(
         export(AgentSource(lambda q: q, "agent_x", {}))
     assert err.value.code == "coverage_insufficient"
     assert "AgentStateSource" in str(err.value)
+
+
+def test_store_stamps_a_format_marker_and_refuses_legacy_or_unknown_layouts(tmp_path):
+    import io
+
+    from traigent.legend import LocalDirectoryStore
+    from traigent.legend.store import STORE_FORMAT_FILE
+
+    fp = "rmf0:sha256:" + "cd" * 32
+    fresh = LocalDirectoryStore(tmp_path / "fresh")
+    assert fresh.has(c.KIND_AGENT, fp) == "missing"  # an empty root is just empty
+    assert fresh.put(c.KIND_AGENT, fp, io.BytesIO(b"x")) == "stored_unverified"
+    assert (
+        (tmp_path / "fresh" / STORE_FORMAT_FILE)
+        .read_text()
+        .startswith("traigent.legend.store/")
+    )
+
+    legacy = tmp_path / "legacy"  # the earlier blob/meta pair layout
+    d = legacy / c.KIND_AGENT / "rmf0"
+    d.mkdir(parents=True)
+    (d / ("cd" * 32 + ".blob")).write_bytes(b"x")
+    (d / ("cd" * 32 + ".meta")).write_text("{}")
+    store = LocalDirectoryStore(legacy)
+    for call in (
+        lambda: store.has(c.KIND_AGENT, fp),
+        lambda: store.get(c.KIND_AGENT, fp, tmp_path / "o"),
+        lambda: store.put(c.KIND_AGENT, fp, io.BytesIO(b"x")),
+    ):
+        with pytest.raises(LegendError) as err:
+            call()
+        assert err.value.code == "local_store_layout_unsupported"  # never "missing"
+
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / STORE_FORMAT_FILE).write_text("traigent.legend.store/99\n")
+    with pytest.raises(LegendError):
+        LocalDirectoryStore(other).has(c.KIND_AGENT, fp)

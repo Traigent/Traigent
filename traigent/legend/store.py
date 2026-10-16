@@ -27,6 +27,11 @@ GetStatus = Literal[
 HasStatus = Literal["available", "missing", "unknown"]
 
 BUNDLE_NAME: Final = "bundle.rmf"
+#: Layout marker at the root of a :class:`LocalDirectoryStore`. A root holding anything else
+#: (e.g. the earlier ``.blob``/``.meta`` pair layout) is refused, never read as "missing".
+STORE_FORMAT_FILE: Final = ".legend-store-format"
+STORE_FORMAT: Final = "traigent.legend.store/1\n"
+LAYOUT_UNSUPPORTED: Final = "local_store_layout_unsupported"
 # Manifest fingerprints (rmf0) and the reserved synthetic conformance keys (rmfc0) are
 # disjoint namespaces; each gets its own directory so they can never collide.
 _KEY_RE: Final = re.compile(
@@ -72,6 +77,36 @@ class LocalDirectoryStore:
     def __init__(self, root: str | os.PathLike[str]) -> None:
         self.root = Path(root)
 
+    def _check_layout(self, create: bool) -> None:
+        """Refuse an unknown or legacy layout with a closed code; stamp an empty root."""
+        marker = self.root / STORE_FORMAT_FILE
+        try:
+            if marker.exists():
+                if marker.read_text() != STORE_FORMAT:
+                    raise LegendError(LAYOUT_UNSUPPORTED, "unsupported store format")
+                return
+            populated = self.root.is_dir() and any(
+                p.is_file() and p.suffix not in (".tmp", ".entry") and p != marker
+                for p in self.root.rglob("*")
+            )
+        except OSError:
+            return  # unreachable root: the operation reports that itself
+        if populated:
+            raise LegendError(LAYOUT_UNSUPPORTED, "unsupported store layout")
+        if not create:
+            return
+        self.root.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=self.root, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as handle:
+                handle.write(STORE_FORMAT)
+            try:
+                os.link(tmp, marker)
+            except FileExistsError:
+                self._check_layout(False)
+        finally:
+            os.unlink(tmp)
+
     def _entry(self, kind: str, fp: str) -> Path:
         check_key(kind, fp)
         namespace, _, digest = fp.rpartition(":sha256:")
@@ -99,6 +134,7 @@ class LocalDirectoryStore:
         data = stream.read()
         digest = hashlib.sha256(data).hexdigest()
         try:
+            self._check_layout(create=True)
             path.parent.mkdir(parents=True, exist_ok=True)
             if path.exists():  # same key: identical bytes are fine, else a conflict
                 return self._same(path, digest)
@@ -130,6 +166,7 @@ class LocalDirectoryStore:
 
     def get(self, kind: str, manifest_fingerprint: str, dest_dir: Path) -> GetStatus:
         path = self._entry(kind, manifest_fingerprint)
+        self._check_layout(create=False)
         try:
             if not path.exists():
                 return "missing"
@@ -150,6 +187,7 @@ class LocalDirectoryStore:
             return "unreachable"
 
     def has(self, kind: str, manifest_fingerprint: str) -> HasStatus:
+        self._check_layout(create=False)
         try:
             return (
                 "available"
