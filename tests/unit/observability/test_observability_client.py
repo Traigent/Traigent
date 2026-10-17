@@ -3945,7 +3945,7 @@ def test_observability_client_logs_ingest_warnings(monkeypatch, caplog):
     )
 
     monkeypatch.setattr(
-        client, "_open_http_request", lambda http_request: _FakeResponse()
+        client, "_open_http_request", lambda http_request, **_: _FakeResponse()
     )
 
     with caplog.at_level(logging.WARNING):
@@ -4006,7 +4006,7 @@ def test_observability_client_closes_http_errors(
     monkeypatch.setattr(
         client,
         "_open_http_request",
-        lambda http_request: (_ for _ in ()).throw(http_error),
+        lambda http_request, **_: (_ for _ in ()).throw(http_error),
     )
 
     with pytest.raises(ClientError, match=message):
@@ -4040,7 +4040,7 @@ def test_observability_ingest_http_error_attaches_retry_after(monkeypatch):
     monkeypatch.setattr(
         client,
         "_open_http_request",
-        lambda http_request: (_ for _ in ()).throw(http_error),
+        lambda http_request, **_: (_ for _ in ()).throw(http_error),
     )
 
     with pytest.raises(ClientError) as exc_info:

@@ -7,6 +7,7 @@ import copy
 import hashlib
 import io
 import json
+import sys
 import threading
 import time
 import uuid
@@ -3209,7 +3210,10 @@ class ObservabilityClient:
             method="POST",
         )
         try:
-            with self._open_http_request(http_request) as response:
+            with self._open_http_request(
+                http_request,
+                timeout=self.config.effective_request_timeout(len(traces)),
+            ) as response:
                 status_code = getattr(response, "status", 200)
                 body = response.read().decode("utf-8") if response else ""
                 if status_code >= 400:
@@ -3344,10 +3348,12 @@ class ObservabilityClient:
             raise ClientError(f"Unexpected response structure for {label}")
         return data
 
-    def _open_http_request(self, http_request: request.Request) -> Any:
+    def _open_http_request(
+        self, http_request: request.Request, timeout: float | None = None
+    ) -> Any:
         return self._http_opener.open(
             http_request,
-            timeout=self.config.request_timeout,
+            timeout=self.config.request_timeout if timeout is None else timeout,
         )
 
     @staticmethod
@@ -3712,9 +3718,20 @@ class ObservabilityClient:
             if self._closed:
                 return
         try:
-            self.close(timeout=self.config.flush_timeout)
+            result = self.close(timeout=self.config.flush_timeout)
         except Exception as exc:
             logger.warning("Observability atexit flush failed: %s", exc)
+            return
+        pending = getattr(result, "items_pending", 0)
+        if self.config.warn_on_undelivered_at_exit and pending > 0:
+            try:
+                sys.stderr.write(
+                    f"traigent: {pending} observability trace(s) were not "
+                    "delivered before exit; call flush() before exit or raise "
+                    "ObservabilityConfig.flush_timeout.\n"
+                )
+            except Exception:  # noqa: BLE001 - stderr may be closed at exit
+                pass
 
     def _flush_deadline(self, timeout: float | None) -> float | None:
         if timeout is None:

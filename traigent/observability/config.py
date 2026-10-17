@@ -417,6 +417,20 @@ class ObservabilityConfig:
     ``health_callback`` receives batch-level local-drop and warning snapshots
     after internal transport locks are released. It may run on background
     threads, and exceptions raised by the callback are swallowed.
+
+    ``request_timeout`` is the floor for one ingest request's time limit. The
+    effective limit is ``max(request_timeout, per_trace_timeout * traces in the
+    request)``, so a full 100-trace upload against a backend that spends tens of
+    milliseconds per trace does not time out; an explicit ``request_timeout``
+    larger than the scaled value is kept. Set ``per_trace_timeout=0`` to use
+    ``request_timeout`` unscaled.
+
+    At interpreter exit (``enable_atexit_flush``) the client flushes for up to
+    ``flush_timeout`` seconds. If traces are still undelivered it writes one
+    line to stderr with the count (``FlushResult.items_pending`` is the same
+    count programmatically); set ``warn_on_undelivered_at_exit=False`` to
+    silence it. Call ``flush()`` before exit or raise ``flush_timeout`` to
+    deliver more.
     """
 
     backend_origin: str = field(default_factory=BackendConfig.get_backend_url)
@@ -435,7 +449,9 @@ class ObservabilityConfig:
     max_batch_bytes: int = 4 * 1024 * 1024
     flush_timeout: float = 30.0
     request_timeout: float = 10.0
+    per_trace_timeout: float = 0.2
     enable_atexit_flush: bool = True
+    warn_on_undelivered_at_exit: bool = True
     offline_mode: bool = field(default_factory=_read_observability_offline_mode)
     content_mode: str = _CONTENT_MODE_UNSET
     # Set in `__post_init__`; not a constructor argument. True iff the
@@ -507,12 +523,19 @@ class ObservabilityConfig:
             raise ValueError(
                 f"request_timeout must be less than or equal to {MAX_TIMEOUT_SECONDS}"
             )
+        if self.per_trace_timeout < 0:
+            raise ValueError("per_trace_timeout must be greater than or equal to 0")
         constructor_content_mode = (
             None if self.content_mode == _CONTENT_MODE_UNSET else self.content_mode
         )
         self.content_mode, self.content_mode_explicit = resolve_client_content_mode(
             constructor_content_mode
         )
+
+    def effective_request_timeout(self, trace_count: int = 0) -> float:
+        """Time limit for one ingest request carrying ``trace_count`` traces."""
+        scaled = self.per_trace_timeout * max(0, trace_count)
+        return min(max(self.request_timeout, scaled), MAX_TIMEOUT_SECONDS)
 
     @property
     def ingest_url(self) -> str:
