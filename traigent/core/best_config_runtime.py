@@ -485,15 +485,20 @@ def snapshot_from_spec(
         )
 
     function_ref = spec.get("function_ref")
-    if (
-        expected_function_ref
-        and function_ref is not None
-        and function_ref != expected_function_ref
-    ):
-        raise ConfigurationError(
-            "Best config function_ref mismatch: "
-            f"expected {expected_function_ref!r}, got {function_ref!r}"
-        )
+    if expected_function_ref:
+        # A caller that names its function is only served a config bound to that
+        # function: a missing / null ``function_ref`` cannot establish it. Only an
+        # explicitly unbound read (no expected function) accepts a legacy unbound config.
+        if function_ref is None:
+            raise ConfigurationError(
+                "Best config function_ref mismatch: the config is not bound to a "
+                f"function, expected {expected_function_ref!r}"
+            )
+        if function_ref != expected_function_ref:
+            raise ConfigurationError(
+                "Best config function_ref mismatch: "
+                f"expected {expected_function_ref!r}, got {function_ref!r}"
+            )
 
     if expected_environment is not None:
         spec_environment = spec.get("environment")
@@ -805,9 +810,15 @@ def resolve_repo_best_config(
     repo_root: str | Path | None = None,
     configuration_space: dict[str, Any] | None = None,
     expected_function_ref: str | None = None,
+    expected_environment: str | None = None,
     strict: bool = False,
 ) -> BestConfigSnapshot | None:
-    """Resolve a repo-local best config by config id."""
+    """Resolve a repo-local best config by config id.
+
+    ``expected_function_ref`` and ``expected_environment`` (when given) bind the manifest's
+    spec to what the caller asked for: a spec for another environment or function is
+    refused (``strict``) or skipped, never loaded.
+    """
 
     if not config_id:
         return None
@@ -832,6 +843,7 @@ def resolve_repo_best_config(
             configuration_space=configuration_space,
             expected_config_id=safe_config_id,
             expected_function_ref=expected_function_ref,
+            expected_environment=expected_environment,
             manifest_entry=entry,
             source=BestConfigSource.REPO.value,
             strict=True,

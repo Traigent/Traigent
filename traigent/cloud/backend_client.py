@@ -2494,13 +2494,17 @@ class BackendIntegratedClient:
                 or not 0 <= expected_head_generation <= _MAX_HEAD_GENERATION
             ):
                 raise CloudServiceError("expected_head_generation is out of range")
-            return self._publish_best_config_protected_sync(
+            protected = self._publish_best_config_protected_sync(
                 spec,
                 environment=environment,
                 if_match=if_match,
                 agent_ref=agent_ref,
                 expected_head_generation=expected_head_generation,
             )
+            self._verify_published_best_config_identity(
+                protected, spec, environment=environment
+            )
+            return protected
         if (agent_id is None) != (expected_head_generation is None):
             raise CloudServiceError(
                 "agent_id and expected_head_generation must be provided together"
@@ -2567,7 +2571,38 @@ class BackendIntegratedClient:
                 f"Best-config publish rejected: "
                 f"{safe_http_error_summary(response.status_code, response.text)}"
             )
-        return self._extract_backend_data(response)
+        published = self._extract_backend_data(response)
+        self._verify_published_best_config_identity(
+            published, spec, environment=environment
+        )
+        return published
+
+    @staticmethod
+    def _verify_published_best_config_identity(
+        data: Any, sent_spec: dict[str, Any], *, environment: str | None
+    ) -> None:
+        """A publish answer must be for the spec that was sent (config, function, environment).
+
+        The effective environment is the sent spec's own, else the request envelope's,
+        else ``"default"`` (the documented precedence). Raises
+        ``CloudBestConfigIntegrityError``; the manager's stricter hash checks still run
+        on top of this (defence in depth).
+        """
+        from traigent.core.config_state_manager import ConfigStateManager
+
+        sent_id = sent_spec.get("config_id")
+        sent_ref = sent_spec.get("function_ref")
+        sent_env = sent_spec.get("environment")
+        ConfigStateManager._verify_returned_identity(
+            data,
+            config_id=sent_id if isinstance(sent_id, str) else "",
+            function_ref=sent_ref if isinstance(sent_ref, str) else None,
+            environment=(
+                sent_env
+                if isinstance(sent_env, str) and sent_env.strip()
+                else environment
+            ),
+        )
 
     def fetch_best_config_sync(
         self,
@@ -2633,7 +2668,19 @@ class BackendIntegratedClient:
                 f"Best-config fetch rejected: "
                 f"{safe_http_error_summary(response.status_code, response.text)}"
             )
-        return self._extract_backend_data(response)
+        fetched = self._extract_backend_data(response)
+        # The answer must be for the requested config / function / environment: a direct
+        # caller gets the same guarantee the runtime manager enforces (never another
+        # environment's or function's config).
+        from traigent.core.config_state_manager import ConfigStateManager
+
+        ConfigStateManager._verify_returned_identity(
+            fetched,
+            config_id=config_id,
+            function_ref=function_ref,
+            environment=environment,
+        )
+        return fetched
 
     def _build_purpose_keys_url(self) -> str | None:
         """Return the purpose-key grant URL for the configured backend API."""

@@ -370,6 +370,7 @@ class ConfigStateManager:
                 configuration_space=self.configuration_space,
                 expected_config_id=self.config_id,
                 expected_function_ref=function_ref_for(self.func),
+                expected_environment=self.best_config_environment,
                 source=source,
                 strict=True,
             )
@@ -549,6 +550,51 @@ class ConfigStateManager:
                 )
 
     @staticmethod
+    def _verify_returned_identity(
+        data: Any,
+        *,
+        config_id: str,
+        function_ref: str | None,
+        environment: str | None,
+    ) -> None:
+        """Bind a backend answer to the request at the transport boundary.
+
+        Same normalization as the runtime fetch path (``config_id`` / ``function_ref``
+        trimmed, ``environment`` trimmed and lower-cased, absent environment =
+        ``"default"``). With a stored ``spec`` the full binding applies; without one,
+        whatever top-level identity the answer carries must still match the request.
+        A request with no ``function_ref`` is explicitly unbound and constrains none.
+        """
+
+        if not isinstance(data, dict):
+            return
+        requested_environment = (environment or "default").strip().lower() or "default"
+        spec = data.get("spec")
+        if isinstance(spec, dict):
+            ConfigStateManager._verify_fetch_binding(
+                data,
+                spec,
+                config_id=config_id,
+                function_ref=function_ref,
+                environment=requested_environment,
+            )
+            return
+        view = (
+            data
+            if function_ref
+            else {key: value for key, value in data.items() if key != "function_ref"}
+        )
+        ConfigStateManager._verify_top_level_identity(
+            view,
+            {
+                "config_id": config_id,
+                "environment": requested_environment,
+                "function_ref": function_ref,
+            },
+            request_environment=requested_environment,
+        )
+
+    @staticmethod
     def _verify_fetch_binding(
         data: dict[str, Any],
         spec: dict[str, Any],
@@ -560,8 +606,10 @@ class ConfigStateManager:
         """Bind a fetched spec to the request: config id, function and effective environment.
 
         A spec for another environment, function or config is never loaded (and never
-        cached), whatever its hashes say. An absent ``function_ref`` in the spec is an
-        unbound legacy config and is accepted, as before.
+        cached), whatever its hashes say. When the caller names a function, a spec with
+        no ``function_ref`` (missing or null) is refused too: it cannot establish that it
+        belongs to that function. An explicitly unbound request (``function_ref`` None)
+        keeps accepting legacy unbound configs.
         """
 
         spec_id = spec.get("config_id")
@@ -570,7 +618,12 @@ class ConfigStateManager:
                 "Cloud best-config response is not for the requested config_id"
             )
         spec_ref = spec.get("function_ref")
-        if function_ref and spec_ref is not None:
+        if function_ref:
+            if spec_ref is None:
+                raise CloudBestConfigIntegrityError(
+                    "Cloud best-config response is not bound to the requested "
+                    "function_ref"
+                )
             if (
                 not isinstance(spec_ref, str)
                 or spec_ref.strip() != function_ref.strip()
@@ -683,6 +736,7 @@ class ConfigStateManager:
                         repo_root=Path.cwd(),
                         configuration_space=self.configuration_space,
                         expected_function_ref=function_ref_for(self.func),
+                        expected_environment=self.best_config_environment,
                         strict=self.best_config_strict,
                     )
                 elif source is BestConfigSource.CLOUD_CACHE:
