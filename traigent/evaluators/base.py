@@ -48,6 +48,11 @@ from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.langchain_interceptor import get_captured_response_by_key
 from traigent.utils.logging import get_logger
 from traigent.utils.removed_params import reject_removed_mock_parameters
+from traigent.utils.trial_costs import (
+    is_cost_unmeasured,
+    known_spend_lower_bound,
+    trial_cost_unknown,
+)
 
 if TYPE_CHECKING:
     from traigent.core.execution_budget import ExecutionBudget
@@ -1688,7 +1693,15 @@ class BaseEvaluator(ABC):
 
     @staticmethod
     def _execution_budget_cost(result: EvaluationResult) -> float | None:
-        """Return an observed evaluation cost, or ``None`` when it is unknown."""
+        """Return an observed evaluation cost, or ``None`` when it is unknown.
+
+        A result flagged ``cost_unmeasured`` yields its known spend floor
+        (``None`` when nothing was reported); the caller keeps the flag visible
+        by marking the debit untracked.
+        """
+        if is_cost_unmeasured(result.aggregated_metrics):
+            floor = known_spend_lower_bound(result.aggregated_metrics)
+            return floor if floor > 0 else None
         for key in ("cost", "total_cost"):
             value = result.aggregated_metrics.get(key)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -1719,7 +1732,7 @@ class BaseEvaluator(ABC):
         budget.debit_trial(
             cost=cost,
             examples=examples,
-            untracked=cost is None,
+            untracked=cost is None or is_cost_unmeasured(result.aggregated_metrics),
         )
         snapshot = budget.snapshot()
         result.execution_budget = snapshot.as_dict()
@@ -1931,9 +1944,13 @@ class BaseEvaluator(ABC):
                 metric_func = self._metric_registry[metric_name]
                 try:
                     # Call metric function with all available data
-                    metrics[metric_name] = metric_func(
+                    metric_value = metric_func(
                         outputs, expected_outputs, errors, **context
                     )
+                    if metric_value is None and metric_name == "cost":
+                        # Unknown cost stays unknown: no key, never 0.0 (#2517).
+                        continue
+                    metrics[metric_name] = metric_value
                 except Exception as e:
                     is_objective = metric_name in self.metrics
                     error_record = {
@@ -2205,8 +2222,12 @@ class BaseEvaluator(ABC):
         expected: list[Any],
         errors: list[str | None],
         **context,
-    ) -> float:
+    ) -> float | None:
         """Default cost metric - extracts average per-example cost from context.
+
+        Returns ``None`` when every measured example lacks a cost measurement
+        (no usage was captured): the cost is unknown and ``compute_metrics``
+        leaves the key out rather than reporting ``0.0`` (Traigent#2517).
 
         Averaged over every example with a recorded cost MEASUREMENT
         (``ExampleMetrics.measured``, Traigent#2160 sol re-review) -- NOT
@@ -2242,15 +2263,28 @@ class BaseEvaluator(ABC):
             if example_metrics:
                 total_cost = 0.0
                 count = 0
+                unmeasured_rows = 0
                 for metrics in example_metrics:
                     if (
                         metrics
                         and hasattr(metrics, "cost")
                         and getattr(metrics, "measured", True)
                     ):
+                        if getattr(metrics.cost, "unmeasured", False):
+                            # No captured usage: unknown, not $0 (#2517).
+                            unmeasured_rows += 1
+                            continue
                         total_cost += metrics.cost.total_cost
                         count += 1
-                return total_cost / count if count > 0 else 0.0
+                if unmeasured_rows > 0:
+                    # Some row's cost is unknown: the mean of the rest is a
+                    # partial estimate, not the trial's cost (#2517).
+                    return None
+                if count == 0:
+                    # Rows exist but none carries a cost measurement (e.g.
+                    # every example errored): unknown, not $0 (#2517).
+                    return None
+                return total_cost / count
 
         # Fallback: look for cost in context directly
         if "cost" in context:
@@ -4297,6 +4331,11 @@ class SimpleScoringEvaluator(BaseEvaluator):
             "cost_unpriced": (
                 1.0 if getattr(metrics_obj.cost, "unpriced", False) else 0.0
             ),
+            # No captured usage: the cost is unknown, not $0 (#2517).
+            "cost_unmeasured": (
+                1.0 if getattr(metrics_obj.cost, "unmeasured", False) else 0.0
+            ),
+            "known_cost": getattr(metrics_obj.cost, "known_cost", 0.0),
             "response_time_ms": getattr(metrics_obj.response, "response_time_ms", 0),
             "tokens_per_second": getattr(metrics_obj.response, "tokens_per_second", 0),
             "model": model_name or "unknown",
@@ -4452,9 +4491,21 @@ class SimpleScoringEvaluator(BaseEvaluator):
         )
         missing_default = None if strict_nulls else 0.0
 
-        example_metrics["input_cost"] = llm_metrics.get("input_cost", missing_default)
-        example_metrics["output_cost"] = llm_metrics.get("output_cost", missing_default)
-        example_metrics["total_cost"] = llm_metrics.get("total_cost", missing_default)
+        if llm_metrics.get("cost_unmeasured"):
+            # Unknown cost: leave the cost keys out; never record 0.0 (#2517).
+            example_metrics["cost_unmeasured"] = 1.0
+            if llm_metrics.get("known_cost"):
+                example_metrics["known_cost"] = llm_metrics["known_cost"]
+        else:
+            example_metrics["input_cost"] = llm_metrics.get(
+                "input_cost", missing_default
+            )
+            example_metrics["output_cost"] = llm_metrics.get(
+                "output_cost", missing_default
+            )
+            example_metrics["total_cost"] = llm_metrics.get(
+                "total_cost", missing_default
+            )
         example_metrics["cost_unpriced"] = (
             1.0 if llm_metrics.get("cost_unpriced", False) else 0.0
         )
@@ -4500,9 +4551,22 @@ class SimpleScoringEvaluator(BaseEvaluator):
         Returns:
             Dictionary of aggregated metrics
         """
-        aggregated = {}
+        aggregated: dict[str, Any] = {}
         for metric in self.metrics:
             if metric in MEASURED_ONLY_METRICS:
+                if not any(
+                    row and _measured_value(row.get(metric)) is not None
+                    for row in all_metrics
+                ):
+                    # Nothing measured this cost: it is unknown, never a
+                    # fabricated 0.0 (#2517). None under strict nulls.
+                    if os.environ.get("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
+                        "true",
+                        "1",
+                        "yes",
+                    ):
+                        aggregated[metric] = None
+                    continue
                 aggregated[metric] = aggregate_measured_metric(metric, all_metrics)
                 continue
             metric_values = [m.get(metric, 0.0) for m in all_metrics if m]
@@ -4540,12 +4604,44 @@ class SimpleScoringEvaluator(BaseEvaluator):
             aggregated[metric] = sum(metric_values) if metric_values else 0.0
 
         # Aggregate cost metrics (total, not average)
+        strict_nulls_cost = os.environ.get(
+            "TRAIGENT_STRICT_METRICS_NULLS", ""
+        ).lower() in ("true", "1", "yes")
         cost_metrics = ["input_cost", "output_cost", "total_cost"]
+        # One shared classifier decides (traigent.utils.trial_costs): a flagged
+        # row, a successful row with no cost, or a trial where no row measured
+        # a cost (every example errored) all make the trial's cost unknown.
+        if len(example_results) == len(all_metrics):
+            successes: list[bool] | None = [
+                bool(getattr(r, "is_successful", True)) for r in example_results
+            ]
+        else:
+            successes = None
+        unmeasured_rows = trial_cost_unknown(all_metrics, successes)
         for metric in cost_metrics:
             metric_values = [
                 m.get(metric, 0.0) for m in all_metrics if m and metric in m
             ]
-            aggregated[metric] = sum(metric_values) if metric_values else 0.0
+            if metric_values and not unmeasured_rows:
+                aggregated[metric] = sum(metric_values)
+            elif unmeasured_rows:
+                # Some row's cost is unknown: a sum would be a floor, not the
+                # trial's cost. The key stays out (None under strict nulls),
+                # never a fabricated 0.0 (#2517).
+                if strict_nulls_cost:
+                    aggregated[metric] = None
+            else:
+                aggregated[metric] = 0.0
+        aggregated["cost_unmeasured"] = 1.0 if unmeasured_rows else 0.0
+        if unmeasured_rows:
+            lower_bound = sum(
+                float(m.get("total_cost", 0.0) or 0.0)
+                + float(m.get("known_cost", 0.0) or 0.0)
+                for m in all_metrics
+                if m
+            )
+            if lower_bound > 0:
+                aggregated["cost_lower_bound"] = lower_bound
 
         # True iff ANY example's cost could not be priced -- unknown spend
         # recorded as $0, not verified-free $0 (#1597). Threaded through so
@@ -4815,6 +4911,12 @@ class SimpleScoringEvaluator(BaseEvaluator):
         if self.capture_llm_metrics and self._metrics_available:
             llm_agg = self._aggregate_llm_metrics(all_metrics, example_results)
             aggregated_metrics.update(llm_agg)
+            if llm_agg.get("cost_unmeasured"):
+                # The custom-metric pass may have produced a partial sum for a
+                # cost metric; an unknown trial cost is absent, not a floor.
+                for metric in MEASURED_ONLY_METRICS:
+                    if metric not in llm_agg:
+                        aggregated_metrics.pop(metric, None)
 
         # Aggregate RAGAS metrics if applicable
         self._aggregate_ragas_metrics(example_results, aggregated_metrics)

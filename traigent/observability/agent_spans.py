@@ -81,6 +81,20 @@ def _coerce_non_negative_float(value: float | None, *, field_name: str) -> float
     return coerced
 
 
+def _coerce_optional_cost(value: float | None) -> float | None:
+    """A reported cost, or ``None`` (unmeasured) when absent or unusable.
+
+    An omitted or invalid cost is "no cost reported", never a measured $0: the
+    span then carries the shared unmeasured marker (see ``SpanPayload``).
+    """
+    if value is None:
+        return None
+    if not _is_safe_number(value) or float(value) < 0:
+        logger.debug("Ignoring invalid cost_usd for agent span; marking unmeasured")
+        return None
+    return float(value)
+
+
 def _normalize_node_id(node_id: str) -> str | None:
     if not isinstance(node_id, str):
         logger.debug("Skipping agent span: node_id must be a string")
@@ -228,7 +242,7 @@ def add_agent_span(
         output_tokens=_coerce_non_negative_int(
             output_tokens, field_name="output_tokens"
         ),
-        cost_usd=_coerce_non_negative_float(cost_usd, field_name="cost_usd"),
+        cost_usd=_coerce_optional_cost(cost_usd),
         metadata=safe_metadata,
     )
 

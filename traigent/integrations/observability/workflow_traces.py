@@ -37,6 +37,7 @@ from __future__ import annotations
 import contextvars
 import hashlib
 import json
+import math
 import os
 import threading
 from collections.abc import Callable, Generator
@@ -117,6 +118,32 @@ class SpanType(StrEnum):
 # =============================================================================
 
 
+def _optional_span_cost(value: Any) -> float | None:
+    """A span attribute as a cost, or ``None`` when it carries no finite number.
+
+    An absent (or non-numeric) ``llm.cost_usd`` is "no cost reported", which
+    is not a measured $0 (Traigent#2517); the span omits it.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        cost = float(value)
+    except (TypeError, ValueError):
+        return None
+    return cost if math.isfinite(cost) and cost >= 0 else None
+
+
+#: Reserved span ``metadata`` key (the schema's open object) marking a span whose
+#: ``cost_usd`` is only the reported floor. Never written at the top level.
+SPAN_COST_UNMEASURED_KEY = "traigent.cost_unmeasured"
+
+
+def unmeasured_span_floor(lower_bound: float | None) -> float:
+    """The ``cost_usd`` an unmeasured span sends: the reported floor, else 0.0."""
+    bound = _optional_span_cost(lower_bound)
+    return bound if bound is not None else 0.0
+
+
 @dataclass
 class SpanPayload:
     """Span data payload for backend ingestion.
@@ -143,7 +170,12 @@ class SpanPayload:
     # Metrics
     input_tokens: int = 0
     output_tokens: int = 0
-    cost_usd: float = 0.0
+    # None = unmeasured cost. The wire contract requires a number, so an
+    # unmeasured span sends the reported floor (``cost_lower_bound``; 0.0 when
+    # nothing was reported) as ``cost_usd`` plus the reserved metadata flag
+    # below -- the flag, never the number, says it is not a measurement.
+    cost_usd: float | None = 0.0
+    cost_lower_bound: float | None = None
 
     # Data
     input_data: dict[str, Any] | None = None
@@ -164,8 +196,13 @@ class SpanPayload:
             "status": self.status,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
-            "cost_usd": self.cost_usd,
         }
+        metadata = dict(self.metadata) if self.metadata else {}
+        if self.cost_usd is not None:
+            result["cost_usd"] = self.cost_usd
+        else:
+            result["cost_usd"] = unmeasured_span_floor(self.cost_lower_bound)
+            metadata[SPAN_COST_UNMEASURED_KEY] = True
 
         # Add optional fields only if present
         if self.parent_span_id:
@@ -182,8 +219,8 @@ class SpanPayload:
             result["input_data"] = self.input_data
         if self.output_data:
             result["output_data"] = self.output_data
-        if self.metadata:
-            result["metadata"] = self.metadata
+        if metadata:
+            result["metadata"] = metadata
 
         return result
 
@@ -1143,7 +1180,9 @@ if OTEL_AVAILABLE:
                 decision_reason=attributes.get("decision.reason"),
                 input_tokens=int(attributes.get("llm.input_tokens", 0)),
                 output_tokens=int(attributes.get("llm.output_tokens", 0)),
-                cost_usd=float(attributes.get("llm.cost_usd", 0.0)),
+                # No ``llm.cost_usd`` attribute means the span reported no
+                # cost: omitted from the payload, never a measured $0 (#2517).
+                cost_usd=_optional_span_cost(attributes.get("llm.cost_usd")),
                 metadata={
                     k: v
                     for k, v in attributes.items()
@@ -1477,7 +1516,7 @@ class WorkflowTracesTracker:
         error_message: str | None = None,
         input_tokens: int = 0,
         output_tokens: int = 0,
-        cost_usd: float = 0.0,
+        cost_usd: float | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Manually add a span to the current trial trace.
@@ -1494,7 +1533,9 @@ class WorkflowTracesTracker:
             error_message: Error message if failed
             input_tokens: Number of input tokens
             output_tokens: Number of output tokens
-            cost_usd: Cost in USD
+            cost_usd: Cost in USD. ``None`` (the default) means the caller
+                reported no cost: it is omitted from the payload rather than
+                uploaded as a measured ``0.0``.
             metadata: Additional metadata
         """
         if not self._current_trace_id or not self._current_config_run_id:

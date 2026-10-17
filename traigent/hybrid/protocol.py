@@ -8,6 +8,7 @@ aligned with TVL 0.9 (Tuned Variables Language) specification.
 
 from __future__ import annotations
 
+import math
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -134,8 +135,52 @@ class HybridExecuteResponse:
             error=data.get("error"),
         )
 
+    def cost_flagged_unmeasured(self) -> bool:
+        """True when the service says the response's cost is not a measurement.
+
+        ``operational_metrics`` allows custom keys; a service that executed
+        examples it could not price sets ``cost_unmeasured`` there (the
+        ``total_cost_usd`` it must still send is then at best a priced lower
+        bound, never a total).
+        """
+        flag = (self.operational_metrics or {}).get("cost_unmeasured")
+        if flag is True:
+            return True
+        return (
+            isinstance(flag, (int, float))
+            and not isinstance(flag, bool)
+            and math.isfinite(flag)
+            and flag > 0
+        )
+
+    def get_reported_total_cost(self) -> float | None:
+        """Total cost the wire response actually reported, else ``None``.
+
+        ``None`` means the service omitted (or sent a non-numeric, non-finite
+        or negative) cost, or flagged it ``cost_unmeasured``: that is "not
+        reported", which is different from a reported ``0.0``. A negative cost
+        is not spend, so it is never accepted as a measurement.
+        """
+        if self.cost_flagged_unmeasured():
+            return None
+        metrics = self.operational_metrics or {}
+        for key in ("total_cost_usd", "cost_usd"):
+            value = metrics.get(key)
+            if (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+                and value >= 0
+            ):
+                return float(value)
+        return None
+
     def get_total_cost(self) -> float:
-        """Extract total cost from operational metrics."""
+        """Extract total cost from operational metrics (0.0 when not reported).
+
+        Prefer :meth:`get_reported_total_cost` where "not reported" must stay
+        distinct from a measured zero.
+        """
         return self.operational_metrics.get(
             "total_cost_usd", self.operational_metrics.get("cost_usd", 0.0)
         )

@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 from tests.shared.mocks.optimizers import MockOptimizer
+from traigent.api.functions import with_usage
 from traigent.config.types import TraigentConfig
 from traigent.core.metadata_helpers import build_backend_metadata
 from traigent.core.orchestrator import OptimizationOrchestrator
@@ -65,7 +66,8 @@ def _grant() -> ContentIdentityKeys:
 
 
 def identity_agent(text: str) -> str:
-    return text.upper()
+    # No model call: report a measured $0 instead of leaving the cost unreported.
+    return with_usage(text.upper(), total_cost=0.0)
 
 
 def _dataset() -> Dataset:

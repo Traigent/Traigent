@@ -104,6 +104,9 @@ class _Colors:
 # ---------------------------------------------------------------------------
 
 
+_UNMEASURED_CELL = "unmeasured"
+
+
 def _format_config_value(val: Any) -> str:
     if isinstance(val, bool):
         return "Yes" if val else "No"
@@ -128,16 +131,33 @@ def _format_percent_metric(val: float) -> str:
     return f"{val:.1%}"
 
 
-def _render_metric_cell(metric: str, raw_value: Any) -> str:
-    """Format one table cell; an unmeasured cost reads "n/a", not "$0.00000".
+def _cost_flagged(trial: Any, metric: str) -> bool:
+    """True when ``metric`` is a cost metric and the trial flags its cost unmeasured."""
+    if "cost" not in metric.lower():
+        return False
+    from traigent.utils.trial_costs import is_cost_unmeasured  # noqa: PLC0415
+
+    return is_cost_unmeasured(getattr(trial, "metrics", None))
+
+
+def _render_metric_cell(metric: str, raw_value: Any, trial: Any = None) -> str:
+    """Format one table cell; an unmeasured cost reads "unmeasured", not "$0.00000".
 
     A trial with no captured LLM usage has an UNKNOWN cost (Traigent#2441), and
     printing it as zero makes it look like the cheapest configuration. Other
     metrics keep the historical 0.0 rendering for a missing value.
     """
     value = _coerce_float(raw_value)
+    if trial is not None and _cost_flagged(trial, metric):
+        # Flagged: the number (if any) is a floor or a stray zero. Show the
+        # known spend as a lower bound, else "unmeasured" -- never "$0.00000".
+        metrics = getattr(trial, "metrics", None) or {}
+        bound = _coerce_float(metrics.get("cost_lower_bound"))
+        if bound is not None and bound > 0:
+            return f"\u2265 {_format_metric_value(metric, bound)}"
+        return _UNMEASURED_CELL
     if value is None and "cost" in metric.lower():
-        return "n/a"
+        return _UNMEASURED_CELL
     return _format_metric_value(metric, value or 0.0)
 
 
@@ -218,6 +238,33 @@ def _get_objective_info(objectives: Any) -> list[tuple[str, str]]:
     return []
 
 
+def _cost_in_play(metric_names: list[str]) -> bool:
+    """True when any objective in play is a cost metric (core selection's rule)."""
+    from traigent.utils.multi_objective import (  # noqa: PLC0415
+        _COST_OBJECTIVE_NAMES,
+    )
+
+    return any(name in _COST_OBJECTIVE_NAMES for name in metric_names)
+
+
+def _trial_rankable(trial: Any, metric_names: list[str]) -> bool:
+    """Mirror ``result_selection``: with a cost objective in play, a trial whose
+    cost is flagged unmeasured is excluded from any overall-best choice."""
+    if not _cost_in_play(metric_names):
+        return True
+    from traigent.utils.trial_costs import is_cost_unmeasured  # noqa: PLC0415
+
+    return not is_cost_unmeasured(getattr(trial, "metrics", None))
+
+
+def _all_eligible_cost_unmeasured(trials: list, metric_names: list[str]) -> bool:
+    """True when there are eligible trials and each is excluded for unmeasured cost."""
+    eligible = [t for t in trials if _trial_is_best_candidate(t)]
+    return bool(eligible) and not any(
+        _trial_rankable(t, metric_names) for t in eligible
+    )
+
+
 def _find_best_per_objective(
     trials: list,
     metric_info: list[tuple[str, str]],
@@ -234,6 +281,8 @@ def _find_best_per_objective(
         is_minimize = orientation == "minimize"
         for i, trial in enumerate(trials):
             if not _trial_is_best_candidate(trial):
+                continue
+            if _cost_flagged(trial, metric_name):
                 continue
             val = _coerce_float(
                 _get_metric_value(trial, metric_name, i, metric_overrides)
@@ -280,7 +329,11 @@ def _find_best_trial(
 ) -> Any:
     """Find the best trial by weighted scores or the primary displayed metric."""
     if weighted_scores:
-        return max(weighted_scores, key=lambda item: item[1])[0]
+        weighted_scores = [
+            item for item in weighted_scores if _trial_rankable(item[0], metric_names)
+        ]
+        if weighted_scores:
+            return max(weighted_scores, key=lambda item: item[1])[0]
 
     eligible_trials = [trial for trial in trials if _trial_is_best_candidate(trial)]
     if not eligible_trials:
@@ -301,13 +354,16 @@ def _find_best_trial(
     missing = float("inf") if is_minimize else float("-inf")
 
     def primary_score(trial: Any) -> float:
+        if _cost_flagged(trial, primary_metric):
+            return missing
         value = _coerce_float(getattr(trial, "metrics", {}).get(primary_metric))
         return missing if value is None else value
 
-    return chooser(
-        eligible_trials,
-        key=primary_score,
-    )
+    rankable = [t for t in eligible_trials if _trial_rankable(t, metric_names)]
+    if not rankable:
+        # Every candidate's cost is unmeasured: no measured winner.
+        return None
+    return chooser(rankable, key=primary_score)
 
 
 def _has_positive_quality_metric(trial: Any) -> bool:
@@ -378,7 +434,7 @@ def _find_best_trial_index(
         results, "best_trial_id", None
     )
     best_index = _find_trial_index_by_id(trials, best_trial_id)
-    if best_index is not None:
+    if best_index is not None and _trial_rankable(trials[best_index], metric_names):
         return best_index
 
     try:
@@ -407,6 +463,8 @@ def _find_best_trial_index(
     primary_metric = metric_names[0] if metric_names else None
     for index, trial in enumerate(trials):
         if getattr(trial, "config", {}) != best_config:
+            continue
+        if not _trial_rankable(trial, metric_names):
             continue
         if best_score is None or primary_metric is None:
             return index
@@ -520,7 +578,12 @@ def print_results_table(
     # Resolve objectives & metrics present in trial data
     objective_info = _get_objective_info(objectives)
     sample_metrics = trials[0].metrics
-    metric_info = [(n, o) for n, o in objective_info if n in sample_metrics]
+    # A declared cost objective keeps its column even when no trial measured it:
+    # dropping the column would hide the gap, and the cells then read
+    # "unmeasured" rather than a fabricated $0 (Traigent#2517).
+    metric_info = [
+        (n, o) for n, o in objective_info if n in sample_metrics or "cost" in n.lower()
+    ]
     metric_names = [n for n, _ in metric_info]
     param_names = list(config_space.keys())
 
@@ -551,7 +614,7 @@ def print_results_table(
         max_len = max(
             len(
                 _render_metric_cell(
-                    metric, _get_metric_value(t, metric, i, metric_overrides)
+                    metric, _get_metric_value(t, metric, i, metric_overrides), t
                 )
             )
             for i, t in enumerate(trials)
@@ -618,7 +681,7 @@ def print_results_table(
 
         for metric in metric_names:
             raw_metric_val = _get_metric_value(trial, metric, i, metric_overrides)
-            formatted = _render_metric_cell(metric, raw_metric_val)
+            formatted = _render_metric_cell(metric, raw_metric_val, trial)
             if not all_failed and i in best_per_objective.get(metric, set()):
                 cell = f"{C.GREEN}{C.BOLD}{formatted:^{col_widths[metric]}}{C.RESET}"
             else:
@@ -644,10 +707,27 @@ def print_results_table(
             f"Inspect per-example errors in "
             f".traigent/optimization_logs/experiments/.../runs/{C.RESET}"
         )
+    elif best_trial_index is None and _all_eligible_cost_unmeasured(
+        trials, metric_names
+    ):
+        _safe_table_print(
+            f"{C.YELLOW}⚠ No measured winner — every candidate's cost is "
+            f"unmeasured, so no trial is starred.{C.RESET}"
+        )
+    elif best_trial_index is None:
+        _safe_table_print(
+            f"{C.YELLOW}⚠ No overall best could be determined, so no trial "
+            f"is starred.{C.RESET}"
+        )
     else:
         legend = [f"{C.GREEN}★{C.RESET} Overall Best"]
         legend.extend(f"{C.GREEN}{C.BOLD}{m}{C.RESET} = Best {m}" for m in metric_names)
         _safe_table_print(f"{C.DIM}Legend: {', '.join(legend)}{C.RESET}")
+
+    # A run cut short by a limit says which one (issue #2518).
+    stop_detail = (getattr(results, "metadata", None) or {}).get("stop_detail")
+    if isinstance(stop_detail, str) and stop_detail:
+        _safe_table_print(f"{C.YELLOW}⚠ {stop_detail}{C.RESET}")
 
     # Provenance caveat (issue #2024): a local-fallback run must say so next to
     # the number it produced, not only in a startup log line.

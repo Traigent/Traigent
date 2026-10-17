@@ -48,6 +48,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from traigent.utils.env_config import (
@@ -366,13 +367,26 @@ class CostStatus:
 UNMEASURED_COST_TRIAL_LIMIT_WARNING_CODE = "COST_UNMEASURED_TRIAL_LIMIT_REACHED"
 
 
+def _spend_reached_limit(known_spend: object, cost_limit: object) -> bool:
+    """True when numeric known spend (a floor) has reached a numeric limit."""
+    return (
+        isinstance(known_spend, (int, float))
+        and isinstance(cost_limit, (int, float))
+        and known_spend >= cost_limit
+    )
+
+
 def unmeasured_cost_stop_message(
     trial_count: int,
     fallback_trial_limit: int,
     cost_limit: float,
     unmeasured_trials: int | None = None,
+    known_spend: float | None = None,
 ) -> str:
     """Explain the default unknown-cost safety stop and how to continue (#2441).
+
+    When ``known_spend`` (a minimum: it excludes unmeasured cost) has reached
+    ``cost_limit``, the message says the limit itself stopped the run.
 
     Conservative by default: once any trial's cost cannot be measured the cost
     limit cannot bound spend, so a run the user did not size explicitly stops
@@ -394,6 +408,13 @@ def unmeasured_cost_stop_message(
             "find why those configurations report no usage (a gateway that "
             "omits `usage`, a streaming call, an uncaptured client) and call "
             "the model through a captured client for every configuration"
+        )
+    if _spend_reached_limit(known_spend, cost_limit):
+        return (
+            f"The cost limit (${cost_limit:.2f}) was reached: known spend is at "
+            f"least ${known_spend:.2f} (a minimum; some cost could not be "
+            f"measured: {counts}). To get cost measured instead, "
+            f"{capture} (see docs/user-guide/cost_capture.md)."
         )
     return (
         f"Cost could not be measured ({counts}; no LLM usage was captured), "
@@ -421,8 +442,22 @@ def unmeasured_cost_stop_message(
 UNMEASURED_COST_TRIALS_RAN_WARNING_CODE = "COST_UNMEASURED_TRIALS_RAN"
 
 
-def unmeasured_cost_ran_message(trial_count: int, unmeasured_trials: int) -> str:
+def unmeasured_cost_ran_message(
+    trial_count: int,
+    unmeasured_trials: int,
+    *,
+    known_spend: float | None = None,
+    cost_limit: float | None = None,
+) -> str:
     """Warn that an explicitly sized run ran unmeasured-cost trials (#2441)."""
+    if _spend_reached_limit(known_spend, cost_limit):
+        return (
+            f"{unmeasured_trials} of {trial_count} trials ran with a cost that "
+            "could not be measured. The cost limit "
+            f"(${cost_limit:.2f}) was reached: known spend is at least "
+            f"${known_spend:.2f} (a minimum; unmeasured cost is not included). "
+            "See docs/user-guide/cost_capture.md to get cost measured."
+        )
     return (
         f"{unmeasured_trials} of {trial_count} trials ran with a cost that could "
         "not be measured (no LLM usage was captured), so the cost limit did not "
@@ -718,7 +753,13 @@ class CostEnforcer:
         """Check if the cost or trial limit has been reached (thread-safe)."""
         with self._lock:
             if self._unknown_cost_mode and not self._unknown_cost_cap_waived:
-                return self._trial_count >= self.config.fallback_trial_limit
+                # Known spend is a floor: it can only under-count, so reaching
+                # the limit with it is proof enough. The trial-count fallback
+                # stays as an extra bound for the spend we cannot see.
+                return (
+                    self._accumulated_cost >= self.config.limit
+                    or self._trial_count >= self.config.fallback_trial_limit
+                )
             return self._accumulated_cost >= self.config.limit
 
     def waive_unknown_cost_trial_cap(self) -> None:
@@ -765,6 +806,7 @@ class CostEnforcer:
                         self.config.fallback_trial_limit,
                         self.config.limit,
                         self._unmeasured_trial_count,
+                        self._accumulated_cost,
                     )
                 )
             estimated = self._accumulated_cost + self._reserved_cost
@@ -1003,6 +1045,8 @@ Options:
         permit: Permit,
         trial_failed: bool = False,
         trial_id: str | None = None,
+        cost_unmeasured: bool = False,
+        unmeasured_examples: Sequence[str] | None = None,
     ) -> None:
         """Track actual cost after each trial (thread-safe).
 
@@ -1019,6 +1063,11 @@ Options:
             permit: The Permit object returned by acquire_permit.
             trial_failed: Whether the trial failed/was cancelled (still counts).
             trial_id: Optional trial identifier for logging.
+            cost_unmeasured: True when ``cost`` is only the known spend floor of
+                a trial whose cost was partly unmeasured. The floor is charged,
+                the trial is counted as unmeasured, and strict mode raises.
+            unmeasured_examples: Up to a few example ids whose usage was
+                missing, named in the strict error / warning (ids only).
 
         Raises:
             CostTrackingRequiredError: If cost is None and
@@ -1044,6 +1093,8 @@ Options:
                 permit=permit,
                 trial_failed=trial_failed,
                 trial_id=trial_id,
+                cost_unmeasured=cost_unmeasured,
+                unmeasured_examples=unmeasured_examples,
                 require_cost_tracking=require_cost_tracking,
                 caller="track_cost",
                 include_limit_in_warning=True,
@@ -1225,6 +1276,8 @@ Options:
         permit: Permit,
         trial_failed: bool = False,
         trial_id: str | None = None,
+        cost_unmeasured: bool = False,
+        unmeasured_examples: Sequence[str] | None = None,
     ) -> None:
         """Async version of track_cost.
 
@@ -1241,6 +1294,11 @@ Options:
             permit: The Permit object returned by acquire_permit_async.
             trial_failed: Whether the trial failed/was cancelled.
             trial_id: Optional trial identifier for logging.
+            cost_unmeasured: True when ``cost`` is only the known spend floor of
+                a trial whose cost was partly unmeasured. The floor is charged,
+                the trial is counted as unmeasured, and strict mode raises.
+            unmeasured_examples: Up to a few example ids whose usage was
+                missing, named in the strict error / warning (ids only).
 
         Raises:
             CostTrackingRequiredError: If cost is None and
@@ -1268,6 +1326,8 @@ Options:
                 permit=permit,
                 trial_failed=trial_failed,
                 trial_id=trial_id,
+                cost_unmeasured=cost_unmeasured,
+                unmeasured_examples=unmeasured_examples,
                 require_cost_tracking=require_cost_tracking,
                 caller="track_cost_async",
                 include_limit_in_warning=False,
@@ -1279,6 +1339,9 @@ Options:
             # In unknown cost mode, use trial count including in-flight
             total_trials = self._trial_count + self._in_flight_count
             if total_trials >= self.config.fallback_trial_limit:
+                return Permit(id=-1, amount=0.0, active=False)  # Denied
+            # The known spend floor still counts against the cost limit.
+            if self._accumulated_cost + self._reserved_cost >= self.config.limit:
                 return Permit(id=-1, amount=0.0, active=False)  # Denied
 
             self._in_flight_count += 1
@@ -1387,19 +1450,33 @@ Options:
         require_cost_tracking: bool,
         include_limit_in_warning: bool,
         trial_failed: bool = False,
+        unmeasured_examples: Sequence[str] | None = None,
     ) -> None:
         """Handle unknown cost under the lock, including strict-mode failure."""
+        examples_text = ""
+        if unmeasured_examples:
+            examples_text = (
+                " Examples whose usage was missing: "
+                + ", ".join(str(e) for e in list(unmeasured_examples)[:5])
+                + "."
+            )
         if require_cost_tracking:
             raise CostTrackingRequiredError(
                 f"Cost extraction failed for {trial_desc} and "
                 f"{self._require_cost_tracking_reason}. An unpriced call is "
                 "not recorded as $0, because the optimizer would rank it "
-                "cheapest. Provide per-token pricing with "
+                f"cheapest.{examples_text} To fix it: wrap a path that makes "
+                "no model call in traigent.with_usage(value, total_cost=0); "
+                "for an unpriced model, provide per-token pricing with "
                 "TRAIGENT_CUSTOM_MODEL_PRICING_JSON or "
-                "TRAIGENT_CUSTOM_MODEL_PRICING_FILE, or set "
+                "TRAIGENT_CUSTOM_MODEL_PRICING_FILE; or set "
                 "TRAIGENT_STRICT_COST_ACCOUNTING=false (and "
                 "TRAIGENT_REQUIRE_COST_TRACKING=false) to accept $0 for "
                 "unpriced calls."
+            )
+        if examples_text:
+            logger.warning(
+                "Cost partly unmeasured for %s.%s", trial_desc, examples_text
             )
 
         if self.config.limit_explicit and not trial_failed:
@@ -1458,6 +1535,8 @@ Options:
         permit: Permit,
         trial_failed: bool,
         trial_id: str | None,
+        cost_unmeasured: bool = False,
+        unmeasured_examples: Sequence[str] | None = None,
         require_cost_tracking: bool,
         caller: str,
         include_limit_in_warning: bool,
@@ -1488,13 +1567,20 @@ Options:
             )
 
         # Handle unknown cost with optional strict mode
-        if cost is None:
+        if cost is None or cost_unmeasured:
+            if cost is not None:
+                # Partly measured: charge the spend that WAS seen so budgets
+                # keep their protection, but never feed a floor into the
+                # per-trial estimate.
+                self._accumulated_cost += cost
+                self._check_thresholds()
             self._unmeasured_trial_count += 1
             self._handle_unknown_cost_locked(
                 trial_desc,
                 require_cost_tracking=require_cost_tracking,
                 include_limit_in_warning=include_limit_in_warning,
                 trial_failed=trial_failed,
+                unmeasured_examples=unmeasured_examples,
             )
             return
 

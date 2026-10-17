@@ -395,12 +395,9 @@ class TestParetoFrontCalculator:
             sample_trial_results, objectives
         )
 
-        # Should include trials that have at least one of the objectives
-        assert len(pareto_front) > 0
-
-        # All points should have accuracy (but may not have nonexistent_metric)
-        for point in pareto_front:
-            assert "accuracy" in point.objectives
+        # A trial missing a configured objective is not Pareto-eligible: it
+        # would otherwise sit undominated on a measurement it lacks (#2446).
+        assert pareto_front == []
 
     def test_calculate_pareto_front_three_objectives(
         self, pareto_calculator_custom_maximize, sample_trial_results
@@ -826,7 +823,9 @@ class TestCTDScenarios:
         "trial_status,has_metrics,objective_coverage,expected_inclusion",
         [
             ("completed", True, "full", True),
-            ("completed", True, "partial", True),
+            # Missing a configured objective (e.g. an unmeasured cost) is not
+            # Pareto-eligible (#2446).
+            ("completed", True, "partial", False),
             ("completed", True, "none", False),
             ("completed", False, "none", False),
             ("failed", True, "full", False),
@@ -845,7 +844,7 @@ class TestCTDScenarios:
             if objective_coverage == "full":
                 metrics = {"accuracy": 0.9, "cost": 0.05}
             elif objective_coverage == "partial":
-                metrics = {"accuracy": 0.9}  # Missing cost but still has one objective
+                metrics = {"accuracy": 0.9}  # Missing cost: unmeasured, not free
             # objective_coverage == "none" keeps metrics empty (no objectives match)
 
         trial = TrialResult(

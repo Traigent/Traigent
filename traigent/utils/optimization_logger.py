@@ -31,6 +31,7 @@ from traigent.utils.secure_path import (
     safe_open,
     validate_path,
 )
+from traigent.utils.trial_costs import coerce_finite_cost, is_cost_unmeasured
 
 logger = get_logger(__name__)
 
@@ -349,6 +350,23 @@ def _should_log_example_content() -> bool:
     return raw.strip().lower() not in _CONTENT_LOGGING_DISABLED_VALUES
 
 
+def _example_cost_fields(cost: Any, row_flag: Any, metrics: Any) -> dict[str, Any]:
+    """``cost_usd`` (and the unmeasured flag) for one serialized example row.
+
+    An absent cost is never written as a measured ``0.0`` (#2517): a row flagged
+    ``cost_unmeasured`` (on the row itself, as ``HybridExampleResult`` does, or
+    in its metrics) carries ``cost_usd: None`` plus the flag, and a row that
+    reports no cost of its own falls back to the per-example ``total_cost``
+    metric the local lane writes, else ``None``. A reported ``0.0`` stays ``0.0``.
+    """
+    if is_cost_unmeasured({"cost_unmeasured": row_flag}) or is_cost_unmeasured(metrics):
+        return {"cost_usd": None, "cost_unmeasured": True}
+    value = coerce_finite_cost(cost)
+    if value is None and isinstance(metrics, dict):
+        value = coerce_finite_cost(metrics.get("total_cost"))
+    return {"cost_usd": value}
+
+
 def _serialize_example_result(ex: Any, *, log_content: bool = True) -> dict[str, Any]:
     """Serialize a per-example result (dataclass or dict) for jsonl logging.
 
@@ -375,7 +393,9 @@ def _serialize_example_result(ex: Any, *, log_content: bool = True) -> dict[str,
             "response": _extract_output_text(actual) if log_content else None,
             "expected": ex.get("expected_output") if log_content else None,
             "accuracy": metrics.get("accuracy") if isinstance(metrics, dict) else None,
-            "cost_usd": ex.get("cost_usd", 0.0),
+            **_example_cost_fields(
+                ex.get("cost_usd"), ex.get("cost_unmeasured"), metrics
+            ),
             "latency_ms": ex.get("latency_ms", 0.0),
             "error": error,
         }
@@ -395,7 +415,11 @@ def _serialize_example_result(ex: Any, *, log_content: bool = True) -> dict[str,
         "response": _extract_output_text(actual) if log_content else None,
         "expected": getattr(ex, "expected_output", None) if log_content else None,
         "accuracy": metrics.get("accuracy") if isinstance(metrics, dict) else None,
-        "cost_usd": getattr(ex, "cost_usd", 0.0),
+        **_example_cost_fields(
+            getattr(ex, "cost_usd", None),
+            getattr(ex, "cost_unmeasured", None),
+            metrics,
+        ),
         "latency_ms": getattr(ex, "latency_ms", 0.0),
         "error": error,
     }

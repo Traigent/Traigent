@@ -21,6 +21,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from collections.abc import AsyncIterator, Iterator
@@ -218,44 +219,76 @@ class PydanticAIHandler:
         end_time = time.time()
         try:
             usage = result.usage()
+            input_tokens = self._usage_counter(usage, "input_tokens")
+            output_tokens = self._usage_counter(usage, "output_tokens")
+            if input_tokens is None or output_tokens is None:
+                # ``usage()`` returned nothing, or without its token counters:
+                # the spend is unknown. A missing counter is not zero tokens, so
+                # it must not price as a measured $0 (Traigent#2517).
+                estimated_cost = None
+                input_tokens = input_tokens or 0
+                output_tokens = output_tokens or 0
+            else:
+                estimated_cost = self._estimate_cost(input_tokens, output_tokens)
             metrics = AgentRunMetrics(
                 model=self._model_name,
                 start_time=start_time,
                 end_time=end_time,
                 request_count=getattr(usage, "requests", 0) or 0,
-                input_tokens=getattr(usage, "input_tokens", 0) or 0,
-                output_tokens=getattr(usage, "output_tokens", 0) or 0,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 total_tokens=getattr(usage, "total_tokens", 0) or 0,
-                cost=self._estimate_cost(
-                    getattr(usage, "input_tokens", 0) or 0,
-                    getattr(usage, "output_tokens", 0) or 0,
-                ),
+                cost=estimated_cost if estimated_cost is not None else 0.0,
+                cost_unmeasured=estimated_cost is None,
             )
         except Exception:
             logger.warning(
                 "Failed to extract usage from PydanticAI result", exc_info=True
             )
+            # No usage could be read: the run's spend is unknown, not $0.
             metrics = AgentRunMetrics(
                 model=self._model_name,
                 start_time=start_time,
                 end_time=end_time,
+                cost_unmeasured=True,
             )
 
         with self._lock:
             self._runs.append(metrics)
 
+    @staticmethod
+    def _usage_counter(usage: Any, name: str) -> int | None:
+        """Return a reported, non-negative token counter, else ``None``.
+
+        ``None`` means "not reported" (usage missing, attribute absent or
+        ``None``, or not a finite non-negative number): the caller must treat
+        the cost as unmeasured rather than as zero tokens.
+        """
+        value = getattr(usage, name, None)
+        if value is None or isinstance(value, bool):
+            return None
+        if not isinstance(value, (int, float)):
+            return None
+        if not math.isfinite(value) or value < 0:
+            return None
+        return int(value)
+
     def _record_error(self, start_time: float) -> None:
-        """Record a failed run with zero usage."""
+        """Record a failed run: no usage was reported, and none is invented."""
         metrics = AgentRunMetrics(
             model=self._model_name,
             start_time=start_time,
             end_time=time.time(),
+            cost_unmeasured=True,
         )
         with self._lock:
             self._runs.append(metrics)
 
-    def _estimate_cost(self, input_tokens: int, output_tokens: int) -> float:
-        """Estimate cost using the canonical cost_from_tokens path."""
+    def _estimate_cost(self, input_tokens: int, output_tokens: int) -> float | None:
+        """Estimate cost using the canonical cost_from_tokens path.
+
+        ``None`` means the estimate failed: the cost is unknown, never $0.
+        """
         if input_tokens == 0 and output_tokens == 0:
             return 0.0
         strict_cost_accounting = self._strict_cost_accounting
@@ -268,14 +301,31 @@ class PydanticAIHandler:
                 self._model_name or "unknown",
                 strict=strict_cost_accounting,
             )
-            return float(input_cost + output_cost)
+            total_cost = float(input_cost + output_cost)
         except Exception:
             if strict_cost_accounting:
                 raise
             logger.debug(
                 "Cost estimation failed for model %s", self._model_name, exc_info=True
             )
-            return 0.0
+            return None
+        from traigent.utils.cost_calculator import (
+            model_pricing_resolves,
+            record_unpriced_runtime_model,
+        )
+
+        if (
+            not strict_cost_accounting
+            and total_cost <= 0.0
+            and not model_pricing_resolves(self._model_name or "unknown")
+        ):
+            # Tokens were reported but no price resolves for the model: the
+            # zero is the absence of a price, not a free call (#2517). A price
+            # that resolves to zero (explicit custom rate) stays a measured $0.
+
+            record_unpriced_runtime_model(self._model_name or "unknown")
+            return None
+        return total_cost
 
     @staticmethod
     def _extract_model_name(agent: Any) -> str:

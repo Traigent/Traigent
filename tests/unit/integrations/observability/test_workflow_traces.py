@@ -1785,7 +1785,10 @@ class TestTraigentSpanExporterConversionFailure:
     def test_partial_conversion_failure_sends_the_rest_and_fails(self) -> None:
         exporter = self._exporter()
         bad = _fake_otel_span(span_id=3)
-        bad.attributes = {"llm.cost_usd": "free"}
+        # A non-integer token count is a genuine conversion failure. (A
+        # non-numeric ``llm.cost_usd`` is not: it is an unmeasured cost, see
+        # test_unparsable_span_cost_is_unmeasured_never_zero.)
+        bad.attributes = {"llm.input_tokens": "n/a"}
 
         result = exporter.export([_fake_otel_span(span_id=2), bad])
 
@@ -1793,6 +1796,20 @@ class TestTraigentSpanExporterConversionFailure:
         assert exporter.dropped_span_count == 1
         exporter.client.ingest_traces.assert_called_once()
         assert len(exporter.client.ingest_traces.call_args.kwargs["spans"]) == 1
+
+    @pytest.mark.parametrize("raw", ["free", "", float("nan"), -1.0, float("inf")])
+    def test_unparsable_span_cost_is_unmeasured_never_zero(self, raw: Any) -> None:
+        exporter = self._exporter()
+        span = _fake_otel_span(span_id=3)
+        span.attributes = {"llm.cost_usd": raw}
+
+        result = exporter.export([span])
+
+        assert result == wt_module.SpanExportResult.SUCCESS
+        assert exporter.dropped_span_count == 0
+        (sent,) = exporter.client.ingest_traces.call_args.kwargs["spans"]
+        assert sent.cost_usd is None
+        assert sent.to_dict()["metadata"][wt_module.SPAN_COST_UNMEASURED_KEY] is True
 
     def test_clean_batch_still_succeeds_without_drops(self) -> None:
         exporter = self._exporter()

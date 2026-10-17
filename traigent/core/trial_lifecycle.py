@@ -54,6 +54,7 @@ from traigent.utils.exceptions import (
 )
 from traigent.utils.langchain_interceptor import capture_scope
 from traigent.utils.logging import get_logger
+from traigent.utils.trial_costs import is_cost_unmeasured, known_spend_lower_bound
 
 from .tracing import record_trial_result, trial_span
 
@@ -83,13 +84,38 @@ def _privacy_metrics(metrics: dict[str, Any]) -> dict[str, int | float | bool]:
     return projected
 
 
-def _privacy_cost(metrics: dict[str, Any]) -> int | float:
-    """Return a finite numeric cost, or the inert wire default."""
+def _privacy_cost(metrics: dict[str, Any]) -> int | float | None:
+    """Return a finite numeric cost, or ``None`` when the trial carries none."""
 
-    value = metrics.get("total_cost", 0.0)
+    value = metrics.get("total_cost")
     if type(value) is int or (type(value) is float and math.isfinite(value)):
         return value
-    return 0.0
+    return None
+
+
+def _span_cost(
+    span_metrics: dict[str, Any] | None,
+    privacy_enabled: bool,
+    unmeasured: bool = False,
+) -> int | float | None:
+    """Workflow-span cost: None (omitted from the payload) when there is none.
+
+    A trial flagged ``cost_unmeasured`` has no cost, and neither does a failed or
+    pruned trial whose metrics never recorded a ``total_cost``: the span must
+    not upload either as 0.0 (#2517, #2446). A recorded ``total_cost`` -- a
+    measured zero included -- is kept as is.
+    """
+
+    if unmeasured or is_cost_unmeasured(span_metrics):
+        return None
+    if privacy_enabled:
+        return _privacy_cost(span_metrics or {})
+    value = (span_metrics or {}).get("total_cost")
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and math.isfinite(value):
+        return value
+    return None
 
 
 def _resolve_primary_objective(orchestrator: Any) -> str | None:
@@ -1404,6 +1430,7 @@ class TrialLifecycle:
             span_config = trial_result.config
             span_error = trial_result.error_message
             span_metrics = trial_result.metrics
+            cost_unmeasured_span = is_cost_unmeasured(span_metrics)
             input_tokens = (
                 trial_result.metadata.get("input_tokens", 0)
                 if trial_result.metadata
@@ -1461,14 +1488,19 @@ class TrialLifecycle:
                 error_message=span_error,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
-                cost_usd=(
-                    _privacy_cost(span_metrics)
-                    if privacy_enabled
-                    else (span_metrics.get("total_cost", 0.0) if span_metrics else 0.0)
+                cost_usd=_span_cost(
+                    span_metrics, privacy_enabled, cost_unmeasured_span
                 ),
                 input_data={"config": span_config},
                 output_data={"metrics": span_metrics},
                 metadata=span_metadata,
+                # An unmeasured span still reports the spend that was seen, as
+                # a floor next to the reserved flag (owner decision A).
+                cost_lower_bound=(
+                    known_spend_lower_bound(trial_result.metrics, trial_result.metadata)
+                    if cost_unmeasured_span
+                    else None
+                ),
             )
 
             # Collect the span via orchestrator
