@@ -1271,6 +1271,35 @@ def test_online_fixture_leaves_the_client_able_to_send_whatever_the_markers(onli
     client._raise_if_backend_egress_disabled("probe")  # does not raise
 
 
+@pytest.mark.parametrize("restriction", ["no_egress", "offline"])
+def test_a_direct_protected_request_sends_nothing_when_egress_is_forbidden(
+    restriction, online, monkeypatch
+):
+    """The transport guards itself: the private helper is a send site, not a trusted caller.
+
+    sol F1e: calling ``_protected_request`` directly used to put one request on the wire
+    under ``no_egress`` or offline mode; only its two public callers were guarded.
+    """
+    from traigent.cloud.backend_client import CloudEgressBlockedError
+
+    client = _client()
+    wire, patcher = _wired((200, {"ok": True}))
+    if restriction == "no_egress":
+        client.no_egress = True
+    else:
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+    with patcher:
+        with pytest.raises(CloudEgressBlockedError):
+            client._protected_request(
+                "GET", "https://api.test/v1/probe", operation="Probe"
+            )
+        with pytest.raises(CloudEgressBlockedError):
+            client._protected_request(
+                "POST", "https://api.test/v1/probe", operation="Probe", json={}
+            )
+    assert wire.requests == []
+
+
 def test_environment_markers_do_not_leak_between_online_and_plain_tests(monkeypatch):
     """Whatever ran before, a test not using ``online`` sees the conftest dev marker."""
     assert os.environ.get("TRAIGENT_ENVIRONMENT") == "development"

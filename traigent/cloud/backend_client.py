@@ -2317,7 +2317,11 @@ class BackendIntegratedClient:
         The session accepts only this URL's origin and refuses every redirect, so the
         ref and credentials cannot travel anywhere else. Transport failures surface as
         fixed text (no URL, no exception text).
+
+        This helper is itself the send site, so it fails closed on its own: ``no_egress``
+        and offline mode are checked here, before any session is built, whoever calls it.
         """
+        self._raise_if_backend_egress_disabled(operation)
         try:
             import requests
         except ImportError as exc:  # pragma: no cover - requests is required
