@@ -198,8 +198,7 @@ def main() -> None:
 #         return str(run.output), metrics
 #
 # Requires a reachable backend and credentials (TRAIGENT_API_KEY,
-# TRAIGENT_BACKEND_URL) plus TRAIGENT_OFFLINE=0. See
-# docs/concepts/composite-knobs.md for the strict certified-selection recipe.
+# TRAIGENT_BACKEND_URL) plus TRAIGENT_OFFLINE=0.
 
 
 if __name__ == "__main__":

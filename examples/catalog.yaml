@@ -62,9 +62,6 @@
   tags: ["guided-generation", "prompt-rewrite", "dataset-growth", "privacy"]
   datasets: []
   docs: "../core/guided-generation/README.md"
-  docs_sections:
-    - label: "Guided Generation Concept"
-      href: "../../docs/concepts/guided-generation.md"
 - slug: multi-objective-tradeoff
   category: core
   title: "Multi-Objective Trade-off"

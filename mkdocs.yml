@@ -43,9 +43,6 @@ nav:
       - Minimal Integration: getting-started/minimal-integration.md
       - Testing: getting-started/testing.md
   - Concepts:
-      - Guided Generation: concepts/guided-generation.md
-      - Composite-Knob IR: concepts/composite-knob-ir.md
-      - Composite Knobs (Execution & Telemetry): concepts/composite-knobs.md
       - Configuration Spaces: user-guide/configuration-spaces.md
       - Constraint Expressions: tvl/CONSTRAINT_EXPRESSIONS.md
       - Dataflow Detection: features/dataflow-detection.md
@@ -83,7 +80,6 @@ nav:
           - Token and Cost Capture: user-guide/cost_capture.md
           - Injection Modes: user-guide/injection_modes.md
           - Interactive Optimization: user-guide/interactive_optimization.md
-          - Optuna Integration: user-guide/optuna_integration.md
           - Tuned Variables: user-guide/tuned_variables.md
       - Operations:
           - Azure OpenAI: operations/azure_openai.md

@@ -196,12 +196,9 @@ _EXAMPLE_INSIGHT_RECOMMENDED_ACTIONS = frozenset(
         "replace_or_rewrite",
         "keep_as_hard_case",
         "inspect_evaluator",
-        # "remove_redundant" retired: subtractive
-        # curation advice keyed to an observed signal biases the customer's own
-        # measurement if acted on (top-15-by-observed-discrimination pruning gave
-        # -0.202 vs a true -0.073, 2.77x biased; random pruning was unbiased). A
-        # stale/un-upgraded backend that still emits this value is now rejected
-        # fail-closed by the allowlist check below, not silently passed through.
+        # "remove_redundant" is retired: acting on removal advice derived from
+        # observed results can bias the user's own measurements. A backend that
+        # still emits it is rejected by the allowlist check below.
     }
 )
 
