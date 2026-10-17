@@ -42,7 +42,6 @@ nav:
       - Installation: getting-started/installation.md
       - Minimal Integration: getting-started/minimal-integration.md
       - Testing: getting-started/testing.md
-      - Portal Dev Laptop Agent: getting-started/portal-dev-laptop-agent.md
   - Concepts:
       - Guided Generation: concepts/guided-generation.md
       - Composite-Knob IR: concepts/composite-knob-ir.md
