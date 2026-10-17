@@ -19,6 +19,7 @@ import copy
 import json
 import logging
 import os
+import re
 import socket
 from pathlib import Path
 from types import SimpleNamespace
@@ -738,14 +739,16 @@ def _refusal(code: str) -> dict[str, Any]:
 
 
 _CONTRACT_DIR = (
-    Path(__file__).resolve().parents[2] / "fixtures/contracts/schema_78ae067"
+    Path(__file__).resolve().parents[2] / "fixtures/contracts/schema_36ff466"
 )
-#: Byte-for-byte copies of TraigentSchema 78ae067 (traigent_schema/schemas/{optimization,execution}/).
+#: Byte-for-byte copies of TraigentSchema 36ff466 (traigent_schema/schemas/{optimization,execution}/).
 _CONTRACT_SHA256 = {
     "agent_head_by_ref_response_schema.json": "878090557b2944fe13802422242104d7f801484a2e54c86bea2809612b518a61",
-    "best_config_endpoints.json": "21684d6da7deeb97bf2301cc8787ada01b7a96d61cb0aa628952716249eaa4bb",
+    "best_config_endpoints.json": "fdf1245e20526dd79a83d16f57816d58b716ad9603df246e80e478e5fd1a6cfb",
     "best_config_head_endpoints.json": "61c2423fda68c7b4faada5aa4cf0d2d26a6a4443839ebbf43eaa6afa9ad5d92a",
     "best_config_head_refusal_schema.json": "b93dccaeab1cfc056b9715e4723641a80697c649a8bb4675a92d043b0558ea8e",
+    "best_config_publish_401_schema.json": "9e02e121596610c60da918ff54337486fbbc2d6c7c321aca52120af5487ff822",
+    "best_config_publish_403_schema.json": "c037c7f2e2ce9cfd685a72d799d733c2b3b0e1897a0e71fd0def8cb9916f0391",
     "best_config_publish_409_schema.json": "3fd219a7254e7b1897683243c37ab99f4cf01c743fb6411d97aa30ebd7d3b380",
     "best_config_publish_500_schema.json": "45537ee74004ebb2749b66ed1f99950218606b4a9895de6738f67753c7da4cfa",
 }
@@ -803,6 +806,22 @@ def test_sdk_status_pairing_matches_the_vendored_endpoint_contract():
     assert by_status[403] == {"head_write_unauthorized", "forbidden"}
     assert by_status[404] == {"reference_not_found"}
     assert by_status[401] == {"unauthenticated"}
+    # Closed 401/403 branches of a PROTECTED publish: the Schema's branch files list
+    # exactly the codes the SDK pairs with those statuses.
+    s401 = _contract("best_config_publish_401_schema.json")
+    s403 = _contract("best_config_publish_403_schema.json")
+    assert by_status[401] == set(s401["allOf"][1]["properties"]["error_code"]["enum"])
+    assert by_status[403] == set(s403["allOf"][1]["properties"]["error_code"]["enum"])
+    for status, branch in (("401", "401"), ("403", "403")):
+        protected, legacy = responses[status]["content"]["application/json"]["schema"][
+            "oneOf"
+        ]
+        assert protected == {
+            "$ref": f"../optimization/best_config_publish_{branch}_schema.json"
+        }
+        # the legacy branch is disjoint: it must not carry any closed refusal code
+        forbidden_codes = set(legacy["not"]["properties"]["error_code"]["enum"])
+        assert forbidden_codes == set(_HEAD_REFUSAL_ENVELOPE)
     head = _contract("best_config_head_endpoints.json")["paths"][
         "/api/v1/best-configs/agent-heads/by-ref/{agent_ref}"
     ]["get"]["responses"]
@@ -960,6 +979,89 @@ def test_stale_is_never_retried_or_refreshed():
 
 
 @pytest.mark.parametrize(
+    ("status", "code"),
+    [(401, "unauthenticated"), (403, "forbidden"), (403, "head_write_unauthorized")],
+)
+def test_closed_auth_envelopes_are_typed_refusals_and_never_retried(status, code):
+    wire, patcher = _wired((status, _refusal(code)), (201, {"success": True}))
+    with patcher, pytest.raises(CloudBestConfigHeadRefusedError) as excinfo:
+        _client().publish_best_config_sync(
+            _SPEC, agent_ref=AGENT_REF, expected_head_generation=3
+        )
+    err = excinfo.value
+    assert err.code is HeadRefusalCode(code)
+    assert err.status_code == status
+    assert not isinstance(err, CloudBestConfigHeadStaleError)
+    assert len(wire.requests) == 1
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        # the LEGACY 401/403 bodies (generic error, free text) are a different branch
+        (
+            401,
+            {
+                "success": False,
+                "error": "AUTHENTICATION_REQUIRED",
+                "message": CANARY_TEXT,
+            },
+        ),
+        (403, {"success": False, "error": "FORBIDDEN", "message": CANARY_TEXT}),
+        (401, {"error_code": "AUTHENTICATION_REQUIRED", "message": CANARY_TEXT}),
+        (403, {"error_code": "PERMISSION_DENIED", "message": CANARY_TEXT}),
+    ],
+)
+def test_legacy_auth_bodies_are_unrecognized_not_a_closed_refusal(status, body):
+    _, patcher = _wired((status, body))
+    with patcher, pytest.raises(CloudBestConfigHeadRefusedError) as excinfo:
+        _client().publish_best_config_sync(
+            _SPEC, agent_ref=AGENT_REF, expected_head_generation=3
+        )
+    assert excinfo.value.code is HeadRefusalCode.UNRECOGNIZED
+    assert excinfo.value.status_code == status
+    assert CANARY_TEXT not in str(excinfo.value) + repr(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    ("status", "code"), [(401, "unauthenticated"), (403, "forbidden")]
+)
+def test_head_read_maps_the_closed_auth_envelopes(status, code):
+    _, patcher = _wired((status, _refusal(code)))
+    with patcher, pytest.raises(CloudBestConfigHeadRefusedError) as excinfo:
+        _client().fetch_agent_head_generation_by_ref_sync(
+            AGENT_REF, environment="staging"
+        )
+    assert excinfo.value.code is HeadRefusalCode(code)
+    assert excinfo.value.status_code == status
+
+
+def test_contract_order_of_refusals_puts_authentication_first():
+    text = _contract("best_config_endpoints.json")["paths"]["/api/v1/best-configs"][
+        "post"
+    ]["description"]
+    order = text.split("ORDER OF REFUSALS:", 1)[1].split("A protected request never")[0]
+    codes = [
+        c
+        for c in re.findall(r"\b[a-z]+(?:_[a-z]+)+\b|unauthenticated|forbidden", order)
+        if c in set(_STATUS)
+    ]
+    assert codes == [
+        "unauthenticated",
+        "forbidden",
+        "head_capture_invalid",
+        "reference_not_found",
+        "head_write_unauthorized",
+        "head_agent_mismatch",
+        "head_environment_mismatch",
+        "head_body_invalid",
+        "head_generation_stale",
+        "head_publish_conflict",
+        "internal_error",
+    ]
+
+
+@pytest.mark.parametrize(
     ("status", "body"),
     [
         (409, {"error_code": "BEST_CONFIG_CONFLICT", "message": CANARY_TEXT}),
@@ -1001,6 +1103,13 @@ def test_a_body_outside_the_closed_envelope_is_unrecognized_and_not_echoed(
         (400, _refusal("head_publish_conflict")),  # a 409 code on a 400
         (409, _refusal("internal_error")),
         (404, _refusal("head_write_unauthorized")),
+        (403, _refusal("unauthenticated")),  # a 401 code on a 403
+        (401, _refusal("forbidden")),  # a 403 code on a 401
+        (401, _refusal("head_write_unauthorized")),
+        (500, _refusal("unauthenticated")),
+        (401, {**_refusal("unauthenticated"), "message": "Please sign in."}),
+        (403, {**_refusal("forbidden"), "error": "unauthenticated"}),
+        (403, {**_refusal("forbidden"), "agent_id": CANARY_AGENT_ID}),
     ],
 )
 def test_malformed_or_mispaired_envelopes_are_unrecognized(status, body):

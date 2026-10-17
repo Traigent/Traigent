@@ -96,12 +96,90 @@
               }
             }
           },
-          "403": {
-            "description": "Protected path: head_write_unauthorized (closed refusal envelope).",
+          "401": {
+            "description": "Protected path (the content-less identity layer is enabled and the request carries X-Traigent-Agent-Ref; these two conditions alone select the envelope, before any session is resolved): unauthenticated (closed refusal envelope, fixed text, whatever the authentication or permission layer would otherwise say). Legacy path (every request while the layer is disabled, whatever the headers, and every request without X-Traigent-Agent-Ref): its own generic error body, unchanged. The branches are disjoint, discriminate on the closed `error_code`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "../optimization/best_config_head_refusal_schema.json"
+                  "oneOf": [
+                    {
+                      "$ref": "../optimization/best_config_publish_401_schema.json"
+                    },
+                    {
+                      "type": "object",
+                      "x-content-class": "legacy_content",
+                      "x-content-key-class": "legacy_content",
+                      "x-content-note": "LEGACY-path 401 body, unchanged (generic error body, e.g. AUTHENTICATION_REQUIRED); free text by design until the legacy facade is retired. Disjoint from the protected branch: it must not carry a protected closed code.",
+                      "not": {
+                        "required": [
+                          "error_code"
+                        ],
+                        "properties": {
+                          "error_code": {
+                            "x-content-class": "closed_enum",
+                            "enum": [
+                              "reference_not_found",
+                              "head_capture_invalid",
+                              "head_environment_mismatch",
+                              "head_agent_mismatch",
+                              "head_generation_stale",
+                              "head_write_unauthorized",
+                              "head_body_invalid",
+                              "head_publish_conflict",
+                              "unauthenticated",
+                              "forbidden",
+                              "internal_error"
+                            ]
+                          }
+                        }
+                      },
+                      "description": "Legacy-path 401 body, unchanged. The `not` keeps this branch disjoint from the protected closed refusal."
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Protected path (the content-less identity layer is enabled and the request carries X-Traigent-Agent-Ref; these two conditions alone select the envelope, before any session is resolved): forbidden (permissions or project role) or head_write_unauthorized (no agent WRITE) (closed refusal envelope, fixed text, whatever the authentication or permission layer would otherwise say). Legacy path (every request while the layer is disabled, whatever the headers, and every request without X-Traigent-Agent-Ref): its own generic error body, unchanged. The branches are disjoint, discriminate on the closed `error_code`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "../optimization/best_config_publish_403_schema.json"
+                    },
+                    {
+                      "type": "object",
+                      "x-content-class": "legacy_content",
+                      "x-content-key-class": "legacy_content",
+                      "x-content-note": "LEGACY-path 403 body, unchanged (generic error body, e.g. AUTHENTICATION_REQUIRED); free text by design until the legacy facade is retired. Disjoint from the protected branch: it must not carry a protected closed code.",
+                      "not": {
+                        "required": [
+                          "error_code"
+                        ],
+                        "properties": {
+                          "error_code": {
+                            "x-content-class": "closed_enum",
+                            "enum": [
+                              "reference_not_found",
+                              "head_capture_invalid",
+                              "head_environment_mismatch",
+                              "head_agent_mismatch",
+                              "head_generation_stale",
+                              "head_write_unauthorized",
+                              "head_body_invalid",
+                              "head_publish_conflict",
+                              "unauthenticated",
+                              "forbidden",
+                              "internal_error"
+                            ]
+                          }
+                        }
+                      },
+                      "description": "Legacy-path 403 body, unchanged. The `not` keeps this branch disjoint from the protected closed refusal."
+                    }
+                  ]
                 }
               }
             }
@@ -198,7 +276,7 @@
           }
           }
         },
-        "description": "PROTECTED PATH (content-less plan v2.1, phase 0b). APPLICABILITY: a publish is PROTECTED if and only if the request carries X-Traigent-Agent-Ref, or the publish belongs to a session negotiated with content_less_v1 (or content_less_v2 once negotiated); every other publish is the LEGACY path and behaves exactly as before. DECISION TABLE (first matching row; 'session' = the session named in spec.provenance, content-less when its stored shape is content-less): [1] Agent-Ref and Agent-Id both present -> 400 head_capture_invalid. [2] Agent-Ref present, Expected-Head-Generation missing or not an integer 0..2^53-1 -> 400 head_capture_invalid. [3] Agent-Ref malformed (not agentref_<32 hex>) -> 400 head_capture_invalid. [4] Agent-Ref present but no resolvable content-less session binding -> 400 head_capture_invalid. [5] Agent-Ref and a valid Expected-Head-Generation, content-less session -> PROTECTED (below). [6] No Agent-Ref, content-less session (with or without Agent-Id / Expected-Head-Generation) -> 400 head_capture_invalid (the capture is required). [7] No Agent-Ref, non-content-less or no session, Agent-Id and/or Expected-Head-Generation -> LEGACY, unchanged (including the legacy Agent-Id promotion and its STALE_HEAD_GENERATION 409 and its own validation errors). [8] No Agent-Ref, no capture headers, non-content-less or no session -> LEGACY, unchanged. PROTECTED RULE: the Backend resolves agent, run and environment from the authoritative session binding, never from the body; keeps agent WRITE authorization; and refuses with a closed code (best_config_head_refusal_schema.json), with no publication row and no head change. ORDER OF REFUSALS: malformed or incomplete capture 400 head_capture_invalid; well-formed but unknown or foreign ref 404 reference_not_found (nothing echoed); agent WRITE denied 403 head_write_unauthorized; ref's agent is not the session's 409 head_agent_mismatch; publish environment differs from the session's 409 head_environment_mismatch; body fails validation 400 head_body_invalid (fixed text, no key or value of the request echoed); head moved 409 head_generation_stale; ordinary publish conflict (If-Match on a new configuration, a changed existing configuration without a matching If-Match, function_ref conflict) 409 head_publish_conflict; any other server-side failure 500 internal_error. A protected request never receives the generic BEST_CONFIG_CONFLICT or a free-text validation body. STALE: the run's result is stale; the client MUST NOT refresh the generation and resubmit the same result, and the SDK MUST NEVER auto-retry a stale refusal (it starts a new run, or re-evaluates against the new head, and publishes with that run's own captured generation). Publish and promote are ONE transaction: a refused or failed promotion leaves no visible configuration version; the head moves g -> g+1 (first promotion 0 -> 1) atomically with the publication, and of several concurrent promotions naming the same expected generation exactly one wins."
+        "description": "PROTECTED PATH (content-less plan v2.1, phase 0b). LAYER CONDITION: everything on this route described below applies only while the content-less identity layer is enabled (a server deployment condition; the flag defaults OFF, and a client cannot observe it before authentication). With the layer disabled EVERY response on this route is the legacy one, whatever the headers: no closed refusal envelope, no head_capture_invalid, and X-Traigent-Agent-Ref is ignored. APPLICABILITY (layer enabled): a publish is PROTECTED if and only if the request carries X-Traigent-Agent-Ref, or the publish belongs to a session negotiated with content_less_v1 (or content_less_v2 once negotiated); every other publish is the LEGACY path and behaves exactly as before. AUTHENTICATION STAGE (before the decision table): the closed 401 `unauthenticated` / 403 `forbidden` envelopes of the authentication, permission and project-role layers are selected by a HEADER PREDICATE ALONE, evaluated before any session is resolved: the request is protected for this stage if and only if the content-less identity layer is enabled and the request carries X-Traigent-Agent-Ref (any value). Expected-Head-Generation and Agent-Id play no part in it, so decision-table row [7] (no Agent-Ref, no content-less session: LEGACY, unchanged) holds for this stage too and a request has exactly one answer: a request without X-Traigent-Agent-Ref gets the legacy generic 401/403 bodies; the session-based decision table below governs everything AFTER authentication. KNOWN, ACCEPTED GAP: a publish in a content_less_v1 session that carries no X-Traigent-Agent-Ref (decision-table row [6]) receives the generic 401/403 when it fails authentication or permission, because the session cannot be read before authentication; once authenticated it is refused 400 head_capture_invalid, so it never succeeds without the capture; if the provenance session id is a typed (content-less registry) id and the Backend cannot positively read its binding, the publish never falls back to the legacy path and writes nothing and moves no head: the caller may not use the session -> 403 head_write_unauthorized; the session is deleted, not registered or outside the caller's scope -> 404 reference_not_found; the lookup is ambiguous, unreadable or the stored state damaged -> 500 internal_error (a malformed capture, decision-table rows [1]-[3], is reported first). Only an id outside the typed namespace that the control plane itself reports as not a typed session is legacy; an unauthenticated caller learns nothing about the session either way. DECISION TABLE (first matching row; 'session' = the session named in spec.provenance, content-less when its stored shape is content-less): [1] Agent-Ref and Agent-Id both present -> 400 head_capture_invalid. [2] Agent-Ref present, Expected-Head-Generation missing or not an integer 0..2^53-1 -> 400 head_capture_invalid. [3] Agent-Ref malformed (not agentref_<32 hex>) -> 400 head_capture_invalid. [4] Agent-Ref present but no resolvable content-less session binding -> 400 head_capture_invalid. [5] Agent-Ref and a valid Expected-Head-Generation, content-less session -> PROTECTED (below). [6] No Agent-Ref, content-less session (with or without Agent-Id / Expected-Head-Generation) -> 400 head_capture_invalid (the capture is required). [7] No Agent-Ref, non-content-less or no session, Agent-Id and/or Expected-Head-Generation -> LEGACY, unchanged (including the legacy Agent-Id promotion and its STALE_HEAD_GENERATION 409 and its own validation errors). [8] No Agent-Ref, no capture headers, non-content-less or no session -> LEGACY, unchanged. PROTECTED RULE: the Backend resolves agent, run and environment from the authoritative session binding, never from the body; keeps agent WRITE authorization; and refuses with a closed code (best_config_head_refusal_schema.json), with no publication row and no head change. ORDER OF REFUSALS: not authenticated 401 unauthenticated; permission or project role denied 403 forbidden (both closed, selected by the header predicate above); malformed or incomplete capture 400 head_capture_invalid; well-formed but unknown or foreign ref 404 reference_not_found (nothing echoed); agent WRITE denied 403 head_write_unauthorized; ref's agent is not the session's 409 head_agent_mismatch; publish environment differs from the session's 409 head_environment_mismatch; body fails validation 400 head_body_invalid (fixed text, no key or value of the request echoed); head moved 409 head_generation_stale; ordinary publish conflict (If-Match on a new configuration, a changed existing configuration without a matching If-Match, function_ref conflict) 409 head_publish_conflict; any other server-side failure 500 internal_error. A protected request never receives the generic BEST_CONFIG_CONFLICT or a free-text validation body. STALE: the run's result is stale; the client MUST NOT refresh the generation and resubmit the same result, and the SDK MUST NEVER auto-retry a stale refusal (it starts a new run, or re-evaluates against the new head, and publishes with that run's own captured generation). Publish and promote are ONE transaction: a refused or failed promotion leaves no visible configuration version; the head moves g -> g+1 (first promotion 0 -> 1) atomically with the publication, and of several concurrent promotions naming the same expected generation exactly one wins."
       }
     },
     "/api/v1/best-configs/{config_id}": {
