@@ -604,7 +604,8 @@ def test_decorator_non_safety_drift_still_falls_back_when_not_strict(
 
     assert wrapped.current_config == {"quality": "baseline"}
     assert wrapped.best_config_snapshot.source == BestConfigSource.DEFAULT.value
-    assert "Ignoring repo best config relaxed-answerer" in caplog.text
+    assert "Ignoring repo best config after validation failure" in caplog.text
+    assert "relaxed-answerer" not in caplog.text
 
     with pytest.raises(ConfigurationError, match="Unknown best config keys"):
         optimize(

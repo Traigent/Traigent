@@ -452,7 +452,12 @@ class ConfigStateManager:
 
     @staticmethod
     def _exception_text(exc: BaseException) -> str:
-        return exc.message if isinstance(exc, TraigentError) else str(exc)
+        """Fixed, log-safe text: a refusal's fixed message, else the exception type.
+
+        Rejected values, keys and paths live on ``exc.details`` only.
+        """
+
+        return exc.message if isinstance(exc, TraigentError) else type(exc).__name__
 
     @staticmethod
     def _canonical_refusal(
@@ -462,23 +467,19 @@ class ConfigStateManager:
         version = envelope["schema_version"]
         if version == BEST_CONFIG_SCHEMA_VERSION:
             return spec_exc
-        shown = version if isinstance(version, str) and len(version) <= 64 else None
         return ConfigurationError(
-            "Unsupported best config schema_version"
-            + (
-                f" {shown!r}"
-                if shown is not None
-                else f" of type {type(version).__name__}"
-            )
+            "Unsupported best config schema_version",
+            details={"schema_version": version},
         )
 
     @classmethod
     def _canonical_failure(
         cls, exc: BaseException, path: str, label: str
     ) -> ConfigurationError:
+        inner = exc.details if isinstance(exc, TraigentError) else {}
         return ConfigurationError(
             f"Failed to load best config ({label}): {cls._exception_text(exc)}",
-            details={"path": path},
+            details={**inner, "path": path},
         )
 
     def _refuse_legacy_file(self, path: str, label: str, reason: str) -> None:

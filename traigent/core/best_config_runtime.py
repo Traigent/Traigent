@@ -17,7 +17,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from traigent.utils.exceptions import ConfigurationError
+from traigent.utils.exceptions import ConfigurationError, TraigentError
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -436,10 +436,13 @@ def load_best_config_spec(
             if isinstance(exc, ConfigurationError):
                 raise
             raise ConfigurationError(
-                f"Failed to load best config {path}: {exc}"
+                "Failed to load best config",
+                details={"path": str(path), "error_type": type(exc).__name__},
             ) from exc
         # fail-open(intentional): non-strict callers accept degraded fallback; strict callers re-raise
-        logger.warning("Ignoring invalid best config %s: %s", path, exc)
+        logger.warning(
+            "Ignoring invalid best config (%s)", _fixed_reason(exc)
+        )
         return None
 
 
@@ -466,22 +469,27 @@ def snapshot_from_spec(
     unknown_top_level = set(spec) - _SPEC_ALLOWED_KEYS
     if unknown_top_level:
         raise ConfigurationError(
-            f"Unknown top-level best config fields: {sorted(unknown_top_level)}"
+            "Unknown top-level best config fields",
+            details={"fields": sorted(unknown_top_level)},
         )
 
     missing = _SPEC_REQUIRED_KEYS - set(spec)
     if missing:
-        raise ConfigurationError(f"Best config spec missing fields: {sorted(missing)}")
+        raise ConfigurationError(
+            "Best config spec missing fields", details={"fields": sorted(missing)}
+        )
 
     if spec["schema_version"] != BEST_CONFIG_SCHEMA_VERSION:
         raise ConfigurationError(
-            f"Unsupported best config schema_version {spec['schema_version']!r}"
+            "Unsupported best config schema_version",
+            details={"schema_version": spec["schema_version"]},
         )
 
     config_id = _validate_config_id(spec["config_id"])
     if expected_config_id and config_id != expected_config_id:
         raise ConfigurationError(
-            f"Best config id mismatch: expected {expected_config_id!r}, got {config_id!r}"
+            "Best config id does not match the requested config_id",
+            details={"expected": expected_config_id, "actual": config_id},
         )
 
     function_ref = spec.get("function_ref")
@@ -492,12 +500,14 @@ def snapshot_from_spec(
         if function_ref is None:
             raise ConfigurationError(
                 "Best config function_ref mismatch: the config is not bound to a "
-                f"function, expected {expected_function_ref!r}"
+                "function",
+                details={"expected": expected_function_ref},
             )
         if function_ref != expected_function_ref:
             raise ConfigurationError(
-                "Best config function_ref mismatch: "
-                f"expected {expected_function_ref!r}, got {function_ref!r}"
+                "Best config function_ref mismatch: the config is bound to "
+                "another function",
+                details={"expected": expected_function_ref, "actual": function_ref},
             )
 
     if expected_environment is not None:
@@ -564,7 +574,8 @@ def compute_spec_hash(spec: dict[str, Any], *, environment: str | None = None) -
     schema_version = spec.get("schema_version")
     if schema_version != BEST_CONFIG_SCHEMA_VERSION:
         raise ConfigurationError(
-            f"No spec_hash rule for best config schema_version {schema_version!r}"
+            "No spec_hash rule for this best config schema_version",
+            details={"schema_version": schema_version},
         )
     return sha256_digest(
         _serialize_v1_hash_payload(_v1_hash_payload(spec, environment))
@@ -691,8 +702,8 @@ def load_manifest(directory: str | Path) -> dict[str, Any] | None:
         raise ConfigurationError("Best config manifest must be an object")
     if manifest.get("schema_version") != BEST_CONFIG_MANIFEST_SCHEMA_VERSION:
         raise ConfigurationError(
-            f"Unsupported best config manifest schema_version "
-            f"{manifest.get('schema_version')!r}"
+            "Unsupported best config manifest schema_version",
+            details={"schema_version": manifest.get("schema_version")},
         )
     configs = manifest.get("configs")
     if not isinstance(configs, dict):
@@ -836,7 +847,7 @@ def resolve_repo_best_config(
         path = entry.get("path")
         if not isinstance(path, str) or not path:
             raise ConfigurationError(
-                f"Manifest entry for {safe_config_id!r} lacks path"
+                "Manifest entry lacks path", details={"config_id": safe_config_id}
             )
         return load_best_config_spec(
             _resolve_entry_path(directory, path),
@@ -855,13 +866,13 @@ def resolve_repo_best_config(
             if isinstance(exc, ConfigurationError):
                 raise
             raise ConfigurationError(
-                f"Failed to resolve repo best config: {exc}"
+                "Failed to resolve repo best config",
+                details={"error_type": type(exc).__name__},
             ) from exc
         # fail-open(intentional): non-strict callers accept degraded fallback; strict callers re-raise
         logger.warning(
-            "Ignoring repo best config %s after validation failure: %s",
-            safe_config_id,
-            exc,
+            "Ignoring repo best config after validation failure: %s",
+            _fixed_reason(exc),
         )
         return None
 
@@ -928,12 +939,26 @@ def resolve_cloud_cache_best_config(
         if strict:
             if isinstance(exc, ConfigurationError):
                 raise
-            raise ConfigurationError(f"Failed to resolve cloud cache: {exc}") from exc
+            raise ConfigurationError(
+                "Failed to resolve cloud cache",
+                details={"error_type": type(exc).__name__},
+            ) from exc
         # fail-open(intentional): non-strict callers accept degraded fallback; strict callers re-raise
         logger.warning(
-            "Ignoring cloud best-config cache for %s: %s", safe_config_id, exc
+            "Ignoring cloud best-config cache: %s", _fixed_reason(exc)
         )
         return None
+
+
+def _fixed_reason(exc: BaseException) -> str:
+    """Log-safe reason: a refusal's fixed message, else only the exception type.
+
+    Structured details live on ``exc.details`` and are never part of the text.
+    """
+
+    if isinstance(exc, TraigentError):
+        return exc.message
+    return type(exc).__name__
 
 
 def _validate_config_id(config_id: Any) -> str:
@@ -1020,15 +1045,19 @@ def _validate_and_filter_config_keys(
     denylisted = sorted(key for key in unknown if _is_safety_sensitive_key(key))
     if denylisted:
         raise SafetySensitiveBestConfigError(
-            f"Unknown safety-sensitive best config keys: {denylisted}"
+            "Unknown safety-sensitive best config keys",
+            details={"keys": denylisted},
         )
 
     if not forward_compat:
-        raise ConfigurationError(f"Unknown best config keys: {sorted(unknown)}")
+        raise ConfigurationError(
+            "Unknown best config keys", details={"keys": sorted(unknown)}
+        )
 
     logger.warning(
-        "Ignoring forward-compatible best config keys outside configuration_space: %s",
-        sorted(unknown),
+        "Ignoring %d forward-compatible best config key(s) outside "
+        "configuration_space",
+        len(unknown),
     )
     return {key: value for key, value in normalized.items() if key in allowed}
 
