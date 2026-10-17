@@ -460,7 +460,7 @@ class LangfuseClient:
     ) -> dict[str, Any] | None:
         """Legacy v1 ``GET /api/public/traces/{id}`` (Langfuse v3 self-hosted only)."""
         try:
-            preflight_requests('GET', f"{self.host}/api/public/traces/{trace_id}")
+            preflight_requests("GET", f"{self.host}/api/public/traces/{trace_id}")
             response = requests.get(
                 f"{self.host}/api/public/traces/{trace_id}",
                 headers=self._get_auth_header(),
@@ -587,7 +587,11 @@ class LangfuseClient:
         cursor: str | None = None
         for page_no in range(max_pages):
             try:
-                preflight_requests('GET', f"{self.host}{_V2_OBSERVATIONS_PATH}", params=self._v2_params(trace_id, cursor, window, include_io))
+                preflight_requests(
+                    "GET",
+                    f"{self.host}{_V2_OBSERVATIONS_PATH}",
+                    params=self._v2_params(trace_id, cursor, window, include_io),
+                )
                 response = requests.get(
                     f"{self.host}{_V2_OBSERVATIONS_PATH}",
                     params=self._v2_params(trace_id, cursor, window, include_io),
@@ -807,11 +811,15 @@ class LangfuseClient:
 
         try:
             while page <= max_pages:
-                preflight_requests('GET', f"{self.host}/api/public/observations", params={
+                preflight_requests(
+                    "GET",
+                    f"{self.host}/api/public/observations",
+                    params={
                         "traceId": trace_id,
                         "limit": str(_LEGACY_PAGE_LIMIT),
                         "page": str(page),
-                    })
+                    },
+                )
                 response = requests.get(
                     f"{self.host}/api/public/observations",
                     params={

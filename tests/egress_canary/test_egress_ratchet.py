@@ -40,7 +40,9 @@ REQUIRED_ROUTES = (
 def scenario(tmp_path_factory: pytest.TempPathFactory) -> ScenarioResult:
     # Phase 3 group 1: the main optimization runs content-less (opt-in). The direct-path
     # exercisers and the offline replay keep the legacy shape and still pin their leaks.
-    return run_scenario(Path(tmp_path_factory.mktemp("egress-canary")), content_less=True)
+    return run_scenario(
+        Path(tmp_path_factory.mktemp("egress-canary")), content_less=True
+    )
 
 
 @pytest.fixture(scope="module")
@@ -228,7 +230,9 @@ def test_content_less_create_carries_no_group1_identity(
     g1 = sorted(
         leak.identity for leak in result.leaks if leak.kind in G1_IDENTITY_KINDS
     )
-    assert not g1, f"group-1 identity on the wire in content-less mode:\n{_fmt(set(g1))}"
+    assert not g1, (
+        f"group-1 identity on the wire in content-less mode:\n{_fmt(set(g1))}"
+    )
     # later groups stay explicitly open: still recorded in the register, never reclassified
     open_ids = distinct_identities(result.leaks)
     assert open_ids, "later-group leaks vanished from the capture (vacuous run?)"

@@ -293,9 +293,17 @@ class FakeBackend:
     def _content_less_shape_ok(payload: dict[str, Any]) -> bool:
         """The Backend refuses a content-less create that still carries legacy identity."""
         forbidden = (
-            "agent_id", "agent_key", "agent_id_source", "dataset_id", "dataset_id_source",
-            "hosted_dataset_ref", "evaluator_id", "evaluator_id_source",
-            "evaluator_definition_id", "user_id", "billing_tier",
+            "agent_id",
+            "agent_key",
+            "agent_id_source",
+            "dataset_id",
+            "dataset_id_source",
+            "hosted_dataset_ref",
+            "evaluator_id",
+            "evaluator_id_source",
+            "evaluator_definition_id",
+            "user_id",
+            "billing_tier",
         )
         if any(payload.get(k) is not None for k in forbidden):
             return False
@@ -414,7 +422,9 @@ class FakeBackend:
                     "agent_id": "agent-canary",
                 }
                 if content_less and self.advertise_content_less:
-                    created.pop("agent_id")  # a content-less create never returns agents.id
+                    created.pop(
+                        "agent_id"
+                    )  # a content-less create never returns agents.id
                     created["capabilities"] = ["content_less_v1"]
                     created.update(self.issued_refs)
                 return 201, created

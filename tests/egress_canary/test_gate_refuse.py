@@ -101,7 +101,9 @@ def test_content_less_create_drops_group1_fields_but_later_groups_stay_refused(
     # still refused for the later groups, before send
     assert content_less.get("legacy_content", 0) > 0
     assert not [
-        r for r in result.requests if r.method == "POST" and r.path.endswith("/sessions")
+        r
+        for r in result.requests
+        if r.method == "POST" and r.path.endswith("/sessions")
     ], "a refused content-less create reached the transport"
     # but strictly less legacy content than the legacy create: group-1 fields are gone
     assert content_less["legacy_content"] < legacy["legacy_content"]
