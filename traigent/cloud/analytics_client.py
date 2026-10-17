@@ -6,7 +6,7 @@ the backend owns all analytics intelligence, so the SDK only
 
 * sends the request with the user's existing credentials,
 * validates that the response is the platform success envelope, unwraps ``data``
-  (and, for the frozen v0 contracts, validates that the required payload keys
+  (and, for the structured payloads, validates that the required payload keys
   are present), and
 * returns the backend payload unchanged for aggregate readers, or a freshly
   projected allowlist for IP-sensitive per-example surfaces.
@@ -42,14 +42,12 @@ Wired analytics endpoints:
 * ``GET /api/v1beta/projects/{project_id}/observability/analysis/insights``
 * ``POST /api/v1beta/projects/{project_id}/observability/analysis/cohorts/compare``
 
-Director v0 (advisory-only; frozen contract, ``~/.claude/plans/director-v0-contract/``):
+Director (advisory-only):
 
 * ``POST /api/v1/director/sessions``
 * ``POST /api/v1/director/sessions/{session_id}/turn``
 * ``GET /api/v1/director/sessions/{session_id}/state``
 """
-
-# Traceability: CONC-Layer-Infra CONC-Security FUNC-CLOUD-HYBRID FUNC-ANALYTICS REQ-CLOUD-009
 
 from __future__ import annotations
 
@@ -100,7 +98,7 @@ except ImportError:  # pragma: no cover - exercised only when httpx is absent
 SUPPORTED_DECISION_INTENTS: tuple[str, ...] = ("iterate", "deploy", "debug", "report")
 _DEFAULT_DECISION_INTENT = "iterate"
 
-# Frozen v0 contract keys the SDK asserts before returning a payload. The
+# Required keys the SDK asserts before returning a payload. The
 # backend may add fields; the SDK only fails closed when a required key is
 # missing (a malformed/partial response must never look like success).
 _DECISION_PAYLOAD_REQUIRED_KEYS = frozenset(
@@ -116,9 +114,9 @@ _DECISION_PAYLOAD_REQUIRED_KEYS = frozenset(
         "warnings",
     }
 )
-# Optional first-party attribution block (BE #2431). Allowed-but-not-required:
-# absent on degenerate/empty briefs; when present it must match the frozen
-# contract exactly and is surfaced unchanged on the returned payload.
+# Optional first-party attribution block. Allowed-but-not-required: absent on
+# degenerate/empty briefs; when present it must match the expected shape
+# exactly and is surfaced unchanged on the returned payload.
 _ATTRIBUTION_FIELDS = frozenset(
     {"source", "label", "headline", "why", "basis", "engine"}
 )
@@ -198,7 +196,7 @@ _EXAMPLE_INSIGHT_RECOMMENDED_ACTIONS = frozenset(
         "replace_or_rewrite",
         "keep_as_hard_case",
         "inspect_evaluator",
-        # "remove_redundant" retired (Rule 0 / TraigentSchema PR #389): subtractive
+        # "remove_redundant" retired: subtractive
         # curation advice keyed to an observed signal biases the customer's own
         # measurement if acted on (top-15-by-observed-discrimination pruning gave
         # -0.202 vs a true -0.073, 2.77x biased; random pruning was unbiased). A
@@ -510,12 +508,9 @@ def _unwrap_success_data(payload: Any, *, what: str) -> dict[str, Any]:
 def _parse_response(payload: Any, *, what: str, envelope: bool) -> dict[str, Any]:
     """Unwrap the analytics ``{success, data}`` envelope, or read a bare object.
 
-    The Director endpoints do NOT use the envelope: their frozen contract
-    (``director-*.schema.json``, e.g. ``Response201`` requiring ``session_id``
-    at the top level) defines bare response objects, and the backend returns
-    exactly that. Routing them through the envelope check made every Director
-    call raise ``malformed_response`` against a real backend while the mocked
-    tests -- which wrapped the payload the same wrong way -- passed.
+    The Director endpoints do NOT use the envelope: they return bare response
+    objects (for example ``session_id`` at the top level), so they are read
+    without the envelope check.
     """
     if envelope:
         return _unwrap_success_data(payload, what=what)
@@ -536,7 +531,7 @@ def _validate_attribution(value: Any, *, what: str) -> None:
     """Validate the optional first-party attribution block, failing closed.
 
     Absent is legal (degenerate/empty responses omit it). When present, the
-    block must match the frozen contract exactly: a Traigent-sourced label,
+    block must match the expected shape exactly: a Traigent-sourced label,
     non-empty headline/why strings, a non-empty basis drawn from the known
     token set, and a rules|policy engine. A malformed block fails closed the
     same way other malformed sub-objects do.
@@ -628,7 +623,7 @@ def _project_example_insight_row(row: Any, *, index: int) -> dict[str, Any]:
             f"{', '.join(sorted(_EXAMPLE_INSIGHT_RECOMMENDED_ACTIONS))}."
         )
 
-    # Optional client-owned example identifier (TraigentSchema 5.6.0): the id
+    # Optional client-owned example identifier: the id
     # the caller submitted in the evaluation dataset, enabling a local content
     # join. Identity only — the same identity already crosses on /scores keys
     # and GuidancePlan seed_ref. Shape-checked fail-closed: anything but a
@@ -681,8 +676,8 @@ def _project_aggregate(data: Any, keys: frozenset[str], *, what: str) -> dict[st
 def _assert_allowed_string(value: Any, allowed: frozenset[str], *, what: str) -> str:
     """Validate that ``value`` is one of a fixed set of enum strings.
 
-    Mirrors the JS SDK's ``assertAllowedString`` (traigent-js analytics-client.ts)
-    used to close the same value-validation gap for cross-SDK parity.
+    Mirrors the JS SDK's ``assertAllowedString`` to close the same
+    value-validation gap for cross-SDK parity.
     """
     if not isinstance(value, str) or value not in allowed:
         raise AnalyticsClientError(
@@ -698,7 +693,7 @@ def _assert_safe_example_refs(value: Any, *, what: str) -> list[str]:
     Each element must be an opaque ``exref_`` reference matching the backend
     contract (``run_analytics_service._safe_example_refs``), and the list must
     not exceed the backend's cap. Mirrors the JS SDK's
-    ``assertSafeExampleRefs`` for cross-SDK parity (Traigent#1662).
+    ``assertSafeExampleRefs`` for cross-SDK parity.
     """
     if not isinstance(value, list):
         raise AnalyticsClientError(
@@ -721,7 +716,7 @@ def _assert_safe_example_refs(value: Any, *, what: str) -> list[str]:
 def _project_example_insights_summary(data: Any) -> dict[str, Any]:
     """Project + value-validate the ``summary`` aggregate.
 
-    ``dataset_quality`` is required and must be one of the backend's frozen
+    ``dataset_quality`` is required and must be one of the fixed
     ``Literal["low", "medium", "high"]`` enum values; a backend regression
     emitting a raw/unexpected value must fail closed rather than pass through.
     """
@@ -1827,7 +1822,7 @@ def _project_observability_tool_analysis(payload: Any) -> dict[str, Any]:
             _require_non_negative_observability_number(
                 item[field], what=f"{what}.{field}"
             )
-        # Unknown cost is null, never 0 (Backend contract).
+        # Unknown cost is null, never 0 (documented API behaviour).
         for field in ("total_cost_usd", "priced_cost_usd"):
             if item.get(field) is not None:
                 _require_non_negative_observability_number(
@@ -2124,22 +2119,16 @@ def normalize_decision_intent(intent: str | None = None) -> str:
 
 # === Director v0 (advisory-only) ===
 #
-# Frozen contract: ~/.claude/plans/director-v0-contract/ rev 2, pinned to
-# TraigentBackend origin/develop 0dda4a6cc. Three thin pass-throughs to the
-# backend's advisory Director endpoints. C1 (frozen contract): the request
+# Three thin pass-throughs to the advisory Director endpoints. The request
 # shapes below carry no client-composed free text -- every field is an enum,
 # an integer, or a server-issued identifier. `intent`, `report`, and
-# `client_report` are the only content fields `director_turn` accepts,
-# matching the frozen director-turn.schema.json Request object exactly.
+# `client_report` are the only content fields `director_turn` accepts.
 DIRECTOR_WORKFLOW_KINDS: tuple[str, ...] = ("optimization_run_advisory",)
 DIRECTOR_INTENTS: tuple[str, ...] = ("ask_next_step", "report_progress")
 _DEFAULT_DIRECTOR_INTENT = "ask_next_step"
 DIRECTOR_REPORT_STATUSES: tuple[str, ...] = ("done", "blocked", "skipped", "failed")
-# client_report.validity_checks[].check / .status / .confidence_label --
-# schemas/director-turn.schema.json $defs.Request.properties.client_report
-# and common.schema.json $defs.ConfidenceLabel. Feeds deterministic rule R1
-# (state-rules.md §3): a client-reported failed/missing validity check
-# BLOCKS run_optimization and promote_winner, before any model call.
+# client_report.validity_checks[].check / .status / .confidence_label closed
+# vocabularies.
 DIRECTOR_VALIDITY_CHECKS: tuple[str, ...] = (
     "scorer_discrimination",
     "split_integrity",
@@ -2148,7 +2137,7 @@ DIRECTOR_VALIDITY_STATUSES: tuple[str, ...] = ("passed", "failed", "missing")
 DIRECTOR_CONFIDENCE_LABELS: tuple[str, ...] = ("low", "medium", "high", "unknown")
 _DIRECTOR_VALIDITY_CHECKS_MAX_ITEMS = 20
 
-# Response201 required keys, schemas/director-session-create.schema.json.
+# Required keys of the session-create response.
 _DIRECTOR_SESSION_REQUIRED_KEYS = frozenset(
     {
         "session_id",
@@ -2162,7 +2151,7 @@ _DIRECTOR_SESSION_REQUIRED_KEYS = frozenset(
         "created_at",
     }
 )
-# Response200 required keys, schemas/director-turn.schema.json.
+# Required keys of the turn response.
 _DIRECTOR_TURN_REQUIRED_KEYS = frozenset(
     {
         "turn_id",
@@ -2176,7 +2165,7 @@ _DIRECTOR_TURN_REQUIRED_KEYS = frozenset(
         "replayed",
     }
 )
-# Response200 required keys, schemas/director-state.schema.json.
+# Required keys of the state response.
 _DIRECTOR_STATE_REQUIRED_KEYS = frozenset(
     {
         "session_id",
@@ -2207,22 +2196,19 @@ def normalize_director_intent(intent: str | None = None) -> str:
 def _canonical_json(value: Mapping[str, Any]) -> str:
     """Stable JSON encoding for Idempotency-Key derivation (sorted keys, no
     whitespace variance) -- two logically-identical bodies must encode
-    byte-identically or they hash differently (state-rules.md §8.2)."""
+    byte-identically or they hash differently."""
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
 def _derive_director_idempotency_key(*parts: str) -> str:
-    """Derive a stable Idempotency-Key from request content (state-rules.md §8.2).
+    """Derive a stable Idempotency-Key from request content.
 
-    The SDK previously minted a fresh ``uuid4()`` per call, so a network
-    retry of the exact same request never matched the original
-    ``(session_id, idempotency_key)`` pair and the duplicate-replay branch
-    (state-rules.md §2 step 2) was dead code in practice -- a retry got
-    ``409 stale_revision`` instead of its original answer, precisely the
-    failure the replay-before-stale-revision ordering exists to prevent.
+    Deriving the key from the request content (rather than minting a random
+    one per call) means a network retry of the exact same request replays the
+    original answer instead of being treated as a new request.
 
-    This keeps C1 intact: the key is a hash over request content, not a
-    string the client's agent composes. An explicit caller-supplied
+    The key is a hash over request content, not a string the client's agent
+    composes. An explicit caller-supplied
     ``idempotency_key`` still wins over this derivation.
     """
     raw = "|".join(parts)
@@ -2478,7 +2464,7 @@ class BackendAnalyticsClient:
 
         Endpoint: ``GET /api/v1/analytics/runs/{run_id}/decision-payload``.
 
-        The frozen v0 ``decision_payload`` contract is asserted before the
+        The ``decision_payload`` required keys are asserted before the
         payload is returned: a partial/malformed brief must never be presented
         as a confident recommendation.
 
@@ -2633,7 +2619,7 @@ class BackendAnalyticsClient:
         contract. ``example_rows`` is the only per-example surface and is rebuilt
         from projected safe fields so raw signals cannot pass through even on a
         backend regression. Each row may carry the optional client-owned
-        ``example_id`` (TraigentSchema 5.6.0) — identity the caller already owns,
+        ``example_id`` — identity the caller already owns,
         shape-checked so a non-string value cannot ride the field as a covert
         signal channel. ``summary``, ``cohorts``, ``recommendations``, and
         ``redactions`` are backend-redacted, templated, canary-enforced safe
@@ -2641,7 +2627,7 @@ class BackendAnalyticsClient:
         and ``cohorts[].safe_example_refs`` additionally get per-value shape
         validation (enum / opaque-ref-pattern + length cap): a backend regression
         placing raw content in those two value families must fail closed rather
-        than pass through (Traigent#1662). This reader deliberately allowlists by
+        than pass through. This reader deliberately allowlists by
         construction, unlike the other thin pass-through readers in this module,
         because it is the IP-sensitive per-example endpoint.
         """
@@ -3090,7 +3076,7 @@ class BackendAnalyticsClient:
         )
         return GroupedConfigurationRunsPageDTO.from_dict(payload)
 
-    # === Director v0 (advisory-only; see the frozen contract note above) ===
+    # === Director (advisory-only) ===
 
     async def director_start(
         self,
@@ -3104,12 +3090,10 @@ class BackendAnalyticsClient:
 
         Endpoint: ``POST /api/v1/director/sessions``.
 
-        Per the frozen ``director-session-create`` schema, ``project_id`` is a
-        JSON body field here (not an ``X-Project-Id`` header) -- the
-        credential-scope check happens against the body value. The only
-        header this call sends is ``Idempotency-Key`` (required by contract);
-        when the caller does not supply one, it is DERIVED from the request
-        body (state-rules.md §8.2) rather than randomly generated, so a
+        ``project_id`` is a JSON body field here (not an ``X-Project-Id``
+        header). The only header this call sends is ``Idempotency-Key``;
+        when the caller does not supply one, it is derived from the request
+        body rather than randomly generated, so a
         genuine retry of the same request replays instead of minting a new
         key that can never match.
 
@@ -3168,8 +3152,7 @@ class BackendAnalyticsClient:
 
         Endpoint: ``POST /api/v1/director/sessions/{session_id}/turn``.
 
-        C1 (frozen contract): this request carries no client-composed free
-        text. ``intent`` is a closed enum; ``report`` and ``client_report``
+        This request carries no client-composed free text. ``intent`` is a closed enum; ``report`` and ``client_report``
         (when present) are typed objects of server-issued/enum fields only --
         there is no prose field anywhere on this call.
 
@@ -3179,22 +3162,19 @@ class BackendAnalyticsClient:
                 (echoed back on ``409 stale_revision``).
             intent: ``ask_next_step`` | ``report_progress``.
             report: Optional ``{instruction_id, status, run_id?}`` closing the
-                instruction loop (C2). Forwarded verbatim; the backend
+                instruction loop. Forwarded verbatim; the backend
                 validates ``instruction_id`` ownership and ``run_id`` scope.
             client_report: Optional ``{validity_checks: [{check, status,
-                confidence_label?}]}``. Feeds deterministic rule R1: a
-                client-reported failed/missing validity check BLOCKS
-                ``run_optimization`` and ``promote_winner`` before any model
-                call. Forwarded verbatim; the caller (MCP tool layer)
+                confidence_label?}]}``, the outcome of local validity checks.
+                Forwarded verbatim; the caller (MCP tool layer)
                 validates every element against the closed vocabularies
                 before this method is called.
             idempotency_key: Caller-stable idempotency key (required by
-                contract). When omitted, DERIVED deterministically from
+                the service). When omitted, derived deterministically from
                 ``session_id``, ``session_revision``, and the rest of the
-                body (state-rules.md §8.2) -- not randomly generated, so a
-                genuine retry of the same request replays (state-rules.md §2
-                step 2) instead of minting a new key that can never match and
-                surfacing ``409 stale_revision`` in its place.
+                body -- not randomly generated, so a genuine retry of the
+                same request replays instead of surfacing
+                ``409 stale_revision``.
 
         Returns:
             The turn response (returned unchanged after the required-key
@@ -3225,7 +3205,7 @@ class BackendAnalyticsClient:
             key = idempotency_key
         else:
             # session_revision is excluded from the canonicalized body and
-            # instead hashed as its own raw component (state-rules.md §8.2):
+            # instead hashed as its own raw component:
             # a genuine retry resends the identical session_revision value
             # it originally computed, so the derived key is unchanged even
             # though the *session*'s current revision may have since

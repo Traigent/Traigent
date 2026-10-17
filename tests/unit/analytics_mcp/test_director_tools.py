@@ -1,7 +1,6 @@
 """Unit tests for the Director v0 (advisory-only) MCP tool wrappers.
 
-Director v0 is governed by the FROZEN contract at
-``~/.claude/plans/director-v0-contract/`` (rev 2). These tools
+These tools
 (``director_start_tool`` / ``director_turn_tool`` / ``director_state_tool``)
 are thin pass-throughs to ``BackendAnalyticsClient.director_start`` /
 ``director_turn`` / ``director_state`` -- copying the same three-layer
@@ -10,7 +9,7 @@ pattern, mocking, and failure-normalization conventions as
 ``TestBackendErrorTaxonomy``). The backend client is mocked at the
 tools-module boundary; no live backend is contacted.
 
-C1 (frozen contract): no tool here exposes a free-text parameter a client
+No tool here exposes a free-text parameter a client
 agent composes. ``director_turn_tool`` accepts only session identity, the
 closed ``intent`` enum, and the typed ``report`` block.
 """
@@ -285,8 +284,8 @@ class TestDirectorTurnTool:
 
 
 class TestDirectorTurnToolClientReport:
-    """C1/R1: client_report.validity_checks feeds the R1 validity-check
-    blocker. Strictly typed -- no free-text field anywhere on this object."""
+    """client_report.validity_checks carries local validity-check
+    outcomes. Strictly typed -- no free-text field anywhere on this object."""
 
     @pytest.mark.asyncio
     async def test_forwards_failed_scorer_discrimination_check(
@@ -515,7 +514,7 @@ class TestDirectorStateTool:
 
 
 class TestDirectorToolsNoFreeText:
-    """C1: no tool exposes a free-text (client-composed prose) parameter."""
+    """No tool exposes a free-text (client-composed prose) parameter."""
 
     _BANNED_SUBSTRINGS = ("message", "notes", "goal", "detail", "text", "prompt")
 
@@ -541,7 +540,7 @@ class TestDirectorToolsNoFreeText:
     def test_director_turn_signature_is_exactly_intent_report_and_client_report(
         self,
     ) -> None:
-        """C1: director_turn takes only session identity, intent (enum), the
+        """director_turn takes only session identity, intent (enum), the
         typed report block, and the typed client_report block -- no other
         content field, and certainly no free-text field."""
         from traigent.analytics_mcp.tools import director_turn_tool
