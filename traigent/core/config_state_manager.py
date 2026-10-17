@@ -188,6 +188,12 @@ class ConfigStateManager:
         self.best_config_environment = self._resolve_best_config_environment(
             best_config_environment
         )
+        # Whether the environment was SET (argument or TRAIGENT_BEST_CONFIG_ENVIRONMENT)
+        # rather than defaulted: an explicit value, "default" included, outranks
+        # TRAIGENT_ENVIRONMENT when a content-less run picks its environment.
+        self.best_config_environment_explicit = (
+            self._best_config_environment_is_explicit(best_config_environment)
+        )
         self.enable_auto_load_dev_logs = (
             auto_load_best
             if enable_auto_load_dev_logs is None
@@ -408,6 +414,11 @@ class ConfigStateManager:
                 spec_exc,
             )
             return None
+
+    @staticmethod
+    def _best_config_environment_is_explicit(explicit: str | None) -> bool:
+        raw = explicit or os.environ.get("TRAIGENT_BEST_CONFIG_ENVIRONMENT") or ""
+        return bool(raw.strip())
 
     @staticmethod
     def _resolve_best_config_environment(explicit: str | None) -> str:

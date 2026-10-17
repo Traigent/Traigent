@@ -18,6 +18,8 @@ import asyncio
 import copy
 import json
 import logging
+import os
+import socket
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -292,21 +294,33 @@ def online(monkeypatch, tmp_path):
         monkeypatch.delenv(name, raising=False)
 
 
-def _make_wrapper():
+def _make_wrapper(best_config_environment=None, **decorator_kwargs):
     @traigent.optimize(
         eval_dataset=_dataset(),
         objectives=["accuracy"],
         configuration_space=_SPACE,
         injection_mode="parameter",
+        **decorator_kwargs,
     )
     def answer(text: str, config) -> str:
         return "ok"
 
+    if best_config_environment is not None:
+        # The decorator does not expose the argument; the state manager is what
+        # OptimizedFunction(best_config_environment=...) feeds, so build it the same way.
+        from traigent.core.config_state_manager import ConfigStateManager as csm
+
+        answer._csm.best_config_environment = csm._resolve_best_config_environment(
+            best_config_environment
+        )
+        answer._csm.best_config_environment_explicit = (
+            csm._best_config_environment_is_explicit(best_config_environment)
+        )
     return answer
 
 
-async def _run(fake: _FakeBackend):
-    answer = _make_wrapper()
+async def _run(fake: _FakeBackend, best_config_environment=None, **decorator_kwargs):
+    answer = _make_wrapper(best_config_environment, **decorator_kwargs)
     with (
         patch.object(
             BackendSessionManager,
@@ -470,6 +484,56 @@ async def test_run_environment_is_one_value_from_session_create_to_publish(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("option", "best_config_arg", "best_config_env", "run_env", "expected"),
+    [
+        # explicit content-less option beats everything
+        ("production", "staging", "development", "test", "production"),
+        ("default", "staging", None, "production", "default"),
+        # explicitly set best-config environment beats TRAIGENT_ENVIRONMENT,
+        # an explicit "default" included
+        (None, "default", None, "production", "default"),
+        (None, None, "default", "production", "default"),
+        (None, "staging", None, "production", "staging"),
+        (None, None, "staging", "production", "staging"),
+        (None, "default", None, None, "default"),
+        # nothing set for the best-config environment: the other sources, then default
+        (None, None, None, "production", "production"),
+        (None, None, None, None, "default"),
+    ],
+    ids=[
+        "option-beats-all",
+        "explicit-default-option-beats-env",
+        "explicit-default-arg-beats-env",
+        "explicit-default-bc-env-beats-env",
+        "arg-beats-env",
+        "bc-env-beats-env",
+        "explicit-default-no-env",
+        "env-when-bc-unset",
+        "default-when-nothing-set",
+    ],
+)
+async def test_environment_precedence_is_option_then_best_config_then_env_then_default(
+    online, monkeypatch, option, best_config_arg, best_config_env, run_env, expected
+):
+    if best_config_env is not None:
+        monkeypatch.setenv("TRAIGENT_BEST_CONFIG_ENVIRONMENT", best_config_env)
+    if run_env is not None:
+        monkeypatch.setenv("TRAIGENT_ENVIRONMENT", run_env)
+    kwargs: dict[str, Any] = {"best_config_environment": best_config_arg}
+    if option is not None:
+        kwargs["environment"] = (
+            option  # @optimize(environment=...), the content-less option
+        )
+    fake = _FakeBackend()
+    answer, result = await _run(fake, **kwargs)
+    assert fake.bindings["bs-1"]["environment"] == expected
+    assert result.metadata["promotion_precondition"]["environment"] == expected
+    _publish(answer, fake)
+    assert [p["environment"] for p in fake.publishes] == [expected]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("bad", ["canary", "prod-eu", "Production Eu", "default2"])
 async def test_environment_outside_the_closed_set_refuses_before_session_create(
     online, monkeypatch, bad
@@ -593,8 +657,20 @@ class _Wire:
         return response
 
 
+#: A public (global) address: ``api.test`` must not need real DNS.
+_PUBLIC_ADDRINFO = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+
+
 def _client() -> BackendIntegratedClient:
-    client = BackendIntegratedClient(api_key=_KEY, base_url="https://api.test")
+    # Root cause of the old canary split: ``online`` unsets the environment markers (so
+    # run-environment precedence is deterministic), which removes the autouse
+    # ``TRAIGENT_ENVIRONMENT=development`` of tests/conftest.py. Without a development
+    # marker url_security fails closed (production assumed), the unresolvable host
+    # ``api.test`` raises CloudUrlUnreachableError, the client is marked ``_url_invalid``
+    # and every call says "backend egress is disabled (offline)". Resolve the host here
+    # so construction never depends on ambient DNS or ambient environment markers.
+    with patch("socket.getaddrinfo", return_value=_PUBLIC_ADDRINFO):
+        client = BackendIntegratedClient(api_key=_KEY, base_url="https://api.test")
     client.auth_manager.auth.get_headers = AsyncMock(
         return_value={"Authorization": "Bearer test-token"}
     )
@@ -1010,9 +1086,23 @@ def test_transport_failure_text_does_not_echo_the_url_or_exception():
 # ------------------------------------------------------------------------ canary
 
 
-def test_no_customer_string_reaches_the_head_requests_or_the_logs(caplog):
-    """Customer-chosen strings in refusal bodies never leave or get logged."""
+@pytest.mark.asyncio
+async def test_no_customer_string_reaches_the_head_requests_or_the_logs(online, caplog):
+    """Customer-chosen strings in the create 201 and in refusal bodies never leave.
+
+    One test, run end to end under ``online``: the capture refusal through the SDK, then
+    the wire level. It passes in any order (see the isolation tests below).
+    """
     caplog.set_level(logging.DEBUG)
+    fake = _FakeBackend()
+    fake.read_error = CloudBestConfigHeadRefusedError(
+        HeadRefusalCode.REFERENCE_NOT_FOUND
+    )
+    answer, _ = await _run(fake)
+    with pytest.raises(CloudBestConfigHeadRefusedError):
+        _publish(answer, fake)
+    assert CANARY_AGENT_ID not in caplog.text and CANARY_TEXT not in caplog.text
+
     # wire level: only the opaque ref, the closed environment and the integer travel
     wire, patcher = _wired(
         (
@@ -1053,6 +1143,23 @@ def test_no_customer_string_reaches_the_head_requests_or_the_logs(caplog):
         assert canary not in sent
         assert canary not in str(excinfo.value) + repr(excinfo.value)
         assert canary not in caplog.text
+
+
+def test_online_fixture_leaves_the_client_able_to_send_whatever_the_markers(online):
+    """The ``online`` fixture removes every environment marker; the client still builds."""
+    for name in ("ENVIRONMENT", "TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT"):
+        assert name not in os.environ
+    client = _client()
+    assert getattr(client, "_url_invalid", None) is False
+    client._raise_if_backend_egress_disabled("probe")  # does not raise
+
+
+def test_environment_markers_do_not_leak_between_online_and_plain_tests(monkeypatch):
+    """Whatever ran before, a test not using ``online`` sees the conftest dev marker."""
+    assert os.environ.get("TRAIGENT_ENVIRONMENT") == "development"
+    assert os.environ.get("TRAIGENT_OFFLINE_MODE") == "false"  # backend_online lane
+    client = _client()
+    assert getattr(client, "_url_invalid", None) is False
 
 
 @pytest.mark.asyncio

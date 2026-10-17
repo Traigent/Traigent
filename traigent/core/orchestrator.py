@@ -456,6 +456,7 @@ class OptimizationOrchestrator:
         # Best-config environment whose agent head is captured at step start,
         # and the promotion precondition captured for the current run.
         self.head_environment: str | None = None
+        self.head_environment_explicit: bool = False
         self._promotion_precondition: dict[str, Any] | None = None
         self._smart_pruning: dict[str, Any] | None = kwargs.pop("smart_pruning", None)
         self._config_metrics_history: dict[str, dict[str, list[float]]] = {}
@@ -3073,7 +3074,12 @@ class OptimizationOrchestrator:
         optimization_strategy_payload = self._backend_optimization_strategy_for_run()
         self._promotion_precondition = None
         head_environment_kwargs: dict[str, Any] = (
-            {"head_environment": self.head_environment} if self.head_environment else {}
+            {
+                "head_environment": self.head_environment,
+                "head_environment_explicit": self.head_environment_explicit,
+            }
+            if self.head_environment
+            else {}
         )
         session_context = self.backend_session_manager.create_session(
             func=func,

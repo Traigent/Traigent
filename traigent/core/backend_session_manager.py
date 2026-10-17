@@ -1534,6 +1534,7 @@ class BackendSessionManager:
         dataset_id: str | None = None,
         content_identity: dict[str, Any] | None = None,
         head_environment: str | None = None,
+        head_environment_explicit: bool | None = None,
         content_less: Any = None,
     ) -> SessionContext:
         """Create backend session and return context.
@@ -1553,6 +1554,11 @@ class BackendSessionManager:
             head_environment: Best-config environment whose agent-head
                 generation is captured (once, here, at the start of the step)
                 for a later promoting publish.
+            head_environment_explicit: Whether ``head_environment`` was set by the
+                user (argument, config or TRAIGENT_BEST_CONFIG_ENVIRONMENT) rather
+                than defaulted. An explicit value, ``"default"`` included, outranks
+                TRAIGENT_ENVIRONMENT; ``None`` keeps the older inference (any value
+                other than ``"default"`` counts as explicit).
 
         Returns:
             SessionContext with session_id (or None if backend disabled)
@@ -1693,9 +1699,17 @@ class BackendSessionManager:
                     else content_less_session.ContentLessOptions()
                 )
                 requested_environment = options.environment
-                if requested_environment is None and head_environment not in (
-                    None,
-                    "default",
+                # Order: explicit content-less option > explicitly set best-config
+                # environment > TRAIGENT_ENVIRONMENT and the other sources > "default".
+                best_config_explicit = (
+                    head_environment not in (None, "default")
+                    if head_environment_explicit is None
+                    else head_environment_explicit
+                )
+                if (
+                    requested_environment is None
+                    and head_environment is not None
+                    and best_config_explicit
                 ):
                     requested_environment = head_environment
                 head_environment = content_less_session.resolve_environment(
