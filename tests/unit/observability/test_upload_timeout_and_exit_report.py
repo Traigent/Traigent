@@ -92,3 +92,56 @@ def test_exit_with_nothing_pending_is_silent(monkeypatch, capsys):
 
 def test_exit_warning_can_be_disabled(monkeypatch, capsys):
     assert _exit_with(monkeypatch, capsys, 7, warn_on_undelivered_at_exit=False) == ""
+
+
+def test_positional_construction_keeps_existing_field_meaning():
+    cfg = ObservabilityConfig(
+        "http://localhost:5000",
+        "test-key",  # pragma: allowlist secret
+        None,
+        None,
+        None,
+        "/api/v1beta/observability",
+        100,
+        5,
+        10000,
+        4194304,
+        30,
+        10,
+        False,
+        True,
+    )
+    assert cfg.request_timeout == 10
+    assert cfg.enable_atexit_flush is False
+    assert cfg.offline_mode is True
+    assert cfg.per_trace_timeout == 0.2
+
+
+def test_effective_timeout_capped_at_max():
+    from traigent.observability.config import MAX_TIMEOUT_SECONDS
+
+    cfg = _config(per_trace_timeout=100.0)
+    assert cfg.effective_request_timeout(10_000) == MAX_TIMEOUT_SECONDS
+
+
+def test_exit_with_broken_stderr_does_not_raise(monkeypatch):
+    class _Broken:
+        def write(self, _):
+            raise ValueError("I/O operation on closed file")
+
+    client = ObservabilityClient(_config())
+    monkeypatch.setattr(
+        client, "close", lambda *, timeout=None: FlushResult(False, 0, 3, 0, 0, 0)
+    )
+    monkeypatch.setattr("sys.stderr", _Broken())
+    client._atexit_close()
+
+
+def test_exit_called_twice_prints_once(monkeypatch, capsys):
+    client = ObservabilityClient(_config())
+    monkeypatch.setattr(
+        client, "close", lambda *, timeout=None: FlushResult(False, 0, 3, 0, 0, 0)
+    )
+    client._atexit_close()
+    client._atexit_close()
+    assert capsys.readouterr().err.count("\n") == 1

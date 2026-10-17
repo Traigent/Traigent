@@ -3723,7 +3723,12 @@ class ObservabilityClient:
             logger.warning("Observability atexit flush failed: %s", exc)
             return
         pending = getattr(result, "items_pending", 0)
-        if self.config.warn_on_undelivered_at_exit and pending > 0:
+        if (
+            self.config.warn_on_undelivered_at_exit
+            and pending > 0
+            and not getattr(self, "_exit_warning_written", False)
+        ):
+            self._exit_warning_written = True
             try:
                 sys.stderr.write(
                     f"traigent: {pending} observability trace(s) were not "

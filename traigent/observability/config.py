@@ -449,9 +449,7 @@ class ObservabilityConfig:
     max_batch_bytes: int = 4 * 1024 * 1024
     flush_timeout: float = 30.0
     request_timeout: float = 10.0
-    per_trace_timeout: float = 0.2
     enable_atexit_flush: bool = True
-    warn_on_undelivered_at_exit: bool = True
     offline_mode: bool = field(default_factory=_read_observability_offline_mode)
     content_mode: str = _CONTENT_MODE_UNSET
     # Set in `__post_init__`; not a constructor argument. True iff the
@@ -471,6 +469,9 @@ class ObservabilityConfig:
         default_factory=_read_default_execution_context
     )
     extra_headers: dict[str, str] = field(default_factory=dict)
+    # Appended last so existing positional construction keeps its meaning.
+    per_trace_timeout: float = 0.2
+    warn_on_undelivered_at_exit: bool = True
 
     def __post_init__(self) -> None:
         self.backend_origin = validate_cloud_base_url(
