@@ -5,8 +5,8 @@ antivirus or EDR product may notice, and how to turn each item off. Every claim
 cites where it comes from:
 
 - **[R]** the PEP 578 recorder (`scripts/security/behaviour_audit.py`), with the
-  run tables in [behaviour-audit-evidence-2026-09-25.md](behaviour-audit-evidence-2026-09-25.md)
-  (origin/develop `e2a04f85`, CPython 3.12.13, litellm 1.98.0 from `uv.lock`);
+  run tables reproduced by the commands below (CPython 3.12, litellm
+  version pinned in `uv.lock`);
 - **[S]** reading the source at the cited `file:line` (static; the recorder
   workloads did not reach that code).
 

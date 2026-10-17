@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Mapping, Sequence
+import re
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
@@ -35,6 +36,7 @@ def generate_recommendations(
     source_code: str = "",
     classification: ClassificationResult | None = None,
     recommendation_bundle: RecommendationBundle | None = None,
+    capability_signals: Iterable[str] | None = None,
 ) -> list[TVarRecommendation]:
     """Generate TVAR recommendations.
 
@@ -51,12 +53,22 @@ def generate_recommendations(
     recommendation_bundle:
         Optional recommendation bundle. ``None`` means try the backend when
         configured; an empty bundle keeps catalog output unchanged.
+    capability_signals:
+        Capabilities the agent declares (for example ``{"sql"}``). ``None``
+        means detect them from ``source_code``. A catalog knob that requires
+        a capability is only recommended when that capability is present,
+        whatever the agent type (Traigent#2524).
     """
     existing_names = {t.name for t in tvars}
     agent_type = classification.agent_type if classification else "general_llm"
+    signals = (
+        frozenset(capability_signals)
+        if capability_signals is not None
+        else detect_capability_signals(source_code)
+    )
 
     # Preset recommendations
-    recs = _preset_recommendations(agent_type, existing_names)
+    recs = _preset_recommendations(agent_type, existing_names, signals)
     recs = _augment_recommendations_with_value_hints(
         recs,
         (
@@ -71,7 +83,10 @@ def generate_recommendations(
         llm_recs = _llm_recommend(tvars, agent_type, source_code, llm)
         # Deduplicate by name
         existing_rec_names = {r.name for r in recs}
+        gated_out = _capability_gated_names(signals)
         for rec in llm_recs:
+            if rec.name in gated_out:
+                continue
             if rec.name not in existing_rec_names and rec.name not in existing_names:
                 recs.append(rec)
                 existing_rec_names.add(rec.name)
@@ -202,9 +217,119 @@ _RECOMMENDATION_ORDER: dict[str, tuple[str, ...]] = {
 }
 
 
-def _catalog_recommendation_templates(agent_type: str) -> list[dict[str, Any]]:
+# ---------------------------------------------------------------------------
+# Capability gating (Traigent#2524)
+# ---------------------------------------------------------------------------
+#
+# The catalog filters by agent type, and an agent type is a coarse guess: the
+# classifier puts a text-to-SQL agent, a HumanEval solver and a subprocess
+# runner in the same ``code_gen`` class. Some knobs only mean something for an
+# agent that has a specific capability -- database schema context, SQLite
+# repair, SQL generation paths -- so they are gated on that capability, never
+# on the agent's type or name. The capability is either declared by the caller
+# or detected from a concrete signal in the source.
+#
+# The requirement is kept here, keyed by catalog entry id, because the catalog
+# entry schema is owned by TraigentSchema and does not (yet) carry a field for
+# it.
+
+SQL_CAPABILITY = "sql"
+
+_ENTRY_REQUIRED_CAPABILITIES: Mapping[str, frozenset[str]] = {
+    # DDL + foreign-key text / schema-linked lines of a database.
+    "code_gen.schema_context.v1": frozenset({SQL_CAPABILITY}),
+    # Appends retrieved schema or value evidence (BIRD-style evidence).
+    "code_gen.evidence_usage.v1": frozenset({SQL_CAPABILITY}),
+    # DAIL-SQL example selection and masked-question similarity.
+    "code_gen.fewshot_selector.v1": frozenset({SQL_CAPABILITY}),
+    # Direct / plan-first / divide-and-conquer SQL generation.
+    "code_gen.generation_path.v1": frozenset({SQL_CAPABILITY}),
+    # Retries on a SQLite error or an empty result set.
+    "code_gen.repair_policy.v1": frozenset({SQL_CAPABILITY}),
+}
+
+_SQL_SIGNAL_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # An identifier or string naming SQL: generate_sql, text2sql, sqlite3,
+    # sqlalchemy, mysql, postgresql, "sql" ... but not a negative mention
+    # ("NoSQL", "no SQL", "non-SQL", "not SQL", "without SQL").
+    re.compile(
+        r"(?<!no)(?<!no )(?<!non-)(?<!non )(?<!not )(?<!without )sql",
+        re.IGNORECASE,
+    ),
+    # A SQL statement at the start of a string literal, in any letter case.
+    re.compile(r"""["'(]\s*select\s+[^\n"']{1,200}?\sfrom\s+\w""", re.IGNORECASE),
+    re.compile(r"\bCREATE\s+TABLE\b|\bFOREIGN\s+KEY\b", re.IGNORECASE),
+    # Common database drivers whose names do not contain "sql".
+    re.compile(
+        r"\b(?:import|from)\s+(?:duckdb|psycopg2?|asyncpg|cx_Oracle|oracledb)\b"
+    ),
+)
+
+
+def _without_comments(source_code: str) -> str:
+    """Remove Python comment tokens, keeping string literals intact."""
+    import io
+    import tokenize
+
+    try:
+        tokens = [
+            tok
+            for tok in tokenize.generate_tokens(io.StringIO(source_code).readline)
+            if tok.type != tokenize.COMMENT
+        ]
+        return " ".join(tok.string for tok in tokens)
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        # Not tokenizable (partial or non-Python source): fall back to a
+        # line-wise strip of text after "#" that is outside quotes.
+        return "\n".join(
+            line if re.search(r"""["']""", line) else line.split("#", 1)[0]
+            for line in source_code.splitlines()
+        )
+
+
+def detect_capability_signals(source_code: str) -> frozenset[str]:
+    """Return the capabilities the source code shows a concrete signal for.
+
+    ``#`` comment text is ignored so prose such as ``# no SQL needed`` is not
+    read as a signal.
+    """
+    code = _without_comments(source_code or "")
+    signals: set[str] = set()
+    if any(p.search(code) for p in _SQL_SIGNAL_PATTERNS):
+        signals.add(SQL_CAPABILITY)
+    return frozenset(signals)
+
+
+def _entry_capabilities_met(
+    entry: Mapping[str, Any], signals: frozenset[str] | None
+) -> bool:
+    if signals is None:
+        return True
+    required = _ENTRY_REQUIRED_CAPABILITIES.get(str(entry.get("entry_id", "")))
+    return required is None or required <= signals
+
+
+def _capability_gated_names(signals: frozenset[str]) -> frozenset[str]:
+    """Knob names of catalog entries whose required capabilities ``signals`` lacks."""
+    return frozenset(
+        entry_to_recommendation(entry).name
+        for entry in catalog_entries("code_gen")
+        if not _entry_capabilities_met(entry, signals)
+    )
+
+
+def _catalog_recommendation_templates(
+    agent_type: str, signals: frozenset[str] | None = None
+) -> list[dict[str, Any]]:
+    """Catalog templates for ``agent_type``.
+
+    ``signals`` ``None`` lists every entry (the raw catalog view); a set keeps
+    only entries whose required capabilities it contains.
+    """
     templates: list[dict[str, Any]] = []
     for entry in catalog_entries(agent_type):
+        if not _entry_capabilities_met(entry, signals):
+            continue
         rec = entry_to_recommendation(entry)
         templates.append(
             {
@@ -225,12 +350,14 @@ def _catalog_recommendation_templates(agent_type: str) -> list[dict[str, Any]]:
     return templates
 
 
-def _recommendation_templates(agent_type: str) -> list[dict[str, Any]]:
+def _recommendation_templates(
+    agent_type: str, signals: frozenset[str] | None = None
+) -> list[dict[str, Any]]:
     templates = [
         dict(template)
         for template in _LEGACY_RECOMMENDATION_TEMPLATES.get(agent_type, ())
     ]
-    templates.extend(_catalog_recommendation_templates(agent_type))
+    templates.extend(_catalog_recommendation_templates(agent_type, signals))
 
     order = _RECOMMENDATION_ORDER.get(agent_type, ())
     if not order:
@@ -252,9 +379,10 @@ _RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
 def _preset_recommendations(
     agent_type: str,
     existing_names: set[str],
+    signals: frozenset[str] | None = None,
 ) -> list[TVarRecommendation]:
     """Generate recommendations from presets."""
-    templates = _recommendation_templates(agent_type)
+    templates = _recommendation_templates(agent_type, signals)
     recs: list[TVarRecommendation] = []
 
     for tmpl in templates:

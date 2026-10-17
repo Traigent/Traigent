@@ -781,6 +781,7 @@ def test_batch_band_scoring_preserves_unknown_and_measured_zero():
     import pytest
 
     from traigent.optimizers.batch_optimizers import (
+        UNMEASURED_COMPOSITE_SCORE,
         AdaptiveBatchOptimizer,
         ParallelBatchOptimizer,
     )
@@ -802,9 +803,11 @@ def test_batch_band_scoring_preserves_unknown_and_measured_zero():
             objectives=["accuracy", "cost"],
             objective_schema=schema,
         )
+        # An unknown objective makes the composite unknowable: the trial gets
+        # the finite failed-trial sentinel, never a quality-only score (#2446).
         assert optimizer._calculate_composite_score(
             {"accuracy": 0.8, "cost": None}
-        ) == pytest.approx(0.8)
+        ) == pytest.approx(UNMEASURED_COMPOSITE_SCORE)
         assert optimizer._calculate_composite_score(
             {"accuracy": 0.8, "cost": 0.0}
         ) == pytest.approx(0.35)

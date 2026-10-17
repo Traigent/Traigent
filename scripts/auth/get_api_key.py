@@ -29,15 +29,24 @@ from urllib.parse import urlparse, urlunparse
 
 import requests  # type: ignore[import-untyped]
 
-# Auto-load .env file if python-dotenv is available
+# Auto-load .env file if python-dotenv is available, unless the caller opted out
+# with TRAIGENT_SKIP_DOTENV (same truthy set as traigent.utils.env_config).
+_SKIP_DOTENV = os.environ.get("TRAIGENT_SKIP_DOTENV", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 try:
     from dotenv import load_dotenv
 
     # Look for .env in the repo root
     env_path = Path(__file__).resolve().parents[2] / ".env"
-    if env_path.exists():
+    if env_path.exists() and not _SKIP_DOTENV:
         load_dotenv(env_path)
-        print(f"Loaded environment from: {env_path}")
+        # stderr: stdout carries only the key, so `--quiet` capture
+        # (KEY=$(... --quiet)) must not pick up this diagnostic.
+        print(f"Loaded environment from: {env_path}", file=sys.stderr)
 except ImportError:
     # python-dotenv not installed, rely on shell environment
     pass

@@ -57,6 +57,8 @@ from traigent.cloud.analytics_client import (
     DIRECTOR_INTENTS,
     DIRECTOR_REPORT_STATUSES,
     DIRECTOR_WORKFLOW_KINDS,
+    OBSERVABILITY_MAX_TAGS,
+    OBSERVABILITY_OUTCOME_KINDS,
     SUPPORTED_DECISION_INTENTS,
 )
 
@@ -73,12 +75,14 @@ def create_server() -> Any:
     ``traigent-analytics-mcp --help`` and import-time checks still work in
     environments that have not installed ``traigent[mcp]``.
     """
+    from traigent.mcp._compat import mcp_server_class
+
     try:
-        from mcp.server.fastmcp import FastMCP
+        server_class = mcp_server_class()
     except ImportError as exc:  # pragma: no cover - covered by CLI/entrypoint test
         raise RuntimeError(_MCP_INSTALL_MESSAGE) from exc
 
-    server = FastMCP(
+    server = server_class(
         "traigent-analytics",
         instructions=(
             "Agent-facing Traigent analytics MCP. Tools read optimization "
@@ -334,9 +338,13 @@ def create_server() -> Any:
 
     @server.tool(
         description=(
-            "Search traces in an explicit window of at most 31 days. Returns "
-            "only bounded content-free summaries; names, user/session IDs, "
-            "tags, metadata, inputs, outputs, comments, and error text are excluded."
+            "Search traces in an explicit window of at most 31 days. Optional "
+            "filters: model (exact observation model name), tags (exact, all "
+            f"must match, at most {OBSERVABILITY_MAX_TAGS}), outcome_kind "
+            f"({', '.join(OBSERVABILITY_OUTCOME_KINDS)}), and has_outcome "
+            "(true/false). Returns only bounded "
+            "content-free summaries; names, user/session IDs, tags, metadata, "
+            "inputs, outputs, comments, and error text are excluded."
         )
     )
     async def observability_search_traces(
@@ -348,6 +356,11 @@ def create_server() -> Any:
         status: str | None = None,
         environment: str | None = None,
         release: str | None = None,
+        *,
+        model: str | None = None,
+        tags: list[str] | None = None,
+        outcome_kind: str | None = None,
+        has_outcome: bool | None = None,
     ) -> dict[str, Any]:
         return await observability_search_traces_tool(
             project_id,
@@ -358,6 +371,10 @@ def create_server() -> Any:
             status,
             environment,
             release,
+            model=model,
+            tags=tags,
+            outcome_kind=outcome_kind,
+            has_outcome=has_outcome,
         )
 
     @server.tool(

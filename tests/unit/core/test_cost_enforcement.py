@@ -181,12 +181,14 @@ class TestEstimatedCallsPerExampleNormalization:
 class TestSeedEstimatedCostPerTrial:
     """Tests for CostEnforcer.seed_estimated_cost_per_trial (issue #1750)."""
 
-    def test_scales_ema_seed_by_multiplier(self) -> None:
+    def test_scales_rough_estimate_by_multiplier(self) -> None:
         enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
         base = enforcer.config.estimated_cost_per_trial
         enforcer.seed_estimated_cost_per_trial(4)
         assert enforcer.config.estimated_cost_per_trial == pytest.approx(base * 4)
-        assert enforcer._estimated_cost == pytest.approx(base * 4)
+        # The in-run estimate is the mean of observed completed-trial costs:
+        # none exists before the first trial completes, whatever the seed.
+        assert enforcer._estimated_cost == 0.0
 
     def test_single_call_is_a_no_op(self) -> None:
         enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
@@ -387,7 +389,7 @@ class TestCostEnforcerUnknownCost:
 
     def test_unknown_cost_triggers_fallback(self) -> None:
         """None cost triggers fallback to trial count mode."""
-        config = CostEnforcerConfig(fallback_trial_limit=5)
+        config = CostEnforcerConfig(limit_explicit=False, fallback_trial_limit=5)
         enforcer = CostEnforcer(config=config)
 
         enforcer.track_cost(None, permit=_create_mock_permit())
@@ -397,7 +399,7 @@ class TestCostEnforcerUnknownCost:
 
     def test_fallback_uses_trial_limit(self) -> None:
         """Fallback mode uses trial count limit."""
-        config = CostEnforcerConfig(fallback_trial_limit=3)
+        config = CostEnforcerConfig(limit_explicit=False, fallback_trial_limit=3)
         enforcer = CostEnforcer(config=config)
 
         enforcer.track_cost(None, permit=_create_mock_permit())  # Trigger fallback
@@ -409,7 +411,7 @@ class TestCostEnforcerUnknownCost:
 
     def test_fallback_permit_check(self) -> None:
         """Permit check works in fallback mode."""
-        config = CostEnforcerConfig(fallback_trial_limit=2)
+        config = CostEnforcerConfig(limit_explicit=False, fallback_trial_limit=2)
         enforcer = CostEnforcer(config=config)
 
         permit = enforcer.acquire_permit()
@@ -439,7 +441,9 @@ class TestCostEnforcerUnknownCost:
         with patch.dict(
             os.environ, {"TRAIGENT_STRICT_COST_ACCOUNTING": "false"}, clear=False
         ):
-            enforcer = CostEnforcer(CostEnforcerConfig(fallback_trial_limit=5))
+            enforcer = CostEnforcer(
+                CostEnforcerConfig(limit_explicit=False, fallback_trial_limit=5)
+            )
 
         with patch.dict(
             os.environ, {"TRAIGENT_STRICT_COST_ACCOUNTING": "true"}, clear=False
@@ -487,6 +491,7 @@ class TestCostEnforcerUnknownCostCTD:
         ):
             enforcer = CostEnforcer(
                 CostEnforcerConfig(
+                    limit_explicit=False,
                     limit=1.0,
                     estimated_cost_per_trial=0.2,
                     fallback_trial_limit=5,
@@ -539,6 +544,7 @@ class TestCostEnforcerUnknownCostCTD:
         ):
             enforcer = CostEnforcer(
                 CostEnforcerConfig(
+                    limit_explicit=False,
                     limit=1.0,
                     estimated_cost_per_trial=0.2,
                     fallback_trial_limit=5,
@@ -1020,21 +1026,21 @@ class TestCostEnforcerInFlightReservation:
         assert permits_granted == 5  # Only 5 should fit
 
     def test_cost_estimate_updates_with_actual_costs(self) -> None:
-        """Cost estimate is updated based on actual costs."""
+        """Cost estimate is the arithmetic mean of observed trial costs."""
         config = CostEnforcerConfig(limit=10.0, estimated_cost_per_trial=0.1)
         enforcer = CostEnforcer(config=config)
 
-        initial_estimate = enforcer._estimated_cost
+        # No estimate exists before the first trial completes.
+        assert enforcer._estimated_cost == 0.0
 
-        # Track some actual costs
         permit = enforcer.acquire_permit()
-        enforcer.track_cost(0.5, permit=permit)  # Much higher than initial estimate
+        enforcer.track_cost(0.5, permit=permit)
+        assert enforcer._estimated_cost == pytest.approx(0.5)
 
-        # Estimate should have increased (EMA with alpha=0.3)
-        assert enforcer._estimated_cost > initial_estimate
-        # Expected: 0.3 * 0.5 + 0.7 * 0.1 = 0.15 + 0.07 = 0.22
-        expected = 0.3 * 0.5 + 0.7 * 0.1
-        assert abs(enforcer._estimated_cost - expected) < 0.001
+        permit = enforcer.acquire_permit()
+        enforcer.track_cost(0.1, permit=permit)
+        # Mean of 0.5 and 0.1 (not an EMA).
+        assert enforcer._estimated_cost == pytest.approx(0.3)
 
     def test_reset_clears_in_flight_state(self) -> None:
         """reset() clears all in-flight tracking state."""
@@ -1053,7 +1059,7 @@ class TestCostEnforcerInFlightReservation:
         assert status.in_flight_count == 0
         assert status.reserved_cost_usd == 0.0
         assert status.accumulated_cost_usd == 0.0
-        assert enforcer._estimated_cost == 0.2  # Back to config default
+        assert enforcer._estimated_cost == 0.0  # No estimate until a trial completes
 
     @pytest.mark.asyncio
     async def test_async_permit_reservation(self) -> None:
@@ -1087,7 +1093,9 @@ class TestCostEnforcerInFlightReservation:
 
     def test_unknown_cost_mode_uses_trial_count_reservation(self) -> None:
         """In unknown cost mode, permits use trial count including in-flight."""
-        config = CostEnforcerConfig(limit=10.0, fallback_trial_limit=3)
+        config = CostEnforcerConfig(
+            limit_explicit=False, limit=10.0, fallback_trial_limit=3
+        )
         enforcer = CostEnforcer(config=config)
 
         # Trigger unknown cost mode
@@ -1237,7 +1245,10 @@ class TestCostEnforcerInFlightReservation:
         config = CostEnforcerConfig(limit=0.1, estimated_cost_per_trial=0.2)
         enforcer = CostEnforcer(config=config)
 
-        # First permit exceeds budget (0.2 > 0.1)
+        # The first trial always starts (no estimate yet); a second reservation
+        # of 0.2 would exceed the 0.1 budget and is denied.
+        first = enforcer.acquire_permit()
+        assert first.is_granted
         permit = enforcer.acquire_permit()
         assert not permit.is_granted
         assert permit.id == -1
@@ -1265,7 +1276,7 @@ class TestCostEnforcerInternals:
         assert enforcer._in_flight_count == 0
         assert enforcer._reserved_cost == 0.0
         assert enforcer._cost_samples == []
-        assert enforcer._estimated_cost == enforcer.config.estimated_cost_per_trial
+        assert enforcer._estimated_cost == 0.0
         assert enforcer._permit_counter == 0
         assert enforcer._active_permits == {}
         assert enforcer._sync_used is False
@@ -1492,7 +1503,7 @@ class TestCostEnforcerApprovalToken:
         assert enforcer._in_flight_count == 0
         assert enforcer._reserved_cost == 0.0
         assert enforcer._cost_samples == []
-        assert enforcer._estimated_cost == enforcer.config.estimated_cost_per_trial
+        assert enforcer._estimated_cost == 0.0
         # NOTE: _permit_counter should NOT be reset (see CostEnforcer.reset comments)
         assert enforcer._permit_counter == 10
         assert enforcer._active_permits == {}
@@ -1666,7 +1677,10 @@ class TestCostDivergenceWarning:
             config=CostEnforcerConfig(limit=100.0, estimated_cost_per_trial=0.05)
         )
 
-        # Track a cost 3x higher than estimate (default threshold is 2.0)
+        # Establish the estimate (mean 0.05), then track a cost 3x higher
+        # (default threshold is 2.0)
+        first = enforcer.acquire_permit()
+        enforcer.track_cost(0.05, permit=first)
         permit = enforcer.acquire_permit()
         with caplog.at_level("WARNING"):
             enforcer.track_cost(0.15, permit=permit)  # 3x higher
@@ -1679,7 +1693,9 @@ class TestCostDivergenceWarning:
             config=CostEnforcerConfig(limit=100.0, estimated_cost_per_trial=0.10)
         )
 
-        # Track a cost 3x lower than estimate
+        # Establish the estimate (mean 0.10), then track a cost ~3x lower
+        first = enforcer.acquire_permit()
+        enforcer.track_cost(0.10, permit=first)
         permit = enforcer.acquire_permit()
         with caplog.at_level("INFO"):
             enforcer.track_cost(0.03, permit=permit)  # ~3x lower
@@ -1936,7 +1952,9 @@ class TestCostEnforcerEdgeCases:
         self, caplog
     ) -> None:
         """Repeated unknown costs should trigger a one-time cold-start warning."""
-        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
+        enforcer = CostEnforcer(
+            config=CostEnforcerConfig(limit_explicit=False, limit=10.0)
+        )
 
         with caplog.at_level("WARNING"):
             for idx in range(EMA_COLD_START_WARNING_TRIALS):
@@ -1973,3 +1991,48 @@ class TestCostEnforcerEdgeCases:
         # Track cost on already-released permit - should still track cost
         await enforcer.track_cost_async(0.1, permit=permit)
         assert enforcer.accumulated_cost == 0.1
+
+
+class TestLimitExplicitFailsClosed:
+    """A named cost limit refuses a cost-less completed trial (fail closed);
+    only the inherited default cap keeps the unknown-cost fallback."""
+
+    @staticmethod
+    def _complete_without_cost(enforcer: CostEnforcer) -> None:
+        permit = enforcer.acquire_permit()
+        assert permit.is_granted
+        enforcer.track_cost(None, permit=permit)
+
+    def test_dataclass_default_is_explicit(self) -> None:
+        assert CostEnforcerConfig(limit=1.0).limit_explicit is True
+
+    def test_direct_config_with_limit_refuses_costless_trial(self) -> None:
+        enforcer = CostEnforcer(CostEnforcerConfig(limit=1.0))
+        with pytest.raises(CostTrackingRequiredError):
+            self._complete_without_cost(enforcer)
+
+    def test_env_limit_refuses_costless_trial(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TRAIGENT_RUN_COST_LIMIT", "3.0")
+        enforcer = CostEnforcer()
+        assert enforcer.config.limit_explicit is True
+        with pytest.raises(CostTrackingRequiredError):
+            self._complete_without_cost(enforcer)
+
+    def test_default_cap_without_any_limit_uses_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("TRAIGENT_RUN_COST_LIMIT", raising=False)
+        monkeypatch.delenv("TRAIGENT_REQUIRE_COST_TRACKING", raising=False)
+        monkeypatch.delenv("TRAIGENT_STRICT_COST_ACCOUNTING", raising=False)
+        enforcer = CostEnforcer()
+        assert enforcer.config.limit_explicit is False
+        self._complete_without_cost(enforcer)
+        assert enforcer.get_status().unknown_cost_mode is True
+
+    def test_empty_env_limit_is_not_explicit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TRAIGENT_RUN_COST_LIMIT", "  ")
+        assert CostEnforcer().config.limit_explicit is False

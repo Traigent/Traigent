@@ -88,7 +88,11 @@ def _orchestrator(
     orchestrator.backend_session_manager = manager
     orchestrator.traigent_config = config
     orchestrator.cost_enforcer = Mock(
-        get_status=Mock(return_value=SimpleNamespace(accumulated_cost_usd=0.0))
+        get_status=Mock(
+            return_value=SimpleNamespace(
+                accumulated_cost_usd=0.0, unmeasured_trial_count=0
+            )
+        )
     )
     orchestrator._build_certified_selection_report = Mock(return_value=None)
     orchestrator._submit_usage_analytics = AsyncMock()
@@ -278,9 +282,46 @@ async def test_finalize_marks_permanent_submission_rejection_metadata(
     assert config.persistence_reason == "rejected"
 
     combined = " ".join(record.getMessage() for record in caplog.records)
-    assert "rejected by the backend" in combined
-    assert reason in combined
+    assert "rejected persistence" in combined
+    assert reason not in combined
     assert "unreachable during the run" not in combined
+
+
+@pytest.mark.asyncio
+async def test_finalize_log_never_echoes_backend_rejection_reason(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Canary (#2552): a 422 details.reason is kept on the result, not logged.
+
+    The reason is what trial submission parses from a 422 body and hands to
+    _flag_backend_degraded; the end-of-run log must carry no part of it.
+    """
+    reason = "customer text here"
+
+    def finalize(*args, **kwargs):
+        return {"status": "completed", "metadata": {"finalized_via_api": True}}
+
+    config = _config(monkeypatch)
+    config.execution_mode = "hybrid"
+    client = _backend_client(finalize)
+    manager = _manager(config, client)
+    manager._flag_backend_degraded("trial submission", rejection_reason=reason)
+    orchestrator = _orchestrator(config, manager)
+    result = _result()
+
+    caplog.set_level(logging.DEBUG)
+
+    await OptimizationOrchestrator._finalize_optimization(
+        orchestrator, result, "session-finalize", None
+    )
+
+    assert result.metadata["persistence_rejection_reason"] == reason
+    assert manager.backend_rejection_reason == reason
+    assert all(reason not in record.getMessage() for record in caplog.records)
+    assert any(
+        "rejected persistence" in record.getMessage() for record in caplog.records
+    )
 
 
 def test_finalize_does_not_retry_validation_4xx(

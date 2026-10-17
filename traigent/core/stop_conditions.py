@@ -1048,6 +1048,7 @@ class CostLimitStopCondition(StopCondition):
                     self._cost_enforcer.config.fallback_trial_limit,
                     status.limit_usd,
                     status.unmeasured_trial_count,
+                    status.accumulated_cost_usd,
                 )
             )
         return (

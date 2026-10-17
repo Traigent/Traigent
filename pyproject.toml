@@ -46,8 +46,8 @@ dependencies = [
     "cryptography>=50.0.0",  # CVE-2026-26007 + 3 more fixed in 46.0.7 (see #709); CVE-2026-69249/GHSA-jwv3-5hgf-82ww (High, cert-chain DoS) + CVE-2026-69248/GHSA-m2h6-j472-rp4c (Moderate, wildcard-DNS name-constraint escape) fixed in 49.0.0; CVE-2026-69247/GHSA-g6cj-pr64-35w5 (High, PKCS#7 Bleichenbacher oracle) fixed in 50.0.0. Reaching 50 required dropping full mlflow, which pins cryptography<50 -- see #2183.
     "PyJWT[crypto]>=2.15.1,<3.0.0",  # >=2.15.1: Dependabot alerts — DoS, SSRF via JWKClient, HS256 forgery, alg bypass, kid DoS
     "backoff>=2.2.0",
-    "litellm>=1.100.4,<2",  # Floor: 1.84+ escaped the 1.83.x python-dotenv==1.0.1 and openai==2.24.0 exact sub-pins; 1.87.1 is the first stable release verified against this SDK. Upper bound <2 guards against a future breaking major. The demo (TraigentDemo) requires 1.88.0; this range admits it. Only the public API surface (completion, acompletion, cost_per_token, token_counter, model_cost, ModelResponse) is used — stable across the 1.x line.
-    "filelock>=3.29.5,<4",  # AIKIDO-2026-181731 — symlink handling in the lock path; transitive via litellm -> tokenizers -> huggingface-hub, undeclared upstream
+    "litellm>=1.100.5,<2",  # Floor: 1.84+ escaped the 1.83.x python-dotenv==1.0.1 and openai==2.24.0 exact sub-pins; 1.87.1 is the first stable release verified against this SDK. Upper bound <2 guards against a future breaking major. Only the public API surface (completion, acompletion, cost_per_token, token_counter, model_cost, ModelResponse) is used — stable across the 1.x line.
+    "filelock>=4.0.9,<5",  # AIKIDO-2026-181731 (symlink handling in the lock path), AIKIDO-2026-444439 (fixed in 4.0.9; the <4 cap blocked it); transitive via litellm -> tokenizers -> huggingface-hub, undeclared upstream
     "tenacity>=8.1.0",  # tenacity completes litellm's retry surface: litellm imports it lazily in its public *_with_retries helpers (and the retry path exercised on litellm 1.91.0, #1824) but doesn't declare it — declare it so litellm's retry path works on a clean install
     "rank-bm25",
     "psutil>=5.8.0",
@@ -58,7 +58,8 @@ dependencies = [
 [project.optional-dependencies]
 # Analytics and intelligence features (Sprint 8)
 analytics = [
-    "numpy>=1.21.0",
+    "numpy>=1.21.0; python_version < '3.12'",
+    "numpy>=2.5.3; python_version >= '3.12'",  # AIKIDO-2026-775417; numpy 2.5 needs py>=3.12
     "pandas>=1.3.0",
     "matplotlib>=3.5.0",
 ]
@@ -104,7 +105,7 @@ pydanticai = [
     # 2.x span as well. Two patched boundaries exist -- 1.107.4 on the 1.x
     # line and 2.28.0 on 2.x. We take 2.28.0 because that is the version
     # this repo locks, installs and tests against.
-    "pydantic-ai-slim>=2.28.0,<3",
+    "pydantic-ai-slim>=2.53.0,<3",
 ]
 
 # Enterprise security features (Sprint 7)
@@ -131,29 +132,23 @@ hybrid = [
     "httpx[http2]>=0.24.0",
     "h2>=4.4.1,<5",  # GHSA-6hr6-w5qg-qmwg — HTTP/2 request smuggling via duplicate Host headers; transitive via httpx[http2], which floors only h2>=3. Pulls hpack>=4.2 transitively.
     "claude-code-sdk>=0.0.14",
-    "mcp>=1.28.1,<2.0.0",  # CVE-2025-66416, AIKIDO-2026-10472, CVE-2026-59950, CVE-2026-52870 (claude-code-sdk dependency)
+    "mcp>=1.30.0,<3.0.0",  # CVE-2025-66416, AIKIDO-2026-10472, CVE-2026-59950, CVE-2026-52870, CVE-2026-59951 (claude-code-sdk dependency)
 ]
 
 # Local stdio MCP server for coding agents.
 mcp = [
-    "mcp>=1.28.1,<2.0.0",  # CVE-2026-59950 (websocket Host/Origin), CVE-2026-52870 (task-handler session scoping)
+    "mcp>=1.30.0,<3.0.0",  # CVE-2026-59950 (websocket Host/Origin), CVE-2026-52870 (task-handler session scoping), CVE-2026-59951
 ]
 
-# NOTE: there is deliberately no `internal_schema` extra here.
+# NOTE: there is deliberately no extra here for the schema-contract package.
 #
-# traigent-schema is needed at an exact commit (the economics contract is
-# fingerprinted), and PyPI rejects any distribution whose metadata contains a
-# direct URL reference — including one nested in an optional extra. Declaring
-# the pin here made traigent 0.26.0 unpublishable:
+# PyPI rejects any distribution whose metadata contains a direct URL
+# reference, including one nested in an optional extra, so such a pin cannot
+# be declared in this file.
 #
-#     400 Can't have direct dependency: traigent-schema @ git+https://...
-#     ; extra == "internal-schema"
-#
-# The pin now lives in scripts/ci/schema-pin.txt, which is not shipped in the
-# sdist, so pyproject carries no direct reference that could reintroduce this.
-# Internal lanes install it with `pip install -r scripts/ci/schema-pin.txt`.
-# Restore a real extra here only once traigent-schema is on PyPI at the version
-# the SDK's economics contract expects, and then as a version specifier.
+# The pin lives in scripts/ci/schema-pin.txt, which is not shipped in the
+# sdist. CI lanes that need it install it with
+# `pip install -r scripts/ci/schema-pin.txt`.
 
 # Testing dependencies
 test = [
@@ -249,13 +244,14 @@ docs = [
     "mkdocstrings[python]>=0.22.0",
 ]
 
-# NOTE: playground and examples dependencies moved to TraigentDemo project
+# NOTE: playground and examples dependencies are not part of this package
 
 # Machine Learning bundle (parallel execution, advanced algorithms, multi-objective)
 # This is the recommended bundle for production ML workloads
 ml = [
     "traigent[bayesian,analytics]",
-    "numpy>=1.21.0",
+    "numpy>=1.21.0; python_version < '3.12'",
+    "numpy>=2.5.3; python_version >= '3.12'",  # AIKIDO-2026-775417; numpy 2.5 needs py>=3.12
     "scipy>=1.7.0",
 ]
 
@@ -266,8 +262,8 @@ deepeval = [
     "deepeval>=1.0.0",
 ]
 
-# Cloud bundle reserved for future remote execution support.
-# Portal-tracked SDK runs use the supported hybrid extra/mode today.
+# Cloud bundle (security extra plus the AWS SDK).
+# Portal-tracked SDK runs use the hybrid extra/mode.
 cloud = [
     "traigent[security]",
     "boto3>=1.28.0",
@@ -279,22 +275,25 @@ recommended = [
     "traigent[integrations,analytics,bayesian,visualization,hybrid,pydanticai]",
 ]
 
-# All optional features combined (playground/examples moved to TraigentDemo)
+# All optional features combined
 all = [
     "traigent[analytics,bayesian,integrations,pydanticai,security,visualization,test,tracing,hybrid]"
 ]
 
-# Enterprise bundle with all features (playground/examples moved to TraigentDemo)
+# Enterprise bundle with all features
 enterprise = [
     "traigent[analytics,bayesian,integrations,security,visualization,test,tracing,ml,cloud,hybrid]",
 ]
 
 [project.urls]
 Homepage = "https://github.com/Traigent/Traigent"
-Documentation = "https://docs.traigent.ai"
+Documentation = "https://traigent.github.io/Traigent/"
 Repository = "https://github.com/Traigent/Traigent"
 "Bug Tracker" = "https://github.com/Traigent/Traigent/issues"
 Changelog = "https://github.com/Traigent/Traigent/blob/main/CHANGELOG.md"
+Security = "https://github.com/Traigent/Traigent/blob/main/SECURITY.md"
+Support = "https://github.com/Traigent/Traigent/blob/main/SUPPORT.md"
+Discussions = "https://github.com/Traigent/Traigent/discussions"
 
 [project.scripts]
 traigent = "traigent.cli.main:cli"
@@ -504,7 +503,7 @@ exclude_lines = [
 target-version = "py311"
 line-length = 88
 exclude = [
-    # NOTE: examples folder moved to TraigentDemo
+    # NOTE: the examples folder is excluded from this lint configuration
     "docs/diagrams/**",
     "docs/generated/**",
     # traigent/generated/schema_types.py is committed but machine-generated

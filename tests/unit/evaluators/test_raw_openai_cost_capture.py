@@ -749,12 +749,18 @@ def test_env_var_overrides_the_default_safety_limit(monkeypatch, tmp_path):
     assert "default safety limit of 4 trials" in _stop_message(result)
 
 
-def test_env_var_applies_when_cost_limit_is_set(monkeypatch, tmp_path):
-    # cost_limit builds the enforcer config directly; that path used to ignore
-    # TRAIGENT_FALLBACK_TRIAL_LIMIT and use 10.
+def test_explicit_cost_limit_refuses_a_trial_without_a_measured_cost(
+    monkeypatch, tmp_path
+):
+    # An explicit cost_limit cannot be enforced on a completed trial that
+    # reports no cost, so the run is refused instead of falling back to the
+    # unknown-cost trial cap (owner-ruled stop rule, optimize.stop-rules.v1).
+    # This replaces the old check that the env override reached this path.
+    from traigent.utils.exceptions import OptimizationError
+
     monkeypatch.setenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", "4")
-    result = _run(monkeypatch, tmp_path, cost_limit=5.0)
-    assert len(result.trials) == 4
+    with pytest.raises(OptimizationError, match="completed without a reported cost"):
+        _run(monkeypatch, tmp_path, cost_limit=5.0)
 
 
 @pytest.mark.parametrize("where", ["call", "constructor"])
@@ -931,12 +937,12 @@ def test_metric_limit_still_requires_non_cost_metrics():
         condition.should_stop([trial])
 
 
-def test_results_table_shows_unmeasured_cost_as_na():
+def test_results_table_shows_unmeasured_cost_as_unmeasured():
     from traigent.utils.results_table import _render_metric_cell
 
-    assert _render_metric_cell("cost", None) == "n/a"
-    assert _render_metric_cell("total_cost", None) == "n/a"
-    assert _render_metric_cell("cost", 0.0) != "n/a"
+    assert _render_metric_cell("cost", None) == "unmeasured"
+    assert _render_metric_cell("total_cost", None) == "unmeasured"
+    assert _render_metric_cell("cost", 0.0) != "unmeasured"
     assert _render_metric_cell("accuracy", None) == _render_metric_cell("accuracy", 0.0)
 
 
@@ -1293,7 +1299,8 @@ async def test_free_call_plus_unpriced_call_is_unknown_not_free(lane, clean_capt
     result = await _default_measurement_evaluator(lane).evaluate(
         agent, {"model": "fictional/unpriced-model"}, _dataset()
     )
-    assert result.aggregated_metrics["cost"] is None
+    # Unknown cost is left out of the metrics (None only under strict nulls).
+    assert result.aggregated_metrics.get("cost") is None
     assert result.aggregated_metrics["cost_unpriced"] == 1.0
 
 

@@ -1554,7 +1554,11 @@ class TestWorkflowSpanCost:
     def test_unmeasured_trial_span_cost_is_null(self):
         span = self._collect({"accuracy": 1.0})
         assert span.cost_usd is None
-        assert span.to_dict()["cost_usd"] is None
+        # The wire contract requires a number: the unknown cost goes out as the
+        # known-spend floor with the reserved flag saying it is not a measurement.
+        wire = span.to_dict()
+        assert wire["cost_usd"] == 0.0
+        assert wire["metadata"]["traigent.cost_unmeasured"] is True
 
     def test_measured_trial_span_cost_is_the_trial_total(self):
         span = self._collect({"accuracy": 1.0, "total_cost": 0.0042})
@@ -1579,7 +1583,16 @@ def test_workflow_span_cost_preserves_measurement_with_privacy(
     privacy_enabled, metrics, expected
 ):
     span = TestWorkflowSpanCost._collect(metrics, privacy_enabled=privacy_enabled)
-    assert span.to_dict()["cost_usd"] == expected
+    wire = span.to_dict()
+    if expected is None:
+        # Unknown cost: the span field is None; the wire carries the floor plus
+        # the reserved unmeasured flag, never an unflagged 0.0.
+        assert span.cost_usd is None
+        assert wire["cost_usd"] == 0.0
+        assert wire["metadata"]["traigent.cost_unmeasured"] is True
+    else:
+        assert wire["cost_usd"] == expected
+        assert "traigent.cost_unmeasured" not in wire.get("metadata", {})
 
 
 def test_private_workflow_span_cost_never_leaks_invalid_value():
@@ -1587,5 +1600,7 @@ def test_private_workflow_span_cost_never_leaks_invalid_value():
         {"total_cost": "COST-REDACTION-CANARY"}, privacy_enabled=True
     )
     wire = span.to_dict()
-    assert wire["cost_usd"] is None
+    assert span.cost_usd is None
+    assert wire["cost_usd"] == 0.0
+    assert wire["metadata"]["traigent.cost_unmeasured"] is True
     assert "COST-REDACTION-CANARY" not in str(wire)

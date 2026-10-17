@@ -32,7 +32,8 @@ Examples:
     ...     },
     ...     constraints=[
     ...         lambda config: config["temperature"] < 0.8 if config["model"] == "gpt-4" else True,
-    ...         lambda config, metrics: metrics.get("cost") is not None and metrics["cost"] <= 0.10
+    ...         lambda config, metrics: metrics.get("cost") is not None
+    ...         and metrics["cost"] <= 0.10
     ...     ]
     ... )
     ... def process_ticket(ticket: str) -> str:
@@ -2804,7 +2805,8 @@ def optimize(  # NOSONAR(S107)
         ...     },
         ...     constraints=[
         ...         lambda cfg: cfg["max_tokens"] <= 500 if cfg["model"] == "gpt-4" else True,
-        ...         lambda cfg, metrics: metrics.get("cost") is not None and metrics["cost"] <= 0.10
+        ...         lambda cfg, metrics: metrics.get("cost") is not None
+        ...         and metrics["cost"] <= 0.10
         ...     ]
         ... )
         ... def handle_ticket(ticket: str) -> str:

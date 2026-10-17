@@ -349,6 +349,15 @@ class InteractiveOptimizer(BaseOptimizer):
             return self.session
 
         except Exception as e:
+            from traigent.cloud.client import SessionQuotaRefusedError
+
+            if isinstance(e, SessionQuotaRefusedError):
+                # Typed, content-free refusal: status + closed code only (#2550).
+                logger.error(
+                    "Failed to initialize session: plan quota refused "
+                    f"(status={e.status_code}, error_code={e.error_code})"
+                )
+                raise
             logger.error(f"Failed to initialize session: {e}")
             raise OptimizationError(f"Session initialization failed: {e}") from None
 

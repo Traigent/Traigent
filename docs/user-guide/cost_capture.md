@@ -111,16 +111,27 @@ When only some examples were measured, the totals cover those examples and a
 warning names the coverage.
 
 The same holds for a `cost` objective: a trial with no measured example has
-no `cost` (or `None` under strict nulls), never `0.0`. The results table shows
-it as `n/a`. Weighted `best_config` selection counts a missing cost as the
-worst cost, so there an unmeasured trial does not win on cost. Workflow
-spans upload an unmeasured trial's `cost_usd` as `null`. A metrics constraint
-must check for the missing value itself: `metrics.get("cost", 0) <= limit`
-accepts an unmeasured trial, while
-`metrics.get("cost") is not None and metrics["cost"] <= limit` rejects it.
-Two surfaces do not handle it yet: the Pareto front keeps unmeasured trials,
-and the batch composite score ignores the missing cost
-([#2446](https://github.com/Traigent/Traigent/issues/2446)).
+no `cost` (or `None` under strict nulls), never `0.0`; `cost_unmeasured` is
+`1.0` on a trial where any example had no measured cost, and token counts
+estimated from the input are labelled with `tokens_estimated`. The results
+table shows the cost as `unmeasured`. Weighted `best_config` selection counts a
+missing cost as the worst cost, the Pareto front leaves out a trial that is
+missing a configured objective, and the batch composite score gives such a
+trial the failed-trial score instead of scoring it on quality alone. A
+constraint written as `metrics.get("cost", 0) <= limit` still accepts unmeasured
+trials ([#2446](https://github.com/Traigent/Traigent/issues/2446), item 3);
+write `metrics.get("cost") is not None and metrics["cost"] <= limit` instead.
+Workflow spans for an unmeasured trial, and for a failed or pruned trial that
+recorded no cost, send the known spend as `cost_usd` (`0.0` when none was
+reported) together with the metadata flag `traigent.cost_unmeasured: true`; the
+flag, not the number, says the cost is not a measurement. Run summaries
+(`get_summary()`, `experiment_stats`) withhold `total_cost` and report `cost_unmeasured_trials`
+and `cost_lower_bound` when any trial's cost is unmeasured.
+
+A run that stops before the grid is exhausted records why in
+`result.metadata["stop_detail"]` and prints it under the results table: the SDK
+default `max_trials=10` when none was passed, an explicit `max_trials`, or the
+unmeasured-cost safety limit.
 A `metric_limit` on a cost metric leaves unmeasured trials out of its running
 total rather than failing the run. Two run-level warnings say what happened:
 

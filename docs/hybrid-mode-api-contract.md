@@ -485,6 +485,12 @@ Execute the agent with a specific configuration on a batch of inputs.
 | `cost_usd` | number | Alias for total_cost_usd |
 | `latency_ms` | number | Total latency in milliseconds |
 
+**Reserved custom metric `cost_unmeasured`**: set `"cost_unmeasured": 1.0` when some
+executed examples could not be priced. `total_cost_usd` is then only a *lower bound*
+(the spend that was reported; `0.0` if none was), never the total. A consumer that
+honours the flag treats the number as "at least"; the flag, not the number, is the
+signal. Omit the flag only when every example reported its cost.
+
 You can add any custom operational metrics:
 ```json
 {

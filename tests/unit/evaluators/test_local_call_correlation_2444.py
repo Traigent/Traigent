@@ -91,7 +91,9 @@ async def test_an_example_without_calls_does_not_borrow_its_neighbours_usage():
         Dataset([EvaluationExample({"q": q}, "ok") for q in ("a", "b")]),
     )
     assert result.example_results[0].metrics["total_tokens"] < 30
-    assert result.example_results[0].metrics["total_cost"] is None
+    # An example with no captured calls has no cost; the key is left out
+    # (never $0, never a neighbour's spend).
+    assert "total_cost" not in result.example_results[0].metrics
     assert result.example_results[1].metrics["total_tokens"] == 30
 
 

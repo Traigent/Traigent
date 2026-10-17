@@ -1680,3 +1680,185 @@ class TestFlushSpansWithoutContext:
             tracker._flush_spans()
 
         assert "No trace context" in caplog.text
+
+
+# =============================================================================
+# Tests for TraigentSpanExporter run-id binding (#2563)
+# =============================================================================
+
+
+def _fake_otel_span(trace_id: int = 1, span_id: int = 2) -> MagicMock:
+    span = MagicMock()
+    span.get_span_context.return_value = MagicMock(trace_id=trace_id, span_id=span_id)
+    span.parent = None
+    span.name = "node"
+    span.start_time = 1_700_000_000_000_000_000
+    span.end_time = 1_700_000_001_000_000_000
+    span.attributes = {}
+    span.status = None
+    return span
+
+
+@pytest.mark.skipif(not wt_module.OTEL_AVAILABLE, reason="opentelemetry-sdk missing")
+class TestTraigentSpanExporterRunIdBinding:
+    """Spans without a configuration_run_id must not vanish silently (#2563)."""
+
+    def test_export_without_run_id_fails_and_warns_once(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        exporter = wt_module.TraigentSpanExporter(backend_url="http://localhost:5000")
+        exporter.client = MagicMock()
+
+        with caplog.at_level(logging.DEBUG, logger=wt_module.logger.name):
+            first = exporter.export([_fake_otel_span(), _fake_otel_span(span_id=3)])
+            second = exporter.export([_fake_otel_span(span_id=4)])
+
+        assert first == wt_module.SpanExportResult.FAILURE
+        assert second == wt_module.SpanExportResult.FAILURE
+        warnings = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.WARNING and "configuration_run_id" in r.message
+        ]
+        assert len(warnings) == 1
+        assert exporter.dropped_span_count == 3
+        exporter.client.ingest_traces.assert_not_called()
+
+    def test_export_empty_batch_without_run_id_is_success(self) -> None:
+        exporter = wt_module.TraigentSpanExporter(backend_url="http://localhost:5000")
+        assert exporter.export([]) == wt_module.SpanExportResult.SUCCESS
+        assert exporter.dropped_span_count == 0
+
+    def test_setup_workflow_tracing_binds_run_id_getter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(wt_module.trace, "set_tracer_provider", MagicMock())
+        exporter = wt_module.setup_workflow_tracing(
+            backend_url="http://localhost:5000",
+            configuration_run_id_getter=lambda: "cfg-1",
+        )
+        assert exporter is not None
+        exporter.client = MagicMock()
+        exporter.client.ingest_traces.return_value = MagicMock(success=True)
+
+        result = exporter.export([_fake_otel_span()])
+
+        assert result == wt_module.SpanExportResult.SUCCESS
+        exporter.client.ingest_traces.assert_called_once()
+        assert (
+            exporter.client.ingest_traces.call_args.kwargs["configuration_run_id"]
+            == "cfg-1"
+        )
+
+
+@pytest.mark.skipif(not wt_module.OTEL_AVAILABLE, reason="opentelemetry-sdk missing")
+class TestTraigentSpanExporterConversionFailure:
+    """Spans that fail conversion must be counted and reported (#2571)."""
+
+    def _exporter(self) -> Any:
+        exporter = wt_module.TraigentSpanExporter(
+            backend_url="http://localhost:5000",
+            configuration_run_id_getter=lambda: "cfg-1",
+        )
+        exporter.client = MagicMock()
+        exporter.client.ingest_traces.return_value = MagicMock(success=True)
+        return exporter
+
+    def test_all_spans_failing_conversion_fail_the_export(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        exporter = self._exporter()
+        spans = [_fake_otel_span(span_id=i) for i in range(2, 5)]
+        for span in spans:
+            span.attributes = {"llm.input_tokens": "n/a"}
+
+        with caplog.at_level(logging.WARNING, logger=wt_module.logger.name):
+            result = exporter.export(spans)
+
+        assert result == wt_module.SpanExportResult.FAILURE
+        assert exporter.dropped_span_count == 3
+        exporter.client.ingest_traces.assert_not_called()
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "3 of 3" in warnings[0].getMessage()
+
+    def test_partial_conversion_failure_sends_the_rest_and_fails(self) -> None:
+        exporter = self._exporter()
+        bad = _fake_otel_span(span_id=3)
+        # A non-integer token count is a genuine conversion failure. (A
+        # non-numeric ``llm.cost_usd`` is not: it is an unmeasured cost, see
+        # test_unparsable_span_cost_is_unmeasured_never_zero.)
+        bad.attributes = {"llm.input_tokens": "n/a"}
+
+        result = exporter.export([_fake_otel_span(span_id=2), bad])
+
+        assert result == wt_module.SpanExportResult.FAILURE
+        assert exporter.dropped_span_count == 1
+        exporter.client.ingest_traces.assert_called_once()
+        assert len(exporter.client.ingest_traces.call_args.kwargs["spans"]) == 1
+
+    @pytest.mark.parametrize("raw", ["free", "", float("nan"), -1.0, float("inf")])
+    def test_unparsable_span_cost_is_unmeasured_never_zero(self, raw: Any) -> None:
+        exporter = self._exporter()
+        span = _fake_otel_span(span_id=3)
+        span.attributes = {"llm.cost_usd": raw}
+
+        result = exporter.export([span])
+
+        assert result == wt_module.SpanExportResult.SUCCESS
+        assert exporter.dropped_span_count == 0
+        (sent,) = exporter.client.ingest_traces.call_args.kwargs["spans"]
+        assert sent.cost_usd is None
+        assert sent.to_dict()["metadata"][wt_module.SPAN_COST_UNMEASURED_KEY] is True
+
+    def test_clean_batch_still_succeeds_without_drops(self) -> None:
+        exporter = self._exporter()
+        assert (
+            exporter.export([_fake_otel_span(span_id=2)])
+            == wt_module.SpanExportResult.SUCCESS
+        )
+        assert exporter.dropped_span_count == 0
+
+
+class TestTraceTrialUnflushedSpans:
+    """auto_send=False must not discard buffered spans silently (#2571)."""
+
+    def _tracker(self) -> WorkflowTracesTracker:
+        tracker = WorkflowTracesTracker(
+            backend_url="http://localhost:5000", auto_send=False
+        )
+        tracker.client = MagicMock()
+        return tracker
+
+    def test_exit_with_unflushed_spans_warns_and_counts(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        tracker = self._tracker()
+
+        with caplog.at_level(logging.WARNING, logger=wt_module.logger.name):
+            with tracker.trace_trial("cfg-1"):
+                tracker.add_span("s1", "node", "node", "2026-01-01T00:00:00+00:00")
+                tracker.add_span("s2", "node", "node", "2026-01-01T00:00:01+00:00")
+
+        tracker.client.ingest_traces.assert_not_called()
+        assert tracker.dropped_span_count == 2
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "2 unflushed span(s)" in warnings[0].getMessage()
+
+    def test_flush_inside_context_drops_nothing(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        tracker = self._tracker()
+        tracker.client.ingest_traces.return_value = MagicMock(
+            success=True, spans_ingested=1
+        )
+
+        with caplog.at_level(logging.WARNING, logger=wt_module.logger.name):
+            with tracker.trace_trial("cfg-1"):
+                tracker.add_span("s1", "node", "node", "2026-01-01T00:00:00+00:00")
+                tracker.flush()
+
+        tracker.client.ingest_traces.assert_called_once()
+        assert tracker.dropped_span_count == 0
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]

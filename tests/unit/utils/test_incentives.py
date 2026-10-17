@@ -1588,6 +1588,56 @@ def test_session_summary_rebuilds_invalid_cache_values(
     assert summaries[0].completed_trials == 1
 
 
+def test_session_summary_index_does_not_follow_cache_symlink_out_of_storage(
+    tmp_path,
+):
+    """A ``cache`` symlink must not redirect index reads or writes (#2457)."""
+    from traigent.storage.local_storage import LocalStorageManager
+
+    storage_root = tmp_path / "store"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    storage = LocalStorageManager(str(storage_root))
+    session_id = storage.create_session("test")
+    storage.add_trial_result(session_id, {}, 1.0)
+    storage.finalize_session(session_id)
+
+    cache_dir = storage_root / "cache"
+    for child in cache_dir.iterdir():
+        if child.is_dir():
+            child.rmdir()
+        else:
+            child.unlink()
+    cache_dir.rmdir()
+    cache_dir.symlink_to(outside, target_is_directory=True)
+
+    summaries = storage.session_summaries()
+
+    # Control: the summary is still correct without the index ...
+    assert [s.completed_trials for s in summaries] == [1]
+    # ... and nothing was written through the link.
+    assert list(outside.iterdir()) == []
+
+
+def test_session_summary_index_symlink_to_a_session_is_never_overwritten(tmp_path):
+    """A symlinked index file must not let the atomic write clobber a session."""
+    from traigent.storage.local_storage import LocalStorageManager
+
+    storage = LocalStorageManager(str(tmp_path))
+    session_id = storage.create_session("test")
+    storage.add_trial_result(session_id, {}, 1.0)
+    storage.finalize_session(session_id)
+    session_file = tmp_path / "sessions" / f"{session_id}.json"
+    before = session_file.read_bytes()
+    (tmp_path / "cache" / storage._SESSION_INDEX_NAME).symlink_to(session_file)
+
+    summaries = storage.session_summaries()
+
+    assert [s.completed_trials for s in summaries] == [1]
+    assert session_file.read_bytes() == before
+    assert storage.load_session(session_id) is not None
+
+
 def test_nested_summary_writers_use_unique_temporary_paths(tmp_path, monkeypatch):
     import os
 

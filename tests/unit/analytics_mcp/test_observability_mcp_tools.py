@@ -558,6 +558,208 @@ async def test_observability_search_propagates_only_bounded_filters(
         status="failed",
         environment="prod",
         release="release-7",
+        model=None,
+        tags=None,
+        outcome_kind=None,
+        has_outcome=None,
+    )
+
+
+def _empty_trace_search() -> dict[str, object]:
+    return {
+        "items": [],
+        "page": 1,
+        "per_page": 50,
+        "total": 0,
+        "has_more": False,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("filters", "message"),
+    [
+        ({"outcome_kind": "refund"}, "outcome_kind"),
+        ({"outcome_kind": "Conversion"}, "outcome_kind"),
+        ({"model": "m" * 256}, "model"),
+        ({"tags": [f"tag-{index}" for index in range(21)]}, "tags"),
+        ({"tags": ["t" * 256]}, "tags"),
+        ({"tags": ["vip", " vip "]}, "tags"),
+        ({"has_outcome": "false"}, "has_outcome"),
+        ({"has_outcome": 0}, "has_outcome"),
+        ({"outcome_kind": "csat", "has_outcome": False}, "has_outcome"),
+    ],
+)
+async def test_observability_search_rejects_invalid_new_filters(
+    monkeypatch, filters: dict[str, object], message: str
+) -> None:
+    from traigent.analytics_mcp.tools import observability_search_traces_tool
+
+    reader = AsyncMock()
+    _install_fake_client(monkeypatch, reader)
+
+    result = await observability_search_traces_tool(
+        "project-1", "2026-07-01T00:00:00Z", "2026-07-02T00:00:00Z", **filters
+    )
+
+    assert result["ok"] is False
+    assert result["code"] == "invalid_input"
+    assert message in result["message"]
+    reader.search_observability_traces.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_observability_search_forwards_normalized_new_filters(
+    monkeypatch,
+) -> None:
+    from traigent.analytics_mcp.tools import observability_search_traces_tool
+
+    reader = AsyncMock()
+    reader.search_observability_traces.return_value = _empty_trace_search()
+    _install_fake_client(monkeypatch, reader)
+
+    matched = await observability_search_traces_tool(
+        "project-1",
+        "2026-07-01T00:00:00Z",
+        "2026-07-02T00:00:00Z",
+        model=" gpt-4o-mini ",
+        tags=[" vip ", "support,billing"],
+        outcome_kind=" csat ",
+        has_outcome=True,
+    )
+    without_outcome = await observability_search_traces_tool(
+        "project-1",
+        "2026-07-01T00:00:00Z",
+        "2026-07-02T00:00:00Z",
+        has_outcome=False,
+    )
+
+    assert matched["ok"] is True
+    assert without_outcome["ok"] is True
+    first, second = reader.search_observability_traces.await_args_list
+    assert first.args == ("project-1",)
+    assert {
+        key: first.kwargs[key]
+        for key in ("model", "tags", "outcome_kind", "has_outcome")
+    } == {
+        "model": "gpt-4o-mini",
+        "tags": ["vip", "support,billing"],
+        "outcome_kind": "csat",
+        "has_outcome": True,
+    }
+    assert second.kwargs["has_outcome"] is False
+    assert second.kwargs["outcome_kind"] is None
+    for unsupported in ("search", "user_id", "session_id"):
+        assert unsupported not in first.kwargs
+
+
+@pytest.mark.asyncio
+async def test_observability_search_rejects_tuple_tags(monkeypatch) -> None:
+    from traigent.analytics_mcp.tools import observability_search_traces_tool
+
+    reader = AsyncMock()
+    _install_fake_client(monkeypatch, reader)
+
+    result = await observability_search_traces_tool(
+        "project-1",
+        "2026-07-01T00:00:00Z",
+        "2026-07-02T00:00:00Z",
+        tags=("a", "b"),
+    )
+
+    assert result["ok"] is False
+    assert result["code"] == "invalid_input"
+    assert "tags" in result["message"]
+    reader.search_observability_traces.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_registered_trace_search_coerces_json_string_has_outcome(
+    monkeypatch,
+) -> None:
+    """FastMCP's lenient argument coercion turns ``"false"`` into ``False``.
+
+    The direct helper rejects a string ``has_outcome``; through the registered
+    server the declared ``bool | None`` parameter coerces it first, which is
+    intended: the reader still receives a real bool, never the string.
+    """
+    pytest.importorskip("mcp")
+    from traigent.analytics_mcp.server import create_server
+
+    reader = AsyncMock()
+    reader.search_observability_traces.return_value = _empty_trace_search()
+    _install_fake_client(monkeypatch, reader)
+
+    await create_server().call_tool(
+        "observability_search_traces",
+        {
+            "project_id": "project-1",
+            "start_time": "2026-07-01T00:00:00Z",
+            "end_time": "2026-07-02T00:00:00Z",
+            "has_outcome": "false",
+        },
+    )
+
+    reader.search_observability_traces.assert_awaited_once()
+    assert reader.search_observability_traces.await_args.kwargs["has_outcome"] is False
+
+
+@pytest.mark.asyncio
+async def test_registered_trace_search_schema_lists_only_bounded_filters() -> None:
+    pytest.importorskip("mcp")
+    from traigent.analytics_mcp.server import create_server
+
+    tools = {tool.name: tool for tool in await create_server().list_tools()}
+    schema = tools["observability_search_traces"].model_dump(by_alias=True)[
+        "inputSchema"
+    ]
+    properties = schema["properties"]
+
+    assert {"model", "tags", "outcome_kind", "has_outcome"}.issubset(properties)
+    assert "array" in str(properties["tags"])
+    assert "boolean" in str(properties["has_outcome"])
+    for unsupported in ("search", "user_id", "session_id", "q", "metadata"):
+        assert unsupported not in properties
+    for optional in ("model", "tags", "outcome_kind", "has_outcome"):
+        assert optional not in schema.get("required", [])
+
+
+@pytest.mark.asyncio
+async def test_registered_trace_search_wrapper_forwards_new_filters(
+    monkeypatch,
+) -> None:
+    pytest.importorskip("mcp")
+    from traigent.analytics_mcp import server as server_module
+
+    helper = AsyncMock(return_value={"ok": True})
+    monkeypatch.setattr(server_module, "observability_search_traces_tool", helper)
+
+    assert await server_module.create_server().call_tool(
+        "observability_search_traces",
+        {
+            "project_id": "project-1",
+            "start_time": "2026-07-01T00:00:00Z",
+            "end_time": "2026-07-02T00:00:00Z",
+            "model": "gpt-4o-mini",
+            "tags": ["vip", "support,billing"],
+            "outcome_kind": "resolution",
+            "has_outcome": False,
+        },
+    )
+
+    helper.assert_awaited_once_with(
+        "project-1",
+        "2026-07-01T00:00:00Z",
+        "2026-07-02T00:00:00Z",
+        1,
+        50,
+        None,
+        None,
+        None,
+        model="gpt-4o-mini",
+        tags=["vip", "support,billing"],
+        outcome_kind="resolution",
+        has_outcome=False,
     )
 
 
@@ -1148,4 +1350,10 @@ async def test_registered_observability_wrappers_match_helper_contracts(
     monkeypatch.setattr(server_module, helper_name, helper)
 
     assert await server_module.create_server().call_tool(tool_name, arguments)
-    helper.assert_awaited_once_with(*expected)
+    if tool_name == "observability_search_traces":
+        # The trace-search filters added for #2564 are forwarded by name.
+        helper.assert_awaited_once_with(
+            *expected, model=None, tags=None, outcome_kind=None, has_outcome=None
+        )
+    else:
+        helper.assert_awaited_once_with(*expected)

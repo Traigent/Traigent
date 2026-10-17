@@ -26,6 +26,8 @@ Usage:
 For OpenTelemetry integration, use TraigentSpanExporter:
     exporter = TraigentSpanExporter(backend_url, auth_token)
     provider.add_span_processor(BatchSpanProcessor(exporter))
+    # Spans are only exported while a configuration_run_id is bound:
+    exporter.set_configuration_run_id("config_run_789")
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Observability FUNC-INTEGRATIONS FUNC-ANALYTICS REQ-INT-008 REQ-ANLY-011
@@ -35,9 +37,10 @@ from __future__ import annotations
 import contextvars
 import hashlib
 import json
+import math
 import os
 import threading
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -115,6 +118,32 @@ class SpanType(StrEnum):
 # =============================================================================
 
 
+def _optional_span_cost(value: Any) -> float | None:
+    """A span attribute as a cost, or ``None`` when it carries no finite number.
+
+    An absent (or non-numeric) ``llm.cost_usd`` is "no cost reported", which
+    is not a measured $0 (Traigent#2517); the span omits it.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        cost = float(value)
+    except (TypeError, ValueError):
+        return None
+    return cost if math.isfinite(cost) and cost >= 0 else None
+
+
+#: Reserved span ``metadata`` key (the schema's open object) marking a span whose
+#: ``cost_usd`` is only the reported floor. Never written at the top level.
+SPAN_COST_UNMEASURED_KEY = "traigent.cost_unmeasured"
+
+
+def unmeasured_span_floor(lower_bound: float | None) -> float:
+    """The ``cost_usd`` an unmeasured span sends: the reported floor, else 0.0."""
+    bound = _optional_span_cost(lower_bound)
+    return bound if bound is not None else 0.0
+
+
 @dataclass
 class SpanPayload:
     """Span data payload for backend ingestion.
@@ -141,8 +170,12 @@ class SpanPayload:
     # Metrics
     input_tokens: int = 0
     output_tokens: int = 0
-    #: ``None`` means the cost is unknown (no usage captured), not $0 (#2446).
+    # None = unmeasured cost. The wire contract requires a number, so an
+    # unmeasured span sends the reported floor (``cost_lower_bound``; 0.0 when
+    # nothing was reported) as ``cost_usd`` plus the reserved metadata flag
+    # below -- the flag, never the number, says it is not a measurement.
     cost_usd: float | None = 0.0
+    cost_lower_bound: float | None = None
 
     # Data
     input_data: dict[str, Any] | None = None
@@ -163,8 +196,13 @@ class SpanPayload:
             "status": self.status,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
-            "cost_usd": self.cost_usd,
         }
+        metadata = dict(self.metadata) if self.metadata else {}
+        if self.cost_usd is not None:
+            result["cost_usd"] = self.cost_usd
+        else:
+            result["cost_usd"] = unmeasured_span_floor(self.cost_lower_bound)
+            metadata[SPAN_COST_UNMEASURED_KEY] = True
 
         # Add optional fields only if present
         if self.parent_span_id:
@@ -181,8 +219,8 @@ class SpanPayload:
             result["input_data"] = self.input_data
         if self.output_data:
             result["output_data"] = self.output_data
-        if self.metadata:
-            result["metadata"] = self.metadata
+        if metadata:
+            result["metadata"] = metadata
 
         return result
 
@@ -321,25 +359,54 @@ class TraceIngestionRequest:
 
 @dataclass
 class TraceIngestionResponse:
-    """Response from trace ingestion endpoint."""
+    """Response from trace ingestion endpoint.
+
+    ``spans_ingested_reported`` is False when the backend response carried no
+    non-negative integer ``spans_ingested``; ``spans_ingested`` is then 0 and
+    must not be read as "the backend ingested zero spans". A directly
+    constructed response states its count only when ``spans_ingested`` is
+    passed: ``TraceIngestionResponse(success=True)`` is unreported, while
+    ``spans_ingested=0`` states zero. After construction ``spans_ingested`` is
+    always an int and ``spans_ingested_reported`` always a bool.
+    """
 
     success: bool
     graph_id: str | None = None
-    spans_ingested: int = 0
+    spans_ingested: int | None = None
     trace_id: str | None = None
     error: str | None = None
+    spans_ingested_reported: bool | None = None
+    skipped_duplicates: int = 0
+
+    def __post_init__(self) -> None:
+        if self.spans_ingested_reported is None:
+            self.spans_ingested_reported = self.spans_ingested is not None
+        if self.spans_ingested is None:
+            self.spans_ingested = 0
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TraceIngestionResponse:
         """Create from API response dictionary."""
         response_data = data.get("data", {})
+        spans_ingested = response_data.get("spans_ingested")
+        skipped_duplicates = response_data.get("skipped_duplicates")
+        reported = _is_count(spans_ingested)
         return cls(
             success=data.get("success", False),
             graph_id=response_data.get("graph_id"),
-            spans_ingested=response_data.get("spans_ingested", 0),
+            spans_ingested=spans_ingested if reported else 0,
             trace_id=response_data.get("trace_id"),
             error=data.get("error"),
+            spans_ingested_reported=reported,
+            skipped_duplicates=(
+                skipped_duplicates if _is_count(skipped_duplicates) else 0
+            ),
         )
+
+
+def _is_count(value: Any) -> bool:
+    """Return True for a non-negative int that is not a bool."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 # =============================================================================
@@ -936,6 +1003,11 @@ if OTEL_AVAILABLE:
             )
             provider.add_span_processor(BatchSpanProcessor(exporter))
             trace.set_tracer_provider(provider)
+
+            # Spans are only exported while a configuration_run_id is bound
+            # (here, or via configuration_run_id_getter); unbound spans are
+            # dropped with one WARNING and counted in dropped_span_count.
+            exporter.set_configuration_run_id("config_run_789")
         """
 
         def __init__(
@@ -956,6 +1028,14 @@ if OTEL_AVAILABLE:
             self._config_run_getter = configuration_run_id_getter
             self._current_config_run_id: str | None = None
             self._lock = threading.Lock()
+            self._dropped_span_count = 0
+            self._warned_missing_run_id = False
+
+        @property
+        def dropped_span_count(self) -> int:
+            """Spans not sent: no configuration_run_id bound, or conversion failed."""
+            with self._lock:
+                return self._dropped_span_count
 
         def set_configuration_run_id(self, config_run_id: str) -> None:
             """Set the current configuration run ID for span association."""
@@ -989,12 +1069,24 @@ if OTEL_AVAILABLE:
 
             config_run_id = self._get_config_run_id()
             if not config_run_id:
-                logger.debug("No configuration_run_id set, skipping span export")
-                return SpanExportResult.SUCCESS
+                with self._lock:
+                    self._dropped_span_count += len(spans)
+                    first_drop = not self._warned_missing_run_id
+                    self._warned_missing_run_id = True
+                log = logger.warning if first_drop else logger.debug
+                log(
+                    "No configuration_run_id bound to TraigentSpanExporter; "
+                    "dropping %d span(s). Pass configuration_run_id_getter or "
+                    "call set_configuration_run_id().",
+                    len(spans),
+                )
+                return SpanExportResult.FAILURE
 
             # Group spans by trace_id
             trace_groups: dict[str, list[SpanPayload]] = {}
 
+            conversion_failures = 0
+            first_error: Exception | None = None
             for otel_span in spans:
                 try:
                     span_payload = self._convert_span(otel_span, config_run_id)
@@ -1003,10 +1095,22 @@ if OTEL_AVAILABLE:
                         trace_groups[trace_id] = []
                     trace_groups[trace_id].append(span_payload)
                 except Exception as e:
-                    logger.warning(f"Failed to convert span: {e}")
+                    conversion_failures += 1
+                    if first_error is None:
+                        first_error = e
 
-            # Export each trace group
-            all_success = True
+            if conversion_failures:
+                with self._lock:
+                    self._dropped_span_count += conversion_failures
+                logger.warning(
+                    "Dropping %d of %d span(s) that failed conversion: %s",
+                    conversion_failures,
+                    len(spans),
+                    first_error,
+                )
+
+            # Export each trace group; any dropped span fails the export
+            all_success = conversion_failures == 0
             for trace_id, span_payloads in trace_groups.items():
                 try:
                     response = self.client.ingest_traces(
@@ -1076,7 +1180,9 @@ if OTEL_AVAILABLE:
                 decision_reason=attributes.get("decision.reason"),
                 input_tokens=int(attributes.get("llm.input_tokens", 0)),
                 output_tokens=int(attributes.get("llm.output_tokens", 0)),
-                cost_usd=float(attributes.get("llm.cost_usd", 0.0)),
+                # No ``llm.cost_usd`` attribute means the span reported no
+                # cost: omitted from the payload, never a measured $0 (#2517).
+                cost_usd=_optional_span_cost(attributes.get("llm.cost_usd")),
                 metadata={
                     k: v
                     for k, v in attributes.items()
@@ -1156,7 +1262,11 @@ class WorkflowTracesTracker:
             backend_url: Base URL of the backend (defaults to env var
                 TRAIGENT_BACKEND_URL or the configured cloud backend)
             auth_token: Bearer token for authentication (defaults to env var TRAIGENT_API_TOKEN)
-            auto_send: Automatically send spans at end of trial context
+            auto_send: Automatically send spans at end of trial context.
+                With ``auto_send=False``, call ``flush()`` inside the
+                ``trace_trial`` context: spans still buffered when it exits
+                are discarded with a WARNING and counted in
+                ``dropped_span_count``.
             batch_size: Number of spans to batch before sending
         """
         backend_url = (
@@ -1195,6 +1305,13 @@ class WorkflowTracesTracker:
         )
         self._graph_id: str | None = None
         self._lock = threading.Lock()
+        self._dropped_span_count = 0
+
+    @property
+    def dropped_span_count(self) -> int:
+        """Spans discarded unsent at trace_trial exit (auto_send=False)."""
+        with self._lock:
+            return self._dropped_span_count
 
     @property
     def _spans(self) -> list[SpanPayload]:
@@ -1370,6 +1487,16 @@ class WorkflowTracesTracker:
             # Send collected spans if auto_send is enabled
             if self.auto_send and self._spans:
                 self._flush_spans()
+            elif self._spans:
+                unflushed = len(self._spans)
+                with self._lock:
+                    self._dropped_span_count += unflushed
+                logger.warning(
+                    "Discarding %d unflushed span(s) at trace_trial exit "
+                    "(auto_send=False); call flush() inside the trace_trial "
+                    "context to send them.",
+                    unflushed,
+                )
 
             # Restore previous context-local state using tokens
             self._cv_trace_id.reset(token_trace)
@@ -1389,7 +1516,7 @@ class WorkflowTracesTracker:
         error_message: str | None = None,
         input_tokens: int = 0,
         output_tokens: int = 0,
-        cost_usd: float = 0.0,
+        cost_usd: float | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Manually add a span to the current trial trace.
@@ -1406,7 +1533,9 @@ class WorkflowTracesTracker:
             error_message: Error message if failed
             input_tokens: Number of input tokens
             output_tokens: Number of output tokens
-            cost_usd: Cost in USD
+            cost_usd: Cost in USD. ``None`` (the default) means the caller
+                reported no cost: it is omitted from the payload rather than
+                uploaded as a measured ``0.0``.
             metadata: Additional metadata
         """
         if not self._current_trace_id or not self._current_config_run_id:
@@ -1536,15 +1665,27 @@ def create_workflow_tracker(
 def setup_workflow_tracing(
     backend_url: str | None = None,
     auth_token: str | None = None,
+    configuration_run_id_getter: Callable[[], str | None] | None = None,
 ) -> TraigentSpanExporter | None:
     """Set up OpenTelemetry tracing with the Traigent exporter.
 
     This function configures OpenTelemetry to automatically capture
     and export spans to the Traigent backend.
 
+    Every span must be linked to a configuration run (trial). Spans
+    exported while no configuration_run_id is bound are NOT sent: the
+    exporter logs one WARNING, counts them in ``dropped_span_count`` and
+    returns ``FAILURE``. Bind the id either with
+    ``configuration_run_id_getter`` or by calling
+    ``set_configuration_run_id()`` on the returned exporter. The getter runs
+    on the span processor's export thread, so read the id from state that
+    thread can see (not a ContextVar of the calling task).
+
     Args:
         backend_url: Backend URL (defaults to env var)
         auth_token: Auth token (defaults to env var)
+        configuration_run_id_getter: Callable returning the current
+            configuration_run_id (or None) for span association
 
     Returns:
         TraigentSpanExporter instance if OTEL is available, None otherwise
@@ -1566,6 +1707,7 @@ def setup_workflow_tracing(
     exporter = TraigentSpanExporter(
         backend_url=resolved_url,  # type: ignore[arg-type]
         auth_token=auth_token,
+        configuration_run_id_getter=configuration_run_id_getter,
     )
 
     provider = TracerProvider()

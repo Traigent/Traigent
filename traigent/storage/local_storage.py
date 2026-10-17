@@ -26,7 +26,7 @@ from ..utils.exceptions import TraigentStorageError
 from ..utils.function_identity import sanitize_identifier
 from ..utils.logging import get_logger
 from ..utils.objectives import is_minimization_objective
-from ..utils.secure_path import safe_open, validate_path
+from ..utils.secure_path import PathTraversalError, safe_open, validate_path
 
 logger = get_logger(__name__)
 
@@ -806,9 +806,29 @@ class LocalStorageManager:
         sessions_dir = self.storage_path / "sessions"
         if not sessions_dir.exists():
             return []
-        index_path = self.storage_path / "cache" / self._SESSION_INDEX_NAME
+        # ``cache`` may be a symlink to somewhere else: confine the index (and
+        # its temp file) to the storage root like session writes are, and run
+        # uncached rather than follow the link out.
+        index_path: Path | None
+        try:
+            index_path = validate_path(
+                self.storage_path / "cache" / self._SESSION_INDEX_NAME,
+                self.storage_path,
+                must_exist=False,
+            )
+            # A symlinked index file could point at a stored session (in-root,
+            # so containment passes) and the atomic replace would clobber it.
+            if (
+                index_path.is_symlink()
+                or (self.storage_path / "cache" / self._SESSION_INDEX_NAME).is_symlink()
+            ):
+                index_path = None
+        except (PathTraversalError, OSError, ValueError):
+            index_path = None
         index: dict[str, Any] = {}
         try:
+            if index_path is None:
+                raise OSError("session summary index outside storage root")
             with open(index_path) as f:
                 loaded = json.load(f)
             if isinstance(loaded, dict):
@@ -848,16 +868,20 @@ class LocalStorageManager:
                 int(session.completed_trials or 0),
             ]
 
-        if fresh != index:
+        if index_path is not None and fresh != index:
             try:
-                tmp_path = index_path.with_name(f".{index_path.name}.{uuid4().hex}.tmp")
+                tmp_path = validate_path(
+                    index_path.with_name(f".{index_path.name}.{uuid4().hex}.tmp"),
+                    self.storage_path,
+                    must_exist=False,
+                )
                 try:
                     with open(tmp_path, "x") as f:
                         json.dump(fresh, f)
                     os.replace(tmp_path, index_path)
                 finally:
                     tmp_path.unlink(missing_ok=True)
-            except OSError as e:
+            except (PathTraversalError, OSError) as e:
                 logger.debug(f"Failed to write session summary index: {e}")
 
         return [

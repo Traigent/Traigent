@@ -15,11 +15,11 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
 from traigent.core.objective_directions import (
     resolve_objective_orientation,
     validate_objective_orientation,
 )
+from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
 from traigent.utils.exceptions import PlatformCapabilityError
 from traigent.utils.logging import get_logger
 
@@ -698,13 +698,20 @@ class ExperimentStats:
     """Aggregated statistics for a complete optimization experiment."""
 
     total_duration: float
-    total_cost: float
+    #: Spend over the whole experiment. ``None`` when any trial's cost is
+    #: unmeasured (``cost_unmeasured_trials > 0``): the known spend is then
+    #: only a lower bound, reported as ``cost_lower_bound``, never a total.
+    total_cost: float | None
     unique_configurations: int
     trial_counts: dict[str, int]
     average_trial_duration: float | None = None
     cost_per_configuration: float | None = None
     success_rate: float | None = None
     error_message: str | None = None
+    #: Number of trials flagged ``cost_unmeasured`` (Traigent#2517).
+    cost_unmeasured_trials: int = 0
+    #: Known spend when ``total_cost`` is withheld for unmeasured trials.
+    cost_lower_bound: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return stats as a plain dictionary for logging/reporting."""
@@ -718,6 +725,8 @@ class ExperimentStats:
             "cost_per_configuration": self.cost_per_configuration,
             "success_rate": self.success_rate,
             "error_message": self.error_message,
+            "cost_unmeasured_trials": self.cost_unmeasured_trials,
+            "cost_lower_bound": self.cost_lower_bound,
         }
 
 
@@ -1181,6 +1190,48 @@ class OptimizationResult:
 
         return build_outcome_matrix(self)
 
+    def failing_examples(
+        self,
+        threshold: float = 0.5,
+        mode: Literal["all_configs", "best_config"] = "all_configs",
+    ) -> list[str]:
+        """Ids of the examples this run got wrong, from its outcome matrix.
+
+        A cell fails on an error, on ``success=False``, or on a finite per-example
+        ``score`` (``accuracy`` when ``score`` is absent) strictly below
+        ``threshold``; equality passes. Cells with no usable score are unknown,
+        not zero. An example is returned only when every selected column failed:
+        every trial for ``"all_configs"``, or the winning configuration's trials
+        for ``"best_config"`` (``session_summary["winning_trial_ids"]`` when
+        stamped, else config equality with ``best_config``).
+
+        Returns:
+            Failing example ids in matrix row order, each once; ``[]`` when the
+            run has usable evidence but nothing failed everywhere.
+
+        Raises:
+            ValueError: On an invalid threshold/mode, no per-example detail, no
+                usable pass/fail signal, or no resolvable winner for
+                ``"best_config"``.
+        """
+        from traigent.utils.outcome_matrix import select_failing_example_ids
+
+        winning_trial_ids: list[Any] | None = None
+        metadata = self.metadata
+        if isinstance(metadata, dict):
+            summary = metadata.get("session_summary")
+            if isinstance(summary, dict):
+                stamped = summary.get("winning_trial_ids")
+                if isinstance(stamped, list) and stamped:
+                    winning_trial_ids = stamped
+        return select_failing_example_ids(
+            self.example_matrix,
+            threshold=threshold,
+            mode=mode,
+            best_config=self.best_config,
+            winning_trial_ids=winning_trial_ids,
+        )
+
     @property
     def eval_audit(self) -> EvalAudit | None:
         """Opt-in eval-dataset defect audit for this run (issues #1880 + #1881).
@@ -1378,6 +1429,22 @@ class OptimizationResult:
                 return dict(trial.metrics)
         return {}
 
+    @staticmethod
+    def _cost_flagged_for_objective(trial: TrialResult, objective: str) -> bool:
+        """True when ``objective`` is a cost objective and the trial's cost is flagged.
+
+        A number next to ``cost_unmeasured`` is a floor or a stray zero, never a
+        ranking value (Traigent#2517); same convention as the Pareto front.
+        """
+        from traigent.utils.multi_objective import (  # noqa: PLC0415
+            _COST_OBJECTIVE_NAMES,
+        )
+        from traigent.utils.trial_costs import is_cost_unmeasured  # noqa: PLC0415
+
+        return objective in _COST_OBJECTIVE_NAMES and is_cost_unmeasured(
+            getattr(trial, "metrics", None)
+        )
+
     def _calculate_objective_ranges(self) -> dict[str, tuple[float, float]]:
         """Calculate min/max ranges for each objective across ranking-eligible
         (falling back to all successful) trials — see ``_ranking_source_trials``
@@ -1391,6 +1458,8 @@ class OptimizationResult:
         for obj in self.objectives:
             values = []
             for trial in self._ranking_source_trials:
+                if self._cost_flagged_for_objective(trial, obj):
+                    continue
                 if trial.metrics and obj in trial.metrics:
                     value = trial.metrics[obj]
                     if value is not None:
@@ -1574,10 +1643,20 @@ class OptimizationResult:
             )
 
             unique_configuration_count = len(aggregation.unique_configs)
-            total_cost = self._resolve_total_cost(aggregation.computed_total_cost)
+            known_cost = self._resolve_total_cost(aggregation.computed_total_cost)
+            unmeasured_trials = self._cost_unmeasured_trial_count()
+            total_cost: float | None = known_cost
+            cost_lower_bound: float | None = None
+            if unmeasured_trials:
+                # Some trial's cost is unknown: the known spend is a floor, not
+                # the experiment's cost, and "cost per configuration" would
+                # divide a floor (or a fabricated 0.0) by the configs (#2517).
+                total_cost = None
+                floor = max(known_cost, self._reported_cost_floor())
+                cost_lower_bound = floor if floor > 0 else None
             cost_per_configuration = (
                 total_cost / unique_configuration_count
-                if unique_configuration_count
+                if total_cost is not None and unique_configuration_count
                 else None
             )
 
@@ -1585,12 +1664,14 @@ class OptimizationResult:
 
             return ExperimentStats(
                 total_duration=float(total_duration),
-                total_cost=float(total_cost),
+                total_cost=float(total_cost) if total_cost is not None else None,
                 unique_configurations=unique_configuration_count,
                 trial_counts=trial_counts,
                 average_trial_duration=average_trial_duration,
                 cost_per_configuration=cost_per_configuration,
                 success_rate=success_rate,
+                cost_unmeasured_trials=unmeasured_trials,
+                cost_lower_bound=cost_lower_bound,
             )
         except (TypeError, ValueError, AttributeError) as exc:
             fallback_counts = base_counts.copy()
@@ -1604,6 +1685,76 @@ class OptimizationResult:
                 success_rate=None,
                 error_message=str(exc),
             )
+
+    def _reported_cost_floor(self) -> float:
+        """Spend the trials reported, counting a flagged trial's preserved floor.
+
+        A trial flagged unmeasured can carry ``cost_lower_bound`` (and no
+        ``total_cost``); the floor that reached budget submission must reach
+        the run summaries too (Traigent#2517).
+        """
+        from traigent.utils.trial_costs import known_spend_lower_bound  # noqa: PLC0415
+
+        return sum(
+            known_spend_lower_bound(
+                getattr(trial, "metrics", None), getattr(trial, "metadata", None)
+            )
+            for trial in self.trials
+        )
+
+    def _cost_unmeasured_trial_count(self) -> int:
+        """Count trials whose cost is flagged unmeasured (Traigent#2517)."""
+        return sum(1 for trial in self.trials if self._trial_cost_unmeasured(trial))
+
+    def _trial_cost_unmeasured(self, trial: TrialResult) -> bool:
+        """True when a trial's cost is flagged, or it ran and none was recorded.
+
+        A completed, failed, pruned or cancelled trial that carries no cost
+        telemetry at all (the factory only records ``total_cost`` when the
+        progress state reported one; ``capture_llm_metrics=False`` records
+        none) spent an unknown amount unless zero attempts were explicitly
+        recorded: counting it as $0 would put a fabricated zero into the run
+        total and the cost per configuration (Traigent#2517).
+        """
+        from traigent.utils.trial_costs import (  # noqa: PLC0415
+            extract_trial_cost_metric,
+            is_cost_unmeasured,
+        )
+
+        metrics = getattr(trial, "metrics", None)
+        if is_cost_unmeasured(metrics):
+            return True
+        if trial.status not in (
+            TrialStatus.COMPLETED,
+            TrialStatus.FAILED,
+            TrialStatus.PRUNED,
+            TrialStatus.CANCELLED,
+        ):
+            return False
+        if self._trial_recorded_zero_attempts(trial):
+            # Explicitly recorded zero attempts: no work ran, so no spend.
+            return False
+        # Missing attempt telemetry is unknown, not zero: a terminal trial
+        # with no cost metric at all spent an unknown amount.
+        return (
+            extract_trial_cost_metric(metrics, trial.metadata) is None
+            and self._extract_trial_cost(trial) is None
+            and self._extract_summary_cost(trial) is None
+        )
+
+    @staticmethod
+    def _trial_recorded_zero_attempts(trial: TrialResult) -> bool:
+        """True only when telemetry explicitly recorded zero attempted examples."""
+        metadata = getattr(trial, "metadata", None)
+        if not isinstance(metadata, dict):
+            return False
+        recorded = metadata.get("examples_attempted")
+        if recorded is None or isinstance(recorded, bool):
+            return False
+        try:
+            return int(recorded) == 0
+        except (TypeError, ValueError):
+            return False
 
     def _resolve_initial_duration(self) -> float:
         """Safely coerce the experiment duration to float."""
@@ -1981,6 +2132,11 @@ class OptimizationResult:
 
         for trial in self._ranking_source_trials:
             if not trial.metrics:
+                continue
+            if any(self._cost_flagged_for_objective(trial, o) for o in self.objectives):
+                # Excluded from the ranking (as on the Pareto front): its cost
+                # objective has no measured value, so it cannot beat a trial
+                # that does (Traigent#2517).
                 continue
 
             normalized = self._normalize_trial_metrics(
@@ -2527,6 +2683,7 @@ class OptimizationResult:
             trials_per_model,
         ) = self._aggregate_summary_data()
 
+        unmeasured_trials = self._cost_unmeasured_trial_count()
         summary = {
             "total_trials": total_trials,
             "completed_trials": status_counter.get(TrialStatus.COMPLETED, 0),
@@ -2534,12 +2691,19 @@ class OptimizationResult:
             "failed_trials": status_counter.get(TrialStatus.FAILED, 0),
             "cancelled_trials": status_counter.get(TrialStatus.CANCELLED, 0),
             "total_duration": total_duration,
-            "total_cost": total_cost,
+            # Withheld (None) when any trial's cost is unmeasured: the sum of
+            # the trials that did report a cost is a floor, not the run's cost
+            # (Traigent#2517); the floor is reported as ``cost_lower_bound``.
+            "total_cost": None if unmeasured_trials else total_cost,
             "total_examples_attempted": total_examples,
             "non_failed_trials": total_trials
             - status_counter.get(TrialStatus.FAILED, 0),
             "trials_per_model": dict(trials_per_model),
         }
+        if unmeasured_trials:
+            summary["cost_unmeasured_trials"] = unmeasured_trials
+            floor = max(total_cost, self._reported_cost_floor())
+            summary["cost_lower_bound"] = floor if floor > 0 else None
 
         # Include best configuration information if available
         summary["best_config"] = self.best_config

@@ -8,6 +8,42 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`TraceRecord` and `SessionRecord` expose `tenant_id` and `project_id`
+  (#2605).** Both are optional and filled from the backend's trace and session
+  read responses, so a caller can confirm which project its traces landed in
+  when the scope was resolved from the API key. They are `None` when the
+  response does not carry them.
+- **Export a run's failing examples as a regression dataset.**
+  `OptimizationResult.failing_examples(threshold=0.5, mode="all_configs")`
+  returns the ids of examples that failed in every trial (or, with
+  `mode="best_config"`, in every trial of the winning configuration), read from
+  the per-example outcome matrix without re-running anything; the selector is
+  `traigent.utils.outcome_matrix.select_failing_example_ids`.
+  `traigent results export-failures RUN --dataset PATH --out PATH` joins each
+  id to the one dataset row whose input and expected_output equal what the run
+  recorded for that id (never by guessing the evaluator's id scheme; both are
+  compared in the redacted form the run stores, so export with the SDK version
+  that ran the optimization), and
+  writes the rows as JSONL that `Dataset.from_jsonl` reads back. It writes
+  nothing if any id has no recorded input, matches no row, or matches more than
+  one. Exported rows without a `metadata.example_id` gain their source id
+  (`example_<index>`) so the subset's ids stay unique. `RUN` is a saved result
+  name; logger run directories (which record no example inputs) and `local:`
+  sessions are refused. New helpers: `Dataset.to_jsonl()` (atomic, refuses
+  values JSON would alter) and
+  `traigent.utils.regression_dataset.select_examples_by_id(dataset, ids, run)`.
+  Nothing is sent over the network.
+- **Trace search filters: `model`, `tags`, `outcome_kind`, `has_outcome` (#2564).**
+  `BackendAnalyticsClient.search_observability_traces` and the
+  `observability_search_traces` MCP tool accept them and validate them before
+  any request: tags are exact, sent as repeated `tags` keys and must all match;
+  `outcome_kind` is one of the backend's outcome kinds; `has_outcome=False` is
+  sent explicitly. Free-text `search`, `user_id` and `session_id` remain
+  deliberately unsupported to keep the reader content-free.
+- **`ProjectUsageExperimentDTO`: optional `priced_configuration_runs` /
+  `unpriced_configuration_runs`.** Both default to `None` and are read from the
+  matching keys when present, so clients can tell an unmeasured cost (priced 0,
+  unpriced > 0) from a real zero.
 - **`traigent.observability.otel`: OpenTelemetry-based observability (extra `observability`).**
   `init` / `instrument` / `observe` / `attributes` / `flush` / `shutdown` /
   `stats`, a bounded best-effort span processor, an OTLP/HTTP exporter (official
@@ -28,6 +64,41 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   left untouched and the run's `OptimizationResult` stays available to publish
   again deliberately. Runs against a backend that reports no generation (older
   backend, offline run, no bound agent) publish exactly as before.
+
+### Changed
+
+- **BREAKING: non-string hybrid example ids are refused (#2575).** When the
+  id a row resolves to (`example_id`, else `input_id`) is not a string (an
+  int, float, bool, list or dict), the trial now fails with a
+  `ValidationError` naming the position, the field and its type. The hybrid
+  protocol defines these ids as strings echoed exactly; a dataset with unique
+  int ids that ran before must convert them to strings. A falsy non-string
+  `example_id` or `input_id` (`0`, `False`) is refused too; it used to be
+  replaced by the `input_id` or the fallback id.
+
+- **BREAKING: a run with `cost` as an objective now refuses to record an unpriced
+  call as $0 (#2517).** Strict cost accounting is on by default, so such a run
+  raises `OptimizationError` (with `CostTrackingRequiredError` as its
+  `__cause__`) instead of ranking the unpriced model cheapest. Remedy: report usage with `traigent.with_usage(...)`, or give
+  per-token prices through `TRAIGENT_CUSTOM_MODEL_PRICING_JSON` /
+  `TRAIGENT_CUSTOM_MODEL_PRICING_FILE`; set
+  `TRAIGENT_STRICT_COST_ACCOUNTING=false` only to turn the error into a warning:
+  the unpriced call stays flagged `cost_unmeasured` and is never recorded as $0.
+  A trial whose cost is only partly measured (some example reported no usage,
+  or a call inside one example reported none) stops the run the same way, and
+  the error names up to 5 such examples. A failed example with no cost
+  telemetry counts as unmeasured too, unless it reports a cost (`0` included)
+  or `provider_attempts: 0`. Fix it
+  by wrapping a path that makes no model call in
+  `traigent.with_usage(value, total_cost=0)`, adding a price for an unpriced
+  model (`TRAIGENT_CUSTOM_MODEL_PRICING_JSON` / `_FILE`), or setting
+  `TRAIGENT_STRICT_COST_ACCOUNTING=false`. Without a cost objective and without
+  an explicit cost limit the run continues with a warning; an explicit cost
+  limit fails closed the same way, because it cannot bound an unknown spend.
+  Spend that was reported for a trial flagged `cost_unmeasured` (its
+  `cost_lower_bound`) is charged to `cost_limit`, `ExecutionBudget` and the
+  cost enforcer as a minimum; the trial keeps its `cost_unmeasured` flag and its
+  objective value is unchanged.
 
 ### Removed
 
@@ -62,6 +133,132 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **BREAKING: evaluators reject `mock` and `mock_mode_config`.** `LocalEvaluator(...)`
   (and every `BaseEvaluator` subclass) now raises `TypeError` for either name,
   even when the value is `None`, instead of storing it in `evaluator.config`.
+
+### Fixed
+
+- **Observability ingest requests now fit the backend's per-request limits
+  (#2600).** The transport used to cut requests only by `batch_size` (up to
+  10,000) and bytes. The backend accepts at most 100 traces (422 above it) and
+  1,000 observations, nested children included (413 above it), so batches
+  above either limit failed and were retained and re-sent unchanged on every
+  flush. Each request now carries at most 100 traces and 1,000 observations.
+  `batch_size` above 100 is still accepted; it sets how many buffered traces
+  trigger a background flush, and that flush is sent as several requests. A
+  single trace with more than 1,000 observations can never be accepted, so it
+  is now dropped locally (`dropped_by_reason["too_many_observations"]`, named
+  in `FlushResult.errors`) instead of blocking the traces batched with it.
+  These limits apply only to the SDK's own ingest path; a custom `sender=`
+  receives batches cut by `batch_size` and `max_batch_bytes` as before.
+- **A rejected trace update no longer lets an older snapshot of the same trace
+  go out (#2601).** When an update was dropped (`payload_too_large`, not JSON
+  serializable, or `too_many_observations`), the older snapshot already queued
+  for that trace was still sent, and the backend stored a stale partial trace
+  behind a successful flush. That older snapshot is now dropped with the
+  update; if it is already being sent it cannot be recalled, but a failed send
+  no longer queues it for a retry. The trace id is named in
+  `FlushResult.errors` as before.
+- **`flush()` / `close()` no longer re-send traces the backend already has
+  (#2604).** Every flush re-submitted the latest snapshot of every trace the
+  client had started, and each was sent again. A snapshot identical to the one
+  last delivered for that trace is now skipped
+  (`get_stats()["skipped_unchanged_items"]`); a changed or never-delivered
+  trace is sent as before, and so is any trace whose last delivery came back
+  with backend warnings. The transport remembers delivered snapshots for the
+  most recent `max_queue_size` traces (10,000 by default); beyond that, older
+  traces are sent again on the next flush, as before. `FlushResult.items_sent`
+  no longer counts skipped repeats. The client still keeps every trace it
+  started in memory; that is unchanged.
+- **Suppressed observability delivery is now reported (#2602).** With offline
+  mode, `TRAIGENT_DISABLE_TELEMETRY`, or no credential, `flush()` and
+  `close()` returned `success=True, items_sent=0` and no warning, the same as
+  a real delivery. `success` stays `True` so telemetry never breaks the host
+  application, but `warnings` now names the cause and says no traces were
+  sent.
+- **Offline-mode errors from observability control-plane calls name the real
+  cause (#2603).** `submit_feedback`, `add_comment` and the `list_*` / `get_*`
+  calls said "skipped because TRAIGENT_OFFLINE_MODE=true" even when
+  `TRAIGENT_DISABLE_TELEMETRY`, `TRAIGENT_OFFLINE` or
+  `ObservabilityConfig(offline_mode=True)` caused it. The message now names
+  each offline variable that is set, or the config flag.
+- **Dead and non-public links removed from published surfaces (#2598).** The
+  PyPI Documentation URL and the docs site's `site_url` pointed at a domain
+  that does not resolve; both now use the docs site
+  (https://traigent.github.io/Traigent/). The "API keys detected in code"
+  warning linked a domain Traigent does not own; it now links the secret
+  management guide. The docs nav's dead "JavaScript SDK" entry is removed
+  until JS SDK docs are published, and doc links to a dead community forum and to
+  repositories the public cannot open were removed. A new offline test fails
+  if any of these come back.
+- **`Dataset.to_jsonl` keeps an existing file's permission bits when it
+  replaces it.** Re-exporting over an owner-only (`0600`) file under a `022`
+  umask used to leave it `0644`. A new file still follows the umask, like
+  `open(..., "w")`. Owner and group are those of a new file, as before.
+- **The outcome-matrix merge warning no longer logs trial ids.** A trial id
+  is a free-form string set by whoever built the result and can carry content,
+  so the warning now names the trial by its matrix column index.
+- **`TraceIngestionResponse(success=True)` without `spans_ingested` is now an
+  unconfirmed count, not a confirmed zero**, so `submit_traces` no longer warns
+  that every span went missing. Pass `spans_ingested=0` to state zero. The
+  two fields are annotated `int | None` / `bool | None` so an omitted value is
+  detectable; after construction they are always an `int` and a `bool`.
+- **An unmeasured cost is no longer stored, shown or ranked as $0 (#2517, #2518, #2446).**
+  When no LLM usage is captured for an example (for example a raw provider
+  client the interceptors do not wrap), the local lane used to estimate tokens
+  and record `cost: 0.0` as a measurement. The trial now omits `cost` /
+  `total_cost`, sets `cost_unmeasured: 1.0`, keeps the estimated tokens
+  labelled with `tokens_estimated`, and the results table prints `unmeasured`.
+  The Pareto front excludes a trial missing a configured objective and the batch
+  composite score no longer rescales over the objectives that remain. A run
+  stopped by the SDK default `max_trials` or the unmeasured-cost safety limit
+  records and prints why (`metadata["stop_detail"]`).
+
+- **A hybrid service that reports no cost is unmeasured, not $0 (#2517).**
+  `TraigentService` no longer sends `cost_usd: 0.0` for an execute handler that
+  returned no cost: the per-item field is omitted, and a batch where any handler
+  (or a handler that raised) reported none sends `operational_metrics.cost_unmeasured`
+  next to the priced lower bound it must still send as `total_cost_usd`.
+  `HybridAPIEvaluator` treats that flag, an omitted or negative cost, and a
+  failed row with no reported cost as unknown: the trial carries `cost_unmeasured`
+  and no cost total, a per-item `metrics.cost_unmeasured` from the service can no
+  longer overwrite that verdict, and the optimization logger and outcome matrix
+  never write `0.0` for it. A workflow span sends the known spend floor (0.0 when
+  none was reported) as `cost_usd`, always with
+  `metadata["traigent.cost_unmeasured"] = true` so consumers can tell it apart
+  from a measured cost. Run summaries
+  (`get_summary()`, `experiment_stats`) withhold `total_cost` when a trial is
+  unmeasured and report `cost_unmeasured_trials` / `cost_lower_bound`.
+
+- **`ObservabilityClient` multi-tag trace/session filters no longer return an
+  empty page (#2573).** `list_traces` / `iter_traces` / `list_sessions` /
+  `iter_sessions` now send a list `tags` filter as repeated keys
+  (`tags=vip&tags=beta`) instead of one comma-joined value, which the backend
+  read as the single literal tag `"vip,beta"`. A single string is still sent
+  as one value.
+- **TVL specs with out-of-range chance thresholds or budgets now fail to load
+  (#1616).** `load_tvl_spec` raises `TVLValidationError` when a
+  `promotion_policy.chance_constraints[].threshold` is outside `[0, 1]`, or when
+  `exploration.budgets` has a `max_trials` or `max_wallclock_s` below 1 or not a
+  whole number, or a `max_spend_usd` below 0 or NaN. These are the canonical TVL
+  bounds. A threshold above 1 used to make the constraint always pass. The same
+  check applies to a `promotion_policy` returned by hybrid config-space
+  discovery. `max_spend_usd: 0` still loads, as the TVL schema allows, but a run
+  that takes its cost limit from the spec still fails the cost-limit check,
+  which needs a value above 0.
+- **Hybrid API examples no longer share one id (#2575).** `HybridAPIEvaluator`
+  numbered the fallback example id from the position inside the batch, so at
+  the default `batch_size=1` every example was sent and recorded as `ex_0`, and
+  the outcome matrix merged them into one row. The fallback is now
+  `ex_<dataset position>`; a string `example_id` (else `input_id`) in the
+  inputs still wins. A dataset that fits in one batch sends the same ids as
+  before, and the ids the backend stores for hybrid rows are unchanged. A
+  hybrid dataset whose ids repeat now fails the trial with a `ValidationError`
+  naming the positions, before any request is sent. `build_outcome_matrix`
+  logs a warning when one trial repeats an example id instead of merging the
+  cells silently. Statistical-significance tests, the best-config margin and
+  the semantic-saturation stop condition, which key per-example scores by id,
+  also saw only one example per in-batch position (a single example at the
+  default `batch_size=1`) when the rows carry no ids; they now see every
+  example, so their results for such hybrid runs can change.
 
 ## [0.30.0] - 2026-09-26
 
@@ -197,10 +394,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `traigent.utils.exceptions.ObjectiveDirectionOverrideWarning` naming the reserved
   keyword, its default direction, and the direction you declared. The Traigent Backend
   certificate for that run will refuse to assert a comparison claim for that objective,
-  because the declared direction contradicts the reserved keyword's preset (see
-  TraigentBackend's `front_claim_producer.check_preset_direction`); this warning surfaces
-  that at declaration time instead of only when the certificate is issued. No warning for
-  a bare name taking its canonical default, or for any custom (non-reserved) name.
+  because the declared direction contradicts the reserved keyword's preset; this warning
+  surfaces that at declaration time instead of only when the certificate is issued. No
+  warning for a bare name taking its canonical default, or for any custom (non-reserved) name.
 
 ### Fixed
 
@@ -302,9 +498,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   records `$0` and warns (`UNPRICED_MODEL_RUNTIME`). Runs without a cost objective are
   unchanged. Two more ways a cost run recorded `$0` are covered: a response that carries
   token counts but no model name to price them now fails the same way, and a cost-objective
-  run that captured no LLM usage at all fails too (`COST_OBJECTIVE_NO_USAGE_CAPTURED` as a
-  warning when not strict, and in mock-LLM runs, which have no spend to measure), because
-  an unmeasured `$0` is not a cheap configuration;
+  run that captured no LLM usage at all fails too, because an unmeasured `$0` is not a
+  cheap configuration. Strict mode raises `CostTrackingRequiredError` at the first such
+  trial, mock-LLM runs included (mock mode never bypasses cost enforcement); fix it with
+  `traigent.with_usage(value, total_cost=0)` for a path that makes no model call, custom
+  pricing (`TRAIGENT_CUSTOM_MODEL_PRICING_JSON`), or `TRAIGENT_STRICT_COST_ACCOUNTING=false`,
+  under which the run only warns (`COST_OBJECTIVE_NO_USAGE_CAPTURED`);
   `result.metadata["pricing"]["usage_captured"]` reports whether any usage was measured.
   `cost_per_1k` now counts as a cost objective. The LangChain and Pydantic AI callback
   handlers read the setting when constructed, so set
@@ -1415,7 +1614,7 @@ work correctly or fail loudly.
   `docs/api-reference/telemetry.md`. (Backfilled 2026-08-14, same provenance.)
 
 ### Removed
-- **Breaking in 0.12.0:** removed Python-orchestrated JavaScript optimization through the temporary JS bridge. `ExecutionOptions.runtime`, all `ExecutionOptions.js_*` fields, `traigent.bridges.*`, and `traigent.evaluators.JSEvaluator` are no longer available. JavaScript/TypeScript users should migrate to native `@traigent/sdk` optimization with `optimize(spec)(agentFn)` and `await wrapped.optimize(...)`; see https://github.com/Traigent/traigent-js/blob/main/docs/getting-started/minimal-integration.md and https://github.com/Traigent/traigent-js/blob/main/docs/MIGRATION_FROM_PYTHON.md.
+- **Breaking in 0.12.0:** removed Python-orchestrated JavaScript optimization through the temporary JS bridge. `ExecutionOptions.runtime`, all `ExecutionOptions.js_*` fields, `traigent.bridges.*`, and `traigent.evaluators.JSEvaluator` are no longer available. JavaScript/TypeScript users should migrate to native `@traigent/sdk` optimization with `optimize(spec)(agentFn)` and `await wrapped.optimize(...)`; see the JS SDK's `docs/getting-started/minimal-integration.md` and `docs/MIGRATION_FROM_PYTHON.md`.
 
 ### Fixed
 - **`BenchmarkClient` now attributes generation to the active project** (#1066). It read

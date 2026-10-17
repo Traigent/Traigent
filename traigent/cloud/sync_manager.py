@@ -25,6 +25,7 @@ from traigent.cloud.models import (
     dataset_identity_from_record,
 )
 from traigent.cloud.url_security import validate_cloud_base_url
+from traigent.core.session_types import safe_http_error_summary
 
 try:
     import aiohttp  # noqa: F401 - Import check only
@@ -43,6 +44,7 @@ from ..storage.local_storage import (
 )
 from ..utils.exceptions import TraigentStorageError
 from ..utils.logging import get_logger
+from ..utils.trial_costs import is_cost_unmeasured
 
 logger = get_logger(__name__)
 
@@ -512,9 +514,13 @@ class SyncManager:
             fallback = measures.get("score")
             if not isinstance(fallback, (int, float)) or isinstance(fallback, bool):
                 fallback = 0.0
+            cost_unmeasured = is_cost_unmeasured(measures)
             for objective in objectives:
                 value = measures.get(objective)
                 if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    if cost_unmeasured and "cost" in objective.lower():
+                        # Unknown cost is omitted, never the score or 0.0.
+                        continue
                     measures[objective] = fallback
 
     def _convert_trials_to_configuration_runs(
@@ -1243,7 +1249,9 @@ class SyncManager:
             if response.status_code not in (200, 201):
                 return {
                     "success": False,
-                    "error": f"HTTP {response.status_code}: {response.text}",
+                    "error": safe_http_error_summary(
+                        response.status_code, response.text
+                    ),
                 }
             payload = self._response_json(response)
             if not isinstance(payload, Mapping):
@@ -1343,7 +1351,7 @@ class SyncManager:
         if response.status_code not in (200, 201):
             return {
                 "success": False,
-                "error": f"HTTP {response.status_code}: {response.text}",
+                "error": safe_http_error_summary(response.status_code, response.text),
             }
         payload = self._response_json(response)
         if not isinstance(payload, Mapping):
@@ -1460,7 +1468,7 @@ class SyncManager:
                 continue
 
             errors.append(
-                f"trial {ordinal}: HTTP {response.status_code}: {response.text}"
+                f"trial {ordinal}: {safe_http_error_summary(response.status_code, response.text)}"
             )
 
         return {
@@ -1495,7 +1503,7 @@ class SyncManager:
                 return {"success": True, "classification": "completed"}
             return {
                 "success": False,
-                "error": f"HTTP {response.status_code}: {response.text}",
+                "error": safe_http_error_summary(response.status_code, response.text),
             }
         except Exception as e:
             return {"success": False, "error": str(e)}

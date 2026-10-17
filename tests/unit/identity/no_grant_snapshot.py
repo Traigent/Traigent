@@ -15,6 +15,7 @@ import json
 import os
 import re
 from typing import Any
+from unittest import mock
 
 _VOLATILE_KEY = re.compile(
     r"(time|duration|timestamp|_ms$|_at$|elapsed|latency|trial_id|session_id|"
@@ -130,9 +131,11 @@ def build_snapshot() -> dict[str, Any]:
     from traigent.config.types import TraigentConfig
     from traigent.core.metadata_helpers import build_backend_metadata
 
-    os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
-    os.environ.setdefault("TRAIGENT_RUN_COST_LIMIT", "100.0")
-    captured, result = asyncio.run(_run_optimize())
+    # No explicit TRAIGENT_RUN_COST_LIMIT: under honest cost a run that reports no
+    # cost is refused when a limit is set, by design. The approval flag is scoped
+    # to this call so nothing leaks into later tests in the same process.
+    with mock.patch.dict(os.environ, {"TRAIGENT_COST_APPROVED": "true"}):
+        captured, result = asyncio.run(_run_optimize())
     trials = []
     for trial in result.trials:
         trials.append(

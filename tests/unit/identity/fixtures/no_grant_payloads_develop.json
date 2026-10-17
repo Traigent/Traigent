@@ -186,27 +186,12 @@
        "ratio": 1.0,
        "total": 3
       },
-      "input_cost": {
-       "present": 3,
-       "ratio": 1.0,
-       "total": 3
-      },
       "input_tokens": {
        "present": 3,
        "ratio": 1.0,
        "total": 3
       },
-      "output_cost": {
-       "present": 3,
-       "ratio": 1.0,
-       "total": 3
-      },
       "output_tokens": {
-       "present": 3,
-       "ratio": 1.0,
-       "total": 3
-      },
-      "total_cost": {
        "present": 3,
        "ratio": 1.0,
        "total": 3
@@ -223,8 +208,7 @@
      "total_examples": 3,
      "warning_codes": []
     },
-    "cost": 0.0,
-    "cost_per_example_mean": 0.0,
+    "cost_unmeasured": 1.0,
     "cost_unpriced": 0.0,
     "duration": "<volatile>",
     "empty_output_rate": 0.0,
@@ -238,13 +222,10 @@
       "metrics": {
        "accuracy": 1.0,
        "execution_time_ms": "<volatile>",
-       "input_cost": 0.0,
        "input_tokens": 1,
-       "output_cost": 0.0,
        "output_tokens": 1,
        "response_time": "<volatile>",
        "score": 1.0,
-       "total_cost": 0.0,
        "total_tokens": 2
       },
       "output_digest": "<hex>",
@@ -257,13 +238,10 @@
       "metrics": {
        "accuracy": 1.0,
        "execution_time_ms": "<volatile>",
-       "input_cost": 0.0,
        "input_tokens": 1,
-       "output_cost": 0.0,
        "output_tokens": 1,
        "response_time": "<volatile>",
        "score": 1.0,
-       "total_cost": 0.0,
        "total_tokens": 2
       },
       "output_digest": "<hex>",
@@ -276,13 +254,10 @@
       "metrics": {
        "accuracy": 1.0,
        "execution_time_ms": "<volatile>",
-       "input_cost": 0.0,
        "input_tokens": 1,
-       "output_cost": 0.0,
        "output_tokens": 1,
        "response_time": "<volatile>",
        "score": 1.0,
-       "total_cost": 0.0,
        "total_tokens": 2
       },
       "output_digest": "<hex>",
@@ -295,7 +270,6 @@
     "score": 1.0,
     "successful_examples": 3,
     "tokens_estimated": 1.0,
-    "total_cost": 0.0,
     "total_examples": 3,
     "total_tokens": 2.0,
     "trial_id": "<volatile>",
@@ -317,11 +291,8 @@
      },
      "metrics": {
       "accuracy": 1.0,
-      "input_cost": 0.0,
       "input_tokens": 1,
-      "output_cost": 0.0,
       "output_tokens": 1,
-      "total_cost": 0.0,
       "total_tokens": 2
      },
      "output_digest": "<hex>",
@@ -344,11 +315,8 @@
      },
      "metrics": {
       "accuracy": 1.0,
-      "input_cost": 0.0,
       "input_tokens": 1,
-      "output_cost": 0.0,
       "output_tokens": 1,
-      "total_cost": 0.0,
       "total_tokens": 2
      },
      "output_digest": "<hex>",
@@ -371,11 +339,8 @@
      },
      "metrics": {
       "accuracy": 1.0,
-      "input_cost": 0.0,
       "input_tokens": 1,
-      "output_cost": 0.0,
       "output_tokens": 1,
-      "total_cost": 0.0,
       "total_tokens": 2
      },
      "output_digest": "<hex>",
@@ -394,8 +359,7 @@
     "output_count",
     "sample_budget_exhausted",
     "success_rate",
-    "successful_examples",
-    "total_example_cost"
+    "successful_examples"
    ]
   },
   {
@@ -412,27 +376,12 @@
        "ratio": 1.0,
        "total": 3
       },
-      "input_cost": {
-       "present": 3,
-       "ratio": 1.0,
-       "total": 3
-      },
       "input_tokens": {
        "present": 3,
        "ratio": 1.0,
        "total": 3
       },
-      "output_cost": {
-       "present": 3,
-       "ratio": 1.0,
-       "total": 3
-      },
       "output_tokens": {
-       "present": 3,
-       "ratio": 1.0,
-       "total": 3
-      },
-      "total_cost": {
        "present": 3,
        "ratio": 1.0,
        "total": 3
@@ -449,8 +398,7 @@
      "total_examples": 3,
      "warning_codes": []
     },
-    "cost": 0.0,
-    "cost_per_example_mean": 0.0,
+    "cost_unmeasured": 1.0,
     "cost_unpriced": 0.0,
     "duration": "<volatile>",
     "empty_output_rate": 0.0,
@@ -464,13 +412,10 @@
       "metrics": {
        "accuracy": 1.0,
        "execution_time_ms": "<volatile>",
-       "input_cost": 0.0,
        "input_tokens": 1,
-       "output_cost": 0.0,
        "output_tokens": 1,
        "response_time": "<volatile>",
        "score": 1.0,
-       "total_cost": 0.0,
        "total_tokens": 2
       },
       "output_digest": "<hex>",
@@ -483,13 +428,10 @@
       "metrics": {
        "accuracy": 1.0,
        "execution_time_ms": "<volatile>",
-       "input_cost": 0.0,
        "input_tokens": 1,
-       "output_cost": 0.0,
        "output_tokens": 1,
        "response_time": "<volatile>",
        "score": 1.0,
-       "total_cost": 0.0,
        "total_tokens": 2
       },
       "output_digest": "<hex>",
@@ -502,13 +444,10 @@
       "metrics": {
        "accuracy": 1.0,
        "execution_time_ms": "<volatile>",
-       "input_cost": 0.0,
        "input_tokens": 1,
-       "output_cost": 0.0,
        "output_tokens": 1,
        "response_time": "<volatile>",
        "score": 1.0,
-       "total_cost": 0.0,
        "total_tokens": 2
       },
       "output_digest": "<hex>",
@@ -521,7 +460,6 @@
     "score": 1.0,
     "successful_examples": 3,
     "tokens_estimated": 1.0,
-    "total_cost": 0.0,
     "total_examples": 3,
     "total_tokens": 2.0,
     "trial_id": "<volatile>",
@@ -543,11 +481,8 @@
      },
      "metrics": {
       "accuracy": 1.0,
-      "input_cost": 0.0,
       "input_tokens": 1,
-      "output_cost": 0.0,
       "output_tokens": 1,
-      "total_cost": 0.0,
       "total_tokens": 2
      },
      "output_digest": "<hex>",
@@ -570,11 +505,8 @@
      },
      "metrics": {
       "accuracy": 1.0,
-      "input_cost": 0.0,
       "input_tokens": 1,
-      "output_cost": 0.0,
       "output_tokens": 1,
-      "total_cost": 0.0,
       "total_tokens": 2
      },
      "output_digest": "<hex>",
@@ -597,11 +529,8 @@
      },
      "metrics": {
       "accuracy": 1.0,
-      "input_cost": 0.0,
       "input_tokens": 1,
-      "output_cost": 0.0,
       "output_tokens": 1,
-      "total_cost": 0.0,
       "total_tokens": 2
      },
      "output_digest": "<hex>",
@@ -620,8 +549,7 @@
     "output_count",
     "sample_budget_exhausted",
     "success_rate",
-    "successful_examples",
-    "total_example_cost"
+    "successful_examples"
    ]
   }
  ]

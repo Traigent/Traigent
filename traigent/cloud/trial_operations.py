@@ -11,8 +11,12 @@ import concurrent.futures
 import copy
 import hashlib
 import json
+import math
 import re
-from dataclasses import dataclass
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -27,11 +31,17 @@ from traigent.cloud.session_budgets import (
 )
 from traigent.cloud.validators import validate_configuration_run_submission
 from traigent.config.backend_config import BackendConfig
+from traigent.core.session_types import safe_http_error_summary
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.logging import get_logger
+from traigent.utils.trial_costs import is_cost_unmeasured
 
 # HTTP Content-Type header constant
 _JSON_CONTENT_TYPE_HEADER = {"Content-Type": "application/json"}
+#: Summary aggregates whose mean is a placeholder when cost went unmeasured.
+_SUMMARY_COST_AGGREGATES = frozenset(
+    {"input_cost", "output_cost", "total_cost", "cost"}
+)
 
 # Optional aiohttp dependency handling
 try:
@@ -91,7 +101,9 @@ class TrialSubmissionResult:
 
     submitted: bool = False
     permanent_rejection: bool = False
-    reason: str | None = None
+    # Backend details.reason: kept readable for callers, but excluded from
+    # repr/str so customer-influenced backend text never reaches logs.
+    reason: str | None = field(default=None, repr=False)
 
     def __bool__(self) -> bool:
         return self.submitted
@@ -99,6 +111,11 @@ class TrialSubmissionResult:
     @classmethod
     def rejected(cls, reason: str | None = None) -> "TrialSubmissionResult":
         return cls(permanent_rejection=True, reason=reason)
+
+
+_sync_registration_loop: ContextVar[bool] = ContextVar(
+    "traigent_sync_registration_loop", default=False
+)
 
 
 class TrialOperations:
@@ -199,22 +216,6 @@ class TrialOperations:
             status,
             summary,
         )
-
-    @staticmethod
-    def _first_error_line(error_text: str | None) -> str:
-        """Return a safe, trimmed first line of an error payload for logging."""
-
-        if not error_text:
-            return ""
-
-        lines = error_text.strip().splitlines()
-        if not lines:
-            return ""
-
-        excerpt = lines[0].strip()
-        if len(excerpt) > 200:
-            return f"{excerpt[:197]}..."
-        return excerpt
 
     @staticmethod
     def _sanitize_for_json(value: Any) -> Any:
@@ -333,6 +334,20 @@ class TrialOperations:
             ]
         return data
 
+    @asynccontextmanager
+    async def _trial_http_session(self) -> AsyncIterator[Any]:
+        """Borrow the running loop's pooled session, or own a sync wrapper's.
+
+        ``_ensure_session`` keeps one pool per event loop, so a borrowed session
+        always belongs to the running loop. A sync wrapper's temporary loop gets
+        a private session closed before the wrapper returns.
+        """
+        if not _sync_registration_loop.get():
+            yield await self.client._ensure_session()
+            return
+        async with aiohttp.ClientSession(trust_env=True) as session:
+            yield session
+
     async def register_trial_start(
         self,
         session_id: str,
@@ -387,16 +402,12 @@ class TrialOperations:
             }
             registration_payload = self._sanitize_for_json(registration_data)
 
-            connector = None
-
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(
                 _JSON_CONTENT_TYPE_HEADER
             )
 
-            async with aiohttp.ClientSession(
-                connector=connector, trust_env=True
-            ) as session:
+            async with self._trial_http_session() as session:
                 # Use the same endpoint but with "running" status
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -464,7 +475,11 @@ class TrialOperations:
         """
 
         async def _register_async() -> bool | None:
-            return await self.register_trial_start(session_id, trial_id, config)
+            context_reset = _sync_registration_loop.set(True)
+            try:
+                return await self.register_trial_start(session_id, trial_id, config)
+            finally:
+                _sync_registration_loop.reset(context_reset)
 
         try:
             # Check if there's a running event loop
@@ -542,10 +557,7 @@ class TrialOperations:
             headers = await self.client.auth_manager.augment_headers(
                 _JSON_CONTENT_TYPE_HEADER
             )
-            connector = self._create_localhost_connector()
-            async with aiohttp.ClientSession(
-                connector=connector, trust_env=True
-            ) as session:
+            async with self._trial_http_session() as session:
                 api_base = (
                     self.client.backend_config.api_base_url
                     or BackendConfig.get_backend_api_url()
@@ -902,31 +914,31 @@ class TrialOperations:
                 "Backend detail: %s",
                 session_id,
                 trial_id,
-                detail or error_text or "(no body)",
+                safe_http_error_summary(status, error_text),
             )
             return True
 
         # A non-transient 4xx is a PERMANENT rejection. Label it explicitly so it
-        # is not mistaken for a transient backend outage; the run continues but is
-        # tracked LOCALLY ONLY.
+        # is not mistaken for a transient backend outage. The session manager
+        # decides whether execution policy permits local fallback.
         if isinstance(status, int) and 400 <= status < 500:
             logger.error(
-                "\u274c Trial submission REJECTED by the backend: HTTP %s \u2014 %s. "
+                "\u274c Trial submission REJECTED by the backend: %s. "
                 "This is a PERMANENT error, NOT a transient outage. "
-                "The run will be tracked LOCALLY ONLY "
-                "(source='local_fallback'); fix the request to track it on the "
-                "backend.  Trial %s  Session %s  URL %s",
-                status,
-                detail or "(no response body)",
+                "Fix the rejected request to track this trial on the backend; "
+                "whether the run continues locally depends on the execution policy.  "
+                "Trial %s  Session %s  URL %s",
+                safe_http_error_summary(status, error_text),
                 trial_id,
                 session_id,
                 url,
             )
-            return TrialSubmissionResult.rejected(reason or detail or None)
+            # ``details.reason`` is the documented caller contract; never fall back to
+            # the backend message/error/body (customer text can be echoed there).
+            return TrialSubmissionResult.rejected(reason or None)
         logger.warning(
-            "\u274c Failed to submit trial result: HTTP %s \u2014 %s",
-            status,
-            detail or "(no response body)",
+            "\u274c Failed to submit trial result: %s",
+            safe_http_error_summary(status, error_text),
         )
         logger.warning(
             "   Trial ID: %s  Session ID: %s  URL: %s", trial_id, session_id, url
@@ -1046,8 +1058,6 @@ class TrialOperations:
                     error_message
                 )
 
-            connector = self._create_localhost_connector()
-
             logger.debug(f"📤 Submission data for trial {trial_id}:")
             logger.debug(f"   Has measures: {'measures' in result_data}")
             logger.debug(f"   Has summary_stats: {'summary_stats' in result_data}")
@@ -1064,10 +1074,7 @@ class TrialOperations:
                 _JSON_CONTENT_TYPE_HEADER
             )
 
-            async with aiohttp.ClientSession(
-                connector=connector,
-                trust_env=True,
-            ) as session:
+            async with self._trial_http_session() as session:
                 api_base = (
                     self.client.backend_config.api_base_url
                     or BackendConfig.get_backend_api_url()
@@ -1141,7 +1148,13 @@ class TrialOperations:
             return {}
 
         projected: dict[str, Any] = {}
+        # Cost aggregates over examples that had no cost measurement are
+        # placeholders, not $0 (#2517): drop their means and send the flag
+        # (plus the reported floor) instead.
+        cost_flagged = is_cost_unmeasured(summary_metrics)
         for metric_name, aggregate in summary_metrics.items():
+            if cost_flagged and metric_name in _SUMMARY_COST_AGGREGATES:
+                continue
             if isinstance(aggregate, dict):
                 if "mean" not in aggregate:
                     continue
@@ -1154,6 +1167,17 @@ class TrialOperations:
             ):
                 continue
             projected[metric_name] = scalar
+
+        if cost_flagged:
+            projected["cost_unmeasured"] = 1.0
+            bound = summary_metrics.get("cost_lower_bound")
+            if (
+                isinstance(bound, (int, float))
+                and not isinstance(bound, bool)
+                and math.isfinite(bound)
+                and bound > 0
+            ):
+                projected["cost_lower_bound"] = float(bound)
 
         return dict(MeasuresDict(projected))
 
@@ -1244,16 +1268,12 @@ class TrialOperations:
                 sorted(submission_data.keys()),
             )
 
-            connector = self._create_localhost_connector()
-
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(
                 _JSON_CONTENT_TYPE_HEADER
             )
 
-            # fmt: off
-            async with aiohttp.ClientSession(connector=connector, trust_env=True) as session:
-                # fmt: on
+            async with self._trial_http_session() as session:
                 # Submit to session endpoint with summary_stats
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -1348,17 +1368,12 @@ class TrialOperations:
                 },
             }
 
-            connector = None
-
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(
                 _JSON_CONTENT_TYPE_HEADER
             )
 
-            async with aiohttp.ClientSession(
-                connector=connector,
-                trust_env=True,
-            ) as session:
+            async with self._trial_http_session() as session:
                 api_base = (
                     self.client.backend_config.api_base_url
                     or BackendConfig.get_backend_api_url()

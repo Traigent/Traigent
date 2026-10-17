@@ -138,11 +138,12 @@ async def test_cost_preflight_env_approved_warns_with_exact_unpriced_models(
     preflight_warnings = [
         str(warning.message)
         for warning in captured
-        if "results will report $0" in str(warning.message)
+        if "unavailable — results will keep" in str(warning.message)
     ]
     assert preflight_warnings == [
         "Cost for `us.fake.unpriced-model-v9:0` is unavailable — results will "
-        "report $0 for it. Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON, or contact "
+        "keep its monetary cost unavailable. Set "
+        "TRAIGENT_CUSTOM_MODEL_PRICING_JSON, or contact "
         "Traigent to add coverage."
     ]
     assert "`gpt-4o`" not in preflight_warnings[0]
@@ -176,7 +177,7 @@ async def test_cost_preflight_cost_approved_param_skips_prompt_non_interactive(
         warning
         for warning in captured
         if FAKE_MODEL in str(warning.message)
-        and "results will report $0" in str(warning.message)
+        and "unavailable — results will keep" in str(warning.message)
     ]
 
 
@@ -249,7 +250,7 @@ async def test_cost_preflight_token_approval_skips_prompt_non_interactive(
         warning
         for warning in captured
         if FAKE_MODEL in str(warning.message)
-        and "results will report $0" in str(warning.message)
+        and "unavailable — results will keep" in str(warning.message)
     ]
 
 
@@ -366,7 +367,7 @@ async def test_cost_preflight_interactive_yes_proceeds(
         warning
         for warning in captured
         if FAKE_MODEL in str(warning.message)
-        and "results will report $0" in str(warning.message)
+        and "unavailable — results will keep" in str(warning.message)
     ]
 
 
@@ -417,7 +418,7 @@ async def test_cost_preflight_fully_priced_space_has_no_warning(
     assert not [
         warning
         for warning in captured
-        if "results will report $0" in str(warning.message)
+        if "unavailable — results will keep" in str(warning.message)
     ]
 
 
@@ -461,7 +462,7 @@ async def test_cost_preflight_custom_pricing_json_counts_as_covered(
     assert not [
         warning
         for warning in captured
-        if "results will report $0" in str(warning.message)
+        if "unavailable — results will keep" in str(warning.message)
     ]
 
 
@@ -489,7 +490,7 @@ async def test_cost_preflight_mock_mode_skips_warning_and_strict_block(
     assert not [
         warning
         for warning in captured
-        if "results will report $0" in str(warning.message)
+        if "unavailable — results will keep" in str(warning.message)
     ]
 
 
@@ -518,5 +519,5 @@ async def test_cost_preflight_checks_default_model_when_model_is_fixed(
         warning
         for warning in captured
         if FAKE_MODEL in str(warning.message)
-        and "results will report $0" in str(warning.message)
+        and "unavailable — results will keep" in str(warning.message)
     ]

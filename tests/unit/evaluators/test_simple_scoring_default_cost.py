@@ -67,5 +67,10 @@ async def test_no_call_row_does_not_fabricate_cost_or_dilute_measured_mean():
     call_cost = sum(cost_from_tokens(10, 20, "gpt-4o-mini"))
     assert result.example_results[0].metrics["cost"] == pytest.approx(call_cost)
     assert "cost" not in result.example_results[1].metrics
-    assert result.aggregated_metrics["cost"] == pytest.approx(call_cost)
-    assert result.aggregated_metrics["total_cost"] == pytest.approx(call_cost)
+    # A partial trial has no cost: the measured row's spend is only a floor,
+    # so it is reported as ``cost_lower_bound``, never as the (diluted or
+    # undiluted) trial cost (#2517).
+    assert "cost" not in result.aggregated_metrics
+    assert "total_cost" not in result.aggregated_metrics
+    assert result.aggregated_metrics["cost_unmeasured"] == 1.0
+    assert result.aggregated_metrics["cost_lower_bound"] == pytest.approx(call_cost)

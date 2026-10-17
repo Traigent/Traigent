@@ -14,6 +14,7 @@ from typing import Any, cast
 
 from traigent.api.types import OptimizationResult, TrialResult
 from traigent.utils.logging import get_logger
+from traigent.utils.trial_costs import is_cost_unmeasured
 
 logger = get_logger(__name__)
 
@@ -114,17 +115,34 @@ def _analyze_top_configurations(
         # then the per-config ``cost`` metric, then ``total_cost`` so that a run
         # whose per-config ``cost`` was decoupled from the real spend still
         # reports a non-zero cost-per-query (#1423).
-        if any(k in trial.metrics for k in ("cost", "cost_per_1k", "total_cost")):
-            cost_per_query = (
-                trial.metrics.get("cost_per_1k")
-                or trial.metrics.get("cost")
-                or trial.metrics.get("total_cost")
-                or 0.0
+        # A trial flagged ``cost_unmeasured`` has no cost: no cost analysis is
+        # reported for it, never a ``cost_per_query`` of 0.0 (#2517).
+        if not is_cost_unmeasured(trial.metrics) and any(
+            k in trial.metrics for k in ("cost", "cost_per_1k", "total_cost")
+        ):
+            cost_per_query = next(
+                (
+                    value
+                    for value in (
+                        trial.metrics.get("cost_per_1k"),
+                        trial.metrics.get("cost"),
+                        trial.metrics.get("total_cost"),
+                    )
+                    if value
+                ),
+                None,
             )
-            config_analysis["cost_analysis"] = {
-                "cost_per_query": cost_per_query,
-                "cost_efficiency": _calculate_cost_efficiency(trial, primary_objective),
-            }
+            if cost_per_query is None and any(
+                trial.metrics.get(k) == 0 for k in ("cost_per_1k", "cost", "total_cost")
+            ):
+                cost_per_query = 0.0  # a measured zero, not an absent cost
+            if cost_per_query is not None:
+                config_analysis["cost_analysis"] = {
+                    "cost_per_query": cost_per_query,
+                    "cost_efficiency": _calculate_cost_efficiency(
+                        trial, primary_objective
+                    ),
+                }
 
         top_configurations.append(config_analysis)
 

@@ -15,9 +15,18 @@ captures, for one deterministic offline optimize() run with no grant:
 Timing values, generated ids and the SDK version string are normalized; every
 other key and value must be identical. On the reviewed head ``cc20b4aa`` this
 comparison failed (trials carried ``content_identity`` and results carried
-``external_id``). Regenerate only from a develop commit, never from this branch: in that
+``external_id``). Regenerate only from a develop commit, never from a feature branch: in that
 worktree, write ``json.dumps(build_snapshot(), indent=1, sort_keys=True)`` to
 the fixture path.
+
+Exception, 2026-10-17: the fixture was regenerated from the honest-cost branch
+(PR #2615), because honest cost accounting (#2517) deliberately reports an
+unmeasured cost instead of $0. The delta from the ``bad5953b`` snapshot is
+limited to the cost keys removed (``cost``, ``total_cost``, ``input_cost``,
+``output_cost``, ``cost_per_example_mean``, the ``*_cost`` entries of
+``per_metric_coverage``, and ``total_example_cost`` in ``metadata_keys``) plus
+``cost_unmeasured`` added. After #2615 merges, regenerate only from a develop
+commit again.
 """
 
 from __future__ import annotations

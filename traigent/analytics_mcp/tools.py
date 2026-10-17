@@ -39,6 +39,7 @@ from traigent.cloud.analytics_client import (
     _project_observability_trace_analysis,
     _project_observability_trace_search,
     _project_observability_trace_slice,
+    _validate_observability_trace_filters,
     normalize_decision_intent,
 )
 from traigent.utils.logging import get_logger
@@ -209,9 +210,8 @@ class _ToolInputError(ValueError):
 
 # === Director v0 (advisory-only) input validation ===
 #
-# C1 (frozen contract): the Director tools accept no client-composed free
-# text. Every field validated below is an enum, an integer, or a
-# server-issued identifier pattern.
+# The Director tools accept no client-composed free text. Every field
+# validated below is an enum, an integer, or an identifier pattern.
 _DIRECTOR_INSTRUCTION_ID_PATTERN = re.compile(r"^di_[0-9a-f]{32}$")
 
 
@@ -284,14 +284,13 @@ _DIRECTOR_VALIDITY_CHECKS_MAX_ITEMS = 20
 def _validate_director_client_report(
     value: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
-    """Validate ``client_report`` against the frozen contract (R1 feed).
+    """Validate the optional ``client_report`` block.
 
-    ``client_report.validity_checks`` feeds deterministic rule R1: a
-    client-reported failed/missing validity check BLOCKS ``run_optimization``
-    and ``promote_winner`` before any model call. Every element is validated
-    field-by-field against closed enums -- C1 still holds: there is no
-    ``detail``/``notes`` field anywhere on this object, and an unknown key on
-    either the outer object or an individual check is rejected outright.
+    ``client_report.validity_checks`` reports the outcome of local validity
+    checks. Every element is validated field-by-field against closed enums:
+    there is no ``detail``/``notes`` field anywhere on this object, and an
+    unknown key on either the outer object or an individual check is rejected
+    outright.
     """
     from traigent.cloud.analytics_client import (
         DIRECTOR_CONFIDENCE_LABELS,
@@ -592,9 +591,8 @@ def _http_status_failure(
             backend_url=backend_url,
         )
     if status == 409:
-        # Director v0 state-rules.md §2: a stale-revision or idempotency
-        # conflict is a NORMAL, recoverable outcome -- never a generic
-        # failure. Surface the backend's own error code (and, for
+        # A stale-revision or idempotency conflict is a normal, recoverable
+        # outcome -- never a generic failure. Surface the error code (and, for
         # stale_revision, the current revision so the caller can re-read
         # state and retry) instead of collapsing it into backend_unavailable.
         payload = _response_payload(response)
@@ -1154,8 +1152,17 @@ async def observability_search_traces_tool(
     status: str | None = None,
     environment: str | None = None,
     release: str | None = None,
+    *,
+    model: str | None = None,
+    tags: list[str] | None = None,
+    outcome_kind: str | None = None,
+    has_outcome: bool | None = None,
 ) -> dict[str, Any]:
-    """Search trace summaries through a bounded, content-free projection."""
+    """Search trace summaries through a bounded, content-free projection.
+
+    ``model``/``tags``/``outcome_kind``/``has_outcome`` are validated against
+    the reader's own vocabulary and bounds before the reader is called.
+    """
     try:
         pid = _bounded_identifier(project_id, field="project_id")
         start, end = _bounded_time_window(start_time, end_time)
@@ -1167,6 +1174,19 @@ async def observability_search_traces_tool(
             environment, field="environment", maximum=64
         )
         clean_release = _bounded_optional_text(release, field="release", maximum=128)
+        if tags is not None and not isinstance(tags, list):
+            raise _ToolInputError("tags must be a list of strings.")
+        try:
+            clean_model, clean_tags, clean_outcome_kind, _ = (
+                _validate_observability_trace_filters(
+                    model=model,
+                    tags=tags,
+                    outcome_kind=outcome_kind,
+                    has_outcome=has_outcome,
+                )
+            )
+        except ValueError as exc:
+            raise _ToolInputError(str(exc)) from exc
     except _ToolInputError as exc:
         return _failure(str(exc))
     return await _call_observability_backend(
@@ -1179,6 +1199,10 @@ async def observability_search_traces_tool(
             status=clean_status,
             environment=clean_environment,
             release=clean_release,
+            model=clean_model,
+            tags=clean_tags or None,
+            outcome_kind=clean_outcome_kind,
+            has_outcome=has_outcome,
         ),
         what="observability trace search",
         projector=_project_observability_trace_search,
@@ -1730,12 +1754,11 @@ async def observability_build_change_brief_tool(
 
 # === Director v0 (advisory-only) tools ===
 #
-# Thin pass-throughs to the backend's three advisory Director endpoints
+# Thin pass-throughs to the three advisory Director endpoints
 # (BackendAnalyticsClient.director_start / director_turn / director_state).
-# Frozen contract: ~/.claude/plans/director-v0-contract/ rev 2. v0 is
-# ADVISORY ONLY -- these tools never authorize spend, promotion, or change.
+# Advisory only -- these tools never authorize spend, promotion, or change.
 #
-# C1: no free-text parameter anywhere. director_turn accepts only session
+# No free-text parameter anywhere. director_turn accepts only session
 # identity, the closed `intent` enum, and the typed `report` block.
 
 
@@ -1774,10 +1797,9 @@ async def director_turn_tool(
     rather than as a generic failure.
 
     ``client_report`` carries ``{validity_checks: [{check, status,
-    confidence_label?}]}`` and feeds deterministic rule R1 (a failed/missing
-    validity check blocks ``run_optimization``/``promote_winner`` before any
-    model call). Every element is validated against closed enums; there is
-    no free-text field on this object.
+    confidence_label?}]}``, the outcome of local validity checks. Every
+    element is validated against closed enums; there is no free-text field on
+    this object.
     """
     try:
         sid = _bounded_identifier(session_id, field="session_id")

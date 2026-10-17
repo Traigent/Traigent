@@ -77,10 +77,14 @@ class TestLocalCompletedCostIsPerTrialTotal:
         # The mean must never be overloaded onto ``cost``.
         assert formatted["cost"] != formatted["cost_per_example_mean"]
 
-    def test_empty_tracker_reports_unknown_cost(self) -> None:
+    def test_empty_tracker_preserves_zero_default(self) -> None:
+        # No example was tracked at all (no evaluation ran): the normal
+        # contract keeps its 0.0 default and strict nulls give None. A tracker
+        # WITH rows but no cost measurement is a different case: its cost is
+        # unmeasured and left out (#2517), see the unmeasured-cost tests.
         with mock.patch.dict(os.environ, {}, clear=True):
             formatted = MetricsTracker().format_for_backend()
-        assert formatted["cost"] is None
+        assert formatted["cost"] == 0.0
 
     def test_empty_tracker_preserves_strict_null(self) -> None:
         with mock.patch.dict(

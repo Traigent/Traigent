@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 from rich.console import Console
@@ -1359,6 +1359,7 @@ def results() -> None:
         traigent results show my_run             # Show detailed view
         traigent results compare run1 run2       # Side-by-side comparison
         traigent results rerank my_run --weights accuracy=0.8,cost=0.2
+        traigent results export-failures my_run --dataset eval.jsonl --out regressions.jsonl
     """
     pass
 
@@ -1577,6 +1578,175 @@ def results_rerank(
         console.print(_MSG_RESULTS_LIST_HINT)
     except Exception as e:
         console.print(f"[red]Error re-ranking: {e}[/red]")
+
+
+def _select_run_failures(
+    run: str, storage_dir: str, threshold: float, mode: str
+) -> tuple[Any, list[str]]:
+    """Load a saved result and select its failing example ids.
+
+    Only saved results are accepted: the join back to dataset rows needs the
+    per-example ``input_data`` the run evaluated, which saved results keep and
+    optimization-logger run directories do not.
+    """
+    if run.startswith("local:"):
+        raise click.ClickException(
+            "Local session results ('local:<session_id>') are not supported by "
+            "export-failures; pass a saved result name"
+        )
+    try:
+        result = PersistenceManager(storage_dir).load_result(run)
+    except Exception as exc:
+        # Whatever the loader's reason (not found, or a path it refuses), a
+        # directory argument that is not also a saved result gets the real
+        # explanation; a saved result that fails to load keeps its own error.
+        run_path = Path(run).expanduser()
+        storage_root = Path(storage_dir).expanduser().resolve()
+        is_saved_entry = (storage_root / run_path).exists() and (
+            not run_path.is_absolute() or run_path.resolve().parent == storage_root
+        )
+        if run_path.is_dir() and not is_saved_entry:
+            raise click.ClickException(
+                f"'{run}' is a directory, not a saved result in {storage_dir}. "
+                "export-failures reads a saved result name (see 'traigent "
+                "results list'): optimization-logger run directories do not "
+                "record the example inputs needed to join failures to dataset "
+                "rows. Save the run with PersistenceManager(...).save_result(), "
+                "or in Python call traigent.utils.regression_dataset."
+                "select_examples_by_id(dataset, result.failing_examples(), "
+                "result) on the in-memory result"
+            ) from exc
+        if isinstance(exc, FileNotFoundError):
+            raise click.ClickException(
+                f"Result '{run}' not found in {storage_dir}. {_MSG_RESULTS_LIST_HINT}"
+            ) from exc
+        raise click.ClickException(f"Error loading result '{run}': {exc}") from exc
+    try:
+        failing: list[str] = result.failing_examples(
+            threshold=threshold, mode=cast(Any, mode)
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    return result, failing
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    """Whether ``a`` and ``b`` name the same file.
+
+    Fails closed: if the comparison itself cannot be made (e.g. a stat is
+    refused), the caller must not go on to overwrite, so the error is raised as
+    a ClickException rather than read as "different files".
+    """
+    if a == b:
+        return True
+    try:
+        return a.exists() and b.exists() and a.samefile(b)
+    except OSError as exc:
+        raise click.ClickException(
+            f"Cannot tell whether {a} is the source dataset {b}: {exc}; "
+            "refusing to write"
+        ) from exc
+
+
+@results.command("export-failures")
+@click.argument("run")
+@click.option(
+    "--dataset",
+    "dataset_path",
+    required=True,
+    help="The original JSONL/JSON dataset the run evaluated",
+)
+@click.option(
+    "--out",
+    "out_path",
+    required=True,
+    help="Where to write the failing examples as JSONL",
+)
+@click.option(
+    "--threshold",
+    type=float,
+    default=0.5,
+    show_default=True,
+    help="Per-example score below which an example fails (equality passes)",
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["all_configs", "best_config"]),
+    default="all_configs",
+    show_default=True,
+    help="all_configs: failed in every trial; best_config: failed in the winner's trials",
+)
+@click.option(
+    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
+)
+def results_export_failures(
+    run: str,
+    dataset_path: str,
+    out_path: str,
+    threshold: float,
+    mode: str,
+    storage_dir: str,
+) -> None:
+    """Export the examples a run got wrong as a regression JSONL dataset.
+
+    RUN is a saved result name (as in 'traigent results show'). Failing ids
+    come from the run's outcome matrix. Each id is joined to the one row of
+    --dataset whose input and expected_output equal what the run recorded for
+    that id (both compared in the redacted form the run stores; export with
+    the SDK version that ran the optimization), so --dataset must be the
+    dataset the run evaluated. If any id has no recorded input, matches no
+    row, or matches more than one row, nothing is written. Rows without a metadata example_id gain their source id
+    (example_<index>). Everything stays local: nothing is uploaded.
+
+    Examples:
+        traigent results export-failures my_run --dataset eval.jsonl --out regressions.jsonl
+        traigent results export-failures my_run --dataset eval.jsonl \\
+            --out regressions.jsonl --mode best_config
+    """
+    from traigent.evaluators.base import Dataset
+    from traigent.utils.regression_dataset import (
+        UnresolvedExampleIdError,
+        select_examples_by_id,
+    )
+
+    out_resolved = _resolve_user_cli_path(Path(out_path), "Output path", for_write=True)
+    if out_resolved.is_dir():
+        raise click.ClickException(f"Output path is a directory: {out_resolved}")
+
+    try:
+        dataset = Dataset.from_jsonl(dataset_path)
+    except Exception as exc:
+        raise click.ClickException(
+            f"Cannot load dataset '{dataset_path}': {exc}"
+        ) from exc
+    source_path = Path(str((dataset.metadata or {}).get("source_path", dataset_path)))
+    if _same_file(out_resolved, source_path.resolve()):
+        raise click.ClickException(
+            f"--out resolves to the source dataset {source_path}; refusing to "
+            "overwrite it"
+        )
+
+    run_result, failing_ids = _select_run_failures(run, storage_dir, threshold, mode)
+    if not failing_ids:
+        console.print("No failing examples; no dataset written")
+        return
+
+    try:
+        subset = select_examples_by_id(dataset, failing_ids, run_result)
+    except UnresolvedExampleIdError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except (TypeError, ValueError) as exc:
+        raise click.ClickException(f"Cannot select failing examples: {exc}") from exc
+
+    try:
+        out_resolved.parent.mkdir(parents=True, exist_ok=True)
+        subset.to_jsonl(out_resolved)
+    except (OSError, TypeError, ValueError) as exc:
+        raise click.ClickException(f"Cannot write {out_resolved}: {exc}") from exc
+
+    console.print(
+        f"Wrote {len(subset)} failing example(s) to {out_resolved}", soft_wrap=True
+    )
 
 
 @cli.command()

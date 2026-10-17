@@ -6,6 +6,9 @@ including session creation, status updates, and configuration run management.
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID FUNC-AGENTS REQ-CLOUD-009 REQ-AGNT-013
 
+import base64
+import binascii
+import re
 import time
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 from urllib.parse import urlparse
@@ -46,7 +49,9 @@ from traigent.config.types import _warn_deprecated_once
 from traigent.core.session_types import (
     SessionCreationFailureDetail,
     SessionCreationHTTPError,
+    safe_http_error_summary,
 )
+from traigent.security.redaction import redact_embedded_credentials
 from traigent.utils.artifact_fingerprints import (
     artifact_fingerprints_to_wire,
     fingerprint_meta_to_wire,
@@ -296,6 +301,119 @@ def _typed_configuration_space(space: Any) -> Any:
     return normalized
 
 
+# Upper bound on the text the scrubbers ever see. Error text is truncated to
+# 1000 chars on output anyway; bounding the input keeps every pattern below
+# cheap on hostile or runaway messages.
+_MAX_SCRUB_INPUT_CHARS = 4096
+
+_SECRET_WORDS = (
+    r"(?:password|passwd|passphrase|pwd|pw|secret|token|credentials?|"
+    r"api[_-]?key|access[_-]?key|private[_-]?key)"
+)
+# ``api_key_value=...`` is still a secret; ``max_tokens=100`` is not.
+_KEY_SUFFIX = r"(?:[_-](?:value|val|str|string|hash|key|text|data|id))?"
+# Quoted values may contain escaped quotes and may be unterminated (the text
+# can be cut mid-value); both forms are consumed to the end.
+_QUOTED_VALUE = r"\"(?:\\[\s\S]?|[^\"\\])*(?:\"|$)|'(?:\\[\s\S]?|[^'\\])*(?:'|$)"
+# Key (optionally prefixed, e.g. ``db_password``) followed by ``=`` or ``:``.
+# The lookbehind makes a match start only at the beginning of a name, so the
+# greedy prefix is not retried from every offset (no quadratic backtracking).
+_SECRET_KV_RE = re.compile(
+    rf"(?P<key>(?<![\w.-])[\w.-]*{_SECRET_WORDS}{_KEY_SUFFIX}[\"']?\s*[=:]\s*)"
+    rf"(?:{_QUOTED_VALUE}|\S+)",
+    re.IGNORECASE,
+)
+# A quoted value (JSON/dict style) is consumed to its closing quote; an unquoted
+# header consumes the rest of the line so multi-part schemes (``Digest a="b",
+# c="d"``, ``Negotiate <token>``) never leave a parameter behind.
+_AUTH_HEADER_RE = re.compile(
+    r"(?P<key>\bAuthorization[\"']?\s*[=:]\s*)"
+    r"(?:\"(?:\\[\s\S]?|[^\"\\])*(?:\"|$)|'(?:\\[\s\S]?|[^'\\])*(?:'|$)|[^\r\n]+)",
+    re.IGNORECASE,
+)
+_COOKIE_HEADER_RE = re.compile(
+    r"(?P<key>\b(?:Set-)?Cookie[\"']?\s*:\s*[\"']?)[^\r\n]+", re.IGNORECASE
+)
+_BEARER_RE = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{4,}", re.IGNORECASE)
+# Whole userinfo (``user:pass@`` or ``token@``): the user name can be a secret too.
+# Standalone ``Basic <base64>`` (needs a capital/digit/symbol so lowercase prose
+# such as "Basic authentication" is untouched).
+_BASIC_RE = re.compile(
+    r"\bBasic\s+(?=[A-Za-z0-9+/]*(?-i:[A-Z0-9+/=]))[A-Za-z0-9+/]{8,}={0,2}",
+    re.IGNORECASE,
+)
+# Case-insensitive companion: a lowercase-only credential (``basic ajppajppajpp``)
+# has no capital/digit/symbol, so it is redacted only when the token is valid
+# base64 that decodes to ``user:pass`` (contains ``:``). Prose such as
+# "basic usage of the API" does not decode to a colon-bearing string and stays.
+_BASIC_B64_RE = re.compile(r"\bBasic\s+(?P<tok>[A-Za-z0-9+/]{8,}={0,2})", re.IGNORECASE)
+
+
+def _basic_b64_replace(match: "re.Match[str]") -> str:
+    token = match.group("tok")
+    stripped = token.rstrip("=")
+    # Try the token as written (padded), then trimmed to a whole number of
+    # 4-char groups: a token cut by the input cap has an invalid length.
+    for candidate in (
+        stripped + "=" * (-len(stripped) % 4),
+        stripped[: len(stripped) // 4 * 4],
+    ):
+        try:
+            decoded = base64.b64decode(candidate, validate=True)
+        except (binascii.Error, ValueError):  # silent-ok: not base64, try next
+            continue
+        if b":" in decoded:
+            return "Basic [REDACTED]"
+    return match.group(0)
+
+
+# A ``Basic <token>`` that runs to the very end of input cut by the cap is a
+# truncated credential whatever it decodes to or how few characters survive
+# (a bare trailing ``Basic `` is redacted too).
+_BASIC_CUT_TAIL_RE = re.compile(r"\bBasic\s+[A-Za-z0-9+/]*={0,2}\Z", re.IGNORECASE)
+_URL_USERINFO_RE = re.compile(r"(?<=://)[^/\s@?#]+(?=@)")
+_URL_CUT_AUTHORITY_RE = re.compile(r"(?<=://)[^/\s@?#]+\Z")
+# Windows forbids these characters in a file name; a user name may hold up to
+# two spaces ("John Smith") when a path separator follows.
+_WIN_NAME = r"[^\s\\/\"':*?<>|]+"
+_WINDOWS_USER_PATH_RE = re.compile(
+    r"\b[A-Za-z]:[\\/]+Users[\\/]+"
+    rf"(?:{_WIN_NAME}(?: {_WIN_NAME})*(?=[\\/])|{_WIN_NAME})"
+    r"(?:[\\/]+[^\s\"']*)?",
+    re.IGNORECASE,
+)
+
+
+def _scrub_error_text(text: str) -> str:
+    """Mask credentials and user-identifying paths in error text.
+
+    Default-deny for credential-shaped key/value pairs, ``Authorization`` /
+    ``Bearer`` / ``Cookie`` values and URL userinfo; credential shapes from the
+    shared redaction helper (AWS, GitHub, JWT, PEM, ...) are masked too. PII
+    heuristics (SSN/card/email) are deliberately not applied: they would eat
+    numeric error codes and ids.
+    """
+    truncated = len(text) > _MAX_SCRUB_INPUT_CHARS
+    text = text[:_MAX_SCRUB_INPUT_CHARS]
+    text = _URL_USERINFO_RE.sub("[REDACTED]", text)
+    if truncated:
+        # The cap may have cut through ``scheme://user:pass@host``; the ``@``
+        # is gone, so redact an unterminated authority at the very end.
+        text = _URL_CUT_AUTHORITY_RE.sub("[REDACTED]", text)
+    text = _AUTH_HEADER_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
+    text = _COOKIE_HEADER_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
+    text = _BASIC_RE.sub("Basic [REDACTED]", text)
+    text = _BASIC_B64_RE.sub(_basic_b64_replace, text)
+    if truncated:
+        text = _BASIC_CUT_TAIL_RE.sub("Basic [REDACTED]", text)
+    text = _BEARER_RE.sub("Bearer [REDACTED]", text)
+    text = _SECRET_KV_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
+    text = redact_embedded_credentials(text)
+    text = _WINDOWS_USER_PATH_RE.sub("[PATH]", text)
+    text = re.sub(r"/home/[\w/.@+-]+", "[PATH]", text)
+    return re.sub(r"/Users/[\w/.@+-]+", "[PATH]", text)
+
+
 class ApiOperations:
     """Handles backend API operations."""
 
@@ -423,20 +541,7 @@ class ApiOperations:
         if not error_message:
             return None
 
-        # Remove sensitive information patterns
-        import re
-
-        # Remove potential secrets/tokens
-        sanitized = re.sub(
-            r"(api[_-]?key|token|secret|password)[\s=:]+[\w-]+",
-            "[REDACTED]",
-            error_message,
-            flags=re.IGNORECASE,
-        )
-
-        # Remove file paths that might contain user info
-        sanitized = re.sub(r"/home/[\w/.-]+", "[PATH]", sanitized)
-        sanitized = re.sub(r"/Users/[\w/.-]+", "[PATH]", sanitized)
+        sanitized = _scrub_error_text(error_message)
 
         # Truncate if too long
         max_length = 1000
@@ -503,6 +608,12 @@ class ApiOperations:
                     session_request
                 ):
                     raise
+                # A quota/limit refusal is a definitive answer from a reachable
+                # backend: the legacy contract would be refused the same way, so
+                # do not retry it (#2550).
+                typed_failure = getattr(typed_exc, "session_creation_failure", None)
+                if getattr(typed_failure, "is_quota_refusal", False):
+                    raise
                 logger.warning(
                     "Typed session create failed; retrying once with the "
                     "legacy contract (non-governed session, "
@@ -549,6 +660,12 @@ class ApiOperations:
             raise
         except CloudServiceError as e:
             if getattr(e, "typed_legacy_session_create_400", False):
+                raise
+            # Keep a quota refusal intact (with its structured detail) so the
+            # caller can tell it from a connectivity failure (#2550).
+            if getattr(
+                getattr(e, "session_creation_failure", None), "is_quota_refusal", False
+            ):
                 raise
             self._handle_generic_session_exception(e)
         except aiohttp.ClientConnectorError as e:
@@ -965,12 +1082,10 @@ class ApiOperations:
 
                     error_msg = await response.text()
                     logger.debug(
-                        "Intermediate report rejected for session %s trial %s: "
-                        "HTTP %s %s",
+                        "Intermediate report rejected for session %s trial %s: %s",
                         session_id,
                         trial_id,
-                        response.status,
-                        error_msg[:300],
+                        safe_http_error_summary(response.status, error_msg),
                     )
                     return {"prune": False, "prune_reason": None}
         except aiohttp.ClientError as exc:
@@ -1004,7 +1119,12 @@ class ApiOperations:
             cast(Any, service_exc).session_creation_failure = detail
             raise service_exc from structured_cause
 
-        logger.debug("Backend session error: %s - %s", status_code, error_msg[:200])
+        # Never log the backend message/body: it can carry customer text.
+        logger.debug(
+            "Backend session error: HTTP %s (%s)",
+            status_code,
+            detail.safe_quota_error_code if detail.is_quota_refusal else "n/a",
+        )
         service_exc = CloudServiceError(
             f"Session creation failed: HTTP {status_code}: {detail.one_line_summary()}"
         )
@@ -1101,7 +1221,7 @@ class ApiOperations:
                     else:
                         error_msg = await response.text()
                         logger.debug(
-                            f"Failed to update config run status: {response.status} - {error_msg[:100]}"
+                            f"Failed to update config run status: {safe_http_error_summary(response.status, error_msg)}"
                         )
                         return False
 
@@ -1283,7 +1403,7 @@ class ApiOperations:
                     else:
                         error_msg = await response.text()
                         logger.debug(
-                            f"Failed to update config run measures: {response.status} - {error_msg[:100]}"
+                            f"Failed to update config run measures: {safe_http_error_summary(response.status, error_msg)}"
                         )
                         return False
 
@@ -1354,7 +1474,8 @@ class ApiOperations:
                     else:
                         error_text = await response.text()
                         logger.warning(
-                            f"Failed to update experiment run status (HTTP {response.status}): {error_text}"
+                            f"Failed to update experiment run status: "
+                            f"{safe_http_error_summary(response.status, error_text)}"
                         )
         except Exception as e:
             logger.warning(f"Error updating experiment run status: {e}")

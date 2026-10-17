@@ -39,9 +39,11 @@ from traigent.hybrid import (
     TransportTimeoutError,
     create_transport,
 )
+from traigent.utils.exceptions import ValidationError
 from traigent.utils.logging import get_logger
 from traigent.utils.objectives import classify_objective
 from traigent.utils.retry import RetryConfig, RetryHandler
+from traigent.utils.trial_costs import is_finite_numeric_cost, trial_cost_unknown
 
 if TYPE_CHECKING:
     from traigent.cloud.production_mcp_client import (
@@ -67,6 +69,16 @@ _HYBRID_TRANSPORT_RETRY_CONFIG = RetryConfig(
 )
 
 
+def _is_absent_id(value: Any) -> bool:
+    """True for a missing id (``None`` or ``""``).
+
+    Only a ``str`` is compared with ``""``: for values such as ``pandas.NA`` or
+    a NumPy array, ``== ""`` returns a non-bool whose truth test raises, so
+    they must reach the type check (and its ``ValidationError``) instead.
+    """
+    return value is None or (isinstance(value, str) and value == "")
+
+
 @dataclass
 class HybridExampleResult:
     """Result for a single example in hybrid evaluation.
@@ -90,6 +102,9 @@ class HybridExampleResult:
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     input_id: str | None = None
+    #: True when the wire response reported no cost for this example. Then
+    #: ``cost_usd`` (0.0) is a placeholder, not a measurement (#2517).
+    cost_unmeasured: bool = False
 
     def __post_init__(self) -> None:
         """Normalize legacy input_id and canonical example_id fields."""
@@ -122,9 +137,25 @@ class HybridExampleResult:
 #: from trial-level totals a few lines below, so a per-example payload key of
 #: the same name would silently change what the number MEANS -- a per-example
 #: mean presented where a trial total is expected.
+#:
+#: ``cost_unmeasured`` is reserved for a stronger reason (#2517): it is Traigent's
+#: own verdict that a trial's cost is not a measurement. A value the service puts
+#: under that key -- ``0`` on every row is enough -- must never average into, or
+#: overwrite, the flag Traigent computed from what the service actually reported;
+#: that would turn an unknown cost back into a ranked, budgeted $0.
 _TRAIGENT_COMPUTED_METRIC_KEYS: frozenset[str] = frozenset(
-    {"success_rate", "cost", "total_cost", "latency", "response_time_ms"}
+    {
+        "success_rate",
+        "cost",
+        "total_cost",
+        "latency",
+        "response_time_ms",
+        "cost_unmeasured",
+    }
 )
+
+
+_COST_UNMEASURED_KEY = "cost_unmeasured"
 
 
 class HybridAPIEvaluator(BaseEvaluator):
@@ -448,6 +479,59 @@ class HybridAPIEvaluator(BaseEvaluator):
         if self._session_id:
             await self._lifecycle_manager.register(self._session_id)
 
+    @classmethod
+    def _fallback_example_cost(cls, response: Any, n_inputs: int) -> float | None:
+        """Per-example share of the response's total cost, or None if unreported."""
+        reported = response.get_reported_total_cost()
+        if not is_finite_numeric_cost(reported):
+            return None
+        return float(reported) / max(n_inputs, 1)
+
+    @classmethod
+    def _resolve_example_cost(
+        cls, output_item: dict[str, Any], fallback_cost: float | None
+    ) -> tuple[float, bool]:
+        """Return ``(cost_usd, unmeasured)`` for one output item.
+
+        A per-item numeric ``cost_usd`` (including a reported 0) is measured; so
+        is the response-level share. When the wire reported neither, the cost is
+        unknown: ``(0.0, True)`` -- the 0.0 is a placeholder the row flag
+        disowns (#2517).
+        """
+        item_cost = output_item.get("cost_usd")
+        if is_finite_numeric_cost(item_cost):
+            if float(item_cost) < 0:
+                # A negative cost is not spend: it must not enter the sums as
+                # a measurement (and must not net out a priced row).
+                return 0.0, True
+            return float(item_cost), False
+        if fallback_cost is None:
+            return 0.0, True
+        return fallback_cost, False
+
+    @staticmethod
+    def _results_cost_unknown(results: list[HybridExampleResult]) -> bool:
+        """True when the trial's cost is unknown (shared classifier, #2517).
+
+        A row is measured only when the wire reported a cost for it. Every other
+        row -- successful or failed -- keeps its explicit ``cost_unmeasured``
+        flag, so one such row makes the trial's cost unknown. A failure alone
+        does not establish zero spend: the remote service may have spent before
+        it errored, and a mixed trial must not claim the priced rows' sum as the
+        trial's cost (it would then outrank a fully measured trial).
+
+        The local lane may skip a failed row without a cost because it measures
+        spend by observing calls; a hybrid service only *reports* spend, so
+        silence from it is an unknown, not a zero.
+        """
+        rows: list[dict[str, float]] = []
+        for r in results:
+            if r.cost_unmeasured:
+                rows.append({_COST_UNMEASURED_KEY: 1.0})
+            else:
+                rows.append({"cost": r.cost_usd})
+        return trial_cost_unknown(rows, [r.success for r in results])
+
     @staticmethod
     def _coerce_metric(value: Any, default: float = 0.0) -> float:
         """Coerce a numeric metric value to float with a safe fallback."""
@@ -502,6 +586,9 @@ class HybridAPIEvaluator(BaseEvaluator):
                 example_id=str(inp["example_id"]),
                 expected_output=self._extract_expected(batch[i]),
                 error=error,
+                # Nothing was priced for an errored example: 0.0 is a
+                # placeholder, not a measured $0 (#2517).
+                cost_unmeasured=True,
             )
             for i, inp in enumerate(inputs)
         ]
@@ -608,6 +695,11 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         normalized: dict[str, float] = {}
         for key, value in metrics.items():
+            # The unmeasured-cost verdict is Traigent's, never the service's
+            # (#2517): a per-example value for it is ignored, not carried into
+            # the row metrics that downstream flag readers consult.
+            if key == _COST_UNMEASURED_KEY:
+                continue
             if isinstance(value, bool):
                 continue
             if isinstance(value, (int, float)):
@@ -644,7 +736,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         for result in results:
             success_values.append(1.0 if result.success else 0.0)
 
-            if result.cost_usd > 0:
+            if result.cost_usd > 0 and not result.cost_unmeasured:
                 cost_values.append(float(result.cost_usd))
 
             if result.latency_ms > 0:
@@ -680,7 +772,7 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         if accuracy_values and "accuracy" not in metric_values:
             metric_values["accuracy"] = accuracy_values
-        if cost_values:
+        if cost_values and not self._results_cost_unknown(results):
             metric_values.setdefault("cost", cost_values)
             metric_values.setdefault("total_cost", cost_values)
         if latency_values:
@@ -740,7 +832,15 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         Raises:
             EvaluationError: If evaluation fails.
+            ValidationError: If the id an example resolves to (``example_id``,
+                else ``input_id``) is not a string, or two examples resolve to
+                the same id.
         """
+        # Resolve every example's id once, from its dataset position, before any
+        # budget is reserved or any request is sent.
+        examples = list(dataset)
+        example_ids = self._resolve_example_ids(examples)
+
         execution_budget_lease, blocked_result = (
             self._prepare_execution_budget_evaluation(
                 budget, config, sample_lease=sample_lease
@@ -764,8 +864,6 @@ class HybridAPIEvaluator(BaseEvaluator):
             self._ensure_lifecycle_manager(), sample_lease, execution_budget_lease
         )
 
-        # Prepare examples
-        examples = list(dataset)
         total_examples = len(examples)
 
         # Apply sample budget limits
@@ -799,6 +897,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         for batch_start in range(0, len(examples), self._batch_size):
             batch_end = min(batch_start + self._batch_size, len(examples))
             batch = examples[batch_start:batch_end]
+            batch_ids = example_ids[batch_start:batch_end]
 
             # Consume from sample lease
             if sample_lease is not None:
@@ -808,7 +907,7 @@ class HybridAPIEvaluator(BaseEvaluator):
 
             # Execute batch
             batch_results = await self._await_with_sample_lease_cleanup(
-                self._execute_batch(transport, caps, config, batch),
+                self._execute_batch(transport, caps, config, batch, batch_ids),
                 sample_lease,
                 execution_budget_lease,
             )
@@ -816,21 +915,24 @@ class HybridAPIEvaluator(BaseEvaluator):
             if sample_lease:
                 sample_lease.mark_completed(len(batch_results))
 
-            # Track cost
-            batch_cost = sum(r.cost_usd for r in batch_results)
+            # Track cost: only rows the wire priced add to the running total;
+            # an unmeasured row's 0.0 is a placeholder, not spend (#2517).
+            batch_cost = sum(r.cost_usd for r in batch_results if not r.cost_unmeasured)
             total_cost += batch_cost
 
             # Progress callback
             if progress_callback is not None:
                 try:
-                    progress_callback(
-                        len(example_results),
-                        {
-                            "batch_size": len(batch),
-                            "total_cost": total_cost,
-                            "successful": sum(1 for r in example_results if r.success),
-                        },
-                    )
+                    progress_info: dict[str, Any] = {
+                        "batch_size": len(batch),
+                        "successful": sum(1 for r in example_results if r.success),
+                    }
+                    if self._results_cost_unknown(example_results):
+                        # Unknown spend: no $0 running total (#2517).
+                        progress_info["cost_unmeasured"] = 1.0
+                    else:
+                        progress_info["total_cost"] = total_cost
+                    progress_callback(len(example_results), progress_info)
                 except asyncio.CancelledError:
                     # The callback runs after batch admissions are marked, but
                     # keep the evaluator's cancellation boundary explicit for
@@ -876,6 +978,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         caps: ServiceCapabilities,
         config: dict[str, Any],
         batch: list[Any],
+        example_ids: list[str] | None = None,
     ) -> list[HybridExampleResult]:
         """Execute a batch of examples.
 
@@ -884,23 +987,23 @@ class HybridAPIEvaluator(BaseEvaluator):
             caps: Service capabilities.
             config: Configuration for this trial.
             batch: Batch of examples to process.
+            example_ids: The batch's ids from :meth:`_resolve_example_ids`, in
+                batch order. When omitted the batch is treated as the whole
+                dataset (positions start at 0).
 
         Returns:
             List of results for each example.
         """
+        if example_ids is None:
+            example_ids = self._resolve_example_ids(batch)
         # Prepare examples list
-        inputs = []
-        for i, example in enumerate(batch):
-            input_data = self._extract_input(example)
-            example_id = (
-                input_data.get("example_id") or input_data.get("input_id") or f"ex_{i}"
-            )
-            inputs.append(
-                {
-                    "example_id": example_id,
-                    "data": input_data,
-                }
-            )
+        inputs = [
+            {
+                "example_id": example_id,
+                "data": self._extract_input(example),
+            }
+            for example, example_id in zip(batch, example_ids, strict=True)
+        ]
 
         request = HybridExecuteRequest(
             tunable_id=self._tunable_id or "default",
@@ -969,6 +1072,65 @@ class HybridAPIEvaluator(BaseEvaluator):
             # Return error results for all examples
             return self._batch_error_results(batch, inputs, str(e))
 
+    def _resolve_example_id(self, example: Any, position: int) -> str:
+        """Return the id an example is sent and recorded under.
+
+        An ``example_id`` (else ``input_id``) in the input data that is not
+        ``None`` or ``""`` is used as-is, since the external service may look
+        rows up by it; otherwise ``ex_<position>``, where ``position`` is the
+        example's index in the dataset. The ``ex_`` prefix is deliberate: it
+        never matches the SDK's ``example_<idx>`` measure id, so the ids the
+        backend stores for hybrid rows stay ``ex_<hash>_<idx>``.
+
+        Raises:
+            ValidationError: The id in the input data is not a string. The
+                hybrid protocol defines ``example_id`` / ``input_id`` as
+                strings that the service echoes exactly, and only exact string
+                ids can be matched and checked for uniqueness reliably.
+        """
+        input_data = self._extract_input(example)
+        key = "example_id"
+        explicit = input_data.get(key)
+        if _is_absent_id(explicit):
+            key = "input_id"
+            explicit = input_data.get(key)
+        if _is_absent_id(explicit):
+            return f"ex_{position}"
+        if not isinstance(explicit, str):
+            raise ValidationError(
+                f"Hybrid example at position {position} has an {key} of type "
+                f"{type(explicit).__name__}; the hybrid protocol requires a "
+                "string id"
+            )
+        return explicit
+
+    def _resolve_example_ids(self, examples: list[Any]) -> list[str]:
+        """Resolve every example's id and require them to be unique.
+
+        Ids correlate each output with its example inside a request and key
+        the per-example results (outcome matrix, failing examples), so a
+        repeated id would silently merge examples. The error names positions
+        only: an id may be customer content.
+
+        Raises:
+            ValidationError: An id is not a string, or two examples resolve to
+                the same id.
+        """
+        first_position: dict[str, int] = {}
+        example_ids: list[str] = []
+        for position, example in enumerate(examples):
+            example_id = self._resolve_example_id(example, position)
+            previous = first_position.setdefault(example_id, position)
+            if previous != position:
+                raise ValidationError(
+                    f"Hybrid examples at positions {previous} and {position} "
+                    "resolve to the same example_id; example ids must be unique "
+                    "(check example_id / input_id in the inputs; rows without one "
+                    "use ex_<position>)"
+                )
+            example_ids.append(example_id)
+        return example_ids
+
     def _extract_input(self, example: Any) -> dict[str, Any]:
         """Extract input data from dataset example."""
         # Handle EvaluationExample dataclass
@@ -1009,9 +1171,7 @@ class HybridAPIEvaluator(BaseEvaluator):
     ) -> list[HybridExampleResult]:
         """Process response in combined mode (quality metrics included)."""
         results: list[HybridExampleResult] = []
-        fallback_cost = self._coerce_metric(response.get_total_cost()) / max(
-            len(inputs), 1
-        )
+        fallback_cost = self._fallback_example_cost(response, len(inputs))
         fallback_latency = self._coerce_metric(
             response.operational_metrics.get("latency_ms", 0.0)
         )
@@ -1028,6 +1188,7 @@ class HybridAPIEvaluator(BaseEvaluator):
                         example_id=example_id,
                         expected_output=expected,
                         error=self._missing_output_error(example_id),
+                        cost_unmeasured=True,
                         metadata={
                             "evaluation_mode": "evaluated",
                             "accuracy_derivation_path": "none",
@@ -1050,7 +1211,9 @@ class HybridAPIEvaluator(BaseEvaluator):
             error = output_item.get("error")
 
             # Prefer per-item metrics, fall back to aggregate execution metrics.
-            cost = self._coerce_metric(output_item.get("cost_usd"), fallback_cost)
+            cost, cost_unmeasured = self._resolve_example_cost(
+                output_item, fallback_cost
+            )
             latency = self._coerce_metric(
                 output_item.get("latency_ms"), fallback_latency
             )
@@ -1062,6 +1225,7 @@ class HybridAPIEvaluator(BaseEvaluator):
                     expected_output=expected,
                     metrics=per_example_metrics,
                     cost_usd=cost,
+                    cost_unmeasured=cost_unmeasured,
                     latency_ms=latency,
                     error=error if isinstance(error, str) else None,
                     metadata={
@@ -1144,9 +1308,7 @@ class HybridAPIEvaluator(BaseEvaluator):
 
             # Merge execute and evaluate results
             results: list[HybridExampleResult] = []
-            fallback_cost = self._coerce_metric(
-                execute_response.get_total_cost()
-            ) / max(len(inputs), 1)
+            fallback_cost = self._fallback_example_cost(execute_response, len(inputs))
             fallback_latency = self._coerce_metric(
                 execute_response.operational_metrics.get("latency_ms", 0.0)
             )
@@ -1189,11 +1351,12 @@ class HybridAPIEvaluator(BaseEvaluator):
                     derivation_path = "none"
 
                 # Prefer per-item operational metrics when present.
-                cost = (
-                    0.0
-                    if output_item is None
-                    else self._coerce_metric(output_item.get("cost_usd"), fallback_cost)
-                )
+                if output_item is None:
+                    cost, cost_unmeasured = 0.0, True
+                else:
+                    cost, cost_unmeasured = self._resolve_example_cost(
+                        output_item, fallback_cost
+                    )
                 latency = (
                     0.0
                     if output_item is None
@@ -1205,12 +1368,12 @@ class HybridAPIEvaluator(BaseEvaluator):
                 # Log raw per-example result for observability
                 logger.info(
                     "Hybrid example result: example_id=%s, "
-                    "output_id=%s, accuracy=%s, cost=%.6f, "
+                    "output_id=%s, accuracy=%s, cost=%s, "
                     "latency=%.0fms, error=%s",
                     example_id,
                     output_item.get("output_id") if output_item is not None else None,
                     per_example_metrics.get("accuracy"),
-                    cost,
+                    "unmeasured" if cost_unmeasured else f"{cost:.6f}",
                     latency,
                     eval_error or execute_error,
                 )
@@ -1222,6 +1385,7 @@ class HybridAPIEvaluator(BaseEvaluator):
                         expected_output=expected or eval_expected,
                         metrics=per_example_metrics,
                         cost_usd=cost,
+                        cost_unmeasured=cost_unmeasured,
                         latency_ms=latency,
                         error=eval_error
                         or (execute_error if isinstance(execute_error, str) else None),
@@ -1255,9 +1419,7 @@ class HybridAPIEvaluator(BaseEvaluator):
     ) -> list[HybridExampleResult]:
         """Process response when no evaluation is available."""
         results: list[HybridExampleResult] = []
-        fallback_cost = self._coerce_metric(response.get_total_cost()) / max(
-            len(inputs), 1
-        )
+        fallback_cost = self._fallback_example_cost(response, len(inputs))
         fallback_latency = self._coerce_metric(
             response.operational_metrics.get("latency_ms", 0.0)
         )
@@ -1274,6 +1436,7 @@ class HybridAPIEvaluator(BaseEvaluator):
                         example_id=example_id,
                         expected_output=expected,
                         error=self._missing_output_error(example_id),
+                        cost_unmeasured=True,
                         metadata={
                             "evaluation_mode": evaluation_mode,
                             "accuracy_derivation_path": "none",
@@ -1291,7 +1454,9 @@ class HybridAPIEvaluator(BaseEvaluator):
                     output_item.get("metrics", {})
                 )
             )
-            cost = self._coerce_metric(output_item.get("cost_usd"), fallback_cost)
+            cost, cost_unmeasured = self._resolve_example_cost(
+                output_item, fallback_cost
+            )
             latency = self._coerce_metric(
                 output_item.get("latency_ms"), fallback_latency
             )
@@ -1303,6 +1468,7 @@ class HybridAPIEvaluator(BaseEvaluator):
                     expected_output=expected,
                     metrics=per_example_metrics,
                     cost_usd=cost,
+                    cost_unmeasured=cost_unmeasured,
                     latency_ms=latency,
                     error=error if isinstance(error, str) else None,
                     metadata={
@@ -1448,6 +1614,8 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         lowered = primary_objective.strip().lower()
         if lowered in {"cost", "total_cost"}:
+            if result.cost_unmeasured:
+                return None
             return float(result.cost_usd)
         if lowered in {"latency", "response_time_ms"}:
             return float(result.latency_ms)
@@ -1499,6 +1667,11 @@ class HybridAPIEvaluator(BaseEvaluator):
             "success_rate": sum(1 for r in results if r.success) / len(results),
         }
 
+        # Decided from the rows' own flags, not from anything the service put
+        # in a metrics payload; applied after aggregation (below) so nothing
+        # aggregated can overwrite it (#2517).
+        cost_unknown = self._results_cost_unknown(results)
+
         # Aggregate per-example metrics
         metric_sums: dict[str, float] = {}
         metric_counts: dict[str, int] = {}
@@ -1531,6 +1704,11 @@ class HybridAPIEvaluator(BaseEvaluator):
                 "latency",
                 "response_time_ms",
             ):
+                if result.cost_unmeasured and metric_name in {"cost", "total_cost"}:
+                    # No cost was reported for this example: it contributes
+                    # no coverage to the cost metrics (#2517).
+                    metric_counts.setdefault(metric_name, 0)
+                    continue
                 metric_counts[metric_name] = metric_counts.get(metric_name, 0) + 1
 
         # Compute means
@@ -1560,6 +1738,23 @@ class HybridAPIEvaluator(BaseEvaluator):
             metric_counts,
             primary_objective=primary_objective,
         )
+
+        # Authoritative cost verdict, last: an unknown cost claims no total and
+        # carries the flag; a known one never carries a stray flag.
+        if cost_unknown:
+            aggregated.pop("cost", None)
+            aggregated.pop("total_cost", None)
+            aggregated[_COST_UNMEASURED_KEY] = 1.0
+            # The independently reported per-example costs are a valid floor
+            # (never a measured total): keep them so budgeted submission sends
+            # the reported spend with the flag instead of 0.0.
+            reported_floor = sum(
+                r.cost_usd for r in results if not r.cost_unmeasured and r.cost_usd > 0
+            )
+            if reported_floor > 0:
+                aggregated["cost_lower_bound"] = reported_floor
+        else:
+            aggregated.pop(_COST_UNMEASURED_KEY, None)
         return aggregated, comparability
 
     def _compute_aggregated_metrics(

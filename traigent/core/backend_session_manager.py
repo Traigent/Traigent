@@ -37,6 +37,7 @@ from traigent.core.execution_policy_runtime import (
     SOURCE_EXPLICIT_LOCAL,
     SOURCE_LOCAL_FALLBACK,
     SOURCE_OFFLINE,
+    CloudBrainUnavailableError,
     backend_egress_disabled,
     exception_status,
     failure_reason_from_code,
@@ -70,6 +71,8 @@ from traigent.utils.logging import get_logger
 from traigent.utils.trial_costs import (
     TRIAL_COST_FIELDS,
     extract_trial_cost_metric,
+    lift_flagged_cost_to_floor,
+    is_cost_unmeasured,
     is_finite_numeric_cost,
 )
 
@@ -451,6 +454,8 @@ def _classify_session_creation_failure(
         return SessionCreationFailureClassification.NETWORK
 
     if reason == SessionCreationFailureReason.SESSION_FAILED:
+        if detail and detail.is_quota_refusal:
+            return SessionCreationFailureClassification.QUOTA_EXCEEDED
         if detail and detail.status_code and 400 <= detail.status_code < 500:
             return SessionCreationFailureClassification.UNKNOWN
         return SessionCreationFailureClassification.BACKEND_UNREACHABLE
@@ -497,10 +502,9 @@ def _classify_session_creation_failure(
 
 
 def _format_raw_reason(result: SessionCreationResult) -> str | None:
-    detail = result.failure_response
+    # failure_detail is SDK-composed (status + closed code); the backend raw
+    # body is never printed (#2552).
     raw_reason = result.failure_detail
-    if detail and detail.raw_body:
-        raw_reason = detail.raw_body
     if not raw_reason:
         return None
     return cast(str, raw_reason.replace("\n", "\\n")[:500])
@@ -557,15 +561,23 @@ def _format_untracked_warning_block(
         lines.append(f"HTTP status: {detail.status_code}")
     if detail and detail.backend_url:
         lines.append(f"Backend URL: {detail.backend_url}")
-    if detail and detail.error_code:
-        lines.append(f"Backend error_code: {detail.error_code}")
-    if detail and detail.message:
-        lines.append(f"Backend message: {detail.message}")
+    quota_refusal = bool(detail and detail.is_quota_refusal)
+    if quota_refusal and detail:
+        # Quota path: closed error code only, never backend message/raw body.
+        lines.append(f"Backend error_code: {detail.safe_quota_error_code}")
+    elif detail and detail.error_code:
+        # Closed vocabulary only; the backend message/raw body is never printed.
+        lines.append(f"Backend error_code: {detail.safe_error_code}")
     if detail and detail.missing_permissions:
-        permissions = ", ".join(f"`{p}`" for p in detail.missing_permissions)
-        lines.append(f"Missing permissions: {permissions}")
+        # Count only: permission strings from the backend are never printed
+        # (they can echo customer identifiers). The full list stays on the
+        # failure detail for programmatic callers.
+        lines.append(
+            f"Missing permissions: {len(detail.missing_permissions)} "
+            "(see the Traigent portal for your role)"
+        )
 
-    raw_reason = _format_raw_reason(result)
+    raw_reason = None if quota_refusal else _format_raw_reason(result)
     if raw_reason:
         lines.append(f"Raw reason: {raw_reason}")
 
@@ -613,6 +625,12 @@ def _format_untracked_warning_block(
     elif classification == SessionCreationFailureClassification.KEY_NOT_FOUND:
         lines.append(
             "Remedy: configure a valid Traigent API key or run `traigent auth login`."
+        )
+    elif classification == SessionCreationFailureClassification.QUOTA_EXCEEDED:
+        lines.append(
+            "Remedy: a plan quota/limit was reached (the backend is reachable). "
+            "Review usage and upgrade in the Traigent portal (Billing), or reduce "
+            "the requested trials/samples."
         )
     elif classification == SessionCreationFailureClassification.BACKEND_UNREACHABLE:
         lines.append(
@@ -1026,6 +1044,23 @@ class BackendSessionManager:
         if trial_result.status != TrialStatus.COMPLETED:
             return
 
+        if is_cost_unmeasured(metrics_payload) or is_cost_unmeasured(
+            getattr(trial_result, "metrics", None)
+        ):
+            # Flagged unknown. A budget-armed session needs a numeric cost, so
+            # send the reported lower bound WITH the flag (the flag is the
+            # signal); a flagged ``cost`` of 0 never overrides reported spend.
+            # Elsewhere cost stays omitted.
+            if session_id in self._session_cost_budget_armed:
+                metrics_payload["cost_unmeasured"] = 1.0
+                lift_flagged_cost_to_floor(
+                    metrics_payload,
+                    getattr(trial_result, "metrics", None),
+                    getattr(trial_result, "metadata", None),
+                    metadata,
+                )
+            return
+
         if is_finite_numeric_cost(metrics_payload.get("cost")):
             return
 
@@ -1046,9 +1081,14 @@ class BackendSessionManager:
         if session_id not in self._session_cost_budget_armed:
             return
 
-        metrics_payload["cost"] = 0.0
+        # No cost and no flag: the spend is unknown, never a measured $0.
+        metrics_payload["cost_unmeasured"] = 1.0
+        metrics_payload["cost"] = 0.0  # lower bound: nothing reported
         if not self._cost_budget_zero_backfill_logged:
-            logger.debug("no cost telemetry; backfilling 0.0 for budget accounting")
+            logger.debug(
+                "no cost telemetry; submitting budgeted trial as "
+                "cost_unmeasured (not $0)"
+            )
             self._cost_budget_zero_backfill_logged = True
 
     def _flag_backend_degraded(
@@ -1059,7 +1099,20 @@ class BackendSessionManager:
         Called when a backend-tracking interaction fails at runtime. The first
         call emits a single, prominent warning; subsequent calls are quiet so a
         long run doesn't spam one warning per trial.
+
+        When cloud tracking is REQUIRED (``TRAIGENT_REQUIRE_CLOUD`` or a
+        cloud-required execution policy) local fallback is forbidden, so this
+        raises ``CloudBrainUnavailableError`` instead of degrading (#2510).
         """
+        if policy_requires_cloud(policy_from_config(self._traigent_config)):
+            if rejection_reason:
+                # Fixed text only: the backend reason can echo customer content.
+                detail = (
+                    "required cloud tracking was permanently rejected by the backend"
+                )
+            else:
+                detail = "required cloud tracking did not acknowledge the operation"
+            raise CloudBrainUnavailableError(context, detail)
         self._runtime_degraded = True
         self._fallback_reason = context
         # A runtime degradation carries no typed SessionCreationFailureReason.
@@ -1078,12 +1131,11 @@ class BackendSessionManager:
             logger.warning(
                 "⚠️  Traigent backend tracking was REJECTED during %s — "
                 "continuing in LOCAL-ONLY mode. The backend was reachable and "
-                "rejected the submitted config: %s. Trials are still optimized "
+                "rejected the submitted config. Trials are still optimized "
                 "and saved to local storage, but this run is NOT tracked on the "
                 "cloud backend; its result is marked source='local_fallback' "
                 "and persistence_reason='rejected'.",
                 context,
-                rejection_reason,
             )
             return
         logger.warning(
@@ -2499,6 +2551,8 @@ class BackendSessionManager:
             and auth_manager.has_api_key()
         )
         if not has_api_key:
+            if policy_requires_cloud(policy_from_config(self._traigent_config)):
+                self._flag_backend_degraded("trial submission without credentials")
             logger.debug(
                 "Skipping backend trial submission for session %s trial %s (no API key)",
                 session_id,
@@ -2527,6 +2581,8 @@ class BackendSessionManager:
                 )
 
         if session_mapping is None:
+            if policy_requires_cloud(policy_from_config(self._traigent_config)):
+                self._flag_backend_degraded("trial submission without session mapping")
             logger.info(
                 "No backend session mapping for %s; assuming offline fallback. "
                 "Skipping remote submission for trial %s.",
@@ -2669,7 +2725,10 @@ class BackendSessionManager:
                 # layer already logged an INFO message; don't flag backend degraded
                 # and don't re-log here so the user isn't flooded with warnings for
                 # a known transient condition.  Recover via `traigent sync`.
-                pass
+                # Required cloud tracking cannot tolerate an unacknowledged
+                # write, so it raises instead (#2510).
+                if policy_requires_cloud(policy_from_config(self._traigent_config)):
+                    self._flag_backend_degraded("trial submission")
             elif not submitted:
                 # False covers a real backend rejection (non-2xx that is not a
                 # transient not-found) or a network failure; degrade to local-only
@@ -2683,10 +2742,10 @@ class BackendSessionManager:
                         "trial submission", rejection_reason=rejection_reason
                     )
                     logger.warning(
-                        "Backend session endpoint rejected trial %s for session %s: %s",
+                        "Backend session endpoint rejected trial %s for session %s "
+                        "(permanent rejection)",
                         backend_trial_id,
                         session_id,
-                        rejection_reason,
                     )
                 else:
                     self._flag_backend_degraded("trial submission")
@@ -2706,6 +2765,9 @@ class BackendSessionManager:
                     status,
                     sorted(metrics_payload.keys()),
                 )
+        except CloudBrainUnavailableError:
+            # Required cloud: fail closed; never swallow into local fallback.
+            raise
         except Exception as exc:
             # A raised error here is a backend interaction failure; the run is
             # no longer cloud-tracked for this trial, so degrade to local-only

@@ -417,8 +417,7 @@ await asyncio.sleep(1.0)  # Add delay between trials if needed
 1. Run `traigent quickstart`
 2. Learn about [agent-based optimization](./agent_optimization.md)
 3. Read the [API reference](../api-reference/interactive_optimizer.md)
-4. Join our [community forum](https://community.traigent.ai) for support
 
 ---
 
-_For more information, visit [traigent.ai/docs](https://traigent.ai/docs)_
+_For more information, visit the [Traigent documentation](https://traigent.github.io/Traigent/)_

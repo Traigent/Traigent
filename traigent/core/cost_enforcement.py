@@ -6,8 +6,10 @@ and stop conditions to avoid double counting.
 
 Adaptive Cost Estimation:
     The module uses adaptive cost estimation based on observed trial costs:
-    - Initial estimates use configured estimated_cost_per_trial
-    - After trials complete, estimates update via exponential moving average (EMA)
+    - There is no per-trial estimate before the first trial completes, so the
+      first trial is always admitted
+    - After trials complete, the estimate is the arithmetic mean of the observed
+      costs of the completed trials
     - Confidence levels indicate reliability of estimates (0.0-1.0)
     - Divergence warnings are estimate-accuracy signals only; they do not
       override permit admission or enforce the run budget
@@ -21,7 +23,7 @@ Environment Variables:
         (default: false)
     TRAIGENT_COST_DIVERGENCE_THRESHOLD: Log warning if actual/estimated ratio exceeds
         this value (default: 2.0, meaning 2x divergence triggers warning).
-        This is a per-trial actual-vs-EMA estimate check, not a budget guardrail.
+        This is a per-trial actual-vs-mean estimate check, not a budget guardrail.
 
 Note:
     ``TRAIGENT_MOCK_LLM`` is intentionally NOT consulted here. Sprint 2-B
@@ -46,6 +48,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from traigent.utils.env_config import (
@@ -112,6 +115,11 @@ def resolve_fallback_trial_limit() -> int:
         )
         return DEFAULT_FALLBACK_TRIAL_LIMIT
     return parsed
+
+
+def run_cost_limit_env_is_set() -> bool:
+    """True when TRAIGENT_RUN_COST_LIMIT is set to a non-empty value."""
+    return bool((os.getenv("TRAIGENT_RUN_COST_LIMIT") or "").strip())
 
 
 def normalize_cost_approved(value: object) -> bool:
@@ -197,8 +205,12 @@ class Permit:
 
     @property
     def is_granted(self) -> bool:
-        """Check if this permit was granted (not denied)."""
-        return self.amount > 0.0 and self.id >= 0
+        """Check if this permit was granted (not denied).
+
+        A granted permit may reserve 0.0 USD (a mean cost of zero), so grant
+        is decided by the id alone: denied permits carry id -1.
+        """
+        return self.id >= 0
 
 
 class OptimizationAborted(Exception):
@@ -218,9 +230,17 @@ class CostEnforcerConfig:
         approved: Whether to skip the approval prompt.
         warning_threshold: Fraction of limit at which to emit warnings.
         fallback_trial_limit: If cost cannot be determined, limit by trial count.
-        estimated_cost_per_trial: Initial estimate for per-trial cost reservation.
-            Used for in-flight budget reservation in parallel execution; actual
-            trial cost may exceed the reservation before later admissions stop.
+        estimated_cost_per_trial: Rough per-trial figure used only for the
+            informational ``estimate_remaining_cost`` and for reserving
+            in-flight budget for trials dispatched concurrently before any
+            trial has completed. It is NOT an estimate: the in-run admission
+            estimate is the mean of observed completed-trial costs and is
+            absent until the first trial completes.
+        limit_explicit: True (the default, fail closed) when the config names
+            a cost limit. A completed trial that reports no cost is then
+            refused instead of being run under the unknown-cost trial-count
+            fallback. Only a cap inherited as DEFAULT_COST_LIMIT_USD, with no
+            limit given anywhere, sets this False.
     """
 
     limit: float = DEFAULT_COST_LIMIT_USD
@@ -228,6 +248,7 @@ class CostEnforcerConfig:
     warning_threshold: float = 0.5
     fallback_trial_limit: int = DEFAULT_FALLBACK_TRIAL_LIMIT
     estimated_cost_per_trial: float = 0.05  # $0.05 default estimate
+    limit_explicit: bool = True
 
     def __post_init__(self) -> None:
         self.limit = validate_cost_limit(self.limit)
@@ -346,13 +367,26 @@ class CostStatus:
 UNMEASURED_COST_TRIAL_LIMIT_WARNING_CODE = "COST_UNMEASURED_TRIAL_LIMIT_REACHED"
 
 
+def _spend_reached_limit(known_spend: object, cost_limit: object) -> bool:
+    """True when numeric known spend (a floor) has reached a numeric limit."""
+    return (
+        isinstance(known_spend, (int, float))
+        and isinstance(cost_limit, (int, float))
+        and known_spend >= cost_limit
+    )
+
+
 def unmeasured_cost_stop_message(
     trial_count: int,
     fallback_trial_limit: int,
     cost_limit: float,
     unmeasured_trials: int | None = None,
+    known_spend: float | None = None,
 ) -> str:
     """Explain the default unknown-cost safety stop and how to continue (#2441).
+
+    When ``known_spend`` (a minimum: it excludes unmeasured cost) has reached
+    ``cost_limit``, the message says the limit itself stopped the run.
 
     Conservative by default: once any trial's cost cannot be measured the cost
     limit cannot bound spend, so a run the user did not size explicitly stops
@@ -374,6 +408,13 @@ def unmeasured_cost_stop_message(
             "find why those configurations report no usage (a gateway that "
             "omits `usage`, a streaming call, an uncaptured client) and call "
             "the model through a captured client for every configuration"
+        )
+    if _spend_reached_limit(known_spend, cost_limit):
+        return (
+            f"The cost limit (${cost_limit:.2f}) was reached: known spend is at "
+            f"least ${known_spend:.2f} (a minimum; some cost could not be "
+            f"measured: {counts}). To get cost measured instead, "
+            f"{capture} (see docs/user-guide/cost_capture.md)."
         )
     return (
         f"Cost could not be measured ({counts}; no LLM usage was captured), "
@@ -401,8 +442,22 @@ def unmeasured_cost_stop_message(
 UNMEASURED_COST_TRIALS_RAN_WARNING_CODE = "COST_UNMEASURED_TRIALS_RAN"
 
 
-def unmeasured_cost_ran_message(trial_count: int, unmeasured_trials: int) -> str:
+def unmeasured_cost_ran_message(
+    trial_count: int,
+    unmeasured_trials: int,
+    *,
+    known_spend: float | None = None,
+    cost_limit: float | None = None,
+) -> str:
     """Warn that an explicitly sized run ran unmeasured-cost trials (#2441)."""
+    if _spend_reached_limit(known_spend, cost_limit):
+        return (
+            f"{unmeasured_trials} of {trial_count} trials ran with a cost that "
+            "could not be measured. The cost limit "
+            f"(${cost_limit:.2f}) was reached: known spend is at least "
+            f"${known_spend:.2f} (a minimum; unmeasured cost is not included). "
+            "See docs/user-guide/cost_capture.md to get cost measured."
+        )
     return (
         f"{unmeasured_trials} of {trial_count} trials ran with a cost that could "
         "not be measured (no LLM usage was captured), so the cost limit did not "
@@ -483,7 +538,11 @@ class CostEnforcer:
         self._in_flight_count: int = 0
         self._reserved_cost: float = 0.0
         self._cost_samples: list[float] = []  # Track actual costs for estimation
-        self._estimated_cost: float = self.config.estimated_cost_per_trial
+        # Admission estimate: arithmetic mean of observed completed-trial
+        # costs; 0.0 means "no estimate yet" (nothing has completed).
+        self._estimated_cost: float = 0.0
+        self._observed_cost_sum: float = 0.0
+        self._observed_cost_count: int = 0
         self._cold_start_warning_emitted: bool = False
 
         # Permit tracking for single-release semantics (Phase 1)
@@ -574,15 +633,15 @@ class CostEnforcer:
             self._sync_used = True
 
     def seed_estimated_cost_per_trial(self, calls_per_example: int) -> None:
-        """Scale the per-trial EMA seed by a declared calls-per-example multiplier.
+        """Scale the rough per-trial figure by calls-per-example.
 
         Intended to be called once, at construction time, before any trial has
-        been tracked. Without this, the EMA warm-starts at a single-call
-        estimate (default $0.05) and every early trial of a multi-call agent
-        (self-consistency voting, repair passes, model cascades) diverges from
-        it by roughly the same multiplier — a structurally guaranteed false
-        positive from ``_check_cost_divergence``, not a real anomaly
-        (issue #1750).
+        been tracked. This scales ``config.estimated_cost_per_trial``, the
+        figure used for the informational ``estimate_remaining_cost`` and the
+        concurrent in-flight reservation before any trial completes
+        (issue #1750). It does not seed the admission estimate: that is the
+        arithmetic mean of observed completed-trial costs and does not exist
+        before the first trial completes.
 
         Args:
             calls_per_example: Expected LLM calls per evaluated example. Values
@@ -592,7 +651,6 @@ class CostEnforcer:
             return
         with self._lock:
             self.config.estimated_cost_per_trial *= calls_per_example
-            self._estimated_cost = self.config.estimated_cost_per_trial
 
     def update_limit(self, new_limit: float) -> None:
         """Update the cost limit with synchronization.
@@ -666,6 +724,9 @@ class CostEnforcer:
 
         return CostEnforcerConfig(
             limit=limit_from_env(),
+            # A limit named in the environment is explicit; only the inherited
+            # default cap keeps the unknown-cost fallback.
+            limit_explicit=run_cost_limit_env_is_set(),
             approved=os.getenv("TRAIGENT_COST_APPROVED", "false").lower() == "true",
             warning_threshold=safe_float("TRAIGENT_COST_WARNING_THRESHOLD", 0.5),
             fallback_trial_limit=resolve_fallback_trial_limit(),
@@ -692,7 +753,13 @@ class CostEnforcer:
         """Check if the cost or trial limit has been reached (thread-safe)."""
         with self._lock:
             if self._unknown_cost_mode and not self._unknown_cost_cap_waived:
-                return self._trial_count >= self.config.fallback_trial_limit
+                # Known spend is a floor: it can only under-count, so reaching
+                # the limit with it is proof enough. The trial-count fallback
+                # stays as an extra bound for the spend we cannot see.
+                return (
+                    self._accumulated_cost >= self.config.limit
+                    or self._trial_count >= self.config.fallback_trial_limit
+                )
             return self._accumulated_cost >= self.config.limit
 
     def waive_unknown_cost_trial_cap(self) -> None:
@@ -739,6 +806,7 @@ class CostEnforcer:
                         self.config.fallback_trial_limit,
                         self.config.limit,
                         self._unmeasured_trial_count,
+                        self._accumulated_cost,
                     )
                 )
             estimated = self._accumulated_cost + self._reserved_cost
@@ -977,6 +1045,8 @@ Options:
         permit: Permit,
         trial_failed: bool = False,
         trial_id: str | None = None,
+        cost_unmeasured: bool = False,
+        unmeasured_examples: Sequence[str] | None = None,
     ) -> None:
         """Track actual cost after each trial (thread-safe).
 
@@ -993,6 +1063,11 @@ Options:
             permit: The Permit object returned by acquire_permit.
             trial_failed: Whether the trial failed/was cancelled (still counts).
             trial_id: Optional trial identifier for logging.
+            cost_unmeasured: True when ``cost`` is only the known spend floor of
+                a trial whose cost was partly unmeasured. The floor is charged,
+                the trial is counted as unmeasured, and strict mode raises.
+            unmeasured_examples: Up to a few example ids whose usage was
+                missing, named in the strict error / warning (ids only).
 
         Raises:
             CostTrackingRequiredError: If cost is None and
@@ -1018,6 +1093,8 @@ Options:
                 permit=permit,
                 trial_failed=trial_failed,
                 trial_id=trial_id,
+                cost_unmeasured=cost_unmeasured,
+                unmeasured_examples=unmeasured_examples,
                 require_cost_tracking=require_cost_tracking,
                 caller="track_cost",
                 include_limit_in_warning=True,
@@ -1025,11 +1102,12 @@ Options:
             )
 
     def _update_cost_estimate(self, actual_cost: float) -> None:
-        """Update the cost estimate using exponential moving average.
+        """Update the cost estimate to the mean of observed trial costs.
 
-        Called with lock held. Uses EMA with alpha=0.3 to balance responsiveness
-        with stability. Also maintains a sample buffer for more accurate estimates.
-        Logs warning if actual cost diverges significantly from estimate.
+        Called with lock held. The estimate is the arithmetic mean of every
+        observed completed-trial cost. Also maintains a sample buffer used for
+        confidence. Logs warning if actual cost diverges significantly from
+        the estimate.
 
         Args:
             actual_cost: The actual cost observed for a trial.
@@ -1042,15 +1120,16 @@ Options:
         if len(self._cost_samples) > 10:
             self._cost_samples.pop(0)
 
-        # Use exponential moving average for estimation
-        alpha = 0.3  # Weight for new observations
-        self._estimated_cost = alpha * actual_cost + (1 - alpha) * self._estimated_cost
+        # Arithmetic mean over all observed completed-trial costs.
+        self._observed_cost_sum += actual_cost
+        self._observed_cost_count += 1
+        self._estimated_cost = self._observed_cost_sum / self._observed_cost_count
 
     def _check_cost_divergence(self, actual_cost: float) -> None:
         """Check if actual cost diverges significantly from estimate.
 
         Called with lock held. Logs warning or info based on the ratio between
-        the latest trial's actual cost and the current per-trial EMA estimate.
+        the latest trial's actual cost and the current per-trial mean estimate.
         Configured via TRAIGENT_COST_DIVERGENCE_THRESHOLD (default 2.0).
         This is an estimate-accuracy signal only: it does not abort execution,
         revoke permits, or enforce the approved run budget.
@@ -1126,7 +1205,8 @@ Options:
         """Estimate cost for remaining trials with confidence.
 
         Uses adaptive estimation based on observed trial costs:
-        - Before 3 trials: Uses initial estimate
+        - Before 3 trials: Uses the observed mean, or the configured rough
+          per-trial figure when no trial has completed
         - After 3+ trials: Uses rolling average with confidence-based margin
 
         Args:
@@ -1142,7 +1222,12 @@ Options:
 
             if samples_used < 3:
                 # Use initial estimate with low confidence
-                estimated = self._estimated_cost * remaining_trials * safety_margin
+                per_trial = (
+                    self._estimated_cost
+                    if self._observed_cost_count > 0
+                    else self.config.estimated_cost_per_trial
+                )
+                estimated = per_trial * remaining_trials * safety_margin
                 return CostEstimate(
                     estimated_remaining_cost=estimated,
                     confidence=confidence,
@@ -1191,6 +1276,8 @@ Options:
         permit: Permit,
         trial_failed: bool = False,
         trial_id: str | None = None,
+        cost_unmeasured: bool = False,
+        unmeasured_examples: Sequence[str] | None = None,
     ) -> None:
         """Async version of track_cost.
 
@@ -1207,6 +1294,11 @@ Options:
             permit: The Permit object returned by acquire_permit_async.
             trial_failed: Whether the trial failed/was cancelled.
             trial_id: Optional trial identifier for logging.
+            cost_unmeasured: True when ``cost`` is only the known spend floor of
+                a trial whose cost was partly unmeasured. The floor is charged,
+                the trial is counted as unmeasured, and strict mode raises.
+            unmeasured_examples: Up to a few example ids whose usage was
+                missing, named in the strict error / warning (ids only).
 
         Raises:
             CostTrackingRequiredError: If cost is None and
@@ -1234,6 +1326,8 @@ Options:
                 permit=permit,
                 trial_failed=trial_failed,
                 trial_id=trial_id,
+                cost_unmeasured=cost_unmeasured,
+                unmeasured_examples=unmeasured_examples,
                 require_cost_tracking=require_cost_tracking,
                 caller="track_cost_async",
                 include_limit_in_warning=False,
@@ -1245,6 +1339,9 @@ Options:
             # In unknown cost mode, use trial count including in-flight
             total_trials = self._trial_count + self._in_flight_count
             if total_trials >= self.config.fallback_trial_limit:
+                return Permit(id=-1, amount=0.0, active=False)  # Denied
+            # The known spend floor still counts against the cost limit.
+            if self._accumulated_cost + self._reserved_cost >= self.config.limit:
                 return Permit(id=-1, amount=0.0, active=False)  # Denied
 
             self._in_flight_count += 1
@@ -1258,11 +1355,25 @@ Options:
             return permit
 
         # Admission is checked at trial granularity using the current estimated
-        # reservation plus any already-reserved in-flight cost.
-        reserved_amount = self._estimated_cost
+        # reservation plus any already-reserved in-flight cost. The estimate is
+        # the mean of observed completed-trial costs. Before the first trial
+        # completes there is no estimate, so a trial that starts with nothing in
+        # flight is always admitted. Further trials dispatched concurrently
+        # before any completion reserve the rough configured figure, so a
+        # parallel batch stays bounded by the cap; that figure is a reservation
+        # guard only and is never used as an estimate for a sequential trial.
         total_committed = self._accumulated_cost + self._reserved_cost
-        if total_committed + reserved_amount > self.config.limit:
-            return Permit(id=-1, amount=0.0, active=False)  # Denied
+        if self._observed_cost_count > 0:
+            reserved_amount = self._estimated_cost
+            if total_committed + reserved_amount > self.config.limit:
+                return Permit(id=-1, amount=0.0, active=False)  # Denied
+        else:
+            reserved_amount = self.config.estimated_cost_per_trial
+            if (
+                self._in_flight_count > 0
+                and total_committed + reserved_amount > self.config.limit
+            ):
+                return Permit(id=-1, amount=0.0, active=False)  # Denied
 
         # Reserve budget for this trial
         self._in_flight_count += 1
@@ -1338,21 +1449,44 @@ Options:
         *,
         require_cost_tracking: bool,
         include_limit_in_warning: bool,
+        trial_failed: bool = False,
+        unmeasured_examples: Sequence[str] | None = None,
     ) -> None:
         """Handle unknown cost under the lock, including strict-mode failure."""
+        examples_text = ""
+        if unmeasured_examples:
+            examples_text = (
+                " Examples whose usage was missing: "
+                + ", ".join(str(e) for e in list(unmeasured_examples)[:5])
+                + "."
+            )
         if require_cost_tracking:
             raise CostTrackingRequiredError(
                 f"Cost extraction failed for {trial_desc} and "
                 f"{self._require_cost_tracking_reason}. An unpriced call is "
                 "not recorded as $0, because the optimizer would rank it "
-                "cheapest. Provide per-token pricing with "
+                f"cheapest.{examples_text} To fix it: wrap a path that makes "
+                "no model call in traigent.with_usage(value, total_cost=0); "
+                "for an unpriced model, provide per-token pricing with "
                 "TRAIGENT_CUSTOM_MODEL_PRICING_JSON or "
-                "TRAIGENT_CUSTOM_MODEL_PRICING_FILE, or set "
+                "TRAIGENT_CUSTOM_MODEL_PRICING_FILE; or set "
                 "TRAIGENT_STRICT_COST_ACCOUNTING=false (and "
                 "TRAIGENT_REQUIRE_COST_TRACKING=false) to continue with "
                 "unavailable monetary cost for unpriced calls."
             )
+        if examples_text:
+            logger.warning(
+                "Cost partly unmeasured for %s.%s", trial_desc, examples_text
+            )
 
+        if self.config.limit_explicit and not trial_failed:
+            raise CostTrackingRequiredError(
+                f"Cost limit ${self.config.limit:.2f} is set but {trial_desc} "
+                "completed without a reported cost, so the cap cannot be "
+                "enforced. The run is refused instead of running unbounded. "
+                "Report a cost for each trial (cost metric or priced LLM "
+                "usage), or remove the explicit cost limit."
+            )
         if not self._unknown_cost_mode:
             if include_limit_in_warning:
                 logger.warning(
@@ -1389,7 +1523,9 @@ Options:
                 self._accumulated_cost,
             )
 
-        self._update_cost_estimate(cost)
+        if not trial_failed:
+            # The pre-trial estimate is the mean over completed trials only.
+            self._update_cost_estimate(cost)
         self._check_thresholds()
 
     def _track_cost_locked(
@@ -1399,6 +1535,8 @@ Options:
         permit: Permit,
         trial_failed: bool,
         trial_id: str | None,
+        cost_unmeasured: bool = False,
+        unmeasured_examples: Sequence[str] | None = None,
         require_cost_tracking: bool,
         caller: str,
         include_limit_in_warning: bool,
@@ -1429,12 +1567,20 @@ Options:
             )
 
         # Handle unknown cost with optional strict mode
-        if cost is None:
+        if cost is None or cost_unmeasured:
+            if cost is not None:
+                # Partly measured: charge the spend that WAS seen so budgets
+                # keep their protection, but never feed a floor into the
+                # per-trial estimate.
+                self._accumulated_cost += cost
+                self._check_thresholds()
             self._unmeasured_trial_count += 1
             self._handle_unknown_cost_locked(
                 trial_desc,
                 require_cost_tracking=require_cost_tracking,
                 include_limit_in_warning=include_limit_in_warning,
+                trial_failed=trial_failed,
+                unmeasured_examples=unmeasured_examples,
             )
             return
 
@@ -1485,7 +1631,14 @@ Options:
                 warning_threshold_reached=pct >= self.config.warning_threshold,
                 in_flight_count=self._in_flight_count,
                 reserved_cost_usd=self._reserved_cost,
-                estimated_cost_per_trial=self._estimated_cost,
+                # Mean of observed completed-trial costs; before any trial
+                # completes, the rough configured figure so shared-budget
+                # admission gates still reserve for a whole parallel batch.
+                estimated_cost_per_trial=(
+                    self._estimated_cost
+                    if self._observed_cost_count > 0
+                    else self.config.estimated_cost_per_trial
+                ),
                 cost_confidence=self.get_cost_confidence(),
                 unmeasured_trial_count=self._unmeasured_trial_count,
             )
@@ -1504,7 +1657,9 @@ Options:
             self._in_flight_count = 0
             self._reserved_cost = 0.0
             self._cost_samples = []
-            self._estimated_cost = self.config.estimated_cost_per_trial
+            self._estimated_cost = 0.0
+            self._observed_cost_sum = 0.0
+            self._observed_cost_count = 0
             self._cold_start_warning_emitted = False
             # Clear active permits registry (Phase 4 fix)
             self._active_permits.clear()
@@ -1518,8 +1673,7 @@ Options:
     def _verify_invariants(self) -> list[str]:
         """Runtime invariant verification for debugging.
 
-        Verifies the 8 critical invariants defined in the cost enforcement
-        concept specification (docs/traceability/concepts/cost_enforcement.yml).
+        Verifies the 8 critical cost-enforcement invariants.
 
         This method is designed to be called after state mutations during
         development and testing. Enable via TRAIGENT_DEBUG_INVARIANTS=true.

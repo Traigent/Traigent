@@ -96,10 +96,35 @@ def test_observability_config_does_not_emit_unknown_environment_content(
 
     config = ObservabilityConfig(backend_origin="https://auth.example.com")
 
-    assert config.default_environment is None
+    assert config.default_environment == "default"
     assert sentinel not in json.dumps(config.__dict__)
     assert "Ignoring unknown environment label" in caplog.text
     assert sentinel not in caplog.text
+
+
+def test_observability_environment_follows_one_resolution_order(monkeypatch):
+    """TRAIGENT_ENVIRONMENT beats ENVIRONMENT on the config and on the trace."""
+    monkeypatch.setenv("TRAIGENT_ENVIRONMENT", "staging")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("TRAIGENT_ENV", raising=False)
+    monkeypatch.delenv("OTEL_RESOURCE_ATTRIBUTES", raising=False)
+    _mock_public_backend_dns(monkeypatch)
+    sent_batches: list[list[dict]] = []
+    config = ObservabilityConfig(
+        backend_origin="https://auth.example.com",
+        api_key="test-key",  # pragma: allowlist secret
+    )
+    assert config.default_environment == "staging"
+
+    client = ObservabilityClient(config, sender=sent_batches.append)
+    trace_id = client.start_trace("env-order", trace_id="trace_env_order")
+    client.end_trace(trace_id)
+    client.flush()
+    client.close()
+
+    traces = [t for batch in sent_batches for t in batch]
+    assert traces
+    assert {t.get("environment") for t in traces} == {"staging"}
 
 
 def test_observability_config_defaults_to_metadata_content_mode(monkeypatch):
@@ -496,8 +521,12 @@ def test_observability_client_offline_mode_blocks_request_api():
         request_sender=request_sender,
     )
 
-    with pytest.raises(ClientError, match="TRAIGENT_OFFLINE_MODE=true"):
+    # #2603: no offline env var is set here, so the message must name the
+    # config flag that actually caused it, not TRAIGENT_OFFLINE_MODE.
+    with pytest.raises(ClientError) as exc_info:
         client.list_sessions()
+    assert "ObservabilityConfig.offline_mode=True" in str(exc_info.value)
+    assert "TRAIGENT_OFFLINE_MODE" not in str(exc_info.value)
 
     client.close()
 
@@ -1822,9 +1851,14 @@ def test_health_callback_can_flush_after_batch_delivery_failure():
     callback_finished = threading.Event()
     callback_results: list[BatchFlushResult] = []
 
+    attempts = 0
+
     def sender(traces):
+        nonlocal attempts
         del traces
-        raise AuthenticationError("invalid credentials")
+        attempts += 1
+        if attempts == 1:
+            raise AuthenticationError("invalid credentials")
 
     def health_callback(event_type: str, payload: dict) -> None:
         del payload
@@ -1857,7 +1891,7 @@ def test_health_callback_can_flush_after_batch_delivery_failure():
     assert callback_results[0].items_pending == 0
 
 
-def test_sync_batch_transport_reports_batch_delivery_drops_in_health_snapshot():
+def test_sync_batch_transport_reports_retained_delivery_failure_in_health_snapshot():
     events: list[tuple[str, dict]] = []
     callback_finished = threading.Event()
 
@@ -1883,16 +1917,16 @@ def test_sync_batch_transport_reports_batch_delivery_drops_in_health_snapshot():
     result = transport.flush()
     stats = transport.get_stats()
 
-    assert result.items_dropped == 2
-    assert stats["dropped_by_reason"] == {"batch_delivery_failed": 2}
+    assert result.items_dropped == 0
+    assert result.items_pending == 2
+    assert stats["dropped_by_reason"] == {}
     assert callback_finished.wait(timeout=1.0)
     assert events == [
         (
             "batch_delivery_failed",
             {
-                "drop_reason": "batch_delivery_failed",
-                "dropped_items": 2,
-                "queue_depth": 0,
+                "dropped_items": 0,
+                "queue_depth": 2,
                 "message": "invalid credentials",
                 "item_count": 2,
                 "trace_ids": ["trace_one", "trace_two"],
@@ -1900,6 +1934,8 @@ def test_sync_batch_transport_reports_batch_delivery_drops_in_health_snapshot():
             },
         )
     ]
+    transport._sender = lambda _traces: None
+    transport.close()
 
 
 def test_observability_client_chunks_flushes_by_byte_limit():
@@ -2780,6 +2816,7 @@ class TestDirectClientCallsHonorContentMode:
         gate is one shared enforcement point, not two independent ones."""
         sent_batches: list[list[dict]] = []
         client = _make_recording_client(lambda traces: sent_batches.append(traces))
+        # pragma: allowlist nextline secret
         secret = "top-secret-value"
 
         @observe("decorated-call", client=client, content_mode=mode)
@@ -4045,13 +4082,18 @@ def test_observability_retry_exhaustion_runs_real_retry_handler(monkeypatch):
         )
     )
 
-    events = client._transport._send_batch([("trace_retry_exhausted", {"id": "trace"})])
+    delivered, events = client._transport._send_batch(
+        [("trace_retry_exhausted", {"id": "trace"})]
+    )
     stats = client._transport.get_stats()
+    client._transport._sender = lambda _traces: None
     client.close()
 
+    assert not delivered
     assert attempts == 3
     assert stats["failed_batches"] == 1
-    assert stats["dropped_items"] == 1
+    assert stats["dropped_items"] == 0
+    assert stats["queue_depth"] == 1
     assert stats["errors"]
     assert events
 
@@ -5013,10 +5055,10 @@ class TestM5FullPipelineNumericExemption:
         client.start_trace(
             "m5-root-counterexamples-trace",
             metadata={
-                "passwd": "hunter2",
+                "passwd": "hunter2",  # pragma: allowlist secret
                 "jwt": "eyJhbGciOiJIUzI1NiJ9.secret.sig",
                 "bearer": "some-bearer-value",
-                "privateKey": "not-a-real-key-placeholder",
+                "privateKey": "not-a-real-key-placeholder",  # pragma: allowlist secret
                 "authStuff": "should also be masked",
             },
             content_mode="record",
@@ -5197,7 +5239,8 @@ class TestA4KeyBasedScrubbingCoverage:
         client.start_trace(
             "prompt-reference-secret-trace",
             prompt_reference=PromptReferenceDTO(
-                name="greeting", variables={"api_key": "sk-shouldnotship"}
+                name="greeting",
+                variables={"api_key": "sk-shouldnotship"},  # pragma: allowlist secret
             ),
         )
         client.flush()
@@ -6413,9 +6456,8 @@ class TestFinding2RealTransportInterleavingRegression:
             index = next(call_index)
             if index == paused_call_index:
                 entered_pause.set()
-                assert proceed.wait(timeout=5.0), (
-                    "test never released the paused transport submission"
-                )
+                release_message = "test never released the paused transport submission"
+                assert proceed.wait(timeout=5.0), release_message
                 scrub_armed["on"] = True
             return real_prepare_payload(self, payload, state=state)
 
@@ -6450,9 +6492,8 @@ class TestFinding2RealTransportInterleavingRegression:
         )
         paused_thread.start()
 
-        assert entered_pause.wait(timeout=5.0), (
-            "paused submission never reached the transport prepare step"
-        )
+        pause_message = "paused submission never reached the transport prepare step"
+        assert entered_pause.wait(timeout=5.0), pause_message
 
         # Mutate the SAME trace from this (the main) thread while the
         # first observation's snapshot submission is paused: complete it,
@@ -6507,12 +6548,80 @@ class TestFinding2RealTransportInterleavingRegression:
 
         observations = final_payload.get("observations", [])
         observation_ids = {obs["id"] for obs in observations}
-        assert observation_ids == {first_observation_id}, (
-            f"expected only the frozen observation, got {observation_ids}"
-        )
+        ids_message = f"expected only the frozen observation, got {observation_ids}"
+        assert observation_ids == {first_observation_id}, ids_message
         matching = next(
             obs for obs in observations if obs["id"] == first_observation_id
         )
-        assert matching["status"] == "running", (
+        status_message = (
             f"expected the FROZEN pre-mutation status, got {matching['status']!r}"
         )
+        assert matching["status"] == "running", status_message
+
+
+def test_observability_client_sends_multi_tag_filters_as_repeated_keys():
+    """Multi-value list filters must reach the backend as repeated query keys.
+
+    The backend reads list filters with ``request.args.getlist(key)`` and keeps each
+    received value as one literal item, so ``tags=vip%2Cbeta`` is the single tag
+    "vip,beta" and matches nothing. ``tags=vip&tags=beta`` parses as two tags.
+    """
+    from urllib.parse import parse_qs, urlsplit
+
+    request_paths: list[str] = []
+    empty_page = {
+        "data": {
+            "items": [],
+            "pagination": {
+                "page": 1,
+                "per_page": 20,
+                "total": 0,
+                "total_pages": 0,
+                "has_next": False,
+                "has_prev": False,
+            },
+        }
+    }
+
+    def request_sender(method, path, payload):
+        request_paths.append(path)
+        return copy.deepcopy(empty_page)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=lambda traces: None,
+        request_sender=request_sender,
+    )
+
+    client.list_traces(tags=["vip", " beta ", "", "  "])
+    client.list_sessions(tags=["vip", "beta"])
+    list(client.iter_traces(tags=["vip", "beta"]))
+    list(client.iter_sessions(tags=["vip", "beta"]))
+    # A single string stays one value: a tag may legitimately contain a comma.
+    client.list_traces(tags="vip,beta")
+    # A list of only blank items omits the key entirely.
+    client.list_traces(tags=["", "  "])
+    client.close()
+
+    def tags_of(path: str) -> list[str] | None:
+        return parse_qs(urlsplit(path).query).get("tags")
+
+    assert [urlsplit(path).path for path in request_paths] == [
+        "/traces",
+        "/sessions",
+        "/traces",
+        "/sessions",
+        "/traces",
+        "/traces",
+    ]
+    for path in request_paths[:4]:
+        assert tags_of(path) == ["vip", "beta"], path
+    assert tags_of(request_paths[4]) == ["vip,beta"]
+    assert tags_of(request_paths[5]) is None
+    assert request_paths[1] == "/sessions?page=1&per_page=20&tags=vip&tags=beta"

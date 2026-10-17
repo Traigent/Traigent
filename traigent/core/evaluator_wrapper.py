@@ -32,6 +32,13 @@ from traigent.utils.exceptions import EvaluationError
 from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.langchain_interceptor import capture_evaluation
 from traigent.utils.logging import get_logger
+from traigent.utils.trial_costs import (
+    is_cost_unmeasured,
+    known_spend_lower_bound,
+    row_has_measured_cost,
+    row_reports_zero_provider_attempts,
+    trial_cost_unknown,
+)
 
 logger = get_logger(__name__)
 
@@ -51,6 +58,10 @@ _SDK_MEASURED_OBJECTIVES = frozenset(
         "execution_time_ms",
     }
 )
+
+
+def _truthy_flag(value: Any) -> bool:
+    return bool(is_cost_unmeasured({"cost_unmeasured": value}))
 
 
 def _strict_metrics_nulls() -> bool:
@@ -254,6 +265,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         original_prompt = self._reconstruct_original_prompt(example)
         response_text = self._extract_response_text(example_result.actual_output)
         llm_metrics = None
+        any_unmeasured_call = False
         for position, response in enumerate(captured_responses):
             metrics = self._extract_llm_metrics(
                 response=response,
@@ -264,6 +276,10 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 response_text=response_text if position == 0 else None,
             )
             if not self._has_llm_measurement(metrics):
+                # A call with no usage is an unknown spend, and it stays
+                # unknown even when another call in the same example was
+                # measured: the example total is then only a floor (#2517).
+                any_unmeasured_call = True
                 continue
             if llm_metrics is None:
                 llm_metrics = metrics
@@ -273,6 +289,8 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         if llm_metrics is None:
             # Captured responses without usage are not a measured $0.
             return None
+        if any_unmeasured_call:
+            llm_metrics.cost.unmeasured = True
 
         logger.debug(
             f"Captured LLM metrics for example {example_index}: "
@@ -342,15 +360,25 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             example_result.metrics["total_tokens"] = safe_get_nested_attr(
                 llm_metrics, "tokens.total_tokens", 0
             )
-            example_result.metrics["input_cost"] = safe_get_nested_attr(
-                llm_metrics, "cost.input_cost", 0.0
-            )
-            example_result.metrics["output_cost"] = safe_get_nested_attr(
-                llm_metrics, "cost.output_cost", 0.0
-            )
-            example_result.metrics["total_cost"] = safe_get_nested_attr(
-                llm_metrics, "cost.total_cost", 0.0
-            )
+            if safe_get_nested_attr(llm_metrics, "cost.unmeasured", False):
+                # Unknown cost: leave the cost keys out, flag it (#2517).
+                example_result.metrics["cost_unmeasured"] = 1.0
+                # The part that WAS measured stays a floor, never a total.
+                known = safe_get_nested_attr(
+                    llm_metrics, "cost.total_cost", 0.0
+                ) + safe_get_nested_attr(llm_metrics, "cost.known_cost", 0.0)
+                if known > 0:
+                    example_result.metrics["cost_lower_bound"] = known
+            else:
+                example_result.metrics["input_cost"] = safe_get_nested_attr(
+                    llm_metrics, "cost.input_cost", 0.0
+                )
+                example_result.metrics["output_cost"] = safe_get_nested_attr(
+                    llm_metrics, "cost.output_cost", 0.0
+                )
+                example_result.metrics["total_cost"] = safe_get_nested_attr(
+                    llm_metrics, "cost.total_cost", 0.0
+                )
 
             response_time_ms = safe_get_nested_attr(
                 llm_metrics, "response.response_time_ms", 0
@@ -488,7 +516,14 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         the weighted sum), and single-objective ranking treats the trial as
         ineligible.
         """
+        trial_unmeasured = _truthy_flag(aggregated.get("cost_unmeasured"))
         for metric in MEASURED_ONLY_METRICS & set(self.metrics):
+            if trial_unmeasured:
+                if _strict_metrics_nulls():
+                    aggregated[metric] = None
+                else:
+                    aggregated.pop(metric, None)
+                continue
             if any(
                 row and _measured_number(row.get(metric)) is not None
                 for row in all_metrics
@@ -535,6 +570,54 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 aggregated[metric] = sum(metric_values)
             elif strict_nulls:
                 aggregated[metric] = None
+
+        if trial_cost_unknown(
+            all_metrics,
+            [bool(getattr(r, "success", True)) for r in example_results]
+            if len(example_results) == len(all_metrics)
+            else None,
+        ):
+            # A flagged row, a successful row with no captured cost, or no
+            # measured row at all: the sum would be a floor (or nothing), not
+            # the trial's cost, so no cost total is claimed (#2517).
+            aggregated["cost_unmeasured"] = 1.0
+            # The spend rows did report is a valid floor (never a total): keep
+            # it so budgeted submission sends it with the flag, not 0.0.
+            reported_floor = sum(
+                known_spend_lower_bound(row) for row in all_metrics if row
+            )
+            if reported_floor > 0:
+                aggregated["cost_lower_bound"] = reported_floor
+            for metric in _LLM_COST_METRICS:
+                if strict_nulls:
+                    aggregated[metric] = None
+                else:
+                    aggregated.pop(metric, None)
+        elif any(
+            row_reports_zero_provider_attempts(row) and not row_has_measured_cost(row)
+            for row in all_metrics
+        ):
+            # Rows that explicitly report zero provider attempts spent nothing.
+            # Fold the spend the other rows reported under ANY cost alias
+            # first (``cost`` is not one of the summed keys above), and only
+            # when no row reported any cost materialize the established
+            # measured zero (a sum over no rows would omit the keys).
+            reported = sum(
+                known_spend_lower_bound(row)
+                for row in all_metrics
+                if row_has_measured_cost(row)
+            )
+            if any(row_has_measured_cost(row) for row in all_metrics):
+                # Always the combined per-row spend: the plain sum above only
+                # saw rows reporting ``total_cost`` and would drop a row that
+                # reports ``cost``. ``known_spend_lower_bound`` takes the max
+                # across one row's aliases (trial_costs.py), so a row echoing
+                # the same spend as ``cost`` and ``total_cost`` counts once.
+                aggregated["total_cost"] = reported
+            else:
+                for metric in _LLM_COST_METRICS:
+                    if aggregated.get(metric) is None:
+                        aggregated[metric] = 0.0
 
         measured_rows = sum(
             1

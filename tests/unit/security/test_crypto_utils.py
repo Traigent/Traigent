@@ -782,6 +782,7 @@ class TestProductionFailClosed_SDK896:
         # Prove the fallback storage is genuinely encryption-backed: a
         # round-trip through the public API must recover the original data,
         # and the ciphertext must not contain the plaintext.
+        # pragma: allowlist nextline secret
         secret = {"api_key": "sk-fallback-round-trip"}
         encrypted = storage.encrypt_credentials(secret)
         assert encrypted["encrypted"] is True
@@ -841,6 +842,7 @@ class TestProductionFailClosed_SDK896:
         # Confirm it's the real encryption-backed storage (not the
         # FallbackCredentialStorage the two classifiers would disagree
         # into) by round-tripping through the public encrypt/decrypt API.
+        # pragma: allowlist nextline secret
         secret = {"api_key": "sk-classifier-round-trip"}
         encrypted = storage.encrypt_credentials(secret)
         assert encrypted["encrypted"] is True
