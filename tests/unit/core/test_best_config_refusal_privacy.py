@@ -96,8 +96,14 @@ def _place(entry: str, tmp_path: Path, monkeypatch, data: Any, **kw: Any):
     directory = tmp_path / f"dir-{CANARY}"
     if entry == "dev-log":
         directory = (
-            tmp_path / ".traigent" / "optimization_logs" / "experiments"
-            / "_agent" / "runs" / "r1" / "artifacts"
+            tmp_path
+            / ".traigent"
+            / "optimization_logs"
+            / "experiments"
+            / "_agent"
+            / "runs"
+            / "r1"
+            / "artifacts"
         )
         name = "best_config_v2.json"
     else:
@@ -168,7 +174,10 @@ def test_repo_mode_never_prints_customer_content(case, tmp_path, caplog) -> None
     caplog.set_level(logging.DEBUG)
     root = tmp_path / ".traigent" / "best-configs"
     write_repo_best_config(
-        root, config_id="agent", config={"t": 2}, function_ref=_REF,
+        root,
+        config_id="agent",
+        config={"t": 2},
+        function_ref=_REF,
         environment="prod",
     )
     spec_file = root / "agent.json"

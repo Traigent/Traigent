@@ -440,9 +440,7 @@ def load_best_config_spec(
                 details={"path": str(path), "error_type": type(exc).__name__},
             ) from exc
         # fail-open(intentional): non-strict callers accept degraded fallback; strict callers re-raise
-        logger.warning(
-            "Ignoring invalid best config (%s)", _fixed_reason(exc)
-        )
+        logger.warning("Ignoring invalid best config (%s)", _fixed_reason(exc))
         return None
 
 
@@ -944,9 +942,7 @@ def resolve_cloud_cache_best_config(
                 details={"error_type": type(exc).__name__},
             ) from exc
         # fail-open(intentional): non-strict callers accept degraded fallback; strict callers re-raise
-        logger.warning(
-            "Ignoring cloud best-config cache: %s", _fixed_reason(exc)
-        )
+        logger.warning("Ignoring cloud best-config cache: %s", _fixed_reason(exc))
         return None
 
 
@@ -1055,8 +1051,7 @@ def _validate_and_filter_config_keys(
         )
 
     logger.warning(
-        "Ignoring %d forward-compatible best config key(s) outside "
-        "configuration_space",
+        "Ignoring %d forward-compatible best config key(s) outside configuration_space",
         len(unknown),
     )
     return {key: value for key, value in normalized.items() if key in allowed}
