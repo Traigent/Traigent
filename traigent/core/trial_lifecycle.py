@@ -17,7 +17,7 @@ import inspect
 import math
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
@@ -580,6 +580,9 @@ class TrialLifecycle:
         orchestrator = self._orchestrator
         closure: LeaseClosure | None = None
         capture_bucket: Any = None
+        # Set once the evaluator returns, so a later failure (post-evaluation
+        # constraint, surrogate scoring) keeps the tracker's spend snapshot.
+        eval_result: Any = None
         # Content identity v1: the run's snapshot (taken by optimize(), which
         # also stamped every example with its keyed id/version so each
         # ExampleResult carries it). None without a Backend key grant.
@@ -732,6 +735,7 @@ class TrialLifecycle:
                 progress_state,
                 optuna_trial_id,
                 constraint_error,
+                tracked_spend=getattr(eval_result, "tracked_spend", None),
             )
             self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_effectuation_metadata(result, func)
@@ -780,6 +784,7 @@ class TrialLifecycle:
                 progress_state,
                 optuna_trial_id,
                 exc,
+                tracked_spend=getattr(eval_result, "tracked_spend", None),
             )
             self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_effectuation_metadata(result, func)
@@ -1525,6 +1530,7 @@ class TrialLifecycle:
         optuna_trial_id: int | None,
         error: Exception,
         is_pruned: bool = False,
+        tracked_spend: Mapping[str, Any] | None = None,
     ) -> TrialResult:
         """Build error result for failed or pruned trial.
 
@@ -1537,6 +1543,9 @@ class TrialLifecycle:
             optuna_trial_id: Optuna trial ID (may be None)
             error: Exception that caused the failure
             is_pruned: Whether this is a pruned trial (vs failed)
+            tracked_spend: Tracker snapshot of an evaluation that finished
+                before the failure; kept so run aggregation counts its spend
+                (or its uncertainty) instead of dropping it.
 
         Returns:
             TrialResult with appropriate status and error information
@@ -1565,5 +1574,7 @@ class TrialLifecycle:
                 optuna_trial_id=optuna_trial_id,
             )
 
+        if isinstance(tracked_spend, Mapping):
+            trial_result.tracked_spend = dict(tracked_spend)
         self._apply_budget_metadata(trial_result, closure, budget_exhausted)
         return trial_result

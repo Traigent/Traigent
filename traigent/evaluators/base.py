@@ -1430,12 +1430,16 @@ class EvaluationResult:
             "has_errors": self.has_errors,
             "metric_errors": _safe_json_value(self.metric_errors),
             "model_costs": _safe_json_value(self.model_costs),
+            "tracked_spend": _safe_json_value(self.tracked_spend),
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EvaluationResult:
         """Reconstruct EvaluationResult from a dictionary."""
         from traigent.api.types import ExampleResult
+        from traigent.utils.optimization_result_persistence import (
+            decode_trial_tracked_spend,
+        )
 
         # Rehydrate example_results if they are dicts
         example_results = []
@@ -1463,6 +1467,8 @@ class EvaluationResult:
             errors=data.get("errors"),
             metric_errors=data.get("metric_errors") or [],
             model_costs=data.get("model_costs") or [],
+            # Absent in dicts written before the field existed -> None.
+            tracked_spend=decode_trial_tracked_spend(data.get("tracked_spend")),
         )
 
 

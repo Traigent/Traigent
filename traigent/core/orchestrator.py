@@ -14,7 +14,7 @@ import statistics
 import sys
 import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from difflib import get_close_matches
 from typing import TYPE_CHECKING, Any, cast
@@ -1108,6 +1108,7 @@ class OptimizationOrchestrator:
         # intentionally excluded from ``_trials`` and must therefore be carried
         # into both normal and cancellation result construction explicitly.
         self._winner_stability_accounted_cost = 0.0
+        self._winner_stability_cost_unmeasured = False
         # The backend session id for the active run. Read by the
         # certified-selection report guard to verify the incumbent's trial id
         # was backend-acknowledged before attesting a winner.
@@ -2209,6 +2210,13 @@ class OptimizationOrchestrator:
                     rerun_trial,
                     permit=permit,
                 )
+                tracked = getattr(rerun_trial, "tracked_spend", None)
+                if (
+                    isinstance(tracked, Mapping) and tracked.get("unmeasured")
+                ) or is_cost_unmeasured(rerun_trial.metrics):
+                    # A rerun with unknown spend makes the run total unknown
+                    # too (owner ruling A); its floor is already in the cost.
+                    self._winner_stability_cost_unmeasured = True
                 # Stability reruns are excluded from optimizer history, but
                 # their sample accounting is still serialized.
                 self._register_examples_attempted(rerun_trial)
@@ -2224,9 +2232,31 @@ class OptimizationOrchestrator:
     def _add_winner_stability_cost_to_result(
         result: OptimizationResult,
         stability_cost: float,
+        *,
+        cost_unmeasured: bool = False,
     ) -> None:
-        """Reconcile known stability-rerun spend into an outward result."""
-        if stability_cost <= 0:
+        """Reconcile known stability-rerun spend into an outward result.
+
+        ``cost_unmeasured`` says a rerun's own spend was unknown: the run total
+        becomes unavailable and the measured spend plus every floor is exposed
+        only as ``cost_lower_bound`` (owner ruling A).
+        """
+        if stability_cost <= 0 and not cost_unmeasured:
+            return
+        if cost_unmeasured and not result.metrics.get("cost_unmeasured"):
+            measured = result.total_cost
+            if measured is None:
+                measured = result.metrics.get("total_cost")
+            try:
+                measured_value = float(measured or 0.0)
+            except (TypeError, ValueError):
+                measured_value = 0.0
+            result.total_cost = None
+            result.metrics.pop("total_cost", None)
+            result.metrics["cost_unmeasured"] = 1.0
+            result.metrics["cost_lower_bound"] = measured_value + max(
+                stability_cost, 0.0
+            )
             return
         if result.metrics.get("cost_unmeasured"):
             # Unknown run cost: the rerun spend raises the floor, it never
@@ -3052,6 +3082,7 @@ class OptimizationOrchestrator:
         self._strict_withheld_promotions = []
         self._certified_promotions = 0
         self._winner_stability_accounted_cost = 0.0
+        self._winner_stability_cost_unmeasured = False
 
         # Reset stop conditions for fresh optimization run
         self._stop_condition_manager.reset()
@@ -4221,6 +4252,7 @@ class OptimizationOrchestrator:
                                 self._add_winner_stability_cost_to_result(
                                     result,
                                     self._winner_stability_accounted_cost,
+                                    cost_unmeasured=self._winner_stability_cost_unmeasured,
                                 )
                         except Exception:
                             logger.warning(
@@ -4304,6 +4336,7 @@ class OptimizationOrchestrator:
             self._add_winner_stability_cost_to_result(
                 result,
                 self._winner_stability_accounted_cost,
+                cost_unmeasured=self._winner_stability_cost_unmeasured,
             )
 
             if not scores:
@@ -4768,6 +4801,7 @@ class OptimizationOrchestrator:
         self._add_winner_stability_cost_to_result(
             result,
             self._winner_stability_accounted_cost,
+            cost_unmeasured=self._winner_stability_cost_unmeasured,
         )
         try:
             await self._finalize_optimization(result, session_id, session_span)
