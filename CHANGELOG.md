@@ -107,6 +107,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **A real `publish_best_config()` no longer raises `CloudBestConfigIntegrityError` after the
+  Backend has already committed the publish.** The SDK hashed `provenance` and the unfiltered
+  `validation` into a best-config `spec_hash`, the Backend (since #819) hashes neither, so every
+  publish looked failed while the server had moved the head. `compute_spec_hash` now applies the
+  one frozen `traigent.best_config.v1` rule (TraigentSchema `best_config_schema.json`
+  `x-traigent-spec-hash`): provenance not covered, claim/result keys removed from `validation`
+  recursively, trimmed `config_id`, effective environment always hashed. Publish verification
+  hashes the spec the Backend returned, not the request. A repo or cloud-cache manifest written
+  with the old rule now fails closed with "written with an older spec_hash rule" (regenerate it
+  or refetch); no data is migrated silently.
+
 - **`Dataset.to_jsonl` keeps an existing file's permission bits when it
   replaces it.** Re-exporting over an owner-only (`0600`) file under a `022`
   umask used to leave it `0644`. A new file still follows the umask, like

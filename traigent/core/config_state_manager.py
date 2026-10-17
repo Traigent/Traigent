@@ -457,6 +457,37 @@ class ConfigStateManager:
                 "Cloud best-config config_hash mismatch"
             )
 
+    @staticmethod
+    def _verify_publish_response(result: Any, sent_spec: dict[str, Any]) -> None:
+        """Verify a publish answer against the spec the Backend RETURNED.
+
+        The Backend normalizes a request before it hashes it (trimmed ``config_id``,
+        effective environment), so the digest it returns belongs to the stored spec.
+        The client recomputes it independently under the one frozen v1 rule; it never
+        just accepts the returned digest, and it never hashes its own request instead.
+        """
+
+        stored = result.get("spec") if isinstance(result, dict) else None
+        if not isinstance(stored, dict):
+            raise CloudBestConfigIntegrityError(
+                "Cloud best-config publish response did not include the stored spec"
+            )
+        ConfigStateManager._verify_cloud_response_hashes(result, stored)
+        sent_config = sent_spec.get("config")
+        sent_id = sent_spec.get("config_id")
+        if not isinstance(sent_config, dict) or not isinstance(sent_id, str):
+            raise CloudBestConfigIntegrityError(
+                "Published best-config spec lacks a config object or config_id"
+            )
+        if result.get("config_hash") != sha256_digest(canonical_json(sent_config)):
+            raise CloudBestConfigIntegrityError(
+                "Cloud best-config config_hash mismatch"
+            )
+        if stored.get("config_id") != sent_id.strip():
+            raise CloudBestConfigIntegrityError(
+                "Cloud best-config response is for a different config_id"
+            )
+
     def _is_pure_cloud_source_mode(self) -> bool:
         mode_value = (
             self.best_config_source.value
@@ -1118,7 +1149,7 @@ class ConfigStateManager:
                 if_match=if_match,
                 **precondition_kwargs,
             )
-            self._verify_cloud_response_hashes(result, spec)
+            self._verify_publish_response(result, spec)
             return result
         except CloudBestConfigStaleHeadError as exc:
             # The backend refused and wrote nothing. Keep the refused config on

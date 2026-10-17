@@ -35,7 +35,36 @@ _SPEC_OPTIONAL_KEYS = {
     "forward_compat",
 }
 _SPEC_ALLOWED_KEYS = _SPEC_REQUIRED_KEYS | _SPEC_OPTIONAL_KEYS
+# The frozen spec_hash rule of the legacy ``traigent.best_config.v1`` envelope
+# (TraigentSchema ``best_config_schema.json`` ``x-traigent-spec-hash``). The Backend has
+# applied it since #819; provenance is NOT covered (v1 provenance carries event
+# timestamps, so a republish of an identical config would otherwise look new).
 _SPEC_HASH_KEYS = (
+    "schema_version",
+    "config_id",
+    "function_ref",
+    "environment",
+    "config",
+    "validation",
+)
+_SPEC_HASH_DEFAULT_ENVIRONMENT = "default"
+# Removed from ``validation`` at any depth before hashing (by key name, not meaning):
+# the guaranteed-selection claim and its result members are bound by the certificate,
+# which itself carries the spec_hash, so they cannot be part of the hashed bytes.
+_VALIDATION_HASH_EXCLUDED_KEYS = frozenset(
+    {
+        "guaranteed_selection",
+        "certified_selection",
+        "status",
+        "deployable",
+        "selected_config",
+        "fallback_config",
+        "certificate",
+    }
+)
+# The rule this SDK used before it was aligned with the Backend (it also covered
+# provenance and the unfiltered validation). Kept only to explain a stale stored hash.
+_PRE_ALIGNMENT_SPEC_HASH_KEYS = (
     "schema_version",
     "config_id",
     "function_ref",
@@ -466,6 +495,7 @@ def snapshot_from_spec(
             manifest_entry,
             config_hash=raw_config_hash,
             spec_hash=raw_spec_hash,
+            spec=spec,
         )
 
     config = _validate_and_filter_config_keys(
@@ -489,10 +519,81 @@ def snapshot_from_spec(
     return snapshot
 
 
-def compute_spec_hash(spec: dict[str, Any]) -> str:
-    """Compute hash over the canonical self-hash-free spec payload."""
+def compute_spec_hash(spec: dict[str, Any], *, environment: str | None = None) -> str:
+    """Return the frozen ``spec_hash`` of a ``traigent.best_config.v1`` spec.
 
-    payload = {key: spec[key] for key in _SPEC_HASH_KEYS if key in spec}
+    Mirrors the Backend rule: NFC, trimmed ``config_id``, always-present effective
+    environment (``spec.environment``, else ``environment``, else ``"default"``),
+    provenance and ``forward_compat`` not covered, claim/result keys removed from
+    ``validation`` recursively (``validation`` omitted when empty afterwards), then
+    canonical JSON. ``environment`` is the publish request's environment, used only
+    when the spec carries none. Any other envelope version has no rule here.
+    """
+
+    schema_version = spec.get("schema_version")
+    if schema_version != BEST_CONFIG_SCHEMA_VERSION:
+        raise ConfigurationError(
+            f"No spec_hash rule for best config schema_version {schema_version!r}"
+        )
+    return sha256_digest(
+        _serialize_v1_hash_payload(_v1_hash_payload(spec, environment))
+    )
+
+
+def _v1_hash_payload(spec: dict[str, Any], environment: str | None) -> dict[str, Any]:
+    normalized = _normalize_json_value(copy.deepcopy(spec))
+    if not isinstance(normalized, dict):
+        raise ConfigurationError("Best config spec must be a JSON object")
+    config_id = spec.get("config_id")
+    if not isinstance(config_id, str):
+        raise ConfigurationError("Best config config_id must be a string")
+    normalized["config_id"] = config_id.strip()  # trimmed, not NFC (the Backend rule)
+    function_ref = spec.get("function_ref")
+    if isinstance(function_ref, str):
+        normalized["function_ref"] = function_ref.strip()
+    effective_environment = normalized.get("environment")
+    if effective_environment is None:
+        effective_environment = environment or _SPEC_HASH_DEFAULT_ENVIRONMENT
+    if not isinstance(effective_environment, str):
+        raise ConfigurationError("Best config environment must be a string")
+    normalized["environment"] = effective_environment.strip().lower()
+
+    payload = {key: normalized[key] for key in _SPEC_HASH_KEYS if key in normalized}
+    validation = payload.get("validation")
+    if isinstance(validation, dict):
+        claim_free = _strip_validation_claims(validation)
+        if claim_free:
+            payload["validation"] = claim_free
+        else:
+            payload.pop("validation")
+    return payload
+
+
+def _strip_validation_claims(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _strip_validation_claims(item)
+            for key, item in value.items()
+            if key not in _VALIDATION_HASH_EXCLUDED_KEYS
+        }
+    if isinstance(value, list):
+        return [_strip_validation_claims(item) for item in value]
+    return value
+
+
+def _serialize_v1_hash_payload(payload: dict[str, Any]) -> str:
+    # Not canonical_json(): that would NFC-normalize config_id again, which the rule forbids.
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+
+
+def _pre_alignment_spec_hash(spec: dict[str, Any]) -> str:
+    payload = {key: spec[key] for key in _PRE_ALIGNMENT_SPEC_HASH_KEYS if key in spec}
     return sha256_digest(canonical_json(payload))
 
 
@@ -785,12 +886,19 @@ def _verify_manifest_hashes(
     *,
     config_hash: str,
     spec_hash: str,
+    spec: dict[str, Any] | None = None,
 ) -> None:
     expected_config_hash = manifest_entry.get("config_hash")
     expected_spec_hash = manifest_entry.get("spec_hash")
     if expected_config_hash and expected_config_hash != config_hash:
         raise ConfigurationError("Best config manifest config_hash mismatch")
     if expected_spec_hash and expected_spec_hash != spec_hash:
+        if spec is not None and expected_spec_hash == _pre_alignment_spec_hash(spec):
+            raise ConfigurationError(
+                "Best config manifest spec_hash was written with an older spec_hash "
+                "rule (it covered provenance) and is no longer valid; regenerate the "
+                "manifest entry or refetch the cloud best config"
+            )
         raise ConfigurationError("Best config manifest spec_hash mismatch")
 
 
