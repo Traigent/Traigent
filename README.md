@@ -3,7 +3,8 @@
 <p align="center">
   <a href="https://github.com/Traigent/Traigent/actions/workflows/tests.yml"><img src="https://github.com/Traigent/Traigent/actions/workflows/tests.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg" alt="License: AGPL-3.0"></a>
-  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+"></a>
+  <a href="https://pypi.org/project/traigent/"><img src="https://img.shields.io/pypi/v/traigent.svg" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/traigent/"><img src="https://img.shields.io/pypi/pyversions/traigent.svg" alt="Python versions"></a>
   <a href="docs/getting-started/GETTING_STARTED.md"><img src="https://img.shields.io/badge/docs-getting%20started-brightgreen.svg" alt="Docs"></a>
 </p>
 
@@ -268,8 +269,6 @@ def multi_provider_agent(question: str) -> str:
 | **Live progress** | Auto-enabled progress bar in interactive terminals (`progress_bar=False` to disable) |
 | **No-egress option** | `offline=True` keeps Traigent optimization traffic local when policy requires it |
 
-**TraigentDemo** — Streamlit playground, use cases, and research benchmarks
-
 ---
 
 <details>
@@ -413,7 +412,11 @@ up locally with `uv sync --all-extras`.
 
 ## 🤝 Contributing
 
-We welcome bug reports and feature requests via [GitHub Issues](https://github.com/Traigent/Traigent/issues). For security vulnerabilities, please email security@traigent.ai.
+We welcome bug reports and feature requests via [GitHub Issues](https://github.com/Traigent/Traigent/issues). See [CONTRIBUTING.md](CONTRIBUTING.md) and our [Code of Conduct](CODE_OF_CONDUCT.md). For security vulnerabilities, please email security@traigent.ai (see [SECURITY.md](SECURITY.md)).
+
+## 💬 Support
+
+Questions: [GitHub Discussions](https://github.com/Traigent/Traigent/discussions). Bugs: [GitHub Issues](https://github.com/Traigent/Traigent/issues). Details: [SUPPORT.md](SUPPORT.md).
 
 ## 📄 License
 

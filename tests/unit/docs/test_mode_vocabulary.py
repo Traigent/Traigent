@@ -53,18 +53,7 @@ EXEMPT_KEYWORDS = ("deprecated", "removed", "migrat", "legacy", "formerly")
 # (relative_path, line_number) -> reason. Line numbers are 1-based. Use this
 # ONLY for genuine historical/changelog text that cannot carry an
 # EXEMPT_KEYWORDS on the same line without falsifying the historical record.
-ALLOWLIST_LINES: dict[tuple[str, int], str] = {
-    (
-        "docs/fake-completion-tracking.md",
-        17,
-    ): "changelog entry describing an already-merged historical commit in "
-    "period-accurate terminology (predates the execution-mode consolidation)",
-    (
-        "docs/fake-completion-tracking.md",
-        23,
-    ): "changelog entry describing an already-merged historical commit in "
-    "period-accurate terminology (predates the execution-mode consolidation)",
-}
+ALLOWLIST_LINES: dict[tuple[str, int], str] = {}
 
 # Whole files exempted outright (documented reason required). Prefer
 # ALLOWLIST_LINES for anything narrower than a full file.

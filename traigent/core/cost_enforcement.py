@@ -1673,8 +1673,7 @@ Options:
     def _verify_invariants(self) -> list[str]:
         """Runtime invariant verification for debugging.
 
-        Verifies the 8 critical invariants defined in the cost enforcement
-        concept specification (docs/traceability/concepts/cost_enforcement.yml).
+        Verifies the 8 critical cost-enforcement invariants.
 
         This method is designed to be called after state mutations during
         development and testing. Enable via TRAIGENT_DEBUG_INVARIANTS=true.
