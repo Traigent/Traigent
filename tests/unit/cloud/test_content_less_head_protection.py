@@ -165,14 +165,28 @@ class _FakeBackend:
         self.auth = auth
         self.submit_result = Mock()
         self.read_error: Exception | None = None
-        self.bindings: dict[str, dict[str, str]] = {
-            "bs-1": {"agent_ref": agent_ref or AGENT_REF, "environment": "default"}
-        }
+        self.bindings: dict[str, dict[str, str]] = {}
+        self.create_calls = 0
         if not by_ref:
             self.fetch_agent_head_generation_by_ref_sync = None  # type: ignore[assignment]
 
     def create_session(self, function_name, search_space, optimization_goal, **kw):
+        self.create_calls += 1
         if self.content_less:
+            # The Backend stores the environment of the create body (optimization_identity
+            # ._environment): absent -> "default", a member of SessionEnvironment, else
+            # the create is refused. The body is built by the SDK's own payload rewrite.
+            body: dict[str, Any] = {}
+            cl.apply_to_payload(body, options=kw.get("content_less"), cached_refs={})
+            env = body.get("environment")
+            if env is None:
+                env = "default"
+            if env not in cl.ENVIRONMENTS:
+                raise CloudServiceError("session create refused")
+            self.bindings["bs-1"] = {
+                "agent_ref": self.agent_ref or AGENT_REF,
+                "environment": env,
+            }
             return SessionCreationResult.connected(
                 session_id="bs-1", agent_ref=self.agent_ref, content_less=True
             )
@@ -218,6 +232,7 @@ class _FakeBackend:
                 "expected": expected_head_generation,
                 "environment": environment,
                 "session_id": provenance.get("source_session_id"),
+                "spec_environment": spec.get("environment"),
             }
         )
         if agent_ref is not None:
@@ -265,6 +280,16 @@ def online(monkeypatch, tmp_path):
     monkeypatch.setenv("TRAIGENT_API_KEY", "tg-fake-portal-key-head")
     monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")
     monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path / "results"))
+    monkeypatch.setenv("TRAIGENT_CONTENT_LESS", "1")
+    for name in (
+        "TRAIGENT_ENVIRONMENT",
+        "OTEL_RESOURCE_ATTRIBUTES",
+        "ENVIRONMENT",
+        "TRAIGENT_ENV",
+        "TRAIGENT_BEST_CONFIG_ENVIRONMENT",
+        "TRAIGENT_AGENT_REF",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
 
 def _make_wrapper():
@@ -328,6 +353,7 @@ async def test_publish_sends_the_ref_and_the_captured_generation(online):
             "expected": 3,
             "environment": "default",
             "session_id": "bs-1",  # the Backend resolves the binding from this
+            "spec_environment": "default",
         }
     ]
     assert fake.head == 4
@@ -409,16 +435,62 @@ async def test_client_without_a_by_ref_read_refuses_the_publish_locally(online):
 
 
 @pytest.mark.asyncio
-async def test_capture_for_another_environment_refuses_instead_of_going_unprotected(
-    online,
+@pytest.mark.parametrize(
+    ("configured", "canonical"),
+    [
+        ("staging", "staging"),
+        ("production", "production"),
+        ("prod", "production"),  # accepted alias
+        ("PROD", "production"),
+        ("dev", "development"),  # accepted alias
+        ("development", "development"),
+        ("test", "test"),
+        ("testing", "test"),  # accepted alias
+        ("stage", "staging"),  # accepted alias
+        ("stg", "staging"),  # accepted alias
+        ("default", "default"),
+    ],
+)
+async def test_run_environment_is_one_value_from_session_create_to_publish(
+    online, monkeypatch, configured, canonical
 ):
+    monkeypatch.setenv("TRAIGENT_BEST_CONFIG_ENVIRONMENT", configured)
+    fake = _FakeBackend()
+    answer, result = await _run(fake)
+    assert fake.bindings["bs-1"]["environment"] == canonical  # what the Backend stored
+    assert fake.ref_reads == [(AGENT_REF, canonical)]
+    assert result.metadata["promotion_precondition"]["environment"] == canonical
+
+    _publish(answer, fake)
+
+    assert [(p["environment"], p["spec_environment"]) for p in fake.publishes] == [
+        (canonical, canonical)
+    ]
+    assert fake.head == 4  # the fake's binding check passed end to end
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", ["canary", "prod-eu", "Production Eu", "default2"])
+async def test_environment_outside_the_closed_set_refuses_before_session_create(
+    online, monkeypatch, bad
+):
+    monkeypatch.setenv("TRAIGENT_BEST_CONFIG_ENVIRONMENT", bad)
+    fake = _FakeBackend()
+    with pytest.raises(cl.ContentLessRefusal) as excinfo:
+        await _run(fake)
+    assert excinfo.value.code == cl.INVALID_ENVIRONMENT
+    assert bad not in str(excinfo.value)
+    assert fake.create_calls == 0 and fake.ref_reads == [] and fake.publishes == []
+
+
+@pytest.mark.asyncio
+async def test_publish_uses_the_session_bound_environment_not_a_later_change(online):
     fake = _FakeBackend()
     answer, _ = await _run(fake)
-    answer._csm.best_config_environment = "production"
-    with pytest.raises(CloudBestConfigHeadRefusedError) as excinfo:
-        _publish(answer, fake)
-    assert excinfo.value.code is HeadRefusalCode.HEAD_ENVIRONMENT_MISMATCH
-    assert fake.publishes == []
+    answer._csm.best_config_environment = "production"  # changed after the run
+    _publish(answer, fake)
+    assert fake.publishes[0]["environment"] == "default"
+    assert fake.publishes[0]["spec_environment"] == "default"
 
 
 @pytest.mark.asyncio
@@ -471,7 +543,8 @@ async def test_session_binding_disagreeing_with_the_headers_is_refused(
 
 
 @pytest.mark.asyncio
-async def test_legacy_session_is_unchanged(online):
+async def test_legacy_session_is_unchanged(online, monkeypatch):
+    monkeypatch.delenv("TRAIGENT_CONTENT_LESS")
     fake = _FakeBackend(content_less=False)
     answer, result = await _run(fake)
     assert result.metadata["promotion_precondition"] == {
@@ -488,6 +561,7 @@ async def test_legacy_session_is_unchanged(online):
             "expected": 3,
             "environment": "default",
             "session_id": None,
+            "spec_environment": "default",
         }
     ]
 
@@ -936,18 +1010,9 @@ def test_transport_failure_text_does_not_echo_the_url_or_exception():
 # ------------------------------------------------------------------------ canary
 
 
-@pytest.mark.asyncio
-async def test_no_customer_string_reaches_the_head_requests_or_the_logs(online, caplog):
-    """Customer-chosen strings in the create 201 and in refusal bodies never leave."""
+def test_no_customer_string_reaches_the_head_requests_or_the_logs(caplog):
+    """Customer-chosen strings in refusal bodies never leave or get logged."""
     caplog.set_level(logging.DEBUG)
-    fake = _FakeBackend()
-    fake.read_error = CloudBestConfigHeadRefusedError(
-        HeadRefusalCode.REFERENCE_NOT_FOUND
-    )
-    answer, _ = await _run(fake)
-    with pytest.raises(CloudBestConfigHeadRefusedError):
-        _publish(answer, fake)
-
     # wire level: only the opaque ref, the closed environment and the integer travel
     wire, patcher = _wired(
         (
@@ -988,6 +1053,22 @@ async def test_no_customer_string_reaches_the_head_requests_or_the_logs(online, 
         assert canary not in sent
         assert canary not in str(excinfo.value) + repr(excinfo.value)
         assert canary not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_no_customer_string_reaches_the_logs_when_the_capture_is_refused(
+    online, caplog
+):
+    caplog.set_level(logging.DEBUG)
+    fake = _FakeBackend()
+    fake.read_error = CloudBestConfigHeadRefusedError(
+        HeadRefusalCode.REFERENCE_NOT_FOUND
+    )
+    answer, _ = await _run(fake)
+    with pytest.raises(CloudBestConfigHeadRefusedError):
+        _publish(answer, fake)
+
+    assert CANARY_AGENT_ID not in caplog.text and CANARY_TEXT not in caplog.text
 
 
 @pytest.mark.parametrize("copy_spec", [True])

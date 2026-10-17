@@ -1085,6 +1085,10 @@ class ConfigStateManager:
             captured = self._best_config_precondition
             if isinstance(captured, dict) and captured.get("protected") is True:
                 provenance["source_session_id"] = captured["session_id"]
+                # The session-bound environment (already canonical) is the one the
+                # Backend stored at session create and compares the publish with.
+                environment = captured["environment"]
+                spec["environment"] = environment
         try:
             client = get_backend_client(enable_fallback=False)
             current = client.fetch_best_config_sync(
@@ -1204,9 +1208,11 @@ class ConfigStateManager:
                 HeadRefusalCode.CAPTURE_MISSING,
                 reason=CloudPublishUnavailableReason.HEAD_CAPTURE_MISSING,
             )
-        if captured.get("environment") != environment:
+        from traigent.cloud.content_less import ENVIRONMENTS
+
+        if captured.get("environment") not in ENVIRONMENTS:
             raise CloudBestConfigHeadRefusedError(
-                HeadRefusalCode.HEAD_ENVIRONMENT_MISMATCH,
+                HeadRefusalCode.HEAD_CAPTURE_INVALID,
                 reason=CloudPublishUnavailableReason.HEAD_CAPTURE_MISSING,
             )
         return {"agent_ref": agent_ref, "expected_head_generation": generation}

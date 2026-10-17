@@ -1682,6 +1682,30 @@ class BackendSessionManager:
             from traigent.cloud import content_less as content_less_session
 
             content_less_active = content_less_session.is_enabled(content_less)
+            if content_less_active:
+                # One environment for the whole run: the session is created with the
+                # run's best-config environment (canonicalized once, here, before
+                # anything is sent; out-of-set refuses locally), and the head capture
+                # and the publish use that same session-bound value.
+                options = (
+                    content_less
+                    if isinstance(content_less, content_less_session.ContentLessOptions)
+                    else content_less_session.ContentLessOptions()
+                )
+                requested_environment = options.environment
+                if requested_environment is None and head_environment not in (
+                    None,
+                    "default",
+                ):
+                    requested_environment = head_environment
+                head_environment = content_less_session.resolve_environment(
+                    requested_environment
+                )
+                content_less = content_less_session.ContentLessOptions(
+                    enabled=options.enabled,
+                    agent_ref=options.agent_ref,
+                    environment=head_environment,
+                )
             portal_name = compute_portal_name(
                 # Content-less: the agent is named by its code identifier, never by the
                 # customer-chosen display name, objectives or knobs (group 1).

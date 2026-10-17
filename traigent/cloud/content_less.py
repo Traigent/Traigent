@@ -170,6 +170,22 @@ def _otel_environment(env: Mapping[str, str]) -> str | None:
     )
 
 
+def canonicalize_environment(value: str) -> str:
+    """The ONE canonicalizer of a run environment (strip, lower-case, alias-map).
+
+    The result is a member of the closed ``SessionEnvironment`` enum, which is also a
+    member of the best-config environment enum, so the same string is valid in the
+    session-create body, the head read and the publish. Anything else is refused
+    locally with the closed code ``invalid_environment`` (the value is never echoed).
+    Aliases are an SDK-side convenience: the Backend sees only the canonical value.
+    """
+    text = str(value).strip().lower()
+    text = ENVIRONMENT_ALIASES.get(text, text)
+    if text not in ENVIRONMENTS:
+        raise ContentLessRefusal(INVALID_ENVIRONMENT)
+    return text
+
+
 _warned_default_environment = False
 
 
@@ -196,11 +212,7 @@ def resolve_environment(
     for candidate in candidates:
         if candidate is None or not str(candidate).strip():
             continue
-        value = str(candidate).strip().lower()
-        value = ENVIRONMENT_ALIASES.get(value, value)
-        if value not in ENVIRONMENTS:
-            raise ContentLessRefusal(INVALID_ENVIRONMENT)
-        return value
+        return canonicalize_environment(str(candidate))
     if not _warned_default_environment:
         _warned_default_environment = True
         logger.warning(
