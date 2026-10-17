@@ -1,0 +1,52 @@
+name: Bug report
+description: Report a problem with the Traigent Python SDK
+title: '[Bug]: '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Do not include secrets or
+        API keys. For security vulnerabilities, see SECURITY.md instead.
+  - type: input
+    id: version
+    attributes:
+      label: Traigent version
+      description: Output of `pip show traigent`, or the commit if installed from source.
+      placeholder: '0.3.0'
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Python version, operating system, installation method (pip, uv), and relevant integrations (LangChain, OpenAI, etc.).
+      placeholder: |
+        Python: 3.12
+        OS: Ubuntu 24.04
+        Installed with: pip
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: A minimal code sample or sequence of steps that reproduces the problem.
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead? Include error messages or stack traces.
+    validations:
+      required: true

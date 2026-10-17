@@ -297,6 +297,9 @@ Documentation = "https://traigent.github.io/Traigent/"
 Repository = "https://github.com/Traigent/Traigent"
 "Bug Tracker" = "https://github.com/Traigent/Traigent/issues"
 Changelog = "https://github.com/Traigent/Traigent/blob/main/CHANGELOG.md"
+Security = "https://github.com/Traigent/Traigent/blob/main/SECURITY.md"
+Support = "https://github.com/Traigent/Traigent/blob/main/SUPPORT.md"
+Discussions = "https://github.com/Traigent/Traigent/discussions"
 
 [project.scripts]
 traigent = "traigent.cli.main:cli"
