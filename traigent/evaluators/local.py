@@ -2753,6 +2753,16 @@ class LocalEvaluator(BaseEvaluator):
         result.sample_budget_exhausted = budget_exhausted
         result.examples_consumed = consumed_examples
         result.tracked_spend = self._tracked_spend(comprehensive_metrics, "cost")
+        # Owner ruling A: an unknown tracked cost removes any finite custom
+        # cost/total_cost from the aggregate. With no
+        # tracker data at all the evaluator's own reported cost still counts.
+        if any(
+            m.measured and not m.tokens.estimated and m.tokens.total_tokens > 0
+            for m in metrics_tracker.example_metrics
+        ):
+            self._apply_tracked_unknown_cost(
+                result.aggregated_metrics, result.tracked_spend
+            )
 
         return self._finalize_execution_budget_evaluation(
             budget, result, execution_budget_lease

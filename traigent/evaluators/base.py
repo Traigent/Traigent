@@ -1757,6 +1757,40 @@ class BaseEvaluator(ABC):
             metrics.pop("cost_lower_bound", None)
 
     @staticmethod
+    def _withdraw_unknown_cost_from_rows(
+        rows: Iterable[Any],
+        tracked_spend: Mapping[str, Any] | None,
+        tracker_rows: Sequence[Mapping[str, Any]] | None = None,
+    ) -> None:
+        """Drop non-tracker cost keys from rows when tracked cost is unknown.
+
+        Rows may be ``ExampleResult`` objects or plain metric dicts, paired by
+        index with ``tracker_rows`` (tracker output for the same example). A
+        cost value that the tracker itself measured for that row is kept; any
+        other finite value (a user's custom score) is removed (owner ruling A).
+        The dicts are edited in place, so progress payloads holding the same
+        mapping agree with the returned rows.
+        """
+        if not tracked_spend or not tracked_spend.get("unmeasured"):
+            return
+        for index, row in enumerate(rows):
+            metrics = row if isinstance(row, dict) else getattr(row, "metrics", None)
+            if not isinstance(metrics, dict):
+                continue
+            measured = (
+                tracker_rows[index]
+                if tracker_rows is not None and index < len(tracker_rows)
+                else {}
+            )
+            for key in MEASURED_ONLY_METRICS:
+                if key not in metrics:
+                    continue
+                reference = measured.get(key, measured.get("total_cost"))
+                if reference is not None and metrics[key] == reference:
+                    continue
+                metrics.pop(key, None)
+
+    @staticmethod
     def _execution_budget_cost(result: EvaluationResult) -> float | None:
         """Return observed trial spend, or ``None`` when it is unknown.
 
@@ -5124,6 +5158,12 @@ class SimpleScoringEvaluator(BaseEvaluator):
             if any(key in row for row in tracker_rows for key in _TRACKER_USAGE_KEYS):
                 self._apply_tracked_unknown_cost(
                     result.aggregated_metrics, result.tracked_spend
+                )
+                self._withdraw_unknown_cost_from_rows(
+                    example_results, result.tracked_spend, tracker_rows
+                )
+                self._withdraw_unknown_cost_from_rows(
+                    all_metrics, result.tracked_spend, tracker_rows
                 )
                 if result.metrics is not result.aggregated_metrics:
                     self._apply_tracked_unknown_cost(
