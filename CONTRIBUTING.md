@@ -76,6 +76,10 @@ non-trivial external contributions. See
 [CONTRIBUTOR-LICENSING.md](CONTRIBUTOR-LICENSING.md) for the policy and how to
 request the CLA paperwork (opensource@traigent.ai).
 
+A CLA bot comments on your first pull request. To sign, reply on the pull request
+with exactly: `I have read the CLA Document and I hereby sign the CLA`
+(comment `recheck` to re-run the check afterwards).
+
 ## License
 
 This project is dual-licensed under `AGPL-3.0-only` or a Traigent commercial
