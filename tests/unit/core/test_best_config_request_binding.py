@@ -474,13 +474,31 @@ def test_client_fetch_returns_a_matching_response_unchanged() -> None:
             "agent", function_ref="pkg:agent", environment="prod"
         )
     assert out == body
-    # An explicitly unbound / default-environment request is not over-constrained.
+    # The binding is real, not a pass-through: the very same answer is refused for
+    # another environment (the padded, upper-case "PROD " only matches after the
+    # transport's normalisation, and "staging" must still not match).
+    with (
+        patch("requests.get", return_value=_http(200, body)),
+        _authed(client),
+        pytest.raises(CloudBestConfigIntegrityError),
+    ):
+        client.fetch_best_config_sync(
+            "agent", function_ref="pkg:agent", environment="staging"
+        )
+    # An explicitly unbound / default-environment request is not over-constrained ...
     spec2 = _spec(environment="__omit__")
     with (
         patch("requests.get", return_value=_http(200, {"spec": spec2})),
         _authed(client),
     ):
         assert client.fetch_best_config_sync("agent") == {"spec": spec2}
+    # ... but a spec with no environment is the default environment, not "prod".
+    with (
+        patch("requests.get", return_value=_http(200, {"spec": spec2})),
+        _authed(client),
+        pytest.raises(CloudBestConfigIntegrityError),
+    ):
+        client.fetch_best_config_sync("agent", environment="prod")
 
 
 @pytest.mark.backend_online
@@ -529,6 +547,14 @@ def test_client_publish_without_a_spec_in_the_response_still_returns_it() -> Non
     body = {"config_id": "agent", "version": 1}
     with patch("requests.post", return_value=_http(201, body)), _authed(client):
         assert client.publish_best_config_sync(sent, environment="prod") == body
+    # Without a spec the top-level identity it does carry is still verified.
+    for wrong in ({"config_id": "other"}, {"function_ref": "other:agent"}):
+        with (
+            patch("requests.post", return_value=_http(201, {**body, **wrong})),
+            _authed(client),
+            pytest.raises(CloudBestConfigIntegrityError),
+        ):
+            client.publish_best_config_sync(sent, environment="prod")
 
 
 @pytest.mark.backend_online
@@ -545,3 +571,14 @@ def test_client_publish_uses_the_envelope_environment_when_the_spec_has_none() -
     ):
         out = client.publish_best_config_sync(sent, environment="prod")
     assert out["spec"]["environment"] == "prod"
+    # The envelope environment is the effective one when the spec names none, and it is
+    # verified: an answer for another environment is refused.
+    with (
+        patch(
+            "requests.post",
+            return_value=_http(201, {"environment": "staging", "spec": stored}),
+        ),
+        _authed(client),
+        pytest.raises(CloudBestConfigIntegrityError),
+    ):
+        client.publish_best_config_sync(sent, environment="prod")
