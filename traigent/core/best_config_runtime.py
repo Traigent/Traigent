@@ -411,6 +411,7 @@ def load_best_config_spec(
     configuration_space: dict[str, Any] | None = None,
     expected_config_id: str | None = None,
     expected_function_ref: str | None = None,
+    expected_environment: str | None = None,
     manifest_entry: dict[str, Any] | None = None,
     source: str = BestConfigSource.REPO.value,
     strict: bool = False,
@@ -426,6 +427,7 @@ def load_best_config_spec(
             configuration_space=configuration_space,
             expected_config_id=expected_config_id,
             expected_function_ref=expected_function_ref,
+            expected_environment=expected_environment,
             manifest_entry=manifest_entry,
             source=source,
         )
@@ -447,10 +449,16 @@ def snapshot_from_spec(
     configuration_space: dict[str, Any] | None = None,
     expected_config_id: str | None = None,
     expected_function_ref: str | None = None,
+    expected_environment: str | None = None,
     manifest_entry: dict[str, Any] | None = None,
     source: str = BestConfigSource.REPO.value,
 ) -> BestConfigSnapshot:
-    """Validate a decoded best-config spec and return a snapshot."""
+    """Validate a decoded best-config spec and return a snapshot.
+
+    ``expected_environment`` binds the spec to the environment the caller asked for: the
+    spec's effective environment (``environment``, else ``"default"``; trimmed, lower-cased)
+    must equal it, otherwise another environment's config would be loaded.
+    """
 
     if not isinstance(spec, dict):
         raise ConfigurationError("Best config spec must be a JSON object")
@@ -486,6 +494,21 @@ def snapshot_from_spec(
             "Best config function_ref mismatch: "
             f"expected {expected_function_ref!r}, got {function_ref!r}"
         )
+
+    if expected_environment is not None:
+        spec_environment = spec.get("environment")
+        effective = (
+            spec_environment.strip().lower()
+            if isinstance(spec_environment, str)
+            else "default"
+            if spec_environment is None
+            else None
+        )
+        if effective != expected_environment.strip().lower():
+            raise ConfigurationError(
+                "Best config environment mismatch: the spec is not for the "
+                "requested environment"
+            )
 
     raw_config = spec["config"]
     if not isinstance(raw_config, dict):
@@ -543,6 +566,44 @@ def compute_spec_hash(spec: dict[str, Any], *, environment: str | None = None) -
     )
 
 
+def _check_spec_hash_finite(value: Any) -> None:
+    """Refuse NaN/Infinity anywhere in the ORIGINAL spec (before NFC and exclusions)."""
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ConfigurationError("Best config JSON values cannot be NaN/Infinity")
+    elif isinstance(value, dict):
+        for item in value.values():
+            _check_spec_hash_finite(item)
+    elif isinstance(value, list):
+        for item in value:
+            _check_spec_hash_finite(item)
+
+
+def check_publishable_spec(spec: Any) -> None:
+    """Refuse to SEND a spec holding object keys that are equal after Unicode NFC.
+
+    The frozen v1 hash rule keeps the later key (so stored specs still verify), but a NEW
+    publish with such keys is refused by the Backend; failing here avoids the round trip.
+    The message never echoes a key.
+    """
+    if isinstance(spec, dict):
+        seen: set[str] = set()
+        for key, item in spec.items():
+            if not isinstance(key, str):
+                raise ConfigurationError("Best config JSON object keys must be strings")
+            normalized = unicodedata.normalize("NFC", key)
+            if normalized in seen:
+                raise ConfigurationError(
+                    "Best config spec has object keys that are equal after Unicode "
+                    "normalization (NFC); rename one before publishing"
+                )
+            seen.add(normalized)
+            check_publishable_spec(item)
+    elif isinstance(spec, list):
+        for item in spec:
+            check_publishable_spec(item)
+
+
 def _check_spec_hash_depth(value: Any, depth: int = 0) -> None:
     if depth > _SPEC_HASH_MAX_JSON_DEPTH:
         raise ConfigurationError("Best config spec exceeds the maximum JSON depth")
@@ -555,6 +616,7 @@ def _check_spec_hash_depth(value: Any, depth: int = 0) -> None:
 
 
 def _v1_hash_payload(spec: dict[str, Any], environment: str | None) -> dict[str, Any]:
+    _check_spec_hash_finite(spec)
     _check_spec_hash_depth(spec)
     normalized = _normalize_json_value(copy.deepcopy(spec))
     if not isinstance(normalized, dict):
@@ -801,8 +863,14 @@ def resolve_cloud_cache_best_config(
     stale_ok_ttl_seconds: int | None = None,
     now: datetime | None = None,
     strict: bool = False,
+    expected_function_ref: str | None = None,
+    expected_environment: str | None = None,
 ) -> BestConfigSnapshot | None:
-    """Resolve a locally cached cloud best config by config id."""
+    """Resolve a locally cached cloud best config by config id.
+
+    The cache is keyed by config id only, so ``expected_function_ref`` and
+    ``expected_environment`` (when given) bind the cached spec to what the caller asked for.
+    """
 
     if not config_id or not cache_dir:
         return None
@@ -832,6 +900,8 @@ def resolve_cloud_cache_best_config(
             _resolve_entry_path(directory, entry["path"]),
             configuration_space=configuration_space,
             expected_config_id=safe_config_id,
+            expected_function_ref=expected_function_ref,
+            expected_environment=expected_environment,
             manifest_entry=entry,
             source=BestConfigSource.CLOUD_CACHE.value,
             strict=True,

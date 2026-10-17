@@ -1,6 +1,6 @@
 {
-  "schema_version": "traigent.best_config.v1.spec_hash_vectors.2",
-  "description": "Language-neutral vectors for the frozen legacy traigent.best_config.v1 spec_hash rule (best_config_schema.json x-traigent-spec-hash). Expected values were produced by TraigentBackend src/services/best_config_service.py (commit 311855d82) via parse_publish_request. For each case, apply the rule to request.spec (+ request.environment as the envelope environment) and compare hashed_payload, canonical_json and spec_hash. refusal_cases lists inputs the rule refuses (not hashed) - a consumer must raise/refuse, never return a digest. Duplicate-after-NFC object keys are NOT refused: the later key in document order wins.",
+  "schema_version": "traigent.best_config.v1.spec_hash_vectors.3",
+  "description": "Language-neutral vectors for the frozen legacy traigent.best_config.v1 spec_hash rule (best_config_schema.json x-traigent-spec-hash). Expected values were produced by TraigentBackend src/services/best_config_service.py (commit 311855d82) via parse_publish_request. For each case, apply the rule to request.spec (+ request.environment as the envelope environment) and compare hashed_payload, canonical_json and spec_hash. refusal_cases lists inputs the rule refuses (not hashed) - a consumer must raise/refuse, never return a digest. Finiteness is checked over the ORIGINAL spec, before NFC and before the validation exclusions. historical_cases hold hash-rule vectors that a NEW publish no longer accepts (object keys equal after NFC: the hash keeps last-wins so stored specs still verify) and are verified by the hash function / the stored-spec revalidation path, not by the publish ingress; ingress_refusal_cases lists NEW publishes that must be refused before anything is persisted or sent.",
   "digest_format": "sha256:<64 lowercase hex>",
   "cases": [
     {
@@ -498,60 +498,6 @@
       "spec_hash": "sha256:9326a79f80518eab94e87c6c03032d1f1f0c092a0bff2805c95c628a9f92bb5e"
     },
     {
-      "name": "nfc_colliding_keys_last_wins",
-      "note": "two config keys that are equal after NFC (precomposed e-acute, then e + combining acute) collapse to one key; the LATER one in document order wins (no refusal) - exactly what the Backend does today",
-      "request": {
-        "spec": {
-          "schema_version": "traigent.best_config.v1",
-          "config_id": "support-answerer",
-          "function_ref": "app.agents:answer",
-          "environment": "default",
-          "config": {
-            "é": 1,
-            "é": 2
-          }
-        }
-      },
-      "hashed_payload": {
-        "schema_version": "traigent.best_config.v1",
-        "config_id": "support-answerer",
-        "function_ref": "app.agents:answer",
-        "environment": "default",
-        "config": {
-          "é": 2
-        }
-      },
-      "canonical_json": "{\"config\":{\"é\":2},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
-      "spec_hash": "sha256:59da0051c37f0f9ab0fe5aeff80d64bb9df37e21d59a521a0f0072e39b4c4f2a"
-    },
-    {
-      "name": "nfc_colliding_keys_last_wins_reversed",
-      "note": "same two keys in the opposite document order: the value that wins changes, so the order is part of the rule",
-      "request": {
-        "spec": {
-          "schema_version": "traigent.best_config.v1",
-          "config_id": "support-answerer",
-          "function_ref": "app.agents:answer",
-          "environment": "default",
-          "config": {
-            "é": 2,
-            "é": 1
-          }
-        }
-      },
-      "hashed_payload": {
-        "schema_version": "traigent.best_config.v1",
-        "config_id": "support-answerer",
-        "function_ref": "app.agents:answer",
-        "environment": "default",
-        "config": {
-          "é": 1
-        }
-      },
-      "canonical_json": "{\"config\":{\"é\":1},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
-      "spec_hash": "sha256:24ef7eb5c6405876bdde8fc22e994bd9aa25fe178aedd3acc9605c8bfaf04902"
-    },
-    {
       "name": "depth_boundary_accepted",
       "note": "config.a holds an array nested 14 deep: the deepest value sits at JSON depth 16 (spec = depth 0), the last depth accepted",
       "request": {
@@ -746,6 +692,96 @@
       "spec_hash": "sha256:47d3a065e0d6c7064d79f17ed18a6a81226fdf8394e75d24cee0ff8fe18b7b32"
     }
   ],
+  "historical_cases": [
+    {
+      "name": "nfc_colliding_keys_last_wins",
+      "note": "two config keys that are equal after NFC (precomposed e-acute, then e + combining acute) collapse to one key; the LATER one in document order wins when VERIFYING a spec that is already stored (frozen hash rule); a NEW publish with such keys is refused at ingress, see ingress_refusal_cases",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "é": 1,
+            "é": 2
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "é": 2
+        }
+      },
+      "canonical_json": "{\"config\":{\"é\":2},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:59da0051c37f0f9ab0fe5aeff80d64bb9df37e21d59a521a0f0072e39b4c4f2a"
+    },
+    {
+      "name": "nfc_colliding_keys_last_wins_reversed",
+      "note": "same two keys in the opposite document order: the value that wins changes, so the order is part of the rule",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "é": 2,
+            "é": 1
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "é": 1
+        }
+      },
+      "canonical_json": "{\"config\":{\"é\":1},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:24ef7eb5c6405876bdde8fc22e994bd9aa25fe178aedd3acc9605c8bfaf04902"
+    }
+  ],
+  "ingress_refusal_cases": [
+    {
+      "name": "nfc_colliding_keys_refused_on_publish",
+      "note": "a NEW publish whose config holds two keys equal after NFC is refused by every publisher/ingress (the Backend, and the SDK before it sends); the hash rule itself keeps last-wins for already-stored specs (historical_cases)",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "é": 1,
+            "é": 2
+          }
+        }
+      }
+    },
+    {
+      "name": "nfc_colliding_keys_reversed_refused_on_publish",
+      "note": "same, with the colliding keys in the other order",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "é": 2,
+            "é": 1
+          }
+        }
+      }
+    }
+  ],
   "refusal_cases": [
     {
       "name": "nan_refused",
@@ -859,6 +895,56 @@
             ]
           }
         }
+      }
+    },
+    {
+      "name": "nan_in_excluded_validation_member_refused",
+      "note": "NaN inside a validation member that the hash excludes (validation.status) is still refused: finiteness is checked over the ORIGINAL spec before NFC and before exclusions; replace spec.validation.status (a null placeholder here) with float(\"nan\")",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "x": 1
+          },
+          "validation": {
+            "status": null
+          }
+        }
+      },
+      "non_finite_substitution": {
+        "path": [
+          "spec",
+          "validation",
+          "status"
+        ],
+        "value": "nan"
+      }
+    },
+    {
+      "name": "non_finite_lost_to_nfc_collision_refused",
+      "note": "config holds two keys equal after NFC (precomposed e-acute, then e + combining acute); the first carries +Infinity, the second 2. NFC last-wins would discard the infinity, but finiteness is checked over the ORIGINAL spec before NFC, so it is refused. Replace spec.config[precomposed key] (a null placeholder here) with float(\"inf\")",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "é": null,
+            "é": 2
+          }
+        }
+      },
+      "non_finite_substitution": {
+        "path": [
+          "spec",
+          "config",
+          "é"
+        ],
+        "value": "inf"
       }
     }
   ]

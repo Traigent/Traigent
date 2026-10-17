@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from traigent.core.best_config_runtime import (
+    check_publishable_spec,
     compute_spec_hash,
     resolve_cloud_cache_best_config,
     load_best_config_spec,
@@ -33,11 +34,19 @@ _VECTORS = (
     Path(__file__).resolve().parents[2]
     / "fixtures/contracts/schema_083eb11/best_config_v1_spec_hash_vectors.json"
 )
-_PINNED_SHA256 = "dd72aa11a751c5d6cdf084ab5ba03ca203df73d9ce6ebb59ad86b3bfa6e98e00"
+_PINNED_SHA256 = "b8afcc0d23bb7134f000344dd488e217fa633562396811f021e49e850893db90"
 
 
 def _cases() -> list[dict[str, Any]]:
     return json.loads(_VECTORS.read_text(encoding="utf-8"))["cases"]
+
+
+def _historical_cases() -> list[dict[str, Any]]:
+    return json.loads(_VECTORS.read_text(encoding="utf-8"))["historical_cases"]
+
+
+def _ingress_refusal_cases() -> list[dict[str, Any]]:
+    return json.loads(_VECTORS.read_text(encoding="utf-8"))["ingress_refusal_cases"]
 
 
 def _refusal_cases() -> list[dict[str, Any]]:
@@ -52,7 +61,9 @@ def test_vendored_vectors_are_the_pinned_schema_bytes() -> None:
     assert hashlib.sha256(_VECTORS.read_bytes()).hexdigest() == _PINNED_SHA256
 
 
-@pytest.mark.parametrize("case", _cases(), ids=lambda case: case["name"])
+@pytest.mark.parametrize(
+    "case", _cases() + _historical_cases(), ids=lambda case: case["name"]
+)
 def test_compute_spec_hash_reproduces_every_vector(case: dict[str, Any]) -> None:
     request = case["request"]
     assert (
@@ -305,7 +316,9 @@ def test_publish_response_environment_comes_from_the_envelope_when_the_spec_has_
         )
 
 
-@pytest.mark.parametrize("case", _cases(), ids=lambda case: case["name"])
+@pytest.mark.parametrize(
+    "case", _cases() + _historical_cases(), ids=lambda case: case["name"]
+)
 def test_every_vector_normalized_response_is_still_accepted(
     case: dict[str, Any],
 ) -> None:
@@ -333,3 +346,283 @@ def test_compute_spec_hash_refuses_every_refusal_vector(case: dict[str, Any]) ->
         target[substitution["path"][-1]] = float(substitution["value"])
     with pytest.raises(ConfigurationError):
         compute_spec_hash(request["spec"], environment=request.get("environment"))
+
+
+# --- finiteness is checked over the ORIGINAL spec, before NFC and exclusions (sol F1b P2) ---
+
+
+def test_the_new_refusal_vectors_are_present() -> None:
+    names = {case["name"] for case in _refusal_cases()}
+    assert {
+        "nan_in_excluded_validation_member_refused",
+        "non_finite_lost_to_nfc_collision_refused",
+    } <= names
+
+
+# --- NFC-colliding keys: the hash keeps last-wins, a NEW publish is refused before the network ---
+
+
+@pytest.mark.parametrize(
+    "case",
+    _ingress_refusal_cases() + _historical_cases(),
+    ids=lambda case: case["name"],
+)
+def test_a_spec_with_nfc_colliding_keys_is_not_publishable(
+    case: dict[str, Any],
+) -> None:
+    with pytest.raises(ConfigurationError) as caught:
+        check_publishable_spec(copy.deepcopy(case["request"]["spec"]))
+    assert "\u00e9" not in str(caught.value) and "e\u0301" not in str(caught.value)
+
+
+@pytest.mark.parametrize("case", _cases(), ids=lambda case: case["name"])
+def test_every_ordinary_vector_spec_is_publishable(case: dict[str, Any]) -> None:
+    check_publishable_spec(copy.deepcopy(case["request"]["spec"]))
+
+
+def test_a_nested_collision_inside_validation_is_not_publishable() -> None:
+    spec = copy.deepcopy(_case("provenance_present")["request"]["spec"])
+    spec["validation"] = {"detail": [{"\u00e9": 1, "e\u0301": 2}]}
+    with pytest.raises(ConfigurationError):
+        check_publishable_spec(spec)
+
+
+def test_the_hash_function_itself_still_accepts_colliding_keys() -> None:
+    for case in _historical_cases():
+        request = case["request"]
+        assert (
+            compute_spec_hash(request["spec"], environment=request.get("environment"))
+            == case["spec_hash"]
+        )
+
+
+def _publishing_manager(monkeypatch, sent: list[Any]):
+    import traigent.cloud.backend_client as backend_client
+
+    class Client:
+        def fetch_best_config_sync(self, *args, **kwargs):  # noqa: ARG002
+            return None
+
+        def publish_best_config_sync(self, spec, **kwargs):  # noqa: ARG002
+            sent.append(spec)
+            raise AssertionError("must not reach the network")
+
+    monkeypatch.setattr(backend_client, "get_backend_client", lambda **kw: Client())
+
+
+def test_publish_best_config_refuses_colliding_keys_before_any_request(
+    monkeypatch,
+) -> None:
+    from traigent.core.optimized_function import OptimizedFunction
+
+    sent: list[Any] = []
+    _publishing_manager(monkeypatch, sent)
+
+    def agent(text: str) -> str:
+        return text
+
+    func = OptimizedFunction(
+        func=agent, configuration_space={"t": [1, 2]}, config_id="agent"
+    )
+    func.set_config({"\u00e9": 1, "e\u0301": 2})
+    with pytest.raises(ConfigurationError, match="Unicode"):
+        func.publish_best_config()
+    assert sent == []
+
+
+def test_backend_client_publish_wrapper_refuses_colliding_keys_before_any_request(
+    monkeypatch,
+) -> None:
+    from traigent.cloud.backend_client import BackendIntegratedClient
+
+    client = BackendIntegratedClient.__new__(BackendIntegratedClient)
+    spec = copy.deepcopy(_historical_cases()[0]["request"]["spec"])
+    with pytest.raises(ConfigurationError):
+        client.publish_best_config_sync(spec)
+    with pytest.raises(ConfigurationError):
+        client.publish_best_config_sync(
+            spec, agent_ref="agent_" + "a" * 32, expected_head_generation=0
+        )
+
+
+# --- publish response: the top-level identity fields must agree with the verified spec (P3) ---
+
+
+def _prod_response(**top_level: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    sent = _sent_prod()
+    response = _self_consistent_response(copy.deepcopy(sent))
+    response.update(top_level)
+    return sent, response
+
+
+def test_publish_response_with_matching_top_level_identity_is_accepted() -> None:
+    sent, response = _prod_response(
+        config_id="agent", environment="prod", function_ref="pkg:agent"
+    )
+    ConfigStateManager._verify_publish_response(response, sent, environment="prod")
+
+
+def test_publish_response_normalization_of_top_level_fields_is_accepted() -> None:
+    sent = _sent_prod()
+    sent["config_id"] = "  agent "
+    sent["environment"] = "PROD"
+    stored = {**sent, "config_id": "agent", "environment": "prod"}
+    response = _self_consistent_response(stored)
+    response.update(config_id="agent", environment="prod", function_ref="pkg:agent")
+    ConfigStateManager._verify_publish_response(response, sent, environment="PROD")
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("config_id", "other"),
+        ("environment", "staging"),
+        ("function_ref", "other:agent"),
+        ("config_id", 7),
+        ("environment", None),
+    ],
+)
+def test_publish_response_with_contradictory_top_level_identity_is_rejected(
+    field: str, value: Any
+) -> None:
+    sent, response = _prod_response(**{field: value})
+    with pytest.raises(CloudBestConfigIntegrityError, match="top-level"):
+        ConfigStateManager._verify_publish_response(response, sent, environment="prod")
+
+
+def test_publish_response_with_all_three_contradictory_fields_is_rejected() -> None:
+    sent, response = _prod_response(
+        config_id="other", environment="staging", function_ref="other:agent"
+    )
+    with pytest.raises(CloudBestConfigIntegrityError):
+        ConfigStateManager._verify_publish_response(response, sent, environment="prod")
+
+
+# --- fetch: the fetched spec is bound to the request (sol F1b P2) ---
+
+
+def _agent(text: str) -> str:
+    return text
+
+
+def _fetched(**override: Any) -> dict[str, Any]:
+    from traigent.core.best_config_runtime import function_ref_for
+
+    spec = {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "agent",
+        "function_ref": function_ref_for(_agent),
+        "environment": "prod",
+        "config": {"t": 2},
+    }
+    spec.update(override)
+    data = _self_consistent_response(spec)
+    data.update(
+        config_id=spec["config_id"],
+        environment=spec["environment"],
+        function_ref=spec["function_ref"],
+        etag="etag-1",
+        version=1,
+    )
+    return data
+
+
+def _fetching_manager(monkeypatch, tmp_path, returned, requested=None):
+    """A ConfigStateManager asking for agent/<_agent>/prod whose backend answers ``returned``."""
+    import traigent.cloud.backend_client as backend_client
+
+    class Client:
+        def fetch_best_config_sync(self, config_id, **kwargs):
+            if requested is not None:
+                requested.append({"config_id": config_id, **kwargs})
+            return returned
+
+    monkeypatch.setattr(backend_client, "get_backend_client", lambda **kw: Client())
+    manager = ConfigStateManager.__new__(ConfigStateManager)
+    manager.func = _agent
+    manager.config_id = "agent"
+    manager.best_config_environment = "prod"
+    manager.best_config_source = "cloud"
+    manager.best_config_strict = False
+    manager.best_config_cache_dir = str(tmp_path / "cache")
+    manager.configuration_space = {"t": [1, 2]}
+    manager.default_config = {"t": 1}
+    return manager
+
+
+def test_fetch_of_the_requested_config_is_loaded(monkeypatch, tmp_path) -> None:
+    manager = _fetching_manager(monkeypatch, tmp_path, _fetched())
+    snapshot = manager._resolve_cloud_fetch_best_config()
+    assert snapshot is not None and snapshot.config["t"] == 2
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"environment": "staging"},
+        {"function_ref": "other:agent"},
+        {"config_id": "other"},
+    ],
+    ids=["environment", "function_ref", "config_id"],
+)
+def test_fetch_of_another_environment_function_or_config_is_rejected_and_never_cached(
+    monkeypatch, tmp_path, override: dict[str, Any]
+) -> None:
+    manager = _fetching_manager(monkeypatch, tmp_path, _fetched(**override))
+    with pytest.raises(CloudBestConfigIntegrityError, match="request"):
+        manager._resolve_cloud_fetch_best_config()
+    assert not (tmp_path / "cache").exists() or not any((tmp_path / "cache").iterdir())
+
+
+def test_fetch_response_top_level_identity_must_agree_with_the_spec(
+    monkeypatch, tmp_path
+) -> None:
+    data = _fetched()
+    data["environment"] = "staging"
+    manager = _fetching_manager(monkeypatch, tmp_path, data)
+    with pytest.raises(CloudBestConfigIntegrityError, match="top-level"):
+        manager._resolve_cloud_fetch_best_config()
+
+
+def test_fetch_binding_fails_closed_in_cloud_mode_and_is_ignored_otherwise(
+    monkeypatch, tmp_path
+) -> None:
+    from traigent.core.best_config_runtime import (
+        CloudPublishUnavailable,
+        CloudPublishUnavailableReason,
+    )
+
+    manager = _fetching_manager(monkeypatch, tmp_path, _fetched(environment="staging"))
+    with pytest.raises(CloudPublishUnavailable) as caught:
+        manager._resolve_mode_snapshot()
+    assert caught.value.reason is CloudPublishUnavailableReason.INTEGRITY_FAILED
+    # Outside strict/pure-cloud modes the source is ignored: nothing is loaded.
+    monkeypatch.chdir(tmp_path)
+    manager.best_config_source = "cloud_then_repo"
+    manager.best_config_cache_ttl_seconds = 60
+    manager.best_config_stale_ok_ttl_seconds = None
+    assert manager._resolve_mode_snapshot() is None
+
+
+def test_cloud_cache_of_another_environment_or_function_is_not_loaded(tmp_path) -> None:
+    spec = {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "agent",
+        "function_ref": "pkg:agent",
+        "environment": "staging",
+        "config": {"t": 2},
+    }
+    write_cloud_cache_best_config(tmp_path, spec, version=1)
+    kwargs = {"config_id": "agent", "cache_dir": tmp_path, "strict": True}
+    with pytest.raises(ConfigurationError, match="environment"):
+        resolve_cloud_cache_best_config(
+            expected_function_ref="pkg:agent", expected_environment="prod", **kwargs
+        )
+    with pytest.raises(ConfigurationError, match="function_ref"):
+        resolve_cloud_cache_best_config(
+            expected_function_ref="pkg:other", expected_environment="staging", **kwargs
+        )
+    snapshot = resolve_cloud_cache_best_config(
+        expected_function_ref="pkg:agent", expected_environment="staging", **kwargs
+    )
+    assert snapshot is not None and snapshot.config["t"] == 2

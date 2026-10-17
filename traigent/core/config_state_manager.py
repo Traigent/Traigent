@@ -32,6 +32,7 @@ from traigent.core.best_config_runtime import (
     HeadRefusalCode,
     SafetySensitiveBestConfigError,
     canonical_json,
+    check_publishable_spec,
     compute_spec_hash,
     function_ref_for,
     load_best_config_spec,
@@ -506,6 +507,92 @@ class ConfigStateManager:
             raise CloudBestConfigIntegrityError(
                 "Cloud best-config response is for a different config_id"
             )
+        ConfigStateManager._verify_top_level_identity(
+            result, stored, request_environment=environment
+        )
+
+    @staticmethod
+    def _verify_top_level_identity(
+        data: dict[str, Any],
+        spec: dict[str, Any],
+        *,
+        request_environment: str | None = None,
+    ) -> None:
+        """The response's own ``config_id`` / ``environment`` / ``function_ref`` must agree
+        with the verified spec (after the documented normalization: ``config_id`` and
+        ``function_ref`` trimmed, ``environment`` trimmed and lower-cased). A key the
+        response omits cannot contradict; a present key must match exactly.
+        """
+
+        spec_id = spec.get("config_id")
+        spec_environment = spec.get("environment")
+        spec_ref = spec.get("function_ref")
+        expected = {
+            "config_id": spec_id.strip() if isinstance(spec_id, str) else spec_id,
+            "environment": (
+                spec_environment.strip().lower()
+                if isinstance(spec_environment, str)
+                else (request_environment or "default").strip().lower()
+            ),
+            "function_ref": spec_ref.strip() if isinstance(spec_ref, str) else spec_ref,
+        }
+        for key, want in expected.items():
+            if key not in data:
+                continue
+            got = data[key]
+            if isinstance(got, str):
+                got = got.strip().lower() if key == "environment" else got.strip()
+            if got != want:
+                raise CloudBestConfigIntegrityError(
+                    f"Cloud best-config response top-level {key} does not match "
+                    "the verified spec"
+                )
+
+    @staticmethod
+    def _verify_fetch_binding(
+        data: dict[str, Any],
+        spec: dict[str, Any],
+        *,
+        config_id: str,
+        function_ref: str | None,
+        environment: str,
+    ) -> None:
+        """Bind a fetched spec to the request: config id, function and effective environment.
+
+        A spec for another environment, function or config is never loaded (and never
+        cached), whatever its hashes say. An absent ``function_ref`` in the spec is an
+        unbound legacy config and is accepted, as before.
+        """
+
+        spec_id = spec.get("config_id")
+        if not isinstance(spec_id, str) or spec_id.strip() != config_id.strip():
+            raise CloudBestConfigIntegrityError(
+                "Cloud best-config response is not for the requested config_id"
+            )
+        spec_ref = spec.get("function_ref")
+        if function_ref and spec_ref is not None:
+            if (
+                not isinstance(spec_ref, str)
+                or spec_ref.strip() != function_ref.strip()
+            ):
+                raise CloudBestConfigIntegrityError(
+                    "Cloud best-config response is not for the requested function_ref"
+                )
+        spec_environment = spec.get("environment")
+        if spec_environment is None:
+            effective = "default"
+        elif isinstance(spec_environment, str):
+            effective = spec_environment.strip().lower()
+        else:
+            effective = None
+        if effective != environment.strip().lower():
+            raise CloudBestConfigIntegrityError(
+                "Cloud best-config response is not for the requested environment "
+                "(request mismatch)"
+            )
+        ConfigStateManager._verify_top_level_identity(
+            data, spec, request_environment=environment
+        )
 
     def _is_pure_cloud_source_mode(self) -> bool:
         mode_value = (
@@ -540,6 +627,14 @@ class ConfigStateManager:
                 "Cloud best-config response did not include a spec"
             )
         self._verify_cloud_response_hashes(data, spec)
+        # Bind the answer to the request BEFORE it can be cached or loaded.
+        self._verify_fetch_binding(
+            data,
+            spec,
+            config_id=self.config_id,
+            function_ref=function_ref_for(self.func),
+            environment=self.best_config_environment,
+        )
 
         if self.best_config_cache_dir:
             try:
@@ -566,6 +661,7 @@ class ConfigStateManager:
             configuration_space=self.configuration_space,
             expected_config_id=self.config_id,
             expected_function_ref=function_ref_for(self.func),
+            expected_environment=self.best_config_environment,
             source=BestConfigSource.CLOUD_FETCH.value,
         )
         merged = {**self.default_config, **thaw_config(snapshot.config)}
@@ -597,6 +693,8 @@ class ConfigStateManager:
                         ttl_seconds=self.best_config_cache_ttl_seconds,
                         stale_ok_ttl_seconds=self.best_config_stale_ok_ttl_seconds,
                         strict=self.best_config_strict,
+                        expected_function_ref=function_ref_for(self.func),
+                        expected_environment=self.best_config_environment,
                     )
                 elif source is BestConfigSource.CLOUD_FETCH:
                     snapshot = self._resolve_cloud_fetch_best_config()
@@ -1129,6 +1227,9 @@ class ConfigStateManager:
                 "config": copy.deepcopy(thaw_config(self._best_config)),
                 "provenance": provenance,
             }
+            # A NEW publish with object keys equal after NFC is refused by the Backend;
+            # fail here, before any request (the message never echoes a key).
+            check_publishable_spec(spec)
             # Detached from the live state and from the run's result, so later
             # mutation of either cannot change what is reported on refusal.
             refused_config = copy.deepcopy(spec["config"])

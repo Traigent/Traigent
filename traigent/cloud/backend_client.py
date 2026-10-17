@@ -2474,6 +2474,11 @@ class BackendIntegratedClient:
         ``CloudBestConfigStaleHeadError`` and nothing is written. Supplying only
         one of the two is a caller bug and is rejected before any request.
         """
+        from traigent.core.best_config_runtime import check_publishable_spec
+
+        # Object keys equal after NFC are refused by the Backend for a NEW publish;
+        # fail before any request (ConfigurationError, no key echoed).
+        check_publishable_spec(spec)
         if agent_ref is not None:
             from traigent.cloud import content_less as content_less_session
 
