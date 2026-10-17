@@ -1311,6 +1311,10 @@ class MetricsTracker:
             # Scalars inside ``metrics``: the summary_stats schema allows a
             # number next to the describe() dicts, but no extra top-level keys.
             summary_metrics["cost_unmeasured"] = 1.0
+            # Owner ruling A: with the tracked cost unknown, a user's custom
+            # ``cost`` metric (the tracker has no ``cost`` describe key) must
+            # not appear as a finite spend figure.
+            summary_metrics.pop("cost", None)
             lower_bound = (
                 sum(float(m.cost.total_cost) for m in cost_measured_metrics)
                 + sum(float(m.cost.known_cost) for m in all_metrics)

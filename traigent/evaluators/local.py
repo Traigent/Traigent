@@ -2763,6 +2763,19 @@ class LocalEvaluator(BaseEvaluator):
             self._apply_tracked_unknown_cost(
                 result.aggregated_metrics, result.tracked_spend
             )
+            # Rows too: a user's custom cost/total_cost must not survive in a
+            # returned detailed row (a row's own tracker-measured cost may).
+            tracker_rows = [
+                (
+                    {"cost": m.cost.total_cost, "total_cost": m.cost.total_cost}
+                    if m.measured and cost_is_measured(m) and not m.cost.unpriced
+                    else {}
+                )
+                for m in metrics_tracker.example_metrics
+            ]
+            self._withdraw_unknown_cost_from_rows(
+                result.example_results, result.tracked_spend, tracker_rows
+            )
 
         return self._finalize_execution_budget_evaluation(
             budget, result, execution_budget_lease

@@ -5002,11 +5002,28 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 if sample_lease:
                     sample_lease.mark_completed()
                 if progress_callback:
+                    # Owner ruling A: a callback may copy or serialise this
+                    # payload now, so a custom cost the final unknown-cost
+                    # cleanup will withdraw must not be in it. Rows with
+                    # tracker data get a sanitised copy (the tracker's own
+                    # cost may stay; a user's custom cost may not).
+                    emitted_metrics = example_metrics
+                    # A row with no tracker data after one that had some makes
+                    # the trial unknown too, so it is sanitised as well.
+                    if any(
+                        key in prior
+                        for prior in tracker_rows + [tracker_row]
+                        for key in _TRACKER_USAGE_KEYS
+                    ):
+                        emitted_metrics = dict(example_metrics)
+                        self._withdraw_unknown_cost_from_rows(
+                            [emitted_metrics], {"unmeasured": True}, [tracker_row]
+                        )
                     progress_callback(
                         i,
                         {
                             "success": True,
-                            "metrics": example_metrics,
+                            "metrics": emitted_metrics,
                             "output": output,
                             "llm_metrics": llm_metrics,
                         },
