@@ -406,7 +406,8 @@ class TrialResult:
     score: float | None = None
     # Tracker-measured spend carried from the evaluator for budget accounting
     # (``{"unmeasured", "cost", "lower_bound"}``); never user metric values.
-    # Not serialized: ``None`` when the evaluator had no tracker measurement.
+    # Persisted and restored (TRIAL_RESTORE); ``None`` when the evaluator had no
+    # tracker measurement.
     tracked_spend: dict[str, Any] | None = field(
         default=None, repr=False, compare=False
     )
@@ -1701,12 +1702,23 @@ class OptimizationResult:
         """
         from traigent.utils.trial_costs import known_spend_lower_bound  # noqa: PLC0415
 
-        return sum(
-            known_spend_lower_bound(
+        total = 0.0
+        for trial in self.trials:
+            tracked = getattr(trial, "tracked_spend", None)
+            if isinstance(tracked, dict):
+                # Tracker data is the only authority: a user's custom
+                # cost/total_cost score never feeds a cost summary.
+                if tracked.get("unmeasured"):
+                    total += max(
+                        self._coerce_float(tracked.get("lower_bound")) or 0.0, 0.0
+                    )
+                else:
+                    total += max(self._coerce_float(tracked.get("cost")) or 0.0, 0.0)
+                continue
+            total += known_spend_lower_bound(
                 getattr(trial, "metrics", None), getattr(trial, "metadata", None)
             )
-            for trial in self.trials
-        )
+        return total
 
     def _cost_unmeasured_trial_count(self) -> int:
         """Count trials whose cost is flagged unmeasured (Traigent#2517)."""
@@ -1727,6 +1739,12 @@ class OptimizationResult:
             is_cost_unmeasured,
         )
 
+        tracked = getattr(trial, "tracked_spend", None)
+        if isinstance(tracked, dict):
+            if tracked.get("unmeasured"):
+                return True
+            if self._coerce_float(tracked.get("cost")) is not None:
+                return False
         metrics = getattr(trial, "metrics", None)
         if is_cost_unmeasured(metrics):
             return True
@@ -1872,6 +1890,13 @@ class OptimizationResult:
 
     def _extract_trial_cost(self, trial: TrialResult) -> float | None:
         """Extract total cost from a trial result if available."""
+
+        tracked = getattr(trial, "tracked_spend", None)
+        if isinstance(tracked, dict):
+            # Tracker spend is authoritative; unknown stays unavailable.
+            if tracked.get("unmeasured"):
+                return None
+            return self._coerce_float(tracked.get("cost"))
 
         cost_component = None
         if trial.metrics and "total_cost" in trial.metrics:
@@ -2544,6 +2569,11 @@ class OptimizationResult:
             return None
 
     def _extract_summary_cost(self, trial: TrialResult) -> float | None:
+        tracked = getattr(trial, "tracked_spend", None)
+        if isinstance(tracked, dict):
+            if tracked.get("unmeasured"):
+                return None
+            return self._coerce_float(tracked.get("cost"))
         cost_value = trial.metrics.get("total_cost") if trial.metrics else None
         if cost_value is None:
             cost_value = (trial.metadata or {}).get("total_example_cost")

@@ -360,8 +360,11 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             example_result.metrics["total_tokens"] = safe_get_nested_attr(
                 llm_metrics, "tokens.total_tokens", 0
             )
-            if safe_get_nested_attr(llm_metrics, "cost.unmeasured", False):
-                # Unknown cost: leave the cost keys out, flag it (#2517).
+            if safe_get_nested_attr(
+                llm_metrics, "cost.unmeasured", False
+            ) or safe_get_nested_attr(llm_metrics, "cost.unpriced", False):
+                # Unknown cost (a partly priced row is unknown too, owner
+                # ruling A): leave the cost keys out, flag it (#2517).
                 example_result.metrics["cost_unmeasured"] = 1.0
                 # The part that WAS measured stays a floor, never a total.
                 known = safe_get_nested_attr(
@@ -715,6 +718,10 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         # Evaluate function on all examples using custom evaluator
         example_results = []
         all_metrics = []
+        # Tracker-only view of each row (never the evaluator's own scores):
+        # the sole input to ``tracked_spend``, which feeds budget and summaries.
+        tracker_rows: list[dict[str, Any]] = []
+        tracker_row_has_usage: list[bool] = []
         outputs = []
         errors: list[str | None] = []
         consumed_examples = 0
@@ -790,6 +797,23 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 llm_metrics = self._capture_llm_metrics_for_example(
                     config, example, example_result, i
                 )
+                tracker_row: dict[str, Any] = {}
+                if self.capture_llm_metrics and self._metrics_available:
+                    scratch = ExampleResult(
+                        example_id="tracker",
+                        input_data={},
+                        expected_output=None,
+                        actual_output=None,
+                        metrics={},
+                        execution_time=0.0,
+                        success=True,
+                        error_message=None,
+                        metadata={},
+                    )
+                    self._enhance_result_with_llm_metrics(
+                        scratch, llm_metrics, per_example_duration
+                    )
+                    tracker_row = dict(scratch.metrics)
                 self._enhance_result_with_llm_metrics(
                     example_result, llm_metrics, per_example_duration
                 )
@@ -813,6 +837,8 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                         f"CustomEvaluatorWrapper: Example {i} returned metrics: {example_result.metrics}"
                     )
                 all_metrics.append(example_result.metrics)
+                tracker_rows.append(tracker_row)
+                tracker_row_has_usage.append(llm_metrics is not None)
                 outputs.append(example_result.actual_output)
                 errors.append(example_result.error_message)
 
@@ -846,6 +872,8 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                         },
                     )
                 all_metrics.append(failed_result.metrics)
+                tracker_rows.append(dict(failed_result.metrics or {}))
+                tracker_row_has_usage.append(False)
                 outputs.append(None)
                 errors.append(str(e))
 
@@ -865,12 +893,24 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         aggregated_metrics = self._aggregate_custom_metrics(all_metrics)
 
         # Add LLM metrics aggregation if captured
+        tracked_spend: dict[str, Any] | None = None
         if self.capture_llm_metrics and self._metrics_available:
+            if any(tracker_row_has_usage):
+                tracked_spend = self._tracked_spend(
+                    self._aggregate_llm_metrics(tracker_rows, example_results),
+                    "total_cost",
+                )
             llm_agg = self._aggregate_llm_metrics(all_metrics, example_results)
             # Missing captured cost stays nullable; resolve requested cost
             # objectives according to the measurement policy below.
             aggregated_metrics.update(llm_agg)
             self._resolve_unmeasured_cost_objectives(aggregated_metrics, all_metrics)
+        # No tracker measurement at all (capture off, or no captured call in any
+        # example): ``tracked_spend`` stays None and budget accounting keeps its
+        # legacy reported-metrics fallback. Finding 3 of the round-3 review
+        # asked for "untracked" here, but a custom evaluator whose cost
+        # objective IS its own reported cost (test_custom_evaluator_cost_coverage)
+        # would then trip strict cost accounting; owner decision needed.
 
         # Log results
         success_count = sum(1 for result in example_results if result.success)
@@ -891,6 +931,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             metrics=aggregated_metrics,
             outputs=outputs,
             errors=errors,
+            tracked_spend=tracked_spend,
         )
         return self._finalize_execution_budget_evaluation(
             budget, result, execution_budget_lease

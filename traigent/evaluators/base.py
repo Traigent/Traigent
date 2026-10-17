@@ -4845,6 +4845,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
         # Evaluate function on all examples
         example_results = []
         all_metrics = []
+        tracker_rows: list[dict[str, Any]] = []
         outputs = []
         errors: list[str | None] = []
         budget_exhausted = False
@@ -4900,7 +4901,11 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 )
 
                 # Add LLM metrics if captured
+                tracker_row: dict[str, Any] = {}
                 if llm_metrics:
+                    # Tracker-only twin of the row: the sole input to
+                    # ``tracked_spend`` (never the user's scores).
+                    self._add_llm_metrics_to_example(tracker_row, llm_metrics)
                     self._add_llm_metrics_to_example(example_metrics, llm_metrics)
 
                 # Merge per-example user metrics (never overriding computed keys).
@@ -4940,6 +4945,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
                         },
                     )
                 all_metrics.append(example_metrics)
+                tracker_rows.append(tracker_row)
                 outputs.append(output)
                 errors.append(None)
 
@@ -4971,6 +4977,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
                         },
                     )
                 all_metrics.append(failed_result.metrics)
+                tracker_rows.append(dict(failed_result.metrics or {}))
                 outputs.append(None)
                 errors.append(str(e))
 
@@ -4999,7 +5006,9 @@ class SimpleScoringEvaluator(BaseEvaluator):
         tracked_llm_agg: dict[str, Any] | None = None
         if self.capture_llm_metrics and self._metrics_available:
             llm_agg = self._aggregate_llm_metrics(all_metrics, example_results)
-            tracked_llm_agg = dict(llm_agg)
+            tracked_llm_agg = dict(
+                self._aggregate_llm_metrics(tracker_rows, example_results)
+            )
             aggregated_metrics.update(llm_agg)
             if llm_agg.get("cost_unmeasured"):
                 # The custom-metric pass may have produced a partial sum for a

@@ -195,6 +195,9 @@ TRIAL_RESTORE: frozenset[str] = frozenset(
         "metadata",  # verbatim; consumers read successful_examples/... from it
         "error",  # structured diagnosis: the difference between "bad" and "crashed"
         "score",  # the optimization signal best_config argmaxes (#1845)
+        # tracker-measured spend: the only authority for budget/cost summaries,
+        # so a reloaded trial must not fall back to user custom cost scores
+        "tracked_spend",
     }
 )
 
@@ -234,6 +237,7 @@ _TRIAL_SENTINELS: dict[str, Any] = {
         config={"model": "smart"},
     ),
     "score": 0.61,
+    "tracked_spend": {"unmeasured": False, "cost": 0.2, "lower_bound": 0.0},
     # A field added to TRIAL_RESTORE without an entry here fails
     # test_trial_sentinel_table_covers_every_restored_field.
 }
@@ -267,6 +271,25 @@ def decode_trial_error(raw: Any) -> TrialError | None:
         )
         return None
     return TrialError.from_dict(raw)
+
+
+def decode_trial_tracked_spend(raw: Any) -> dict[str, Any] | None:
+    """Rebuild a trial's tracker-measured spend snapshot.
+
+    ``None``/absent (artifacts written before the field existed, or a trial
+    the tracker never measured) stays ``None``: the loader must not invent a
+    measurement. A malformed payload is reported and dropped, never guessed.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        logger.warning(
+            "Trial 'tracked_spend' payload is %s, not a mapping; restoring it "
+            "as None rather than guessing a measurement.",
+            type(raw).__name__,
+        )
+        return None
+    return dict(raw)
 
 
 def decode_trial_score(raw: Any) -> float | None:

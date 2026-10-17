@@ -767,6 +767,7 @@ class ConfigStateManager:
             from traigent.utils.optimization_result_persistence import (
                 decode_trial_error,
                 decode_trial_score,
+                decode_trial_tracked_spend,
             )
 
             trials = []
@@ -782,6 +783,9 @@ class ConfigStateManager:
                     metadata=trial_data.get("metadata", {}),
                     error=decode_trial_error(trial_data.get("error")),
                     score=decode_trial_score(trial_data.get("score")),
+                    tracked_spend=decode_trial_tracked_spend(
+                        trial_data.get("tracked_spend")
+                    ),
                 )
                 trials.append(trial)
 

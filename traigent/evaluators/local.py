@@ -1975,6 +1975,7 @@ class LocalEvaluator(BaseEvaluator):
             # Nothing priced and nothing tokenized: there is no judge spend to
             # attribute, so ABANDON the fold and leave every field of
             # ``example_metric`` exactly as it was.
+            self._withdraw_partly_priced_rows(example_metric, example_result)
             return
 
         # Only now -- past the abandon-guard -- is this row genuinely measured.
@@ -2043,6 +2044,24 @@ class LocalEvaluator(BaseEvaluator):
             )
             example_result.metrics["total_tokens"] = example_metric.tokens.total_tokens
             example_result.metrics["evaluation_cost"] = eval_total_cost
+        self._withdraw_partly_priced_rows(example_metric, example_result)
+
+    def _withdraw_partly_priced_rows(
+        self, example_metric: ExampleMetrics, example_result: Any
+    ) -> None:
+        """A priced agent call plus an unpriced judge/metric call is unknown.
+
+        The cost keys the agent call already wrote into the detailed row and
+        the custom metrics are withdrawn (owner ruling A), exactly as for a
+        row that was partly priced on its own.
+        """
+        if not self._is_partly_priced(example_metric):
+            return
+        self._withdraw_partly_priced_cost(
+            example_metric, example_metric.custom_metrics, flag=False
+        )
+        if example_result is not None:
+            self._withdraw_partly_priced_cost(example_metric, example_result.metrics)
 
     @staticmethod
     def _mark_example_cost_unmeasured_by_judge(

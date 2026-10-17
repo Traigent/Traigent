@@ -31,6 +31,7 @@ from ..utils.optimization_result_persistence import (
     decode_result,
     decode_trial_error,
     decode_trial_score,
+    decode_trial_tracked_spend,
     encode_result_fields,
     verify_envelope_version,
 )
@@ -538,6 +539,9 @@ class PersistenceManager:
                 # object already defines for itself.
                 "error": _safe_json_value(getattr(trial, "error", None)),
                 "score": _safe_json_value(getattr(trial, "score", None)),
+                "tracked_spend": _safe_json_value(
+                    getattr(trial, "tracked_spend", None)
+                ),
             }
             trials_data.append(trial_dict)
 
@@ -639,6 +643,9 @@ class PersistenceManager:
                         # payload raises.
                         error=decode_trial_error(t.get("error")),
                         score=decode_trial_score(t.get("score")),
+                        tracked_spend=decode_trial_tracked_spend(
+                            t.get("tracked_spend")
+                        ),
                     )
                     trials.append(trial)
         elif pkl_file.exists():
