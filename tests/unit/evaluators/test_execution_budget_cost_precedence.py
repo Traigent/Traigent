@@ -92,7 +92,10 @@ async def test_zero_measured_total_wins_over_custom_cost_score():
     assert result.execution_budget["cost_tracking"] == "complete"
 
 
-async def test_legacy_cost_only_evaluator_keeps_budget_fallback():
+async def test_capture_off_custom_cost_never_becomes_budget_debit():
+    # Owner ruling A: budget debit never comes from a user's custom metric.
+    # With capture off there is no tracker measurement, so the trial is
+    # untracked (previously this debited the custom 0.25 as "complete").
     budget = ExecutionBudget(max_cost_usd=1)
     result = await SimpleScoringEvaluator(
         metric_functions={"cost": lambda output: 0.25}, capture_llm_metrics=False
@@ -103,8 +106,9 @@ async def test_legacy_cost_only_evaluator_keeps_budget_fallback():
         budget=budget,
     )
     assert "total_cost" not in result.aggregated_metrics
-    assert budget.consumed_cost == 0.25
-    assert result.execution_budget["cost_tracking"] == "complete"
+    assert result.aggregated_metrics["cost"] == 0.25  # custom score preserved
+    assert budget.consumed_cost == 0
+    assert result.execution_budget["cost_tracking"] == "untracked"
 
 
 async def test_no_cost_measurement_stays_untracked_and_stops_next_admission():

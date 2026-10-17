@@ -594,6 +594,10 @@ def build_success_result(
         metadata=trial_metadata,
     )
 
+    tracked_spend = getattr(eval_result, "tracked_spend", None)
+    if isinstance(tracked_spend, dict):
+        trial_result.tracked_spend = dict(tracked_spend)
+
     if optuna_trial_id is not None:
         trial_result.metadata.setdefault("optuna_trial_id", optuna_trial_id)
 
@@ -621,7 +625,10 @@ def build_success_result(
     # leaving it decoupled at 0 makes the cost objective inert and shows $0 per
     # config for a real paid run. ``total_cost`` is the SDK's authoritative spend
     # and is never wrongly zeroed, so it is the correct source here.
-    _reconcile_cost_with_total_cost(trial_result.metrics, trial_id)
+    # Skipped when the evaluator carried tracker spend: there ``cost`` may be the
+    # user's own score (a custom 0 stays 0) and the budget reads the tracker.
+    if trial_result.tracked_spend is None:
+        _reconcile_cost_with_total_cost(trial_result.metrics, trial_id)
 
     # Authoritative final-union ceiling — the SINGLE cap that bounds what every
     # lane actually ships on a successful trial. Both evaluator lanes already cap

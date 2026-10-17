@@ -371,3 +371,115 @@ def test_custom_cost_score_never_inflates_floor_after_merge() -> None:
     BaseEvaluator._finalize_execution_budget_evaluation(budget, result, None)
     assert budget.consumed_cost == pytest.approx(0.50)
     assert budget._untracked_trials == 1
+
+
+# Round-2 review findings -----------------------------------------------------
+def _trial_via_factory(eval_result):
+    from traigent.core.trial_result_factory import build_success_result
+
+    return build_success_result(
+        trial_id="t1",
+        evaluation_config={},
+        eval_result=eval_result,
+        duration=1.0,
+        examples_attempted=1,
+        total_cost=None,
+        optuna_trial_id=None,
+    )
+
+
+def _result_with_tracker(metrics: dict, tracker_agg: dict) -> EvaluationResult:
+    return EvaluationResult(
+        config={},
+        aggregated_metrics=metrics,
+        total_examples=1,
+        successful_examples=1,
+        duration=1.0,
+        tracked_spend=BaseEvaluator._tracked_spend(tracker_agg, "total_cost"),
+    )
+
+
+def test_orchestrator_debit_ignores_custom_zero_cost_scores() -> None:
+    from traigent.core.cost_estimator import CostEstimator
+
+    result = _result_with_tracker(
+        {"cost": 0.0, "total_cost": 0.0},
+        {"cost": 0.0000135, "total_cost": 0.0000135},
+    )
+    trial = _trial_via_factory(result)
+    assert CostEstimator.extract_trial_cost(trial) == pytest.approx(0.0000135)
+
+
+def test_orchestrator_debit_ignores_custom_cost_on_unknown_usage() -> None:
+    from traigent.core.cost_estimator import CostEstimator
+
+    result = _result_with_tracker(
+        {"cost": 100.0, "cost_unmeasured": 1.0},
+        {"cost_unmeasured": 1.0, "cost_lower_bound": 0.0000135},
+    )
+    trial = _trial_via_factory(result)
+    assert CostEstimator.extract_trial_cost(trial) == pytest.approx(0.0000135)
+
+
+async def test_capture_off_custom_cost_never_debits_budget() -> None:
+    budget = ExecutionBudget(max_cost_usd=1000.0)
+    evaluator = SimpleScoringEvaluator(
+        capture_llm_metrics=False,
+        metric_functions={
+            "cost": lambda *a, **k: 100.0,
+            "total_cost": lambda *a, **k: 100.0,
+        },
+    )
+    result = await evaluator.evaluate(
+        lambda q: 42,
+        {},
+        Dataset([EvaluationExample({"q": "a"}, 42)]),
+        budget=budget,
+    )
+    assert budget.consumed_cost != pytest.approx(100.0)
+    assert result.execution_budget["cost_tracking"] != "complete"
+
+
+def test_custom_zero_cost_preserved_in_trial_metrics() -> None:
+    result = _result_with_tracker(
+        {"cost": 0.0, "total_cost": 0.0000135},
+        {"cost": 0.0000135, "total_cost": 0.0000135},
+    )
+    trial = _trial_via_factory(result)
+    assert trial.metrics["cost"] == 0.0
+    assert trial.metrics["total_cost"] == pytest.approx(0.0000135)
+
+
+def _partly_priced_metric() -> ExampleMetrics:
+    return ExampleMetrics(
+        tokens=TokenMetrics(input_tokens=20, output_tokens=40, total_tokens=60),
+        response=ResponseMetrics(response_time_ms=10),
+        cost=CostMetrics(input_cost=1.5e-06, output_cost=1.2e-05, unpriced=True),
+        success=True,
+    )
+
+
+def test_partly_priced_row_withdraws_cost_in_detail_and_progress() -> None:
+    from types import SimpleNamespace
+
+    evaluator = LocalEvaluator(detailed=True, metrics=["accuracy"])
+    metric = _partly_priced_metric()
+    # The row already carries the priced subtotal under every cost key.
+    row = SimpleNamespace(
+        metrics={
+            "accuracy": 1.0,
+            "input_cost": 1.5e-06,
+            "output_cost": 1.2e-05,
+            "total_cost": 1.35e-05,
+            "cost": 1.35e-05,
+        }
+    )
+    evaluator._add_standard_metrics_to_custom(metric)
+    evaluator._transfer_token_metrics_to_example_result(row, metric)
+    payload = evaluator._build_local_progress_payload(metric, row, 42)
+
+    for metrics in (row.metrics, payload["metrics"]):
+        assert metrics.get("cost_unmeasured") == 1.0
+        assert metrics.get("known_cost") == pytest.approx(1.35e-05)
+        for key in ("cost", "total_cost", "input_cost", "output_cost"):
+            assert key not in metrics, key

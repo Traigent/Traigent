@@ -5076,6 +5076,14 @@ class SimpleScoringEvaluator(BaseEvaluator):
         result.examples_consumed = len(example_results)
         if tracked_llm_agg is not None:
             result.tracked_spend = self._tracked_spend(tracked_llm_agg, "total_cost")
+        else:
+            # No tracker measurement (capture off): spend is untracked. A
+            # user's custom cost/total_cost score must never become the debit.
+            result.tracked_spend = {
+                "unmeasured": True,
+                "cost": None,
+                "lower_bound": 0.0,
+            }
         return self._finalize_execution_budget_evaluation(
             budget, result, execution_budget_lease
         )

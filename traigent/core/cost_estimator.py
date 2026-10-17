@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import math
+
 from collections.abc import Sequence
 
 from traigent.api.types import TrialResult
@@ -350,6 +352,23 @@ class CostEstimator:
         Returns:
             Cost in USD, or None if cost cannot be determined.
         """
+        # Tracker-measured spend (carried from the evaluator) is authoritative;
+        # a user's custom cost/total_cost score must never feed the budget.
+        tracked = getattr(trial_result, "tracked_spend", None)
+        if isinstance(tracked, dict):
+            if tracked.get("unmeasured"):
+                floor = float(tracked.get("lower_bound") or 0.0)
+                return floor if floor > 0 else None
+            value = tracked.get("cost")
+            if (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+                and value >= 0.0
+            ):
+                return float(value)
+            return None
+
         # Try metrics first
         metrics = trial_result.metrics or {}
         if is_cost_unmeasured(metrics):

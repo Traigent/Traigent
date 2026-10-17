@@ -404,6 +404,12 @@ class TrialResult:
     # trial-construction site; None until the objective value is known or when
     # the objective metric is absent (e.g. a failed trial). See class docstring.
     score: float | None = None
+    # Tracker-measured spend carried from the evaluator for budget accounting
+    # (``{"unmeasured", "cost", "lower_bound"}``); never user metric values.
+    # Not serialized: ``None`` when the evaluator had no tracker measurement.
+    tracked_spend: dict[str, Any] | None = field(
+        default=None, repr=False, compare=False
+    )
 
     @property
     def is_successful(self) -> bool:

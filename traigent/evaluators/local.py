@@ -786,20 +786,15 @@ class LocalEvaluator(BaseEvaluator):
         example_result.metrics["input_tokens"] = example_metric.tokens.input_tokens
         example_result.metrics["output_tokens"] = example_metric.tokens.output_tokens
         example_result.metrics["total_tokens"] = example_metric.tokens.total_tokens
+        if self._is_partly_priced(example_metric):
+            # A partly priced row (owner ruling A) is unknown: withdraw every
+            # cost key and keep only the priced part as a floor.
+            self._withdraw_partly_priced_cost(example_metric, example_result.metrics)
+            return
         if example_metric.cost.unmeasured or not cost_is_measured(example_metric):
             # No captured usage, or usage no price covers: leave the cost keys
             # out. Unknown is not $0 and a downstream sum over example costs
-            # must not see a zero (#2517). A partly priced row (owner ruling
-            # A) is unknown too; its priced part is only a floor.
-            if (
-                example_metric.cost.unpriced
-                and not example_metric.cost.unmeasured
-                and example_metric.cost.total_cost > 0
-            ):
-                example_result.metrics["cost_unmeasured"] = 1.0
-                example_result.metrics["known_cost"] = float(
-                    example_metric.cost.total_cost
-                ) + float(example_metric.cost.known_cost or 0.0)
+            # must not see a zero (#2517).
             return
         example_result.metrics["input_cost"] = example_metric.cost.input_cost
         example_result.metrics["output_cost"] = example_metric.cost.output_cost
@@ -808,6 +803,34 @@ class LocalEvaluator(BaseEvaluator):
         # a user metric function named ``cost`` keeps its own value.
         if "cost" not in self.metric_functions:
             example_result.metrics["cost"] = example_metric.cost.total_cost
+
+    @staticmethod
+    def _is_partly_priced(example_metric: ExampleMetrics) -> bool:
+        """True for a row with priced usage plus usage no price covers."""
+        return (
+            example_metric.cost.unpriced
+            and not example_metric.cost.unmeasured
+            and example_metric.cost.total_cost > 0
+        )
+
+    def _withdraw_partly_priced_cost(
+        self,
+        example_metric: ExampleMetrics,
+        target: dict[str, Any],
+        *,
+        flag: bool = True,
+    ) -> None:
+        """Remove cost keys from ``target`` and flag it unknown with a floor."""
+        for key in ("input_cost", "output_cost", "total_cost"):
+            target.pop(key, None)
+        if "cost" not in self.metric_functions:
+            target.pop("cost", None)
+        if not flag:
+            return
+        target["cost_unmeasured"] = 1.0
+        target["known_cost"] = float(example_metric.cost.total_cost) + float(
+            example_metric.cost.known_cost or 0.0
+        )
 
     def _objective_returned_none_error(
         self,
@@ -1174,7 +1197,9 @@ class LocalEvaluator(BaseEvaluator):
             example_metric.cost.total_cost if cost_is_measured(example_metric) else None
         )
 
-        if example_metric.cost.unmeasured:
+        if self._is_partly_priced(example_metric):
+            self._withdraw_partly_priced_cost(example_metric, payload_metrics)
+        elif example_metric.cost.unmeasured:
             # Unknown cost: no $0 in the progress payload (#2517).
             payload_metrics.pop("total_cost", None)
             payload_metrics.pop("cost", None)
@@ -1185,7 +1210,9 @@ class LocalEvaluator(BaseEvaluator):
 
         if self.detailed and example_result is not None:
             for key, value in example_result.metrics.items():
-                if key in {"cost", "total_cost"} and key in payload_metrics:
+                if key in {"cost", "total_cost"} and (
+                    key in payload_metrics or self._is_partly_priced(example_metric)
+                ):
                     continue
                 payload_metrics.setdefault(key, value)
 
@@ -1412,6 +1439,11 @@ class LocalEvaluator(BaseEvaluator):
             example_metric.tokens.total_tokens
         )
         if example_metric.cost.unmeasured:
+            return
+        if self._is_partly_priced(example_metric):
+            self._withdraw_partly_priced_cost(
+                example_metric, example_metric.custom_metrics, flag=False
+            )
             return
         example_metric.custom_metrics["input_cost"] = example_metric.cost.input_cost
         example_metric.custom_metrics["output_cost"] = example_metric.cost.output_cost
@@ -1963,7 +1995,9 @@ class LocalEvaluator(BaseEvaluator):
         # docblock warns about.
         example_metric.measured = True
 
-        agent_cost_unmeasured = example_metric.cost.unmeasured
+        agent_cost_unmeasured = (
+            example_metric.cost.unmeasured or self._is_partly_priced(example_metric)
+        )
         if agent_cost_unmeasured:
             # The agent's own cost is unknown, so the judge's spend is a known
             # floor, not part of a total: adding it to ``total_cost`` would
