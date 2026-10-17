@@ -739,12 +739,12 @@ def _refusal(code: str) -> dict[str, Any]:
 
 
 _CONTRACT_DIR = (
-    Path(__file__).resolve().parents[2] / "fixtures/contracts/schema_36ff466"
+    Path(__file__).resolve().parents[2] / "fixtures/contracts/schema_083eb11"
 )
-#: Byte-for-byte copies of TraigentSchema 36ff466 (traigent_schema/schemas/{optimization,execution}/).
+#: Byte-for-byte copies of TraigentSchema 083eb11 (traigent_schema/schemas/{optimization,execution}/).
 _CONTRACT_SHA256 = {
     "agent_head_by_ref_response_schema.json": "878090557b2944fe13802422242104d7f801484a2e54c86bea2809612b518a61",
-    "best_config_endpoints.json": "fdf1245e20526dd79a83d16f57816d58b716ad9603df246e80e478e5fd1a6cfb",
+    "best_config_endpoints.json": "0f8b37635059aaaeae6e51c269dcee3fae3f3536aa7e91f8ce6f11e2c1c440c2",
     "best_config_head_endpoints.json": "61c2423fda68c7b4faada5aa4cf0d2d26a6a4443839ebbf43eaa6afa9ad5d92a",
     "best_config_head_refusal_schema.json": "b93dccaeab1cfc056b9715e4723641a80697c649a8bb4675a92d043b0558ea8e",
     "best_config_publish_401_schema.json": "9e02e121596610c60da918ff54337486fbbc2d6c7c321aca52120af5487ff822",
@@ -1040,24 +1040,32 @@ def test_contract_order_of_refusals_puts_authentication_first():
     text = _contract("best_config_endpoints.json")["paths"]["/api/v1/best-configs"][
         "post"
     ]["description"]
-    order = text.split("ORDER OF REFUSALS:", 1)[1].split("A protected request never")[0]
-    codes = [
-        c
-        for c in re.findall(r"\b[a-z]+(?:_[a-z]+)+\b|unauthenticated|forbidden", order)
-        if c in set(_STATUS)
+    order = text.split(
+        "ORDER OF REFUSALS (one order; the first stage that applies answers):", 1
+    )[1].split("A protected request never")[0]
+    stages = [
+        [
+            c
+            for c in re.findall(
+                r"\b[a-z]+(?:_[a-z]+)+\b|unauthenticated|forbidden", stage
+            )
+            if c in set(_STATUS)
+        ]
+        for stage in re.split(r"\(\d+\) ", order)[1:]
     ]
-    assert codes == [
-        "unauthenticated",
-        "forbidden",
-        "head_capture_invalid",
-        "reference_not_found",
-        "head_write_unauthorized",
-        "head_agent_mismatch",
-        "head_environment_mismatch",
-        "head_body_invalid",
-        "head_generation_stale",
-        "head_publish_conflict",
-        "internal_error",
+    assert stages == [
+        ["unauthenticated"],
+        ["forbidden"],
+        ["head_capture_invalid"],
+        ["head_write_unauthorized", "reference_not_found", "internal_error"],
+        ["head_capture_invalid"],
+        ["reference_not_found"],
+        ["head_write_unauthorized"],
+        ["head_agent_mismatch"],
+        ["head_environment_mismatch"],
+        ["head_body_invalid"],
+        ["head_generation_stale"],
+        ["head_publish_conflict", "internal_error"],
     ]
 
 

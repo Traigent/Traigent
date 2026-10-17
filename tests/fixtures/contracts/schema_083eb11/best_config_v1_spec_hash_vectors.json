@@ -1,0 +1,501 @@
+{
+  "schema_version": "traigent.best_config.v1.spec_hash_vectors.1",
+  "description": "Language-neutral vectors for the frozen legacy traigent.best_config.v1 spec_hash rule (best_config_schema.json x-traigent-spec-hash). Expected values were produced by TraigentBackend src/services/best_config_service.py (commit 311855d82) via parse_publish_request. For each case, apply the rule to request.spec (+ request.environment as the envelope environment) and compare hashed_payload, canonical_json and spec_hash.",
+  "digest_format": "sha256:<64 lowercase hex>",
+  "cases": [
+    {
+      "name": "provenance_present",
+      "note": "provenance is carried in the spec but never hashed",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          },
+          "provenance": {
+            "algorithm": "tpe",
+            "optimization_id": "opt_cloud_123",
+            "published_at": "2026-10-17T10:00:00Z",
+            "source": "sdk"
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:6558b30bfa1ca48baac9d04e17573f6e935a111829fc07ac567a5e6c210a2a3e"
+    },
+    {
+      "name": "provenance_absent_same_hash",
+      "note": "identical to provenance_present minus provenance: same hash",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:6558b30bfa1ca48baac9d04e17573f6e935a111829fc07ac567a5e6c210a2a3e"
+    },
+    {
+      "name": "validation_nested_exclusions",
+      "note": "guaranteed_selection / certified_selection containers and the result keys are removed at any depth, inside lists too; other validation content is hashed",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          },
+          "validation": {
+            "guaranteed_selection": {
+              "status": "deployable",
+              "certificate": {
+                "a": 1
+              }
+            },
+            "certified_selection": {
+              "deployable": true
+            },
+            "holdout": {
+              "accuracy": 0.9,
+              "selected_config": {
+                "model": "m"
+              },
+              "fallback_config": {
+                "model": "n"
+              },
+              "rows": [
+                {
+                  "deployable": true,
+                  "id": 1
+                },
+                {
+                  "certificate": "c",
+                  "id": 2
+                }
+              ]
+            }
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        },
+        "validation": {
+          "holdout": {
+            "accuracy": 0.9,
+            "rows": [
+              {
+                "id": 1
+              },
+              {
+                "id": 2
+              }
+            ]
+          }
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\",\"validation\":{\"holdout\":{\"accuracy\":0.9,\"rows\":[{\"id\":1},{\"id\":2}]}}}",
+      "spec_hash": "sha256:c2bb5d0fcf6a31c0f0e4fafbb0307c261b4783303a33a58b3171bbebd3638f78"
+    },
+    {
+      "name": "validation_ordinary_nested_status_is_dropped",
+      "note": "an ordinary nested key named status is removed too: the exclusion is by key name, not by meaning",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          },
+          "validation": {
+            "run": {
+              "status": "ok",
+              "accuracy": 0.91
+            },
+            "status": "done",
+            "notes": [
+              "a"
+            ]
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        },
+        "validation": {
+          "run": {
+            "accuracy": 0.91
+          },
+          "notes": [
+            "a"
+          ]
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\",\"validation\":{\"notes\":[\"a\"],\"run\":{\"accuracy\":0.91}}}",
+      "spec_hash": "sha256:f5bc34e04196db4a46618e0a11eb558373825b817dc5e219bc6f865b48e73fc8"
+    },
+    {
+      "name": "validation_empty_object_omitted",
+      "note": "validation {} is omitted from the hashed payload (the hash equals the no-validation hash)",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          },
+          "validation": {}
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:6558b30bfa1ca48baac9d04e17573f6e935a111829fc07ac567a5e6c210a2a3e"
+    },
+    {
+      "name": "validation_only_excluded_keys_omitted",
+      "note": "validation that is empty after exclusion is omitted",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          },
+          "validation": {
+            "status": "x",
+            "guaranteed_selection": {
+              "status": "y"
+            }
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:6558b30bfa1ca48baac9d04e17573f6e935a111829fc07ac567a5e6c210a2a3e"
+    },
+    {
+      "name": "non_nfc_strings",
+      "note": "strings and object keys are NFC-normalized before hashing (decomposed e + combining acute in a config value, a config key and a validation value)",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "modeé": "café",
+            "temperature": 0.2
+          },
+          "validation": {
+            "note": "résumé"
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "modeé": "café",
+          "temperature": 0.2
+        },
+        "validation": {
+          "note": "résumé"
+        }
+      },
+      "canonical_json": "{\"config\":{\"modeé\":\"café\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\",\"validation\":{\"note\":\"résumé\"}}",
+      "spec_hash": "sha256:f8c33da681a88cc5fbb6d5e321e87cb51513c821662395c954448f1d26526549"
+    },
+    {
+      "name": "config_id_is_trimmed_not_nfc",
+      "note": "config_id is trimmed but, exactly as the Backend does today, NOT NFC-normalized",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "  café-agent  ",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "café-agent",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"café-agent\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:439c733e96880baf5908af0fa8f94eeaa09c2624298b70ee6b19411271b87de5"
+    },
+    {
+      "name": "identifier_and_environment_normalized",
+      "note": "config_id is trimmed (surrounding whitespace, here spaces and a tab); function_ref and environment trim/lower-case are no-ops on contract-valid input because the publish contract only admits canonical values for both",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "  support-answerer\t",
+          "function_ref": "app.agents:answer",
+          "environment": "prod",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "prod",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"prod\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:142c63f02f13fce6acb9e734189adb70c0bf2b609cdc94954afe55ca49b1fac8"
+    },
+    {
+      "name": "environment_from_request_envelope",
+      "note": "spec has no environment: the request envelope environment supplies it",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          }
+        },
+        "environment": "staging"
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "staging",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"staging\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:f99d361f6eacbd5daf93db384070f3a8ba794a74f30333affd07edf8606e871c"
+    },
+    {
+      "name": "environment_defaults",
+      "note": "spec and envelope both omit environment: it is \"default\"",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:6558b30bfa1ca48baac9d04e17573f6e935a111829fc07ac567a5e6c210a2a3e"
+    },
+    {
+      "name": "forward_compat_and_function_ref_absent",
+      "note": "forward_compat is not hashed; an absent function_ref is simply absent from the payload",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "environment": "default",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          },
+          "forward_compat": true
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "environment": "default",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:a57677fe3d102b8edb46b033072d6aa74bfb8e74e7ef3137ca96cc3ea60d792b"
+    },
+    {
+      "name": "number_forms",
+      "note": "Python json number rendering: integers exact, floats shortest round-trip repr (1.0, 1e-07, 0.1), booleans and null",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "i": 3,
+            "big": 12345678901234567890,
+            "f1": 1.0,
+            "f2": 1e-07,
+            "f3": 0.1,
+            "b": true,
+            "n": null,
+            "neg": -0.5,
+            "l": [
+              1,
+              2.5,
+              "x"
+            ],
+            "z": {
+              "b": 1,
+              "a": 2
+            }
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "i": 3,
+          "big": 12345678901234567890,
+          "f1": 1.0,
+          "f2": 1e-07,
+          "f3": 0.1,
+          "b": true,
+          "n": null,
+          "neg": -0.5,
+          "l": [
+            1,
+            2.5,
+            "x"
+          ],
+          "z": {
+            "b": 1,
+            "a": 2
+          }
+        }
+      },
+      "canonical_json": "{\"config\":{\"b\":true,\"big\":12345678901234567890,\"f1\":1.0,\"f2\":1e-07,\"f3\":0.1,\"i\":3,\"l\":[1,2.5,\"x\"],\"n\":null,\"neg\":-0.5,\"z\":{\"a\":2,\"b\":1}},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:9326a79f80518eab94e87c6c03032d1f1f0c092a0bff2805c95c628a9f92bb5e"
+    }
+  ]
+}
