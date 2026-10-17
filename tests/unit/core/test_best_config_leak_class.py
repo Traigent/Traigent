@@ -41,6 +41,7 @@ from traigent.core.best_config_runtime import (
     write_repo_best_config,
 )
 from traigent.core.config_state_manager import ConfigStateManager
+from traigent.utils.exceptions import ConfigurationError
 
 CANARY = "zq-acme-private-canary-91"
 CID = f"id-{CANARY}"
@@ -337,6 +338,8 @@ def _scn_fetch(kind: str, mode: str = "cloud") -> Scenario:
             fetch = ConnectionError(f"failed URL /work/{CANARY}")
         elif kind == "runtime":
             fetch = RuntimeError(CANARY)
+        elif kind in ("config_error", "client_config_error"):
+            fetch = ConfigurationError(f"Invalid config {CANARY}")
         elif kind == "bad_hash":
             data = _data_for(_spec())
             data["spec_hash"] = f"sha256:{CANARY}"
@@ -360,10 +363,17 @@ def _scn_fetch(kind: str, mode: str = "cloud") -> Scenario:
         else:  # pragma: no cover
             raise AssertionError(kind)
         manager = _manager(source=mode, strict=strict, cache_dir=cache_dir)
-        with patch(
-            "traigent.cloud.backend_client.get_backend_client",
-            return_value=_FakeClient(fetch=fetch),
-        ):
+        if kind == "client_config_error":
+            target = patch(
+                "traigent.cloud.backend_client.get_backend_client",
+                side_effect=fetch,
+            )
+        else:
+            target = patch(
+                "traigent.cloud.backend_client.get_backend_client",
+                return_value=_FakeClient(fetch=fetch),
+            )
+        with target:
             manager._resolve_mode_snapshot()
 
     return run
@@ -441,6 +451,133 @@ def _scn_client(op: str, kind: str) -> Scenario:
     return run
 
 
+_AGENT_REF = "agentref_" + "a" * 32
+
+
+def _client() -> BackendIntegratedClient:
+    return BackendIntegratedClient(api_key=FAKE_KEY, base_url="https://api.test")
+
+
+def _auth(client: BackendIntegratedClient, **kw: Any):
+    return patch.object(client.auth_manager.auth, "get_headers", AsyncMock(**kw))
+
+
+def _scn_client_invalid_header(op: str, field: str) -> Scenario:
+    """A real ``requests`` header validation failure (``InvalidHeader``); nothing is sent."""
+
+    def run(tmp_path, monkeypatch, strict):
+        import requests
+
+        client = _client()
+        bad = f"\n{CANARY}"
+        with (
+            _auth(client, return_value={"Authorization": "Bearer t"}),
+            patch.object(
+                requests.adapters.HTTPAdapter,
+                "send",
+                side_effect=AssertionError("must not send"),
+            ),
+        ):
+            if op == "fetch":
+                client.fetch_best_config_sync(CID, etag=bad)
+            else:
+                client.publish_best_config_sync(_spec(), if_match=bad)
+
+    return run
+
+
+def _scn_client_protected(op: str) -> Scenario:
+    def run(tmp_path, monkeypatch, strict):
+        import requests
+
+        client = _client()
+        with (
+            _auth(client, return_value={"Authorization": "Bearer t"}),
+            patch(
+                "traigent.cloud.backend_client.gate_session",
+                lambda sess, **kw: sess,
+            ),
+            patch.object(
+                requests.Session,
+                "request",
+                side_effect=requests.exceptions.ConnectionError(f"/work/{CANARY}"),
+            ),
+        ):
+            if op == "publish":
+                client.publish_best_config_sync(
+                    _spec(),
+                    environment="prod",
+                    agent_ref=_AGENT_REF,
+                    expected_head_generation=1,
+                )
+            else:
+                client.fetch_agent_head_generation_by_ref_sync(
+                    _AGENT_REF, environment="production"
+                )
+
+    return run
+
+
+def _scn_client_auth_failure(tmp_path, monkeypatch, strict):
+    client = _client()
+    with _auth(client, side_effect=RuntimeError(f"refresh URL /work/{CANARY}")):
+        client.fetch_best_config_sync(CID)
+
+
+def _long(tmp_path: Path) -> Path:
+    return tmp_path / (CANARY + "x" * 300)
+
+
+def _scn_repo_overlong(tmp_path, monkeypatch, strict):
+    resolve_repo_best_config(config_id=CID, repo_root=_long(tmp_path), strict=strict)
+
+
+def _scn_cache_overlong(tmp_path, monkeypatch, strict):
+    resolve_cloud_cache_best_config(
+        config_id=CID, cache_dir=_long(tmp_path), strict=strict
+    )
+
+
+def _scn_manager_overlong_cache(tmp_path, monkeypatch, strict):
+    manager = _manager(source="cache", strict=strict, cache_dir=str(_long(tmp_path)))
+    manager._resolve_mode_snapshot()
+
+
+def _scn_whole_config(tmp_path, monkeypatch, strict):
+    manager = _manager()
+    manager.set_config({"t": 2, "prompt": CANARY})
+    results = MagicMock()
+    results.best_config = {"t": 2, "prompt": CANARY}
+    results.metadata = {}
+    manager.apply_best_config(results)
+
+
+def _scn_load_results_missing(tmp_path, monkeypatch, strict):
+    _manager().load_optimization_results(str(tmp_path / f"missing-{CANARY}.json"))
+
+
+def _scn_load_results_bad_json(tmp_path, monkeypatch, strict):
+    target = _write(tmp_path / f"r-{CANARY}.json", '{"a": "' + CANARY)
+    _manager().load_optimization_results(str(target))
+
+
+def _scn_load_results_ok_log(tmp_path, monkeypatch, strict):
+    # a valid file whose name carries the canary: the success log must not name it
+    manager = _manager()
+    src = tmp_path / f"saved-{CANARY}.json"
+    manager.set_config({"t": 2})
+    results = MagicMock()
+    results.best_config = {"t": 2}
+    results.metadata = {}
+    manager._optimization_results = None
+    try:
+        manager.save_optimization_results(str(src))
+    except Exception:  # noqa: BLE001 - nothing to save without results
+        pass
+    if src.exists():
+        manager.load_optimization_results(str(src))
+
+
 def _scenarios() -> dict[str, Scenario]:
     s: dict[str, Scenario] = {}
     for entry in ("load_from", "env", "dev-log"):
@@ -481,6 +618,8 @@ def _scenarios() -> dict[str, Scenario]:
         "spec_keys",
         "cache_unwritable",
         "cache_is_file",
+        "config_error",
+        "client_config_error",
     ):
         for mode in ("cloud", "repo_then_cloud"):
             s[f"fetch/{mode}/{kind}"] = _scn_fetch(kind, mode)
@@ -490,6 +629,18 @@ def _scenarios() -> dict[str, Scenario]:
     for op in ("fetch", "publish"):
         for kind in ("transport", "http_500", "http_400"):
             s[f"client/{op}/{kind}"] = _scn_client(op, kind)
+    for op in ("fetch", "publish"):
+        s[f"client/{op}/invalid_header"] = _scn_client_invalid_header(op, "x")
+    s["client/protected/publish"] = _scn_client_protected("publish")
+    s["client/protected/head_fetch"] = _scn_client_protected("head")
+    s["client/auth_failure"] = _scn_client_auth_failure
+    s["repo/overlong_root"] = _scn_repo_overlong
+    s["cache/overlong_dir"] = _scn_cache_overlong
+    s["manager/overlong_cache_dir"] = _scn_manager_overlong_cache
+    s["manager/whole_config_logging"] = _scn_whole_config
+    s["results/load_missing"] = _scn_load_results_missing
+    s["results/load_bad_json"] = _scn_load_results_bad_json
+    s["results/save_load_named_file"] = _scn_load_results_ok_log
     return s
 
 
@@ -513,7 +664,7 @@ def test_canary_never_appears_in_any_rendering(
 
 def test_scenario_matrix_is_not_empty() -> None:
     # inputs x entry points x renderings: guard against a silently shrunk matrix.
-    assert len(SCENARIOS) >= 90
+    assert len(SCENARIOS) >= 105
 
 
 def test_helper_keeps_rejected_values_on_details_only() -> None:
@@ -549,3 +700,35 @@ def test_cache_write_failure_details_stay_available(tmp_path) -> None:
         with pytest.raises(Exception) as info:
             manager._resolve_mode_snapshot()
     assert info.value.details["error_type"] == "NotADirectoryError"
+
+
+def test_unmarked_configuration_error_message_is_never_a_reason() -> None:
+    from traigent.core import best_config_diagnostics as diag
+
+    assert diag.fixed_reason(ConfigurationError(f"Invalid config {CANARY}")) == (
+        "ConfigurationError"
+    )
+
+
+@pytest.mark.parametrize("strict", [False, True], ids=["lenient", "strict"])
+def test_overlong_path_components_give_fixed_refusal_or_none(strict, tmp_path) -> None:
+    for call in (
+        lambda: resolve_repo_best_config(
+            config_id=CID, repo_root=_long(tmp_path), strict=strict
+        ),
+        lambda: resolve_cloud_cache_best_config(
+            config_id=CID, cache_dir=_long(tmp_path), strict=strict
+        ),
+    ):
+        if strict:
+            with pytest.raises(ConfigurationError) as info:
+                call()
+            assert info.value.details["category"] in {"repo_invalid", "cache_invalid"}
+        else:
+            assert call() is None
+
+
+def test_whole_config_values_are_not_logged(tmp_path, caplog) -> None:
+    caplog.set_level(logging.DEBUG)
+    _scn_whole_config(tmp_path, None, False)
+    assert CANARY not in caplog.text

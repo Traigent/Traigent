@@ -45,15 +45,25 @@ class Category(StrEnum):
     SOURCE_IGNORED = "source_ignored"
 
 
+_SAFE_MARK = "_best_config_diag_safe_message"
+
+
+def mark_safe(error: ConfigurationError) -> ConfigurationError:
+    """Mark ``error`` as carrying a fixed, literal message (see :func:`fixed_reason`)."""
+
+    setattr(error, _SAFE_MARK, True)
+    return error
+
+
 def fixed_reason(exc: BaseException) -> str:
     """Log-safe reason: a SDK refusal's fixed message, else only the exception type.
 
-    Only :class:`ConfigurationError` messages are trusted (they are fixed wording by
-    contract on these paths); the text of any other exception (``OSError``,
-    ``ValueError``, ``ConnectionError`` ...) can carry customer content and is never used.
+    Only an error built by :func:`refusal` (marked with ``_SAFE_MARK``) contributes its
+    message; any other exception, including a plain ``ConfigurationError`` raised by a
+    dependency (its text may interpolate customer content), contributes its type name.
     """
 
-    if isinstance(exc, ConfigurationError):
+    if isinstance(exc, ConfigurationError) and getattr(exc, _SAFE_MARK, False):
         return exc.message
     return type(exc).__name__
 
@@ -97,7 +107,7 @@ def refusal(
     error = error_cls(message, details=payload)
     error.__cause__ = None
     error.__suppress_context__ = True
-    return error
+    return mark_safe(error)
 
 
 def transport_failed_message(operation: str, exc: BaseException) -> str:
@@ -110,6 +120,7 @@ __all__ = [
     "Category",
     "fixed_reason",
     "log",
+    "mark_safe",
     "refusal",
     "transport_failed_message",
 ]

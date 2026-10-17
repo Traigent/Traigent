@@ -345,7 +345,12 @@ def _run_sync_backend_request_with_retry(
     error = result.error
     if isinstance(error, AuthenticationError):
         raise error
-    raise CloudServiceError(f"{operation} failed: {error}") from error
+    # Fixed text only: the transient errors above carry a pre-sanitized message; any
+    # other failure (e.g. a ``requests`` InvalidHeader quoting a header value) is named
+    # by its type, never its text, and never chained.
+    if isinstance(error, _SyncBackendTransientError):
+        raise CloudServiceError(f"{operation} failed: {error}") from None
+    raise CloudServiceError(f"{operation} failed ({type(error).__name__})") from None
 
 
 def _session_is_closed(session: Any) -> bool:
@@ -2079,12 +2084,12 @@ class BackendIntegratedClient:
             # ``CloudServiceError`` rather than swallow into default headers.
             logger.warning(
                 "Sync auth header generation failed; refusing to send "
-                "unauthenticated request: %s",
-                exc,
+                "unauthenticated request (%s)",
+                type(exc).__name__,
             )
             raise CloudServiceError(
-                f"Failed to build sync auth headers: {exc}"
-            ) from exc
+                f"Failed to build sync auth headers ({type(exc).__name__})"
+            ) from None
 
         merged_headers = dict(headers or {})
         merged_headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
@@ -2343,7 +2348,7 @@ class BackendIntegratedClient:
             ConnectionError,
             TimeoutError,
         ) as exc:
-            raise CloudServiceError(f"{operation} transport failed") from exc
+            raise CloudServiceError(f"{operation} transport failed") from None
         finally:
             session.close()
 

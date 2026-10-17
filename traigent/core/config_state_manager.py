@@ -460,7 +460,7 @@ class ConfigStateManager:
         cause: BaseException,
     ) -> CloudPublishUnavailable:
         """A fixed-message ``CloudPublishUnavailable``; the cause stays out of text/chain."""
-        error = CloudPublishUnavailable(reason, message)
+        error = diag.mark_safe(CloudPublishUnavailable(reason, message))
         inner_type = (
             cause.details.get("error_type")
             if isinstance(cause, ConfigurationError)
@@ -493,9 +493,11 @@ class ConfigStateManager:
         version = envelope["schema_version"]
         if version == BEST_CONFIG_SCHEMA_VERSION:
             return spec_exc
-        return ConfigurationError(
-            "Unsupported best config schema_version",
-            details={"schema_version": version},
+        return diag.mark_safe(
+            ConfigurationError(
+                "Unsupported best config schema_version",
+                details={"schema_version": version},
+            )
         )
 
     @classmethod
@@ -503,9 +505,11 @@ class ConfigStateManager:
         cls, exc: BaseException, path: str, label: str
     ) -> ConfigurationError:
         inner = exc.details if isinstance(exc, TraigentError) else {}
-        return ConfigurationError(
-            f"Failed to load best config ({label}): {cls._exception_text(exc)}",
-            details={**inner, "path": path},
+        return diag.mark_safe(
+            ConfigurationError(
+                f"Failed to load best config ({label}): {cls._exception_text(exc)}",
+                details={**inner, "path": path},
+            )
         )
 
     def _refuse_legacy_file(self, path: str, label: str, reason: str) -> None:
@@ -1038,7 +1042,9 @@ class ConfigStateManager:
             self._set_snapshot(snapshot, best_config=config)
             self._override_sticky = True
             self._setup_wrapper_callback()
-        logger.debug(f"Set configuration for {self.func.__name__}: {config}")
+        logger.debug(
+            "Set configuration for %s (%d knobs)", self.func.__name__, len(config)
+        )
 
     def apply_best_config(
         self,
@@ -1110,9 +1116,11 @@ class ConfigStateManager:
                 raise
 
         logger.info(
-            f"Applied best config for {self.func.__name__}: {results.best_config} "
-            f"(previous: {old_config})"
+            "Applied best config for %s (%d knobs)",
+            self.func.__name__,
+            len(results.best_config),
         )
+        logger.debug("Applied best config knob names: %s", sorted(results.best_config))
 
         return True
 
@@ -1169,7 +1177,7 @@ class ConfigStateManager:
         with safe_open(output_path, base_dir, mode="w", encoding="utf-8") as f:
             json.dump(result_dict, f, indent=2, default=str)
 
-        logger.info(f"Saved optimization results to {output_path}")
+        logger.info("Saved optimization results")
 
     def load_optimization_results(self, path: str) -> None:
         """Load optimization results from file.
@@ -1253,10 +1261,15 @@ class ConfigStateManager:
             else:
                 self._state = OptimizationState.OPTIMIZED
 
-            logger.info(f"Loaded optimization results from {path}")
+            logger.info("Loaded optimization results")
 
         except Exception as e:
-            raise ConfigurationError(f"Failed to load optimization results: {e}") from e
+            raise diag.refusal(
+                "Failed to load optimization results",
+                category=diag.Category.LOAD_FAILED,
+                cause=e,
+                path=str(path),
+            ) from None
 
     # -- Auto-load methods -------------------------------------------------
 
@@ -1495,7 +1508,7 @@ class ConfigStateManager:
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(export_data, f, indent=2, default=str)
 
-        logger.info(f"Exported config for {self.func.__name__} to {output_path}")
+        logger.info("Exported config for %s", self.func.__name__)
         return output_path
 
     def export_best_config(

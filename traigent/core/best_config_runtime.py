@@ -847,10 +847,12 @@ def resolve_repo_best_config(
     safe_config_id = _validate_config_id(config_id)
     directory = Path(repo_root or Path.cwd()) / ".traigent" / "best-configs"
     manifest_path = directory / "manifest.json"
-    if not manifest_path.exists():
-        return None
 
     try:
+        # Inside the guarded boundary: ``exists()`` raises ``OSError`` (text names the
+        # path) for an overlong component or a permission failure.
+        if not manifest_path.exists():
+            return None
         manifest = load_manifest(directory) or {}
         entry = manifest.get("configs", {}).get(safe_config_id)
         if not isinstance(entry, dict):
@@ -915,11 +917,11 @@ def resolve_cloud_cache_best_config(
     safe_config_id = _validate_config_id(config_id)
 
     directory = Path(cache_dir)
-    if not directory.exists():
-        return None
 
     current_time = now or datetime.now(UTC)
     try:
+        if not directory.exists():
+            return None
         entry = _load_cache_entry(directory, safe_config_id)
         if entry is None:
             return None
