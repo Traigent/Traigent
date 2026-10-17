@@ -35,7 +35,6 @@ from traigent.core.best_config_runtime import (
     check_publishable_spec,
     compute_spec_hash,
     function_ref_for,
-    load_best_config_spec,
     resolve_cloud_cache_best_config,
     resolve_repo_best_config,
     sha256_digest,
@@ -48,6 +47,7 @@ from traigent.core.best_config_runtime import (
 from traigent.utils.exceptions import (
     ConfigurationError,
     OptimizationStateError,
+    TraigentError,
 )
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import (
@@ -63,6 +63,25 @@ logger = get_logger(__name__)
 _EXPLICIT_LEGACY_SOURCES = frozenset(
     {BestConfigSource.LOAD_FROM.value, BestConfigSource.ENV.value}
 )
+
+# What a log line or exception text calls a best-config file. The path is chosen by the
+# user (it can carry a customer or project name), so it is never interpolated into a log
+# line or a message: it travels only as ``ConfigurationError.details["path"]``.
+_SOURCE_LABELS = {
+    BestConfigSource.LOAD_FROM.value: "load_from",
+    BestConfigSource.ENV.value: "TRAIGENT_CONFIG_PATH",
+    BestConfigSource.DEV_LOG.value: "dev-log",
+}
+_FALLBACK_SOURCE_LABEL = "best config file"
+
+# A schema_version in this namespace marks a canonical best-config envelope.
+_CANONICAL_SCHEMA_NAMESPACE = "traigent.best_config."
+_CANONICAL_ENVELOPE_KEYS = frozenset({"schema_version", "config_id", "config"})
+
+
+def _source_label(source: str) -> str:
+    return _SOURCE_LABELS.get(source, _FALLBACK_SOURCE_LABEL)
+
 
 _T = TypeVar("_T")
 
@@ -363,24 +382,35 @@ class ConfigStateManager:
             source=source,
         )
 
+    @staticmethod
+    def _read_spec_file(path: str, label: str) -> Any:
+        """Decode a JSON file; a read failure never echoes the (user-chosen) path."""
+        try:
+            with Path(path).open(encoding="utf-8") as handle:
+                return json.load(handle)
+        except OSError:
+            raise ConfigurationError(
+                f"Best config file could not be read ({label})",
+                details={"path": path},
+            ) from None
+
     def _load_snapshot_from_file(
         self,
         path: str,
         *,
         source: str,
     ) -> BestConfigSnapshot | None:
+        label = _source_label(source)
         try:
-            snapshot = load_best_config_spec(
-                path,
+            spec = self._read_spec_file(path, label)
+            snapshot = snapshot_from_spec(
+                spec,
                 configuration_space=self.configuration_space,
                 expected_config_id=self.config_id,
                 expected_function_ref=function_ref_for(self.func),
                 expected_environment=self.best_config_environment,
                 source=source,
-                strict=True,
             )
-            if snapshot is None:
-                raise ConfigurationError(f"Failed to load best config from {path}")
             merged = {**self.default_config, **thaw_config(snapshot.config)}
             return BestConfigSnapshot.from_config(
                 merged,
@@ -392,20 +422,19 @@ class ConfigStateManager:
         except Exception as spec_exc:
             if isinstance(spec_exc, SafetySensitiveBestConfigError):
                 raise
-            if self._path_declares_schema_version(path):
-                # A file that declares a schema_version is a canonical envelope. A
-                # version this SDK does not support (or any other canonical refusal)
-                # is final: it never falls back to the identity-blind legacy reader.
+            envelope = self._canonical_envelope_data(path)
+            if envelope is not None:
+                # A canonical envelope (its schema_version is in the best-config
+                # namespace, or it has the envelope shape) is final: a version this
+                # SDK does not support, or any other canonical refusal, never falls
+                # back to the identity-blind legacy reader.
+                refusal = self._canonical_refusal(envelope, spec_exc)
                 if self.best_config_strict:
-                    if isinstance(spec_exc, ConfigurationError):
-                        raise spec_exc
-                    raise ConfigurationError(
-                        f"Failed to load best config from {path}: {spec_exc}"
-                    ) from spec_exc
+                    raise self._canonical_failure(refusal, path, label) from spec_exc
                 logger.warning(
-                    "Ignoring invalid canonical best config %s: %s",
-                    path,
-                    spec_exc,
+                    "Ignoring invalid canonical best config (%s): %s",
+                    label,
+                    self._exception_text(refusal),
                 )
                 return None
 
@@ -413,23 +442,50 @@ class ConfigStateManager:
             if is_legacy_config:
                 return legacy
             if self.best_config_strict:
-                if isinstance(spec_exc, ConfigurationError):
-                    raise spec_exc
-                raise ConfigurationError(
-                    f"Failed to load best config from {path}: {spec_exc}"
-                ) from spec_exc
+                raise self._canonical_failure(spec_exc, path, label) from spec_exc
             logger.warning(
-                "Failed to load best config from %s: %s. Function will use fallback.",
-                path,
-                spec_exc,
+                "Failed to load best config (%s): %s. Function will use fallback.",
+                label,
+                self._exception_text(spec_exc),
             )
             return None
 
-    def _refuse_legacy_file(self, path: str, reason: str) -> None:
+    @staticmethod
+    def _exception_text(exc: BaseException) -> str:
+        return exc.message if isinstance(exc, TraigentError) else str(exc)
+
+    @staticmethod
+    def _canonical_refusal(
+        envelope: dict[str, Any], spec_exc: BaseException
+    ) -> BaseException:
+        """Name an unsupported ``schema_version`` as such, whatever else is wrong."""
+        version = envelope["schema_version"]
+        if version == BEST_CONFIG_SCHEMA_VERSION:
+            return spec_exc
+        shown = version if isinstance(version, str) and len(version) <= 64 else None
+        return ConfigurationError(
+            "Unsupported best config schema_version"
+            + (
+                f" {shown!r}"
+                if shown is not None
+                else f" of type {type(version).__name__}"
+            )
+        )
+
+    @classmethod
+    def _canonical_failure(
+        cls, exc: BaseException, path: str, label: str
+    ) -> ConfigurationError:
+        return ConfigurationError(
+            f"Failed to load best config ({label}): {cls._exception_text(exc)}",
+            details={"path": path},
+        )
+
+    def _refuse_legacy_file(self, path: str, label: str, reason: str) -> None:
         """Refuse a legacy file: strict raises; non-strict warns and the caller skips."""
-        message = f"Refusing legacy best config {path}: {reason}"
+        message = f"Refusing legacy best config ({label}): {reason}"
         if self.best_config_strict:
-            raise ConfigurationError(message)
+            raise ConfigurationError(message, details={"path": path})
         logger.warning("%s", message)
 
     def _legacy_identity_mismatch(self, data: dict[str, Any]) -> str | None:
@@ -476,7 +532,8 @@ class ConfigStateManager:
           warning; ``best_config_strict`` refuses it. A discovered dev log is skipped.
         """
 
-        payload = self._read_legacy_payload(path)
+        label = _source_label(source)
+        payload = self._read_legacy_payload(path, label)
         if payload is None:
             return False, None
         data, loaded_config = payload
@@ -485,36 +542,38 @@ class ConfigStateManager:
 
         mismatch = self._legacy_identity_mismatch(data)
         if mismatch is not None:
-            self._refuse_legacy_file(path, f"identity mismatch: {mismatch}")
+            self._refuse_legacy_file(path, label, f"identity mismatch: {mismatch}")
             return True, None
 
         function_ref = data.get("function_ref")
         if not (isinstance(function_ref, str) and function_ref.strip()):
             if source not in _EXPLICIT_LEGACY_SOURCES:
                 logger.debug(
-                    "Skipping identity-free discovered best config %s: it cannot "
+                    "Skipping identity-free discovered best config (%s): it cannot "
                     "establish which function it belongs to",
-                    path,
+                    label,
                 )
                 return True, None
             if self.best_config_strict:
                 self._refuse_legacy_file(
                     path,
+                    label,
                     "no function identity (function_ref); best_config_strict only "
                     "loads a best config bound to the requested function",
                 )
                 return True, None
             logger.warning(
-                "Loading legacy best config %s without verifying its identity: the "
+                "Loading legacy best config (%s) without verifying its identity: the "
                 "file names no function_ref, so it may belong to another function "
                 "or environment",
-                path,
+                label,
             )
         elif data.get("environment") is None and self.best_config_environment != (
             "default"
         ):
             self._refuse_legacy_file(
                 path,
+                label,
                 "identity mismatch: environment does not match the requested "
                 "environment",
             )
@@ -1165,7 +1224,7 @@ class ConfigStateManager:
         resolved: BestConfigSnapshot | None = None
 
         if self._load_from:
-            logger.debug("Using explicit load_from path: %s", self._load_from)
+            logger.debug("Using explicit load_from path")
             resolved = self._load_snapshot_from_file(
                 self._load_from, source=BestConfigSource.LOAD_FROM.value
             )
@@ -1173,7 +1232,7 @@ class ConfigStateManager:
         if resolved is None:
             env_path = os.environ.get("TRAIGENT_CONFIG_PATH")
             if env_path:
-                logger.debug("Using TRAIGENT_CONFIG_PATH: %s", env_path)
+                logger.debug("Using TRAIGENT_CONFIG_PATH")
                 resolved = self._load_snapshot_from_file(
                     env_path, source=BestConfigSource.ENV.value
                 )
@@ -1184,7 +1243,7 @@ class ConfigStateManager:
         if resolved is None and self.enable_auto_load_dev_logs:
             dev_log_path = self._find_latest_config_path()
             if dev_log_path:
-                logger.debug("Auto-found latest dev log config: %s", dev_log_path)
+                logger.debug("Auto-found latest dev log config")
                 resolved = self._load_snapshot_from_file(
                     dev_log_path, source=BestConfigSource.DEV_LOG.value
                 )
@@ -1274,38 +1333,52 @@ class ConfigStateManager:
         return "function"
 
     @staticmethod
-    def _path_declares_schema_version(path: str) -> bool:
-        """Return True when a file declares ANY ``schema_version``.
+    def _declares_canonical_envelope(data: Any) -> bool:
+        """Return True when decoded JSON is a canonical best-config envelope.
 
-        A declared version marks a canonical envelope: a version the SDK does not
-        support is refused rather than read through the legacy fallback.
+        An envelope is a ``schema_version`` in the ``traigent.best_config.`` namespace,
+        or the envelope shape (``schema_version`` + ``config_id`` + ``config``). Any other
+        ``schema_version`` is an ordinary key of a legacy / bare config: a knob may well
+        be called ``schema_version``.
         """
+        if not isinstance(data, dict) or "schema_version" not in data:
+            return False
+        version = data["schema_version"]
+        if isinstance(version, str) and version.startswith(_CANONICAL_SCHEMA_NAMESPACE):
+            return True
+        return _CANONICAL_ENVELOPE_KEYS <= data.keys()
+
+    @classmethod
+    def _canonical_envelope_data(cls, path: str) -> dict[str, Any] | None:
+        """The decoded file when it is a canonical envelope, else ``None``."""
         try:
             config_path = validate_user_path(path, for_write=False)
             with open(config_path, encoding="utf-8") as f:
                 data = json.load(f)
-            return isinstance(data, dict) and "schema_version" in data
-        except Exception:
-            return False
+        except Exception:  # noqa: BLE001 - an unreadable file is not an envelope
+            return None
+        return data if cls._declares_canonical_envelope(data) else None
 
     @staticmethod
-    def _read_legacy_payload(path: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    def _read_legacy_payload(
+        path: str, label: str = _FALLBACK_SOURCE_LABEL
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
         """Read a legacy file: ``(whole decoded object, extracted config)``.
 
         Returns ``None`` (after the historical warning) when the file cannot be read or
-        holds no recognisable config.
+        holds no recognisable config. Warnings name ``label``, never the path.
         """
         try:
             config_path = validate_user_path(path, for_write=False)
             if not config_path.exists():
-                logger.warning(f"Config file not found: {path}")
+                logger.warning("Config file not found (%s)", label)
                 return None
 
             with open(config_path, encoding="utf-8") as f:
                 data = json.load(f)
 
             if not isinstance(data, dict):
-                logger.warning(f"Unrecognized config format in {path}.")
+                logger.warning("Unrecognized config format (%s).", label)
                 return None
             if "config" in data:
                 config = data["config"]
@@ -1314,24 +1387,26 @@ class ConfigStateManager:
                 best_config = data["best_config"]
                 return (data, dict(best_config)) if best_config is not None else None
             elif not any(k in data for k in ["trials", "metrics", "metadata"]):
-                # A bare config dict carries no envelope: nothing in it is identity
-                # (a tunable may legitimately be called ``environment``).
-                return {}, dict(data)
+                # A bare config dict: its top-level identity fields (config_id /
+                # function_ref / environment) are still checked against the request, so a
+                # file naming another agent, function or environment is never loaded.
+                return data, dict(data)
             else:
                 logger.warning(
-                    f"Unrecognized config format in {path}. "
-                    "Expected 'config' or 'best_config' key, or direct config dict."
+                    "Unrecognized config format (%s). "
+                    "Expected 'config' or 'best_config' key, or direct config dict.",
+                    label,
                 )
                 return None
 
         except json.JSONDecodeError as e:
-            logger.warning(f"Invalid JSON in config file {path}: {e}")
+            logger.warning("Invalid JSON in config file (%s): %s", label, e.msg)
             return None
-        except PathTraversalError as e:
-            logger.warning(f"Security: {e}")
+        except PathTraversalError:
+            logger.warning("Security: config path rejected (%s)", label)
             return None
         except Exception as e:
-            logger.warning(f"Error loading config from {path}: {e}")
+            logger.warning("Error loading config (%s): %s", label, type(e).__name__)
             return None
 
     @staticmethod

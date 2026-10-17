@@ -612,3 +612,251 @@ def test_explicit_value_apis_document_that_they_do_not_verify_stored_identity(
 ) -> None:
     assert "does not verify" in (target.__doc__ or "")
     assert "identity" in (target.__doc__ or "")
+
+
+# --- round F1f -------------------------------------------------------------------------
+# sol F1e review (bare dictionaries) and terra SDK review (schema_version knob, paths).
+
+
+# F1f item 1: a bare dictionary is not exempt from the contradiction rule (ruling a).
+@pytest.mark.parametrize("entry", EXPLICIT_ENTRY_POINTS)
+@pytest.mark.parametrize("field", sorted(CONTRADICTIONS))
+@pytest.mark.parametrize("strict", [False, True])
+def test_f1f_a_bare_dict_with_contradicting_identity_is_refused(
+    entry, field, strict, tmp_path, monkeypatch
+) -> None:
+    data = {**CONTRADICTIONS[field], "t": 2}
+    manager = _entry(entry, tmp_path, monkeypatch, data, strict=strict)
+    if strict:
+        with pytest.raises(ConfigurationError, match="identity mismatch"):
+            manager.maybe_auto_load_config()
+    else:
+        manager.maybe_auto_load_config()
+    assert _is_default(manager)
+
+
+def test_f1f_sols_exact_bare_dict_does_not_install_t2(tmp_path, monkeypatch) -> None:
+    data = {
+        "config_id": "other",
+        "function_ref": "other:agent",
+        "environment": "staging",
+        "t": 2,
+    }
+    for entry in EXPLICIT_ENTRY_POINTS:
+        manager = _entry(entry, tmp_path, monkeypatch, data, strict=False)
+        manager.maybe_auto_load_config()
+        assert manager._best_config_snapshot.config["t"] == 1
+
+
+@pytest.mark.parametrize("entry", EXPLICIT_ENTRY_POINTS)
+def test_f1f_a_bare_dict_that_names_the_requested_identity_still_loads(
+    entry, tmp_path, monkeypatch
+) -> None:
+    data = {
+        "config_id": "agent",
+        "function_ref": _REF,
+        "environment": "prod",
+        "t": 2,
+    }
+    manager = _entry(entry, tmp_path, monkeypatch, data, strict=True)
+    manager.maybe_auto_load_config()
+    assert manager._best_config_snapshot.config["t"] == 2
+
+
+def test_f1f_the_unbound_low_level_read_still_returns_the_bare_dict(tmp_path) -> None:
+    path = _write(tmp_path / "bare.json", {"function_ref": "other:agent", "t": 2})
+    assert ConfigStateManager._load_config_from_path(path)["t"] == 2
+
+
+# F1f item 4: only a canonical envelope is refused for its schema_version.
+@pytest.mark.parametrize("entry", EXPLICIT_ENTRY_POINTS)
+@pytest.mark.parametrize("version", ["2026-10", "v3", 7, "", None])
+def test_f1f_a_schema_version_knob_in_a_bare_config_is_an_ordinary_key(
+    entry, version, tmp_path, monkeypatch, caplog
+) -> None:
+    data = {"schema_version": version, "t": 2}
+    manager = _entry(entry, tmp_path, monkeypatch, data, strict=False)
+    with caplog.at_level(logging.WARNING):
+        manager.maybe_auto_load_config()
+    assert manager._best_config_snapshot.config["t"] == 2
+    assert manager._best_config_snapshot.config["schema_version"] == version
+    assert not any("schema_version" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.parametrize("entry", EXPLICIT_ENTRY_POINTS)
+def test_f1f_strict_refuses_a_schema_version_knob_file_as_identity_free_not_as_a_version(
+    entry, tmp_path, monkeypatch
+) -> None:
+    manager = _entry(
+        entry,
+        tmp_path,
+        monkeypatch,
+        {"schema_version": "2026-10", "t": 2},
+        strict=True,
+    )
+    with pytest.raises(ConfigurationError) as caught:
+        manager.maybe_auto_load_config()
+    assert "identity" in str(caught.value)
+    assert "schema_version" not in str(caught.value)
+
+
+@pytest.mark.parametrize("entry", EXPLICIT_ENTRY_POINTS)
+def test_f1f_a_legacy_envelope_with_a_schema_version_key_is_identity_free_legacy(
+    entry, tmp_path, monkeypatch
+) -> None:
+    """``schema_version`` + ``config`` but no ``config_id`` is not the envelope shape."""
+    data = {"schema_version": "2026-10", "config": {"t": 2}}
+    manager = _entry(entry, tmp_path, monkeypatch, data, strict=False)
+    manager.maybe_auto_load_config()
+    assert manager._best_config_snapshot.config["t"] == 2
+
+
+@pytest.mark.parametrize("entry", EXPLICIT_ENTRY_POINTS)
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"schema_version": "traigent.best_config.v2", "t": 2},
+        {"schema_version": "traigent.best_config.", "t": 2},
+        {"schema_version": "traigent.best_config.v2", "config": {"t": 2}},
+        {"schema_version": "2026-10", "config_id": "agent", "config": {"t": 2}},
+        {"schema_version": 7, "config_id": "agent", "config": {"t": 2}},
+    ],
+    ids=["ns_bare", "ns_prefix_only", "ns_config", "shape", "shape_non_string"],
+)
+def test_f1f_a_canonical_envelope_with_an_unsupported_version_is_still_refused(
+    entry, strict, data, tmp_path, monkeypatch
+) -> None:
+    manager = _entry(entry, tmp_path, monkeypatch, data, strict=strict)
+    if strict:
+        with pytest.raises(ConfigurationError, match="schema_version"):
+            manager.maybe_auto_load_config()
+    else:
+        manager.maybe_auto_load_config()
+    assert _is_default(manager)
+
+
+# F1f item 5: a customer-chosen path never reaches a log line or an exception text.
+_PATH_CANARY = "acme-private-canary"
+
+
+def _canary_root(tmp_path: Path, monkeypatch) -> Path:
+    root = tmp_path / _PATH_CANARY
+    root.mkdir()
+    monkeypatch.chdir(root)
+    return root
+
+
+def _assert_no_path(canary_text: str, caught=None) -> None:
+    assert _PATH_CANARY not in canary_text
+    if caught is not None:
+        assert _PATH_CANARY not in str(caught.value) + repr(caught.value)
+
+
+_REFUSED_FILES = {
+    "contradiction": _legacy(config_id="other"),
+    "identity_free": _IDENTITY_FREE,
+    "bare_identity_free": {"t": 2},
+    "unsupported_version": {"schema_version": "traigent.best_config.v2", "t": 2},
+    "bad_canonical": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "agent",
+        "config": {"t": 2},
+        "unknown_field": 1,
+    },
+}
+
+
+@pytest.mark.parametrize("entry", EXPLICIT_ENTRY_POINTS)
+@pytest.mark.parametrize("kind", sorted(_REFUSED_FILES))
+@pytest.mark.parametrize("strict", [False, True])
+def test_f1f_a_refusal_never_prints_the_file_path(
+    entry, kind, strict, tmp_path, monkeypatch, caplog
+) -> None:
+    root = _canary_root(tmp_path, monkeypatch)
+    caplog.set_level(logging.DEBUG)
+    manager = _entry(entry, root, monkeypatch, _REFUSED_FILES[kind], strict=strict)
+    caught = None
+    if strict:
+        with pytest.raises(ConfigurationError) as caught:
+            manager.maybe_auto_load_config()
+        label = {"load_from": "load_from", "env": "TRAIGENT_CONFIG_PATH"}[entry]
+        assert label in str(caught.value)
+    else:
+        manager.maybe_auto_load_config()
+    _assert_no_path(caplog.text, caught)
+
+
+@pytest.mark.parametrize("entry", EXPLICIT_ENTRY_POINTS)
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("problem", ["missing", "not_json", "not_object"])
+def test_f1f_an_unreadable_file_never_prints_the_file_path(
+    entry, strict, problem, tmp_path, monkeypatch, caplog
+) -> None:
+    root = _canary_root(tmp_path, monkeypatch)
+    caplog.set_level(logging.DEBUG)
+    path = root / "explicit.json"
+    if problem == "not_json":
+        path.write_text("{not json", encoding="utf-8")
+    elif problem == "not_object":
+        path.write_text("[1, 2]", encoding="utf-8")
+    if entry == "load_from":
+        manager = _manager(load_from=str(path), strict=strict)
+    else:
+        monkeypatch.setenv("TRAIGENT_CONFIG_PATH", str(path))
+        manager = _manager(strict=strict)
+    caught = None
+    if strict:
+        with pytest.raises(ConfigurationError) as caught:
+            manager.maybe_auto_load_config()
+    else:
+        manager.maybe_auto_load_config()
+    _assert_no_path(caplog.text, caught)
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("kind", ["contradiction", "unsupported_version"])
+def test_f1f_a_discovered_dev_log_refusal_never_prints_the_file_path(
+    strict, kind, tmp_path, monkeypatch, caplog
+) -> None:
+    root = _canary_root(tmp_path, monkeypatch)
+    caplog.set_level(logging.DEBUG)
+    data = (
+        _legacy(environment="staging")
+        if kind == "contradiction"
+        else _legacy(schema_version="traigent.best_config.v2")
+    )
+    manager = _entry("dev_log", root, monkeypatch, data, strict=strict)
+    caught = None
+    if strict:
+        with pytest.raises(ConfigurationError) as caught:
+            manager.maybe_auto_load_config()
+        assert "dev-log" in str(caught.value)
+    else:
+        manager.maybe_auto_load_config()
+    _assert_no_path(caplog.text, caught)
+
+
+def test_f1f_a_loaded_file_does_not_log_its_path_either(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    root = _canary_root(tmp_path, monkeypatch)
+    caplog.set_level(logging.DEBUG)
+    for entry in ("load_from", "env", "dev_log"):
+        manager = _entry(entry, root, monkeypatch, _legacy(), strict=False)
+        manager.maybe_auto_load_config()
+        assert manager._best_config_snapshot.config["t"] == 2
+    _assert_no_path(caplog.text)
+
+
+def test_f1f_the_path_stays_available_as_a_structured_attribute(
+    tmp_path, monkeypatch
+) -> None:
+    root = _canary_root(tmp_path, monkeypatch)
+    manager = _entry(
+        "load_from", root, monkeypatch, _legacy(config_id="other"), strict=True
+    )
+    with pytest.raises(ConfigurationError) as caught:
+        manager.maybe_auto_load_config()
+    assert _PATH_CANARY in str(caught.value.details["path"])
+    assert _PATH_CANARY not in str(caught.value)
