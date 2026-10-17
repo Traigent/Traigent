@@ -143,22 +143,46 @@ _EXPECTED_HEAD_GENERATION_HEADER = "X-Traigent-Expected-Head-Generation"
 _AGENT_REF_HEADER = "X-Traigent-Agent-Ref"
 _MAX_HEAD_GENERATION = 9007199254740991
 _STALE_HEAD_ERROR_CODE = "STALE_HEAD_GENERATION"
-#: Closed ``error_code`` values of best_config_head_refusal_schema.json (backend-issued).
-_CLOSED_HEAD_REFUSAL_CODES = frozenset(
-    {
-        "reference_not_found",
-        "head_capture_invalid",
-        "head_environment_mismatch",
-        "head_agent_mismatch",
-        "head_generation_stale",
-        "head_write_unauthorized",
-        "head_body_invalid",
-        "head_publish_conflict",
-        "unauthenticated",
-        "forbidden",
-        "internal_error",
-    }
-)
+#: Closed refusal envelope of best_config_head_refusal_schema.json:
+#: error_code -> (HTTP status the Schema pairs with it, fixed ``error``, fixed ``message``).
+_HEAD_REFUSAL_ENVELOPE: dict[str, tuple[int, str, str]] = {
+    "reference_not_found": (404, "reference_not_found", "Reference not found."),
+    "head_capture_invalid": (
+        400,
+        "invalid_request",
+        "Head capture is missing or malformed.",
+    ),
+    "head_environment_mismatch": (
+        409,
+        "head_precondition_refused",
+        "Environment does not match the session.",
+    ),
+    "head_agent_mismatch": (
+        409,
+        "head_precondition_refused",
+        "Agent does not match the session.",
+    ),
+    "head_generation_stale": (
+        409,
+        "head_precondition_refused",
+        "Agent head moved since the capture.",
+    ),
+    "head_write_unauthorized": (
+        403,
+        "head_precondition_refused",
+        "Not authorized to promote this agent.",
+    ),
+    "head_body_invalid": (400, "invalid_request", "Publish body is invalid."),
+    "head_publish_conflict": (
+        409,
+        "head_precondition_refused",
+        "Publish conflicts with the current configuration.",
+    ),
+    "unauthenticated": (401, "unauthenticated", "Authentication required."),
+    "forbidden": (403, "forbidden", "Forbidden."),
+    "internal_error": (500, "internal_error", "Internal error."),
+}
+_HEAD_ENVELOPE_KEYS = frozenset({"success", "error", "error_code", "message"})
 _SYNC_BACKEND_TRANSIENT_STATUSES = frozenset({408, 429, *range(500, 600)})
 _INTERACTION_POLICY_REQUIRED_KEYS = frozenset(
     {
@@ -2262,9 +2286,20 @@ class BackendIntegratedClient:
             body = response.json()
         except Exception:  # noqa: BLE001  # silent-ok: unreadable body is the UNRECOGNIZED refusal below
             body = None
-        if isinstance(body, dict) and body.get("success") is False:
+        # Full closed envelope (best_config_head_refusal_schema.json + the 409/500
+        # branch schemas): exactly the four members, the fixed error/message text of
+        # the code, and the HTTP status the Schema pairs with that code. Anything else
+        # is UNRECOGNIZED, so a malformed body can never claim a typed refusal.
+        if isinstance(body, dict) and set(body) == _HEAD_ENVELOPE_KEYS:
             raw = body.get("error_code")
-            if isinstance(raw, str) and raw in _CLOSED_HEAD_REFUSAL_CODES:
+            spec = _HEAD_REFUSAL_ENVELOPE.get(raw) if isinstance(raw, str) else None
+            if (
+                spec is not None
+                and body.get("success") is False
+                and body.get("error") == spec[1]
+                and body.get("message") == spec[2]
+                and status == spec[0]
+            ):
                 code = HeadRefusalCode(raw)
         if code is HeadRefusalCode.HEAD_GENERATION_STALE:
             return CloudBestConfigHeadStaleError(

@@ -165,6 +165,9 @@ class _FakeBackend:
         self.auth = auth
         self.submit_result = Mock()
         self.read_error: Exception | None = None
+        self.bindings: dict[str, dict[str, str]] = {
+            "bs-1": {"agent_ref": agent_ref or AGENT_REF, "environment": "default"}
+        }
         if not by_ref:
             self.fetch_agent_head_generation_by_ref_sync = None  # type: ignore[assignment]
 
@@ -207,14 +210,36 @@ class _FakeBackend:
         expected_head_generation=None,
         agent_ref=None,
     ):
+        provenance = (spec.get("provenance") or {}) if isinstance(spec, dict) else {}
         self.publishes.append(
             {
                 "agent_ref": agent_ref,
                 "agent_id": agent_id,
                 "expected": expected_head_generation,
                 "environment": environment,
+                "session_id": provenance.get("source_session_id"),
             }
         )
+        if agent_ref is not None:
+            # Backend best_config_routes._protected_publish_precondition: the binding is
+            # resolved from the stored session named in spec.provenance, never the body.
+            sid = provenance.get("source_session_id") or provenance.get("session_id")
+            binding = self.bindings.get(sid) if isinstance(sid, str) else None
+            if binding is None:  # row 4: no resolvable content-less session binding
+                raise CloudBestConfigHeadRefusedError(
+                    HeadRefusalCode.HEAD_CAPTURE_INVALID, status_code=400
+                )
+            if binding["agent_ref"] != agent_ref:
+                raise CloudBestConfigHeadRefusedError(
+                    HeadRefusalCode.HEAD_AGENT_MISMATCH, status_code=409
+                )
+            requested = (
+                (spec.get("environment") or environment or "default").strip().lower()
+            )
+            if requested != binding["environment"]:
+                raise CloudBestConfigHeadRefusedError(
+                    HeadRefusalCode.HEAD_ENVIRONMENT_MISMATCH, status_code=409
+                )
         if expected_head_generation is not None:
             if expected_head_generation != self.head:
                 if agent_ref is not None:
@@ -285,6 +310,7 @@ async def test_run_captures_ref_environment_and_generation_at_start(online):
         "agent_ref": AGENT_REF,
         "environment": "default",
         "generation": 3,
+        "session_id": "bs-1",
     }
     assert fake.ref_reads == [(AGENT_REF, "default")]
     assert fake.legacy_reads == 0  # the agent-id head read is never used
@@ -301,6 +327,7 @@ async def test_publish_sends_the_ref_and_the_captured_generation(online):
             "agent_id": None,
             "expected": 3,
             "environment": "default",
+            "session_id": "bs-1",  # the Backend resolves the binding from this
         }
     ]
     assert fake.head == 4
@@ -395,6 +422,55 @@ async def test_capture_for_another_environment_refuses_instead_of_going_unprotec
 
 
 @pytest.mark.asyncio
+async def test_publish_without_a_session_id_is_refused_locally(online):
+    fake = _FakeBackend()
+    answer, _ = await _run(fake)
+    answer._csm._best_config_precondition.pop("session_id")  # as if never captured
+    with pytest.raises(CloudBestConfigHeadRefusedError) as excinfo:
+        _publish(answer, fake)
+    assert excinfo.value.code is HeadRefusalCode.CAPTURE_MISSING
+    assert fake.publishes == []  # refused locally; the SDK never omits the id
+
+
+def test_fake_enforces_row_4_when_the_spec_names_no_session():
+    fake = _FakeBackend()
+    spec = {"config_id": "c", "environment": "default", "config": {}, "provenance": {}}
+    with pytest.raises(CloudBestConfigHeadRefusedError) as excinfo:
+        fake.publish_best_config_sync(
+            spec, environment="default", agent_ref=AGENT_REF, expected_head_generation=3
+        )
+    assert excinfo.value.code is HeadRefusalCode.HEAD_CAPTURE_INVALID
+    assert excinfo.value.status_code == 400
+    assert fake.head == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("change", "code", "status"),
+    [
+        ("agent_ref", HeadRefusalCode.HEAD_AGENT_MISMATCH, 409),
+        ("environment", HeadRefusalCode.HEAD_ENVIRONMENT_MISMATCH, 409),
+        ("unknown_session", HeadRefusalCode.HEAD_CAPTURE_INVALID, 400),
+    ],
+)
+async def test_session_binding_disagreeing_with_the_headers_is_refused(
+    online, change, code, status
+):
+    fake = _FakeBackend()
+    answer, _ = await _run(fake)
+    if change == "unknown_session":
+        fake.bindings.clear()
+    else:
+        fake.bindings["bs-1"][change] = (
+            OTHER_REF if change == "agent_ref" else "production"
+        )
+    with pytest.raises(CloudBestConfigHeadRefusedError) as excinfo:
+        _publish(answer, fake)
+    assert (excinfo.value.code, excinfo.value.status_code) == (code, status)
+    assert fake.head == 3  # nothing written
+
+
+@pytest.mark.asyncio
 async def test_legacy_session_is_unchanged(online):
     fake = _FakeBackend(content_less=False)
     answer, result = await _run(fake)
@@ -411,6 +487,7 @@ async def test_legacy_session_is_unchanged(online):
             "agent_id": "agent-7",
             "expected": 3,
             "environment": "default",
+            "session_id": None,
         }
     ]
 
@@ -510,16 +587,78 @@ def _refusal(code: str) -> dict[str, Any]:
     return {"success": False, "error": error, "error_code": code, "message": message}
 
 
-def test_fixture_tables_cover_every_schema_code() -> None:
-    schema = Path(
-        "/home/nimrod/TraigentProjects/core_project/worktrees/TraigentSchema/content-less"
-        "/traigent_schema/schemas/optimization/best_config_head_refusal_schema.json"
-    )
-    expected = {c.value for c in HeadRefusalCode} - {"unrecognized", "capture_missing"}
-    assert set(_FIXED_TEXT) == expected == set(_STATUS)
-    if schema.exists():  # the contract itself, when the Schema worktree is present
-        enum = json.loads(schema.read_text())["properties"]["error_code"]["enum"]
-        assert set(enum) == expected
+_CONTRACT_DIR = (
+    Path(__file__).resolve().parents[2] / "fixtures/contracts/schema_78ae067"
+)
+#: Byte-for-byte copies of TraigentSchema 78ae067 (traigent_schema/schemas/{optimization,execution}/).
+_CONTRACT_SHA256 = {
+    "agent_head_by_ref_response_schema.json": "878090557b2944fe13802422242104d7f801484a2e54c86bea2809612b518a61",
+    "best_config_endpoints.json": "21684d6da7deeb97bf2301cc8787ada01b7a96d61cb0aa628952716249eaa4bb",
+    "best_config_head_endpoints.json": "61c2423fda68c7b4faada5aa4cf0d2d26a6a4443839ebbf43eaa6afa9ad5d92a",
+    "best_config_head_refusal_schema.json": "b93dccaeab1cfc056b9715e4723641a80697c649a8bb4675a92d043b0558ea8e",
+    "best_config_publish_409_schema.json": "3fd219a7254e7b1897683243c37ab99f4cf01c743fb6411d97aa30ebd7d3b380",
+    "best_config_publish_500_schema.json": "45537ee74004ebb2749b66ed1f99950218606b4a9895de6738f67753c7da4cfa",
+}
+
+
+def _contract(name: str) -> Any:
+    return json.loads((_CONTRACT_DIR / name).read_text())
+
+
+def test_vendored_contract_files_are_the_pinned_schema_bytes():
+    import hashlib
+
+    for name, digest in _CONTRACT_SHA256.items():
+        assert hashlib.sha256((_CONTRACT_DIR / name).read_bytes()).hexdigest() == digest
+
+
+def test_sdk_code_table_matches_the_vendored_refusal_schema():
+    from traigent.cloud.backend_client import _HEAD_REFUSAL_ENVELOPE
+
+    refusal = _contract("best_config_head_refusal_schema.json")
+    codes = refusal["properties"]["error_code"]["enum"]
+    assert set(_HEAD_REFUSAL_ENVELOPE) == set(codes) == set(_STATUS) == set(_FIXED_TEXT)
+    assert set(_HEAD_REFUSAL_ENVELOPE) == {c.value for c in HeadRefusalCode} - {
+        "unrecognized",
+        "capture_missing",
+    }
+    for branch in refusal["oneOf"]:
+        props = branch["properties"]
+        _status, error, message = _HEAD_REFUSAL_ENVELOPE[props["error_code"]["const"]]
+        assert (error, message) == (props["error"]["const"], props["message"]["const"])
+    assert len(refusal["oneOf"]) == len(codes)
+    assert refusal["additionalProperties"] is False
+    assert set(refusal["required"]) == {"success", "error", "error_code", "message"}
+
+
+def test_sdk_status_pairing_matches_the_vendored_endpoint_contract():
+    from traigent.cloud.backend_client import _HEAD_REFUSAL_ENVELOPE
+
+    publish = _contract("best_config_endpoints.json")["paths"]["/api/v1/best-configs"][
+        "post"
+    ]
+    responses = publish["responses"]
+    s409 = _contract("best_config_publish_409_schema.json")
+    s500 = _contract("best_config_publish_500_schema.json")
+    by_status: dict[int, set[str]] = {}
+    for code, (status, _e, _m) in _HEAD_REFUSAL_ENVELOPE.items():
+        by_status.setdefault(status, set()).add(code)
+    assert by_status[409] == set(s409["allOf"][1]["properties"]["error_code"]["enum"])
+    assert by_status[500] == set(s500["allOf"][1]["properties"]["error_code"]["enum"])
+    for status in (400, 403, 404):
+        text = responses[str(status)]["description"]
+        named = {c for c in _HEAD_REFUSAL_ENVELOPE if c in text}
+        assert named and named <= by_status[status], (status, named)
+    assert by_status[400] == {"head_capture_invalid", "head_body_invalid"}
+    assert by_status[403] == {"head_write_unauthorized", "forbidden"}
+    assert by_status[404] == {"reference_not_found"}
+    assert by_status[401] == {"unauthenticated"}
+    head = _contract("best_config_head_endpoints.json")["paths"][
+        "/api/v1/best-configs/agent-heads/by-ref/{agent_ref}"
+    ]["get"]["responses"]
+    assert set(head) == {"200", "400", "401", "403", "404", "429", "500"}
+    ok = _contract("agent_head_by_ref_response_schema.json")
+    assert set(ok["required"]) == {"agent_ref", "environment", "generation", "exists"}
 
 
 def test_head_read_by_ref_uses_the_contract_route_and_validates_the_body():
@@ -693,6 +832,40 @@ def test_a_body_outside_the_closed_envelope_is_unrecognized_and_not_echoed(
     assert CANARY_TEXT not in str(excinfo.value) + repr(excinfo.value)
 
 
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        (500, _refusal("head_generation_stale")),  # stale claimed on a 500
+        (409, {**_refusal("head_generation_stale"), "extra": CANARY_TEXT}),
+        (409, {**_refusal("head_generation_stale"), "message": "Agent head moved."}),
+        (409, {**_refusal("head_generation_stale"), "error": "invalid_request"}),
+        (409, {**_refusal("head_generation_stale"), "success": True}),
+        (
+            409,
+            {
+                k: v
+                for k, v in _refusal("head_generation_stale").items()
+                if k != "message"
+            },
+        ),
+        (400, _refusal("head_publish_conflict")),  # a 409 code on a 400
+        (409, _refusal("internal_error")),
+        (404, _refusal("head_write_unauthorized")),
+    ],
+)
+def test_malformed_or_mispaired_envelopes_are_unrecognized(status, body):
+    _, patcher = _wired((status, body))
+    with patcher, pytest.raises(CloudBestConfigHeadRefusedError) as excinfo:
+        _client().publish_best_config_sync(
+            _SPEC, agent_ref=AGENT_REF, expected_head_generation=3
+        )
+    err = excinfo.value
+    assert err.code is HeadRefusalCode.UNRECOGNIZED
+    assert not isinstance(err, CloudBestConfigHeadStaleError)
+    assert err.status_code == status
+    assert CANARY_TEXT not in str(err) + repr(err)
+
+
 def test_publish_half_a_protected_precondition_is_refused_before_any_request():
     wire, patcher = _wired()
     with patcher:
@@ -800,13 +973,14 @@ async def test_no_customer_string_reaches_the_head_requests_or_the_logs(online, 
         generation = client.fetch_agent_head_generation_by_ref_sync(
             AGENT_REF, environment="staging"
         )
-        with pytest.raises(CloudBestConfigHeadStaleError) as excinfo:
+        with pytest.raises(CloudBestConfigHeadRefusedError) as excinfo:
             client.publish_best_config_sync(
                 _SPEC,
                 environment="staging",
                 agent_ref=AGENT_REF,
                 expected_head_generation=generation,
             )
+    assert excinfo.value.code is HeadRefusalCode.UNRECOGNIZED
     sent = "\n".join(
         f"{r.method} {r.url} {dict(r.headers)} {r.body!r}" for r in wire.requests
     )

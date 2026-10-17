@@ -1079,6 +1079,12 @@ class ConfigStateManager:
                 # Refused locally, before any request: the caller keeps the config.
                 refusal.best_config = copy.deepcopy(refused_config)
                 raise
+            # A protected publish names the session it came from; the Backend
+            # resolves the authoritative agent/environment binding from it (without
+            # it the request is refused head_capture_invalid).
+            captured = self._best_config_precondition
+            if isinstance(captured, dict) and captured.get("protected") is True:
+                provenance["source_session_id"] = captured["session_id"]
         try:
             client = get_backend_client(enable_fallback=False)
             current = client.fetch_best_config_sync(
@@ -1184,8 +1190,11 @@ class ConfigStateManager:
             )
         agent_ref = captured.get("agent_ref")
         generation = captured.get("generation")
+        session_id = captured.get("session_id")
         if (
-            not isinstance(agent_ref, str)
+            not isinstance(session_id, str)
+            or not session_id
+            or not isinstance(agent_ref, str)
             or not agent_ref
             or isinstance(generation, bool)
             or not isinstance(generation, int)

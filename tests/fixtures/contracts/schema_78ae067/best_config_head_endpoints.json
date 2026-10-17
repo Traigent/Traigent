@@ -1,0 +1,109 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Traigent Content-less Best-config Head Routes",
+    "version": "1.0.0",
+    "description": "Ref-addressed agent-head read of the content-less optimization channel (plan v2.1 phase 0b). The protected-publish precondition (headers X-Traigent-Agent-Ref and X-Traigent-Expected-Head-Generation) is declared on POST /api/v1/best-configs in execution/best_config_endpoints.json; its rule and closed refusals are specified there."
+  },
+  "paths": {
+    "/api/v1/best-configs/agent-heads/by-ref/{agent_ref}": {
+      "get": {
+        "summary": "Read an agent's promotion head by its opaque ref",
+        "description": "TraigentBackend src/routes/best_config_routes.py get_agent_head_by_ref. Resolves `agent_ref` (optimization_identity.resolve_ref, kind agent) inside the caller's tenant and project, keeps agent READ authorization, and returns the head generation (0 / exists=false when never promoted; invariant exists <=> generation >= 1). A run captures this generation when it STARTS and sends it as X-Traigent-Expected-Head-Generation when it publishes its own result; a stale refusal is never cured by re-reading the head and resubmitting the same result. ORDER OF REFUSALS: (1) unauthenticated 401 / forbidden 403 (permissions); (2) malformed path ref or `environment` outside the closed enum: 400 head_capture_invalid; (3) well-formed but unknown, foreign or unreadable ref: 404 reference_not_found, nothing echoed. Every error body of this route is the closed envelope best_config_head_refusal_schema.json except 429 (rate_limit_info).",
+        "operationId": "getAgentHeadByRef",
+        "x-asserted-against-backend": false,
+        "parameters": [
+          {
+            "name": "agent_ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "../labels/label_common_schema.json#/definitions/AgentRef"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": false,
+            "description": "Closed run environment; absent means `default`.",
+            "schema": {
+              "$ref": "./session_capabilities_schema.json#/definitions/SessionEnvironment"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The head generation for the agent and environment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./agent_head_by_ref_response_schema.json"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "head_capture_invalid — malformed `agent_ref` path value or `environment` outside the closed enum. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./best_config_head_refusal_schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthenticated — closed envelope with fixed text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./best_config_head_refusal_schema.json"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden — caller lacks experiment.read or the project role. Closed envelope with fixed text. (A caller who may not READ the agent gets 404 reference_not_found, never a distinguishable denial.)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./best_config_head_refusal_schema.json"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "reference_not_found — the well-formed ref is unknown, foreign, no longer visible or not readable. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./best_config_head_refusal_schema.json"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests — rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../rate_limit_info_schema.json"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error — closed envelope with fixed text; no exception data.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./best_config_head_refusal_schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

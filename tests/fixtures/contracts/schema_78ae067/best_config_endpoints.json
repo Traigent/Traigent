@@ -1,0 +1,332 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Traigent Cloud Best Config Routes",
+    "version": "1.0.0",
+    "description": "Backend routes for publishing, fetching, listing, and rolling back promoted runtime best configs."
+  },
+  "paths": {
+    "/api/v1/best-configs": {
+      "get": {
+        "summary": "List current cloud best configs",
+        "parameters": [
+          {
+            "name": "environment",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "../optimization/best_config_schema.json#/definitions/best_config_environment"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Best configs retrieved successfully"
+          },
+          "429": {
+            "description": "Too many requests — rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../rate_limit_info_schema.json"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Publish current cloud best config",
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": false,
+            "description": "Required when replacing an existing best config. Use the current ETag returned by GET or publish.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Traigent-Agent-Ref",
+            "in": "header",
+            "required": false,
+            "description": "Opaque ref of the agent being promoted (the `agent_ref` of the session-create 201). Its presence selects the PROTECTED publish path; sent together with X-Traigent-Expected-Head-Generation. Never a raw agent id.",
+            "schema": {
+              "$ref": "../labels/label_common_schema.json#/definitions/AgentRef"
+            }
+          },
+          {
+            "name": "X-Traigent-Expected-Head-Generation",
+            "in": "header",
+            "required": false,
+            "description": "The head generation the run captured when it STARTED (the `generation` of GET /api/v1/best-configs/agent-heads/by-ref/{agent_ref}). Compare-and-set precondition of the promotion of that run's own result; sent with X-Traigent-Agent-Ref (protected path) or with X-Traigent-Agent-Id (legacy promotion). Never refreshed to cure a stale refusal.",
+            "schema": {
+              "x-content-class": "number",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./best_config_publish_request_schema.json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Existing best config returned or updated"
+          },
+          "201": {
+            "description": "Best config published successfully"
+          },
+          "400": {
+            "description": "Protected path: head_capture_invalid or head_body_invalid (closed refusal envelope). Legacy path: its own validation errors, unchanged.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/best_config_head_refusal_schema.json"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Protected path: head_write_unauthorized (closed refusal envelope).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/best_config_head_refusal_schema.json"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Protected path: reference_not_found (closed refusal envelope).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/best_config_head_refusal_schema.json"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Publish precondition failed or function_ref conflict (LEGACY path, unchanged), or a PROTECTED-path refusal: head_environment_mismatch, head_agent_mismatch, head_generation_stale or head_publish_conflict (closed envelope; the branches are disjoint, discriminate on the closed `error_code`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "../optimization/best_config_publish_409_schema.json"
+                    },
+                    {
+                      "type": "object",
+                      "x-content-class": "legacy_content",
+                      "x-content-key-class": "legacy_content",
+                      "x-content-note": "LEGACY-path 409 bodies, unchanged (BEST_CONFIG_CONFLICT, STALE_HEAD_GENERATION and other legacy codes); free text by design until the legacy facade is retired. Disjoint from the protected branch: it must not carry a protected closed code.",
+                      "not": {
+                        "required": [
+                          "error_code"
+                        ],
+                        "properties": {
+                          "error_code": {
+                            "x-content-class": "closed_enum",
+                            "enum": [
+                              "head_environment_mismatch",
+                              "head_agent_mismatch",
+                              "head_generation_stale",
+                              "head_publish_conflict"
+                            ]
+                          }
+                        }
+                      },
+                      "description": "Legacy-path 409 bodies, unchanged: publish precondition failures, function_ref conflicts and the STALE_HEAD_GENERATION body of the X-Traigent-Agent-Id promotion. The `not` keeps this branch disjoint from the protected closed refusals."
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests — rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../rate_limit_info_schema.json"
+                }
+              }
+            }
+          },
+          "500": {
+"description": "Protected path: internal_error (closed refusal envelope, fixed text). Legacy path: its own generic error body (BEST_CONFIG_ERROR, \"Internal server error\"), unchanged. The branches are disjoint, discriminate on the closed `error_code`.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "../optimization/best_config_publish_500_schema.json"
+                  },
+                  {
+                    "type": "object",
+                    "x-content-class": "legacy_content",
+                    "x-content-key-class": "legacy_content",
+                    "x-content-note": "LEGACY-path 500 body, unchanged (generic server-error body, e.g. BEST_CONFIG_ERROR); free text by design until the legacy facade is retired. Disjoint from the protected branch: it must not carry the protected closed code.",
+                    "not": {
+                      "required": [
+                        "error_code"
+                      ],
+                      "properties": {
+                        "error_code": {
+                          "x-content-class": "closed_enum",
+                          "enum": [
+                            "internal_error"
+                          ]
+                        }
+                      }
+                    },
+                    "description": "Legacy-path 500 body, unchanged. The `not` keeps this branch disjoint from the protected closed internal_error refusal."
+                  }
+                ]
+              }
+            }
+          }
+          }
+        },
+        "description": "PROTECTED PATH (content-less plan v2.1, phase 0b). APPLICABILITY: a publish is PROTECTED if and only if the request carries X-Traigent-Agent-Ref, or the publish belongs to a session negotiated with content_less_v1 (or content_less_v2 once negotiated); every other publish is the LEGACY path and behaves exactly as before. DECISION TABLE (first matching row; 'session' = the session named in spec.provenance, content-less when its stored shape is content-less): [1] Agent-Ref and Agent-Id both present -> 400 head_capture_invalid. [2] Agent-Ref present, Expected-Head-Generation missing or not an integer 0..2^53-1 -> 400 head_capture_invalid. [3] Agent-Ref malformed (not agentref_<32 hex>) -> 400 head_capture_invalid. [4] Agent-Ref present but no resolvable content-less session binding -> 400 head_capture_invalid. [5] Agent-Ref and a valid Expected-Head-Generation, content-less session -> PROTECTED (below). [6] No Agent-Ref, content-less session (with or without Agent-Id / Expected-Head-Generation) -> 400 head_capture_invalid (the capture is required). [7] No Agent-Ref, non-content-less or no session, Agent-Id and/or Expected-Head-Generation -> LEGACY, unchanged (including the legacy Agent-Id promotion and its STALE_HEAD_GENERATION 409 and its own validation errors). [8] No Agent-Ref, no capture headers, non-content-less or no session -> LEGACY, unchanged. PROTECTED RULE: the Backend resolves agent, run and environment from the authoritative session binding, never from the body; keeps agent WRITE authorization; and refuses with a closed code (best_config_head_refusal_schema.json), with no publication row and no head change. ORDER OF REFUSALS: malformed or incomplete capture 400 head_capture_invalid; well-formed but unknown or foreign ref 404 reference_not_found (nothing echoed); agent WRITE denied 403 head_write_unauthorized; ref's agent is not the session's 409 head_agent_mismatch; publish environment differs from the session's 409 head_environment_mismatch; body fails validation 400 head_body_invalid (fixed text, no key or value of the request echoed); head moved 409 head_generation_stale; ordinary publish conflict (If-Match on a new configuration, a changed existing configuration without a matching If-Match, function_ref conflict) 409 head_publish_conflict; any other server-side failure 500 internal_error. A protected request never receives the generic BEST_CONFIG_CONFLICT or a free-text validation body. STALE: the run's result is stale; the client MUST NOT refresh the generation and resubmit the same result, and the SDK MUST NEVER auto-retry a stale refusal (it starts a new run, or re-evaluates against the new head, and publishes with that run's own captured generation). Publish and promote are ONE transaction: a refused or failed promotion leaves no visible configuration version; the head moves g -> g+1 (first promotion 0 -> 1) atomically with the publication, and of several concurrent promotions naming the same expected generation exactly one wins."
+      }
+    },
+    "/api/v1/best-configs/{config_id}": {
+      "get": {
+        "summary": "Fetch current cloud best config",
+        "parameters": [
+          {
+            "name": "config_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "required": false,
+            "description": "Return 304 when the current best config ETag matches this value.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "../optimization/best_config_schema.json#/definitions/best_config_environment"
+            }
+          },
+          {
+            "name": "function_ref",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Best config retrieved successfully"
+          },
+          "304": {
+            "description": "Cached best config is current"
+          },
+          "404": {
+            "description": "Best config not found"
+          },
+          "429": {
+            "description": "Too many requests — rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../rate_limit_info_schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/best-configs/{config_id}/versions": {
+      "get": {
+        "summary": "List immutable cloud best-config versions",
+        "responses": {
+          "200": {
+            "description": "Best config versions retrieved successfully"
+          },
+          "429": {
+            "description": "Too many requests — rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../rate_limit_info_schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/best-configs/{config_id}/rollback": {
+      "post": {
+        "summary": "Rollback current best config to a previous immutable version",
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "description": "Current best-config ETag required to publish a rollback version.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./best_config_rollback_request_schema.json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Best config rollback published successfully"
+          },
+          "409": {
+            "description": "Rollback precondition failed"
+          },
+          "429": {
+            "description": "Too many requests — rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../rate_limit_info_schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

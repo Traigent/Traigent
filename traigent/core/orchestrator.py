@@ -5306,8 +5306,13 @@ class OptimizationOrchestrator:
             agent_ref = getattr(session_context, "agent_ref", None)
             generation = getattr(session_context, "head_generation", None)
             environment = getattr(session_context, "head_environment", None)
+            # The Backend resolves the authoritative binding from this id
+            # (spec.provenance.source_session_id); it is a Backend-issued lookup key.
+            session_id = getattr(session_context, "session_id", None)
             if (
-                isinstance(agent_ref, str)
+                isinstance(session_id, str)
+                and 0 < len(session_id) <= 128
+                and isinstance(agent_ref, str)
                 and agent_ref
                 and isinstance(generation, int)
                 and not isinstance(generation, bool)
@@ -5315,7 +5320,10 @@ class OptimizationOrchestrator:
                 and environment
             ):
                 precondition.update(
-                    agent_ref=agent_ref, environment=environment, generation=generation
+                    agent_ref=agent_ref,
+                    environment=environment,
+                    generation=generation,
+                    session_id=session_id,
                 )
             else:
                 refusal = getattr(session_context, "head_capture_refusal", None)
