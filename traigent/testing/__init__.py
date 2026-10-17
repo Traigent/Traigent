@@ -102,6 +102,15 @@ def enable_mock_mode_for_quickstart() -> None:
                 "of real LLM calls. If you want a keyless demo, run with "
                 "ENVIRONMENT!=production."
             )
+        # Install the LLM interceptors now, not lazily at the first
+        # LocalEvaluator construction (#2416): the caller asked for
+        # interception, so a litellm/LangChain call made before the first
+        # optimize run (a warm-up call, ExampleSynthesizer's callback) must be
+        # mocked too. The lock is held across the install and enablement is
+        # published only after it succeeds: a concurrent caller therefore
+        # cannot return before interception exists, and a failed install
+        # leaves mock mode off (the exception propagates; a retry installs).
+        _install_mock_interceptors()
         _enabled = True
         if not _activation_logged:
             _activation_logged = True
@@ -122,12 +131,6 @@ def enable_mock_mode_for_quickstart() -> None:
                 "can hit the real provider API (a billed call if a provider key "
                 "is set)."
             )
-    # Install the LLM interceptors now, not lazily at the first
-    # LocalEvaluator construction (#2416): the caller asked for interception,
-    # so a litellm/LangChain call made before the first optimize run (a
-    # warm-up call, ExampleSynthesizer's callback) must be mocked too.
-    # Outside the lock: installing imports litellm, which can take seconds.
-    _install_mock_interceptors()
 
 
 def _install_mock_interceptors() -> None:

@@ -1273,6 +1273,8 @@ class LocalEvaluator(BaseEvaluator):
             and responses_by_key is not None
         ):
             total: ExampleMetrics | None = None
+            saw_unmeasured_call = False
+            known_spend = 0.0
             for response in metrics_source._responses:
                 call = extract_llm_metrics(
                     response=response,
@@ -1280,6 +1282,15 @@ class LocalEvaluator(BaseEvaluator):
                     original_prompt=None,
                     response_text=None,
                 )
+                # A call with no usage keeps the aggregate unmeasured; the
+                # paid calls are a floor, never the example's total.
+                if call.cost.unmeasured:
+                    saw_unmeasured_call = True
+                    known_spend += float(call.cost.known_cost or 0.0)
+                else:
+                    known_spend += float(call.cost.total_cost or 0.0) + float(
+                        call.cost.known_cost or 0.0
+                    )
                 if total is None:
                     total = call
                 else:
@@ -1302,6 +1313,9 @@ class LocalEvaluator(BaseEvaluator):
                     total.measured = total.measured or call.measured
                     total.response.response_time_ms += call.response.response_time_ms
             assert total is not None
+            if saw_unmeasured_call:
+                total.cost.unmeasured = True
+                total.cost.known_cost = known_spend
             total.response.tokens_per_second = (
                 total.tokens.total_tokens / (total.response.response_time_ms / 1000)
                 if total.response.response_time_ms > 0
@@ -2187,6 +2201,16 @@ class LocalEvaluator(BaseEvaluator):
                         aggregated_metrics[key] = value
                     else:
                         aggregated_metrics.pop(key, None)
+                elif (
+                    key == "cost"
+                    and value is not None
+                    and "total_cost" not in self.metric_functions
+                ):
+                    # A user's custom ``cost`` score is preserved, but it is
+                    # not spend: keep the tracker's measured spend under
+                    # ``total_cost`` so the execution budget debits what was
+                    # actually spent, never the custom score.
+                    aggregated_metrics["total_cost"] = value
                 continue
             if value is None:
                 continue

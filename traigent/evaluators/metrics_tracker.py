@@ -1324,7 +1324,7 @@ class MetricsTracker:
                 + sum(
                     float(m.cost.total_cost)
                     for m in measured_metrics
-                    if m.cost.unpriced and not m.cost.unmeasured
+                    if m.cost.unpriced and not m.cost.unmeasured and not m.cost_measured
                 )
             )
             if lower_bound > 0:

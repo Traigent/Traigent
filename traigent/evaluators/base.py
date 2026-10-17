@@ -1724,6 +1724,23 @@ class BaseEvaluator(ABC):
         return None
 
     @staticmethod
+    def _cost_is_partially_priced(metrics: Any) -> bool:
+        """True when ``cost_unpriced`` says part of the spend had no price.
+
+        The reported cost is then a floor (the priced part), so the budget
+        debit must be marked untracked rather than complete.
+        """
+        if not isinstance(metrics, Mapping):
+            return False
+        flag = metrics.get("cost_unpriced")
+        return (
+            isinstance(flag, (int, float))
+            and not isinstance(flag, bool)
+            and math.isfinite(flag)
+            and flag > 0
+        )
+
+    @staticmethod
     def _finalize_execution_budget_evaluation(
         budget: ExecutionBudget | None,
         result: EvaluationResult,
@@ -1745,7 +1762,11 @@ class BaseEvaluator(ABC):
         budget.debit_trial(
             cost=cost,
             examples=examples,
-            untracked=cost is None or is_cost_unmeasured(result.aggregated_metrics),
+            untracked=(
+                cost is None
+                or is_cost_unmeasured(result.aggregated_metrics)
+                or BaseEvaluator._cost_is_partially_priced(result.aggregated_metrics)
+            ),
         )
         snapshot = budget.snapshot()
         result.execution_budget = snapshot.as_dict()
@@ -5056,6 +5077,9 @@ class SimpleScoringEvaluator(BaseEvaluator):
         # Each call is priced at the model it reports (#2443). Responses are
         # cleared before each example, so these are all this example's.
         metrics_obj = None
+        # A call that reported no usage keeps the whole example unmeasured: a
+        # later paid call is a floor on the spend, never the example's total.
+        saw_unmeasured_call = False
         for position, response in enumerate(captured_responses):
             call_metrics = self._extract_llm_metrics(
                 response=response,
@@ -5064,6 +5088,8 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 # The answer text describes the first call only.
                 response_text=response_text if position == 0 else None,
             )
+            if getattr(getattr(call_metrics, "cost", None), "unmeasured", False):
+                saw_unmeasured_call = True
             if metrics_obj is None:
                 metrics_obj = call_metrics
             elif self._call_has_llm_measurement(call_metrics):
@@ -5071,6 +5097,17 @@ class SimpleScoringEvaluator(BaseEvaluator):
                     self._add_call_llm_metrics(metrics_obj, call_metrics)
                 else:
                     metrics_obj = call_metrics
+
+        if (
+            saw_unmeasured_call
+            and metrics_obj is not None
+            and not metrics_obj.cost.unmeasured
+        ):
+            # Paid part -> known_cost (lower bound); never total_cost.
+            metrics_obj.cost.known_cost = float(
+                metrics_obj.cost.known_cost or 0.0
+            ) + float(metrics_obj.cost.total_cost or 0.0)
+            metrics_obj.cost.unmeasured = True
 
         llm_metrics = self._build_llm_metrics_dict(metrics_obj, model_name)
 

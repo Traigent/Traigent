@@ -1824,6 +1824,75 @@ def test_new_scope_acquire_after_atomic_framework_restore_keeps_capture(monkeypa
         manager.deactivate_overrides()
 
 
+def test_capture_acquired_during_framework_activation_stays_active_until_deactivation(
+    monkeypatch,
+):
+    """Review finding (PR 2532): activation must not overwrite a capture that
+    another thread installs between activation's read and its publish."""
+    import threading
+
+    from openai.resources.chat.completions import Completions
+
+    from traigent.utils.langchain_interceptor import capture_scope
+
+    original = Completions.create
+    manager = FrameworkOverrideManager()
+    start = threading.Event()
+    opened = threading.Event()
+    proceed = threading.Event()
+    called = threading.Event()
+    observed = []
+    failures = []
+
+    def lifetime():
+        client = _sync_client()
+        try:
+            assert start.wait(5)
+            with capture_scope():
+                opened.set()
+                assert proceed.wait(5)
+                _sync_agent(client)("capture during activation")
+                observed.extend(get_all_captured_responses())
+                called.set()
+                assert release.wait(5)
+        except BaseException as exc:
+            failures.append(exc)
+        finally:
+            called.set()
+            client.close()
+
+    release = threading.Event()
+    worker = threading.Thread(target=lifetime)
+    worker.start()
+    create_override = manager._create_override_method
+
+    def interposed(original_method, class_name, method_path):
+        wrapped = create_override(original_method, class_name, method_path)
+        if class_name == "openai.OpenAI" and method_path == "chat.completions.create":
+            start.set()
+            assert opened.wait(5)
+        return wrapped
+
+    try:
+        monkeypatch.setattr(manager, "_create_override_method", interposed)
+        manager.activate_overrides(["openai.OpenAI"])
+        # Capture is still open and activation is complete: the capture must
+        # still observe the call (activation did not overwrite it).
+        proceed.set()
+        assert called.wait(5)
+        assert len(observed) == 1 and not failures
+        release.set()
+        worker.join(5)
+        manager.deactivate_overrides()
+        assert Completions.create is original
+    finally:
+        start.set()
+        proceed.set()
+        release.set()
+        worker.join(5)
+        manager.deactivate_overrides()
+
+
 def test_capture_acquired_during_framework_activation_survives_deactivation(
     monkeypatch,
 ):

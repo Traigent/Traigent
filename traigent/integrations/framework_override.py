@@ -539,7 +539,23 @@ class FrameworkOverrideManager(BaseOverrideManager):
             override_method = self._create_override_method(
                 original_method, class_name, method_path
             )
-            setattr(current_obj, method_name, override_method)
+            # Publish under the lock capture installation uses. Another thread
+            # may have installed (or removed) a capture wrapper since
+            # ``original_method`` was read; publishing the override over a
+            # stale read would silently drop that capture. Re-read and, if the
+            # attribute moved, wrap what is installed now. The lock is
+            # re-entrant and the capture code never takes a framework lock, so
+            # this ordering cannot deadlock.
+            from traigent.utils import openai_interceptor
+
+            with openai_interceptor._lock:
+                current_method = getattr(current_obj, method_name)
+                if current_method is not original_method:
+                    original_method = current_method
+                    override_method = self._create_override_method(
+                        original_method, class_name, method_path
+                    )
+                setattr(current_obj, method_name, override_method)
 
             # Track for cleanup
             method_key = f"{class_name}.{method_path}"
