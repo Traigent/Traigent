@@ -91,7 +91,7 @@ from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.config.backend_config import BackendConfig
 from traigent.config.project import read_optional_project_env
 from traigent.evaluators.base import Dataset
-from traigent.labels.transport_gate import preflight_requests
+from traigent.labels.transport_gate import TransportGateRefusal, preflight_requests
 from traigent.security.session_manager import SessionManager as SecuritySessionManager
 from traigent.utils.exceptions import RetryableError
 from traigent.utils.logging import get_logger

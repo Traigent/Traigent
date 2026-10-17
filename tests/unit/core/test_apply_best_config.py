@@ -259,9 +259,14 @@ class TestApplyBestConfig:
 
         # Verify logging occurred
         mock_logger.info.assert_called_once()
-        log_call_args = mock_logger.info.call_args[0][0]
-        assert "Applied best config for mock_function" in log_call_args
-        assert str(sample_optimization_result.best_config) in log_call_args
+        # Fixed template + knob count: values never reach the log line.
+        template, func_name, knob_count = mock_logger.info.call_args[0]
+        assert template.startswith("Applied best config for")
+        assert func_name == "mock_function"
+        assert knob_count == len(sample_optimization_result.best_config)
+        assert str(sample_optimization_result.best_config) not in str(
+            mock_logger.info.call_args
+        )
 
     def test_apply_best_config_calls_setup_function_wrapper(
         self,

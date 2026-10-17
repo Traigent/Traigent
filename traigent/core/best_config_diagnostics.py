@@ -48,6 +48,17 @@ class Category(StrEnum):
 _SAFE_MARK = "_best_config_diag_safe_message"
 
 
+class SafeConfigurationError(ConfigurationError):
+    """A ``ConfigurationError`` whose message is a fixed literal written in this SDK.
+
+    Raised only with string literals (or a literal plus an exception *type* name);
+    :func:`fixed_reason` may therefore print its message. A plain ``ConfigurationError``
+    (e.g. from a dependency) is not trusted.
+    """
+
+    _best_config_diag_safe_message = True
+
+
 def mark_safe(error: ConfigurationError) -> ConfigurationError:
     """Mark ``error`` as carrying a fixed, literal message (see :func:`fixed_reason`)."""
 
@@ -119,6 +130,7 @@ def transport_failed_message(operation: str, exc: BaseException) -> str:
 __all__ = [
     "Category",
     "fixed_reason",
+    "SafeConfigurationError",
     "log",
     "mark_safe",
     "refusal",

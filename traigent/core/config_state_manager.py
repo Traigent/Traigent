@@ -1269,6 +1269,7 @@ class ConfigStateManager:
                 category=diag.Category.LOAD_FAILED,
                 cause=e,
                 path=str(path),
+                reason=str(e),  # details only: may quote file content or the path
             ) from None
 
     # -- Auto-load methods -------------------------------------------------
