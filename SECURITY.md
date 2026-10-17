@@ -2,20 +2,24 @@
 
 ## Supported Versions
 
-| Version | Supported |
-|---------|-----------|
-| 0.10.x  | ✅ Yes    |
-| 0.9.x   | ✅ Yes    |
-| < 0.9   | ❌ No     |
+Traigent is in a pre-1.0 line (0.x). Security fixes are released for the latest
+0.x minor release.
+
+| Version          | Supported |
+|------------------|-----------|
+| 0.30.x (latest)  | ✅ Yes    |
+| < 0.30           | ❌ No     |
 
 ## Reporting a Vulnerability
 
 **Do not report security vulnerabilities through public GitHub issues.**
 
-To report a security vulnerability:
+To report a security vulnerability, use either channel:
 
 1. Email: security@traigent.ai
-2. Include:
+2. [GitHub private vulnerability reporting](https://github.com/Traigent/Traigent/security/advisories/new)
+
+Please include:
    - Description of the vulnerability
    - Steps to reproduce
    - Potential impact
@@ -58,8 +62,7 @@ credentials.
   tooling, is also a customer/provider credential and follows the same
   boundary.
 
-Current local and hybrid modes run trials locally. The `cloud` remote
-execution mode is reserved for future use and fails closed in this SDK.
+Trials run locally in the supported local and hybrid execution modes.
 
 ## Best Practices
 

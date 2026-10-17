@@ -15,6 +15,11 @@ from traigent.config.context import (
     config_context,
     get_trial_context,
 )
+from traigent.identity.agent_scope import (
+    ScopeLedger,
+    reset_trace_ledger,
+    set_trace_ledger,
+)
 from traigent.observability.client import ObservabilityClient
 from traigent.observability.config import validate_content_mode_override
 from traigent.observability.dtos import (
@@ -218,6 +223,7 @@ class ObserveContext:
         self._trace_token: contextvars.Token[str | None] | None = None
         self._stack_token: contextvars.Token[tuple[str, ...]] | None = None
         self._client_token: contextvars.Token[ObservabilityClient | None] | None = None
+        self._ledger_token: contextvars.Token[ScopeLedger | None] | None = None
         self._finished = False
         self._result: Any = None
         self._enriched_metadata = _build_observe_enrichment_metadata()
@@ -259,6 +265,10 @@ class ObserveContext:
                 )
                 self._created_trace = True
                 self._trace_token = _current_trace_id.set(trace_id)
+                # Scopes opened below this root register with this trace's
+                # ledger. start_trace already recorded the scopes that enclosed
+                # the root, so decorator order does not matter.
+                self._ledger_token = set_trace_ledger(client.scope_ledger(trace_id))
 
             observation_metadata = dict(self.metadata)
             observation_metadata.update(self._enriched_metadata)
@@ -302,6 +312,9 @@ class ObserveContext:
         if self._stack_token is not None:
             _current_observation_stack.reset(self._stack_token)
             self._stack_token = None
+        if self._ledger_token is not None:
+            reset_trace_ledger(self._ledger_token)
+            self._ledger_token = None
         if self._trace_token is not None:
             _current_trace_id.reset(self._trace_token)
             self._trace_token = None
@@ -399,10 +412,26 @@ class ObserveContext:
             # for whatever code runs next in this thread/task.
             if self._stack_token is not None:
                 _current_observation_stack.reset(self._stack_token)
+            if self._ledger_token is not None:
+                reset_trace_ledger(self._ledger_token)
             if self._trace_token is not None:
                 _current_trace_id.reset(self._trace_token)
             if self._client_token is not None:
                 _current_client.reset(self._client_token)
+
+
+def _is_async_callable(func: Callable[..., Any]) -> bool:
+    """True for async functions, including an ``@optimize`` wrapper around one.
+
+    An ``OptimizedFunction`` is a callable object, so ``iscoroutinefunction``
+    cannot see that it returns a coroutine; without this, ``@observe`` over
+    ``@optimize`` would close its span before the body is awaited.
+    """
+    if inspect.iscoroutinefunction(func):
+        return True
+    return hasattr(func, "agent_binding") and inspect.iscoroutinefunction(
+        getattr(func, "func", None)
+    )
 
 
 class _ObserveFactory:
@@ -462,7 +491,7 @@ class _ObserveFactory:
     def __call__(self, func: Callable[..., Any]):
         observation_name = self.name or func.__name__
 
-        if inspect.iscoroutinefunction(func):
+        if _is_async_callable(func):
 
             @functools.wraps(func)
             async def async_wrapper(*args, **kwargs):

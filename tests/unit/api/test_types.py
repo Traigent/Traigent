@@ -1029,6 +1029,8 @@ class TestExperimentStats:
                 status=TrialStatus.CANCELLED,
                 duration=0.5,
                 config={"model": "b", "temperature": 0.1},
+                # Explicitly recorded zero attempts: no work, no spend.
+                metadata={"examples_attempted": 0},
             ),
         ]
 
@@ -1129,7 +1131,9 @@ class TestExperimentStats:
         stats = result.experiment_stats
 
         assert isinstance(stats, ExperimentStats)
-        assert stats.total_cost == pytest.approx(0.0)
+        # An invalid cost is not a measurement: unmeasured, never a fabricated 0.
+        assert stats.total_cost is None
+        assert stats.cost_unmeasured_trials == 1
         assert stats.trial_counts["total"] == 1
         assert stats.trial_counts["failed"] == 1
         assert stats.total_duration == pytest.approx(0.0)

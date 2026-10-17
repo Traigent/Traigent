@@ -20,6 +20,8 @@ from urllib import error, request
 from urllib.parse import urlencode
 
 from traigent.cloud.async_batch_transport import BatchFlushResult
+from traigent.identity.agent_scope import ScopeLedger, new_trace_ledger
+from traigent.identity.workload import resolve_environment
 from traigent.observability.config import (
     INGEST_MAX_OBSERVATIONS_PER_REQUEST,
     INGEST_MAX_TRACES_PER_REQUEST,
@@ -625,6 +627,9 @@ class _TraceState:
     # `capture_sequence` is its capture order whatever order the (lock-free)
     # transport submissions later run in. One int per trace; never on the wire.
     snapshot_sequence: int = 0
+    # Agent scopes seen inside this trace; decides the scope-derived agent_id
+    # that only the final (end_trace) snapshot may carry. Never on the wire.
+    scope_ledger: ScopeLedger = field(default_factory=ScopeLedger)
 
     def mark_content_history(self, entity_key: str, field_name: str) -> None:
         self.content_history.setdefault(entity_key, set()).add(field_name)
@@ -792,6 +797,45 @@ def _safe_trace_snapshot(
     long after it was released -- reflects this snapshot, never whatever
     `state` mutates into by then.
     """
+    return _capture_trace_snapshot(state)
+
+
+# Test seam: called between serialization and the identity decision.
+_after_serialize_hook: Callable[[], None] | None = None
+
+
+def _stamp_scope_agent_id(state: _TraceState, payload: dict[str, Any]) -> None:
+    """Set or clear the generated ``execution_context.agent_id`` on ``payload``.
+
+    ``payload`` is the detached, already-serialized snapshot; the live trace is
+    never modified, so a generated id is "withdrawn" simply by not stamping it
+    again. Only a finalized (ended) trace may carry a scope-derived id, and only
+    the one the sealed, untainted ledger yields. An explicit ``agent_id``
+    (per-trace, ``TRAIGENT_AGENT_ID``, including an explicit clear) is present in
+    the payload already and is never touched. Nothing here runs caller code, so
+    it is safe under the ledger lock.
+    """
+    hook = _after_serialize_hook
+    if hook is not None:
+        hook()
+    if state.trace.ended_at is None:
+        return
+
+    def stamp(key: str | None) -> None:
+        if key is None:
+            return
+        context = payload.get("execution_context")
+        if context is None:
+            payload["execution_context"] = {"schema_version": "1.0", "agent_id": key}
+        elif isinstance(context, dict) and "agent_id" not in context:
+            context["agent_id"] = key
+
+    state.scope_ledger.finalize(stamp)
+
+
+def _capture_trace_snapshot(
+    state: _TraceState,
+) -> tuple[dict[str, Any], _TraceFallbackDescriptor]:
     descriptor = _build_fallback_descriptor(state)
     try:
         payload = state.to_payload()
@@ -814,6 +858,7 @@ def _safe_trace_snapshot(
             ),
             descriptor,
         )
+    _stamp_scope_agent_id(state, payload)
     return _redact_trace_payload(payload, state=descriptor), descriptor
 
 
@@ -2016,6 +2061,9 @@ class ObservabilityClient:
         redact_output: bool = False,
     ) -> str:
         trace_id = trace_id or _new_trace_id()
+        # Read the ambient agent scope before any span of this trace opens: a
+        # scope that already encloses the trace belongs to it.
+        scope_ledger = new_trace_ledger()
         session_dto = self._coerce_session(session)
         if session_dto is not None and session_id is None:
             session_id = session_dto.id
@@ -2042,7 +2090,11 @@ class ObservabilityClient:
             status=status,
             session_id=session_id,
             user_id=user_id,
-            environment=environment or self.config.default_environment,
+            environment=(
+                resolve_environment(environment).environment
+                if environment is not None and environment.strip()
+                else self.config.default_environment
+            ),
             release=release or self.config.default_release,
             custom_trace_id=custom_trace_id,
             tags=list(tags or []),
@@ -2073,6 +2125,7 @@ class ObservabilityClient:
                 snapshot_sequence=(
                     previous.snapshot_sequence if previous is not None else 0
                 ),
+                scope_ledger=scope_ledger,
             )
 
         self._queue_trace_snapshot(trace_id)
@@ -2424,6 +2477,12 @@ class ObservabilityClient:
                 state.trace.metadata = merged
 
         self._queue_trace_snapshot(trace_id)
+
+    def scope_ledger(self, trace_id: str) -> ScopeLedger | None:
+        """The agent-scope ledger of a live trace (None for an unknown trace)."""
+        with self._lock:
+            state = self._trace_states.get(trace_id)
+            return state.scope_ledger if state is not None else None
 
     def flush(self, timeout: float | None = None) -> FlushResult:
         """Flush queued traces.

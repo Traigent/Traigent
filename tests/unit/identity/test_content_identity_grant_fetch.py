@@ -27,6 +27,7 @@ from traigent.cloud.backend_client import (
     PurposeKeyGrantFetchError,
 )
 from traigent.cloud.client import CloudEgressBlockedError
+from traigent.api.functions import with_usage
 from traigent.config.types import TraigentConfig, content_identity_enabled
 from traigent.core.metadata_helpers import build_backend_metadata
 from traigent.core.orchestrator import OptimizationOrchestrator
@@ -384,7 +385,8 @@ def test_one_warning_names_only_the_failure_type(
 
 
 def identity_agent(text: str) -> str:
-    return text.upper()
+    # No model call: report a measured $0 instead of leaving the cost unreported.
+    return with_usage(text.upper(), total_cost=0.0)
 
 
 def _dataset() -> Dataset:
@@ -724,10 +726,10 @@ async def test_switch_off_run_never_sees_a_concurrent_runs_fetched_grant(
         # Run A holds its fetched grant, mid-trial, for the whole of run B.
         a_in_trial.set()
         await asyncio.wait_for(release_a.wait(), _WAIT)
-        return text.upper()
+        return with_usage(text.upper(), total_cost=0.0)
 
     async def agent_b(text: str) -> str:
-        return text.upper()
+        return with_usage(text.upper(), total_cost=0.0)
 
     source_a = _source(dict(GRANT))
     source_b = _source(dict(GRANT_B))
@@ -760,14 +762,14 @@ async def test_concurrent_runs_each_use_their_own_tenants_grant(
     a_done = asyncio.Event()
 
     async def agent_a(text: str) -> str:
-        return text.upper()
+        return with_usage(text.upper(), total_cost=0.0)
 
     async def agent_b(text: str) -> str:
         # Run B is mid-trial while run A starts, runs and FINISHES; B's later
         # results must still carry B's keys (A's teardown clears nothing of B's).
         b_in_trial.set()
         await asyncio.wait_for(a_done.wait(), _WAIT)
-        return text.upper()
+        return with_usage(text.upper(), total_cost=0.0)
 
     source_a = _source(dict(GRANT))
     source_b = _source(dict(GRANT_B))
@@ -809,11 +811,11 @@ async def test_threaded_sync_trials_carry_the_runs_keys(
         worker_threads.add(threading.get_ident())
         a_in_trial.set()
         assert b_done.wait(_WAIT)
-        return text.upper()
+        return with_usage(text.upper(), total_cost=0.0)
 
     def sync_agent_b(text: str) -> str:
         worker_threads.add(threading.get_ident())
-        return text.upper()
+        return with_usage(text.upper(), total_cost=0.0)
 
     async def run_b() -> Any:
         # Start B only once A's keys are live and A is evaluating.

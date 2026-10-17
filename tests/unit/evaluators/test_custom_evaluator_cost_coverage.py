@@ -129,9 +129,8 @@ def test_simple_scoring_aggregation_ignores_unmeasured_cost(lenient):
     assert aggregated["accuracy"] == pytest.approx(2 / 3)
 
 
-def test_cost_objective_run_survives_failed_rows(monkeypatch, tmp_path):
-    # End to end through the orchestrator's spend accounting, which the tests
-    # above never reach: cost is an objective, so strict accounting is on.
+def _flaky_cost_objective_run(monkeypatch, tmp_path, *, zero_attempts: bool):
+    """Cost is an objective; the 'flaky' config fails every odd example."""
     from traigent.core.optimized_function import OptimizedFunction
 
     monkeypatch.delenv("TRAIGENT_STRICT_COST_ACCOUNTING", raising=False)
@@ -142,17 +141,22 @@ def test_cost_objective_run_survives_failed_rows(monkeypatch, tmp_path):
 
     def custom_evaluator(func, config, example):
         index = example.input_data["value"]
-        if config["model"] == "flaky" and index % 2:
+        failed = config["model"] == "flaky" and index % 2
+        if failed and not zero_attempts:
             raise RuntimeError("provider call failed after spending")
         return ExampleResult(
             example_id=f"row-{index}",
             input_data=example.input_data,
             expected_output=example.expected_output,
-            actual_output=func(**example.input_data),
-            metrics={"accuracy": 1.0, "cost": 0.005},
+            actual_output=None if failed else func(**example.input_data),
+            metrics=(
+                {"accuracy": 0.0, "provider_attempts": 0}
+                if failed
+                else {"accuracy": 1.0, "cost": 0.005}
+            ),
             execution_time=0.0,
-            success=True,
-            error_message=None,
+            success=not failed,
+            error_message="failed before any provider call" if failed else None,
             metadata={},
         )
 
@@ -164,7 +168,29 @@ def test_cost_objective_run_survives_failed_rows(monkeypatch, tmp_path):
         custom_evaluator=custom_evaluator,
         max_trials=2,
     )
-    result = opt_func.optimize_sync(algorithm="grid", max_trials=2, progress_bar=False)
+    return opt_func.optimize_sync(algorithm="grid", max_trials=2, progress_bar=False)
+
+
+def test_cost_objective_run_fails_closed_on_failed_rows_without_cost(
+    monkeypatch, tmp_path
+):
+    # An evaluator that raises after a provider call may have spent money: a
+    # failed row with no cost telemetry is an unknown spend, and with cost as
+    # an objective strict mode refuses to rank it (round 20, #2517).
+    from traigent.core.cost_enforcement import CostTrackingRequiredError
+    from traigent.utils.exceptions import OptimizationError
+
+    with pytest.raises(OptimizationError) as exc:
+        _flaky_cost_objective_run(monkeypatch, tmp_path, zero_attempts=False)
+    assert isinstance(exc.value.__cause__, CostTrackingRequiredError)
+
+
+def test_cost_objective_run_survives_failed_rows_reporting_zero_attempts(
+    monkeypatch, tmp_path
+):
+    # A failed row that explicitly reports zero provider attempts has no spend
+    # to measure, so the trial keeps its measured cost and the run completes.
+    result = _flaky_cost_objective_run(monkeypatch, tmp_path, zero_attempts=True)
 
     by_model = {t.config["model"]: t for t in result.trials}
     assert by_model["flaky"].metrics["cost"] == pytest.approx(0.005)

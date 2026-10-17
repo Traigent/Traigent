@@ -60,6 +60,7 @@ from traigent.core.cost_enforcement import (
     CostEnforcer,
     CostEnforcerConfig,
     Permit,
+    _spend_reached_limit,
     normalize_cost_approved,
     normalize_estimated_calls_per_example,
     resolve_fallback_trial_limit,
@@ -123,7 +124,7 @@ from traigent.core.stop_condition_manager import StopConditionManager
 from traigent.core.trial_lifecycle import TrialLifecycle
 from traigent.core.utils import extract_examples_attempted
 from traigent.core.workflow_trace_manager import WorkflowTraceManager
-from traigent.evaluators.base import BaseEvaluator, Dataset
+from traigent.evaluators.base import MEASURED_ONLY_METRICS, BaseEvaluator, Dataset
 from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.interactive_optimizer import CloudBrainOptimizationComplete
@@ -148,6 +149,7 @@ from traigent.utils.objectives import (
     is_minimization_objective,
 )
 from traigent.utils.optimization_logger import OptimizationLogger
+from traigent.utils.trial_costs import is_cost_unmeasured, unmeasured_example_ids
 
 from .tracing import optimization_session_span, record_optimization_complete
 
@@ -2113,31 +2115,49 @@ class OptimizationOrchestrator:
         """
         effective_permit = permit or Permit(id=0, amount=0.0, active=True)
         trial_cost = self._extract_trial_cost(trial_result)
+        flagged = is_cost_unmeasured(trial_result.metrics)
+        missing_examples = (
+            unmeasured_example_ids((trial_result.metadata or {}).get("example_results"))
+            if flagged
+            else []
+        )
 
-        if self.cost_enforcer is not None:
-            if trial_result.status == TrialStatus.CANCELLED:
-                if trial_cost is not None:
+        # The shared budget is debited even when strict mode rejects the trial:
+        # the known floor was spent, so the ledger must show it (a flagged
+        # trial stays "untracked"). ``finally`` only orders the debit before
+        # the error propagates; it does not swallow it.
+        try:
+            if self.cost_enforcer is not None:
+                if trial_result.status == TrialStatus.CANCELLED:
+                    if trial_cost is not None:
+                        await self.cost_enforcer.track_cost_async(
+                            cost=trial_cost,
+                            permit=effective_permit,
+                            trial_failed=True,
+                            trial_id=trial_result.trial_id,
+                            cost_unmeasured=flagged,
+                            unmeasured_examples=missing_examples,
+                        )
+                else:
                     await self.cost_enforcer.track_cost_async(
                         cost=trial_cost,
                         permit=effective_permit,
-                        trial_failed=True,
+                        trial_failed=trial_result.status == TrialStatus.FAILED,
                         trial_id=trial_result.trial_id,
+                        cost_unmeasured=flagged,
+                        unmeasured_examples=missing_examples,
                     )
-            else:
-                await self.cost_enforcer.track_cost_async(
+        finally:
+            if (budget := getattr(self, "execution_budget", None)) is not None:
+                budget.debit_trial(
                     cost=trial_cost,
-                    permit=effective_permit,
-                    trial_failed=trial_result.status == TrialStatus.FAILED,
+                    examples=self._examples_of(trial_result),
+                    # A flagged trial is charged its known floor but stays
+                    # "untracked": the ledger is then a minimum, not exact.
+                    untracked=trial_cost is None
+                    or is_cost_unmeasured(trial_result.metrics),
                     trial_id=trial_result.trial_id,
                 )
-
-        if (budget := getattr(self, "execution_budget", None)) is not None:
-            budget.debit_trial(
-                cost=trial_cost,
-                examples=self._examples_of(trial_result),
-                untracked=trial_cost is None,
-                trial_id=trial_result.trial_id,
-            )
 
         return trial_cost
 
@@ -4544,12 +4564,21 @@ class OptimizationOrchestrator:
                     self._optimization_id,
                 )
 
+        self._log_completion_cost(result)
+
+    def _log_completion_cost(self, result: OptimizationResult) -> None:
+        """Log the completion line; a floor is printed as a minimum, not exact."""
         cost_status = self.cost_enforcer.get_status()
+        cost_text = (
+            f"at least ${cost_status.accumulated_cost_usd:.4f} (some cost unmeasured)"
+            if cost_status.unmeasured_trial_count > 0
+            else f"${cost_status.accumulated_cost_usd:.4f}"
+        )
         logger.info(
             f"Optimization {self._optimization_id} completed: "
             f"{len(self._trials)} trials, best score: "
             f"{'N/A' if result.best_score is None else f'{result.best_score:.4f}'}, "
-            f"total cost: ${cost_status.accumulated_cost_usd:.4f}"
+            f"total cost: {cost_text}"
         )
 
     def _finalize_failed_backend_session(
@@ -5129,10 +5158,52 @@ class OptimizationOrchestrator:
             return False
 
         metrics = trial_result.metrics or {}
+        if self._cost_objective_unmeasured(metrics):
+            # The trial's cost objective is UNKNOWN. Telling the optimizer 0.0
+            # would teach its sampler that this configuration is free (#2517);
+            # an unknown objective value is reported as no result instead, the
+            # same way the ranking and Pareto code leave such a trial out.
+            reporter = getattr(self.optimizer, "report_trial_failure", None)
+            if callable(reporter):
+                reporter(
+                    optuna_trial_id,
+                    "cost objective unmeasured: no cost was captured for this trial",
+                )
+                return True
+            return False
         values = self._extract_objective_values(metrics)
         payload: float | list[float] = values if len(values) > 1 else values[0]
         self.optimizer.report_trial_result(optuna_trial_id, payload)
         return True
+
+    def _cost_objective_unmeasured(self, metrics: dict[str, Any]) -> bool:
+        """True when a declared cost objective has no measured value (#2517).
+
+        A trial flagged ``cost_unmeasured``, or one that carries no cost under a
+        declared cost objective, has an unknown cost objective: it must not be
+        reported to the optimizer as a measured value.
+        """
+        objectives = [
+            name
+            for name in (getattr(self.optimizer, "objectives", None) or [])
+            if isinstance(name, str) and name in MEASURED_ONLY_METRICS
+        ]
+        if not objectives:
+            return False
+        if is_cost_unmeasured(metrics):
+            return True
+        for name in objectives:
+            value = metrics.get(name)
+            if value is None and name == "cost":
+                value = metrics.get("total_cost")
+            if value is None or isinstance(value, bool):
+                return True
+            try:
+                if not math.isfinite(float(value)):
+                    return True
+            except (TypeError, ValueError):
+                return True
+        return False
 
     def _notify_failed_trial(
         self, trial_result: TrialResult, optuna_trial_id: int
@@ -5165,6 +5236,60 @@ class OptimizationOrchestrator:
             self._notify_completed_trial(trial_result, optuna_trial_id)
         elif status == TrialStatus.FAILED:
             self._notify_failed_trial(trial_result, optuna_trial_id)
+
+    def mark_max_trials_sdk_default(self) -> None:
+        """Record that ``max_trials`` is the SDK default, not the user's choice."""
+        self._max_trials_is_sdk_default = True
+
+    def _describe_stop(self) -> str | None:
+        """One sentence saying why this run was cut short, or None.
+
+        Recorded as ``metadata["stop_detail"]`` and printed under the results
+        table, so a run cut by a limit the user never set (the SDK default
+        ``max_trials``, or the unmeasured-cost safety limit) says so instead of
+        ending silently (Traigent#2518).
+        """
+        reason = self._stop_reason
+        trials = len(self._trials)
+        if reason == "max_trials_reached":
+            if getattr(self, "_max_trials_is_sdk_default", False):
+                return (
+                    f"Stopped at {trials} trials: the SDK default max_trials="
+                    f"{self.max_trials} applied because none was passed. Pass "
+                    "max_trials=... to run more."
+                )
+            return f"Stopped at {trials} trials: max_trials={self.max_trials} reached."
+        if reason == "cost_limit":
+            enforcer = getattr(self, "cost_enforcer", None)
+            if enforcer is not None and not enforcer.unknown_cost_cap_waived:
+                status = enforcer.get_status()
+                if status.unknown_cost_mode and _spend_reached_limit(
+                    status.accumulated_cost_usd, status.limit_usd
+                ):
+                    return (
+                        f"Stopped at {trials} trials: the cost limit "
+                        f"(${status.limit_usd:.2f}) was reached by known spend "
+                        f"of at least ${status.accumulated_cost_usd:.2f} (a "
+                        f"minimum: cost is unmeasured for "
+                        f"{status.unmeasured_trial_count} of "
+                        f"{status.trial_count} trials)."
+                    )
+                if status.unknown_cost_mode:
+                    return (
+                        f"Stopped at {trials} trials: cost is unmeasured for "
+                        f"{status.unmeasured_trial_count} of {status.trial_count} "
+                        "trials, so the cost limit cannot bound spend and the "
+                        f"default safety limit of "
+                        f"{enforcer.config.fallback_trial_limit} trials applied "
+                        "(TRAIGENT_FALLBACK_TRIAL_LIMIT). Pass max_trials=... to "
+                        "run more."
+                    )
+            return f"Stopped at {trials} trials: the cost limit was reached."
+        if reason == "max_samples_reached":
+            return f"Stopped at {trials} trials: max_total_examples reached."
+        if reason == "timeout":
+            return f"Stopped at {trials} trials: the timeout elapsed."
+        return None
 
     def waive_unknown_cost_trial_cap(self) -> None:
         """The user sized this run explicitly; see CostEnforcer (#2441)."""
@@ -5342,6 +5467,11 @@ class OptimizationOrchestrator:
         # Only present for warm-started runs; absent otherwise.
         if self._warm_start_from:
             metadata["warm_start_from"] = self._warm_start_from
+
+        describe_stop = getattr(self, "_describe_stop", None)
+        stop_detail = describe_stop() if callable(describe_stop) else None
+        if stop_detail:
+            metadata["stop_detail"] = stop_detail
 
         # Agent head generation read when this run's step started. A later
         # publish sends this value, not a fresh read, so a head that moved in

@@ -76,6 +76,30 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `example_id` or `input_id` (`0`, `False`) is refused too; it used to be
   replaced by the `input_id` or the fallback id.
 
+- **BREAKING: a run with `cost` as an objective now refuses to record an unpriced
+  call as $0 (#2517).** Strict cost accounting is on by default, so such a run
+  raises `OptimizationError` (with `CostTrackingRequiredError` as its
+  `__cause__`) instead of ranking the unpriced model cheapest. Remedy: report usage with `traigent.with_usage(...)`, or give
+  per-token prices through `TRAIGENT_CUSTOM_MODEL_PRICING_JSON` /
+  `TRAIGENT_CUSTOM_MODEL_PRICING_FILE`; set
+  `TRAIGENT_STRICT_COST_ACCOUNTING=false` only to turn the error into a warning:
+  the unpriced call stays flagged `cost_unmeasured` and is never recorded as $0.
+  A trial whose cost is only partly measured (some example reported no usage,
+  or a call inside one example reported none) stops the run the same way, and
+  the error names up to 5 such examples. A failed example with no cost
+  telemetry counts as unmeasured too, unless it reports a cost (`0` included)
+  or `provider_attempts: 0`. Fix it
+  by wrapping a path that makes no model call in
+  `traigent.with_usage(value, total_cost=0)`, adding a price for an unpriced
+  model (`TRAIGENT_CUSTOM_MODEL_PRICING_JSON` / `_FILE`), or setting
+  `TRAIGENT_STRICT_COST_ACCOUNTING=false`. Without a cost objective and without
+  an explicit cost limit the run continues with a warning; an explicit cost
+  limit fails closed the same way, because it cannot bound an unknown spend.
+  Spend that was reported for a trial flagged `cost_unmeasured` (its
+  `cost_lower_bound`) is charged to `cost_limit`, `ExecutionBudget` and the
+  cost enforcer as a minimum; the trial keeps its `cost_unmeasured` flag and its
+  objective value is unchanged.
+
 ### Removed
 
 - **Candidate runs (`optimize(apply=False)`) are temporarily withdrawn.** Their
@@ -177,6 +201,33 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   that every span went missing. Pass `spans_ingested=0` to state zero. The
   two fields are annotated `int | None` / `bool | None` so an omitted value is
   detectable; after construction they are always an `int` and a `bool`.
+- **An unmeasured cost is no longer stored, shown or ranked as $0 (#2517, #2518, #2446).**
+  When no LLM usage is captured for an example (for example a raw provider
+  client the interceptors do not wrap), the local lane used to estimate tokens
+  and record `cost: 0.0` as a measurement. The trial now omits `cost` /
+  `total_cost`, sets `cost_unmeasured: 1.0`, keeps the estimated tokens
+  labelled with `tokens_estimated`, and the results table prints `unmeasured`.
+  The Pareto front excludes a trial missing a configured objective and the batch
+  composite score no longer rescales over the objectives that remain. A run
+  stopped by the SDK default `max_trials` or the unmeasured-cost safety limit
+  records and prints why (`metadata["stop_detail"]`).
+
+- **A hybrid service that reports no cost is unmeasured, not $0 (#2517).**
+  `TraigentService` no longer sends `cost_usd: 0.0` for an execute handler that
+  returned no cost: the per-item field is omitted, and a batch where any handler
+  (or a handler that raised) reported none sends `operational_metrics.cost_unmeasured`
+  next to the priced lower bound it must still send as `total_cost_usd`.
+  `HybridAPIEvaluator` treats that flag, an omitted or negative cost, and a
+  failed row with no reported cost as unknown: the trial carries `cost_unmeasured`
+  and no cost total, a per-item `metrics.cost_unmeasured` from the service can no
+  longer overwrite that verdict, and the optimization logger and outcome matrix
+  never write `0.0` for it. A workflow span sends the known spend floor (0.0 when
+  none was reported) as `cost_usd`, always with
+  `metadata["traigent.cost_unmeasured"] = true` so consumers can tell it apart
+  from a measured cost. Run summaries
+  (`get_summary()`, `experiment_stats`) withhold `total_cost` when a trial is
+  unmeasured and report `cost_unmeasured_trials` / `cost_lower_bound`.
+
 - **`ObservabilityClient` multi-tag trace/session filters no longer return an
   empty page (#2573).** `list_traces` / `iter_traces` / `list_sessions` /
   `iter_sessions` now send a list `tags` filter as repeated keys
@@ -343,10 +394,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `traigent.utils.exceptions.ObjectiveDirectionOverrideWarning` naming the reserved
   keyword, its default direction, and the direction you declared. The Traigent Backend
   certificate for that run will refuse to assert a comparison claim for that objective,
-  because the declared direction contradicts the reserved keyword's preset (see
-  TraigentBackend's `front_claim_producer.check_preset_direction`); this warning surfaces
-  that at declaration time instead of only when the certificate is issued. No warning for
-  a bare name taking its canonical default, or for any custom (non-reserved) name.
+  because the declared direction contradicts the reserved keyword's preset; this warning
+  surfaces that at declaration time instead of only when the certificate is issued. No
+  warning for a bare name taking its canonical default, or for any custom (non-reserved) name.
 
 ### Fixed
 
@@ -448,9 +498,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   records `$0` and warns (`UNPRICED_MODEL_RUNTIME`). Runs without a cost objective are
   unchanged. Two more ways a cost run recorded `$0` are covered: a response that carries
   token counts but no model name to price them now fails the same way, and a cost-objective
-  run that captured no LLM usage at all fails too (`COST_OBJECTIVE_NO_USAGE_CAPTURED` as a
-  warning when not strict, and in mock-LLM runs, which have no spend to measure), because
-  an unmeasured `$0` is not a cheap configuration;
+  run that captured no LLM usage at all fails too, because an unmeasured `$0` is not a
+  cheap configuration. Strict mode raises `CostTrackingRequiredError` at the first such
+  trial, mock-LLM runs included (mock mode never bypasses cost enforcement); fix it with
+  `traigent.with_usage(value, total_cost=0)` for a path that makes no model call, custom
+  pricing (`TRAIGENT_CUSTOM_MODEL_PRICING_JSON`), or `TRAIGENT_STRICT_COST_ACCOUNTING=false`,
+  under which the run only warns (`COST_OBJECTIVE_NO_USAGE_CAPTURED`);
   `result.metadata["pricing"]["usage_captured"]` reports whether any usage was measured.
   `cost_per_1k` now counts as a cost objective. The LangChain and Pydantic AI callback
   handlers read the setting when constructed, so set

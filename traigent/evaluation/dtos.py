@@ -453,7 +453,7 @@ class EvaluatorRunDTO:
     input_tokens: int
     output_tokens: int
     total_tokens: int
-    cost_usd: float
+    cost_usd: float | None
     latency_ms: int
     error_message: str | None
     observability_trace_id: str | None
@@ -488,7 +488,9 @@ class EvaluatorRunDTO:
             input_tokens=int(payload.get("input_tokens", 0)),
             output_tokens=int(payload.get("output_tokens", 0)),
             total_tokens=int(payload.get("total_tokens", 0)),
-            cost_usd=float(payload.get("cost_usd", 0.0)),
+            cost_usd=(
+                None if payload.get("cost_usd") is None else float(payload["cost_usd"])
+            ),
             latency_ms=int(payload.get("latency_ms", 0)),
             error_message=payload.get("error_message"),
             observability_trace_id=payload.get("observability_trace_id"),

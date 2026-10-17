@@ -227,6 +227,11 @@ def test_format_as_summary_stats_all_unmeasured_still_emits_builtin_keys():
         "total_cost",
     ):
         assert key in metrics, key
+        if key.endswith("_cost"):
+            # No cost sample exists: the entry is null, not a zero mean that
+            # would read as a measured $0 (#2517).
+            assert metrics[key] is None, key
+            continue
         assert metrics[key]["count"] == 0, key
         assert metrics[key]["mean"] == 0.0, key
 

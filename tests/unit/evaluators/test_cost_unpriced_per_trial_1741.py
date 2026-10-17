@@ -32,6 +32,8 @@ caught exactly that defect during development of this fix).
 
 from __future__ import annotations
 
+import pytest
+
 from traigent.cloud.dtos import MeasuresDict
 from traigent.evaluators.base import SimpleScoringEvaluator
 from traigent.evaluators.metrics_tracker import (
@@ -91,9 +93,13 @@ class TestFormatForBackendCostUnpriced:
 
         assert formatted["cost_unpriced"] == 1.0
         assert not isinstance(formatted["cost_unpriced"], bool)
-        # The trial's cost total is still a real (zero-inclusive) sum, not
-        # replaced or hidden by the flag -- the flag is additive metadata.
-        assert formatted["cost"] == 0.001 + 0.002 + 0.0 + 0.001 + 0.002
+        # An unpriced example's $0 is the absence of a price, so the trial has
+        # no cost total (#2517); the priced part is kept as a floor.
+        assert formatted["cost"] is None
+        assert formatted["cost_unmeasured"] == 1.0
+        assert formatted["cost_lower_bound"] == pytest.approx(
+            0.001 + 0.002 + 0.001 + 0.002
+        )
 
     def test_cost_unpriced_is_reserved_and_never_dropped(self):
         assert "cost_unpriced" in RESERVED_METRIC_KEYS

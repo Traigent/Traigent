@@ -161,6 +161,45 @@ def resolve_result_selection_schema(
     return objective_schema
 
 
+def _cost_objective_names() -> frozenset[str]:
+    # Lazy: multi_objective imports api.types, which imports this package.
+    from traigent.utils.multi_objective import (  # noqa: PLC0415
+        _COST_OBJECTIVE_NAMES,
+    )
+
+    return _COST_OBJECTIVE_NAMES
+
+
+def _cost_flagged(metrics: Any) -> bool:
+    from traigent.utils.trial_costs import is_cost_unmeasured  # noqa: PLC0415
+
+    return is_cost_unmeasured(metrics)
+
+
+def _ranking_metrics(metrics: dict[str, Any] | None) -> dict[str, Any]:
+    """Metrics as ranking sees them: a flagged trial has no cost value.
+
+    A number next to ``cost_unmeasured`` is a floor or a stray zero, never a
+    ranking value (Traigent#2517): drop the cost entries so a tie-break treats
+    the cost as missing (ranked last) instead of cheapest. Same convention as
+    the Pareto front and ``OptimizationResult`` weighted scoring.
+    """
+    metrics = metrics or {}
+    if not _cost_flagged(metrics):
+        return metrics
+    names = _cost_objective_names()
+    return {k: v for k, v in metrics.items() if k not in names}
+
+
+def _cost_objective_in_play(
+    primary_objective: str, schema: ObjectiveSchema | None
+) -> bool:
+    names = _cost_objective_names()
+    if primary_objective in names:
+        return True
+    return schema is not None and any(o.name in names for o in schema.objectives)
+
+
 def observed_metric_ranges(
     trials: Iterable[TrialResult],
     objective_names: Iterable[str],
@@ -177,7 +216,7 @@ def observed_metric_ranges(
     names = list(objective_names)
     ranges: dict[str, tuple[float, float]] = {}
     for trial in trials:
-        metrics = getattr(trial, "metrics", None) or {}
+        metrics = _ranking_metrics(getattr(trial, "metrics", None))
         for name in names:
             value = metrics.get(name)
             if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -621,7 +660,7 @@ def _apply_min_abs_deviation(
     def secondary_score(t: TrialResult) -> tuple[Any, ...]:
         return (
             *_secondary_metric_key(
-                t.metrics or {},
+                _ranking_metrics(t.metrics),
                 objective,
                 objective_order,
                 objective_orientations,
@@ -738,6 +777,9 @@ def _aggregate_trials(
             {"config": trial.config, "metrics_sum": {}, "count": 0, "trial_ids": []},
         )
         entry["trial_ids"].append(trial.trial_id)
+        if _cost_flagged(trial.metrics):
+            # The group's mean cost would mix in an unknown: omit it.
+            entry["cost_flagged"] = True
 
         for metric_name, metric_value in (trial.metrics or {}).items():
             if metric_name == "examples_attempted":
@@ -755,8 +797,11 @@ def _aggregate_trials(
 def _compute_mean_metrics(entry: dict[str, Any]) -> dict[str, float]:
     """Compute mean metrics from an aggregated entry."""
     count = entry["count"] or 1
+    omit = _cost_objective_names() if entry.get("cost_flagged") else frozenset()
     return {
-        metric: value / count for metric, value in entry.get("metrics_sum", {}).items()
+        metric: value / count
+        for metric, value in entry.get("metrics_sum", {}).items()
+        if metric not in omit
     }
 
 
@@ -1305,10 +1350,19 @@ def select_best_configuration(
     eligible_trials: list[TrialResult] = []
     excluded_count = 0
     unknown_count = 0
+    # When a cost objective drives the ranking (primary or weighted), a trial
+    # whose cost is flagged unmeasured has no value to rank on: it is excluded
+    # exactly as the Pareto front excludes it (Traigent#2517).
+    cost_ranked = _cost_objective_in_play(
+        primary_objective, resolve_result_selection_schema(objective_schema)
+    )
     for trial in successful_trials:
         eligible, unknown, _codes = _is_ranking_eligible(
             trial, primary_objective, comparability_mode
         )
+        if eligible and cost_ranked and _cost_flagged(trial.metrics):
+            excluded_count += 1
+            continue
         if eligible:
             eligible_trials.append(trial)
             continue

@@ -90,6 +90,9 @@ Cell fields record only what the run actually produced — no fabricated values:
   defaults ``latency_ms`` and ``cost_usd`` to ``0.0`` at the dataclass level, so
   a hybrid example that never set them records ``0.0`` (not ``null``) — the
   projection fabricates nothing and reflects exactly what the run produced.
+  The one exception is cost: a row flagged ``cost_unmeasured`` (the service
+  reported no cost for it) records ``cost_usd: null``, because its ``0.0`` is a
+  placeholder, not a measurement.
 * ``predicted`` is the model's actual answer for the cell (``actual_output``
   verbatim). It is recorded **only on non-correct cells** (``success is not
   True`` — the wrong and indeterminate cells) and is ``null`` otherwise. That is
@@ -143,6 +146,26 @@ _TOKEN_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("output", ("completion_tokens", "output_tokens")),
     ("total", ("total_tokens",)),
 )
+
+
+def _cost_flagged_unmeasured(row_flag: Any, metrics: dict[str, Any]) -> bool:
+    """True when the row (or its metrics) flags its cost as unmeasured (#2517).
+
+    Mirrors ``traigent.utils.trial_costs.is_cost_unmeasured`` (kept stdlib-only
+    here so the matrix stays a pure projection): ``True`` or a finite number
+    greater than zero is the flag; ``0`` / ``False`` / absent is not.
+    """
+    for flag in (row_flag, metrics.get("cost_unmeasured")):
+        if flag is True:
+            return True
+        if (
+            isinstance(flag, (int, float))
+            and not isinstance(flag, bool)
+            and math.isfinite(flag)
+            and flag > 0
+        ):
+            return True
+    return False
 
 
 def _get(ex: Any, key: str, default: Any = None) -> Any:
@@ -207,10 +230,15 @@ def _extract_cell(ex: Any) -> dict[str, Any]:
     success = bool(explicit_success) if explicit_success is not None else error is None
 
     # Cost: evaluator writes ``total_cost`` into metrics; HybridExampleResult
-    # carries a top-level ``cost_usd``.
-    cost_usd = metrics.get("total_cost")
-    if cost_usd is None:
-        cost_usd = _get(ex, "cost_usd")
+    # carries a top-level ``cost_usd``. A row flagged ``cost_unmeasured`` has no
+    # cost: its ``cost_usd`` is a 0.0 placeholder the flag disowns, so the cell
+    # records ``null``, never a measured zero (#2517).
+    if _cost_flagged_unmeasured(_get(ex, "cost_unmeasured"), metrics):
+        cost_usd = None
+    else:
+        cost_usd = metrics.get("total_cost")
+        if cost_usd is None:
+            cost_usd = _get(ex, "cost_usd")
 
     # Timing kept per-source in its own unit (no unit-mixing): ExampleResult
     # exposes ``execution_time`` (seconds); HybridExampleResult exposes

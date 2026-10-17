@@ -6,8 +6,8 @@ modes and execution modes.
 
 ARCHITECTURAL INSIGHT - Orthogonality by Design
 ===============================================
-The Alloy model (docs/traceability/alloy/cost_enforcement.als) is intentionally
-mode-agnostic. This is NOT an oversight but a deliberate design decision:
+The cost-enforcement model is intentionally mode-agnostic. This is NOT an
+oversight but a deliberate design decision:
 
 1. **CostEnforcer operates below the mode abstraction layer**: It tracks costs
    regardless of how configurations are injected (CONTEXT, PARAMETER, SEAMLESS)
@@ -28,9 +28,6 @@ While the injection_mode tests may appear to run identical code paths (because
 CostEnforcer IS injection-mode agnostic), they provide explicit evidence of this
 orthogonality. The tests PROVE that varying injection mode doesn't affect
 CostEnforcer behavior - which is exactly what we want to demonstrate.
-
-Reference: docs/traceability/verification/REVIEW_TRACKING.yml
-Addresses: Mode coverage evidence gap identified in formal verification review
 
 Safety properties verified:
 - I1: in_flight_count >= 0

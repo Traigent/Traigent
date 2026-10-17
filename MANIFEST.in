@@ -33,7 +33,6 @@ prune docs/reviews
 prune docs/refactoring
 prune docs/tvl/tvl-website
 exclude docs/WORKFLOW_TRACES_SDK_IMPLEMENTATION_REPORT.md
-exclude docs/testing/RELEASE_READINESS_TESTING.md
 exclude traigent/conftest.py
 prune tests
 

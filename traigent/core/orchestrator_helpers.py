@@ -29,6 +29,7 @@ from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.exceptions import TVLConstraintError
 from traigent.utils.logging import get_logger
+from traigent.utils.trial_costs import is_cost_unmeasured, trial_cost_unknown
 
 logger = get_logger(__name__)
 
@@ -395,7 +396,16 @@ def extract_cost_from_results(
 
         total_cost_examples = 0.0
         has_cost_samples = False
+        example_rows = []
+        example_ok = []
         for example in eval_result.example_results:
+            row_metrics = getattr(example, "metrics", None) or {}
+            if getattr(example, "cost_unmeasured", None) is True:
+                # A row object that disowns its own cost (HybridExampleResult)
+                # is unmeasured whatever its metrics dict happens to carry.
+                row_metrics = {**row_metrics, "cost_unmeasured": 1.0}
+            example_rows.append(row_metrics)
+            example_ok.append(bool(getattr(example, "success", True)))
             metrics = getattr(example, "metrics", {}) or {}
             cost_value = None
             for key in ("total_cost", "cost", "example_cost"):
@@ -413,8 +423,12 @@ def extract_cost_from_results(
                         trial_id,
                     )
 
-        if has_cost_samples:
+        # A successful row without a measured cost makes the sum a floor, not
+        # the trial's cost (shared classifier, #2517).
+        if has_cost_samples and not trial_cost_unknown(example_rows, example_ok):
             total_cost = total_cost_examples
+        elif has_cost_samples:
+            total_cost = None
 
     # Fallback to aggregated metrics
     if total_cost is None and hasattr(eval_result, "aggregated_metrics"):
@@ -423,6 +437,11 @@ def extract_cost_from_results(
         if total_cost is None:
             # Backward-compatible fallback for evaluators that still emit "cost".
             total_cost = agg_metrics.get("cost")
+
+    # A trial the evaluator flagged unmeasured has no cost, whatever the
+    # progress state or a stray number says (#2517).
+    if is_cost_unmeasured(getattr(eval_result, "aggregated_metrics", None)):
+        total_cost = None
 
     # Prefer evaluator-reported totals when available to avoid double counting
     result_total = getattr(eval_result, "total_examples", None)

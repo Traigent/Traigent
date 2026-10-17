@@ -16,7 +16,11 @@ sys.path.insert(0, HERE)
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 os.environ.setdefault("TRAIGENT_RESULTS_FOLDER", os.path.join(HERE, ".traigent"))
 
-from local_search import my_llm_function  # noqa: E402
+from local_search import (  # noqa: E402
+    my_llm_function,
+    print_simulated_cost_notice,
+    simulated_cost_provenance,
+)
 
 RESULTS_FILE = "results.json"
 DATASET_FILE = "my_dataset.jsonl"
@@ -51,6 +55,7 @@ def main() -> None:
         "objectives": getattr(opt_result, "objectives", []),
         "algorithm": getattr(opt_result, "algorithm", ""),
         "source": getattr(opt_result, "source", None),
+        **simulated_cost_provenance(),
         "total_cost": getattr(opt_result, "total_cost", None),
         "total_tokens": getattr(opt_result, "total_tokens", None),
         "trials": _serialize_trials(opt_result, limit=10),
@@ -59,6 +64,7 @@ def main() -> None:
     with open(RESULTS_FILE, "w", encoding="utf-8") as f:
         json.dump(out, f, indent=2)
 
+    print_simulated_cost_notice()
     print(json.dumps(out, indent=2))
     print(f"Wrote {os.path.abspath(RESULTS_FILE)}")
 

@@ -38,7 +38,11 @@ class BatchTrial:
     @property
     def is_successful(self) -> bool:
         """Check if trial was successful."""
-        return self.score != float("-inf") and not self.metadata.get("failed", False)
+        return (
+            self.score != float("-inf")
+            and not self.metadata.get("failed", False)
+            and not self.metadata.get("objective_unmeasured", False)
+        )
 
 
 @dataclass

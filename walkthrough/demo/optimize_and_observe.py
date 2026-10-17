@@ -54,7 +54,9 @@ from utils.helpers import (
 from utils.mock_answers import (
     ANSWERS,
     DEFAULT_MOCK_MODEL,
+    MOCK_TASK_TOKENS,
     get_mock_accuracy,
+    get_mock_cost,
     get_mock_latency,
     normalize_text,
     set_mock_model,
@@ -542,7 +544,7 @@ def create_demo_agent(runtime: RuntimeSettings, client: ObservabilityClient):
             "mode": runtime.mode,
         },
     )
-    def answer_question(question: str) -> str:
+    def answer_question(question: str) -> str | dict[str, Any]:
         config = traigent.get_config()
         model = str(config.get("model", DEFAULT_MOCK_MODEL))
         temperature = float(config.get("temperature", 0.0) or 0.0)
@@ -567,9 +569,18 @@ def create_demo_agent(runtime: RuntimeSettings, client: ObservabilityClient):
 
         if runtime.mode == "mock":
             raw_output = invoke_mock(question, model, response_style)
-        else:
-            raw_output = invoke_real(prompt, model, temperature, response_style)
+            answer = post_process_response(raw_output)
+            # Report simulated per-call usage so the `cost` objective is real
+            # data, not an unpriced call that honest cost accounting refuses.
+            # NOTE: the SDK treats this like real spend; this demo sets no budget.
+            return traigent.with_usage(
+                answer,
+                total_cost=get_mock_cost(model, "simple_qa", dataset_size=1),
+                input_tokens=MOCK_TASK_TOKENS["simple_qa"]["input"],
+                output_tokens=MOCK_TASK_TOKENS["simple_qa"]["output"],
+            )
 
+        raw_output = invoke_real(prompt, model, temperature, response_style)
         return post_process_response(raw_output)
 
     return answer_question

@@ -106,6 +106,12 @@ from traigent.evaluators.base import (
     EvaluationExample,
     load_inline_dataset,
 )
+from traigent.identity.agent_scope import (
+    open_scope,
+    record_failed_boundary,
+    run_in_scope,
+)
+from traigent.identity.workload import AgentBinding, classify_python_registration
 from traigent.integrations.framework_override import override_context
 from traigent.optimizers import get_optimizer
 from traigent.tvl.options import TVLOptions
@@ -593,8 +599,8 @@ COST_OBJECTIVE_NO_USAGE_WARNING_CODE = "COST_OBJECTIVE_NO_USAGE_CAPTURED"
 
 _NO_USAGE_CAPTURED_MESSAGE = (
     "A cost objective was declared but no LLM usage was captured on any "
-    "trial: every trial recorded $0, so the cost column is UNMEASURED rather "
-    "than zero, and any cost ranking over these trials is meaningless. "
+    "trial: no trial has a measured cost, so the cost column is UNMEASURED "
+    "rather than zero, and any cost ranking over these trials is meaningless. "
     "Traigent captures usage from the response object the optimized function "
     "returns and from `litellm.completion` calls it intercepts; calls made "
     "through a client object the interceptor does not wrap (a provider SDK "
@@ -1653,12 +1659,48 @@ class OptimizedFunction(Generic[_P, _R]):
         preserves its original parameter / return types under mypy/pyright.
         """
         wrapped_func = self._wrapped_func
-        # If framework overrides are enabled, use them during function call
-        if self.auto_override_frameworks and self.framework_targets:
-            with override_context(self.framework_targets):
-                return cast(_R, wrapped_func(*args, **kwargs))
-        else:
+
+        def invoke() -> _R:
+            # If framework overrides are enabled, use them during function call
+            if self.auto_override_frameworks and self.framework_targets:
+                with override_context(self.framework_targets):
+                    return cast(_R, wrapped_func(*args, **kwargs))
             return cast(_R, wrapped_func(*args, **kwargs))
+
+        # Each call opens an agent scope so traces recorded inside it can carry
+        # the agent key (see traigent.identity.agent_scope). Never let identity
+        # bookkeeping break the user's call.
+        try:
+            scope = open_scope(self.agent_binding())
+        except Exception:
+            logger.debug("agent scope could not be opened", exc_info=True)
+            # Run the user's function, but never let the boundary
+            # vanish -- record it as ineligible in the active trace ledger.
+            record_failed_boundary()
+            return invoke()
+        return cast(_R, run_in_scope(scope, invoke))
+
+    def agent_binding(self) -> AgentBinding:
+        """Registration identity, provenance and canonical trace key of this agent."""
+        # Identity and provenance come from ONE read of the inputs.
+        registration, declared = self._identity_inputs()
+        return classify_python_registration(
+            registration_identity=registration,
+            function_name=getattr(self.func, "__name__", None),
+            declared_name=declared,
+        )
+
+    def _identity_inputs(self) -> tuple[str, str | None]:
+        """(registration identity, explicit declared name) from a single read."""
+        explicit = self._experiment_name
+        if explicit is not None:
+            return explicit, explicit
+        env_name = os.environ.get("TRAIGENT_EXPERIMENT_NAME")
+        if env_name:
+            return env_name, env_name
+        if self._default_experiment_name is not None:
+            return self._default_experiment_name, None
+        return self.__name__, None
 
     def _trial_callable_for_config_space(
         self,
@@ -3050,7 +3092,10 @@ class OptimizedFunction(Generic[_P, _R]):
         if waived:
             code = UNMEASURED_COST_TRIALS_RAN_WARNING_CODE
             message = unmeasured_cost_ran_message(
-                status.trial_count, status.unmeasured_trial_count
+                status.trial_count,
+                status.unmeasured_trial_count,
+                known_spend=status.accumulated_cost_usd,
+                cost_limit=status.limit_usd,
             )
         elif (
             getattr(result, "stop_reason", None) == "cost_limit"
@@ -3062,6 +3107,7 @@ class OptimizedFunction(Generic[_P, _R]):
                 fallback_limit,
                 status.limit_usd,
                 status.unmeasured_trial_count,
+                status.accumulated_cost_usd,
             )
         else:
             return
@@ -3773,6 +3819,8 @@ Remediation:
             or max_total_examples_value is not None
         ):
             orchestrator.waive_unknown_cost_trial_cap()
+        if used_implicit_default_max_trials:
+            orchestrator.mark_max_trials_sdk_default()
 
         # Phase 9: Run optimization and finalize
         from traigent.cloud.client import SessionContractError
@@ -4615,14 +4663,7 @@ Remediation:
            — stored in ``_default_experiment_name``.
         4. Decorated function's ``__name__`` (bare fallback when no objectives/knobs exist).
         """
-        if self._experiment_name is not None:
-            return self._experiment_name
-        env_name = os.environ.get("TRAIGENT_EXPERIMENT_NAME")
-        if env_name:
-            return env_name
-        if self._default_experiment_name is not None:
-            return self._default_experiment_name
-        return self.__name__
+        return self._identity_inputs()[0]
 
     @property
     def agent_name(self) -> str:
@@ -4632,10 +4673,7 @@ Remediation:
     @property
     def declared_agent_name(self) -> str | None:
         """Return only an explicit decorator or environment agent identity."""
-        if self._experiment_name is not None:
-            return self._experiment_name
-        env_name = os.environ.get("TRAIGENT_EXPERIMENT_NAME")
-        return env_name or None
+        return self._identity_inputs()[1]
 
     @property
     def run_title(self) -> str | None:
