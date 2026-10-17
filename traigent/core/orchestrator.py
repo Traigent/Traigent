@@ -2228,6 +2228,13 @@ class OptimizationOrchestrator:
         """Reconcile known stability-rerun spend into an outward result."""
         if stability_cost <= 0:
             return
+        if result.metrics.get("cost_unmeasured"):
+            # Unknown run cost: the rerun spend raises the floor, it never
+            # turns the floor into a finite total (owner ruling A).
+            result.metrics["cost_lower_bound"] = (
+                float(result.metrics.get("cost_lower_bound") or 0.0) + stability_cost
+            )
+            return
         prior_total_cost = result.total_cost or 0.0
         result.total_cost = prior_total_cost + stability_cost
         prior_metric_cost = result.metrics.get("total_cost", prior_total_cost)
@@ -5791,7 +5798,9 @@ class OptimizationOrchestrator:
             objectives=self.optimizer.objectives,
             algorithm=self.optimizer.__class__.__name__,
             timestamp=now,
-            total_cost=total_cost if total_cost > 0 else None,
+            total_cost=(
+                total_cost if total_cost is not None and total_cost > 0 else None
+            ),
             total_tokens=total_tokens if total_tokens > 0 else None,
             metrics=processed_metrics,
             metadata=result_metadata,

@@ -224,3 +224,25 @@ async def test_tokenless_explicit_zero_charge_drops_custom_cost() -> None:
     ):
         for key, custom in (("cost", 100.0), ("total_cost", 200.0)):
             assert metrics.get(key) != custom, f"{label}: {key}"
+
+
+def test_local_progress_copy_drops_custom_cost_for_unmeasured_row_with_floor() -> None:
+    """A priced call plus a usage-less call: unknown cost, floor only."""
+    evaluator = LocalEvaluator(
+        detailed=True,
+        metrics=["accuracy", "cost", "total_cost"],
+        metric_functions=_custom_cost_functions(),
+    )
+    metric = ExampleMetrics(
+        tokens=TokenMetrics(input_tokens=20, output_tokens=40, total_tokens=60),
+        response=ResponseMetrics(response_time_ms=10),
+        cost=CostMetrics(unmeasured=True, known_cost=_FLOOR),
+        success=True,
+    )
+    metric.custom_metrics.update({"cost": 100.0, "total_cost": 200.0})
+    row = SimpleNamespace(metrics={"accuracy": 1.0, "cost": 100.0, "total_cost": 200.0})
+    payload = evaluator._build_local_progress_payload(metric, row, 42)
+    seen = copy.deepcopy(payload["metrics"])
+    assert seen.get("cost_unmeasured") == 1.0
+    for key in ("cost", "total_cost", "input_cost", "output_cost"):
+        assert key not in seen, f"{key}={seen.get(key)}"

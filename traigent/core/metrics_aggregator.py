@@ -21,7 +21,8 @@ class AggregatedMetrics:
     """Aggregated metrics extracted from a collection of trials."""
 
     processed_metrics: dict[str, Any]
-    total_cost: float
+    #: None when any trial's cost is unmeasured (floor is in processed_metrics).
+    total_cost: float | None
     total_tokens: int
 
 
@@ -84,7 +85,7 @@ def aggregate_metrics(
 
     return AggregatedMetrics(
         processed_metrics=processed_metrics,
-        total_cost=totals.total_cost,
+        total_cost=totals.reported_total_cost,
         total_tokens=totals.total_tokens,
     )
 

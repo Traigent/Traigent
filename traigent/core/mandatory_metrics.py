@@ -25,14 +25,28 @@ _SPEND_ACCUMULATING_STATUSES = {
 class MandatoryMetricsTotals:
     """Aggregated totals for mandatory metrics."""
 
+    #: Known spend. When ``cost_unmeasured_trials > 0`` this is only a lower
+    #: bound (measured spend plus unknown trials' floors), never a run total.
     total_cost: float = 0.0
+    cost_unmeasured_trials: int = 0
     total_tokens: int = 0
     total_duration: float = 0.0
     total_examples_attempted: int = 0
 
+    @property
+    def reported_total_cost(self) -> float | None:
+        """Run total cost, or None when any trial's cost is unmeasured."""
+        return None if self.cost_unmeasured_trials else self.total_cost
+
     def as_metrics_dict(self) -> dict[str, float]:
         metrics: dict[str, float] = {}
-        if self.total_cost > 0:
+        if self.cost_unmeasured_trials:
+            # Owner ruling A: unknown cost is never a finite total; only the
+            # flag and the floor are reported.
+            metrics["cost_unmeasured"] = 1.0
+            if self.total_cost > 0:
+                metrics["cost_lower_bound"] = self.total_cost
+        elif self.total_cost > 0:
             metrics["total_cost"] = self.total_cost
         if self.total_tokens > 0:
             metrics["total_tokens"] = float(self.total_tokens)
@@ -60,6 +74,9 @@ class MandatoryMetricsCollector:
 
         self._totals.total_examples_attempted += self._extract_examples_attempted(trial)
 
+        tracked = getattr(trial, "tracked_spend", None)
+        if isinstance(tracked, Mapping) and tracked.get("unmeasured"):
+            self._totals.cost_unmeasured_trials += 1
         cost_increment, token_increment = self._extract_cost_and_tokens(trial)
         self._totals.total_cost += cost_increment
         self._totals.total_tokens += token_increment

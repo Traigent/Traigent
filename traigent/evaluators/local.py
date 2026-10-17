@@ -813,6 +813,18 @@ class LocalEvaluator(BaseEvaluator):
             and example_metric.cost.total_cost > 0
         )
 
+    @staticmethod
+    def _is_unmeasured_with_floor(example_metric: ExampleMetrics) -> bool:
+        """True for an unknown-cost row that still carries a priced floor.
+
+        Treated like a partly priced row: its cost keys stay withdrawn and
+        are never reinserted from the detailed row (owner ruling A).
+        """
+        return bool(
+            example_metric.cost.unmeasured
+            and float(example_metric.cost.known_cost or 0.0) > 0
+        )
+
     def _withdraw_partly_priced_cost(
         self,
         example_metric: ExampleMetrics,
@@ -1214,7 +1226,9 @@ class LocalEvaluator(BaseEvaluator):
         if self.detailed and example_result is not None:
             for key, value in example_result.metrics.items():
                 if key in {"cost", "total_cost"} and (
-                    key in payload_metrics or self._is_partly_priced(example_metric)
+                    key in payload_metrics
+                    or self._is_partly_priced(example_metric)
+                    or self._is_unmeasured_with_floor(example_metric)
                 ):
                     continue
                 payload_metrics.setdefault(key, value)
