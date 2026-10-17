@@ -2347,7 +2347,7 @@ class BackendIntegratedClient:
             requests.exceptions.Timeout,
             ConnectionError,
             TimeoutError,
-        ) as exc:
+        ):
             raise CloudServiceError(f"{operation} transport failed") from None
         finally:
             session.close()
