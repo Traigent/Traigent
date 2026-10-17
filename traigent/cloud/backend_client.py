@@ -350,6 +350,11 @@ def _run_sync_backend_request_with_retry(
     # by its type, never its text, and never chained.
     if isinstance(error, _SyncBackendTransientError):
         raise CloudServiceError(f"{operation} failed: {error}") from None
+    if isinstance(error, TransportGateRefusal):
+        # The gate's own refusal carries counts only (never values); callers key on it.
+        raise CloudServiceError(
+            f"{operation} failed ({type(error).__name__})"
+        ) from error
     raise CloudServiceError(f"{operation} failed ({type(error).__name__})") from None
 
 
