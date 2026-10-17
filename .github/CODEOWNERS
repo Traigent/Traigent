@@ -1,3 +1,2 @@
-# Code ownership. Code-owner review is required on main only (branch protection).
-# Review requests for every path go to the core team.
+# Code ownership: review requests for every path go to the core team.
 * @Traigent/core

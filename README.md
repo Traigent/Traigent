@@ -269,8 +269,6 @@ def multi_provider_agent(question: str) -> str:
 | **Live progress** | Auto-enabled progress bar in interactive terminals (`progress_bar=False` to disable) |
 | **No-egress option** | `offline=True` keeps Traigent optimization traffic local when policy requires it |
 
-**TraigentDemo** — Streamlit playground, use cases, and research benchmarks
-
 ---
 
 <details>

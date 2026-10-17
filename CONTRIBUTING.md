@@ -51,13 +51,13 @@ make local-gate         # run the local pre-push checks before pushing
 Run the tests related to your change as you work. Continuous integration runs
 the broader suite on every pull request.
 
-## Branch model
+## Contribution flow
 
-- Open pull requests against the `develop` branch.
-- Maintainers promote `develop` to `main` for releases.
-- Changes to protected branches are merged by maintainers.
-- Create your branch from the latest `develop`, for example
-  `feature/<short-description>` or `fix/<short-description>`.
+- Open an issue (or start a discussion) describing the change before you write
+  code, so we can agree on the approach.
+- For accepted changes, maintainers coordinate how the change lands (for
+  example, a maintainer may open or carry the pull request).
+- Contributions are merged by maintainers.
 
 ## Commits and pull requests
 
@@ -73,12 +73,11 @@ the broader suite on every pull request.
 
 Traigent requires a signed Contributor License Agreement (CLA) before accepting
 non-trivial external contributions. See
-[CONTRIBUTOR-LICENSING.md](CONTRIBUTOR-LICENSING.md) for the policy and how to
-request the CLA paperwork (opensource@traigent.ai).
+[CONTRIBUTOR-LICENSING.md](CONTRIBUTOR-LICENSING.md) for the policy.
 
-A CLA bot comments on your first pull request. To sign, reply on the pull request
-with exactly: `I have read the CLA Document and I hereby sign the CLA`
-(comment `recheck` to re-run the check afterwards).
+To proceed, contact opensource@traigent.ai to request the current CLA paperwork
+(Individual or Corporate). If you are contributing on behalf of a company,
+say so up front so the correct form can be provided.
 
 ## License
 

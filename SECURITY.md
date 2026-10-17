@@ -62,8 +62,7 @@ credentials.
   tooling, is also a customer/provider credential and follows the same
   boundary.
 
-Current local and hybrid modes run trials locally. The `cloud` remote
-execution mode is reserved for future use and fails closed in this SDK.
+Trials run locally in the supported local and hybrid execution modes.
 
 ## Best Practices
 
