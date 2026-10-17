@@ -12,11 +12,8 @@ from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.config.backend_config import BackendConfig
 from traigent.config.project import read_optional_project_env, scope_api_path
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
-from traigent.utils.env_config import (
-    is_backend_offline,
-    is_truthy,
-    resolve_environment_label,
-)
+from traigent.identity.workload import resolve_environment
+from traigent.utils.env_config import is_backend_offline, is_truthy
 
 MAX_BATCH_SIZE = 10_000
 MAX_QUEUE_SIZE = 1_000_000
@@ -448,9 +445,9 @@ class ObservabilityConfig:
     # `ObservabilityClient._resolve_content_mode`.
     content_mode_explicit: bool = field(default=False, init=False, repr=False)
     health_callback: Callable[[str, dict[str, Any]], None] | None = None
-    default_environment: str | None = field(
-        default_factory=lambda: resolve_environment_label(default=None)
-    )
+    # Resolved in ``__post_init__`` (explicit > TRAIGENT_ENVIRONMENT > OTel >
+    # ENVIRONMENT > legacy TRAIGENT_ENV > "default"); never None afterwards.
+    default_environment: str | None = None
     default_release: str | None = field(
         default_factory=lambda: os.getenv("TRAIGENT_RELEASE")
     )
@@ -464,6 +461,9 @@ class ObservabilityConfig:
             self.backend_origin,
             purpose="observability backend",
         )
+        self.default_environment = resolve_environment(
+            self.default_environment
+        ).environment
         self.tenant_id = (
             self.tenant_id.strip() or None if self.tenant_id is not None else None
         )
