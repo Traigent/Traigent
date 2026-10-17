@@ -146,15 +146,36 @@ async def _direct_serializer() -> None:
         await resp.read()
 
 
+BEST_CONFIG_ID = "best-canary-direct"
+
+
+def _best_config_spec() -> dict[str, Any]:
+    """The publish input: the old raw dict plus the ``config_id`` the client now requires.
+
+    The client verifies the identity of every publish / fetch answer against the sent
+    spec, so a spec without ``config_id`` can never be answered correctly (the old
+    fixture failed before any fetch). The canary knob, choice and metric stay exactly
+    where the ratchet pins them (``$.spec.<knob>``, ``$.spec.metric`` in
+    leak_manifest.json): nesting them under ``spec.config`` as a contract-valid
+    ``traigent.best_config.v1`` spec has them is a removal plus an addition of leak
+    identities, which the ratchet refuses by design. Migrating the pinned paths is its
+    own change with its own rationale; this harness measures what the SDK sends.
+    """
+
+    c = CANARIES
+    return {
+        "config_id": BEST_CONFIG_ID,
+        c["knob_name"]: c["choice_value"],
+        "metric": c["metric_name"],
+    }
+
+
 def _best_config_sync() -> None:
     c = CANARIES
     client = _client()
-    client.publish_best_config_sync(
-        {c["knob_name"]: c["choice_value"], "metric": c["metric_name"]},
-        environment=c["agent_name"],
-    )
+    client.publish_best_config_sync(_best_config_spec(), environment=c["agent_name"])
     client.fetch_best_config_sync(
-        "best-canary-direct", environment=c["agent_name"], function_ref=c["agent_name"]
+        BEST_CONFIG_ID, environment=c["agent_name"], function_ref=c["agent_name"]
     )
 
 
@@ -277,12 +298,9 @@ def _best_config_retry() -> None:
     _inject("POST", r"/best-configs$", [503, "connection"], expects_retry=True)
     _inject("GET", r"/best-configs/", [429, 500], expects_retry=True)
     client = _client()
-    client.publish_best_config_sync(
-        {c["knob_name"]: c["choice_value"], "metric": c["metric_name"]},
-        environment=c["agent_name"],
-    )
+    client.publish_best_config_sync(_best_config_spec(), environment=c["agent_name"])
     client.fetch_best_config_sync(
-        "best-canary-direct", environment=c["agent_name"], function_ref=c["agent_name"]
+        BEST_CONFIG_ID, environment=c["agent_name"], function_ref=c["agent_name"]
     )
 
 

@@ -28,7 +28,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 from unittest import mock
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 #: Header names whose values are credentials. Dropped, never captured.
 SECRET_HEADERS = frozenset(
@@ -276,6 +276,7 @@ class FakeBackend:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.sessions: dict[str, dict[str, Any]] = {}
+        self.best_configs: dict[str, dict[str, Any]] = {}
         self.unhandled: list[str] = []
         self._session_counter = 0
         self.faults: list[Fault] = []
@@ -503,10 +504,31 @@ class FakeBackend:
             ):
                 return 200, {"success": True}
             if method == "POST" and p.endswith("/best-configs"):
-                spec = payload.get("spec", {})
-                return 200, {"data": {"config_id": "best-canary", "spec": spec}}
+                # Store and answer the spec as the Backend does: the effective
+                # environment (spec, else envelope, else "default") is part of the
+                # stored spec, and the answer's identity is the stored spec's. The
+                # SDK verifies that identity against what it sent.
+                spec = dict(payload.get("spec") or {})
+                env = spec.get("environment") or payload.get("environment")
+                stored = {**spec, "environment": (env or "default").strip().lower()}
+                self.best_configs[str(stored.get("config_id", "")).strip()] = stored
+                return 200, {
+                    "data": {"config_id": stored.get("config_id"), "spec": stored}
+                }
             if method == "GET" and "/best-configs/" in p:
-                return 200, {"data": {"config_id": "best-canary", "spec": {}}}
+                # The stored spec for the requested id. The harness measures what the SDK
+                # SENDS, not Backend policy: a stored spec with no function_ref is
+                # answered bound to the requested function so the SDK's own identity
+                # verification of a fetched answer runs.
+                query_args = parse_qs(query)
+                config_id = unquote(p.rsplit("/", 1)[-1])
+                stored = self.best_configs.get(config_id)
+                if stored is None:
+                    return 404, {"error": "not_found"}
+                bound = dict(stored)
+                if bound.get("function_ref") is None and query_args.get("function_ref"):
+                    bound["function_ref"] = query_args["function_ref"][0]
+                return 200, {"data": {"config_id": config_id, "spec": bound}}
             if method == "GET" and p.endswith("/status"):
                 return 200, {"status": "active", "session_id": "hybrid-canary"}
             if method == "POST" and p.endswith("/example-sets"):

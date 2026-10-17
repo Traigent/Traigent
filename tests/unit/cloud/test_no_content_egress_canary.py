@@ -47,12 +47,16 @@ def _json_safe(value: Any) -> Any:
         return str(value)
 
 
+# A contract-valid function reference (``module:qualname``): the Schema pattern refuses a
+# bare name.
+_CANARY_FUNCTION_REF = "guarded_pkg.guarded:guarded_function"
+
 # A real best-config spec: the client validates the identity a response carries, so the
 # canned answers must be for the config / function / environment the test asks about.
 _CANARY_BEST_CONFIG_SPEC: dict[str, Any] = {
     "schema_version": "traigent.best_config.v1",
     "config_id": "best-canary",
-    "function_ref": "guarded_function",
+    "function_ref": _CANARY_FUNCTION_REF,
     "environment": "test",
     "config": {"temperature": 0.1},
 }
@@ -230,7 +234,7 @@ class _OutboundCapture:
                 {
                     "data": {
                         "config_id": "best-canary",
-                        "function_ref": "guarded_function",
+                        "function_ref": _CANARY_FUNCTION_REF,
                         "environment": "test",
                         "spec": _CANARY_BEST_CONFIG_SPEC,
                     }
@@ -527,7 +531,7 @@ def _call_sync_guard_operation(client: Any, operation: str) -> Any:
         return client.fetch_best_config_sync(
             "best-canary",
             environment="test",
-            function_ref="guarded_function",
+            function_ref=_CANARY_FUNCTION_REF,
         )
     raise AssertionError(f"unknown sync operation: {operation}")
 
