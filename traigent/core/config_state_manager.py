@@ -458,13 +458,21 @@ class ConfigStateManager:
             )
 
     @staticmethod
-    def _verify_publish_response(result: Any, sent_spec: dict[str, Any]) -> None:
+    def _verify_publish_response(
+        result: Any, sent_spec: dict[str, Any], *, environment: str | None = None
+    ) -> None:
         """Verify a publish answer against the spec the Backend RETURNED.
 
         The Backend normalizes a request before it hashes it (trimmed ``config_id``,
         effective environment), so the digest it returns belongs to the stored spec.
         The client recomputes it independently under the one frozen v1 rule; it never
         just accepts the returned digest, and it never hashes its own request instead.
+
+        The returned digest is additionally bound to the request: the frozen rule applied
+        to the SENT spec (with the request envelope ``environment``) must give the same
+        digest. That admits exactly the documented normalization (``config_id`` trim,
+        NFC, environment precedence, validation stripping) and refuses a stored spec for
+        a different environment, function or config.
         """
 
         stored = result.get("spec") if isinstance(result, dict) else None
@@ -482,6 +490,17 @@ class ConfigStateManager:
         if result.get("config_hash") != sha256_digest(canonical_json(sent_config)):
             raise CloudBestConfigIntegrityError(
                 "Cloud best-config config_hash mismatch"
+            )
+        try:
+            expected_spec_hash = compute_spec_hash(sent_spec, environment=environment)
+        except ConfigurationError as exc:
+            raise CloudBestConfigIntegrityError(
+                f"Published best-config spec cannot be hashed: {exc}"
+            ) from exc
+        if result.get("spec_hash") != expected_spec_hash:
+            raise CloudBestConfigIntegrityError(
+                "Cloud best-config spec_hash mismatch: the response is not for the "
+                "published spec (environment, function or content differs)"
             )
         if stored.get("config_id") != sent_id.strip():
             raise CloudBestConfigIntegrityError(
@@ -1149,7 +1168,7 @@ class ConfigStateManager:
                 if_match=if_match,
                 **precondition_kwargs,
             )
-            self._verify_publish_response(result, spec)
+            self._verify_publish_response(result, spec, environment=environment)
             return result
         except CloudBestConfigStaleHeadError as exc:
             # The backend refused and wrote nothing. Keep the refused config on

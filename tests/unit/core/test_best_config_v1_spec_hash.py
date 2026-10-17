@@ -33,11 +33,15 @@ _VECTORS = (
     Path(__file__).resolve().parents[2]
     / "fixtures/contracts/schema_083eb11/best_config_v1_spec_hash_vectors.json"
 )
-_PINNED_SHA256 = "01dc28a76f0a145c477e643bbe4b2dcc8fbcb232fce6deebc2787639f57b74b9"
+_PINNED_SHA256 = "dd72aa11a751c5d6cdf084ab5ba03ca203df73d9ce6ebb59ad86b3bfa6e98e00"
 
 
 def _cases() -> list[dict[str, Any]]:
     return json.loads(_VECTORS.read_text(encoding="utf-8"))["cases"]
+
+
+def _refusal_cases() -> list[dict[str, Any]]:
+    return json.loads(_VECTORS.read_text(encoding="utf-8"))["refusal_cases"]
 
 
 def _case(name: str) -> dict[str, Any]:
@@ -240,3 +244,85 @@ def test_repo_manifest_hash_is_independent_of_provenance(tmp_path: Path) -> None
         "spec_hash"
     ]
     assert first == second
+
+
+# --- a publish answer is bound to the request: environment and function_ref (sol F1 P2) ---
+
+
+def _self_consistent_response(stored: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "spec": stored,
+        "spec_hash": compute_spec_hash(stored),
+        "config_hash": "sha256:"
+        + hashlib.sha256(
+            json.dumps(
+                stored["config"], ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode()
+        ).hexdigest(),
+    }
+
+
+def _sent_prod() -> dict[str, Any]:
+    return {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "agent",
+        "function_ref": "pkg:agent",
+        "environment": "prod",
+        "config": {"temperature": 0.2},
+    }
+
+
+def test_publish_response_for_a_different_environment_is_rejected() -> None:
+    sent = _sent_prod()
+    response = _self_consistent_response({**sent, "environment": "staging"})
+    with pytest.raises(CloudBestConfigIntegrityError, match="spec_hash"):
+        ConfigStateManager._verify_publish_response(response, sent, environment="prod")
+
+
+def test_publish_response_for_a_different_function_ref_is_rejected() -> None:
+    sent = _sent_prod()
+    response = _self_consistent_response({**sent, "function_ref": "other:agent"})
+    with pytest.raises(CloudBestConfigIntegrityError, match="spec_hash"):
+        ConfigStateManager._verify_publish_response(response, sent, environment="prod")
+
+
+def test_publish_response_environment_comes_from_the_envelope_when_the_spec_has_none() -> None:
+    sent = _sent_prod()
+    del sent["environment"]
+    stored = {**sent, "environment": "prod"}
+    ConfigStateManager._verify_publish_response(
+        _self_consistent_response(stored), sent, environment="prod"
+    )
+    wrong = {**sent, "environment": "staging"}
+    with pytest.raises(CloudBestConfigIntegrityError, match="spec_hash"):
+        ConfigStateManager._verify_publish_response(
+            _self_consistent_response(wrong), sent, environment="prod"
+        )
+
+
+@pytest.mark.parametrize("case", _cases(), ids=lambda case: case["name"])
+def test_every_vector_normalized_response_is_still_accepted(case: dict[str, Any]) -> None:
+    request = case["request"]
+    sent = copy.deepcopy(request["spec"])
+    stored = copy.deepcopy(case["hashed_payload"])
+    response = _self_consistent_response(stored)
+    assert response["spec_hash"] == case["spec_hash"]
+    ConfigStateManager._verify_publish_response(
+        response, sent, environment=request.get("environment")
+    )
+
+
+# --- refusal vectors: NaN / +-Infinity and over-deep specs are refused, never hashed ---
+
+
+@pytest.mark.parametrize("case", _refusal_cases(), ids=lambda case: case["name"])
+def test_compute_spec_hash_refuses_every_refusal_vector(case: dict[str, Any]) -> None:
+    request = copy.deepcopy(case["request"])
+    substitution = case.get("non_finite_substitution")
+    if substitution:
+        target = request
+        for key in substitution["path"][:-1]:
+            target = target[key]
+        target[substitution["path"][-1]] = float(substitution["value"])
+    with pytest.raises(ConfigurationError):
+        compute_spec_hash(request["spec"], environment=request.get("environment"))

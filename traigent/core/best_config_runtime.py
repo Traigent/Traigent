@@ -48,6 +48,9 @@ _SPEC_HASH_KEYS = (
     "validation",
 )
 _SPEC_HASH_DEFAULT_ENVIRONMENT = "default"
+# The Backend refuses a spec nested deeper than this (spec itself = depth 0); the
+# frozen rule defines no digest for one (vector ``depth_boundary_refused``).
+_SPEC_HASH_MAX_JSON_DEPTH = 16
 # Removed from ``validation`` at any depth before hashing (by key name, not meaning):
 # the guaranteed-selection claim and its result members are bound by the certificate,
 # which itself carries the spec_hash, so they cannot be part of the hashed bytes.
@@ -540,7 +543,19 @@ def compute_spec_hash(spec: dict[str, Any], *, environment: str | None = None) -
     )
 
 
+def _check_spec_hash_depth(value: Any, depth: int = 0) -> None:
+    if depth > _SPEC_HASH_MAX_JSON_DEPTH:
+        raise ConfigurationError("Best config spec exceeds the maximum JSON depth")
+    if isinstance(value, dict):
+        for item in value.values():
+            _check_spec_hash_depth(item, depth + 1)
+    elif isinstance(value, list):
+        for item in value:
+            _check_spec_hash_depth(item, depth + 1)
+
+
 def _v1_hash_payload(spec: dict[str, Any], environment: str | None) -> dict[str, Any]:
+    _check_spec_hash_depth(spec)
     normalized = _normalize_json_value(copy.deepcopy(spec))
     if not isinstance(normalized, dict):
         raise ConfigurationError("Best config spec must be a JSON object")
