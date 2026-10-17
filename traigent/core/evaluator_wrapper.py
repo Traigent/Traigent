@@ -366,6 +366,10 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 # Unknown cost (a partly priced row is unknown too, owner
                 # ruling A): leave the cost keys out, flag it (#2517).
                 example_result.metrics["cost_unmeasured"] = 1.0
+                # The evaluator's own cost/total_cost is not tracker data: it
+                # must not reach the progress payload or the returned row.
+                for cost_key in ("cost", "total_cost", "input_cost", "output_cost"):
+                    example_result.metrics.pop(cost_key, None)
                 # The part that WAS measured stays a floor, never a total.
                 known = safe_get_nested_attr(
                     llm_metrics, "cost.total_cost", 0.0

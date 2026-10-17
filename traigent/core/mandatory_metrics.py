@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Any
 
 from traigent.api.types import TrialResult, TrialStatus
@@ -74,13 +75,22 @@ class MandatoryMetricsCollector:
 
     def _extract_cost_and_tokens(self, trial: TrialResult) -> tuple[float, int]:
         metrics = trial.metrics or {}
-        cost_increment = self._safe_float(metrics.get("total_cost"))
+        tracked = getattr(trial, "tracked_spend", None)
+        tracker_authoritative = isinstance(tracked, Mapping)
+        if tracker_authoritative:
+            # Owner ruling A: tracker spend is the only cost authority; a
+            # user's custom total_cost never feeds run totals. Unknown spend
+            # contributes only its known floor.
+            key = "lower_bound" if tracked.get("unmeasured") else "cost"
+            cost_increment = self._safe_float(tracked.get(key))
+        else:
+            cost_increment = self._safe_float(metrics.get("total_cost"))
         token_increment = self._safe_tokens(metrics.get("total_tokens"), trial)
 
         eval_result = (trial.metadata or {}).get("evaluation_result")
         if eval_result is not None:
             aggregated_metrics = getattr(eval_result, "aggregated_metrics", None) or {}
-            if cost_increment <= 0:
+            if cost_increment <= 0 and not tracker_authoritative:
                 cost_increment = self._from_aggregated_cost(
                     aggregated_metrics, eval_result, trial
                 )

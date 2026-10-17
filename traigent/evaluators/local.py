@@ -1199,6 +1199,9 @@ class LocalEvaluator(BaseEvaluator):
 
         if self._is_partly_priced(example_metric):
             self._withdraw_partly_priced_cost(example_metric, payload_metrics)
+            # A user's custom ``cost`` metric function is not tracker data:
+            # this row's cost is unknown, so no cost key survives (ruling A).
+            payload_metrics.pop("cost", None)
         elif example_metric.cost.unmeasured:
             # Unknown cost: no $0 in the progress payload (#2517).
             payload_metrics.pop("total_cost", None)
@@ -2756,8 +2759,18 @@ class LocalEvaluator(BaseEvaluator):
         # Owner ruling A: an unknown tracked cost removes any finite custom
         # cost/total_cost from the aggregate. With no
         # tracker data at all the evaluator's own reported cost still counts.
+        # The test is "the tracker saw a real captured call", not "it saw
+        # tokens": a charge-only response (usage.cost with zero tokens) is
+        # tracker data too.
         if any(
-            m.measured and not m.tokens.estimated and m.tokens.total_tokens > 0
+            m.measured
+            and not m.tokens.estimated
+            and (
+                m.tokens.total_tokens > 0
+                or m.cost.cost_explicit
+                or m.cost.total_cost > 0
+                or m.cost.unmeasured
+            )
             for m in metrics_tracker.example_metrics
         ):
             self._apply_tracked_unknown_cost(
