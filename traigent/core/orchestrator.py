@@ -457,6 +457,10 @@ class OptimizationOrchestrator:
         # and the promotion precondition captured for the current run.
         self.head_environment: str | None = None
         self.head_environment_explicit: bool = False
+        # Identity the development log is stamped with (set by OptimizedFunction),
+        # so auto-discovery loads only artifacts that are this function's.
+        self.head_function_ref: str | None = None
+        self.head_config_id: str | None = None
         self._promotion_precondition: dict[str, Any] | None = None
         self._smart_pruning: dict[str, Any] | None = kwargs.pop("smart_pruning", None)
         self._config_metrics_history: dict[str, dict[str, list[float]]] = {}
@@ -2045,6 +2049,7 @@ class OptimizationOrchestrator:
                 ExecutionMode | str,
                 self.traigent_config.execution_mode or "local",
             ),
+            best_config_identity=self._best_config_identity(),
         )
         self._logger_facade.attach(self._logger)
 
@@ -2061,6 +2066,16 @@ class OptimizationOrchestrator:
                 "name": getattr(dataset, "name", "unknown"),
             },
         )
+
+    def _best_config_identity(self) -> dict[str, str] | None:
+        """The identity stamped on the development log's best-config artifacts."""
+        identity = {
+            "config_id": self.head_config_id,
+            "function_ref": self.head_function_ref,
+            "environment": self.head_environment,
+        }
+        present = {key: value for key, value in identity.items() if value}
+        return present or None
 
     def _build_logger_run_config(self) -> dict[str, Any]:
         resolved_algorithm = self.optimizer.__class__.__name__

@@ -12,6 +12,7 @@ import shutil
 import sys
 import tempfile
 import threading
+from collections.abc import Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -401,6 +402,9 @@ def _serialize_example_result(ex: Any, *, log_content: bool = True) -> dict[str,
     }
 
 
+_BEST_CONFIG_IDENTITY_KEYS = ("config_id", "function_ref", "environment")
+
+
 class OptimizationLogger:
     """Thread-safe optimization logger with versioned files and sanitization."""
 
@@ -414,7 +418,16 @@ class OptimizationLogger:
         base_path: Path | None = None,
         buffer_size: int = 10,
         log_example_content: bool | None = None,
+        best_config_identity: Mapping[str, str] | None = None,
     ) -> None:
+        # Stamped on every best-config artifact so a later auto-load can verify the
+        # artifact belongs to the function / environment asking for it. The run
+        # directory is keyed on the bare function name, which two modules can share.
+        self.best_config_identity: dict[str, str] = {
+            key: value
+            for key, value in dict(best_config_identity or {}).items()
+            if key in _BEST_CONFIG_IDENTITY_KEYS and isinstance(value, str) and value
+        }
         self.experiment_name = self._sanitize_name(experiment_name)
         self.session_id = session_id
         self.execution_mode_enum = resolve_execution_mode(execution_mode)
@@ -981,6 +994,7 @@ class OptimizationLogger:
 
         file_path = artifacts_dir / self.file_manager.get_filename("best_config")
         payload = {
+            **self.best_config_identity,
             "config": config,
             "score": score,
             "metrics": metrics,
@@ -1036,6 +1050,7 @@ class OptimizationLogger:
             self.run_path / "artifacts" / self.file_manager.get_filename("best_config")
         )
         best_config_data = {
+            **self.best_config_identity,
             "config": optimization_result.best_config,
             "score": optimization_result.best_score,
             "objectives": optimization_result.objectives,

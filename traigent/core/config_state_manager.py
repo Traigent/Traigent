@@ -59,6 +59,11 @@ from traigent.utils.secure_path import (
 
 logger = get_logger(__name__)
 
+# Legacy files the user named themselves. A discovered dev log is not one of them.
+_EXPLICIT_LEGACY_SOURCES = frozenset(
+    {BestConfigSource.LOAD_FROM.value, BestConfigSource.ENV.value}
+)
+
 _T = TypeVar("_T")
 
 DEFAULT_OPTIMIZATION_HISTORY_LIMIT = 100
@@ -387,7 +392,10 @@ class ConfigStateManager:
         except Exception as spec_exc:
             if isinstance(spec_exc, SafetySensitiveBestConfigError):
                 raise
-            if self._path_has_best_config_schema(path):
+            if self._path_declares_schema_version(path):
+                # A file that declares a schema_version is a canonical envelope. A
+                # version this SDK does not support (or any other canonical refusal)
+                # is final: it never falls back to the identity-blind legacy reader.
                 if self.best_config_strict:
                     if isinstance(spec_exc, ConfigurationError):
                         raise spec_exc
@@ -401,9 +409,9 @@ class ConfigStateManager:
                 )
                 return None
 
-            loaded_config = self._load_config_from_path(path)
-            if loaded_config:
-                return self._snapshot_from_plain_config(loaded_config, source=source)
+            is_legacy_config, legacy = self._load_legacy_snapshot(path, source=source)
+            if is_legacy_config:
+                return legacy
             if self.best_config_strict:
                 if isinstance(spec_exc, ConfigurationError):
                     raise spec_exc
@@ -416,6 +424,102 @@ class ConfigStateManager:
                 spec_exc,
             )
             return None
+
+    def _refuse_legacy_file(self, path: str, reason: str) -> None:
+        """Refuse a legacy file: strict raises; non-strict warns and the caller skips."""
+        message = f"Refusing legacy best config {path}: {reason}"
+        if self.best_config_strict:
+            raise ConfigurationError(message)
+        logger.warning("%s", message)
+
+    def _legacy_identity_mismatch(self, data: dict[str, Any]) -> str | None:
+        """Name the first identity field of a legacy file that contradicts the request.
+
+        Same normalisation as the canonical path: ``config_id`` / ``function_ref`` are
+        trimmed, the environment is trimmed and lower-cased, and an absent environment
+        is ``default``. ``None`` fields are treated as absent. Values are not echoed.
+        """
+
+        if data.get("config_id") is not None and self.config_id:
+            value = data["config_id"]
+            if not isinstance(value, str) or value.strip() != self.config_id.strip():
+                return "config_id does not match the requested config_id"
+        if data.get("function_ref") is not None:
+            value = data["function_ref"]
+            if not isinstance(value, str) or value.strip() != function_ref_for(
+                self.func
+            ):
+                return "function_ref does not match the requested function"
+        if data.get("environment") is not None:
+            value = data["environment"]
+            if (
+                not isinstance(value, str)
+                or value.strip().lower() != self.best_config_environment
+            ):
+                return "environment does not match the requested environment"
+        return None
+
+    def _load_legacy_snapshot(
+        self, path: str, *, source: str
+    ) -> tuple[bool, BestConfigSnapshot | None]:
+        """Read a legacy (non-canonical) file under the request's identity.
+
+        Returns ``(False, None)`` when the file holds no legacy config at all (the
+        caller then reports the canonical failure); ``(True, None)`` when the file is
+        refused or skipped; otherwise ``(True, snapshot)``.
+
+        * identity fields that contradict the request: refused, always;
+        * a file bound to the requested function (``function_ref`` present and equal)
+          loads;
+        * an identity-free file (or one that cannot establish the function) loads only
+          when the user named it (``load_from`` / ``TRAIGENT_CONFIG_PATH``), with a
+          warning; ``best_config_strict`` refuses it. A discovered dev log is skipped.
+        """
+
+        payload = self._read_legacy_payload(path)
+        if payload is None:
+            return False, None
+        data, loaded_config = payload
+        if not loaded_config:
+            return False, None
+
+        mismatch = self._legacy_identity_mismatch(data)
+        if mismatch is not None:
+            self._refuse_legacy_file(path, f"identity mismatch: {mismatch}")
+            return True, None
+
+        function_ref = data.get("function_ref")
+        if not (isinstance(function_ref, str) and function_ref.strip()):
+            if source not in _EXPLICIT_LEGACY_SOURCES:
+                logger.debug(
+                    "Skipping identity-free discovered best config %s: it cannot "
+                    "establish which function it belongs to",
+                    path,
+                )
+                return True, None
+            if self.best_config_strict:
+                self._refuse_legacy_file(
+                    path,
+                    "no function identity (function_ref); best_config_strict only "
+                    "loads a best config bound to the requested function",
+                )
+                return True, None
+            logger.warning(
+                "Loading legacy best config %s without verifying its identity: the "
+                "file names no function_ref, so it may belong to another function "
+                "or environment",
+                path,
+            )
+        elif data.get("environment") is None and self.best_config_environment != (
+            "default"
+        ):
+            self._refuse_legacy_file(
+                path,
+                "identity mismatch: environment does not match the requested "
+                "environment",
+            )
+            return True, None
+        return True, self._snapshot_from_plain_config(loaded_config, source=source)
 
     @staticmethod
     def _best_config_environment_is_explicit(explicit: str | None) -> bool:
@@ -818,7 +922,11 @@ class ConfigStateManager:
         logger.info(f"Reset optimization state for {self.func.__name__}")
 
     def set_config(self, config: dict[str, Any]) -> None:
-        """Set current configuration manually as a sticky override."""
+        """Set current configuration manually as a sticky override.
+
+        An explicit user call with the values in hand: it does not verify stored
+        identity (``config_id`` / ``function_ref`` / environment) of anything.
+        """
         with self._state_lock:
             snapshot = self._snapshot_from_plain_config(
                 config, source=BestConfigSource.OVERRIDE.value
@@ -836,6 +944,9 @@ class ConfigStateManager:
         set_wrapped_func: Callable[[Any], None] | None = None,
     ) -> bool:
         """Apply best configuration from optimization results.
+
+        An explicit user call with the result in hand: it does not verify the stored
+        identity (``config_id`` / ``function_ref`` / environment) of ``results``.
 
         Args:
             results: OptimizationResult to use (defaults to latest optimization)
@@ -958,6 +1069,10 @@ class ConfigStateManager:
 
     def load_optimization_results(self, path: str) -> None:
         """Load optimization results from file.
+
+        An explicit user call with a saved result in hand: it does not verify the
+        stored identity (``config_id`` / ``function_ref`` / environment) of the file
+        and installs its winner as a sticky override.
 
         Raises:
             ConfigurationError: If results cannot be loaded
@@ -1089,7 +1204,16 @@ class ConfigStateManager:
             )
 
     def _find_latest_config_path(self) -> str | None:
-        """Find the most recent best_config file in optimization logs."""
+        """Find the newest best_config artifact in the optimization logs that is ours.
+
+        The log directory is keyed on the bare function name, so two functions in
+        different modules share it. An artifact is only a candidate when it names the
+        requested function's qualified ``function_ref``: identity-free artifacts and
+        another function's artifacts are skipped. Among candidates the newest one
+        bound to the requested environment (and config id) wins; when none is, the
+        newest function-matching artifact is returned so that loading it refuses it
+        (strict raises, non-strict skips) rather than silently serving defaults.
+        """
         log_dirs = [
             Path.cwd() / ".traigent" / "optimization_logs",
             Path(os.environ.get("TRAIGENT_RESULTS_FOLDER", Path.home() / ".traigent"))
@@ -1100,6 +1224,7 @@ class ConfigStateManager:
             log_dirs.insert(0, Path(self.local_storage_path) / "optimization_logs")
 
         func_name = getattr(self.func, "__name__", "unknown")
+        fallback: str | None = None
 
         for log_dir in log_dirs:
             experiments_dir = log_dir / "experiments" / func_name / "runs"
@@ -1117,28 +1242,59 @@ class ConfigStateManager:
                     run_dir / "artifacts" / "best_config_v2.json",
                     run_dir / "artifacts" / "best_config.json",
                 ]:
-                    if config_file.exists():
+                    if not config_file.exists():
+                        continue
+                    verdict = self._dev_log_candidate(config_file)
+                    if verdict == "match":
                         return str(config_file)
+                    if verdict == "function" and fallback is None:
+                        fallback = str(config_file)
 
-        return None
+        return fallback
+
+    def _dev_log_candidate(self, config_file: Path) -> str | None:
+        """Classify a dev-log artifact: ``match``, ``function`` (only) or ``None``."""
+        try:
+            with open(config_file, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:  # noqa: BLE001 - an unreadable artifact is not a candidate
+            return None
+        if not isinstance(data, dict):
+            return None
+        function_ref = data.get("function_ref")
+        if not isinstance(function_ref, str):
+            return None
+        if function_ref.strip() != function_ref_for(self.func):
+            return None
+        if self._legacy_identity_mismatch(data) is None and (
+            data.get("environment") is not None
+            or self.best_config_environment == "default"
+        ):
+            return "match"
+        return "function"
 
     @staticmethod
-    def _path_has_best_config_schema(path: str) -> bool:
-        """Return True when a file declares the canonical best-config schema."""
+    def _path_declares_schema_version(path: str) -> bool:
+        """Return True when a file declares ANY ``schema_version``.
+
+        A declared version marks a canonical envelope: a version the SDK does not
+        support is refused rather than read through the legacy fallback.
+        """
         try:
             config_path = validate_user_path(path, for_write=False)
             with open(config_path, encoding="utf-8") as f:
                 data = json.load(f)
-            return (
-                isinstance(data, dict)
-                and data.get("schema_version") == BEST_CONFIG_SCHEMA_VERSION
-            )
+            return isinstance(data, dict) and "schema_version" in data
         except Exception:
             return False
 
     @staticmethod
-    def _load_config_from_path(path: str) -> dict[str, Any] | None:
-        """Load configuration from a JSON file."""
+    def _read_legacy_payload(path: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        """Read a legacy file: ``(whole decoded object, extracted config)``.
+
+        Returns ``None`` (after the historical warning) when the file cannot be read or
+        holds no recognisable config.
+        """
         try:
             config_path = validate_user_path(path, for_write=False)
             if not config_path.exists():
@@ -1148,16 +1304,19 @@ class ConfigStateManager:
             with open(config_path, encoding="utf-8") as f:
                 data = json.load(f)
 
+            if not isinstance(data, dict):
+                logger.warning(f"Unrecognized config format in {path}.")
+                return None
             if "config" in data:
                 config = data["config"]
-                return dict(config) if config is not None else None
+                return (data, dict(config)) if config is not None else None
             elif "best_config" in data:
                 best_config = data["best_config"]
-                return dict(best_config) if best_config is not None else None
-            elif isinstance(data, dict) and not any(
-                k in data for k in ["trials", "metrics", "metadata"]
-            ):
-                return dict(data)
+                return (data, dict(best_config)) if best_config is not None else None
+            elif not any(k in data for k in ["trials", "metrics", "metadata"]):
+                # A bare config dict carries no envelope: nothing in it is identity
+                # (a tunable may legitimately be called ``environment``).
+                return {}, dict(data)
             else:
                 logger.warning(
                     f"Unrecognized config format in {path}. "
@@ -1174,6 +1333,16 @@ class ConfigStateManager:
         except Exception as e:
             logger.warning(f"Error loading config from {path}: {e}")
             return None
+
+    @staticmethod
+    def _load_config_from_path(path: str) -> dict[str, Any] | None:
+        """Load the bare configuration from a JSON file (no identity check).
+
+        Low-level read: it returns only the config dict. Identity-bound loading goes
+        through ``_load_snapshot_from_file``.
+        """
+        payload = ConfigStateManager._read_legacy_payload(path)
+        return payload[1] if payload else None
 
     # -- Export methods ----------------------------------------------------
 

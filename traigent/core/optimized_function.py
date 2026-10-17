@@ -53,6 +53,7 @@ from traigent.config.types import (
     resolve_execution_policy,
     validate_execution_mode,
 )
+from traigent.core.best_config_runtime import function_ref_for
 from traigent.core.ci_approval import check_ci_approval
 from traigent.core.config_state_manager import (
     ConfigStateManager,  # Per-function configuration manager.
@@ -2780,6 +2781,10 @@ class OptimizedFunction(Generic[_P, _R]):
         orchestrator.task_type = self.task_type
         orchestrator.dataset_id = self.dataset_id
         orchestrator.head_environment = self._csm.best_config_environment
+        # The identity the SDK's own development log is stamped with, so that
+        # auto-discovery can later load only an artifact that is ours.
+        orchestrator.head_function_ref = function_ref_for(self._csm.func)
+        orchestrator.head_config_id = self._csm.config_id
         orchestrator.head_environment_explicit = bool(
             getattr(self._csm, "best_config_environment_explicit", False)
         )
@@ -4351,7 +4356,11 @@ Remediation:
         self._csm.save_optimization_results(path)
 
     def load_optimization_results(self, path: str) -> None:
-        """Load optimization results from file."""
+        """Load optimization results from file.
+
+        An explicit user call with a saved result in hand: it does not verify the
+        stored identity (``config_id`` / ``function_ref`` / environment) of the file.
+        """
         self._csm.load_optimization_results(path)
 
     @property
@@ -4374,7 +4383,11 @@ Remediation:
         self._csm.maybe_auto_load_config()
 
     def set_config(self, config: dict[str, Any]) -> None:
-        """Set current configuration manually."""
+        """Set current configuration manually.
+
+        An explicit user call with the values in hand: it does not verify stored
+        identity (``config_id`` / ``function_ref`` / environment) of anything.
+        """
         self._csm.set_config(config)
 
     def clear_override(self) -> bool:
@@ -4388,6 +4401,9 @@ Remediation:
 
     def apply_best_config(self, results: OptimizationResult | None = None) -> bool:
         """Apply best configuration from optimization results.
+
+        An explicit user call with the result in hand: it does not verify the stored
+        identity (``config_id`` / ``function_ref`` / environment) of ``results``.
 
         Promotion takes the same exclusive per-wrapper slot as an
         ``optimize(apply=True)`` run and holds it across the commit, so it is

@@ -627,8 +627,17 @@ def test_decorator_enable_auto_load_dev_logs_reads_latest_config(tmp_path):
         / "artifacts"
     )
     artifacts_dir.mkdir(parents=True)
+    # The artifact carries the identity the SDK's own logger stamps on it: an
+    # identity-free dev log is no longer auto-loaded (F1e ruling d; see
+    # test_best_config_legacy_identity.py).
     (artifacts_dir / "best_config.json").write_text(
-        json.dumps({"config": {"temperature": 0.6}}),
+        json.dumps(
+            {
+                "function_ref": function_ref_for(context_answer),
+                "environment": "default",
+                "config": {"temperature": 0.6},
+            }
+        ),
         encoding="utf-8",
     )
 
