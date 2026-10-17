@@ -108,9 +108,6 @@
   datasets:
     - "datasets/structured-output-json/evaluation_set.jsonl"
   docs: "../core/structured-output-json/index.html"
-  docs_sections:
-    - label: "Code Review Playbook"
-      href: "../../docs/contributing/code_review_instructions.md"
 - slug: tool-use-calculator
   category: core
   title: "Tool Use Calculator"
