@@ -76,6 +76,7 @@ from traigent.cloud.privacy_operations import PrivacyOperations
 from traigent.cloud.session_operations import SessionOperations
 from traigent.cloud.session_types import SessionCreationResult
 from traigent.core.session_types import safe_http_error_summary
+from traigent.core.best_config_diagnostics import transport_failed_message
 from traigent.cloud.subset_selection import SmartSubsetSelector
 from traigent.cloud.trial_operations import (
     TrialOperations,
@@ -2240,8 +2241,8 @@ class BackendIntegratedClient:
                 TimeoutError,
             ) as exc:
                 raise _SyncBackendTransientError(
-                    f"Agent-head fetch transport failed: {exc}"
-                ) from exc
+                    transport_failed_message("Agent-head fetch", exc)
+                ) from None
             _raise_for_transient_backend_response(response, "Agent-head fetch")
             return response
 
@@ -2551,8 +2552,8 @@ class BackendIntegratedClient:
                 TimeoutError,
             ) as exc:
                 raise _SyncBackendTransientError(
-                    f"Best-config publish transport failed: {exc}"
-                ) from exc
+                    transport_failed_message("Best-config publish", exc)
+                ) from None
             _raise_for_transient_backend_response(response, "Best-config publish")
             return response
 
@@ -2655,8 +2656,8 @@ class BackendIntegratedClient:
                 TimeoutError,
             ) as exc:
                 raise _SyncBackendTransientError(
-                    f"Best-config fetch transport failed: {exc}"
-                ) from exc
+                    transport_failed_message("Best-config fetch", exc)
+                ) from None
             _raise_for_transient_backend_response(response, "Best-config fetch")
             return response
 
@@ -2820,8 +2821,8 @@ class BackendIntegratedClient:
                 TimeoutError,
             ) as exc:
                 raise _SyncBackendTransientError(
-                    f"Example feature upload transport failed: {exc}"
-                ) from exc
+                    transport_failed_message("Example feature upload", exc)
+                ) from None
             _raise_for_transient_backend_response(response, "Example feature upload")
             return response
 

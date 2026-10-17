@@ -10,6 +10,7 @@ OptimizedFunction to reduce class complexity.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import copy
 import threading
@@ -20,6 +21,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from traigent.api.types import OptimizationResult, OptimizationStatus
+from traigent.core import best_config_diagnostics as diag
 from traigent.core.best_config_runtime import (
     BEST_CONFIG_SCHEMA_VERSION,
     BestConfigSnapshot,
@@ -430,7 +432,7 @@ class ConfigStateManager:
                 # back to the identity-blind legacy reader.
                 refusal = self._canonical_refusal(envelope, spec_exc)
                 if self.best_config_strict:
-                    raise self._canonical_failure(refusal, path, label) from spec_exc
+                    raise self._canonical_failure(refusal, path, label) from None
                 logger.warning(
                     "Ignoring invalid canonical best config (%s): %s",
                     label,
@@ -442,7 +444,7 @@ class ConfigStateManager:
             if is_legacy_config:
                 return legacy
             if self.best_config_strict:
-                raise self._canonical_failure(spec_exc, path, label) from spec_exc
+                raise self._canonical_failure(spec_exc, path, label) from None
             logger.warning(
                 "Failed to load best config (%s): %s. Function will use fallback.",
                 label,
@@ -451,13 +453,37 @@ class ConfigStateManager:
             return None
 
     @staticmethod
+    def _unavailable(
+        reason: CloudPublishUnavailableReason,
+        message: str,
+        category: diag.Category,
+        cause: BaseException,
+    ) -> CloudPublishUnavailable:
+        """A fixed-message ``CloudPublishUnavailable``; the cause stays out of text/chain."""
+        error = CloudPublishUnavailable(reason, message)
+        inner_type = (
+            cause.details.get("error_type")
+            if isinstance(cause, ConfigurationError)
+            else None
+        )
+        error.details.update(
+            {
+                "category": category.value,
+                "error_type": inner_type or type(cause).__name__,
+            }
+        )
+        error.__cause__ = None
+        error.__suppress_context__ = True
+        return error
+
+    @staticmethod
     def _exception_text(exc: BaseException) -> str:
         """Fixed, log-safe text: a refusal's fixed message, else the exception type.
 
         Rejected values, keys and paths live on ``exc.details`` only.
         """
 
-        return exc.message if isinstance(exc, TraigentError) else type(exc).__name__
+        return diag.fixed_reason(exc)
 
     @staticmethod
     def _canonical_refusal(
@@ -660,9 +686,12 @@ class ConfigStateManager:
         try:
             expected_spec_hash = compute_spec_hash(sent_spec, environment=environment)
         except ConfigurationError as exc:
-            raise CloudBestConfigIntegrityError(
-                f"Published best-config spec cannot be hashed: {exc}"
-            ) from exc
+            raise diag.refusal(
+                "Published best-config spec cannot be hashed",
+                category=diag.Category.PUBLISH_INTEGRITY_FAILED,
+                cause=exc,
+                error_cls=CloudBestConfigIntegrityError,
+            ) from None
         if result.get("spec_hash") != expected_spec_hash:
             raise CloudBestConfigIntegrityError(
                 "Cloud best-config spec_hash mismatch: the response is not for the "
@@ -865,12 +894,18 @@ class ConfigStateManager:
                 )
             except Exception as cache_exc:
                 if self.best_config_strict:
-                    raise ConfigurationError(
-                        f"Failed to update cloud best-config cache: {cache_exc}"
-                    ) from cache_exc
-                logger.warning(
-                    "Fetched cloud best config but failed to update cache: %s",
-                    cache_exc,
+                    raise diag.refusal(
+                        "Failed to update cloud best-config cache",
+                        category=diag.Category.CACHE_WRITE_FAILED,
+                        cause=cache_exc,
+                        cache_dir=str(self.best_config_cache_dir),
+                    ) from None
+                diag.log(
+                    logger,
+                    logging.WARNING,
+                    "Fetched cloud best config but failed to update cache",
+                    category=diag.Category.CACHE_WRITE_FAILED,
+                    exc=cache_exc,
                 )
 
         snapshot = snapshot_from_spec(
@@ -933,27 +968,36 @@ class ConfigStateManager:
                     if isinstance(exc, CloudPublishUnavailable):
                         raise
                     if isinstance(exc, CloudBestConfigIntegrityError):
-                        raise CloudPublishUnavailable(
+                        raise self._unavailable(
                             CloudPublishUnavailableReason.INTEGRITY_FAILED,
-                            f"Cloud best-config integrity check failed: {exc}",
-                        ) from exc
-                    raise CloudPublishUnavailable(
+                            "Cloud best-config integrity check failed",
+                            diag.Category.FETCH_INTEGRITY_FAILED,
+                            exc,
+                        ) from None
+                    raise self._unavailable(
                         CloudPublishUnavailableReason.REQUEST_FAILED,
-                        f"Cloud best-config fetch failed: {exc}",
-                    ) from exc
+                        "Cloud best-config fetch failed",
+                        diag.Category.FETCH_FAILED,
+                        exc,
+                    ) from None
                 if self.best_config_strict:
                     raise
                 if isinstance(exc, CloudBestConfigIntegrityError):
-                    logger.error(
-                        "Cloud best-config integrity failure; ignoring %s source: %s",
-                        source.value,
-                        exc,
+                    diag.log(
+                        logger,
+                        logging.ERROR,
+                        f"Cloud best-config integrity failure; ignoring "
+                        f"{source.value} source",
+                        category=diag.Category.FETCH_INTEGRITY_FAILED,
+                        exc=exc,
                     )
                 else:
-                    logger.warning(
-                        "Ignoring %s best-config source after failure: %s",
-                        source.value,
-                        exc,
+                    diag.log(
+                        logger,
+                        logging.WARNING,
+                        f"Ignoring {source.value} best-config source after failure",
+                        category=diag.Category.SOURCE_IGNORED,
+                        exc=exc,
                     )
                 snapshot = None
             if snapshot is not None:
@@ -1583,15 +1627,19 @@ class ConfigStateManager:
         except CloudPublishUnavailable:
             raise
         except CloudBestConfigIntegrityError as exc:
-            raise CloudPublishUnavailable(
+            raise ConfigStateManager._unavailable(
                 CloudPublishUnavailableReason.INTEGRITY_FAILED,
-                f"Cloud best-config publish integrity check failed: {exc}",
-            ) from exc
+                "Cloud best-config publish integrity check failed",
+                diag.Category.PUBLISH_INTEGRITY_FAILED,
+                exc,
+            ) from None
         except Exception as exc:
-            raise CloudPublishUnavailable(
+            raise ConfigStateManager._unavailable(
                 CloudPublishUnavailableReason.REQUEST_FAILED,
-                f"Cloud best-config publish failed: {exc}",
-            ) from exc
+                "Cloud best-config publish failed",
+                diag.Category.PUBLISH_FAILED,
+                exc,
+            ) from None
 
     @staticmethod
     def _promotion_precondition_kwargs(

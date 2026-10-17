@@ -8,6 +8,7 @@ import copy
 import hashlib
 import inspect
 import json
+import logging
 import math
 import unicodedata
 from dataclasses import dataclass, field
@@ -17,7 +18,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from traigent.utils.exceptions import ConfigurationError, TraigentError
+from traigent.core import best_config_diagnostics as diag
+from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -381,10 +383,13 @@ def source_order_for_mode(
     try:
         normalized = BestConfigSourceMode(mode)
     except ValueError as exc:
-        raise ConfigurationError(
-            f"Unknown best_config_source {mode!r}. "
-            "Use one of: off, repo, cloud, repo_then_cloud, cloud_then_repo."
-        ) from exc
+        raise diag.refusal(
+            "Unknown best_config_source. "
+            "Use one of: off, repo, cloud, repo_then_cloud, cloud_then_repo.",
+            category=diag.Category.SOURCE_MODE,
+            cause=exc,
+            best_config_source=repr(mode),
+        ) from None
 
     if normalized is BestConfigSourceMode.OFF:
         return ()
@@ -435,12 +440,20 @@ def load_best_config_spec(
         if strict or isinstance(exc, ConfigurationError):
             if isinstance(exc, ConfigurationError):
                 raise
-            raise ConfigurationError(
+            raise diag.refusal(
                 "Failed to load best config",
-                details={"path": str(path), "error_type": type(exc).__name__},
-            ) from exc
+                category=diag.Category.LOAD_FAILED,
+                cause=exc,
+                path=str(path),
+            ) from None
         # fail-open(intentional): non-strict callers accept degraded fallback; strict callers re-raise
-        logger.warning("Ignoring invalid best config (%s)", _fixed_reason(exc))
+        diag.log(
+            logger,
+            logging.WARNING,
+            "Ignoring invalid best config",
+            category=diag.Category.LOAD_FAILED,
+            exc=exc,
+        )
         return None
 
 
@@ -863,14 +876,18 @@ def resolve_repo_best_config(
         if strict:
             if isinstance(exc, ConfigurationError):
                 raise
-            raise ConfigurationError(
+            raise diag.refusal(
                 "Failed to resolve repo best config",
-                details={"error_type": type(exc).__name__},
-            ) from exc
+                category=diag.Category.REPO_INVALID,
+                cause=exc,
+            ) from None
         # fail-open(intentional): non-strict callers accept degraded fallback; strict callers re-raise
-        logger.warning(
-            "Ignoring repo best config after validation failure: %s",
-            _fixed_reason(exc),
+        diag.log(
+            logger,
+            logging.WARNING,
+            "Ignoring repo best config after validation failure",
+            category=diag.Category.REPO_INVALID,
+            exc=exc,
         )
         return None
 
@@ -914,7 +931,12 @@ def resolve_cloud_cache_best_config(
             stale_ok_ttl_seconds if stale_ok_ttl_seconds is not None else ttl_seconds
         )
         if current_time - loaded_at > timedelta(seconds=max_age):
-            logger.warning("Ignoring stale best-config cache for %s", safe_config_id)
+            diag.log(
+                logger,
+                logging.WARNING,
+                "Ignoring stale best-config cache",
+                category=diag.Category.CACHE_STALE,
+            )
             return None
 
         snapshot = load_best_config_spec(
@@ -937,24 +959,20 @@ def resolve_cloud_cache_best_config(
         if strict:
             if isinstance(exc, ConfigurationError):
                 raise
-            raise ConfigurationError(
+            raise diag.refusal(
                 "Failed to resolve cloud cache",
-                details={"error_type": type(exc).__name__},
-            ) from exc
+                category=diag.Category.CACHE_INVALID,
+                cause=exc,
+            ) from None
         # fail-open(intentional): non-strict callers accept degraded fallback; strict callers re-raise
-        logger.warning("Ignoring cloud best-config cache: %s", _fixed_reason(exc))
+        diag.log(
+            logger,
+            logging.WARNING,
+            "Ignoring cloud best-config cache",
+            category=diag.Category.CACHE_INVALID,
+            exc=exc,
+        )
         return None
-
-
-def _fixed_reason(exc: BaseException) -> str:
-    """Log-safe reason: a refusal's fixed message, else only the exception type.
-
-    Structured details live on ``exc.details`` and are never part of the text.
-    """
-
-    if isinstance(exc, TraigentError):
-        return exc.message
-    return type(exc).__name__
 
 
 def _validate_config_id(config_id: Any) -> str:
