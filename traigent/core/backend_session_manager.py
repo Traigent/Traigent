@@ -70,6 +70,7 @@ from traigent.utils.function_identity import FunctionDescriptor
 from traigent.utils.logging import get_logger
 from traigent.utils.trial_costs import (
     TRIAL_COST_FIELDS,
+    coerce_finite_cost,
     extract_trial_cost_metric,
     lift_flagged_cost_to_floor,
     is_cost_unmeasured,
@@ -1033,6 +1034,32 @@ class BackendSessionManager:
         except (TypeError, ValueError):
             return False
 
+    def _apply_tracked_spend_to_payload(
+        self,
+        session_id: str,
+        metrics_payload: dict[str, Any],
+        tracked: Mapping[str, Any],
+    ) -> None:
+        """Overwrite payload cost fields from the trial's tracker snapshot."""
+        cost = coerce_finite_cost(tracked.get("cost"))
+        for key in ("cost", "total_cost", "input_cost", "output_cost"):
+            metrics_payload.pop(key, None)
+        if tracked.get("unmeasured") or cost is None:
+            floor = coerce_finite_cost(tracked.get("lower_bound"))
+            floor = floor if floor is not None and floor > 0 else 0.0
+            metrics_payload["cost_unmeasured"] = 1.0
+            if floor > 0:
+                metrics_payload["cost_lower_bound"] = floor
+            else:
+                metrics_payload.pop("cost_lower_bound", None)
+            if session_id in self._session_cost_budget_armed:
+                metrics_payload["cost"] = floor
+            return
+        metrics_payload.pop("cost_unmeasured", None)
+        metrics_payload.pop("cost_lower_bound", None)
+        metrics_payload["cost"] = cost
+        metrics_payload["total_cost"] = cost
+
     def _ensure_budget_cost_metric(
         self,
         *,
@@ -1042,6 +1069,13 @@ class BackendSessionManager:
         metadata: Mapping[str, Any],
     ) -> None:
         if trial_result.status != TrialStatus.COMPLETED:
+            return
+
+        tracked = getattr(trial_result, "tracked_spend", None)
+        if isinstance(tracked, Mapping):
+            # Tracker-derived spend is the only authority: a user's custom
+            # cost/total_cost score never reaches the budget (owner ruling A).
+            self._apply_tracked_spend_to_payload(session_id, metrics_payload, tracked)
             return
 
         if is_cost_unmeasured(metrics_payload) or is_cost_unmeasured(
@@ -2394,6 +2428,11 @@ class BackendSessionManager:
 
         sanitized_score = float(score) if score is not None else None
         metadata_payload = dict(metadata)
+        tracked_spend = getattr(trial_result, "tracked_spend", None)
+        if isinstance(tracked_spend, Mapping):
+            # Offline sync must rebuild spend from the tracker, never from
+            # user metrics.
+            metadata_payload["tracked_spend"] = dict(tracked_spend)
         if score is None:
             metadata_payload["primary_objective_missing"] = True
 

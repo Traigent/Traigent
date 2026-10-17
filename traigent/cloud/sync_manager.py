@@ -44,7 +44,8 @@ from ..storage.local_storage import (
 )
 from ..utils.exceptions import TraigentStorageError
 from ..utils.logging import get_logger
-from ..utils.trial_costs import is_cost_unmeasured
+from ..utils.optimization_result_persistence import decode_trial_tracked_spend
+from ..utils.trial_costs import coerce_finite_cost, is_cost_unmeasured
 
 logger = get_logger(__name__)
 
@@ -682,6 +683,18 @@ class SyncManager:
         """Return True for JSON numeric values while excluding booleans."""
         return isinstance(value, (int, float)) and not isinstance(value, bool)
 
+    @staticmethod
+    def _tracked_cost_measures(tracked: dict[str, Any]) -> dict[str, float]:
+        """Cost measures rebuilt from a tracker snapshot (owner ruling A)."""
+        cost = coerce_finite_cost(tracked.get("cost"))
+        if tracked.get("unmeasured") or cost is None:
+            floor = coerce_finite_cost(tracked.get("lower_bound"))
+            measures = {"cost_unmeasured": 1.0}
+            if floor is not None and floor > 0:
+                measures["cost_lower_bound"] = floor
+            return measures
+        return {"cost": cost, "total_cost": cost}
+
     def _convert_trials_to_results(self, trials: list[Any]) -> list[dict[str, Any]]:
         """Convert local trials to Traigent configuration_run format."""
         results = []
@@ -712,6 +725,15 @@ class SyncManager:
             trial_metrics = {
                 k: v for k, v in all_metrics.items() if self._is_numeric(v)
             }
+            tracked = decode_trial_tracked_spend(
+                (trial.metadata or {}).get("tracked_spend")
+            )
+            if tracked is not None:
+                # Tracker-derived spend is the only authority: user metrics
+                # (all_metrics / metadata costs) never become synced cost.
+                for key in ("cost", "total_cost", "input_cost", "output_cost"):
+                    trial_metrics.pop(key, None)
+                cost_measures = self._tracked_cost_measures(tracked)
             result = {
                 "id": f"config_run_{trial.trial_id}",
                 "trial_id": trial.trial_id,

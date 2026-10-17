@@ -110,6 +110,17 @@ logger = get_logger(__name__)
 # it was and can let it win a cost objective (issue #2404).
 MEASURED_ONLY_METRICS = frozenset({"cost", "input_cost", "output_cost", "total_cost"})
 
+# Keys a tracker-derived row carries once a call was captured.
+_TRACKER_USAGE_KEYS = (
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+    "input_cost",
+    "output_cost",
+    "total_cost",
+    "cost_unmeasured",
+)
+
 
 def failed_row_metrics(metric_names: Iterable[str]) -> dict[str, float]:
     """Metrics for a failed example: 0.0 quality, no fabricated cost."""
@@ -1722,6 +1733,28 @@ class BaseEvaluator(ABC):
             "cost": coerce_finite_cost(source.get(cost_key)),
             "lower_bound": bound if bound is not None and bound > 0 else 0.0,
         }
+
+    @staticmethod
+    def _apply_tracked_unknown_cost(
+        metrics: dict[str, Any], tracked_spend: Mapping[str, Any] | None
+    ) -> None:
+        """Make public metrics agree with an unknown tracker-measured cost.
+
+        When ``tracked_spend`` says the trial's cost is unknown (owner ruling
+        A), a finite ``cost``/``total_cost`` (typically a user's own score
+        from the custom pass) must not survive: drop it, flag the trial
+        ``cost_unmeasured`` and report the priced part as ``cost_lower_bound``.
+        """
+        if not tracked_spend or not tracked_spend.get("unmeasured"):
+            return
+        for key in MEASURED_ONLY_METRICS:
+            metrics.pop(key, None)
+        metrics["cost_unmeasured"] = 1.0
+        bound = coerce_finite_cost(tracked_spend.get("lower_bound"))
+        if bound is not None and bound > 0:
+            metrics["cost_lower_bound"] = bound
+        else:
+            metrics.pop("cost_lower_bound", None)
 
     @staticmethod
     def _execution_budget_cost(result: EvaluationResult) -> float | None:
@@ -5085,6 +5118,17 @@ class SimpleScoringEvaluator(BaseEvaluator):
         result.examples_consumed = len(example_results)
         if tracked_llm_agg is not None:
             result.tracked_spend = self._tracked_spend(tracked_llm_agg, "total_cost")
+            # Only when the tracker actually measured something: with no
+            # captured call at all the evaluator's own reported cost still
+            # counts (documented carve-out).
+            if any(key in row for row in tracker_rows for key in _TRACKER_USAGE_KEYS):
+                self._apply_tracked_unknown_cost(
+                    result.aggregated_metrics, result.tracked_spend
+                )
+                if result.metrics is not result.aggregated_metrics:
+                    self._apply_tracked_unknown_cost(
+                        result.metrics, result.tracked_spend
+                    )
         else:
             # No tracker measurement (capture off): spend is untracked. A
             # user's custom cost/total_cost score must never become the debit.

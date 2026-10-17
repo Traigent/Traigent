@@ -905,6 +905,9 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             # objectives according to the measurement policy below.
             aggregated_metrics.update(llm_agg)
             self._resolve_unmeasured_cost_objectives(aggregated_metrics, all_metrics)
+            # Public metrics follow the tracker: an unknown tracked cost drops
+            # any finite custom cost/total_cost and carries the floor.
+            self._apply_tracked_unknown_cost(aggregated_metrics, tracked_spend)
         # No tracker measurement at all (capture off, or no captured call in any
         # example): ``tracked_spend`` stays None and budget accounting keeps its
         # legacy reported-metrics fallback. Finding 3 of the round-3 review
