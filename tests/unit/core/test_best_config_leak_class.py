@@ -566,16 +566,156 @@ def _scn_load_results_ok_log(tmp_path, monkeypatch, strict):
     manager = _manager()
     src = tmp_path / f"saved-{CANARY}.json"
     manager.set_config({"t": 2})
+    manager._optimization_results = _real_results()
+    manager.save_optimization_results(str(src))
+    assert src.exists(), "the save must succeed so the load below is reached"
+    manager.load_optimization_results(str(src))
+    assert manager._optimization_results is not None
+
+
+def _real_results():
+    from traigent.api.types import OptimizationResult, OptimizationStatus
+
+    return OptimizationResult(
+        trials=[],
+        best_config={"t": 2},
+        best_score=1.0,
+        optimization_id="opt-1",
+        duration=1.0,
+        convergence_info={},
+        status=OptimizationStatus.COMPLETED,
+        objectives=["accuracy"],
+        algorithm="grid",
+        timestamp=datetime.now(UTC),
+    )
+
+
+def _scn_load_results_unknown_status(tmp_path, monkeypatch, strict):
+    manager = _manager()
+    src = tmp_path / "saved.json"
+    manager.set_config({"t": 2})
+    manager._optimization_results = _real_results()
+    manager.save_optimization_results(str(src))
+    data = json.loads(src.read_text())
+    data["status"] = f"status-{CANARY}"
+    src.write_text(json.dumps(data))
+    manager.load_optimization_results(str(src))
+
+
+def _scn_load_results_legacy(tmp_path, monkeypatch, strict):
+    # an unversioned (legacy) artifact named with the canary decodes with a warning
+    from traigent.utils.optimization_result_persistence import SCHEMA_VERSION_KEY
+
+    manager = _manager()
+    src = tmp_path / f"legacy-{CANARY}.json"
+    manager.set_config({"t": 2})
+    manager._optimization_results = _real_results()
+    manager.save_optimization_results(str(src))
+    data = json.loads(src.read_text())
+    data.pop(SCHEMA_VERSION_KEY, None)
+    for field in ("source", "warnings", "stop_reason", "total_cost", "metadata"):
+        data.pop(field, None)
+    src.write_text(json.dumps(data))
+    manager.load_optimization_results(str(src))
+
+
+def _scn_client_protected_invalid_header(tmp_path, monkeypatch, strict):
+    import requests
+
+    client = _client()
+    with (
+        _auth(client, return_value={"Authorization": "Bearer t"}),
+        patch("traigent.cloud.backend_client.gate_session", lambda sess, **kw: sess),
+        patch.object(
+            requests.adapters.HTTPAdapter,
+            "send",
+            side_effect=AssertionError("must not send"),
+        ),
+    ):
+        client.publish_best_config_sync(
+            _spec(),
+            environment="prod",
+            agent_ref=_AGENT_REF,
+            expected_head_generation=0,
+            if_match="\n" + CANARY,
+        )
+
+
+def _table_missing():
+    raise FileNotFoundError(f"/work/{CANARY}/table.json")
+
+
+def _scn_gate_refusal_chain(tmp_path, monkeypatch, strict):
+    from traigent.labels import transport_gate as tg
+
+    with (
+        patch.object(tg, "current_mode", return_value="refuse"),
+        patch.object(tg, "applies_to", return_value=True),
+        patch.object(tg, "get_table", _table_missing),
+    ):
+        tg.inspect_outgoing("GET", "https://api.test/x", None)
+
+
+def _scn_client_gate_refusal_chain(tmp_path, monkeypatch, strict):
+    import requests
+    from traigent.labels import transport_gate as tg
+
+    client = _client()
+    with (
+        _auth(client, return_value={"Authorization": "Bearer t"}),
+        patch.object(tg, "current_mode", return_value="refuse"),
+        patch.object(tg, "applies_to", return_value=True),
+        patch.object(tg, "get_table", _table_missing),
+        patch.object(
+            requests.adapters.HTTPAdapter,
+            "send",
+            side_effect=AssertionError("must not send"),
+        ),
+    ):
+        client.fetch_agent_head_generation_by_ref_sync(
+            _AGENT_REF, environment="production"
+        )
+
+
+def _scn_apply_best_config_key(tmp_path, monkeypatch, strict):
+    manager = _manager()
+    manager.set_config({"t": 2})
     results = MagicMock()
-    results.best_config = {"t": 2}
+    results.best_config = {"t": 2, f"k_{CANARY}": 1}
     results.metadata = {}
-    manager._optimization_results = None
-    try:
-        manager.save_optimization_results(str(src))
-    except Exception:  # noqa: BLE001 - nothing to save without results
-        pass
-    if src.exists():
-        manager.load_optimization_results(str(src))
+    manager.apply_best_config(results)
+
+
+def _long_dir(tmp_path: Path) -> Path:
+    return tmp_path / (CANARY + "x" * 300)
+
+
+def _scn_write_repo_overlong(tmp_path, monkeypatch, strict):
+    write_repo_best_config(_long_dir(tmp_path), config_id=CID, config={"t": 2})
+
+
+def _scn_write_cache_overlong(tmp_path, monkeypatch, strict):
+    write_cloud_cache_best_config(
+        _long_dir(tmp_path), _spec(), etag="e", loaded_at=datetime.now(UTC)
+    )
+
+
+def _scn_load_manifest_overlong(tmp_path, monkeypatch, strict):
+    from traigent.core.best_config_runtime import load_manifest
+
+    load_manifest(_long_dir(tmp_path))
+
+
+def _scn_export_overlong(tmp_path, monkeypatch, strict):
+    manager = _manager()
+    manager.set_config({"t": 2})
+    manager.export_best_config(str(_long_dir(tmp_path)))
+
+
+def _scn_write_manifest_is_dir(tmp_path, monkeypatch, strict):
+    target = tmp_path / f"d-{CANARY}"
+    (target / "manifest.json").mkdir(parents=True)
+    write_repo_best_config(target, config_id=CID, config={"t": 2})
 
 
 def _scenarios() -> dict[str, Scenario]:
@@ -641,6 +781,17 @@ def _scenarios() -> dict[str, Scenario]:
     s["results/load_missing"] = _scn_load_results_missing
     s["results/load_bad_json"] = _scn_load_results_bad_json
     s["results/save_load_named_file"] = _scn_load_results_ok_log
+    s["results/legacy_named_file"] = _scn_load_results_legacy
+    s["results/unknown_status"] = _scn_load_results_unknown_status
+    s["client/protected/publish_invalid_header"] = _scn_client_protected_invalid_header
+    s["gate/refusal_chain"] = _scn_gate_refusal_chain
+    s["client/gate_refusal_chain"] = _scn_client_gate_refusal_chain
+    s["manager/apply_best_config_key"] = _scn_apply_best_config_key
+    s["write/repo_overlong"] = _scn_write_repo_overlong
+    s["write/cache_overlong"] = _scn_write_cache_overlong
+    s["write/load_manifest_overlong"] = _scn_load_manifest_overlong
+    s["write/export_overlong"] = _scn_export_overlong
+    s["write/manifest_is_dir"] = _scn_write_manifest_is_dir
     return s
 
 

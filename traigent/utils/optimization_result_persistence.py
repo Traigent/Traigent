@@ -495,10 +495,11 @@ def _decode_status(value: Any) -> OptimizationStatus:
     try:
         return OptimizationStatus(value)
     except ValueError:
+        # The value is artifact content: never printed (fixed text, type only).
         logger.warning(
-            "Unrecognized OptimizationStatus %r in a persisted result; "
+            "Unrecognized OptimizationStatus (%s) in a persisted result; "
             "restoring it as UNKNOWN rather than asserting success or failure.",
-            value,
+            type(value).__name__,
         )
         return OptimizationStatus.UNKNOWN
 
@@ -771,10 +772,9 @@ def _decode_legacy(
         # with a loader-internal concern and break the verbatim round trip
         # those fields are pinned to (#2026).
         logger.warning(
-            "Restored a pre-#2031 %s artifact (%s) with reduced fidelity: "
+            "Restored a pre-#2031 %s artifact with reduced fidelity: "
             "fields not present in the artifact and left at their defaults: %s. %s",
             legacy_format,
-            label,
             ", ".join(defaulted) or "(none)",
             " ".join(notes) or "",
         )

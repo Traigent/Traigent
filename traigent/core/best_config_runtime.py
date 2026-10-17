@@ -715,10 +715,11 @@ def load_manifest(directory: str | Path) -> dict[str, Any] | None:
     """Load a best-config manifest from a directory."""
 
     manifest_path = Path(directory) / "manifest.json"
-    if not manifest_path.exists():
-        return None
-    with manifest_path.open(encoding="utf-8") as handle:
-        manifest = json.load(handle)
+    with diag.fs_guard("Best config manifest could not be read"):
+        if not manifest_path.exists():
+            return None
+        with manifest_path.open(encoding="utf-8") as handle:
+            manifest = json.load(handle)
     if not isinstance(manifest, dict):
         raise diag.SafeConfigurationError("Best config manifest must be an object")
     if manifest.get("schema_version") != BEST_CONFIG_MANIFEST_SCHEMA_VERSION:
@@ -748,7 +749,8 @@ def write_repo_best_config(
 
     safe_config_id = _validate_config_id(config_id)
     output_dir = Path(directory)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    with diag.fs_guard("Best config directory could not be created"):
+        output_dir.mkdir(parents=True, exist_ok=True)
 
     spec: dict[str, Any] = {
         "schema_version": BEST_CONFIG_SCHEMA_VERSION,
@@ -770,7 +772,9 @@ def write_repo_best_config(
     _write_json_atomic(spec_path, spec)
 
     manifest_path = output_dir / "manifest.json"
-    loaded_manifest = load_manifest(output_dir) if manifest_path.exists() else None
+    with diag.fs_guard("Best config manifest could not be inspected"):
+        manifest_present = manifest_path.exists()
+    loaded_manifest = load_manifest(output_dir) if manifest_present else None
     manifest: dict[str, Any] = loaded_manifest or {
         "schema_version": BEST_CONFIG_MANIFEST_SCHEMA_VERSION,
         "configs": {},
@@ -807,7 +811,8 @@ def write_cloud_cache_best_config(
     snapshot = snapshot_from_spec(spec, source=BestConfigSource.CLOUD_CACHE.value)
     safe_config_id = _validate_config_id(snapshot.config_id)
     output_dir = Path(directory)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    with diag.fs_guard("Best config directory could not be created"):
+        output_dir.mkdir(parents=True, exist_ok=True)
 
     normalized_spec = _normalize_json_value(copy.deepcopy(spec))
     if not isinstance(normalized_spec, dict):
@@ -818,7 +823,9 @@ def write_cloud_cache_best_config(
     _write_json_atomic(spec_path, normalized_spec)
 
     manifest_path = output_dir / "manifest.json"
-    loaded_manifest = load_manifest(output_dir) if manifest_path.exists() else None
+    with diag.fs_guard("Best config manifest could not be inspected"):
+        manifest_present = manifest_path.exists()
+    loaded_manifest = load_manifest(output_dir) if manifest_present else None
     manifest: dict[str, Any] = loaded_manifest or {
         "schema_version": BEST_CONFIG_MANIFEST_SCHEMA_VERSION,
         "configs": {},
@@ -1197,13 +1204,14 @@ def _parse_datetime(value: Any) -> datetime:
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f".{path.name}.tmp")
-    with tmp_path.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
-        handle.write("\n")
-        handle.flush()
-    tmp_path.replace(path)
+    with diag.fs_guard("Best config file could not be written"):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_name(f".{path.name}.tmp")
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
+            handle.write("\n")
+            handle.flush()
+        tmp_path.replace(path)
 
 
 __all__ = [

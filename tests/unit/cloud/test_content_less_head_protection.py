@@ -1182,6 +1182,9 @@ def test_head_read_refuses_a_redirect():
     with patcher, pytest.raises(CloudServiceError) as excinfo:
         _client().fetch_agent_head_generation_by_ref_sync(AGENT_REF, environment="test")
     assert isinstance(excinfo.value.__cause__, TransportGateRefusal)
+    # the refusal itself has no printable cause chain; its type is the only detail
+    assert excinfo.value.__cause__.__cause__ is None
+    assert "TransportGateRefusal" in str(excinfo.value)
     assert len(wire.requests) == 1  # the redirect target was never contacted
 
 

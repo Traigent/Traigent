@@ -522,7 +522,8 @@ def test_unrecognized_status_member_decodes_to_unknown(caplog) -> None:
         restored = decode_result(encoded, trials=[])
 
     assert restored.status is OptimizationStatus.UNKNOWN
-    assert "quantum_superposition" in caplog.text
+    assert "quantum_superposition" not in caplog.text  # artifact content stays out
+    assert "UNKNOWN" in caplog.text
 
 
 def test_schema_version_is_stamped_into_the_encoded_payload() -> None:
@@ -777,7 +778,7 @@ def test_legacy_artifact_defaults_missing_fields_and_says_so(caplog) -> None:
     assert restored.warning_codes == []
     for name in ("total_cost", "total_tokens", "warnings", "warning_codes"):
         assert name in caplog.text
-    assert "old.json" in caplog.text
+    assert "old.json" not in caplog.text  # artifact names stay out of logs
 
 
 def test_legacy_source_is_unknown_never_the_backend_default() -> None:

@@ -1120,7 +1120,6 @@ class ConfigStateManager:
             self.func.__name__,
             len(results.best_config),
         )
-        logger.debug("Applied best config knob names: %s", sorted(results.best_config))
 
         return True
 
@@ -1239,7 +1238,6 @@ class ConfigStateManager:
                 result_dict,
                 trials=trials,
                 legacy_format="config_state",
-                artifact_name=str(input_path),
             )
             self.append_optimization_result(self._optimization_results)
 

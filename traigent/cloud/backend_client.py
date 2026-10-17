@@ -2347,12 +2347,9 @@ class BackendIntegratedClient:
                 timeout=min(self.timeout, 30.0),
                 **kwargs,
             )
-        except (
-            requests.exceptions.ConnectionError,
-            requests.exceptions.Timeout,
-            ConnectionError,
-            TimeoutError,
-        ):
+        except (requests.exceptions.RequestException, ConnectionError, TimeoutError):
+            # RequestException also covers InvalidHeader / InvalidURL / MissingSchema,
+            # whose text quotes the offending header or URL.
             raise CloudServiceError(f"{operation} transport failed") from None
         finally:
             session.close()

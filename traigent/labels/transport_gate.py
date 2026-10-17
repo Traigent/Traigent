@@ -55,8 +55,11 @@ _CLASS_CACHE: dict[tuple[type, str], type] = {}
 class TransportGateRefusal(RuntimeError):
     """A request was refused before send. Carries counts only, never values."""
 
-    def __init__(self, route: str, counts: dict[str, int]) -> None:
+    def __init__(
+        self, route: str, counts: dict[str, int], *, cause_type: str | None = None
+    ) -> None:
         self.route = route
+        self.cause_type = cause_type  # type name only, never the cause's text
         self.counts = dict(counts)
         blocked = {k: v for k, v in counts.items() if k in BLOCKING}
         super().__init__(f"transport gate refused {route}: {blocked}")
@@ -202,7 +205,10 @@ def inspect_outgoing(
         raise
     except Exception as exc:  # noqa: BLE001 - report mode must never fail a request
         if refuse:
-            raise TransportGateRefusal("unclassifiable", {"violation": 1}) from exc
+            # No printable cause: it can quote a path or request content.
+            raise TransportGateRefusal(
+                "unclassifiable", {"violation": 1}, cause_type=type(exc).__name__
+            ) from None
         with _lock:
             _errors[type(exc).__name__] += 1
         return None
@@ -530,6 +536,9 @@ def preflight_requests(method: str, url: str, **kwargs: Any) -> None:
         raise
     except Exception as exc:  # noqa: BLE001
         if current_mode() == "refuse":
-            raise TransportGateRefusal("unclassifiable", {"violation": 1}) from exc
+            # No printable cause: it can quote a path or request content.
+            raise TransportGateRefusal(
+                "unclassifiable", {"violation": 1}, cause_type=type(exc).__name__
+            ) from None
         with _lock:
             _errors[type(exc).__name__] += 1

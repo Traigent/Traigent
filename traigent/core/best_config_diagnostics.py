@@ -22,6 +22,8 @@ Callers pass only string *literals* as ``message``; nothing interpolated.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from enum import StrEnum
 from typing import Any
 
@@ -43,6 +45,7 @@ class Category(StrEnum):
     PUBLISH_INTEGRITY_FAILED = "publish_integrity_failed"
     TRANSPORT_FAILED = "transport_failed"
     SOURCE_IGNORED = "source_ignored"
+    FILESYSTEM_FAILED = "filesystem_failed"
 
 
 _SAFE_MARK = "_best_config_diag_safe_message"
@@ -114,11 +117,30 @@ def refusal(
 
     payload: dict[str, Any] = {"category": category.value, **details}
     if cause is not None:
-        payload["error_type"] = type(cause).__name__
+        inner = getattr(cause, "details", None)
+        if getattr(cause, _SAFE_MARK, False) and isinstance(inner, dict):
+            # a refusal wrapping a refusal keeps the original exception type name
+            payload["error_type"] = inner.get("error_type", type(cause).__name__)
+        else:
+            payload["error_type"] = type(cause).__name__
     error = error_cls(message, details=payload)
     error.__cause__ = None
     error.__suppress_context__ = True
     return mark_safe(error)
+
+
+@contextmanager
+def fs_guard(message: str) -> Iterator[None]:
+    """Turn any ``OSError`` in the block into a fixed refusal (type name in details only).
+
+    ``OSError`` text quotes the path (which carries customer-chosen components), so it is
+    never printed or chained. ``message`` is a literal.
+    """
+
+    try:
+        yield
+    except OSError as exc:
+        raise refusal(message, category=Category.FILESYSTEM_FAILED, cause=exc) from None
 
 
 def transport_failed_message(operation: str, exc: BaseException) -> str:
@@ -130,6 +152,7 @@ def transport_failed_message(operation: str, exc: BaseException) -> str:
 __all__ = [
     "Category",
     "fixed_reason",
+    "fs_guard",
     "SafeConfigurationError",
     "log",
     "mark_safe",
