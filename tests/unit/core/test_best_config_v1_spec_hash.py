@@ -256,7 +256,10 @@ def _self_consistent_response(stored: dict[str, Any]) -> dict[str, Any]:
         "config_hash": "sha256:"
         + hashlib.sha256(
             json.dumps(
-                stored["config"], ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                stored["config"],
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
             ).encode()
         ).hexdigest(),
     }
@@ -286,7 +289,9 @@ def test_publish_response_for_a_different_function_ref_is_rejected() -> None:
         ConfigStateManager._verify_publish_response(response, sent, environment="prod")
 
 
-def test_publish_response_environment_comes_from_the_envelope_when_the_spec_has_none() -> None:
+def test_publish_response_environment_comes_from_the_envelope_when_the_spec_has_none() -> (
+    None
+):
     sent = _sent_prod()
     del sent["environment"]
     stored = {**sent, "environment": "prod"}
@@ -301,7 +306,9 @@ def test_publish_response_environment_comes_from_the_envelope_when_the_spec_has_
 
 
 @pytest.mark.parametrize("case", _cases(), ids=lambda case: case["name"])
-def test_every_vector_normalized_response_is_still_accepted(case: dict[str, Any]) -> None:
+def test_every_vector_normalized_response_is_still_accepted(
+    case: dict[str, Any],
+) -> None:
     request = case["request"]
     sent = copy.deepcopy(request["spec"])
     stored = copy.deepcopy(case["hashed_payload"])
