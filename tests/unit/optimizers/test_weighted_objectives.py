@@ -629,9 +629,8 @@ class TestWeightedObjectivesIntegration:
                 scores.append(score)
 
             best_trial_index = scores.index(max(scores))
-            assert best_trial_index == expected_winners[i], (
-                f"Scenario {i}: Expected trial {expected_winners[i]}, got {best_trial_index}"
-            )
+            failure_message = f"Scenario {i}: Expected trial {expected_winners[i]}, got {best_trial_index}"
+            assert best_trial_index == expected_winners[i], failure_message
 
     def test_weighted_objectives_with_missing_data(self):
         """Test weighted objectives handling when some trials have missing metrics."""
@@ -776,3 +775,39 @@ class TestWeightedObjectivesErrorHandling:
 
         assert not optimizer._dominates(partial_scores1, partial_scores2)
         assert not optimizer._dominates(partial_scores2, partial_scores1)
+
+
+def test_batch_band_scoring_preserves_unknown_and_measured_zero():
+    import pytest
+
+    from traigent.optimizers.batch_optimizers import (
+        AdaptiveBatchOptimizer,
+        ParallelBatchOptimizer,
+    )
+    from traigent.tvl.models import BandTarget
+
+    schema = ObjectiveSchema(
+        weights_sum=2.0,
+        weights_normalized={"accuracy": 0.5, "cost": 0.5},
+        objectives=[
+            ObjectiveDefinition("accuracy", "maximize", 1.0),
+            ObjectiveDefinition(
+                "cost", "band", 1.0, band=BandTarget(low=0.1, high=0.2)
+            ),
+        ],
+    )
+    for optimizer_type in (ParallelBatchOptimizer, AdaptiveBatchOptimizer):
+        optimizer = optimizer_type(
+            config_space={"setting": [1]},
+            objectives=["accuracy", "cost"],
+            objective_schema=schema,
+        )
+        assert optimizer._calculate_composite_score(
+            {"accuracy": 0.8, "cost": None}
+        ) == pytest.approx(0.8)
+        assert optimizer._calculate_composite_score(
+            {"accuracy": 0.8, "cost": 0.0}
+        ) == pytest.approx(0.35)
+        assert optimizer._calculate_composite_score(
+            {"accuracy": 0.8, "cost": 0.15}
+        ) == pytest.approx(0.4)

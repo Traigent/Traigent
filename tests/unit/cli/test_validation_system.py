@@ -173,8 +173,7 @@ def regular_function():
     ):
         """Discovery should validate user modules against the caller's CWD."""
         module_path = tmp_path / "local_script.py"
-        module_path.write_text(
-            """
+        module_source = """
 class OptimizedFunction:
     def __init__(self, func):
         self.func = func
@@ -185,7 +184,7 @@ def local_func(text: str, model: str = "default"):
 
 local_func = OptimizedFunction(local_func)
 """
-        )
+        module_path.write_text(module_source)
         monkeypatch.chdir(tmp_path)
 
         functions = discover_optimized_functions("local_script.py")
@@ -197,8 +196,7 @@ local_func = OptimizedFunction(local_func)
         self, tmp_path, monkeypatch
     ):
         module_path = tmp_path / "declared_directions.py"
-        module_path.write_text(
-            """
+        module_source = """
 import traigent
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
@@ -215,7 +213,7 @@ OBJECTIVES = ObjectiveSchema.from_objectives([
 def declared_agent(text: str, mode: str = "a"):
     return text
 """
-        )
+        module_path.write_text(module_source)
         monkeypatch.chdir(tmp_path)
 
         [func_info] = discover_optimized_functions("declared_directions.py")
@@ -231,8 +229,7 @@ def declared_agent(text: str, mode: str = "a"):
         self, tmp_path, monkeypatch
     ):
         module_path = tmp_path / "band_direction.py"
-        module_path.write_text(
-            """
+        module_source = """
 import traigent
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.tvl.models import BandTarget
@@ -254,7 +251,7 @@ OBJECTIVES = ObjectiveSchema.from_objectives([
 def declared_agent(text: str, mode: str = "a"):
     return text
 """
-        )
+        module_path.write_text(module_source)
         monkeypatch.chdir(tmp_path)
 
         [func_info] = discover_optimized_functions("band_direction.py")
@@ -500,8 +497,7 @@ def test_func():
     ):
         """Dry-run should accept a normal user script under the caller's CWD."""
         module_path = tmp_path / "local_script.py"
-        module_path.write_text(
-            """
+        module_source = """
 class OptimizedFunction:
     def __init__(self, func):
         self.func = func
@@ -515,7 +511,7 @@ def local_func(text: str, model: str = "default"):
 
 local_func = OptimizedFunction(local_func)
 """
-        )
+        module_path.write_text(module_source)
         (tmp_path / "test.jsonl").write_text(
             '{"input": {"text": "hello"}, "output": "hello"}\n'
         )
@@ -702,3 +698,55 @@ def mock_pareto_calculator():
 if __name__ == "__main__":
     # Run tests with coverage
     pytest.main([__file__, "-v", "--cov=traigent.cli", "--cov-report=term-missing"])
+
+
+@pytest.mark.asyncio
+async def test_unknown_cost_is_unavailable_in_both_validation_arms():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    validator = OptimizationValidator()
+    decorated = SimpleNamespace(
+        optimize=AsyncMock(
+            return_value=SimpleNamespace(
+                successful_trials=1,
+                best_metrics={"accuracy": 0.9, "cost": None},
+                best_config={"setting": 2},
+            )
+        )
+    )
+    info = OptimizedFunction(
+        name="measured_agent",
+        func=decorated,
+        decorator_config={},
+        default_params={},
+        eval_dataset=None,
+        objectives=["accuracy", "cost"],
+    )
+    baseline = validator._filter_metrics_to_objectives(
+        {"accuracy": 0.8, "cost": None}, info, False
+    )
+    optimized, config = await validator._run_optimization(info)
+    assert baseline == {"accuracy": 0.8}
+    assert optimized == {"accuracy": 0.9}
+    assert config == {"setting": 2}
+    superior, improvements = validator._compare_results(
+        baseline, optimized, info.objectives
+    )
+    assert superior is False
+    assert improvements == {"accuracy": pytest.approx(12.5)}
+    for mock_mode in (False, True):
+        assert validator._filter_metrics_to_objectives(
+            {"accuracy": 0.9, "cost": 0.0}, info, mock_mode
+        ) == {"accuracy": 0.9, "cost": 0.0}
+        no_objectives = OptimizedFunction(
+            name="measured_agent",
+            func=decorated,
+            decorator_config={},
+            default_params={},
+            eval_dataset=None,
+            objectives=[],
+        )
+        assert validator._filter_metrics_to_objectives(
+            {"accuracy": 0.9, "cost": None}, no_objectives, mock_mode
+        ) == {"accuracy": 0.9}

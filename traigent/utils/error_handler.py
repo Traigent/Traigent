@@ -47,14 +47,55 @@ class DependencyError(TraigentError):
 
 
 class APIKeyError(TraigentError):
-    """Error for missing or invalid API keys."""
+    """Error for missing or invalid API keys.
 
-    def __init__(self, key_name: str) -> None:
+    ``APIKeyError("OPENAI_API_KEY")`` names the missing variable and builds
+    the "add it to your .env" fix. Pass ``fix`` explicitly when the first
+    argument is a description rather than a variable name, so the fix line
+    does not repeat the message (#2417).
+    """
+
+    def __init__(self, key_name: str, fix: str | None = None) -> None:
         super().__init__(
             message=f"Missing or invalid API key: {key_name}",
-            fix=f"Add {key_name} to your .env file or set as environment variable",
+            fix=(
+                fix
+                if fix is not None
+                else f"Add {key_name} to your .env file or set as environment variable"
+            ),
             docs_link="https://github.com/Traigent/Traigent#configuration",
         )
+
+
+_CREDENTIAL_ERROR_TOKENS = ("api key", "api_key", "authentication", "openai_api_key")
+
+
+def provider_credential_error(error: Exception) -> APIKeyError | None:
+    """The ``APIKeyError`` to raise for a provider credential failure, or None.
+
+    Shared by the evaluator and invoker fail-fast paths (#2417) so both give
+    the same hint. Under mock mode the user already enabled mock, so the hint
+    explains the bypass instead of telling them to enable it again.
+    """
+    if not any(token in str(error).lower() for token in _CREDENTIAL_ERROR_TOKENS):
+        return None
+    from traigent.utils.env_config import is_mock_llm
+
+    if is_mock_llm():
+        fix = (
+            "Mock mode is already active, so this call bypassed its "
+            "interceptors. Route the call through LiteLLM/LangChain, stub the "
+            "client, or pass a placeholder key (e.g. "
+            "OPENAI_API_KEY=mock-placeholder) if the client only checks for a "
+            "key at construction."
+        )
+    else:
+        fix = (
+            "Set the provider's API key environment variable, or enable mock "
+            "mode with traigent.testing.enable_mock_mode_for_quickstart() for "
+            "a keyless dry run."
+        )
+    return APIKeyError(str(error), fix=fix)
 
 
 class ConfigurationError(TraigentError):

@@ -83,13 +83,13 @@ def _privacy_metrics(metrics: dict[str, Any]) -> dict[str, int | float | bool]:
     return projected
 
 
-def _privacy_cost(metrics: dict[str, Any]) -> int | float:
-    """Return a finite numeric cost, or the inert wire default."""
+def _privacy_cost(metrics: dict[str, Any]) -> int | float | None:
+    """Return a finite numeric cost, or unknown without exposing raw values."""
 
-    value = metrics.get("total_cost", 0.0)
+    value = metrics.get("total_cost")
     if type(value) is int or (type(value) is float and math.isfinite(value)):
         return value
-    return 0.0
+    return None
 
 
 def _resolve_primary_objective(orchestrator: Any) -> str | None:
@@ -1158,6 +1158,7 @@ class TrialLifecycle:
             ),
             progress_state={"evaluated": 0, "total_examples": total_examples},
             optuna_trial_id=optuna_trial_id,
+            constraint_rejected=True,
         )
         result.error_message = str(error)
         metadata = dict(result.metadata or {})
@@ -1464,7 +1465,7 @@ class TrialLifecycle:
                 cost_usd=(
                     _privacy_cost(span_metrics)
                     if privacy_enabled
-                    else (span_metrics.get("total_cost", 0.0) if span_metrics else 0.0)
+                    else (span_metrics.get("total_cost") if span_metrics else None)
                 ),
                 input_data={"config": span_config},
                 output_data={"metrics": span_metrics},

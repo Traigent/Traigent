@@ -14,6 +14,7 @@ Tests cover:
 
 from __future__ import annotations
 
+import logging
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1295,6 +1296,40 @@ class TestRunSequentialTrial:
         assert rejected_trial.metadata["stop_reason"] == "trial_rejected_by_constraint"
 
     @pytest.mark.asyncio
+    async def test_constraint_rejection_logs_skip_not_pruned_warning(self, caplog):
+        """#2513: a constraint-excluded config is an intended skip, not a warning."""
+        caplog.set_level(logging.INFO, logger="traigent.core.trial_result_factory")
+        orchestrator = MockOrchestrator()
+        orchestrator.max_trials = 10
+
+        def failing_constraint(config, metrics=None):
+            return False
+
+        failing_constraint.__tvl_constraint__ = {"id": "test", "message": "Excluded"}
+        orchestrator._constraints_pre_eval = [failing_constraint]
+        lifecycle = TrialLifecycle(orchestrator)
+
+        async def mock_func(input_data):
+            return "result"
+
+        await lifecycle.run_sequential_trial(
+            func=mock_func,
+            dataset=create_mock_dataset(),
+            session_id=None,
+            function_name="test_func",
+            trial_count=5,
+        )
+
+        factory_records = [
+            r for r in caplog.records if r.name == "traigent.core.trial_result_factory"
+        ]
+        assert not [r for r in factory_records if r.levelno >= logging.WARNING]
+        assert any(
+            "excluded by constraint" in r.getMessage() and r.levelno == logging.INFO
+            for r in factory_records
+        )
+
+    @pytest.mark.asyncio
     async def test_constraint_rejection_decrements_optimizer_trial_count(self):
         """Regression: constraint-rejected configs must give back the optimizer's _trial_count slot.
 
@@ -1485,3 +1520,72 @@ class TestCancelledErrorPropagation:
                 trial_number=0,
                 session_id=None,
             )
+
+
+# =============================================================================
+# Workflow span cost (#2446)
+# =============================================================================
+
+
+class TestWorkflowSpanCost:
+    """An unmeasured trial's span must carry an unknown cost, never $0."""
+
+    @staticmethod
+    def _collect(metrics: dict, privacy_enabled: bool = False) -> object:
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        orchestrator = MagicMock()
+        orchestrator._optimization_id = "opt-1"
+        orchestrator.traigent_config = SimpleNamespace(privacy_enabled=privacy_enabled)
+        lifecycle = TrialLifecycle(orchestrator)
+        trial = TrialResult(
+            trial_id="t1",
+            config={"model": "m"},
+            metrics=metrics,
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime.now(UTC),
+        )
+        lifecycle._collect_workflow_span("t1", trial, 0.0, 1.0)
+        (call,) = orchestrator.collect_workflow_span.call_args_list
+        return call.args[0]
+
+    def test_unmeasured_trial_span_cost_is_null(self):
+        span = self._collect({"accuracy": 1.0})
+        assert span.cost_usd is None
+        assert span.to_dict()["cost_usd"] is None
+
+    def test_measured_trial_span_cost_is_the_trial_total(self):
+        span = self._collect({"accuracy": 1.0, "total_cost": 0.0042})
+        assert span.to_dict()["cost_usd"] == pytest.approx(0.0042)
+
+    def test_measured_free_trial_span_cost_stays_zero(self):
+        span = self._collect({"accuracy": 1.0, "total_cost": 0.0})
+        assert span.to_dict()["cost_usd"] == 0.0
+
+
+@pytest.mark.parametrize("privacy_enabled", [False, True])
+@pytest.mark.parametrize(
+    "metrics,expected",
+    [
+        ({}, None),
+        ({"total_cost": None}, None),
+        ({"total_cost": 0.0}, 0.0),
+        ({"total_cost": 0.0042}, 0.0042),
+    ],
+)
+def test_workflow_span_cost_preserves_measurement_with_privacy(
+    privacy_enabled, metrics, expected
+):
+    span = TestWorkflowSpanCost._collect(metrics, privacy_enabled=privacy_enabled)
+    assert span.to_dict()["cost_usd"] == expected
+
+
+def test_private_workflow_span_cost_never_leaks_invalid_value():
+    span = TestWorkflowSpanCost._collect(
+        {"total_cost": "COST-REDACTION-CANARY"}, privacy_enabled=True
+    )
+    wire = span.to_dict()
+    assert wire["cost_usd"] is None
+    assert "COST-REDACTION-CANARY" not in str(wire)

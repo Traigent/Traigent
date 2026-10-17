@@ -158,11 +158,30 @@ class StopConditionManager:
                 condition.set_include_pruned(include_pruned)
 
     def should_stop(self, trials: Iterable[TrialResult]) -> tuple[bool, str | None]:
+        trial_seq = trials if isinstance(trials, Sequence) else list(trials)
         for condition in self._conditions:
-            if condition.should_stop(trials):
+            if condition.should_stop(trial_seq):
+                if isinstance(
+                    condition, (MaxTrialsStopCondition, MaxSamplesStopCondition)
+                ) and self.safety_constraint_violated(trial_seq):
+                    return True, SafetyConstraintStopCondition.reason
                 reason = getattr(condition, "reason", condition.__class__.__name__)
                 return True, reason
         return False, None
+
+    def safety_constraint_violated(self, trials: Iterable[TrialResult]) -> bool:
+        """Whether a configured safety constraint is violated on ``trials``.
+
+        A trial budget running out on the same trial that violates a safety
+        constraint must not mask the violation as ``max_trials_reached``
+        (#2481), so budget stops consult this before naming their reason.
+        """
+        trial_seq = trials if isinstance(trials, Sequence) else list(trials)
+        return any(
+            isinstance(condition, SafetyConstraintStopCondition)
+            and condition.should_stop(trial_seq)
+            for condition in self._conditions
+        )
 
     def semantic_saturation_diagnostics(
         self, trials: Iterable[TrialResult]

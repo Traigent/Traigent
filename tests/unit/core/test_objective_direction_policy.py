@@ -6,13 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 
+from traigent.api.decorators import optimize
+from traigent.core import objective_directions
 from traigent.core.objectives import (
     ObjectiveDefinition,
     ObjectiveSchema,
     create_default_objectives,
 )
-from traigent.api.decorators import optimize
-from traigent.core import objective_directions
 from traigent.core.orchestrator_helpers import prepare_objectives
 from traigent.utils.exceptions import ObjectiveDirectionOverrideWarning
 from traigent.utils.results_table import _find_best_per_objective, _get_objective_info
@@ -59,7 +59,25 @@ def test_semantically_misleading_custom_names_require_declaration(name: str) -> 
     message = str(error.value)
     assert "from traigent.core.objectives import create_default_objectives" in message
     assert f"create_default_objectives([{name!r}]" in message
-    assert f"orientations={{{name!r}: 'minimize'}}" in message
+    # #2421: never prescribe one direction for an unknown metric -- pasted
+    # as-is for a higher-is-better metric it would crown the worst config.
+    assert f"orientations={{{name!r}: '<maximize|minimize>'}}" in message
+    assert f"orientations={{{name!r}: 'minimize'}}" not in message
+    assert f"orientations={{{name!r}: 'maximize'}}" not in message
+
+
+def test_orientation_snippet_pasted_unedited_fails_instead_of_picking() -> None:
+    """#2421: the printed snippet is a placeholder the reader must fill in."""
+    with pytest.raises(ValueError, match="has no declared orientation") as error:
+        create_default_objectives(["exec_acc"])
+    snippet = str(error.value).splitlines()[-1]
+    namespace: dict[str, object] = {}
+    with pytest.raises(ValueError, match="must be 'maximize' or 'minimize'"):
+        exec(  # noqa: S102 - executes the SDK's own printed migration snippet
+            "from traigent.core.objectives import create_default_objectives\n"
+            + snippet,
+            namespace,
+        )
 
 
 def test_accuracy_score_requires_explicit_direction() -> None:

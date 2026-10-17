@@ -40,7 +40,8 @@ Lambdas can optionally accept a second `metrics` argument containing results fro
 
 ```python
 constraints=[
-    lambda config, metrics: metrics.get("cost", 0) <= 0.10,
+    # An unmeasured cost is None: reject it rather than treat it as $0.
+    lambda config, metrics: metrics.get("cost") is not None and metrics["cost"] <= 0.10,
     lambda config, metrics: metrics.get("latency_ms", 0) <= 5000,
 ]
 ```

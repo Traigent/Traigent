@@ -99,7 +99,9 @@ def _mixed_example_metrics() -> list[ExampleMetrics]:
         ExampleMetrics(cost=CostMetrics(input_cost=0.01), success=True),
         ExampleMetrics(cost=CostMetrics(input_cost=0.01), success=True),
         ExampleMetrics(cost=CostMetrics(input_cost=0.03), success=False, error="boom"),
-        ExampleMetrics(cost=CostMetrics(), success=False, error="boom2"),
+        ExampleMetrics(
+            cost=CostMetrics(cost_explicit=True), success=False, error="boom2"
+        ),
     ]
 
 

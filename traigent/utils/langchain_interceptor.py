@@ -6,13 +6,14 @@ that would otherwise be lost when functions return only strings.
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Observability CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
 
+import functools
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Coroutine, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ParamSpec, TypeVar
 
 from traigent.utils.logging import get_logger
 
@@ -35,6 +36,7 @@ class _CaptureBucket:
 
     responses: list[Any] = field(default_factory=list)
     by_key: dict[str, Any] = field(default_factory=dict)
+    responses_by_key: dict[Any, list[Any]] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
     #: Provider/model versions observed from REAL provider responses in this
     #: trial (content identity v1, ``ObservedProviderVersionV1``), keyed by
@@ -86,6 +88,17 @@ def inside_instrumented_provider_call() -> bool:
     return _instrumented_call.get()
 
 
+_NO_CORRELATION = object()
+_correlation_key: ContextVar[Any] = ContextVar(
+    "traigent_example_capture_key", default=_NO_CORRELATION
+)
+
+
+def has_active_capture_scope() -> bool:
+    """Whether the current call belongs to an evaluation capture bucket."""
+    return _capture_scope.get() is not None
+
+
 class capture_scope:
     """Give the enclosing trial its own capture buffer (Traigent#2387).
 
@@ -105,16 +118,55 @@ class capture_scope:
     def __enter__(self) -> _CaptureBucket:
         bucket = _CaptureBucket()
         self._token = _capture_scope.set(bucket)
+        from traigent.utils.openai_interceptor import acquire_openai_capture
+
+        try:
+            acquire_openai_capture()
+        except BaseException:
+            _capture_scope.reset(self._token)
+            raise
         return bucket
 
     def __exit__(self, *exc_info: Any) -> None:
-        _capture_scope.reset(self._token)
+        from traigent.utils.openai_interceptor import release_openai_capture
+
+        try:
+            release_openai_capture()
+        finally:
+            _capture_scope.reset(self._token)
 
     async def __aenter__(self) -> _CaptureBucket:
         return self.__enter__()
 
     async def __aexit__(self, *exc_info: Any) -> None:
         self.__exit__(*exc_info)
+
+
+_EvaluationParams = ParamSpec("_EvaluationParams")
+_EvaluationResult = TypeVar("_EvaluationResult")
+
+
+def capture_evaluation(
+    evaluate: Callable[_EvaluationParams, Coroutine[Any, Any, _EvaluationResult]],
+) -> Callable[_EvaluationParams, Coroutine[Any, Any, _EvaluationResult]]:
+    """Open a direct evaluation scope, preserving a lifecycle-owned outer scope."""
+
+    @functools.wraps(evaluate)
+    async def run(
+        *args: _EvaluationParams.args, **kwargs: _EvaluationParams.kwargs
+    ) -> _EvaluationResult:
+        if has_active_capture_scope():
+            return await evaluate(*args, **kwargs)
+        async with capture_scope():
+            return await evaluate(*args, **kwargs)
+
+    return run
+
+
+#: How many recent responses the per-thread ``get_last_response`` history
+#: keeps. Trial cost never reads it (it reads the capture scope), so this only
+#: bounds memory on long-lived worker threads (#2444).
+_LAST_RESPONSE_HISTORY_LIMIT = 64
 
 
 class LangChainMetadataCapture:
@@ -127,6 +179,7 @@ class LangChainMetadataCapture:
         self._all_responses: list[Any] = []
         self._response_lock = threading.Lock()
         # Map correlation keys (e.g., example_id) to responses
+        self._responses_by_key: dict[Any, list[Any]] = {}
         self._by_key: dict[str, Any] = {}
         self._by_key_lock = threading.Lock()
         # Current correlation key in thread local
@@ -138,9 +191,21 @@ class LangChainMetadataCapture:
             if not hasattr(self._storage, "responses"):
                 self._storage.responses = []
             self._storage.responses.append(response)
+            # This per-thread list feeds only ``get_last_response`` (which pops
+            # one element) and is otherwise drained only by ``clear``; trial
+            # spend is read from the scoped bucket below. Unbounded, it held a
+            # reference to every response a long-lived worker thread ever saw
+            # (#2444), so keep only the most recent ones.
+            overflow = len(self._storage.responses) - _LAST_RESPONSE_HISTORY_LIMIT
+            if overflow > 0:
+                del self._storage.responses[:overflow]
             logger.debug("Captured LangChain response with metadata")
 
-        key = getattr(self._key_local, "current_key", None)
+        key = _correlation_key.get()
+        if key is _NO_CORRELATION:
+            key = getattr(self._key_local, "current_key", None)
+            if key is None:
+                key = _NO_CORRELATION
 
         # Route into the trial's own buffer when one is active (Traigent#2387).
         # Without a scope this falls back to the process-global list, which is
@@ -149,16 +214,18 @@ class LangChainMetadataCapture:
         if bucket is not None:
             with bucket.lock:
                 bucket.responses.append(response)
-                if key is not None:
+                if key is not _NO_CORRELATION:
                     bucket.by_key[key] = response
+                    bucket.responses_by_key.setdefault(key, []).append(response)
             return
 
         with self._response_lock:
             self._all_responses.append(response)
 
-        if key is not None:
+        if key is not _NO_CORRELATION:
             with self._by_key_lock:
                 self._by_key[key] = response
+                self._responses_by_key.setdefault(key, []).append(response)
 
     def get_last_response(self) -> Any | None:
         """Get and clear the last LangChain response."""
@@ -197,14 +264,27 @@ class LangChainMetadataCapture:
             with bucket.lock:
                 bucket.responses.clear()
                 bucket.by_key.clear()
+                bucket.responses_by_key.clear()
         else:
             with self._response_lock:
                 self._all_responses.clear()
             with self._by_key_lock:
                 self._by_key.clear()
+                self._responses_by_key.clear()
 
         if hasattr(self._key_local, "current_key"):
             self._key_local.current_key = None
+
+    def responses_by_key(self) -> dict[Any, list[Any]]:
+        """Snapshot every call per example before the evaluation buffer is drained."""
+        bucket = _capture_scope.get()
+        if bucket is not None:
+            with bucket.lock:
+                return {
+                    key: list(values) for key, values in bucket.responses_by_key.items()
+                }
+        with self._by_key_lock:
+            return {key: list(values) for key, values in self._responses_by_key.items()}
 
     # Key management
     def set_current_key(self, key: Any) -> None:
@@ -293,6 +373,11 @@ def get_captured_response_by_key(key: Any) -> Any | None:
     return _metadata_capture.get_by_key(key)
 
 
+def get_captured_responses_by_key() -> dict[Any, list[Any]]:
+    """Snapshot response lists grouped by their owning example."""
+    return _metadata_capture.responses_by_key()
+
+
 def clear_captured_responses() -> None:
     """Clear all captured responses."""
     _metadata_capture.clear()
@@ -311,15 +396,107 @@ def langchain_metadata_context():
 @contextmanager
 def capture_key(key: Any):
     """Context manager to associate subsequent captured responses with a key."""
+    context_reset = _correlation_key.set(key)
     try:
         _metadata_capture.set_current_key(key)
         yield
     finally:
         _metadata_capture.clear_current_key()
+        _correlation_key.reset(context_reset)
+
+
+def _mock_enabled(provider: str) -> bool:
+    from traigent.integrations.utils.mock_adapter import MockAdapter
+
+    return MockAdapter.is_mock_enabled(provider)
+
+
+def _mock_ai_message(provider: str, client: Any, *, chunk: bool = False) -> Any:
+    """Build the canned LangChain message mock mode returns for ``provider``.
+
+    Shared by every patched entry point (``invoke``, ``ainvoke``, ``stream``,
+    ``astream``) so they cannot drift apart (#2424). ``chunk=True`` returns an
+    ``AIMessageChunk`` for the streaming methods. The response is captured for
+    metadata extraction, the same as the historical ``invoke`` mock branch.
+    """
+    from traigent.integrations.utils.mock_adapter import MockAdapter
+
+    if chunk:
+        from langchain_core.messages import AIMessageChunk as message_cls
+    else:
+        from langchain_core.messages import AIMessage as message_cls
+
+    model_name = requested_model_of(client) or "mock-model"
+    mock_data = MockAdapter.get_mock_response(provider, model=str(model_name))
+    usage = mock_data["usage"]
+    if provider == "openai":
+        content = mock_data["choices"][0]["message"]["content"]
+        response_metadata = {
+            "model_name": mock_data["model"],
+            "finish_reason": mock_data["choices"][0]["finish_reason"],
+        }
+        input_tokens = usage["prompt_tokens"]
+        output_tokens = usage["completion_tokens"]
+    else:  # anthropic and bedrock share the Messages response shape
+        content = mock_data["content"][0]["text"]
+        response_metadata = {
+            "model_name": mock_data["model"],
+            "stop_reason": mock_data["stop_reason"],
+        }
+        input_tokens = usage["input_tokens"]
+        output_tokens = usage["output_tokens"]
+    response_metadata["response_time_ms"] = 0.0
+    response = message_cls(
+        content=content,
+        response_metadata=response_metadata,
+        usage_metadata={
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": usage.get("total_tokens", input_tokens + output_tokens),
+        },
+    )
+    capture_langchain_response(response)
+    return response
+
+
+def _create_ainvoke_wrapper(
+    original_meth: Any, provider: str = "unknown", *, instrumented: bool = False
+) -> Any:
+    """Mock ``ainvoke`` in mock mode (#2424); otherwise capture it the way the
+    patched ``invoke`` does (#2445).
+
+    ``abatch`` and other async entry points that go through ``ainvoke`` are
+    covered by the same wrapper.
+    """
+
+    async def ainvoke_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        if _mock_enabled(provider):
+            return _mock_ai_message(provider, self)
+
+        start_time = time.perf_counter()
+        if instrumented:
+            with instrumented_provider_call():
+                response = await original_meth(self, *args, **kwargs)
+        else:
+            response = await original_meth(self, *args, **kwargs)
+        response_time_ms = (time.perf_counter() - start_time) * 1000
+
+        if not hasattr(response, "response_metadata"):
+            response.response_metadata = {}
+        response.response_metadata["response_time_ms"] = response_time_ms
+        capture_observed_response(
+            response, provider=provider, requested_model=requested_model_of(self)
+        )
+        return response
+
+    return ainvoke_wrapper
 
 
 def _create_stream_wrapper(original_meth: Any, provider: str = "unknown") -> Any:
     def stream_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        if _mock_enabled(provider):
+            yield _mock_ai_message(provider, self, chunk=True)
+            return
         start_time = time.perf_counter()
         last = None
         for chunk in original_meth(self, *args, **kwargs):
@@ -339,6 +516,9 @@ def _create_stream_wrapper(original_meth: Any, provider: str = "unknown") -> Any
 
 def _create_astream_wrapper(original_meth: Any, provider: str = "unknown") -> Any:
     async def astream_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        if _mock_enabled(provider):
+            yield _mock_ai_message(provider, self, chunk=True)
+            return
         start_time = time.perf_counter()
         last = None
         async for chunk in original_meth(self, *args, **kwargs):
@@ -356,6 +536,19 @@ def _create_astream_wrapper(original_meth: Any, provider: str = "unknown") -> An
     return astream_wrapper
 
 
+_METHOD_WRAPPERS: dict[str, Callable[..., Any]] = {
+    "ainvoke": _create_ainvoke_wrapper,
+    "stream": _create_stream_wrapper,
+    "astream": _create_astream_wrapper,
+}
+#: Patched alongside ``invoke`` on every supported chat model class.
+_EXTRA_METHODS = (
+    ("ainvoke", "_traigent_patched_ainvoke"),
+    ("stream", "_traigent_patched_stream"),
+    ("astream", "_traigent_patched_astream"),
+)
+
+
 def _patch_langchain_bedrock_model(model_cls: Any, class_name: str) -> bool:
     """Patch one langchain_aws Bedrock chat class for response capture."""
     patched_any = False
@@ -368,32 +561,7 @@ def _patch_langchain_bedrock_model(model_cls: Any, class_name: str) -> bool:
             from traigent.integrations.utils.mock_adapter import MockAdapter
 
             if MockAdapter.is_mock_enabled("bedrock"):
-                from langchain_core.messages import AIMessage
-
-                model_name = (
-                    getattr(self, "model_id", None)
-                    or getattr(self, "model", None)
-                    or "mock-model"
-                )
-                mock_data = MockAdapter.get_mock_response(
-                    "bedrock", model=str(model_name)
-                )
-                usage = mock_data["usage"]
-                response = AIMessage(
-                    content=mock_data["content"][0]["text"],
-                    response_metadata={
-                        "model_name": mock_data["model"],
-                        "stop_reason": mock_data["stop_reason"],
-                        "response_time_ms": 0.0,
-                    },
-                    usage_metadata={
-                        "input_tokens": usage["input_tokens"],
-                        "output_tokens": usage["output_tokens"],
-                        "total_tokens": usage["total_tokens"],
-                    },
-                )
-                capture_langchain_response(response)
-                return response
+                return _mock_ai_message("bedrock", self)
 
             start_time = time.perf_counter()
             response = original_invoke(self, *args, **kwargs)
@@ -419,24 +587,14 @@ def _patch_langchain_bedrock_model(model_cls: Any, class_name: str) -> bool:
         logger.info("✅ Patched %s.invoke for metadata capture", class_name)
         patched_any = True
 
-    for meth_name, flag in [
-        ("stream", "_traigent_patched_stream"),
-        ("astream", "_traigent_patched_astream"),
-    ]:
+    for meth_name, flag in _EXTRA_METHODS:
         if hasattr(model_cls, meth_name) and not getattr(model_cls, flag, False):
             original_meth = getattr(model_cls, meth_name)
-            if meth_name == "stream":
-                setattr(
-                    model_cls,
-                    meth_name,
-                    _create_stream_wrapper(original_meth, provider="bedrock"),
-                )
-            else:
-                setattr(
-                    model_cls,
-                    meth_name,
-                    _create_astream_wrapper(original_meth, provider="bedrock"),
-                )
+            setattr(
+                model_cls,
+                meth_name,
+                _METHOD_WRAPPERS[meth_name](original_meth, provider="bedrock"),
+            )
             setattr(model_cls, flag, True)
             logger.info("✅ Patched %s.%s for metadata capture", class_name, meth_name)
             patched_any = True
@@ -467,29 +625,7 @@ def patch_langchain_for_metadata_capture() -> bool:
                 from traigent.integrations.utils.mock_adapter import MockAdapter
 
                 if MockAdapter.is_mock_enabled("anthropic"):
-                    from langchain_core.messages import AIMessage
-
-                    model_name = getattr(self, "model", "mock-model")
-                    mock_data = MockAdapter.get_mock_response(
-                        "anthropic", model=model_name
-                    )
-                    content = mock_data["content"][0]["text"]
-                    response = AIMessage(
-                        content=content,
-                        response_metadata={
-                            "model_name": mock_data["model"],
-                            "stop_reason": mock_data["stop_reason"],
-                            "response_time_ms": 0.0,
-                        },
-                        usage_metadata={
-                            "input_tokens": mock_data["usage"]["input_tokens"],
-                            "output_tokens": mock_data["usage"]["output_tokens"],
-                            "total_tokens": mock_data["usage"]["input_tokens"]
-                            + mock_data["usage"]["output_tokens"],
-                        },
-                    )
-                    capture_langchain_response(response)
-                    return response
+                    return _mock_ai_message("anthropic", self)
 
                 start_time = time.perf_counter()
                 response = original_invoke(self, *args, **kwargs)
@@ -517,27 +653,16 @@ def patch_langchain_for_metadata_capture() -> bool:
             patched_any = True
 
         # Patch stream methods if available
-        for meth_name, flag in [
-            ("stream", "_traigent_patched_stream"),
-            ("astream", "_traigent_patched_astream"),
-        ]:
+        for meth_name, flag in _EXTRA_METHODS:
             if hasattr(ChatAnthropic, meth_name) and not getattr(
                 ChatAnthropic, flag, False
             ):
                 original_meth = getattr(ChatAnthropic, meth_name)
-
-                if meth_name == "stream":
-                    setattr(
-                        ChatAnthropic,
-                        meth_name,
-                        _create_stream_wrapper(original_meth, provider="anthropic"),
-                    )
-                else:
-                    setattr(
-                        ChatAnthropic,
-                        meth_name,
-                        _create_astream_wrapper(original_meth, provider="anthropic"),
-                    )
+                setattr(
+                    ChatAnthropic,
+                    meth_name,
+                    _METHOD_WRAPPERS[meth_name](original_meth, provider="anthropic"),
+                )
                 setattr(ChatAnthropic, flag, True)
                 logger.info(
                     f"✅ Patched ChatAnthropic.{meth_name} for metadata capture"
@@ -561,30 +686,7 @@ def patch_langchain_for_metadata_capture() -> bool:
                 from traigent.integrations.utils.mock_adapter import MockAdapter
 
                 if MockAdapter.is_mock_enabled("openai"):
-                    from langchain_core.messages import AIMessage
-
-                    model_name = getattr(self, "model_name", None) or getattr(
-                        self, "model", "mock-model"
-                    )
-                    mock_data = MockAdapter.get_mock_response(
-                        "openai", model=model_name
-                    )
-                    content = mock_data["choices"][0]["message"]["content"]
-                    response = AIMessage(
-                        content=content,
-                        response_metadata={
-                            "model_name": mock_data["model"],
-                            "finish_reason": mock_data["choices"][0]["finish_reason"],
-                            "response_time_ms": 0.0,
-                        },
-                        usage_metadata={
-                            "input_tokens": mock_data["usage"]["prompt_tokens"],
-                            "output_tokens": mock_data["usage"]["completion_tokens"],
-                            "total_tokens": mock_data["usage"]["total_tokens"],
-                        },
-                    )
-                    capture_langchain_response(response)
-                    return response
+                    return _mock_ai_message("openai", self)
 
                 start_time = time.perf_counter()
                 with instrumented_provider_call():
@@ -612,24 +714,20 @@ def patch_langchain_for_metadata_capture() -> bool:
             logger.info("✅ Patched ChatOpenAI.invoke for metadata capture")
             patched_any = True
 
-        for meth_name, flag in [
-            ("stream", "_traigent_patched_stream"),
-            ("astream", "_traigent_patched_astream"),
-        ]:
+        for meth_name, flag in _EXTRA_METHODS:
             if hasattr(ChatOpenAI, meth_name) and not getattr(ChatOpenAI, flag, False):
                 original_meth = getattr(ChatOpenAI, meth_name)
-                if meth_name == "stream":
-                    setattr(
-                        ChatOpenAI,
-                        meth_name,
-                        _create_stream_wrapper(original_meth, provider="openai"),
-                    )
-                else:
-                    setattr(
-                        ChatOpenAI,
-                        meth_name,
-                        _create_astream_wrapper(original_meth, provider="openai"),
-                    )
+                setattr(
+                    ChatOpenAI,
+                    meth_name,
+                    _METHOD_WRAPPERS[meth_name](
+                        original_meth,
+                        provider="openai",
+                        # Mirrors invoke: the openai call LangChain makes
+                        # underneath must not be captured a second time.
+                        **({"instrumented": True} if meth_name == "ainvoke" else {}),
+                    ),
+                )
                 setattr(ChatOpenAI, flag, True)
                 logger.info(f"✅ Patched ChatOpenAI.{meth_name} for metadata capture")
 

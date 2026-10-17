@@ -171,6 +171,43 @@ def _run_status_text(result: Any) -> str:
         return str(OptimizationStatus.UNKNOWN)
 
 
+def _best_score_basis(result: Any) -> str:
+    """Name the aggregation behind ``best_score`` when the winner repeated.
+
+    Connected runs select the winner by the mean over its repeated
+    evaluations (#1854) while the progress line shows the best single trial,
+    so an unlabelled final number reads as a discrepancy (#2512). Returns
+    `` (mean of N runs: a, b)`` -- per-run values only when ``best_score`` is
+    the primary objective's mean, not a weighted aggregate -- or ``""`` when
+    the winner was evaluated once or selection did not average.
+    """
+    metadata = getattr(result, "metadata", None)
+    summary = metadata.get("session_summary") if isinstance(metadata, dict) else None
+    if not isinstance(summary, dict) or summary.get("selection_mode") != (
+        "aggregated_mean"
+    ):
+        return ""
+    trial_ids = summary.get("winning_trial_ids")
+    if not isinstance(trial_ids, list) or len(trial_ids) < 2:
+        return ""
+    primary = summary.get("primary_objective")
+    if summary.get("weighted_selection") or not isinstance(primary, str):
+        return f" (mean of {len(trial_ids)} runs)"
+    by_id = {
+        getattr(trial, "trial_id", None): trial
+        for trial in (getattr(result, "trials", None) or [])
+    }
+    values: list[float] = []
+    for trial_id in trial_ids:
+        metrics = getattr(by_id.get(trial_id), "metrics", None) or {}
+        value = metrics.get(primary)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return f" (mean of {len(trial_ids)} runs)"
+        values.append(float(value))
+    shown = ", ".join(f"{value:.3f}" for value in values)
+    return f" (mean of {len(values)} runs: {shown})"
+
+
 CallbackInvocationKey = tuple[int, str]
 
 
@@ -380,6 +417,8 @@ class ProgressBarCallback(OptimizationCallback):
         best_score_str = (
             f"{result.best_score:.3f}" if result.best_score is not None else "N/A"
         )
+        if result.best_score is not None:
+            best_score_str += _best_score_basis(result)
         _safe_print(f"🏆 Best score: {best_score_str}")
         _safe_print(f"⏱️  Total time: {result.duration:.1f}s")
         _safe_print(f"📈 Success rate: {result.success_rate:.1%}")
@@ -576,6 +615,8 @@ class ManagedProgressCallback(OptimizationCallback):
         # user their run completed when it was cut short is worse than silence.
         # Mapped strictly onto the known status set rather than interpolated
         # raw, so an unexpected value cannot inject text into this line.
+        if result.best_score is not None:
+            best_score_str += _best_score_basis(result)
         status_text = _run_status_text(result)
         _safe_print(
             f"[traigent] managed run {status_text}: best={best_score_str} "

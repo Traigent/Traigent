@@ -22,7 +22,7 @@ class _DummyBaseEvaluator(BaseEvaluator):
 
 def test_exact_match_coerces_string_output_for_typed_expected(caplog) -> None:
     """String outputs matching typed scalar expected values should score correctly."""
-    caplog.set_level("WARNING", logger="traigent.evaluators.base")
+    caplog.set_level("DEBUG", logger="traigent.evaluators.base")
     base = _DummyBaseEvaluator()
     local = LocalEvaluator(metrics=["accuracy"])
     dataset = Dataset(
@@ -98,7 +98,7 @@ async def test_issue_1464_numeric_accuracy_tolerance_keeps_real_mismatches() -> 
 @pytest.mark.asyncio
 async def test_issue_1463_string_outputs_match_typed_expected_values(caplog) -> None:
     """Exact-match accuracy compares string model outputs to typed expected values."""
-    caplog.set_level("WARNING", logger="traigent.evaluators.base")
+    caplog.set_level("DEBUG", logger="traigent.evaluators.base")
     evaluator = LocalEvaluator(metrics=["accuracy"], detailed=True)
     dataset = Dataset(
         [
@@ -161,7 +161,7 @@ def test_issue_1772_container_elements_keep_real_mismatches(
 def test_issue_1772_json_string_output_matches_structured_expected(caplog) -> None:
     """A JSON-string output must match a dict/list expected value, not always
     score 0.0 (Traigent#1772)."""
-    caplog.set_level("WARNING", logger="traigent.evaluators.base")
+    caplog.set_level("DEBUG", logger="traigent.evaluators.base")
 
     assert _accuracy_values_match('{"a": 1, "b": "X"}', {"a": 1, "b": "x"}) is True
     assert _accuracy_values_match('["Paris", "Rome"]', ["paris", "rome"]) is True
@@ -172,7 +172,7 @@ def test_issue_1772_json_string_output_matches_structured_expected(caplog) -> No
 def test_issue_1772_numeric_string_string_pairs_are_coerced(caplog) -> None:
     """String-string numeric pairs (the common JSONL habit) must be coerced
     the same way a typed expected value already is (Traigent#1772)."""
-    caplog.set_level("WARNING", logger="traigent.evaluators.base")
+    caplog.set_level("DEBUG", logger="traigent.evaluators.base")
 
     assert _accuracy_values_match("1.0", "1") is True
     assert _accuracy_values_match(".5", "0.5") is True

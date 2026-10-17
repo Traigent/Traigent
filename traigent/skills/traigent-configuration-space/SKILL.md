@@ -237,7 +237,8 @@ Lambda constraints can also receive metrics from past trials:
 
 ```python
 constraints=[
-    lambda config, metrics: metrics.get("cost", 0) <= 0.10,
+    # An unmeasured cost is None: reject it rather than treat it as $0.
+    lambda config, metrics: metrics.get("cost") is not None and metrics["cost"] <= 0.10,
 ]
 ```
 

@@ -678,11 +678,14 @@ def build_pruned_result(
     prune_error: TrialPrunedError,
     progress_state: dict[str, Any] | None,
     optuna_trial_id: int | None,
+    constraint_rejected: bool = False,
 ) -> TrialResult:
     """Create a pruned :class:`TrialResult` instance.
 
     Captures partial example results from the TrialPrunedError if available,
     ensuring that metrics from evaluated examples are preserved for pruned trials.
+    ``constraint_rejected`` marks a config the user's constraints excluded
+    before it ran, which is expected to carry no example results.
     """
 
     metadata: dict[str, Any] = {
@@ -722,6 +725,10 @@ def build_pruned_result(
             len(prune_error.example_results),
             trial_id,
         )
+    elif constraint_rejected:
+        # The user's own constraints excluded this config before it ran:
+        # an intended exclusion with nothing to evaluate, not a failure (#2513).
+        logger.info("Skipped trial %s: excluded by constraint", trial_id)
     else:
         logger.warning(
             "⚠️ No example_results in TrialPrunedError for pruned trial %s (step=%s)",

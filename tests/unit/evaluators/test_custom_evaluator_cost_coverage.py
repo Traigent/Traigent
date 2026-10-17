@@ -103,12 +103,12 @@ async def test_full_cost_coverage_is_unchanged_under_strict(strict):
 
 
 @pytest.mark.asyncio
-async def test_no_row_reporting_cost_keeps_the_previous_zero(strict):
+async def test_no_row_reporting_cost_is_unknown(strict):
     # An evaluator that never emits cost is left to the run-level
-    # "no usage captured" handling; this change must not start failing it.
+    # "no usage captured" handling; an unknown value is not a failure.
     evaluator = _evaluator(["nocost"] * 4)
     result = await evaluator.evaluate(_identity, {}, _dataset())
-    assert result.aggregated_metrics["cost"] == 0.0
+    assert result.aggregated_metrics["cost"] is None
 
 
 def test_simple_scoring_aggregation_ignores_unmeasured_cost(lenient):

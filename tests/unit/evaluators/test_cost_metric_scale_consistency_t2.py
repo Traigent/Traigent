@@ -25,10 +25,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from traigent.core.trial_result_factory import (
-    build_pruned_result,
-    build_success_result,
-)
+from traigent.core.trial_result_factory import build_pruned_result, build_success_result
 from traigent.evaluators.hybrid_api import HybridAPIEvaluator, HybridExampleResult
 from traigent.evaluators.metrics_tracker import (
     CostMetrics,
@@ -80,10 +77,10 @@ class TestLocalCompletedCostIsPerTrialTotal:
         # The mean must never be overloaded onto ``cost``.
         assert formatted["cost"] != formatted["cost_per_example_mean"]
 
-    def test_empty_tracker_preserves_zero_default(self) -> None:
+    def test_empty_tracker_reports_unknown_cost(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=True):
             formatted = MetricsTracker().format_for_backend()
-        assert formatted["cost"] == 0.0
+        assert formatted["cost"] is None
 
     def test_empty_tracker_preserves_strict_null(self) -> None:
         with mock.patch.dict(
