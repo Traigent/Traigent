@@ -54,6 +54,7 @@ from traigent.utils.langchain_interceptor import (
 from traigent.utils.logging import get_logger
 from traigent.utils.removed_params import reject_removed_mock_parameters
 from traigent.utils.trial_costs import (
+    coerce_finite_cost,
     is_cost_unmeasured,
     known_spend_lower_bound,
     trial_cost_unknown,
@@ -1357,6 +1358,13 @@ class EvaluationResult:
     # when no example reported a per-call breakdown.
     model_costs: list[dict[str, Any]] = field(default_factory=list)
 
+    # Tracker-measured spend for execution-budget accounting, kept apart from
+    # ``aggregated_metrics`` so a user's custom ``cost``/``total_cost`` score
+    # can never feed or hide the budget debit. ``{"unmeasured": bool,
+    # "cost": float | None, "lower_bound": float}``; ``None`` when the
+    # evaluator has no tracker measurement (legacy metric-only fallback).
+    tracked_spend: dict[str, Any] | None = None
+
     def __post_init__(self) -> None:
         # Backward compatibility mapping
         if self.metrics is None:
@@ -1703,15 +1711,41 @@ class BaseEvaluator(ABC):
             raise
 
     @staticmethod
+    def _tracked_spend(source: Mapping[str, Any], cost_key: str) -> dict[str, Any]:
+        """Snapshot tracker-measured spend from tracker/LLM-aggregated metrics.
+
+        ``source`` must hold tracker output, never user metric values.
+        """
+        bound = coerce_finite_cost(source.get("cost_lower_bound"))
+        return {
+            "unmeasured": is_cost_unmeasured(source),
+            "cost": coerce_finite_cost(source.get(cost_key)),
+            "lower_bound": bound if bound is not None and bound > 0 else 0.0,
+        }
+
+    @staticmethod
     def _execution_budget_cost(result: EvaluationResult) -> float | None:
         """Return observed trial spend, or ``None`` when it is unknown.
 
-        A result flagged ``cost_unmeasured`` yields its known spend floor
-        (``None`` when nothing was reported); the caller keeps the flag visible
-        by marking the debit untracked. Otherwise a cost objective can be a
-        per-example mean or a custom score, so captured ``total_cost`` (the
-        cumulative spend the budget consumes) is read before ``cost``.
+        Spend comes from the tracker (``result.tracked_spend``), never from a
+        user's custom ``cost``/``total_cost`` score. A result flagged
+        ``cost_unmeasured`` (which includes a partly priced trial, owner
+        ruling A) yields its known spend floor (``None`` when nothing was
+        reported); the caller keeps the flag visible by marking the debit
+        untracked. Evaluators without a tracker measurement fall back to the
+        reported ``total_cost``/``cost`` metrics.
         """
+        tracked = getattr(result, "tracked_spend", None)
+        if tracked is not None:
+            if tracked.get("unmeasured"):
+                floor = float(tracked.get("lower_bound") or 0.0)
+                return floor if floor > 0 else None
+            value = tracked.get("cost")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                numeric = float(value)
+                if math.isfinite(numeric) and numeric >= 0.0:
+                    return numeric
+            return None
         if is_cost_unmeasured(result.aggregated_metrics):
             floor = known_spend_lower_bound(result.aggregated_metrics)
             return floor if floor > 0 else None
@@ -1722,23 +1756,6 @@ class BaseEvaluator(ABC):
                 if math.isfinite(numeric) and numeric >= 0.0:
                     return numeric
         return None
-
-    @staticmethod
-    def _cost_is_partially_priced(metrics: Any) -> bool:
-        """True when ``cost_unpriced`` says part of the spend had no price.
-
-        The reported cost is then a floor (the priced part), so the budget
-        debit must be marked untracked rather than complete.
-        """
-        if not isinstance(metrics, Mapping):
-            return False
-        flag = metrics.get("cost_unpriced")
-        return (
-            isinstance(flag, (int, float))
-            and not isinstance(flag, bool)
-            and math.isfinite(flag)
-            and flag > 0
-        )
 
     @staticmethod
     def _finalize_execution_budget_evaluation(
@@ -1765,7 +1782,7 @@ class BaseEvaluator(ABC):
             untracked=(
                 cost is None
                 or is_cost_unmeasured(result.aggregated_metrics)
-                or BaseEvaluator._cost_is_partially_priced(result.aggregated_metrics)
+                or bool(result.tracked_spend and result.tracked_spend.get("unmeasured"))
             ),
         )
         snapshot = budget.snapshot()
@@ -4358,6 +4375,17 @@ class SimpleScoringEvaluator(BaseEvaluator):
             Dictionary of LLM metrics
         """
         measured_cost = cost_is_measured(metrics_obj)
+        # Owner ruling A: a partly priced example (priced spend plus usage no
+        # price covers) is unknown cost; its priced part is only a floor.
+        cost_obj = getattr(metrics_obj, "cost", None)
+        partly_priced = bool(
+            getattr(cost_obj, "unpriced", False)
+            and not getattr(cost_obj, "unmeasured", False)
+            and float(getattr(cost_obj, "total_cost", 0.0) or 0.0) > 0
+        )
+        known_cost = float(getattr(cost_obj, "known_cost", 0.0) or 0.0)
+        if partly_priced:
+            known_cost += float(cost_obj.total_cost)
         return {
             "total_tokens": getattr(metrics_obj.tokens, "total_tokens", 0),
             "prompt_tokens": getattr(metrics_obj.tokens, "prompt_tokens", 0),
@@ -4385,9 +4413,11 @@ class SimpleScoringEvaluator(BaseEvaluator):
             ),
             # No captured usage: the cost is unknown, not $0 (#2517).
             "cost_unmeasured": (
-                1.0 if getattr(metrics_obj.cost, "unmeasured", False) else 0.0
+                1.0
+                if getattr(metrics_obj.cost, "unmeasured", False) or partly_priced
+                else 0.0
             ),
-            "known_cost": getattr(metrics_obj.cost, "known_cost", 0.0),
+            "known_cost": known_cost,
             "response_time_ms": getattr(metrics_obj.response, "response_time_ms", 0),
             "tokens_per_second": getattr(metrics_obj.response, "tokens_per_second", 0),
             "model": model_name or "unknown",
@@ -4966,8 +4996,10 @@ class SimpleScoringEvaluator(BaseEvaluator):
         aggregated_metrics = self._aggregate_custom_metrics(all_metrics)
 
         # Then aggregate LLM metrics if captured
+        tracked_llm_agg: dict[str, Any] | None = None
         if self.capture_llm_metrics and self._metrics_available:
             llm_agg = self._aggregate_llm_metrics(all_metrics, example_results)
+            tracked_llm_agg = dict(llm_agg)
             aggregated_metrics.update(llm_agg)
             if llm_agg.get("cost_unmeasured"):
                 # The custom-metric pass may have produced a partial sum for a
@@ -5042,6 +5074,8 @@ class SimpleScoringEvaluator(BaseEvaluator):
         )
         result.sample_budget_exhausted = budget_exhausted
         result.examples_consumed = len(example_results)
+        if tracked_llm_agg is not None:
+            result.tracked_spend = self._tracked_spend(tracked_llm_agg, "total_cost")
         return self._finalize_execution_budget_evaluation(
             budget, result, execution_budget_lease
         )

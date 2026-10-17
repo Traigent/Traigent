@@ -1701,8 +1701,12 @@ def test_default_public_mixed_pricing_warning_preserves_unknown_cost(
     measured_spend = sum(
         cost_from_tokens(PROMPT_TOKENS, COMPLETION_TOKENS, KNOWN_MODEL)
     )
-    assert trial.metrics["cost"] == pytest.approx(measured_spend)
-    assert trial.metrics["total_cost"] == pytest.approx(measured_spend)
+    # owner ruling A, partly priced cost is unknown: cost is unavailable and the
+    # priced part survives only as a lower bound.
+    assert trial.metrics.get("cost") is None
+    assert trial.metrics.get("total_cost") is None
+    assert trial.metrics["cost_unmeasured"] == 1
+    assert trial.metrics["cost_lower_bound"] == pytest.approx(measured_spend)
     assert trial.metrics["cost_unpriced"] == 1
     warning = " ".join(result.warnings)
     assert "Pricing is UNKNOWN" in warning

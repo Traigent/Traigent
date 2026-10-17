@@ -590,33 +590,26 @@ class ExampleMetrics:
         aggregation, ranking and display must filter on this, never on the
         magnitude of ``total_cost``. Usage that no price table covers
         (``cost.unpriced``) is not a measured cost either: its ``$0`` is the
-        absence of a price. Whatever part WAS priced stays a floor -- except a
-        row that still carries a positive priced charge, which is real spend
-        (``cost_unpriced`` flags that the row's total is a lower bound).
+        absence of a price. A partly priced row (priced spend plus usage with
+        no price) is UNKNOWN cost too (owner ruling A): the priced part is kept
+        only as a floor (``cost_lower_bound``), never as the row's cost.
         """
-        return (
-            self.measured
-            and not self.cost.unmeasured
-            and (not self.cost.unpriced or self.cost.total_cost > 0)
-        )
+        return self.measured and not self.cost.unmeasured and not self.cost.unpriced
 
 
 def cost_is_measured(metrics: ExampleMetrics) -> bool:
     """Distinguish a real charge or priced usage from default zero cost.
 
-    Explicit charges include provider/agent-reported zero. Positive charges
-    remain real spend even when another call in the row could not be priced.
+    Explicit charges include provider/agent-reported zero. A row with any
+    usage that could not be priced is unknown cost (owner ruling A, partly
+    priced cost is unknown); its priced part is only a floor.
     Character-length token estimates never establish a cost measurement.
     """
-    if not metrics.measured or metrics.cost.unmeasured:
+    if not metrics.measured or metrics.cost.unmeasured or metrics.cost.unpriced:
         return False
     if metrics.cost.cost_explicit or metrics.cost.total_cost > 0:
         return True
-    return (
-        not metrics.cost.unpriced
-        and not metrics.tokens.estimated
-        and metrics.tokens.total_tokens > 0
-    )
+    return not metrics.tokens.estimated and metrics.tokens.total_tokens > 0
 
 
 class MetricsTracker:

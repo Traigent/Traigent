@@ -789,7 +789,17 @@ class LocalEvaluator(BaseEvaluator):
         if example_metric.cost.unmeasured or not cost_is_measured(example_metric):
             # No captured usage, or usage no price covers: leave the cost keys
             # out. Unknown is not $0 and a downstream sum over example costs
-            # must not see a zero (#2517).
+            # must not see a zero (#2517). A partly priced row (owner ruling
+            # A) is unknown too; its priced part is only a floor.
+            if (
+                example_metric.cost.unpriced
+                and not example_metric.cost.unmeasured
+                and example_metric.cost.total_cost > 0
+            ):
+                example_result.metrics["cost_unmeasured"] = 1.0
+                example_result.metrics["known_cost"] = float(
+                    example_metric.cost.total_cost
+                ) + float(example_metric.cost.known_cost or 0.0)
             return
         example_result.metrics["input_cost"] = example_metric.cost.input_cost
         example_result.metrics["output_cost"] = example_metric.cost.output_cost
@@ -2689,6 +2699,7 @@ class LocalEvaluator(BaseEvaluator):
 
         result.sample_budget_exhausted = budget_exhausted
         result.examples_consumed = consumed_examples
+        result.tracked_spend = self._tracked_spend(comprehensive_metrics, "cost")
 
         return self._finalize_execution_budget_evaluation(
             budget, result, execution_budget_lease

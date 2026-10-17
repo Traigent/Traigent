@@ -99,6 +99,7 @@ def test_custom_cost_metric_does_not_hide_measured_spend_from_budget() -> None:
         total_examples=1,
         successful_examples=1,
         duration=1.0,
+        tracked_spend=BaseEvaluator._tracked_spend(comprehensive, "cost"),
     )
     assert BaseEvaluator._execution_budget_cost(result) == pytest.approx(0.50)
 
@@ -111,6 +112,9 @@ def test_partially_priced_row_is_flagged_incomplete_with_a_floor() -> None:
 
     assert metrics["cost_unpriced"] == 1.0  # flagged incomplete
     assert metrics["cost_lower_bound"] == pytest.approx(0.20)  # the floor
+    # owner ruling A, partly priced cost is unknown: no cost value, only a floor
+    assert metrics["cost"] is None
+    assert metrics["cost_unmeasured"] == 1.0
 
 
 def test_partially_priced_row_is_not_budget_complete() -> None:
@@ -199,3 +203,171 @@ async def test_local_unmeasured_first_call_keeps_aggregate_unmeasured(
     assert agg.get("cost_unmeasured") == 1.0
     assert agg.get("cost") is None
     assert agg.get("cost_lower_bound") == pytest.approx(paid)
+
+
+# Owner ruling A: a partly priced trial is UNKNOWN cost -----------------------
+def _trial_from_tracker(trial_id: str, tracker: MetricsTracker, **extra: float):
+    from datetime import UTC, datetime
+
+    from traigent.api.types import TrialResult, TrialStatus
+
+    keys = ("cost", "cost_unmeasured", "cost_lower_bound", "cost_unpriced")
+    formatted = tracker.format_for_backend()
+    metrics = {k: formatted[k] for k in keys if formatted.get(k) is not None}
+    metrics.update(extra)
+    return TrialResult(
+        trial_id=trial_id,
+        config={"id": trial_id},
+        metrics=metrics,
+        status=TrialStatus.COMPLETED,
+        duration=1.0,
+        timestamp=datetime.now(UTC),
+    )
+
+
+def _measured_tracker(cost: float) -> MetricsTracker:
+    tracker = MetricsTracker()
+    tracker.example_metrics.append(
+        ExampleMetrics(
+            tokens=TokenMetrics(input_tokens=10, output_tokens=20, total_tokens=30),
+            response=ResponseMetrics(response_time_ms=10),
+            cost=CostMetrics(input_cost=cost, output_cost=0.0),
+            success=True,
+        )
+    )
+    return tracker
+
+
+def test_partly_priced_trial_does_not_beat_fully_measured_on_cost_objective() -> None:
+    from traigent.core.result_selection import select_best_configuration
+
+    partial_tracker = MetricsTracker()
+    partial_tracker.example_metrics.append(_partial_row(0.20))
+    partial = _trial_from_tracker("partial", partial_tracker)
+    measured = _trial_from_tracker("measured", _measured_tracker(0.30))
+    assert "cost" not in partial.metrics  # unknown, not $0.20
+
+    res = select_best_configuration(
+        [partial, measured],
+        primary_objective="cost",
+        config_space_keys=["id"],
+        aggregate_configs=False,
+        comparability_mode="legacy",
+    )
+    assert res.best_trial_id == "measured"
+
+
+async def test_orchestrator_debit_for_partly_priced_trial_is_lower_bound_only() -> None:
+    from types import SimpleNamespace
+
+    from traigent.core.cost_estimator import CostEstimator
+    from traigent.core.orchestrator import OptimizationOrchestrator
+
+    tracker = MetricsTracker()
+    tracker.example_metrics.append(_partial_row(0.20))
+    trial = _trial_from_tracker("partial", tracker)
+    budget = ExecutionBudget(max_cost_usd=100.0)
+
+    async def _noop(**_kwargs) -> None:
+        return None
+
+    orch = SimpleNamespace(
+        cost_enforcer=SimpleNamespace(track_cost_async=_noop),
+        execution_budget=budget,
+        _extract_trial_cost=CostEstimator.extract_trial_cost,
+        _examples_of=lambda t: 1,
+    )
+    await OptimizationOrchestrator._account_trial_spend(orch, trial)
+    snap = budget.snapshot()
+    assert snap.consumed_cost == pytest.approx(0.20)  # the floor
+    assert snap.untracked_trials == 1  # not an exact total
+
+
+def test_summary_stats_for_single_partly_priced_row_are_not_complete() -> None:
+    tracker = MetricsTracker()
+    tracker.example_metrics.append(_partial_row(0.20))
+    summary = tracker.format_as_summary_stats()["metrics"]
+    assert summary["cost_unmeasured"] == 1.0
+    assert summary["cost_lower_bound"] == pytest.approx(0.20)
+    assert summary["total_cost"] is None  # no numeric statistics as complete
+    assert summary.get("cost_unpriced") in (None, 1.0)
+
+
+# Custom scores never feed the budget (P1 review) -----------------------------
+def _two_calls_paid_only(unmeasured_first: bool):
+    def func(q: str) -> str:
+        if unmeasured_first:
+            capture_langchain_response(_completion("gpt-4o-mini", usage=False))
+        capture_langchain_response(_completion("gpt-4o-mini", usage=True))
+        return 42
+
+    return func
+
+
+@pytest.mark.parametrize("evaluator_cls", [LocalEvaluator, SimpleScoringEvaluator])
+async def test_custom_zero_cost_scores_do_not_hide_tracked_spend(evaluator_cls) -> None:
+    paid = sum(cost_from_tokens(10, 20, "gpt-4o-mini"))
+    budget = ExecutionBudget(max_cost_usd=10.0)
+    evaluator = evaluator_cls(
+        metric_functions={
+            "cost": lambda *a, **k: 0.0,
+            "total_cost": lambda *a, **k: 0.0,
+        }
+    )
+    result = await evaluator.evaluate(
+        _two_calls_paid_only(False),
+        {"model": "gpt-4o-mini"},
+        Dataset([EvaluationExample({"q": "a"}, 42)]),
+        budget=budget,
+    )
+    assert result.aggregated_metrics["cost"] == 0.0  # custom score preserved
+    assert budget.consumed_cost == pytest.approx(paid)
+    assert result.execution_budget["cost_tracking"] == "complete"
+
+
+@pytest.mark.parametrize("evaluator_cls", [LocalEvaluator, SimpleScoringEvaluator])
+async def test_custom_cost_score_never_inflates_unmeasured_floor(evaluator_cls) -> None:
+    paid = sum(cost_from_tokens(10, 20, "gpt-4o-mini"))
+    budget = ExecutionBudget(max_cost_usd=1000.0)
+    evaluator = evaluator_cls(metric_functions={"cost": lambda *a, **k: 100.0})
+    result = await evaluator.evaluate(
+        _two_calls_paid_only(True),
+        {"model": "gpt-4o-mini"},
+        Dataset([EvaluationExample({"q": "a"}, 42)]),
+        budget=budget,
+    )
+    assert result.aggregated_metrics.get("cost_unmeasured") == 1.0
+    assert budget.consumed_cost == pytest.approx(paid)  # never the custom 100
+    assert result.execution_budget["cost_tracking"] == "untracked"
+
+
+def test_custom_cost_score_never_inflates_floor_after_merge() -> None:
+    """Unmeasured trial, $0.50 floor, custom ``cost`` score 100: debit $0.50."""
+    tracker = MetricsTracker()
+    tracker.example_metrics.append(_unknown_row())
+    tracker.example_metrics[0].cost.known_cost = 0.50
+    comprehensive = tracker.format_for_backend()
+    assert comprehensive["cost_unmeasured"] == 1.0
+    assert comprehensive["cost_lower_bound"] == pytest.approx(0.50)
+
+    evaluator = LocalEvaluator(
+        metrics=["cost"], metric_functions={"cost": lambda *a, **k: 100.0}
+    )
+    aggregated: dict = {"cost": 100.0}  # the user's custom score
+    evaluator._merge_comprehensive_metrics(
+        aggregated, comprehensive, preserve_authoritative_accuracy=True
+    )
+    assert aggregated["cost"] == 100.0  # custom score preserved
+    result = EvaluationResult(
+        config={},
+        aggregated_metrics=aggregated,
+        total_examples=1,
+        successful_examples=1,
+        duration=1.0,
+        tracked_spend=BaseEvaluator._tracked_spend(comprehensive, "cost"),
+    )
+    assert BaseEvaluator._execution_budget_cost(result) == pytest.approx(0.50)
+    budget = ExecutionBudget(max_cost_usd=1000.0)
+    BaseEvaluator._finalize_execution_budget_evaluation(budget, result, None)
+    assert budget.consumed_cost == pytest.approx(0.50)
+    assert budget._untracked_trials == 1
