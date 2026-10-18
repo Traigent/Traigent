@@ -855,6 +855,233 @@ def _scn_client_submit_result_load_session_permission(tmp_path, monkeypatch, str
         client.submit_result("opaque-session", {"t": 2}, 1.0)
 
 
+# ------------------------------------------------------- F1m (terra F1k/F1l + sol)
+def _store(tmp_path):
+    from traigent.storage.local_storage import LocalStorageManager
+
+    return LocalStorageManager(str(tmp_path / "f1m-store"))
+
+
+def _scn_store_banded_objective_name(tmp_path, monkeypatch, strict):
+    # terra P1: the objective name is stored caller config; the band refusal quoted it
+    store = _store(tmp_path)
+    sid = store.create_session(
+        "fn",
+        optimization_config={
+            "objective_schema": {
+                "objectives": [{"name": f"obj-{CANARY}", "orientation": "band"}]
+            }
+        },
+    )
+    store.add_trial_result(sid, {"t": 1}, 0.5)
+    store.add_trial_result(sid, {"t": 2}, 0.6)
+
+
+def _scn_store_status_logs(tmp_path, monkeypatch, strict):
+    # terra P1: a caller-supplied status string was logged verbatim
+    store = _store(tmp_path)
+    sid = store.create_session("fn")
+    store.update_session_status(sid, f"status-{CANARY}")
+    store.finalize_session(sid, f"status-{CANARY}")
+
+
+def _scn_store_session_id_not_found(tmp_path, monkeypatch, strict):
+    store = _store(tmp_path)
+    sid = f"sid-{CANARY}"
+    store.finalize_session(sid)
+    store.update_sync_state(sid, {"a": 1})
+    store.delete_session(sid)
+    store.add_trial_result(sid, {"t": 1}, 1.0)
+
+
+def _scn_store_session_id_load_failure(tmp_path, monkeypatch, strict):
+    store = _store(tmp_path)
+    sid = f"sid-{CANARY}"
+    (tmp_path / "f1m-store" / "sessions" / f"{sid}.json").write_text("{not json")
+    store.load_session(sid)
+    store.export_session(sid, str(tmp_path / "out.json"))
+
+
+def _scn_store_session_id_created_and_saved(tmp_path, monkeypatch, strict):
+    store = _store(tmp_path)
+    sid = store.create_session("fn", session_id=f"sid-{CANARY}")
+    store.add_trial_result(sid, {"t": 1}, 1.0)
+    store.export_session(sid, str(tmp_path / "out.json"))
+    store.finalize_session(sid)
+    store.delete_session(sid)
+
+
+def _scn_store_save_failure_session_id(tmp_path, monkeypatch, strict):
+    store = _store(tmp_path)
+    sid = store.create_session("fn", session_id=f"sid-{CANARY}")
+    with patch("traigent.storage.local_storage.safe_open", side_effect=OSError("x")):
+        store.update_session_status(sid, "running")
+
+
+def _scn_store_export_format(tmp_path, monkeypatch, strict):
+    store = _store(tmp_path)
+    sid = store.create_session("fn")
+    store.export_session(sid, str(tmp_path / "o.json"), format=f"fmt-{CANARY}")
+
+
+def _scn_manager_captured_environment(tmp_path, monkeypatch, strict):
+    # terra P2: a captured head's environment reached a debug log
+    ConfigStateManager._promotion_precondition_kwargs(
+        {"agent_id": "a1", "generation": 3, "environment": f"env-{CANARY}"},
+        "prod",
+    )
+    ConfigStateManager._promotion_precondition_kwargs(
+        {"agent_id": "a1", "generation": 3, "environment": "prod"},
+        f"env-{CANARY}",
+    )
+
+
+class _StrRaisesConfigurationError:
+    def __deepcopy__(self, memo):
+        return self
+
+    def __str__(self) -> str:
+        raise ConfigurationError(f"value /work/{CANARY}")
+
+
+def _scn_save_str_raises_configuration_error(tmp_path, monkeypatch, strict):
+    # sol P3: a value's own __str__ raising ConfigurationError(value) escaped unchanged
+    manager = _manager()
+    results = _real_results()
+    results.best_config = {"t": _StrRaisesConfigurationError()}
+    manager._optimization_results = results
+    manager.save_optimization_results(str(tmp_path / "r.json"))
+
+
+def _scn_persistence_encode_timestamp_value(tmp_path, monkeypatch, strict):
+    # sol P2: value-bearing ValueErrors outside the save boundary
+    from traigent.utils.optimization_result_persistence import encode_result_fields
+
+    results = _real_results()
+    results.timestamp = f"ts-{CANARY}"
+    encode_result_fields(results)
+
+
+def _scn_persistence_encode_status_value(tmp_path, monkeypatch, strict):
+    from traigent.utils.optimization_result_persistence import encode_result_fields
+
+    results = _real_results()
+    results.status = f"status-{CANARY}"
+    encode_result_fields(results)
+
+
+def _scn_persistence_decode_timestamp_value(tmp_path, monkeypatch, strict):
+    from traigent.utils.optimization_result_persistence import _decode_timestamp
+
+    _decode_timestamp({"k": CANARY})
+
+
+def _scn_persistence_manager_save_foreign_result(tmp_path, monkeypatch, strict):
+    from traigent.utils.persistence import PersistenceManager
+
+    real = _real_results()
+
+    class Foreign:
+        """Duck-typed result (not an OptimizationResult) with a bad timestamp."""
+
+        timestamp = f"ts-{CANARY}"
+
+        def __getattr__(self, name):
+            return getattr(real, name)
+
+    PersistenceManager(str(tmp_path / "pm")).save_result(Foreign(), "named")
+
+
+def _scn_client_submit_result_session_id(tmp_path, monkeypatch, strict):
+    client = BackendIntegratedClient(
+        api_key=FAKE_KEY,
+        base_url="https://api.test",
+        enable_fallback=True,
+        local_storage_path=str(tmp_path / "store"),
+    )
+    client.submit_result(f"sid-{CANARY}", {"t": 2}, 1.0)
+
+
+def _scn_manager_export_config_format(tmp_path, monkeypatch, strict):
+    # F1m audit: the caller-supplied format token was echoed in the error text
+    manager = _manager()
+    manager.set_config({"t": 2})
+    manager.export_config(tmp_path / "c.json", format=f"fmt-{CANARY}")
+
+
+def _encoded_result_fields():
+    from traigent.utils.optimization_result_persistence import (
+        SCHEMA_VERSION_KEY,
+        encode_result_fields,
+    )
+
+    fields = encode_result_fields(_real_results())
+    fields[SCHEMA_VERSION_KEY] = 2
+    return fields
+
+
+def _scn_persistence_decode_version_value(tmp_path, monkeypatch, strict):
+    from traigent.utils.optimization_result_persistence import (
+        SCHEMA_VERSION_KEY,
+        decode_result,
+    )
+
+    fields = _encoded_result_fields()
+    fields[SCHEMA_VERSION_KEY] = f"v-{CANARY}"
+    decode_result(fields, trials=[], artifact_name="named")
+
+
+def _scn_persistence_envelope_version_value(tmp_path, monkeypatch, strict):
+    from traigent.utils.optimization_result_persistence import (
+        SCHEMA_VERSION_KEY,
+        verify_envelope_version,
+    )
+
+    inner = {SCHEMA_VERSION_KEY: f"in-{CANARY}"}
+    verify_envelope_version({SCHEMA_VERSION_KEY: f"out-{CANARY}"}, inner)
+
+
+def _scn_persistence_predating_fields_label(tmp_path, monkeypatch, strict):
+    from traigent.utils.optimization_result_persistence import (
+        FIELD_INTRODUCED_IN,
+        SCHEMA_VERSION_KEY,
+        decode_result,
+    )
+
+    fields = _encoded_result_fields()
+    fields[SCHEMA_VERSION_KEY] = 1
+    for name, introduced in FIELD_INTRODUCED_IN.items():
+        if introduced > 1:
+            fields.pop(name, None)
+    decode_result(fields, trials=[], artifact_name=f"name-{CANARY}")
+
+
+F1M_SCENARIOS: dict[str, Scenario] = {
+    "manager/export_config_format": _scn_manager_export_config_format,
+    "persistence/decode_version_value": _scn_persistence_decode_version_value,
+    "persistence/envelope_version_value": _scn_persistence_envelope_version_value,
+    "persistence/predating_fields_label": _scn_persistence_predating_fields_label,
+    "store/banded_objective_name": _scn_store_banded_objective_name,
+    "store/status_logs": _scn_store_status_logs,
+    "store/session_id_not_found": _scn_store_session_id_not_found,
+    "store/session_id_load_failure": _scn_store_session_id_load_failure,
+    "store/session_id_created_and_saved": _scn_store_session_id_created_and_saved,
+    "store/save_failure_session_id": _scn_store_save_failure_session_id,
+    "store/export_format": _scn_store_export_format,
+    "manager/captured_environment": _scn_manager_captured_environment,
+    "results/save_str_raises_configuration_error": (
+        _scn_save_str_raises_configuration_error
+    ),
+    "persistence/encode_timestamp_value": _scn_persistence_encode_timestamp_value,
+    "persistence/encode_status_value": _scn_persistence_encode_status_value,
+    "persistence/decode_timestamp_value": _scn_persistence_decode_timestamp_value,
+    "persistence/manager_save_foreign_result": (
+        _scn_persistence_manager_save_foreign_result
+    ),
+    "client/submit_result_session_id": _scn_client_submit_result_session_id,
+}
+
+
 def _scenarios() -> dict[str, Scenario]:
     s: dict[str, Scenario] = {}
     s["results/save_traversal"] = _scn_save_traversal
@@ -946,6 +1173,7 @@ def _scenarios() -> dict[str, Scenario]:
     s["write/load_manifest_overlong"] = _scn_load_manifest_overlong
     s["write/export_overlong"] = _scn_export_overlong
     s["write/manifest_is_dir"] = _scn_write_manifest_is_dir
+    s.update(F1M_SCENARIOS)
     return s
 
 
@@ -973,7 +1201,7 @@ def test_canary_never_appears_in_any_rendering(
 
 def test_scenario_matrix_is_not_empty() -> None:
     # inputs x entry points x renderings: guard against a silently shrunk matrix.
-    assert len(SCENARIOS) >= 118
+    assert len(SCENARIOS) >= 136
 
 
 def test_helper_keeps_rejected_values_on_details_only() -> None:

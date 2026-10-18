@@ -984,8 +984,9 @@ def test_a_type_violating_real_result_fails_the_save_instead_of_downgrading(
     result.status = "definitely_not_a_status"  # type: ignore[assignment]
 
     persistence = PersistenceManager(base_dir=tmp_path)
-    with pytest.raises(ValueError, match="definitely_not_a_status"):
+    with pytest.raises(ValueError, match="'status'") as raised:
         persistence.save_result(result, "bogus-status")
+    assert "definitely_not_a_status" not in str(raised.value)
 
 
 class _UnserializableMetadataValue:
@@ -1057,8 +1058,9 @@ def test_the_strict_re_raise_still_covers_a_declared_field_type_violation(
     result.metadata = {"plugin_payload": _UnserializableMetadataValue()}
 
     persistence = PersistenceManager(base_dir=tmp_path)
-    with pytest.raises(ValueError, match="not-a-date"):
+    with pytest.raises(ValueError, match="'timestamp'") as raised:
         persistence.save_result(result, "violating-timestamp")
+    assert "not-a-date" not in str(raised.value)
 
 
 def test_a_duck_typed_result_with_unserializable_metadata_also_degrades(

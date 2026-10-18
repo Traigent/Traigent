@@ -44,15 +44,26 @@ LOG_METHODS = {"debug", "info", "warning", "error", "exception", "critical", "lo
 # GNFR-PRIV-003), a fixed label derived from the source enum (``_source_label``), an
 # SDK-owned constant, or text the SDK wrote itself. Regenerate a digest only after
 # re-reading the new expression; do not copy it blindly.
-_COUNT = "interpolates only counts / type names / code identifiers / SDK constants"
+_COUNT = (
+    "interpolates only len() counts, exception type names, code identifiers "
+    "(func.__name__, GNFR-PRIV-003), BestConfigSource enum values (every "
+    "_snapshot_from_plain_config / _load_* caller passes BestConfigSource.*.value: "
+    "config_state_manager.py:620, 1047, 1097, 1295, 1335-1355) or operation literals "
+    "(backend_client.py:2399, 2465 are the only _protected_request callers)"
+)
 _LABEL = (
-    "interpolates only _source_label() (fixed enum-derived label) and fixed reasons"
+    "interpolates only _source_label() (config_state_manager.py:84: a closed table, "
+    ":72-76, or the constant fallback :77) and fixed reasons (_legacy_identity_mismatch, "
+    ":530-552, returns literals only)"
 )
 _DECODER = (
-    "decoder ValueError text: the only best-config caller (load_optimization_results) no "
-    "longer passes artifact_name (label is '<unnamed>') and keeps the text off str/args by "
-    "wrapping it in diag.refusal(reason=...) details; other callers (persistence.py) name "
-    "their own artifacts"
+    "decoder ValueError text with an artifact label and SDK field names; declared "
+    "versions print as ints only (_shown_version). Best-config path: "
+    "config_state_manager.py:1287-1291 passes no artifact_name (label '<unnamed>') and "
+    "every exception is rewrapped by diag.refusal with the text on details only "
+    "(:1314-1322). The other caller, PersistenceManager.load_result (persistence.py:"
+    "686-706, not a best-config path), hands its own result name back to that same "
+    "caller; persistence.py is outside this guard's scope (residual, reported)"
 )
 _LEGACY_BACKEND = (
     "PRE-EXISTING, NOT PROVEN SAFE: generic backend-client path outside the best-config "
@@ -60,256 +71,7 @@ _LEGACY_BACKEND = (
     "F1j; any change to these sites should move them to best_config_diagnostics and "
     "remove the entry. Reported as an open follow-up."
 )
-_STORE_ID = (
-    "interpolates only a session id (SDK-generated timestamp + sanitized code identifier, "
-    "or a backend-issued reference), counts, a status token, a score, or an exception "
-    "*type* name; PRE-EXISTING local-storage text, session ids not proven free of "
-    "customer text when externally supplied"
-)
 ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
-    (
-        "local_storage.py",
-        "LocalStorageManager._ensure_directories",
-        "raise",
-        "aa530486fb476013",
-    ): (
-        1,
-        "fixed text plus the exception type name (the OS text quoting the path is dropped)",
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager._resolve_primary_objective_band",
-        "raise",
-        "95a7b0c2896fc67a",
-    ): (
-        1,
-        "SDK-owned objective name from the session spec (code identifier), no artifact content",
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager._save_session",
-        "raise",
-        "53b5f20678b8b46f",
-    ): (
-        1,
-        "session id plus the exception type name; cause suppressed (from None)",
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager._try_cleanup_stale_lock",
-        "log",
-        "43f91e231f55aa2a",
-    ): (
-        1,
-        "lock name is an SDK constant; pid and timeout are numbers",
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.acquire_lock",
-        "log",
-        "77492c9cb356be1f",
-    ): (
-        1,
-        "lock name is an SDK constant; pid and timeout are numbers",
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.acquire_lock",
-        "log",
-        "bfa7beeaa54a7ed0",
-    ): (
-        1,
-        "lock name is an SDK constant; pid and timeout are numbers",
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.acquire_lock",
-        "raise",
-        "f2235393b29b118c",
-    ): (
-        1,
-        "lock name is an SDK constant; pid and timeout are numbers",
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.add_trial_result",
-        "log",
-        "80ebf4d5d5a8ad12",
-    ): (
-        1,
-        _STORE_ID,
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.add_trial_result",
-        "raise",
-        "f0bbf4bfdd69dbbe",
-    ): (
-        1,
-        _STORE_ID,
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.cleanup_old_sessions",
-        "log",
-        "4f7e58761a9f7f45",
-    ): (
-        1,
-        _STORE_ID,
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.create_session",
-        "log",
-        "13ce705fd54807a3",
-    ): (
-        1,
-        _STORE_ID,
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.delete_session",
-        "log",
-        "08d46702c0cda984",
-    ): (
-        1,
-        _STORE_ID,
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.delete_session",
-        "log",
-        "614a27cb0350800f",
-    ): (
-        1,
-        _STORE_ID,
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.export_session",
-        "log",
-        "15826609a3df0bd1",
-    ): (
-        1,
-        _STORE_ID,
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.export_session",
-        "log",
-        "46189f28af1987a7",
-    ): (
-        1,
-        _STORE_ID,
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.export_session",
-        "log",
-        "91b6ce588075d703",
-    ): (
-        1,
-        "UNVERIFIED: interpolates the caller-supplied export format token (documented domain: json); pre-existing",
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.export_session",
-        "raise",
-        "f0bbf4bfdd69dbbe",
-    ): (
-        1,
-        _STORE_ID,
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.finalize_session",
-        "log",
-        "204380f960282a35",
-    ): (
-        1,
-        _STORE_ID,
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.finalize_session",
-        "log",
-        "2e2cbb0f1715c74a",
-    ): (
-        1,
-        _STORE_ID,
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.find_cached_result",
-        "log",
-        "809166c6c2228661",
-    ): (
-        1,
-        _STORE_ID,
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.find_cached_result_across_sessions",
-        "log",
-        "d05caf4650cdd57a",
-    ): (
-        1,
-        _STORE_ID,
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.is_config_seen",
-        "log",
-        "c824c6bcea372ad2",
-    ): (
-        1,
-        _STORE_ID,
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.load_session",
-        "log",
-        "f43453674dbf60d8",
-    ): (
-        1,
-        _STORE_ID,
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.session_summaries",
-        "log",
-        "29bd4fa0f611c3a0",
-    ): (
-        1,
-        _STORE_ID,
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.update_session_status",
-        "log",
-        "665f9a0d44f2c50f",
-    ): (
-        1,
-        _STORE_ID,
-    ),
-    (
-        "local_storage.py",
-        "LocalStorageManager.update_sync_state",
-        "log",
-        "1ee277ac3232528e",
-    ): (
-        1,
-        _STORE_ID,
-    ),
-    (
-        "local_storage.py",
-        "OptimizationSession._reconcile_total_trials",
-        "log",
-        "bc350e471d4068e7",
-    ): (
-        1,
-        _STORE_ID,
-    ),
     (
         "backend_client.py",
         "BackendIntegratedClient.__aenter__",
@@ -350,10 +112,14 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient._check_rate_limit",
         "raise",
-        "142dd45d23238ed1",
+        "e55509fda12dc933",
     ): (
         1,
-        "a computed wait time",
+        (
+            "wait_time is float arithmetic: rate_limit_period is a float "
+            "(backend_client.py:800, :940) minus time.time() floats (:1373-1385); a "
+            "non-number raises TypeError before the format"
+        ),
     ),
     (
         "backend_client.py",
@@ -483,15 +249,6 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
     ),
     (
         "backend_client.py",
-        "BackendIntegratedClient.submit_result",
-        "log",
-        "e81c0ab0dc7c6acc",
-    ): (
-        1,
-        _LEGACY_BACKEND,
-    ),
-    (
-        "backend_client.py",
         "BackendIntegratedClient.upload_example_features",
         "log",
         "66762c532b1f6fea",
@@ -504,6 +261,15 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "BackendIntegratedClient.upload_example_features",
         "log",
         "684478ff85c030ae",
+    ): (
+        1,
+        _LEGACY_BACKEND,
+    ),
+    (
+        "backend_client.py",
+        "BackendIntegratedClient.upload_example_features",
+        "log",
+        "6b381c0da720f7a0",
     ): (
         1,
         _LEGACY_BACKEND,
@@ -528,15 +294,6 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
     ),
     (
         "backend_client.py",
-        "BackendIntegratedClient.upload_example_features",
-        "log",
-        "6b381c0da720f7a0",
-    ): (
-        1,
-        _LEGACY_BACKEND,
-    ),
-    (
-        "backend_client.py",
         "BackendIntegratedClient.validate_session_token",
         "log",
         "d9f6ca85645982d3",
@@ -551,7 +308,10 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "8660996a06a105a3",
     ): (
         1,
-        "status code (int) and error_code that _envelope_error_code restricts to a plain token (_SAFE_ERROR_CODE_RE)",
+        (
+            "status code (int) and error_code that _envelope_error_code restricts to a "
+            "plain token (_SAFE_ERROR_CODE_RE)"
+        ),
     ),
     (
         "backend_client.py",
@@ -589,7 +349,12 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         1,
         "operation literal + pre-sanitized transient text or exception type name",
     ),
-    ("best_config_runtime.py", "_normalize_json_value", "raise", "b59a8129cf386185"): (
+    (
+        "best_config_runtime.py",
+        "_normalize_json_value",
+        "raise",
+        "b59a8129cf386185",
+    ): (
         1,
         _COUNT,
     ),
@@ -627,7 +392,10 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "6c4b6d7db0b8d805",
     ): (
         1,
-        "interpolates only _source_label() (fixed enum-derived label) and fixed reasons; refusal text via diag.fixed_reason",
+        (
+            "interpolates only _source_label() (fixed enum-derived label) and fixed "
+            "reasons; refusal text via diag.fixed_reason"
+        ),
     ),
     (
         "config_state_manager.py",
@@ -636,16 +404,10 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "d83a569ecbe94f7d",
     ): (
         1,
-        "interpolates only _source_label() (fixed enum-derived label) and fixed reasons; refusal text via diag.fixed_reason",
-    ),
-    (
-        "config_state_manager.py",
-        "ConfigStateManager._promotion_precondition_kwargs",
-        "log",
-        "9b0a7718b6396383",
-    ): (
-        1,
-        "environment names are the caller's own run configuration, not artifact content",
+        (
+            "interpolates only _source_label() (fixed enum-derived label) and fixed "
+            "reasons; refusal text via diag.fixed_reason"
+        ),
     ),
     (
         "config_state_manager.py",
@@ -654,7 +416,10 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "25567ea31b9886c8",
     ): (
         1,
-        "interpolates only _source_label() (fixed enum-derived label) and fixed reasons; JSON decoder .msg is a fixed library phrase; exceptions by type",
+        (
+            "interpolates only _source_label() (fixed enum-derived label) and fixed "
+            "reasons; JSON decoder .msg is a fixed library phrase; exceptions by type"
+        ),
     ),
     (
         "config_state_manager.py",
@@ -663,7 +428,10 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "28b6de4dbecb85f7",
     ): (
         1,
-        "interpolates only _source_label() (fixed enum-derived label) and fixed reasons; JSON decoder .msg is a fixed library phrase; exceptions by type",
+        (
+            "interpolates only _source_label() (fixed enum-derived label) and fixed "
+            "reasons; JSON decoder .msg is a fixed library phrase; exceptions by type"
+        ),
     ),
     (
         "config_state_manager.py",
@@ -672,7 +440,10 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "493a8d9ba51427b3",
     ): (
         1,
-        "interpolates only _source_label() (fixed enum-derived label) and fixed reasons; JSON decoder .msg is a fixed library phrase; exceptions by type",
+        (
+            "interpolates only _source_label() (fixed enum-derived label) and fixed "
+            "reasons; JSON decoder .msg is a fixed library phrase; exceptions by type"
+        ),
     ),
     (
         "config_state_manager.py",
@@ -681,7 +452,10 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "abd85b78d1f1cbbf",
     ): (
         1,
-        "interpolates only _source_label() (fixed enum-derived label) and fixed reasons; JSON decoder .msg is a fixed library phrase; exceptions by type",
+        (
+            "interpolates only _source_label() (fixed enum-derived label) and fixed "
+            "reasons; JSON decoder .msg is a fixed library phrase; exceptions by type"
+        ),
     ),
     (
         "config_state_manager.py",
@@ -690,7 +464,10 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "d23c9a9333e0d04c",
     ): (
         1,
-        "interpolates only _source_label() (fixed enum-derived label) and fixed reasons; JSON decoder .msg is a fixed library phrase; exceptions by type",
+        (
+            "interpolates only _source_label() (fixed enum-derived label) and fixed "
+            "reasons; JSON decoder .msg is a fixed library phrase; exceptions by type"
+        ),
     ),
     (
         "config_state_manager.py",
@@ -699,7 +476,10 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "de9ebe4d05039de2",
     ): (
         1,
-        "interpolates only _source_label() (fixed enum-derived label) and fixed reasons; JSON decoder .msg is a fixed library phrase; exceptions by type",
+        (
+            "interpolates only _source_label() (fixed enum-derived label) and fixed "
+            "reasons; JSON decoder .msg is a fixed library phrase; exceptions by type"
+        ),
     ),
     (
         "config_state_manager.py",
@@ -708,7 +488,10 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "e9f0fd0c5a65be0b",
     ): (
         1,
-        "interpolates only _source_label() (fixed enum-derived label) and fixed reasons; the path lives on details only",
+        (
+            "interpolates only _source_label() (fixed enum-derived label) and fixed "
+            "reasons; the path lives on details only"
+        ),
     ),
     (
         "config_state_manager.py",
@@ -726,7 +509,10 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "b647783b06ba48e3",
     ): (
         1,
-        "message is _LABEL text (fixed enum-derived label) plus a literal reason; the path lives on details only",
+        (
+            "message is _LABEL text (fixed enum-derived label) plus a literal reason; the "
+            "path lives on details only"
+        ),
     ),
     (
         "config_state_manager.py",
@@ -735,7 +521,10 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "3619248b5b4b60ab",
     ): (
         1,
-        "interpolates only source.value (the closed best-config source enum) via diag.log with a fixed category",
+        (
+            "interpolates only source.value (the closed best-config source enum) via "
+            "diag.log with a fixed category"
+        ),
     ),
     (
         "config_state_manager.py",
@@ -744,7 +533,10 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "596663837dba5a91",
     ): (
         1,
-        "interpolates only source.value (the closed best-config source enum) via diag.log with a fixed category",
+        (
+            "interpolates only source.value (the closed best-config source enum) via "
+            "diag.log with a fixed category"
+        ),
     ),
     (
         "config_state_manager.py",
@@ -775,15 +567,6 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
     ),
     (
         "config_state_manager.py",
-        "ConfigStateManager.export_config",
-        "raise",
-        "91f853c9fe0f5aa8",
-    ): (
-        1,
-        "echoes the caller's own 'format' argument (slim/full choice), not artifact content",
-    ),
-    (
-        "config_state_manager.py",
         "ConfigStateManager.maybe_auto_load_config",
         "log",
         "66e853dcebdc2f1e",
@@ -810,13 +593,134 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         _COUNT,
     ),
     (
+        "local_storage.py",
+        "LocalStorageManager._ensure_directories",
+        "raise",
+        "aa530486fb476013",
+    ): (
+        1,
+        "fixed text plus the exception type name (the OS text quoting the path is dropped)",
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager._save_session",
+        "raise",
+        "d3e84162472e3028",
+    ): (
+        1,
+        (
+            "fixed text plus the exception type name; the session id lives on details "
+            "only (local_storage.py _save_session except-block)"
+        ),
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.cleanup_old_sessions",
+        "log",
+        "315c770cd3a4fbe8",
+    ): (
+        1,
+        (
+            "deleted_count is an int counter (initialised 0 and += 1 in the same "
+            "function); no session id or days value"
+        ),
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.delete_session",
+        "log",
+        "d288f3d7657ce756",
+    ): (
+        1,
+        "fixed text plus the exception type name; no session id",
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.export_session",
+        "log",
+        "e377e1a882507af6",
+    ): (
+        1,
+        "fixed text plus the exception type name; no session id or format",
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.find_cached_result",
+        "log",
+        "809166c6c2228661",
+    ): (
+        1,
+        (
+            "interpolates only a session id (SDK-generated timestamp + sanitized code "
+            "identifier, or a backend-issued reference), counts, a status token, a score, "
+            "or an exception *type* name; PRE-EXISTING local-storage text, session ids "
+            "not proven free of customer text when externally supplied"
+        ),
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.find_cached_result_across_sessions",
+        "log",
+        "d05caf4650cdd57a",
+    ): (
+        1,
+        (
+            "interpolates only a session id (SDK-generated timestamp + sanitized code "
+            "identifier, or a backend-issued reference), counts, a status token, a score, "
+            "or an exception *type* name; PRE-EXISTING local-storage text, session ids "
+            "not proven free of customer text when externally supplied"
+        ),
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.is_config_seen",
+        "log",
+        "c824c6bcea372ad2",
+    ): (
+        1,
+        (
+            "interpolates only a session id (SDK-generated timestamp + sanitized code "
+            "identifier, or a backend-issued reference), counts, a status token, a score, "
+            "or an exception *type* name; PRE-EXISTING local-storage text, session ids "
+            "not proven free of customer text when externally supplied"
+        ),
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.load_session",
+        "log",
+        "1eefa7c4501b7dd4",
+    ): (
+        1,
+        "fixed text plus the exception type name; no session id",
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.session_summaries",
+        "log",
+        "29bd4fa0f611c3a0",
+    ): (
+        1,
+        (
+            "interpolates only a session id (SDK-generated timestamp + sanitized code "
+            "identifier, or a backend-issued reference), counts, a status token, a score, "
+            "or an exception *type* name; PRE-EXISTING local-storage text, session ids "
+            "not proven free of customer text when externally supplied"
+        ),
+    ),
+    (
         "optimization_result_persistence.py",
         "_decode_legacy",
         "log",
-        "845f059f8627399f",
+        "9beb48b46cf2e48b",
     ): (
         1,
-        "legacy format literal + SDK dataclass field names; no artifact name",
+        (
+            "legacy_format is a member of _LEGACY_FORMATS "
+            "(decode_result refuses any other value before calling _decode_legacy); "
+            "defaulted are RESULT_RESTORE field names and notes are literals appended in "
+            "_decode_legacy; no artifact label"
+        ),
     ),
     (
         "optimization_result_persistence.py",
@@ -838,21 +742,17 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
     ),
     (
         "optimization_result_persistence.py",
-        "_decode_timestamp",
-        "raise",
-        "5fe7e0b228f39f82",
-    ): (
-        1,
-        _DECODER,
-    ),
-    (
-        "optimization_result_persistence.py",
         "_decode_versioned",
         "log",
-        "2d1493ad10949247",
+        "fd2ae3924719f974",
     ): (
         1,
-        "interpolates the artifact label: only reached via decode_result; the best-config caller passes no artifact_name ('<unnamed>'); persistence.py callers name their own artifacts",
+        (
+            "version is an int >= 1 and <= RESULT_SCHEMA_VERSION (checked in "
+            "decode_result before the call), RESULT_SCHEMA_VERSION is a constant, "
+            "predating are RESULT_RESTORE field names; the artifact label is no longer "
+            "logged"
+        ),
     ),
     (
         "optimization_result_persistence.py",
@@ -865,15 +765,6 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
     ),
     (
         "optimization_result_persistence.py",
-        "_encode_timestamp",
-        "raise",
-        "eabcfa82bec244e0",
-    ): (
-        1,
-        "encode side: the caller's own in-memory value, raised before anything is written",
-    ),
-    (
-        "optimization_result_persistence.py",
         "_introduced_in",
         "raise",
         "aa8985ff8d298e6f",
@@ -881,7 +772,12 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         1,
         "SDK-internal consistency error naming SDK-owned field names",
     ),
-    ("optimization_result_persistence.py", "_read_field", "log", "adea9fa45fc35ab8"): (
+    (
+        "optimization_result_persistence.py",
+        "_read_field",
+        "log",
+        "adea9fa45fc35ab8",
+    ): (
         1,
         "dataclass field name + type name (SDK-owned)",
     ),
@@ -898,15 +794,6 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "decode_result",
         "raise",
-        "05fb740e7dd2607a",
-    ): (
-        1,
-        _DECODER,
-    ),
-    (
-        "optimization_result_persistence.py",
-        "decode_result",
-        "raise",
         "4afff28277651612",
     ): (
         1,
@@ -917,6 +804,15 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "decode_result",
         "raise",
         "52448019bbf40e37",
+    ): (
+        1,
+        _DECODER,
+    ),
+    (
+        "optimization_result_persistence.py",
+        "decode_result",
+        "raise",
+        "8905b0fcf7fc8541",
     ): (
         1,
         _DECODER,
@@ -952,7 +848,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "verify_envelope_version",
         "raise",
-        "326f46cf438c5571",
+        "7c6f7eedce6ff880",
     ): (
         1,
         _DECODER,
@@ -961,7 +857,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "verify_envelope_version",
         "raise",
-        "6c2e3f2e2a4362c1",
+        "b2c5030f8ca7aa58",
     ): (
         1,
         _DECODER,
@@ -973,11 +869,24 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "2ce69a653d075128",
     ): (
         1,
-        "route is a table template (never the request path) and the dict holds only violation-class counts",
+        (
+            "route is a table template (never the request path) and the dict holds only "
+            "violation-class counts"
+        ),
     ),
-    ("transport_gate.py", "inspect_outgoing", "log", "0f4e66ea82fa23c1"): (
+    (
+        "transport_gate.py",
+        "inspect_outgoing",
+        "log",
+        "10d5f86293b5ddb7",
+    ): (
         1,
-        "debug line of mode, route template and violation-class counts; no request path, header or body",
+        (
+            "mode is one of MODES (current_mode, transport_gate.py:71), template is "
+            "route['template'] from the generated table (content_classes.py:260, :283) "
+            "and counts is a Counter of class labels from the same table: never the "
+            "request path, query or body"
+        ),
     ),
 }
 
@@ -1019,6 +928,45 @@ def _variable_message(node: ast.AST) -> bool:
         return not (_is_const(node.left) and _is_const(node.right))
     return not _is_const(node)
 
+
+def _dotted(node: ast.AST) -> str | None:
+    """``a`` / ``self._m`` / ``a.b.c`` as one name, else None."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted(node.value)
+        return f"{base}.{node.attr}" if base else None
+    return None
+
+
+# callees that take a caught exception but render only its type name / fixed reason
+_TYPE_ONLY = {"type", "isinstance", "id", "transport_failed_message", "fixed_reason"}
+# factories that own the wording of the error they build (rejected values live on
+# ``details``); their own bodies are scanned, so their callers are not re-flagged
+_SANITIZERS = {"refusal", "_unavailable", "_canonical_failure"}
+
+
+def _has_exception_text(node: ast.AST | None, handler_vars: set[str]) -> bool:
+    """True when ``node`` reads a caught exception's value or text.
+
+    ``type(e)`` / ``e.__class__.__name__`` / ``isinstance`` are type-only and pass;
+    everything else that touches the caught exception (``e``, ``e.message``,
+    ``e.args[0]``, ``e.details``) is the inner error's text, which may carry content.
+    """
+    if node is None or not handler_vars:
+        return False
+    if isinstance(node, ast.Call):
+        callee = getattr(node.func, "id", getattr(node.func, "attr", ""))
+        if callee in _TYPE_ONLY:
+            return False
+    if isinstance(node, ast.Attribute) and node.attr in {"__class__", "__name__"}:
+        return False
+    if isinstance(node, ast.Name):
+        return node.id in handler_vars
+    return any(_has_exception_text(c, handler_vars) for c in ast.iter_child_nodes(node))
+
+
+_MESSAGE_KW = {"message", "msg", "reason", "detail"}
 
 _LOGGER_NAMES = {"logger", "log", "_logger", "logging", "LOGGER", "_LOGGER"}
 
@@ -1118,6 +1066,7 @@ class _Scan(ast.NodeVisitor):
         self.aliases = aliases or _Aliases()
         self.stack: list[str] = []
         self.funcs: list[ast.AST] = []
+        self.handler_vars: list[str] = []
         # (file, function, kind, digest of exact expression text, line)
         self.found: list[tuple[str, str, str, str, int]] = []
 
@@ -1148,13 +1097,27 @@ class _Scan(ast.NodeVisitor):
         ]
 
         def names_in(node: ast.AST | None) -> set[str]:
+            # plain names and dotted attribute chains (``self._m``) alike
             if node is None:
                 return set()
-            return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+            out: set[str] = set()
+            for n in ast.walk(node):
+                if isinstance(n, (ast.Name, ast.Attribute)):
+                    dotted = _dotted(n)
+                    if dotted:
+                        out.add(dotted)
+            return out
+
+        def flat(target: ast.AST) -> list[ast.AST]:
+            if isinstance(target, (ast.Tuple, ast.List)):
+                return [leaf for elt in target.elts for leaf in flat(elt)]
+            if isinstance(target, ast.Starred):
+                return flat(target.value)
+            return [target]
 
         def targets(sub: ast.AST) -> set[str]:
             raw = sub.targets if isinstance(sub, ast.Assign) else [sub.target]  # type: ignore[attr-defined]
-            return {t.id for t in raw if isinstance(t, ast.Name)}
+            return {d for t in raw for leaf in flat(t) if (d := _dotted(leaf))}
 
         wanted: set[str] = set()
         for expr in exprs:
@@ -1245,15 +1208,41 @@ class _Scan(ast.NodeVisitor):
                 self._add("log", node, feeders, node.lineno)
         self.generic_visit(node)
 
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.name:
+            self.handler_vars.append(node.name)
+        self.generic_visit(node)
+        if node.name:
+            self.handler_vars.pop()
+
+    def _prepared_exception(self, exc: ast.AST) -> list[ast.Call]:
+        """Calls that build the exception object a bare ``raise err`` re-raises."""
+        name = _dotted(exc)
+        if name is None:
+            return []
+        out: list[ast.Call] = []
+        for feeder in self._feeders(exc, transitive=False):
+            value = getattr(feeder, "value", None)
+            if isinstance(value, ast.Call):
+                out.append(value)
+        return out
+
     def visit_Raise(self, node: ast.Raise) -> None:
         exc = node.exc
+        hv = set(self.handler_vars)
+        if isinstance(exc, (ast.Name, ast.Attribute)):
+            # ``err = ValueError(f"..{x}"); raise err``: judge the call that built it
+            prepared = self._prepared_exception(exc)
+            if any(self._call_builds_text(call, hv) for call in prepared):
+                feeders = self._feeders(exc)
+                self._add("raise", node, feeders, node.lineno)
         if isinstance(exc, ast.Call):
             raise_args = [*exc.args, *(kw.value for kw in exc.keywords)]
             feeders = self._feeders(*raise_args)
             # what *builds* the message is judged on its direct assignments only; the
             # transitive chain is hashed (so a distant change alters the key)
             direct = self._feeders(*raise_args, transitive=False)
-            builds_text = (
+            builds_text = self._call_builds_text(exc, hv) or (
                 any(_formats_value(a) for a in exc.args)
                 or any(_formats_value(getattr(f, "value", None) or f) for f in direct)
                 # a bare value (name / attribute / subscript) as a builtin exception's
@@ -1269,6 +1258,35 @@ class _Scan(ast.NodeVisitor):
             if builds_text:
                 self._add("raise", node, feeders, node.lineno)
         self.generic_visit(node)
+
+    def _call_builds_text(self, exc: ast.Call, hv: set[str]) -> bool:
+        """Does this exception constructor print a value (not just a literal)?"""
+        callee = getattr(exc.func, "id", getattr(exc.func, "attr", ""))
+        sanitizer = callee in _SANITIZERS
+        if sanitizer:
+            hv = set()
+        # keywords (``path=``, ``cache_dir=``, ``details=``) carry rejected values on
+        # ``exc.details`` by design; only message-named keywords are judged
+        args = [
+            *exc.args,
+            *(
+                kw.value
+                for kw in exc.keywords
+                if kw.arg in _MESSAGE_KW and not sanitizer
+            ),
+        ]
+        if any(_formats_value(a) for a in args):
+            return True
+        if _is_builtin_exception(exc.func) and any(
+            isinstance(a, (ast.Name, ast.Attribute, ast.Subscript)) for a in exc.args
+        ):
+            return True
+        if any(_has_exception_text(a, hv) for a in args):
+            return True
+        direct = self._feeders(*args, transitive=False)
+        return any(
+            _formats_value(getattr(f, "value", None) or f) for f in direct
+        ) or any(_has_exception_text(getattr(f, "value", None), hv) for f in direct)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         bases = [ast.unparse(b) for b in node.bases]
@@ -1407,6 +1425,32 @@ def _kinds(source: str) -> list[str]:
             "class E(Exception):\n def __str__(self):\n  return 'bad %s' % self.v\n",
             ["exc_class"],
         ),
+        # F1m: a prepared exception object, and a wrapped SDK/inner error's text
+        ("def f(p):\n err = ValueError(f'bad {p}')\n raise err\n", ["raise"]),
+        (
+            "def f(p):\n err = ValueError(p)\n raise err\n",
+            ["raise"],
+        ),
+        (
+            "def f(p):\n e2 = W(f'bad {p}')\n raise e2 from None\n",
+            ["raise"],
+        ),
+        (
+            "def f():\n try:\n  g()\n except Exception as e:\n  raise W(e.message)\n",
+            ["raise"],
+        ),
+        (
+            "def f():\n try:\n  g()\n except Exception as e:\n  raise W(e)\n",
+            ["raise"],
+        ),
+        (
+            "def f():\n try:\n  g()\n except Exception as e:\n  m = e.args[0]\n  raise W(m)\n",
+            ["raise"],
+        ),
+        (
+            "def f():\n try:\n  g()\n except Exception as e:\n  err = W(e.message)\n  raise err\n",
+            ["raise"],
+        ),
     ],
 )
 def test_guard_catches_each_bypass(source: str, expected: list[str]) -> None:
@@ -1462,6 +1506,34 @@ def test_two_hop_source_assignment_changes_the_key() -> None:
     (unsafe,) = [
         d for _, _, _, d, _ in scan_source("x.py", template.format(src="str(exc)"))
     ]
+    assert safe != unsafe
+
+
+def _digests(source: str) -> list[str]:
+    return [d for _, _, _, d, _ in scan_source("x.py", source)]
+
+
+def test_attribute_target_source_assignment_changes_the_key() -> None:
+    template = (
+        "class C:\n def f(self, exc):\n  self._m = {src}\n"
+        "  logger.warning(f'failed {{self._m}}')\n"
+    )
+    (safe,) = _digests(template.format(src="type(exc).__name__"))
+    (unsafe,) = _digests(template.format(src="str(exc)"))
+    assert safe != unsafe
+
+
+def test_tuple_target_source_assignment_changes_the_key() -> None:
+    template = "def f(exc):\n a, b = {src}, 1\n raise ValueError(f'failed {{a}}')\n"
+    (safe,) = _digests(template.format(src="type(exc).__name__"))
+    (unsafe,) = _digests(template.format(src="str(exc)"))
+    assert safe != unsafe
+
+
+def test_prepared_exception_source_changes_the_key() -> None:
+    template = "def f(exc):\n err = ValueError(f'failed {{{x}}}')\n raise err\n"
+    (safe,) = _digests(template.format(x="type(exc).__name__"))
+    (unsafe,) = _digests(template.format(x="exc.path"))
     assert safe != unsafe
 
 

@@ -1207,8 +1207,16 @@ class ConfigStateManager:
                 output_path = validate_path(output_path, base_dir, must_exist=False)
                 with safe_open(output_path, base_dir, mode="w", encoding="utf-8") as f:
                     json.dump(result_dict, f, indent=2, default=str)
-        except ConfigurationError:
-            raise
+        except ConfigurationError as exc:
+            if diag.is_safe(exc):
+                raise
+            # a value's own __str__ can raise ConfigurationError(<customer text>):
+            # only a refusal built by this SDK passes unchanged
+            raise diag.refusal(
+                "Failed to save optimization results",
+                category=diag.Category.FILESYSTEM_FAILED,
+                cause=exc,
+            ) from None
         except Exception as exc:
             # PathTraversalError / secure_path's ValueError quote the path, and a
             # value's own __str__ can raise customer text: fixed refusal, type only
@@ -1542,8 +1550,10 @@ class ConfigStateManager:
         elif format == "full":
             export_data = self._create_full_export(include_metadata)
         else:
+            # the caller-supplied format token is a rejected value: details only
             raise ConfigurationError(
-                f"Unknown export format: {format}. Use 'slim' or 'full'."
+                "Unknown export format. Use 'slim' or 'full'.",
+                details={"format": format},
             )
 
         with open(output_path, "w", encoding="utf-8") as f:
@@ -1725,11 +1735,10 @@ class ConfigStateManager:
             logger.debug("Captured agent head generation is malformed; ignoring it")
             return {}
         if captured.get("environment") != environment:
+            # both environments are caller/captured input: not logged
             logger.debug(
-                "Agent head generation was captured for environment %r, not %r; "
-                "publishing without one",
-                captured.get("environment"),
-                environment,
+                "Agent head generation was captured for a different environment; "
+                "publishing without one"
             )
             return {}
         return {"agent_id": agent_id, "expected_head_generation": generation}

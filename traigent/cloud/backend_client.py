@@ -3022,7 +3022,7 @@ class BackendIntegratedClient:
     ) -> None:
         """Compatibility shim for legacy synchronous result submission."""
 
-        logger.debug("submit_result called for session=%s score=%s", session_id, score)
+        logger.debug("submit_result called")
 
         if self.enable_fallback and self.local_storage:
             try:

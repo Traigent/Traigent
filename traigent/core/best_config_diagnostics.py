@@ -70,6 +70,12 @@ def mark_safe(error: ConfigurationError) -> ConfigurationError:
     return error
 
 
+def is_safe(exc: BaseException) -> bool:
+    """True for a ``ConfigurationError`` built by :func:`refusal` / :func:`mark_safe`."""
+
+    return isinstance(exc, ConfigurationError) and bool(getattr(exc, _SAFE_MARK, False))
+
+
 def fixed_reason(exc: BaseException) -> str:
     """Log-safe reason: a SDK refusal's fixed message, else only the exception type.
 
@@ -154,6 +160,7 @@ __all__ = [
     "Category",
     "fixed_reason",
     "fs_guard",
+    "is_safe",
     "SafeConfigurationError",
     "log",
     "mark_safe",

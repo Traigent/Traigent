@@ -459,13 +459,14 @@ def _encode_timestamp(value: Any) -> str:
     """
     try:
         return _decode_timestamp(value).isoformat()
-    except ValueError as exc:
+    except ValueError:
+        # the rejected value (and the parser's text, which quotes it) is caller
+        # content: neither is printed, so it cannot reach a log or traceback
         raise ValueError(
-            f"Cannot persist an optimization result whose 'timestamp' is "
-            f"{value!r}: a persisted timestamp must be a datetime or an "
-            f"ISO-8601 string, and writing this value would produce an "
-            f"artifact that load_result cannot read back ({exc})."
-        ) from exc
+            "Cannot persist an optimization result whose 'timestamp' is not a "
+            "datetime or an ISO-8601 string: writing this value would produce an "
+            "artifact that load_result cannot read back."
+        ) from None
 
 
 def _encode_value(name: str, value: Any) -> Any:
@@ -477,7 +478,14 @@ def _encode_value(name: str, value: Any) -> Any:
     is on disk and the caller that supplied it is long gone.
     """
     if name == "status":
-        return OptimizationStatus(value).value
+        try:
+            return OptimizationStatus(value).value
+        except ValueError:
+            # the enum's text quotes the rejected value: not printed
+            raise ValueError(
+                "Cannot persist an optimization result whose 'status' is not a "
+                "valid OptimizationStatus."
+            ) from None
     if name == "timestamp":
         return _encode_timestamp(value)
     if name == "preset_selection":
@@ -504,6 +512,17 @@ def _decode_status(value: Any) -> OptimizationStatus:
         return OptimizationStatus.UNKNOWN
 
 
+def _shown_version(value: Any) -> str:
+    """A declared schema version safe to print: an int as itself, anything else by type.
+
+    The value comes from the artifact on disk; a non-integer one can carry arbitrary
+    text, so only its type name is shown.
+    """
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    return f"<{type(value).__name__}>"
+
+
 def _decode_timestamp(value: Any) -> datetime:
     """Decode a persisted timestamp written by ``isoformat`` or ``str``."""
     if isinstance(value, datetime):
@@ -511,8 +530,12 @@ def _decode_timestamp(value: Any) -> datetime:
     if isinstance(value, str):
         # Covers both writers: PersistenceManager stores `isoformat()`;
         # ConfigStateManager dumps with `default=str` (space separator).
-        return datetime.fromisoformat(value)
-    raise ValueError(f"Unreadable persisted timestamp: {value!r}")
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            # the parser's text quotes the persisted value: not printed
+            raise ValueError("Unreadable persisted timestamp") from None
+    raise ValueError("Unreadable persisted timestamp")
 
 
 def _decode_value(name: str, value: Any) -> Any:
@@ -894,10 +917,10 @@ def _decode_versioned(
         # restored to the value the dataclass itself would have produced when
         # the record was written.
         logger.info(
-            "Optimization result artifact %s declares schema version %d; this "
+            # the artifact label is a caller-chosen name: not logged
+            "Optimization result artifact declares schema version %d; this "
             "build reads version %d. Fields introduced after version %d are "
             "restored at their declared defaults: %s.",
-            label,
             version,
             RESULT_SCHEMA_VERSION,
             version,
@@ -961,7 +984,8 @@ def verify_envelope_version(
     if outer != inner:
         raise ValueError(
             f"Corrupted optimization result artifact {label}: it declares "
-            f"'{SCHEMA_VERSION_KEY}' {outer!r} on the envelope but {inner!r} on "
+            f"'{SCHEMA_VERSION_KEY}' {_shown_version(outer)} on the envelope but "
+            f"{_shown_version(inner)} on "
             f"its 'result_fields' payload. Both are written together and must "
             f"agree; decoding the payload at its own version would ignore the "
             f"envelope's claim and silently drop whatever the other version "
@@ -1028,7 +1052,7 @@ def decode_result(
         if isinstance(version, bool) or not isinstance(version, int) or version < 1:
             raise ValueError(
                 f"Corrupted optimization result artifact {label}: "
-                f"'{SCHEMA_VERSION_KEY}' is {version!r}, which is not a schema "
+                f"'{SCHEMA_VERSION_KEY}' is {_shown_version(version)}, which is not a schema "
                 f"version this format ever used (versions are integers from 1; "
                 f"this build writes {RESULT_SCHEMA_VERSION})."
             )
