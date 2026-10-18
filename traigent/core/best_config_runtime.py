@@ -214,22 +214,39 @@ class CloudBestConfigStaleHeadError(CloudPublishUnavailable):
         environment: str | None = None,
         best_config: dict[str, Any] | None = None,
     ) -> None:
-        super().__init__(
-            CloudPublishUnavailableReason.STALE_HEAD_GENERATION,
-            message
-            or (
+        # trust only validated operands: exactly ``int`` (bool and subclasses, whose
+        # ``__str__`` / ``__format__`` can be overridden, are excluded)
+        operands_valid = (
+            type(current_generation) is int and type(expected_generation) is int
+        )
+        if message is not None:
+            default_message = message
+        elif operands_valid:
+            default_message = (
                 f"Agent head is at generation {current_generation}, not the "
                 f"generation {expected_generation} captured when the run started; "
                 "the published head was left unchanged."
-            ),
+            )
+        else:
+            default_message = (
+                "Agent head moved after the run captured its generation; "
+                "the published head was left unchanged."
+            )
+        super().__init__(
+            CloudPublishUnavailableReason.STALE_HEAD_GENERATION,
+            default_message,
         )
         self.current_generation = current_generation
         self.expected_generation = expected_generation
         self.agent_id = agent_id
         self.environment = environment
         self.best_config = best_config
-        if message is None and type(self) is CloudBestConfigStaleHeadError:
-            # the default message holds only two integers
+        if (
+            message is None
+            and operands_valid
+            and type(self) is CloudBestConfigStaleHeadError
+        ):
+            # the default message holds only two validated integers
             diag._mark_safe(self)
 
 
@@ -251,18 +268,26 @@ class CloudBestConfigHeadRefusedError(CloudPublishUnavailable):
         reason: CloudPublishUnavailableReason = CloudPublishUnavailableReason.HEAD_REFUSED,
         best_config: dict[str, Any] | None = None,
     ) -> None:
+        # the closed code is validated by identity against the enum's own members, never
+        # through the operand's ``__eq__`` / ``__hash__`` / ``__str__`` / ``value``
+        valid_code = next((m for m in HeadRefusalCode if m is code), None)
         super().__init__(
-            reason, f"Protected best-config publish refused: {code.value}."
+            reason,
+            (
+                f"Protected best-config publish refused: {valid_code.value}."
+                if valid_code is not None
+                else "Protected best-config publish refused."
+            ),
         )
         self.code = code
         self.status_code = status_code
         self.best_config = best_config
-        if type(self) in (
+        if valid_code is not None and type(self) in (
             CloudBestConfigHeadRefusedError,
             CloudBestConfigHeadStaleError,
         ):
-            # the message is built here from a closed code: trusted by construction
-            # (an unknown subclass stays untrusted)
+            # the message is built here from a validated closed code: trusted
+            # (an unknown subclass or a forged code stays untrusted)
             diag._mark_safe(self)
 
 

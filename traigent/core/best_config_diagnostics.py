@@ -187,10 +187,23 @@ def fs_guard(message: str) -> Iterator[None]:
     so neither is printed or chained. ``message`` is a literal.
     """
 
+    error: ConfigurationError | None = None
     try:
         yield
     except (OSError, UnicodeDecodeError) as exc:
-        raise refusal(message, category=Category.FILESYSTEM_FAILED, cause=exc) from None
+        error = refusal(message, category=Category.FILESYSTEM_FAILED, cause=exc)
+    if error is not None:
+        # raised outside the ``except`` block: inside it the original exception would
+        # be chained as ``__context__``, carrying the path / undecodable bytes
+        # (contextlib throws the original into this generator, so the interpreter links
+        # it again on ``raise``; clear it after that link and re-raise unchanged)
+        try:
+            raise error from None
+        except ConfigurationError as raised:
+            raised.__cause__ = None
+            raised.__context__ = None
+            raised.__suppress_context__ = True
+            raise
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
