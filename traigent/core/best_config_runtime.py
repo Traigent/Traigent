@@ -350,7 +350,19 @@ def canonical_json(value: Any) -> str:
 def sha256_digest(value: str | bytes) -> str:
     """Return a prefixed sha256 digest."""
 
-    data = value.encode("utf-8") if isinstance(value, str) else value
+    if isinstance(value, str):
+        try:
+            data = value.encode("utf-8")
+        except UnicodeEncodeError:
+            # the error's repr/args carry the whole string (an unpaired surrogate in an
+            # ordinary config value): fixed refusal, type name only
+            raise diag.refusal(
+                "Best config value is not valid UTF-8 text",
+                category=diag.Category.RESULT_INVALID,
+                error_type="UnicodeEncodeError",
+            ) from None
+    else:
+        data = value
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
@@ -388,7 +400,7 @@ def source_order_for_mode(
             "Use one of: off, repo, cloud, repo_then_cloud, cloud_then_repo.",
             category=diag.Category.SOURCE_MODE,
             cause=exc,
-            best_config_source=repr(mode),
+            best_config_source_type=type(mode).__name__,
         ) from None
 
     if normalized is BestConfigSourceMode.OFF:
@@ -1171,10 +1183,19 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     with diag.fs_guard("Best config file could not be written"):
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = path.with_name(f".{path.name}.tmp")
-        with tmp_path.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
-            handle.write("\n")
-            handle.flush()
+        try:
+            with tmp_path.open("w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
+                handle.write("\n")
+                handle.flush()
+        except UnicodeEncodeError:
+            # repr/args of the encode error carry the unencodable customer string
+            tmp_path.unlink(missing_ok=True)
+            raise diag.refusal(
+                "Best config file could not be written",
+                category=diag.Category.FILESYSTEM_FAILED,
+                error_type="UnicodeEncodeError",
+            ) from None
         tmp_path.replace(path)
 
 

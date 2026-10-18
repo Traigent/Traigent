@@ -1121,6 +1121,63 @@ F1M_SCENARIOS: dict[str, Scenario] = {
 }
 
 
+SURROGATE_VALUE = "\ud800" + CANARY
+
+
+def _scn_hash_unencodable_snapshot(tmp_path, monkeypatch, strict):
+    from traigent.core.best_config_runtime import BestConfigSnapshot
+
+    BestConfigSnapshot.from_config({"k": SURROGATE_VALUE}, config_id=CID, source="repo")
+
+
+def _scn_hash_unencodable_digest(tmp_path, monkeypatch, strict):
+    from traigent.core.best_config_runtime import sha256_digest
+
+    sha256_digest(SURROGATE_VALUE)
+
+
+def _scn_write_repo_unencodable(tmp_path, monkeypatch, strict):
+    write_repo_best_config(tmp_path, config_id=CID, config={"k": SURROGATE_VALUE})
+
+
+def _scn_write_json_unencodable(tmp_path, monkeypatch, strict):
+    from traigent.core.best_config_runtime import _write_json_atomic
+
+    _write_json_atomic(tmp_path / "x.json", {"k": SURROGATE_VALUE})
+
+
+def _scn_export_best_config_unencodable(tmp_path, monkeypatch, strict):
+    manager = _manager()
+    manager.set_config({"k": SURROGATE_VALUE})
+    manager.export_best_config(str(tmp_path / "out"))
+
+
+def _scn_export_config_unencodable(tmp_path, monkeypatch, strict):
+    manager = _manager()
+    manager.set_config({"k": SURROGATE_VALUE})
+    manager.export_config(str(tmp_path / "out.json"))
+
+
+class _BadReprStr(str):
+    def __repr__(self) -> str:
+        raise ValueError(CANARY)
+
+
+def _scn_source_mode_failing_repr(tmp_path, monkeypatch, strict):
+    source_order_for_mode(_BadReprStr(f"x-{CANARY}"))
+
+
+F1P_SCENARIOS: dict[str, Scenario] = {
+    "hash/unencodable_snapshot": _scn_hash_unencodable_snapshot,
+    "hash/unencodable_digest": _scn_hash_unencodable_digest,
+    "write/repo_unencodable": _scn_write_repo_unencodable,
+    "write/json_unencodable": _scn_write_json_unencodable,
+    "manager/export_best_config_unencodable": _scn_export_best_config_unencodable,
+    "manager/export_config_unencodable": _scn_export_config_unencodable,
+    "source_mode/failing_repr": _scn_source_mode_failing_repr,
+}
+
+
 def _scenarios() -> dict[str, Scenario]:
     s: dict[str, Scenario] = {}
     s["results/save_traversal"] = _scn_save_traversal
@@ -1213,6 +1270,7 @@ def _scenarios() -> dict[str, Scenario]:
     s["write/export_overlong"] = _scn_export_overlong
     s["write/manifest_is_dir"] = _scn_write_manifest_is_dir
     s.update(F1M_SCENARIOS)
+    s.update(F1P_SCENARIOS)
     return s
 
 
@@ -1240,7 +1298,7 @@ def test_canary_never_appears_in_any_rendering(
 
 def test_scenario_matrix_is_not_empty() -> None:
     # inputs x entry points x renderings: guard against a silently shrunk matrix.
-    assert len(SCENARIOS) >= 138
+    assert len(SCENARIOS) >= 145
 
 
 def test_helper_keeps_rejected_values_on_details_only() -> None:

@@ -1556,8 +1556,16 @@ class ConfigStateManager:
                 details={"format": format},
             )
 
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(export_data, f, indent=2, default=str)
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(export_data, f, indent=2, default=str)
+        except UnicodeEncodeError:
+            # repr/args of the encode error carry the unencodable customer string
+            raise diag.refusal(
+                "Config could not be exported",
+                category=diag.Category.FILESYSTEM_FAILED,
+                error_type="UnicodeEncodeError",
+            ) from None
 
         logger.info("Exported config for %s", self.func.__name__)
         return output_path
