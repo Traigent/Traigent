@@ -535,6 +535,34 @@ class TestOptimizationResult:
         assert result.best_config is None
         assert result.best_metrics == {}
 
+    def test_to_dataframe_without_pandas_names_the_extra(self, monkeypatch):
+        """#2543: a missing pandas must say which extra to install."""
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "pandas":
+                raise ModuleNotFoundError("No module named 'pandas'", name="pandas")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        result = OptimizationResult(
+            trials=self.trials[:2],
+            best_config={},
+            best_score=0.95,
+            optimization_id="opt_001",
+            duration=10.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy"],
+            algorithm="random",
+            timestamp=datetime.now(),
+        )
+
+        with pytest.raises(ImportError, match=r"traigent\[analytics\]"):
+            result.to_dataframe()
+
     def test_to_dataframe(self):
         """Test to_dataframe method."""
         result = OptimizationResult(
