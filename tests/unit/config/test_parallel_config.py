@@ -161,3 +161,18 @@ def test_from_dict_rejects_multiple_unknown_keys() -> None:
     assert "batch_size" in error_msg
     assert "max_workers" in error_msg
     assert "parallel_trials" in error_msg
+
+
+def test_resolve_unset_mode_trial_one_keeps_example_concurrency() -> None:
+    """#2542: sequential trials with concurrent examples must not be rejected."""
+    cfg = ParallelConfig(example_concurrency=3, trial_concurrency=1)
+    resolved = resolve_parallel_config(
+        cfg,
+        default_thread_workers=2,
+        config_space_size=2,
+        detected_function_kind="sync",
+    )
+
+    assert resolved.mode == "sequential"
+    assert resolved.trial_concurrency == 1
+    assert resolved.example_concurrency == 3
