@@ -45,12 +45,13 @@ identifiers.
 
 from __future__ import annotations
 
+import functools
 import logging
 import weakref
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from enum import StrEnum
-from typing import Any
+from typing import Any, TypeVar
 
 from traigent.utils.exceptions import ConfigurationError
 
@@ -179,16 +180,73 @@ def refusal(
 
 @contextmanager
 def fs_guard(message: str) -> Iterator[None]:
-    """Turn any ``OSError`` in the block into a fixed refusal (type name in details only).
+    """Turn any ``OSError`` or decode failure in the block into a fixed refusal.
 
-    ``OSError`` text quotes the path (which carries customer-chosen components), so it is
-    never printed or chained. ``message`` is a literal.
+    ``OSError`` text quotes the path (which carries customer-chosen components) and a
+    ``UnicodeDecodeError`` holds the undecodable bytes of the customer file in ``args``,
+    so neither is printed or chained. ``message`` is a literal.
     """
 
     try:
         yield
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise refusal(message, category=Category.FILESYSTEM_FAILED, cause=exc) from None
+
+
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+
+def boundary(
+    category: Category,
+    message: str,
+    *,
+    convert: Callable[[BaseException], ConfigurationError] | None = None,
+) -> Callable[[_F], _F]:
+    """Decorate a PUBLIC best-config entry point with the one diagnostic boundary.
+
+    Whatever leaves the wrapped function is either a trusted refusal (:func:`is_safe`,
+    passed through unchanged apart from dropping any chained cause or context) or a fixed
+    refusal built here: ``message`` (a literal), ``category`` and the inner exception
+    *type name* on ``details`` only. This closes the class the per-shape fixes kept
+    reopening: an exception nobody anticipated (a dependency's, a ``__repr__`` or
+    ``__str__`` of a customer value, a decoder's) cannot carry customer text out through
+    ``str`` / ``repr`` / ``args`` / ``__cause__`` / ``__context__``.
+
+    ``convert`` builds the refusal when callers rely on a different class on that path
+    (it must return a trusted error and must not interpolate the exception text).
+    Only ``Exception`` is converted; ``KeyboardInterrupt``, ``SystemExit`` and
+    ``GeneratorExit`` pass untouched. Fail-open paths inside the function (those that
+    return ``None`` after a fixed log line) are unaffected: only what escapes is wrapped.
+    """
+
+    def decorate(func: _F) -> _F:
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            error: BaseException
+            try:
+                return func(*args, **kwargs)
+            except Exception as exc:
+                if is_safe(exc):
+                    error = exc
+                else:
+                    try:
+                        error = (
+                            convert(exc)
+                            if convert is not None
+                            else refusal(message, category=category, cause=exc)
+                        )
+                    except Exception:  # noqa: BLE001 - the converter must not leak
+                        error = refusal(message, category=category)
+            # raise outside the ``except`` block: inside it the original exception would
+            # be chained as ``__context__``
+            error.__cause__ = None
+            error.__context__ = None
+            error.__suppress_context__ = True
+            raise error from None
+
+        return wrapper  # type: ignore[return-value]
+
+    return decorate
 
 
 def transport_failed_message(operation: str, exc: BaseException) -> str:
@@ -199,6 +257,7 @@ def transport_failed_message(operation: str, exc: BaseException) -> str:
 
 __all__ = [
     "Category",
+    "boundary",
     "fixed_reason",
     "fs_guard",
     "is_safe",

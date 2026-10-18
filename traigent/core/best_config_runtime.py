@@ -228,6 +228,9 @@ class CloudBestConfigStaleHeadError(CloudPublishUnavailable):
         self.agent_id = agent_id
         self.environment = environment
         self.best_config = best_config
+        if message is None and type(self) is CloudBestConfigStaleHeadError:
+            # the default message holds only two integers
+            diag._mark_safe(self)
 
 
 class CloudBestConfigHeadRefusedError(CloudPublishUnavailable):
@@ -254,6 +257,13 @@ class CloudBestConfigHeadRefusedError(CloudPublishUnavailable):
         self.code = code
         self.status_code = status_code
         self.best_config = best_config
+        if type(self) in (
+            CloudBestConfigHeadRefusedError,
+            CloudBestConfigHeadStaleError,
+        ):
+            # the message is built here from a closed code: trusted by construction
+            # (an unknown subclass stays untrusted)
+            diag._mark_safe(self)
 
 
 class CloudBestConfigHeadStaleError(CloudBestConfigHeadRefusedError):
@@ -299,6 +309,10 @@ class BestConfigSnapshot:
     )
 
     @classmethod
+    @diag.boundary(
+        diag.Category.RESULT_INVALID,
+        "Best config snapshot could not be built",
+    )
     def from_config(
         cls,
         config: dict[str, Any],
@@ -334,6 +348,10 @@ class BestConfigSnapshot:
         )
 
 
+@diag.boundary(
+    diag.Category.RESULT_INVALID,
+    "Best config value could not be serialized",
+)
 def canonical_json(value: Any) -> str:
     """Return canonical JSON for hash-stable, JSON-native values."""
 
@@ -347,6 +365,10 @@ def canonical_json(value: Any) -> str:
     )
 
 
+@diag.boundary(
+    diag.Category.RESULT_INVALID,
+    "Best config value could not be hashed",
+)
 def sha256_digest(value: str | bytes) -> str:
     """Return a prefixed sha256 digest."""
 
@@ -366,16 +388,28 @@ def sha256_digest(value: str | bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
+@diag.boundary(
+    diag.Category.RESULT_INVALID,
+    "Best config could not be converted",
+)
 def thaw_config(config: Any) -> Any:
     """Convert a frozen config tree back to mutable JSON-native containers."""
 
+    return _thaw(config)
+
+
+def _thaw(config: Any) -> Any:
     if isinstance(config, MappingProxyType):
-        return {key: thaw_config(value) for key, value in config.items()}
+        return {key: _thaw(value) for key, value in config.items()}
     if isinstance(config, tuple):
-        return [thaw_config(value) for value in config]
+        return [_thaw(value) for value in config]
     return config
 
 
+@diag.boundary(
+    diag.Category.RESULT_INVALID,
+    "Function reference could not be derived",
+)
 def function_ref_for(func: Any) -> str:
     """Return canonical ``module:qualname`` for a callable after unwrapping."""
 
@@ -387,19 +421,42 @@ def function_ref_for(func: Any) -> str:
     return f"{module}:{qualname}"
 
 
+def _lookup_source_mode(mode: Any) -> BestConfigSourceMode | None:
+    """Resolve ``mode`` to a member by value, or ``None``; never formats ``mode``.
+
+    ``BestConfigSourceMode(mode)`` formats a rejected value with ``%r``, which runs a
+    ``str`` subclass's own ``__repr__`` (and any exception it raises escapes). A member
+    passes as itself; any other ``str`` is reduced to an exact ``str`` first (``join``
+    does not call the subclass's ``__str__``, ``__eq__`` or ``__hash__``).
+    """
+
+    if isinstance(mode, BestConfigSourceMode):
+        return mode
+    if not isinstance(mode, str):
+        return None
+    return _SOURCE_MODES.get(str.join("", (mode,)))
+
+
+_SOURCE_MODES: dict[str, BestConfigSourceMode] = {
+    member.value: member for member in BestConfigSourceMode
+}
+
+
+@diag.boundary(
+    diag.Category.SOURCE_MODE,
+    "Best config source mode could not be resolved",
+)
 def source_order_for_mode(
     mode: str | BestConfigSourceMode,
 ) -> tuple[BestConfigSource, ...]:
     """Return durable source order for a best-config source mode."""
 
-    try:
-        normalized = BestConfigSourceMode(mode)
-    except ValueError as exc:
+    normalized = _lookup_source_mode(mode)
+    if normalized is None:
         raise diag.refusal(
             "Unknown best_config_source. "
             "Use one of: off, repo, cloud, repo_then_cloud, cloud_then_repo.",
             category=diag.Category.SOURCE_MODE,
-            cause=exc,
             best_config_source_type=type(mode).__name__,
         ) from None
 
@@ -422,6 +479,10 @@ def source_order_for_mode(
     )
 
 
+@diag.boundary(
+    diag.Category.LOAD_FAILED,
+    "Failed to load best config",
+)
 def load_best_config_spec(
     path: str | Path,
     *,
@@ -469,6 +530,10 @@ def load_best_config_spec(
         return None
 
 
+@diag.boundary(
+    diag.Category.RESULT_INVALID,
+    "Best config spec could not be validated",
+)
 def snapshot_from_spec(
     spec: dict[str, Any],
     *,
@@ -583,6 +648,10 @@ def snapshot_from_spec(
     return snapshot
 
 
+@diag.boundary(
+    diag.Category.RESULT_INVALID,
+    "Best config spec could not be hashed",
+)
 def compute_spec_hash(spec: dict[str, Any], *, environment: str | None = None) -> str:
     """Return the frozen ``spec_hash`` of a ``traigent.best_config.v1`` spec.
 
@@ -618,6 +687,10 @@ def _check_spec_hash_finite(value: Any) -> None:
             _check_spec_hash_finite(item)
 
 
+@diag.boundary(
+    diag.Category.RESULT_INVALID,
+    "Best config spec could not be checked",
+)
 def check_publishable_spec(spec: Any) -> None:
     """Refuse to SEND a spec holding object keys that are equal after Unicode NFC.
 
@@ -625,6 +698,10 @@ def check_publishable_spec(spec: Any) -> None:
     publish with such keys is refused by the Backend; failing here avoids the round trip.
     The message never echoes a key.
     """
+    _check_publishable(spec)
+
+
+def _check_publishable(spec: Any) -> None:
     if isinstance(spec, dict):
         seen: set[str] = set()
         for key, item in spec.items():
@@ -637,10 +714,10 @@ def check_publishable_spec(spec: Any) -> None:
                     "normalization (NFC); rename one before publishing"
                 )
             seen.add(normalized)
-            check_publishable_spec(item)
+            _check_publishable(item)
     elif isinstance(spec, list):
         for item in spec:
-            check_publishable_spec(item)
+            _check_publishable(item)
 
 
 def _check_spec_hash_depth(value: Any, depth: int = 0) -> None:
@@ -713,6 +790,10 @@ def _pre_alignment_spec_hash(spec: dict[str, Any]) -> str:
     return sha256_digest(canonical_json(payload))
 
 
+@diag.boundary(
+    diag.Category.FILESYSTEM_FAILED,
+    "Best config manifest could not be read",
+)
 def load_manifest(directory: str | Path) -> dict[str, Any] | None:
     """Load a best-config manifest from a directory."""
 
@@ -735,6 +816,10 @@ def load_manifest(directory: str | Path) -> dict[str, Any] | None:
     return manifest
 
 
+@diag.boundary(
+    diag.Category.FILESYSTEM_FAILED,
+    "Best config could not be written",
+)
 def write_repo_best_config(
     directory: str | Path,
     *,
@@ -791,6 +876,10 @@ def write_repo_best_config(
     return spec_path
 
 
+@diag.boundary(
+    diag.Category.CACHE_WRITE_FAILED,
+    "Cloud best config cache could not be written",
+)
 def write_cloud_cache_best_config(
     directory: str | Path,
     spec: dict[str, Any],
@@ -845,6 +934,10 @@ def write_cloud_cache_best_config(
     return spec_path
 
 
+@diag.boundary(
+    diag.Category.REPO_INVALID,
+    "Failed to resolve repo best config",
+)
 def resolve_repo_best_config(
     *,
     config_id: str | None,
@@ -913,6 +1006,10 @@ def resolve_repo_best_config(
         return None
 
 
+@diag.boundary(
+    diag.Category.CACHE_INVALID,
+    "Failed to resolve cloud cache",
+)
 def resolve_cloud_cache_best_config(
     *,
     config_id: str | None,
@@ -1028,8 +1125,9 @@ def _load_cache_entry(directory: Path, config_id: str) -> dict[str, Any] | None:
     spec_path = directory / f"{config_id}.json"
     if not metadata_path.exists() or not spec_path.exists():
         return None
-    with metadata_path.open(encoding="utf-8") as handle:
-        metadata = json.load(handle)
+    with diag.fs_guard("Cloud cache metadata could not be read"):
+        with metadata_path.open(encoding="utf-8") as handle:
+            metadata = json.load(handle)
     if not isinstance(metadata, dict):
         raise diag._safe_error("Cloud cache metadata must be an object")
     metadata.setdefault("path", spec_path.name)
@@ -1077,9 +1175,11 @@ def _validate_and_filter_config_keys(
 
     denylisted = sorted(key for key in unknown if _is_safety_sensitive_key(key))
     if denylisted:
-        raise SafetySensitiveBestConfigError(
-            "Unknown safety-sensitive best config keys",
-            details={"keys": denylisted},
+        raise diag._mark_safe(
+            SafetySensitiveBestConfigError(
+                "Unknown safety-sensitive best config keys",
+                details={"keys": denylisted},
+            )
         )
 
     if not forward_compat:

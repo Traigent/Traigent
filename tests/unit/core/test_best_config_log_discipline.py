@@ -485,7 +485,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager._read_spec_file",
         "raise",
-        "e9f0fd0c5a65be0b",
+        "3cb2da6f2f658516",
     ): (
         1,
         (
@@ -506,7 +506,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager._refuse_legacy_file",
         "raise",
-        "b647783b06ba48e3",
+        "2063f78cfc5547a0",
     ): (
         1,
         (
@@ -542,7 +542,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager._verify_top_level_identity",
         "raise",
-        "e374dbea7f7ea7ce",
+        "25be7d9280bbf10f",
     ): (
         1,
         "key is one of the SDK's fixed top-level field names",

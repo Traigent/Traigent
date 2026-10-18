@@ -18,7 +18,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from traigent.api.types import OptimizationResult, OptimizationStatus
 from traigent.core import best_config_diagnostics as diag
@@ -165,6 +165,38 @@ def _redact_example_content_for_disk_save(result_dict: dict[str, Any]) -> None:
             for field_name in _EXAMPLE_RESULT_CONTENT_FIELDS:
                 if field_name in example:
                     example[field_name] = None
+
+
+def _integrity_error(message: str) -> CloudBestConfigIntegrityError:
+    """A trusted integrity error; ``message`` is a literal written in this module."""
+
+    return cast(
+        CloudBestConfigIntegrityError,
+        diag._mark_safe(CloudBestConfigIntegrityError(message)),
+    )
+
+
+def _cloud_unavailable(
+    reason: CloudPublishUnavailableReason, message: str
+) -> CloudPublishUnavailable:
+    """A trusted ``CloudPublishUnavailable``; ``message`` is a literal."""
+
+    return cast(
+        CloudPublishUnavailable,
+        diag._mark_safe(CloudPublishUnavailable(reason, message)),
+    )
+
+
+def _publish_boundary_failure(exc: BaseException) -> ConfigurationError:
+    """What an unanticipated failure in ``publish_best_config`` leaves as: the class
+    callers already catch on that path, with a fixed message and the type name only."""
+
+    return ConfigStateManager._unavailable(
+        CloudPublishUnavailableReason.REQUEST_FAILED,
+        "Cloud best-config publish failed",
+        diag.Category.PUBLISH_FAILED,
+        exc,
+    )
 
 
 class ConfigStateManager:
@@ -328,6 +360,10 @@ class ConfigStateManager:
 
     # -- Query methods -----------------------------------------------------
 
+    @diag.boundary(
+        diag.Category.RESULT_INVALID,
+        "Best config could not be read",
+    )
     def get_best_config(self) -> dict[str, Any] | None:
         """Get the best configuration found or loaded for runtime use."""
         if self._optimization_results and self._optimization_results.best_config:
@@ -399,7 +435,7 @@ class ConfigStateManager:
             with Path(path).open(encoding="utf-8") as handle:
                 return json.load(handle)
         except OSError:
-            raise ConfigurationError(
+            raise diag._safe_error(
                 f"Best config file could not be read ({label})",
                 details={"path": path},
             ) from None
@@ -471,7 +507,7 @@ class ConfigStateManager:
         error = diag._mark_safe(CloudPublishUnavailable(reason, message))
         inner_type = (
             cause.details.get("error_type")
-            if isinstance(cause, ConfigurationError)
+            if isinstance(cause, ConfigurationError) and diag.is_safe(cause)
             else None
         )
         error.details.update(
@@ -524,7 +560,7 @@ class ConfigStateManager:
         """Refuse a legacy file: strict raises; non-strict warns and the caller skips."""
         message = f"Refusing legacy best config ({label}): {reason}"
         if self.best_config_strict:
-            raise ConfigurationError(message, details={"path": path})
+            raise diag._safe_error(message, details={"path": path})
         logger.warning("%s", message)
 
     def _legacy_identity_mismatch(self, data: dict[str, Any]) -> str | None:
@@ -639,27 +675,23 @@ class ConfigStateManager:
         response_spec_hash = data.get("spec_hash")
         response_config_hash = data.get("config_hash")
         if not isinstance(response_spec_hash, str) or not response_spec_hash:
-            raise CloudBestConfigIntegrityError(
+            raise _integrity_error(
                 "Cloud best-config response did not include spec_hash"
             )
         if not isinstance(response_config_hash, str) or not response_config_hash:
-            raise CloudBestConfigIntegrityError(
+            raise _integrity_error(
                 "Cloud best-config response did not include config_hash"
             )
         config = spec.get("config")
         if not isinstance(config, dict):
-            raise CloudBestConfigIntegrityError(
-                "Cloud best-config spec.config must be an object"
-            )
+            raise _integrity_error("Cloud best-config spec.config must be an object")
 
         actual_spec_hash = compute_spec_hash(spec)
         actual_config_hash = sha256_digest(canonical_json(config))
         if response_spec_hash != actual_spec_hash:
-            raise CloudBestConfigIntegrityError("Cloud best-config spec_hash mismatch")
+            raise _integrity_error("Cloud best-config spec_hash mismatch")
         if response_config_hash != actual_config_hash:
-            raise CloudBestConfigIntegrityError(
-                "Cloud best-config config_hash mismatch"
-            )
+            raise _integrity_error("Cloud best-config config_hash mismatch")
 
     @staticmethod
     def _verify_publish_response(
@@ -681,20 +713,18 @@ class ConfigStateManager:
 
         stored = result.get("spec") if isinstance(result, dict) else None
         if not isinstance(stored, dict):
-            raise CloudBestConfigIntegrityError(
+            raise _integrity_error(
                 "Cloud best-config publish response did not include the stored spec"
             )
         ConfigStateManager._verify_cloud_response_hashes(result, stored)
         sent_config = sent_spec.get("config")
         sent_id = sent_spec.get("config_id")
         if not isinstance(sent_config, dict) or not isinstance(sent_id, str):
-            raise CloudBestConfigIntegrityError(
+            raise _integrity_error(
                 "Published best-config spec lacks a config object or config_id"
             )
         if result.get("config_hash") != sha256_digest(canonical_json(sent_config)):
-            raise CloudBestConfigIntegrityError(
-                "Cloud best-config config_hash mismatch"
-            )
+            raise _integrity_error("Cloud best-config config_hash mismatch")
         try:
             expected_spec_hash = compute_spec_hash(sent_spec, environment=environment)
         except ConfigurationError as exc:
@@ -705,12 +735,12 @@ class ConfigStateManager:
                 error_cls=CloudBestConfigIntegrityError,
             ) from None
         if result.get("spec_hash") != expected_spec_hash:
-            raise CloudBestConfigIntegrityError(
+            raise _integrity_error(
                 "Cloud best-config spec_hash mismatch: the response is not for the "
                 "published spec (environment, function or content differs)"
             )
         if stored.get("config_id") != sent_id.strip():
-            raise CloudBestConfigIntegrityError(
+            raise _integrity_error(
                 "Cloud best-config response is for a different config_id"
             )
         ConfigStateManager._verify_top_level_identity(
@@ -749,7 +779,7 @@ class ConfigStateManager:
             if isinstance(got, str):
                 got = got.strip().lower() if key == "environment" else got.strip()
             if got != want:
-                raise CloudBestConfigIntegrityError(
+                raise _integrity_error(
                     f"Cloud best-config response top-level {key} does not match "
                     "the verified spec"
                 )
@@ -819,13 +849,13 @@ class ConfigStateManager:
 
         spec_id = spec.get("config_id")
         if not isinstance(spec_id, str) or spec_id.strip() != config_id.strip():
-            raise CloudBestConfigIntegrityError(
+            raise _integrity_error(
                 "Cloud best-config response is not for the requested config_id"
             )
         spec_ref = spec.get("function_ref")
         if function_ref:
             if spec_ref is None:
-                raise CloudBestConfigIntegrityError(
+                raise _integrity_error(
                     "Cloud best-config response is not bound to the requested "
                     "function_ref"
                 )
@@ -833,7 +863,7 @@ class ConfigStateManager:
                 not isinstance(spec_ref, str)
                 or spec_ref.strip() != function_ref.strip()
             ):
-                raise CloudBestConfigIntegrityError(
+                raise _integrity_error(
                     "Cloud best-config response is not for the requested function_ref"
                 )
         spec_environment = spec.get("environment")
@@ -844,7 +874,7 @@ class ConfigStateManager:
         else:
             effective = None
         if effective != environment.strip().lower():
-            raise CloudBestConfigIntegrityError(
+            raise _integrity_error(
                 "Cloud best-config response is not for the requested environment "
                 "(request mismatch)"
             )
@@ -874,16 +904,14 @@ class ConfigStateManager:
         )
         if not data:
             if self._is_pure_cloud_source_mode():
-                raise CloudPublishUnavailable(
+                raise _cloud_unavailable(
                     CloudPublishUnavailableReason.REQUEST_FAILED,
                     "Cloud best-config fetch returned no active config",
                 )
             return None
         spec = data.get("spec")
         if not isinstance(spec, dict):
-            raise ConfigurationError(
-                "Cloud best-config response did not include a spec"
-            )
+            raise diag._safe_error("Cloud best-config response did not include a spec")
         self._verify_cloud_response_hashes(data, spec)
         # Bind the answer to the request BEFORE it can be cached or loaded.
         self._verify_fetch_binding(
@@ -1037,6 +1065,10 @@ class ConfigStateManager:
         self._setup_wrapper_callback()
         logger.info(f"Reset optimization state for {self.func.__name__}")
 
+    @diag.boundary(
+        diag.Category.RESULT_INVALID,
+        "Best config could not be set",
+    )
     def set_config(self, config: dict[str, Any]) -> None:
         """Set current configuration manually as a sticky override.
 
@@ -1054,6 +1086,10 @@ class ConfigStateManager:
             "Set configuration for %s (%d knobs)", self.func.__name__, len(config)
         )
 
+    @diag.boundary(
+        diag.Category.RESULT_INVALID,
+        "Best config could not be applied",
+    )
     def apply_best_config(
         self,
         results: OptimizationResult | None = None,
@@ -1081,7 +1117,7 @@ class ConfigStateManager:
             results = self._optimization_results
 
         if not results or not results.best_config:
-            raise ConfigurationError(
+            raise diag._safe_error(
                 "No optimization results available to apply. "
                 "Please run optimization first using .optimize()"
             )
@@ -1131,6 +1167,10 @@ class ConfigStateManager:
 
         return True
 
+    @diag.boundary(
+        diag.Category.LOAD_FAILED,
+        "Best config override could not be cleared",
+    )
     def clear_override(self) -> bool:
         """Clear any sticky per-instance config override and re-resolve sources."""
         with self._state_lock:
@@ -1141,6 +1181,10 @@ class ConfigStateManager:
 
     # -- Persistence methods -----------------------------------------------
 
+    @diag.boundary(
+        diag.Category.RESULT_INVALID,
+        "Failed to save optimization results",
+    )
     def save_optimization_results(self, path: str) -> None:
         """Save optimization results to file.
 
@@ -1150,7 +1194,7 @@ class ConfigStateManager:
                 :meth:`load_optimization_results` could not read back.
         """
         if not self._optimization_results:
-            raise ConfigurationError("No optimization results to save")
+            raise diag._safe_error("No optimization results to save")
 
         from traigent.utils.optimization_result_persistence import (
             encode_whole_result_dump,
@@ -1228,6 +1272,10 @@ class ConfigStateManager:
 
         logger.info("Saved optimization results")
 
+    @diag.boundary(
+        diag.Category.LOAD_FAILED,
+        "Failed to load optimization results",
+    )
     def load_optimization_results(self, path: str) -> None:
         """Load optimization results from file.
 
@@ -1322,6 +1370,10 @@ class ConfigStateManager:
 
     # -- Auto-load methods -------------------------------------------------
 
+    @diag.boundary(
+        diag.Category.LOAD_FAILED,
+        "Failed to load best config",
+    )
     def maybe_auto_load_config(self) -> None:
         """Resolve startup best config from explicit, repo, cache, or dev sources."""
         with self._state_lock:
@@ -1528,6 +1580,10 @@ class ConfigStateManager:
 
     # -- Export methods ----------------------------------------------------
 
+    @diag.boundary(
+        diag.Category.FILESYSTEM_FAILED,
+        "Config could not be exported",
+    )
     def export_config(
         self,
         path: str | Path,
@@ -1537,7 +1593,7 @@ class ConfigStateManager:
     ) -> Path:
         """Export the best configuration to a file."""
         if not self._best_config:
-            raise ConfigurationError(
+            raise diag._safe_error(
                 "No best configuration available to export. "
                 "Please run optimization first using .optimize() or load a config."
             )
@@ -1551,7 +1607,7 @@ class ConfigStateManager:
             export_data = self._create_full_export(include_metadata)
         else:
             # the caller-supplied format token is a rejected value: details only
-            raise ConfigurationError(
+            raise diag._safe_error(
                 "Unknown export format. Use 'slim' or 'full'.",
                 details={"format": format},
             )
@@ -1570,6 +1626,10 @@ class ConfigStateManager:
         logger.info("Exported config for %s", self.func.__name__)
         return output_path
 
+    @diag.boundary(
+        diag.Category.FILESYSTEM_FAILED,
+        "Best config could not be exported",
+    )
     def export_best_config(
         self,
         directory: str | Path = ".traigent/best-configs",
@@ -1579,7 +1639,7 @@ class ConfigStateManager:
     ) -> Path:
         """Export the active best config as a canonical repo runtime spec."""
         if not self._best_config:
-            raise ConfigurationError(
+            raise diag._safe_error(
                 "No best configuration available to export. "
                 "Please run optimization first using .optimize() or load a config."
             )
@@ -1605,10 +1665,15 @@ class ConfigStateManager:
             environment=self.best_config_environment,
         )
 
+    @diag.boundary(
+        diag.Category.PUBLISH_FAILED,
+        "Cloud best-config publish failed",
+        convert=_publish_boundary_failure,
+    )
     def publish_best_config(self, *, target: str = "cloud") -> dict[str, Any]:
         """Publish the active best config to durable backend cloud storage."""
         if target != "cloud":
-            raise CloudPublishUnavailable(
+            raise _cloud_unavailable(
                 CloudPublishUnavailableReason.DISABLED_BY_CONFIG,
                 "Only target='cloud' is reserved for best-config publishing. "
                 "Use export_best_config() for local repo artifacts.",
@@ -1620,7 +1685,7 @@ class ConfigStateManager:
         # cannot pair this config with another run's head generation.
         with self._state_lock:
             if not self._best_config:
-                raise ConfigurationError(
+                raise diag._safe_error(
                     "No best configuration available to publish. "
                     "Please run optimization first using .optimize() or load a config."
                 )

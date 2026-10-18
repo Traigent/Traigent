@@ -1178,6 +1178,127 @@ F1P_SCENARIOS: dict[str, Scenario] = {
 }
 
 
+BAD_UTF8 = b"\xff" + CANARY.encode()
+
+
+def _write_bad_utf8(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(BAD_UTF8)
+    return path
+
+
+def _scn_decode_load_manifest(tmp_path, monkeypatch, strict):
+    from traigent.core.best_config_runtime import load_manifest
+
+    _write_bad_utf8(tmp_path / "m" / "manifest.json")
+    load_manifest(tmp_path / "m")
+
+
+def _scn_decode_write_repo(tmp_path, monkeypatch, strict):
+    _write_bad_utf8(tmp_path / "m" / "manifest.json")
+    write_repo_best_config(tmp_path / "m", config_id=CID, config={"t": 2})
+
+
+def _scn_decode_write_cache(tmp_path, monkeypatch, strict):
+    _write_bad_utf8(tmp_path / "m" / "manifest.json")
+    write_cloud_cache_best_config(tmp_path / "m", _spec(), etag="e1")
+
+
+def _scn_decode_export_best_config(tmp_path, monkeypatch, strict):
+    _write_bad_utf8(tmp_path / "m" / "manifest.json")
+    manager = _manager()
+    manager.set_config({"t": 2})
+    manager.export_best_config(str(tmp_path / "m"))
+
+
+def _scn_decode_resolve_repo(tmp_path, monkeypatch, strict):
+    _write_bad_utf8(tmp_path / ".traigent" / "best-configs" / "manifest.json")
+    resolve_repo_best_config(config_id=CID, repo_root=tmp_path, strict=strict)
+
+
+def _scn_decode_cache_metadata(tmp_path, monkeypatch, strict):
+    cache = tmp_path / "cache"
+    _write_bad_utf8(cache / f"{CID}.metadata.json")
+    _write(cache / f"{CID}.json", _spec())
+    resolve_cloud_cache_best_config(config_id=CID, cache_dir=cache, strict=strict)
+
+
+def _scn_decode_cache_manifest(tmp_path, monkeypatch, strict):
+    cache = tmp_path / "cache"
+    _write_bad_utf8(cache / "manifest.json")
+    resolve_cloud_cache_best_config(config_id=CID, cache_dir=cache, strict=strict)
+
+
+def _scn_decode_load_spec(tmp_path, monkeypatch, strict):
+    path = _write_bad_utf8(tmp_path / "spec.json")
+    load_best_config_spec(path, strict=strict)
+
+
+def _scn_decode_manager_file(entry: str) -> Scenario:
+    def run(tmp_path, monkeypatch, strict):
+        if entry == "dev-log":
+            path = _write_bad_utf8(
+                tmp_path
+                / ".traigent/optimization_logs/experiments/_agent/runs/r1/artifacts"
+                / "best_config_v2.json"
+            )
+        else:
+            path = _write_bad_utf8(tmp_path / "f.json")
+        if entry == "load_from":
+            manager = _manager(load_from=str(path), strict=strict)
+        elif entry == "env":
+            monkeypatch.setenv("TRAIGENT_CONFIG_PATH", str(path))
+            manager = _manager(strict=strict)
+        else:
+            manager = _manager(strict=strict, dev_logs=True)
+        manager.maybe_auto_load_config()
+
+    return run
+
+
+def _scn_decode_results_load(tmp_path, monkeypatch, strict):
+    target = _write_bad_utf8(tmp_path / "r.json")
+    _manager().load_optimization_results(str(target))
+
+
+class _ReprRaisesRuntimeStr(str):
+    def __repr__(self) -> str:
+        raise RuntimeError(CANARY)
+
+
+def _scn_source_mode_repr_runtime_error(tmp_path, monkeypatch, strict):
+    # Enum conversion formats the rejected value with %r, which runs this __repr__ and
+    # raises a RuntimeError past an ``except ValueError``.
+    source_order_for_mode(_ReprRaisesRuntimeStr(f"x-{CANARY}"))
+
+
+class _ReprRaisesValueStr(str):
+    def __repr__(self) -> str:
+        raise ValueError(CANARY)
+
+
+def _scn_source_mode_repr_value_error(tmp_path, monkeypatch, strict):
+    source_order_for_mode(_ReprRaisesValueStr(f"x-{CANARY}"))
+
+
+F1Q_SCENARIOS: dict[str, Scenario] = {
+    "decode/load_manifest": _scn_decode_load_manifest,
+    "decode/write_repo": _scn_decode_write_repo,
+    "decode/write_cache": _scn_decode_write_cache,
+    "decode/export_best_config": _scn_decode_export_best_config,
+    "decode/resolve_repo": _scn_decode_resolve_repo,
+    "decode/cache_metadata": _scn_decode_cache_metadata,
+    "decode/cache_manifest": _scn_decode_cache_manifest,
+    "decode/load_spec": _scn_decode_load_spec,
+    "decode/load_from": _scn_decode_manager_file("load_from"),
+    "decode/env": _scn_decode_manager_file("env"),
+    "decode/dev_log": _scn_decode_manager_file("dev-log"),
+    "decode/results_load": _scn_decode_results_load,
+    "source_mode/repr_runtime_error": _scn_source_mode_repr_runtime_error,
+    "source_mode/repr_value_error": _scn_source_mode_repr_value_error,
+}
+
+
 def _scenarios() -> dict[str, Scenario]:
     s: dict[str, Scenario] = {}
     s["results/save_traversal"] = _scn_save_traversal
@@ -1271,6 +1392,7 @@ def _scenarios() -> dict[str, Scenario]:
     s["write/manifest_is_dir"] = _scn_write_manifest_is_dir
     s.update(F1M_SCENARIOS)
     s.update(F1P_SCENARIOS)
+    s.update(F1Q_SCENARIOS)
     return s
 
 
@@ -1298,7 +1420,7 @@ def test_canary_never_appears_in_any_rendering(
 
 def test_scenario_matrix_is_not_empty() -> None:
     # inputs x entry points x renderings: guard against a silently shrunk matrix.
-    assert len(SCENARIOS) >= 145
+    assert len(SCENARIOS) >= 177
 
 
 def test_helper_keeps_rejected_values_on_details_only() -> None:
