@@ -6647,3 +6647,61 @@ def test_observability_client_sends_multi_tag_filters_as_repeated_keys():
     assert tags_of(request_paths[4]) == ["vip,beta"]
     assert tags_of(request_paths[5]) is None
     assert request_paths[1] == "/sessions?page=1&per_page=20&tags=vip&tags=beta"
+
+
+class TestFallbackSnapshotPreservesAbsentStatus:
+    """#2588: the M8/A5 fallback must not fabricate a "failed" status for a
+    trace that never carried one, while keeping an explicit valid status."""
+
+    @staticmethod
+    def _state(status: str | None):
+        from traigent.observability.client import _TraceState
+
+        return _TraceState(trace=TraceDTO(id="trace-1", name="n", status=status))
+
+    def test_serialization_failure_keeps_absent_status_absent(self, monkeypatch):
+        from traigent.observability.client import _capture_trace_snapshot
+
+        state = self._state(None)
+
+        def _boom():
+            raise RuntimeError("serialization exploded")
+
+        monkeypatch.setattr(state, "to_payload", _boom)
+        snapshot, _ = _capture_trace_snapshot(state)
+        assert "status" not in snapshot
+
+    def test_redaction_failure_keeps_absent_status_absent(self, monkeypatch):
+        from traigent.observability.client import _redact_trace_payload
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("redactor exploded")
+
+        monkeypatch.setattr(
+            "traigent.observability.client.redact_sensitive_data", _boom
+        )
+        snapshot = _redact_trace_payload({"id": "trace-1", "name": "n"})
+        assert "status" not in snapshot
+
+    def test_explicit_valid_status_survives_both_failure_paths(self, monkeypatch):
+        from traigent.observability.client import (
+            _capture_trace_snapshot,
+            _redact_trace_payload,
+        )
+
+        state = self._state("completed")
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(state, "to_payload", _boom)
+        snapshot, _ = _capture_trace_snapshot(state)
+        assert snapshot["status"] == "completed"
+
+        monkeypatch.setattr(
+            "traigent.observability.client.redact_sensitive_data", _boom
+        )
+        redacted = _redact_trace_payload(
+            {"id": "trace-1", "name": "n", "status": "completed"}
+        )
+        assert redacted["status"] == "completed"

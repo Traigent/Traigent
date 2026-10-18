@@ -441,9 +441,13 @@ def _safe_allowlisted_snapshot(
     safe: dict[str, Any] = {
         "id": safe_id if isinstance(safe_id, str) and safe_id else _new_trace_id(),
         "name": "[REDACTED]",
-        "status": _safe_scalar(payload.get("status")) or "failed",
         "metadata": {},
     }
+    # #2588: keep an explicitly supplied status; never fabricate one for a
+    # trace that carried none (downstream would otherwise record "failed").
+    safe_status = _safe_scalar(payload.get("status"))
+    if isinstance(safe_status, str) and safe_status:
+        safe["status"] = safe_status
     if payload.get("user_id") is not None:
         safe["user_id"] = "[REDACTED]"
     for field_name in _SAFE_SNAPSHOT_ID_FIELDS:
