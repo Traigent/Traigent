@@ -69,19 +69,25 @@ MAIN_BOUND=0
 [[ "$BRANCH" =~ ^(release|hotfix)/ ]] && MAIN_BOUND=1
 [[ "${LOCAL_GATE_SONAR:-0}" == "1" ]] && MAIN_BOUND=1
 
-# Resolve a ruff entrypoint: PATH ruff, else the venv's, else `python -m ruff`.
+# Resolve a ruff entrypoint: the repo venv's first (it carries the pinned
+# version; the pre-push hook does not activate the venv), else PATH ruff, else
+# `python -m ruff`.
 RUFF=""
-if command -v ruff >/dev/null 2>&1; then RUFF="ruff"
-elif [[ -x ".venv/bin/ruff" ]]; then RUFF=".venv/bin/ruff"
+if [[ -x ".venv/bin/ruff" ]]; then RUFF=".venv/bin/ruff"
+elif command -v ruff >/dev/null 2>&1; then RUFF="ruff"
 elif python3 -c "import ruff" >/dev/null 2>&1; then RUFF="python3 -m ruff"
 fi
 
-# Resolve a pytest entrypoint for the local smoke/full-unit tier.
+# Resolve a pytest entrypoint for the local smoke/full-unit tier. The repo venv
+# wins over PATH: pyproject addopts needs pytest-xdist, which a user-level or
+# system pytest usually lacks (#2474).
 PYTEST=()
-if command -v pytest >/dev/null 2>&1; then PYTEST=(pytest)
-elif [[ -x ".venv/bin/pytest" ]]; then PYTEST=(.venv/bin/pytest)
-elif python3 -c "import pytest" >/dev/null 2>&1; then PYTEST=(python3 -m pytest)
+PYTEST_PY=""
+if [[ -x ".venv/bin/pytest" ]]; then PYTEST=(.venv/bin/pytest); PYTEST_PY=".venv/bin/python"
+elif command -v pytest >/dev/null 2>&1; then PYTEST=(pytest)
+elif python3 -c "import pytest" >/dev/null 2>&1; then PYTEST=(python3 -m pytest); PYTEST_PY="python3"
 fi
+echo "  resolved tools: ruff=${RUFF:-none} pytest=${PYTEST[*]:-none}"
 
 SMOKE_TESTS=(
   tests/unit/test_init_imports.py
@@ -207,6 +213,11 @@ if ! skip pytest; then
     # Keep ambient user-site pytest plugins from changing the CI-shaped unit run.
     # The repo depends on pytest-asyncio, not pytest-asyncio-cooperative; the
     # latter can reorder xdist reports and produce internal errors locally.
+    if [[ -n "$PYTEST_PY" ]] && ! "$PYTEST_PY" -c "import xdist" >/dev/null 2>&1; then
+      echo "  ❌ pytest interpreter '$PYTEST_PY' cannot import pytest-xdist (required by pyproject addopts)"
+      echo "     install the dev extra: pip install -e '.[dev]' (in the repo .venv)"
+      FAIL=1
+    fi
     collection_args=(--collect-only -q tests/ -o addopts= -p no:cacheprovider -rs)
     echo "  • ${#CODE_CHANGED[@]} code/test/gate file(s) changed; first verifying whole-suite collection"
     echo "  • TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true PYTHONPATH=. ${PYTEST[*]} ${collection_args[*]}"
