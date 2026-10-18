@@ -124,9 +124,7 @@ def _install_fake_venv(repo: Path, log_path: Path, xdist_ok: bool) -> None:
     venv_bin = repo / ".venv" / "bin"
     venv_bin.mkdir(parents=True)
     (venv_bin / "pytest").write_text(
-        "#!/usr/bin/env bash\n"
-        f"echo venv-pytest \"$*\" >> {log_path}\n"
-        "exit 0\n",
+        f'#!/usr/bin/env bash\necho venv-pytest "$*" >> {log_path}\nexit 0\n',
         encoding="utf-8",
     )
     (venv_bin / "ruff").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
