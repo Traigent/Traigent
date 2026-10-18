@@ -582,7 +582,7 @@ def _revalidate_same_named_twin(
         # spelling of the same name (they are disjoint in every bundle today).
         payload.setdefault(key, legacy_value)
     try:
-        return cast(BundleModel, model_cls.model_validate(payload))
+        rebuilt = cast(BundleModel, model_cls.model_validate(payload))
     except PydanticValidationError as exc:
         raise TypeError(
             f"{parameter_name} was given an instance of "
@@ -590,6 +590,14 @@ def _revalidate_same_named_twin(
             f"{model_cls.__module__} (a reloaded module), and its values "
             f"do not validate against this one: {exc}"
         ) from exc
+    # The rebuild passed every field, so pydantic marked all of them as set.
+    # Restore the twin's own explicitness: ``_explicit_bundle_value`` relies on
+    # ``model_fields_set`` to tell a caller-set value from a default (#2540).
+    live_fields = set(model_cls.model_fields)
+    rebuilt.__pydantic_fields_set__ = {
+        name for name in value.model_fields_set if name in live_fields
+    }
+    return rebuilt
 
 
 def _coerce_bundle(
