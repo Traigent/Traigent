@@ -128,12 +128,12 @@ async def test_simple_scoring_usage_less_response_custom_cost_not_a_floor() -> N
 
 
 # 3 -- wrapper, capture off: custom cost never debits --------------------------
-# Carve-out (owner default A, 2026-10-17, pending explicit confirmation): with
-# no tracker data at all, a custom evaluator's own reported cost counts and the
-# run is not marked untracked. This keeps cost-objective runs of custom
-# evaluators working (see test_cost_objective_run_survives_failed_rows_
-# reporting_zero_attempts).
-async def test_wrapper_capture_off_custom_cost_counts_when_no_tracker_data() -> None:
+# Owner ruling B, 2026-10-19: even with no tracker data at all, a custom
+# evaluator's own reported cost/total_cost never becomes a budget debit or a
+# trial cost; the trial is untracked/unmeasured (tracked_spend authoritative).
+async def test_wrapper_capture_off_custom_cost_never_counts_even_without_tracker_data() -> (
+    None
+):
     async def custom(func, config, example):
         return _example_result(
             example,
@@ -147,10 +147,12 @@ async def test_wrapper_capture_off_custom_cost_counts_when_no_tracker_data() -> 
     )
     result = await evaluator.evaluate(lambda q: 42, {}, _dataset(), budget=budget)
 
-    assert budget.consumed_cost == pytest.approx(42.0)
-    assert result.execution_budget["cost_tracking"] != "untracked"
+    assert budget.consumed_cost == 0.0
+    assert result.execution_budget["cost_tracking"] == "untracked"
+    assert result.tracked_spend["unmeasured"] is True
+    assert result.tracked_spend["cost"] is None
     trial = _trial_via_factory(result)
-    assert CostEstimator.extract_trial_cost(trial) is not None
+    assert CostEstimator.extract_trial_cost(trial) is None
 
 
 # 4 -- persistence: tracked_spend is a durable fact ----------------------------

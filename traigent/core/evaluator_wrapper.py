@@ -918,12 +918,12 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             self._withdraw_unknown_cost_from_rows(
                 all_metrics, tracked_spend, tracker_rows
             )
-        # No tracker measurement at all (capture off, or no captured call in any
-        # example): ``tracked_spend`` stays None and budget accounting keeps its
-        # legacy reported-metrics fallback. Finding 3 of the round-3 review
-        # asked for "untracked" here, but a custom evaluator whose cost
-        # objective IS its own reported cost (test_custom_evaluator_cost_coverage)
-        # would then trip strict cost accounting; owner decision needed.
+        if tracked_spend is None:
+            # No tracker measurement at all (capture off, or no captured call in
+            # any example). Owner ruling B (2026-10-19): the evaluator's own
+            # cost/total_cost never becomes a debit or trial cost, so spend is
+            # unmeasured (same shape as SimpleScoringEvaluator's capture-off).
+            tracked_spend = {"unmeasured": True, "cost": None, "lower_bound": 0.0}
 
         # Log results
         success_count = sum(1 for result in example_results if result.success)

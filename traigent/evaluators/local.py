@@ -2772,7 +2772,8 @@ class LocalEvaluator(BaseEvaluator):
         result.tracked_spend = self._tracked_spend(comprehensive_metrics, "cost")
         # Owner ruling A: an unknown tracked cost removes any finite custom
         # cost/total_cost from the aggregate. With no
-        # tracker data at all the evaluator's own reported cost still counts.
+        # tracker data at all the evaluator's own reported cost is still never a
+        # debit (owner ruling B, 2026-10-19; tracked_spend is authoritative).
         # The test is "the tracker saw a real captured call", not "it saw
         # tokens": a charge-only response (usage.cost with zero tokens) is
         # tracker data too.

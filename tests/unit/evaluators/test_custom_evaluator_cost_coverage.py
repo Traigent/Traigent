@@ -185,14 +185,16 @@ def test_cost_objective_run_fails_closed_on_failed_rows_without_cost(
     assert isinstance(exc.value.__cause__, CostTrackingRequiredError)
 
 
-def test_cost_objective_run_survives_failed_rows_reporting_zero_attempts(
+def test_cost_objective_run_with_only_custom_evaluator_cost_fails_closed(
     monkeypatch, tmp_path
 ):
-    # A failed row that explicitly reports zero provider attempts has no spend
-    # to measure, so the trial keeps its measured cost and the run completes.
-    result = _flaky_cost_objective_run(monkeypatch, tmp_path, zero_attempts=True)
+    # Owner ruling B (2026-10-19): a custom evaluator's own cost never becomes
+    # a trial cost, even with no tracker data at all. Previously this run
+    # completed on the evaluator's reported 0.005 (the carve-out); now no trial
+    # has a measured cost, so strict accounting refuses to rank on cost.
+    from traigent.core.cost_enforcement import CostTrackingRequiredError
+    from traigent.utils.exceptions import OptimizationError
 
-    by_model = {t.config["model"]: t for t in result.trials}
-    assert by_model["flaky"].metrics["cost"] == pytest.approx(0.005)
-    assert by_model["flaky"].metrics["accuracy"] == pytest.approx(0.5)
-    assert result.best_config["model"] == "steady"
+    with pytest.raises(OptimizationError) as exc:
+        _flaky_cost_objective_run(monkeypatch, tmp_path, zero_attempts=True)
+    assert isinstance(exc.value.__cause__, CostTrackingRequiredError)

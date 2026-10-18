@@ -5176,8 +5176,9 @@ class SimpleScoringEvaluator(BaseEvaluator):
         if tracked_llm_agg is not None:
             result.tracked_spend = self._tracked_spend(tracked_llm_agg, "total_cost")
             # Only when the tracker actually measured something: with no
-            # captured call at all the evaluator's own reported cost still
-            # counts (documented carve-out).
+            # captured call at all there is no tracker unknown-cost to apply;
+            # the evaluator's own cost is still never a debit (owner ruling B,
+            # 2026-10-19: tracked_spend above is authoritative).
             if any(key in row for row in tracker_rows for key in _TRACKER_USAGE_KEYS):
                 self._apply_tracked_unknown_cost(
                     result.aggregated_metrics, result.tracked_spend
