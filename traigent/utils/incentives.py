@@ -20,6 +20,16 @@ from .local_analytics import LocalAnalytics, collect_and_submit_analytics
 logger = get_logger(__name__)
 
 
+def _hints_disabled_by_env() -> bool:
+    """Whether ``TRAIGENT_DISABLE_HINTS`` opts out of all upgrade hints (#2544)."""
+    return os.environ.get("TRAIGENT_DISABLE_HINTS", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
 class IncentiveManager:
     """
     Manages progressive feature hints and incentives for Edge Analytics mode users.
@@ -116,6 +126,8 @@ class IncentiveManager:
 
     def should_show_hint(self, context: str = "general") -> bool:
         """Determine if a hint should be shown based on context and timing."""
+        if _hints_disabled_by_env():
+            return False
         if self._state.get("upgrade_dismissed", False):
             return False
 
@@ -243,12 +255,7 @@ class IncentiveManager:
         Banners are marketing text; they honour ``minimal_logging``, the
         persisted ``dismiss_upgrade_hints`` flag and ``TRAIGENT_DISABLE_HINTS``.
         """
-        if os.environ.get("TRAIGENT_DISABLE_HINTS", "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        ):
+        if _hints_disabled_by_env():
             return True
         if self._state.get("upgrade_dismissed", False):
             return True
