@@ -475,7 +475,7 @@ class PersistenceManager:
                     "optimization_id, status, source and total_cost will not "
                     "survive load_result.",
                     type(result).__name__,
-                    exc,
+                    type(exc).__name__,
                 )
             else:
                 metadata[SCHEMA_VERSION_KEY] = RESULT_SCHEMA_VERSION

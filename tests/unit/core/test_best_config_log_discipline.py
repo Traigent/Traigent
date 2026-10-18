@@ -353,7 +353,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "best_config_runtime.py",
         "_normalize_json_value",
         "raise",
-        "b59a8129cf386185",
+        "2285344d7fb19497",
     ): (
         1,
         _COUNT,
@@ -1221,11 +1221,52 @@ class _Scan(ast.NodeVisitor):
         if name is None:
             return []
         out: list[ast.Call] = []
-        for feeder in self._feeders(exc, transitive=False):
-            value = getattr(feeder, "value", None)
-            if isinstance(value, ast.Call):
-                out.append(value)
+        seen: set[str] = set()
+        todo = [name]
+        while todo:
+            current = todo.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            for feeder in self._feeders(ast.Name(id=current), transitive=False):
+                for value in self._values_for(feeder, current):
+                    if isinstance(value, ast.Call):
+                        out.append(value)
+                    elif isinstance(value, (ast.Name, ast.Attribute)):
+                        # alias: ``f = e; raise f``
+                        alias = _dotted(value)
+                        if alias:
+                            todo.append(alias)
         return out
+
+    @staticmethod
+    def _values_for(assign: ast.AST, name: str) -> list[ast.AST]:
+        """The expression(s) an assignment binds to ``name``, unpacking tuples by position."""
+        value = getattr(assign, "value", None)
+        if value is None:
+            return []
+        if not isinstance(assign, ast.Assign):
+            return [value]
+        found: list[ast.AST] = []
+        for target in assign.targets:
+            if isinstance(target, (ast.Tuple, ast.List)) and isinstance(
+                value, (ast.Tuple, ast.List)
+            ):
+                if len(target.elts) == len(value.elts) and not any(
+                    isinstance(e, ast.Starred) for e in (*target.elts, *value.elts)
+                ):
+                    for t, v in zip(target.elts, value.elts, strict=True):
+                        if _dotted(t) == name:
+                            found.append(v)
+                    continue
+                # shapes we cannot pair: judge every element conservatively
+                found.extend(value.elts)
+            elif _dotted(target) == name:
+                found.append(value)
+            elif isinstance(target, (ast.Tuple, ast.List)):
+                # ``a, b = make()``: the call builds the whole tuple
+                found.append(value)
+        return found
 
     def visit_Raise(self, node: ast.Raise) -> None:
         exc = node.exc
@@ -1449,6 +1490,23 @@ def _kinds(source: str) -> list[str]:
         ),
         (
             "def f():\n try:\n  g()\n except Exception as e:\n  err = W(e.message)\n  raise err\n",
+            ["raise"],
+        ),
+        # F1n: aliasing and tuple unpacking of a prepared exception
+        (
+            "def f(p):\n e = ValueError(f'bad {p}')\n f2 = e\n raise f2\n",
+            ["raise"],
+        ),
+        (
+            "def f(p):\n a, b = ValueError(f'bad {p}'), 1\n raise a\n",
+            ["raise"],
+        ),
+        (
+            "def f(p):\n b, a = 1, ValueError(p)\n raise a\n",
+            ["raise"],
+        ),
+        (
+            "def f(p):\n e = ValueError(f'bad {p}')\n g = e\n h = g\n raise h from None\n",
             ["raise"],
         ),
     ],

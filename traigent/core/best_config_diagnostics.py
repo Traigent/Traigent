@@ -22,6 +22,7 @@ Callers pass only string *literals* as ``message``; nothing interpolated.
 from __future__ import annotations
 
 import logging
+import weakref
 from collections.abc import Iterator
 from contextlib import contextmanager
 from enum import StrEnum
@@ -49,43 +50,59 @@ class Category(StrEnum):
     RESULT_INVALID = "result_invalid"
 
 
-_SAFE_MARK = "_best_config_diag_safe_message"
+# Trust is an identity fact, not a property the object carries. A marker attribute (or a
+# class) can be forged by any value whose ``__str__`` raises ``SafeConfigurationError(...)``,
+# so only instances registered here, by this module's own constructors, are trusted.
+# The registry maps ``id(exc)`` to a weak reference and is checked by identity, so a copy
+# (``copy.copy`` / ``deepcopy`` build a new object), a subclass instance or an instance
+# built anywhere else is untrusted, and a subclass cannot spoof it through ``__eq__`` /
+# ``__hash__``.
+_TRUSTED: dict[int, weakref.ref[BaseException]] = {}
+
+
+def _trust(error: ConfigurationError) -> ConfigurationError:
+    key = id(error)
+    _TRUSTED[key] = weakref.ref(error, lambda _ref, key=key: _TRUSTED.pop(key, None))
+    return error
 
 
 class SafeConfigurationError(ConfigurationError):
     """A ``ConfigurationError`` whose message is a fixed literal written in this SDK.
 
-    Raised only with string literals (or a literal plus an exception *type* name);
-    :func:`fixed_reason` may therefore print its message. A plain ``ConfigurationError``
-    (e.g. from a dependency) is not trusted.
+    Build it only through :func:`safe_error`: an instance constructed any other way
+    (customer code, a subclass, a copy) is not trusted and :func:`is_safe` is False.
     """
 
-    _best_config_diag_safe_message = True
+
+def safe_error(message: str, **kwargs: Any) -> SafeConfigurationError:
+    """Build a trusted :class:`SafeConfigurationError`; ``message`` is a string literal."""
+
+    return _trust(SafeConfigurationError(message, **kwargs))  # type: ignore[return-value]
 
 
 def mark_safe(error: ConfigurationError) -> ConfigurationError:
-    """Mark ``error`` as carrying a fixed, literal message (see :func:`fixed_reason`)."""
+    """Trust ``error`` as carrying a fixed, literal message (see :func:`fixed_reason`)."""
 
-    setattr(error, _SAFE_MARK, True)
-    return error
+    return _trust(error)
 
 
 def is_safe(exc: BaseException) -> bool:
-    """True for a ``ConfigurationError`` built by :func:`refusal` / :func:`mark_safe`."""
+    """True only for an instance registered by :func:`safe_error` / :func:`refusal`."""
 
-    return isinstance(exc, ConfigurationError) and bool(getattr(exc, _SAFE_MARK, False))
+    ref = _TRUSTED.get(id(exc))
+    return ref is not None and ref() is exc and isinstance(exc, ConfigurationError)
 
 
 def fixed_reason(exc: BaseException) -> str:
     """Log-safe reason: a SDK refusal's fixed message, else only the exception type.
 
-    Only an error built by :func:`refusal` (marked with ``_SAFE_MARK``) contributes its
+    Only an error built by :func:`refusal` (registered as trusted) contributes its
     message; any other exception, including a plain ``ConfigurationError`` raised by a
     dependency (its text may interpolate customer content), contributes its type name.
     """
 
-    if isinstance(exc, ConfigurationError) and getattr(exc, _SAFE_MARK, False):
-        return exc.message
+    if is_safe(exc):
+        return exc.message  # type: ignore[attr-defined]
     return type(exc).__name__
 
 
@@ -125,7 +142,7 @@ def refusal(
     payload: dict[str, Any] = {"category": category.value, **details}
     if cause is not None:
         inner = getattr(cause, "details", None)
-        if getattr(cause, _SAFE_MARK, False) and isinstance(inner, dict):
+        if is_safe(cause) and isinstance(inner, dict):
             # a refusal wrapping a refusal keeps the original exception type name
             payload["error_type"] = inner.get("error_type", type(cause).__name__)
         else:
@@ -165,5 +182,6 @@ __all__ = [
     "log",
     "mark_safe",
     "refusal",
+    "safe_error",
     "transport_failed_message",
 ]

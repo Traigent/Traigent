@@ -953,6 +953,39 @@ def _scn_save_str_raises_configuration_error(tmp_path, monkeypatch, strict):
     manager.save_optimization_results(str(tmp_path / "r.json"))
 
 
+class _StrRaisesSafeConfigurationError:
+    """F1n (terra P1): a value forging the helper's trusted marker."""
+
+    def __deepcopy__(self, memo):
+        return self
+
+    def __str__(self) -> str:
+        from traigent.core import best_config_diagnostics as diag
+
+        raise diag.SafeConfigurationError(f"value /work/{CANARY}")
+
+
+def _scn_save_str_raises_safe_configuration_error(tmp_path, monkeypatch, strict):
+    manager = _manager()
+    results = _real_results()
+    results.best_config = {"t": _StrRaisesSafeConfigurationError()}
+    manager._optimization_results = results
+    manager.save_optimization_results(str(tmp_path / "r.json"))
+
+
+def _scn_persistence_metadata_to_dict_failure_log(tmp_path, monkeypatch, strict):
+    # F1n (terra P2): the degraded-save warning logged the exception text
+    from traigent.utils.persistence import PersistenceManager
+
+    class Bad:
+        def to_dict(self):
+            raise RuntimeError(f"/work/{CANARY}")
+
+    result = _real_results()
+    result.metadata = {"plugin": Bad()}
+    PersistenceManager(str(tmp_path / "pm")).save_result(result, "named")
+
+
 def _scn_persistence_encode_timestamp_value(tmp_path, monkeypatch, strict):
     # sol P2: value-bearing ValueErrors outside the save boundary
     from traigent.utils.optimization_result_persistence import encode_result_fields
@@ -1079,6 +1112,12 @@ F1M_SCENARIOS: dict[str, Scenario] = {
         _scn_persistence_manager_save_foreign_result
     ),
     "client/submit_result_session_id": _scn_client_submit_result_session_id,
+    "results/save_str_raises_safe_configuration_error": (
+        _scn_save_str_raises_safe_configuration_error
+    ),
+    "persistence/metadata_to_dict_failure_log": (
+        _scn_persistence_metadata_to_dict_failure_log
+    ),
 }
 
 
@@ -1201,7 +1240,7 @@ def test_canary_never_appears_in_any_rendering(
 
 def test_scenario_matrix_is_not_empty() -> None:
     # inputs x entry points x renderings: guard against a silently shrunk matrix.
-    assert len(SCENARIOS) >= 136
+    assert len(SCENARIOS) >= 138
 
 
 def test_helper_keeps_rejected_values_on_details_only() -> None:
@@ -1294,3 +1333,60 @@ def test_loaded_result_equals_saved_result(tmp_path) -> None:
     manager._optimization_results = None
     manager.load_optimization_results(str(target))
     assert manager._optimization_results == saved
+
+
+# --- F1n: trust in a safe refusal is unforgeable -------------------------------------
+
+
+def test_safe_trust_is_unforgeable() -> None:
+    import copy
+
+    from traigent.core import best_config_diagnostics as diag
+
+    forged = diag.SafeConfigurationError(f"value {CANARY}")
+    assert not diag.is_safe(forged)
+    assert diag.fixed_reason(forged) == "SafeConfigurationError"
+
+    class Sub(diag.SafeConfigurationError):
+        pass
+
+    assert not diag.is_safe(Sub("x"))
+
+    class Liar(diag.SafeConfigurationError):
+        def __eq__(self, other):
+            return True
+
+        __hash__ = object.__hash__
+
+    assert not diag.is_safe(Liar("x"))
+
+    plain = ConfigurationError(f"value {CANARY}")
+    forged_attr = ConfigurationError("x")
+    forged_attr._best_config_diag_safe_message = True  # type: ignore[attr-defined]
+    assert not diag.is_safe(plain)
+    assert not diag.is_safe(forged_attr)
+
+    trusted = diag.safe_error("fixed literal")
+    assert diag.is_safe(trusted)
+    assert diag.fixed_reason(trusted) == "fixed literal"
+    assert not diag.is_safe(copy.copy(trusted))
+    assert not diag.is_safe(copy.deepcopy(trusted))
+
+
+def test_helper_made_refusals_still_pass_through_unchanged(tmp_path) -> None:
+    from traigent.core import best_config_diagnostics as diag
+
+    refused = diag.refusal("Fixed message", category=diag.Category.RESULT_INVALID)
+    assert diag.is_safe(refused)
+    assert diag.fixed_reason(refused) == "Fixed message"
+    marked = diag.mark_safe(ConfigurationError("literal"))
+    assert diag.is_safe(marked)
+    # a refusal wrapping a trusted refusal keeps the original type name
+    wrapped = diag.refusal("Outer", category=diag.Category.LOAD_FAILED, cause=refused)
+    assert wrapped.details["error_type"] == type(refused).__name__
+
+    with pytest.raises(ConfigurationError) as info:
+        with diag.fs_guard("Failed to do the thing"):
+            raise OSError(f"/work/{CANARY}")
+    assert diag.is_safe(info.value)
+    assert str(info.value) == "Failed to do the thing"
