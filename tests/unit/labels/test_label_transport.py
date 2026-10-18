@@ -437,6 +437,7 @@ def test_label_routes_pass_the_gate_only_when_sealed(vectors: dict) -> None:
         for refused in (
             longest + "0",
             "cursorref_" + "0f" * 16,
+            "datasetsliceref_" + "0f" * 16,  # a slice reuses evaluationsetref_
         ):  # 57 chars; not an object kind
             with pytest.raises(gate.TransportGateRefusal):
                 gate.inspect_outgoing(
