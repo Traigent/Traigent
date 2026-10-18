@@ -144,9 +144,8 @@ jobs:
 
           write_masked_env() {
             local name="$1"
-            local nbytes="${2:-32}"
             local value
-            value="$(openssl rand -hex "$nbytes")"
+            value="$(openssl rand -hex 32)"
             if [ -z "$value" ]; then
               echo "::error::openssl produced an empty value for ${name}." >&2
               return 1
@@ -156,20 +155,7 @@ jobs:
           }
 
           write_masked_env JWT_SECRET_KEY
-          # SECRET_KEY is deliberately exactly 32 chars (16 random bytes, hex).
-          # TraigentBackend's EnvironmentDetector (src/security/environment_detector.py,
-          # "Signal 5") classifies a stack as PRODUCTION, whatever ENVIRONMENT /
-          # FLASK_ENV say, when DATABASE_URL is postgresql://, REDIS_URL is
-          # redis:// AND len(SECRET_KEY) > 32 -- the shape of this plaintext
-          # compose stack. Since BE#3943 (2026-10-17) a production-classified
-          # backend refuses a non-rediss:// REDIS_URL at import
-          # (InsecureRedisTransportError), so a 64-char key crash-looped the
-          # backend. 32 chars still meets the backend's >=32 minimum
-          # (_MIN_REQUIRED_CREDENTIAL_LENGTH) and is not "> 32", so the
-          # detector reports ci/non-production, which this ephemeral stack is.
-          # The backend gate is intentionally NOT weakened. If the backend
-          # compose later gains TLS Redis or an explicit dev opt-in, drop this.
-          write_masked_env SECRET_KEY 16
+          write_masked_env SECRET_KEY
           write_masked_env TRAIGENT_MASTER_KEY
           write_masked_env TRAIGENT_ID_SECRET
 
