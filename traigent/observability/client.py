@@ -851,9 +851,13 @@ def _capture_trace_snapshot(
         return (
             _safe_allowlisted_snapshot_or_static_fallback(
                 {
-                    "id": state.trace.id,
-                    "name": state.trace.name,
-                    "status": state.trace.status,
+                    key: value
+                    for key, value in (
+                        ("id", state.trace.id),
+                        ("name", state.trace.name),
+                        ("status", state.trace.status),
+                    )
+                    if value is not None
                 },
                 state=descriptor,
             ),
