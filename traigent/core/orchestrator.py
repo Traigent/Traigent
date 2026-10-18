@@ -1155,6 +1155,31 @@ class OptimizationOrchestrator:
         # Lock for protecting shared state mutations during parallel trial execution
         self._state_lock = asyncio.Lock()
 
+    def _warn_if_baseline_shrinks_grid(self) -> None:
+        """Warn when the default_config baseline leaves grid points unevaluated.
+
+        The baseline trial counts against ``max_trials``, so ``max_trials`` equal
+        to the grid size silently drops the last grid point (#1808).
+        """
+        grid_size = getattr(self.optimizer, "total_combinations", None)
+        max_trials = getattr(self, "max_trials", None)
+        if (
+            not isinstance(grid_size, int)
+            or isinstance(grid_size, bool)
+            or not isinstance(max_trials, int)
+            or isinstance(max_trials, bool)
+        ):
+            return
+        if max_trials < grid_size + 1:
+            logger.warning(
+                "default_config runs as an extra baseline trial that counts against "
+                "max_trials=%d, so the %d-point grid will not be fully evaluated. "
+                "Set max_trials >= %d to cover the whole grid.",
+                max_trials,
+                grid_size,
+                grid_size + 1,
+            )
+
     def _consume_default_config(self) -> dict[str, Any] | None:
         """Return the default config once to seed a baseline trial."""
         if self._default_config_used:
@@ -1163,6 +1188,8 @@ class OptimizationOrchestrator:
         self._default_config_used = True
         if not self._default_config:
             return None
+
+        self._warn_if_baseline_shrinks_grid()
 
         # Keep optimizer trial counts aligned with max_trials when applicable.
         # Some optimizers (random/optuna) track an internal _trial_count and can
