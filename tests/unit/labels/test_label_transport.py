@@ -428,6 +428,20 @@ def test_label_routes_pass_the_gate_only_when_sealed(vectors: dict) -> None:
         )
         with pytest.raises(gate.TransportGateRefusal):
             gate.inspect_outgoing("POST", read_url, json.dumps({"object_refs": [NAME]}))
+        # phase 1a: ObjectRef covers the loop nouns; the longest ref is 56 characters
+        longest = "configurationversionref_" + "0f" * 16
+        assert len(longest) == 56
+        assert gate.inspect_outgoing(
+            "POST", read_url, json.dumps({"object_refs": [longest]})
+        )
+        for refused in (
+            longest + "0",
+            "cursorref_" + "0f" * 16,
+        ):  # 57 chars; not an object kind
+            with pytest.raises(gate.TransportGateRefusal):
+                gate.inspect_outgoing(
+                    "POST", read_url, json.dumps({"object_refs": [refused]})
+                )
     finally:
         gate.set_mode(None)
         gate.set_allowed_origins(None)
