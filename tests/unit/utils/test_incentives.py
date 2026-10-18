@@ -782,6 +782,7 @@ class TestCheckAchievements:
         return TraigentConfig(
             execution_mode=ExecutionMode.LOCAL.value,
             local_storage_path=temp_storage_path,
+            minimal_logging=False,
         )
 
     @pytest.fixture
@@ -1661,3 +1662,46 @@ def test_nested_summary_writers_use_unique_temporary_paths(tmp_path, monkeypatch
     storage.session_summaries()
     assert len(sources) == 2
     assert len(set(sources)) == 2
+
+
+class TestAchievementBannerSuppression:
+    """#2544: achievement banners honour minimal_logging and hint opt-outs."""
+
+    def _manager(self, tmp_path, minimal_logging: bool) -> IncentiveManager:
+        return IncentiveManager(
+            TraigentConfig(
+                execution_mode=ExecutionMode.LOCAL.value,
+                local_storage_path=str(tmp_path),
+                minimal_logging=minimal_logging,
+            )
+        )
+
+    @staticmethod
+    def _sessions() -> list:
+        return [
+            Mock(spec=OptimizationSession, status=OptimizationStatus.COMPLETED.value)
+        ]
+
+    def test_minimal_logging_prints_no_banner(self, tmp_path, capsys) -> None:
+        manager = self._manager(tmp_path, minimal_logging=True)
+
+        manager._check_achievements(self._sessions())
+
+        assert capsys.readouterr().out == ""
+        assert manager._state["achievement_unlocked"] == []
+
+    def test_env_opt_out_prints_no_banner(self, tmp_path, capsys, monkeypatch) -> None:
+        monkeypatch.setenv("TRAIGENT_DISABLE_HINTS", "1")
+        manager = self._manager(tmp_path, minimal_logging=False)
+
+        manager._check_achievements(self._sessions())
+
+        assert capsys.readouterr().out == ""
+
+    def test_dismissed_hints_print_no_banner(self, tmp_path, capsys) -> None:
+        manager = self._manager(tmp_path, minimal_logging=False)
+        manager._state["upgrade_dismissed"] = True
+
+        manager._check_achievements(self._sessions())
+
+        assert capsys.readouterr().out == ""

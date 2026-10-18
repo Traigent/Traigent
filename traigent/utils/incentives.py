@@ -6,6 +6,7 @@ Inspired by DeepEval's approach to encourage cloud adoption.
 # Traceability: CONC-Layer-Core CONC-Quality-Performance CONC-Quality-Observability FUNC-ANALYTICS REQ-ANLY-011 SYNC-Observability
 
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -236,6 +237,23 @@ class IncentiveManager:
 
         return f"\n{ach['title']}\n{ach['description']}\n💡 {ach['hint']}\n"
 
+    def _achievement_banners_suppressed(self) -> bool:
+        """Whether achievement banners must stay silent (#2544).
+
+        Banners are marketing text; they honour ``minimal_logging``, the
+        persisted ``dismiss_upgrade_hints`` flag and ``TRAIGENT_DISABLE_HINTS``.
+        """
+        if os.environ.get("TRAIGENT_DISABLE_HINTS", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
+            return True
+        if self._state.get("upgrade_dismissed", False):
+            return True
+        return bool(getattr(self.config, "minimal_logging", False))
+
     def _check_achievements(self, completed_sessions: list[Any]) -> None:
         """Check and unlock achievements based on usage."""
         completed_count = len(completed_sessions)
@@ -246,6 +264,9 @@ class IncentiveManager:
             "efficiency_expert": 10,
             "optimization_master": 25,
         }
+
+        if self._achievement_banners_suppressed():
+            return
 
         for achievement, threshold in achievement_thresholds.items():
             if completed_count >= threshold and achievement not in self._state.get(
