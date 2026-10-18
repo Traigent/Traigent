@@ -493,10 +493,11 @@ def _safe_allowlisted_snapshot_or_static_fallback(
                 "a static minimal snapshot instead of the caller's payload.",
                 exc_info=True,
             )
+    # #2588: no "status" here -- it is trace status, and a snapshot-builder
+    # failure says nothing about whether the traced operation failed.
     return {
         "id": _new_trace_id(),
         "name": "[REDACTED]",
-        "status": "failed",
         "metadata": {},
     }
 

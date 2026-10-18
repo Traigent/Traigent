@@ -6705,3 +6705,31 @@ class TestFallbackSnapshotPreservesAbsentStatus:
             {"id": "trace-1", "name": "n", "status": "completed"}
         )
         assert redacted["status"] == "completed"
+
+    def test_static_fallback_omits_status_when_allowlist_build_raises(
+        self, monkeypatch, caplog
+    ):
+        """#2588: `status` is trace status, not snapshot health. When the
+        allowlist builder itself raises, the static last-resort snapshot must
+        not claim the traced operation failed."""
+        from traigent.observability.client import (
+            _safe_allowlisted_snapshot_or_static_fallback,
+        )
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("allowlist construction exploded")
+
+        monkeypatch.setattr(
+            "traigent.observability.client._safe_allowlisted_snapshot", _boom
+        )
+        with caplog.at_level("ERROR"):
+            snapshot = _safe_allowlisted_snapshot_or_static_fallback(
+                {"id": "trace-1", "name": "n", "status": "completed"}
+            )
+        assert "status" not in snapshot
+        assert snapshot["name"] == "[REDACTED]"
+        assert snapshot["metadata"] == {}
+        assert any(
+            "static minimal snapshot" in record.getMessage()
+            for record in caplog.records
+        )
