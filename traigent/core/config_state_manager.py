@@ -94,6 +94,14 @@ class CloudBestConfigIntegrityError(ConfigurationError):
     """Raised when a cloud best-config response fails hash integrity checks."""
 
 
+class ResultNotPersistableError(ConfigurationError, ValueError):
+    """Refusal to write a result its own loader could not read back.
+
+    A ``ValueError`` too, so callers that caught the encoder's error keep working; the
+    message is a fixed literal and the rejected value is never in it.
+    """
+
+
 class OptimizationState(Enum):
     """Lifecycle state of an OptimizedFunction.
 
@@ -1157,7 +1165,18 @@ class ConfigStateManager:
         # version-1 artifact its own loader then refused: a bare `asdict` +
         # `json.dump(default=str)` wrote `timestamp: None` happily and
         # load_optimization_results raised on it, one process later.
-        result_dict = encode_whole_result_dump(self._optimization_results)
+        try:
+            result_dict = encode_whole_result_dump(self._optimization_results)
+        except (ValueError, TypeError) as exc:
+            # the encoder's text quotes the rejected value; keep it off str / args /
+            # traceback (the offending field's type name lives on details)
+            raise diag.refusal(
+                "Cannot persist optimization result: invalid 'status' or "
+                "'timestamp' field",
+                category=diag.Category.RESULT_INVALID,
+                cause=exc,
+                error_cls=ResultNotPersistableError,
+            ) from None
 
         # #2223: this writer had no idea `TRAIGENT_LOG_EXAMPLE_CONTENT` exists.
         # `optimization_logger.py` already honors it for the trial jsonl (its
@@ -1168,13 +1187,16 @@ class ConfigStateManager:
         # on every artifact this SDK writes, not just the jsonl trial log.
         _redact_example_content_for_disk_save(result_dict)
 
-        output_path = Path(path).expanduser()
-        base_dir = (
-            output_path.parent if output_path.is_absolute() else Path.cwd().resolve()
-        )
-        output_path = validate_path(output_path, base_dir, must_exist=False)
-        with safe_open(output_path, base_dir, mode="w", encoding="utf-8") as f:
-            json.dump(result_dict, f, indent=2, default=str)
+        with diag.fs_guard("Failed to save optimization results"):
+            output_path = Path(path).expanduser()
+            base_dir = (
+                output_path.parent
+                if output_path.is_absolute()
+                else Path.cwd().resolve()
+            )
+            output_path = validate_path(output_path, base_dir, must_exist=False)
+            with safe_open(output_path, base_dir, mode="w", encoding="utf-8") as f:
+                json.dump(result_dict, f, indent=2, default=str)
 
         logger.info("Saved optimization results")
 

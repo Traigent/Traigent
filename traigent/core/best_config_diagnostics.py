@@ -46,6 +46,7 @@ class Category(StrEnum):
     TRANSPORT_FAILED = "transport_failed"
     SOURCE_IGNORED = "source_ignored"
     FILESYSTEM_FAILED = "filesystem_failed"
+    RESULT_INVALID = "result_invalid"
 
 
 _SAFE_MARK = "_best_config_diag_safe_message"

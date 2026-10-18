@@ -266,11 +266,12 @@ class LocalStorageManager:
             (self.storage_path / "cache" / "model_responses").mkdir(
                 parents=True, exist_ok=True
             )
-            logger.debug(f"Initialized storage directories at {self.storage_path}")
-        except Exception as e:
+            logger.debug("Initialized storage directories")
+        except Exception as exc:
+            # OS error text quotes the (customer-chosen) storage path
             raise TraigentStorageError(
-                f"Failed to create storage directories: {e}"
-            ) from e
+                f"Failed to create storage directories ({type(exc).__name__})"
+            ) from None
 
     def _is_process_alive(self, pid: int) -> bool:
         """Best-effort check whether a process is alive."""

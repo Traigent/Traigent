@@ -9,6 +9,7 @@ for better maintainability and adherence to software engineering principles.
 import asyncio
 import concurrent.futures
 import json
+import logging
 import os
 import re
 import secrets
@@ -76,6 +77,7 @@ from traigent.cloud.privacy_operations import PrivacyOperations
 from traigent.cloud.session_operations import SessionOperations
 from traigent.cloud.session_types import SessionCreationResult
 from traigent.core.session_types import safe_http_error_summary
+from traigent.core import best_config_diagnostics as diag
 from traigent.core.best_config_diagnostics import transport_failed_message
 from traigent.cloud.subset_selection import SmartSubsetSelector
 from traigent.cloud.trial_operations import (
@@ -974,12 +976,16 @@ class BackendIntegratedClient:
                 self.local_storage = LocalStorageBackendManager(
                     str(self._local_storage_root)
                 )
-                logger.info(
-                    "Local storage fallback initialized at %s",
-                    self._local_storage_root,
+                logger.info("Local storage fallback initialized")
+            except Exception as exc:
+                # the storage root and the OS error text carry customer-chosen paths
+                diag.log(
+                    logger,
+                    logging.WARNING,
+                    "Failed to initialize local storage fallback",
+                    category=diag.Category.FILESYSTEM_FAILED,
+                    exc=exc,
                 )
-            except Exception as e:
-                logger.warning(f"Failed to initialize local storage fallback: {e}")
 
         # Session management
         self._session = None
@@ -1554,10 +1560,13 @@ class BackendIntegratedClient:
             # silently emits a rejected key.
             raise
         except Exception as exc:
-            logger.warning("Could not get auth headers: %s", exc)
+            logger.warning(
+                "Could not get auth headers (%s)",
+                type(exc).__name__,
+            )
             raise CloudServiceError(
-                f"Failed to build authenticated session: {exc}"
-            ) from exc
+                f"Failed to build authenticated session ({type(exc).__name__})"
+            ) from None
         headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
         headers.setdefault("User-Agent", _SDK_USER_AGENT)
 
@@ -3026,10 +3035,12 @@ class BackendIntegratedClient:
             except Exception as exc:
                 # #1279: do not silently drop the local record — on connected
                 # runs this is the only durable trace if the remote submit fails.
-                logger.warning(
-                    "Local storage trial result persistence failed for session %s: %s",
-                    session_id,
-                    exc,
+                diag.log(
+                    logger,
+                    logging.WARNING,
+                    "Local storage trial result persistence failed",
+                    category=diag.Category.FILESYSTEM_FAILED,
+                    exc=exc,
                 )
 
         session = self._active_sessions.get(session_id)

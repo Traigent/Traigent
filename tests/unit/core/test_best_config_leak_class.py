@@ -567,10 +567,15 @@ def _scn_load_results_ok_log(tmp_path, monkeypatch, strict):
     src = tmp_path / f"saved-{CANARY}.json"
     manager.set_config({"t": 2})
     manager._optimization_results = _real_results()
+    saved = _real_results()
+    manager._optimization_results = saved
     manager.save_optimization_results(str(src))
     assert src.exists(), "the save must succeed so the load below is reached"
+    manager._optimization_results = None
     manager.load_optimization_results(str(src))
-    assert manager._optimization_results is not None
+    loaded = manager._optimization_results
+    assert loaded is not None, "the load must produce a result"
+    assert loaded == saved, "the loaded object must equal the saved one"
 
 
 def _real_results():
@@ -588,6 +593,76 @@ def _real_results():
         algorithm="grid",
         timestamp=datetime.now(UTC),
     )
+
+
+def _scn_save_overlong_path(tmp_path, monkeypatch, strict):
+    manager = _manager()
+    manager._optimization_results = _real_results()
+    manager.save_optimization_results(str(_long(tmp_path) / "r.json"))
+
+
+def _scn_save_overlong_name(tmp_path, monkeypatch, strict):
+    manager = _manager()
+    manager._optimization_results = _real_results()
+    manager.save_optimization_results(str(tmp_path / (CANARY + "y" * 300 + ".json")))
+
+
+def _scn_save_bad_timestamp(tmp_path, monkeypatch, strict):
+    manager = _manager()
+    results = _real_results()
+    results.timestamp = f"ts-{CANARY}"
+    manager._optimization_results = results
+    manager.save_optimization_results(str(tmp_path / "r.json"))
+
+
+def _scn_save_bad_status(tmp_path, monkeypatch, strict):
+    manager = _manager()
+    results = _real_results()
+    results.status = f"status-{CANARY}"
+    manager._optimization_results = results
+    manager.save_optimization_results(str(tmp_path / "r.json"))
+
+
+def _scn_client_overlong_local_storage(tmp_path, monkeypatch, strict):
+    BackendIntegratedClient(
+        api_key=FAKE_KEY,
+        base_url="https://api.test",
+        enable_fallback=True,
+        local_storage_path=str(_long(tmp_path)),
+    )
+
+
+def _scn_client_local_storage_dir_logged(tmp_path, monkeypatch, strict):
+    BackendIntegratedClient(
+        api_key=FAKE_KEY,
+        base_url="https://api.test",
+        enable_fallback=True,
+        local_storage_path=str(tmp_path / f"store-{CANARY}"),
+    )
+
+
+def _scn_client_submit_result_storage_failure(tmp_path, monkeypatch, strict):
+    client = BackendIntegratedClient(
+        api_key=FAKE_KEY,
+        base_url="https://api.test",
+        enable_fallback=True,
+        local_storage_path=str(tmp_path / "store"),
+    )
+    assert client.local_storage is not None
+    err = OSError(36, f"File name too long: '/work/{CANARY}'")
+    with patch.object(client.local_storage, "add_trial_result", side_effect=err):
+        try:
+            client.submit_result("opaque-session", {"t": 2}, 1.0)
+        finally:
+            assert client.local_storage.add_trial_result.call_count == 1
+
+
+def _scn_client_async_auth_failure(tmp_path, monkeypatch, strict):
+    import asyncio
+
+    client = _client()
+    with _auth(client, side_effect=RuntimeError(f"refresh URL /work/{CANARY}")):
+        asyncio.run(client._build_http_session())
 
 
 def _scn_load_results_unknown_status(tmp_path, monkeypatch, strict):
@@ -781,6 +856,16 @@ def _scenarios() -> dict[str, Scenario]:
     s["results/load_missing"] = _scn_load_results_missing
     s["results/load_bad_json"] = _scn_load_results_bad_json
     s["results/save_load_named_file"] = _scn_load_results_ok_log
+    s["results/save_overlong_dir"] = _scn_save_overlong_path
+    s["results/save_overlong_name"] = _scn_save_overlong_name
+    s["results/save_bad_timestamp"] = _scn_save_bad_timestamp
+    s["results/save_bad_status"] = _scn_save_bad_status
+    s["client/overlong_local_storage"] = _scn_client_overlong_local_storage
+    s["client/local_storage_dir_logged"] = _scn_client_local_storage_dir_logged
+    s["client/submit_result_storage_failure"] = (
+        _scn_client_submit_result_storage_failure
+    )
+    s["client/async_auth_failure"] = _scn_client_async_auth_failure
     s["results/legacy_named_file"] = _scn_load_results_legacy
     s["results/unknown_status"] = _scn_load_results_unknown_status
     s["client/protected/publish_invalid_header"] = _scn_client_protected_invalid_header
@@ -808,6 +893,10 @@ def test_canary_never_appears_in_any_rendering(
     raised: list[BaseException] = []
     try:
         SCENARIOS[name](tmp_path, monkeypatch, strict)
+    except AssertionError:
+        # a failed scenario precondition (setup / round-trip check) is a test failure,
+        # never a "rendered nothing" pass
+        raise
     except Exception as exc:  # noqa: BLE001 - the property is about what it renders
         raised.append(exc)
     _check(caplog, raised)
@@ -815,7 +904,7 @@ def test_canary_never_appears_in_any_rendering(
 
 def test_scenario_matrix_is_not_empty() -> None:
     # inputs x entry points x renderings: guard against a silently shrunk matrix.
-    assert len(SCENARIOS) >= 105
+    assert len(SCENARIOS) >= 113
 
 
 def test_helper_keeps_rejected_values_on_details_only() -> None:
@@ -883,3 +972,28 @@ def test_whole_config_values_are_not_logged(tmp_path, caplog) -> None:
     caplog.set_level(logging.DEBUG)
     _scn_whole_config(tmp_path, None, False)
     assert CANARY not in caplog.text
+
+
+def test_successful_load_scenario_cannot_pass_without_loading(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    """A setup failure before the save/load must fail the property test, not pass it."""
+    with patch(
+        f"{__name__}._real_results", side_effect=AssertionError("setup failed")
+    ) as setup:
+        with pytest.raises(AssertionError, match="setup failed"):
+            test_canary_never_appears_in_any_rendering(
+                "results/save_load_named_file", False, tmp_path, monkeypatch, caplog
+            )
+    assert setup.call_count == 1
+
+
+def test_loaded_result_equals_saved_result(tmp_path) -> None:
+    manager = _manager()
+    saved = _real_results()
+    target = tmp_path / f"saved-{CANARY}.json"
+    manager._optimization_results = saved
+    manager.save_optimization_results(str(target))
+    manager._optimization_results = None
+    manager.load_optimization_results(str(target))
+    assert manager._optimization_results == saved

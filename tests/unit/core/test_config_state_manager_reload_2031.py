@@ -286,8 +286,10 @@ def test_the_writer_refuses_a_status_its_loader_would_have_degraded(tmp_path) ->
     saver = _manager(tmp_path)
     saver._optimization_results = result
 
-    with pytest.raises(ValueError, match="bogus"):
+    # the refusal names the field, never the rejected value (that lives on no rendering)
+    with pytest.raises(ValueError, match="status") as excinfo:
         saver.save_optimization_results(str(path))
+    assert "bogus" not in str(excinfo.value)
 
     assert not path.exists()
 
