@@ -234,6 +234,12 @@ _EXAMPLE_INSIGHTS_REDACTIONS_KEYS: frozenset[str] = frozenset(
 _OBSERVABILITY_TRACE_STATUSES = frozenset(
     {"running", "completed", "failed", "rejected"}
 )
+# Read side only: the server may report ``unknown`` for traces whose final
+# state cannot be determined. Never an outbound (write-side) status, and never
+# part of the required ``status_counts`` key set (#2588).
+_OBSERVABILITY_TRACE_READ_STATUSES = _OBSERVABILITY_TRACE_STATUSES | frozenset(
+    {"unknown"}
+)
 _OBSERVABILITY_TRACE_STATUS_ALIASES = {
     "success": "completed",
     "error": "failed",
@@ -854,7 +860,7 @@ def _project_observability_trace_search(payload: Any) -> dict[str, Any]:
             )
             _require_observability_enum(
                 item_status,
-                _OBSERVABILITY_TRACE_STATUSES,
+                _OBSERVABILITY_TRACE_READ_STATUSES,
                 what=f"items[{index}].status",
             )
             item = {**item, "status": item_status}
@@ -1348,13 +1354,15 @@ def _project_observability_variant(payload: Any, *, what: str) -> dict[str, Any]
     )
     status_counts = _exact_observability_object(
         source["status_counts"],
-        keys=_OBSERVABILITY_TRACE_STATUSES,
+        keys=_OBSERVABILITY_TRACE_READ_STATUSES,
+        required=_OBSERVABILITY_TRACE_STATUSES,
         what=f"{what}.status_counts",
     )
-    for field in _OBSERVABILITY_TRACE_STATUSES:
-        _require_observability_integer(
-            status_counts[field], what=f"{what}.status_counts.{field}"
-        )
+    for field in _OBSERVABILITY_TRACE_READ_STATUSES:
+        if field in status_counts:
+            _require_observability_integer(
+                status_counts[field], what=f"{what}.status_counts.{field}"
+            )
     return {
         "id": source["id"],
         "project_id": source["project_id"],
@@ -1368,7 +1376,9 @@ def _project_observability_variant(payload: Any, *, what: str) -> dict[str, Any]
         "representative_trace_id": source["representative_trace_id"],
         "boundary_trace_ids": list(boundary_ids),
         "status_counts": {
-            key: status_counts[key] for key in _OBSERVABILITY_TRACE_STATUSES
+            key: status_counts[key]
+            for key in sorted(_OBSERVABILITY_TRACE_READ_STATUSES)
+            if key in status_counts
         },
         "derivation": _project_observability_derivation(
             source["derivation"], what=f"{what}.derivation"
@@ -1427,7 +1437,7 @@ def _project_observability_variant_detail(payload: Any) -> dict[str, Any]:
             trace["trace_id"], what=f"{what}.trace_id"
         )
         _require_observability_enum(
-            trace["status"], _OBSERVABILITY_TRACE_STATUSES, what=f"{what}.status"
+            trace["status"], _OBSERVABILITY_TRACE_READ_STATUSES, what=f"{what}.status"
         )
         if trace["started_at"] is not None:
             _require_observability_datetime(
@@ -1705,7 +1715,7 @@ def _project_observability_trace_slice(payload: Any) -> dict[str, Any]:
             what=f"{what}.semantic_kind",
         )
         _require_observability_enum(
-            item["status"], _OBSERVABILITY_TRACE_STATUSES, what=f"{what}.status"
+            item["status"], _OBSERVABILITY_TRACE_READ_STATUSES, what=f"{what}.status"
         )
         _require_observability_integer(
             item["sequence_index"], what=f"{what}.sequence_index", maximum=1_000_000
@@ -3914,10 +3924,12 @@ def _validate_observability_cohort(
     statuses = _validate_identifier_list(
         cohort.get("trace_statuses", []), field=f"{field}.trace_statuses"
     )
-    allowed_statuses = {"running", "completed", "failed", "rejected"}
-    if len(statuses) > 4 or set(statuses).difference(allowed_statuses):
+    if len(statuses) > 4 or set(statuses).difference(
+        _OBSERVABILITY_TRACE_READ_STATUSES
+    ):
         raise ValueError(
-            f"{field}.trace_statuses must use running/completed/failed/rejected."
+            f"{field}.trace_statuses must use "
+            "running/completed/failed/rejected/unknown."
         )
     sample_limit = cohort.get("sample_limit", 5000)
     if not isinstance(sample_limit, int) or isinstance(sample_limit, bool):
