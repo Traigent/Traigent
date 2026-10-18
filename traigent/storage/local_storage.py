@@ -764,7 +764,8 @@ class LocalStorageManager:
             return session
 
         except Exception as e:
-            logger.error(f"Failed to load session {session_id}: {e}")
+            # the exception text can quote the session file's full path
+            logger.error("Failed to load session %s (%s)", session_id, type(e).__name__)
             return None
 
     def list_sessions(self, status: str | None = None) -> list[OptimizationSession]:
@@ -883,7 +884,9 @@ class LocalStorageManager:
                 finally:
                     tmp_path.unlink(missing_ok=True)
             except (PathTraversalError, OSError) as e:
-                logger.debug(f"Failed to write session summary index: {e}")
+                logger.debug(
+                    "Failed to write session summary index (%s)", type(e).__name__
+                )
 
         return [
             SessionSummary(status=entry[2], completed_trials=entry[3])
@@ -904,7 +907,9 @@ class LocalStorageManager:
                 logger.info(f"Deleted session {session_id}")
                 return True
             except Exception as e:
-                logger.error(f"Failed to delete session {session_id}: {e}")
+                logger.error(
+                    "Failed to delete session %s (%s)", session_id, type(e).__name__
+                )
                 return False
 
         return False
@@ -957,11 +962,13 @@ class LocalStorageManager:
                 if temp_path.exists():
                     temp_path.unlink()
 
-            logger.info(f"Exported session {session_id} to {path_obj}")
+            logger.info("Exported session %s", session_id)
             return True
 
         except Exception as e:
-            logger.error(f"Failed to export session {session_id}: {e}")
+            logger.error(
+                "Failed to export session %s (%s)", session_id, type(e).__name__
+            )
             return False
 
     def get_session_summary(self, session_id: str) -> dict[str, Any | None] | None:
@@ -1054,9 +1061,10 @@ class LocalStorageManager:
                     temp_path.unlink()
 
         except Exception as e:
+            # the exception text can quote the session file's full path
             raise TraigentStorageError(
-                f"Failed to save session {session.session_id}: {e}"
-            ) from e
+                f"Failed to save session {session.session_id} ({type(e).__name__})"
+            ) from None
 
     def _make_json_serializable(self, value: Any) -> Any:
         """Recursively convert a value to something JSON can encode."""
@@ -1120,15 +1128,13 @@ class LocalStorageManager:
                     if trial.error is None and self.compute_config_hash(
                         trial.config
                     ) == self.compute_config_hash(config):
-                        logger.info(
-                            f"🎯 Cache hit! Found cached result for config: {config}"
-                        )
+                        logger.info("🎯 Cache hit! Found cached result for config")
                         return trial
 
             return None
 
         except Exception as e:
-            logger.error(f"Error checking cache: {e}")
+            logger.error("Error checking cache (%s)", type(e).__name__)
             return None
 
     def get_storage_info(self) -> dict[str, Any]:
@@ -1308,7 +1314,9 @@ class LocalStorageManager:
                                 return True
 
         except Exception as e:
-            logger.warning(f"Error during config deduplication check: {e}")
+            logger.warning(
+                "Error during config deduplication check (%s)", type(e).__name__
+            )
             # Best effort - don't fail optimization due to dedup errors
 
         return False
@@ -1370,6 +1378,8 @@ class LocalStorageManager:
                     return cached
 
         except Exception as exc:  # pragma: no cover - defensive logging only
-            logger.warning("Error during cross-session cache lookup: %s", exc)
+            logger.warning(
+                "Error during cross-session cache lookup (%s)", type(exc).__name__
+            )
 
         return None

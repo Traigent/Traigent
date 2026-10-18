@@ -1177,6 +1177,15 @@ class ConfigStateManager:
                 cause=exc,
                 error_cls=ResultNotPersistableError,
             ) from None
+        except Exception as exc:
+            # an arbitrary value's own __deepcopy__ / __str__ can raise text that
+            # quotes customer content; only the exception type name is kept
+            raise diag.refusal(
+                "Cannot persist optimization result: serialization failed",
+                category=diag.Category.RESULT_INVALID,
+                cause=exc,
+                error_cls=ResultNotPersistableError,
+            ) from None
 
         # #2223: this writer had no idea `TRAIGENT_LOG_EXAMPLE_CONTENT` exists.
         # `optimization_logger.py` already honors it for the trial jsonl (its
@@ -1187,16 +1196,27 @@ class ConfigStateManager:
         # on every artifact this SDK writes, not just the jsonl trial log.
         _redact_example_content_for_disk_save(result_dict)
 
-        with diag.fs_guard("Failed to save optimization results"):
-            output_path = Path(path).expanduser()
-            base_dir = (
-                output_path.parent
-                if output_path.is_absolute()
-                else Path.cwd().resolve()
-            )
-            output_path = validate_path(output_path, base_dir, must_exist=False)
-            with safe_open(output_path, base_dir, mode="w", encoding="utf-8") as f:
-                json.dump(result_dict, f, indent=2, default=str)
+        try:
+            with diag.fs_guard("Failed to save optimization results"):
+                output_path = Path(path).expanduser()
+                base_dir = (
+                    output_path.parent
+                    if output_path.is_absolute()
+                    else Path.cwd().resolve()
+                )
+                output_path = validate_path(output_path, base_dir, must_exist=False)
+                with safe_open(output_path, base_dir, mode="w", encoding="utf-8") as f:
+                    json.dump(result_dict, f, indent=2, default=str)
+        except ConfigurationError:
+            raise
+        except Exception as exc:
+            # PathTraversalError / secure_path's ValueError quote the path, and a
+            # value's own __str__ can raise customer text: fixed refusal, type only
+            raise diag.refusal(
+                "Failed to save optimization results",
+                category=diag.Category.FILESYSTEM_FAILED,
+                cause=exc,
+            ) from None
 
         logger.info("Saved optimization results")
 

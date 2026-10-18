@@ -17,6 +17,7 @@ truly carries only SDK-owned constants, add it to ``ALLOWLIST`` with that reason
 from __future__ import annotations
 
 import ast
+import builtins
 import hashlib
 from pathlib import Path
 
@@ -27,6 +28,7 @@ FILES = (
     *sorted((ROOT / "core").glob("best_config_*.py")),
     ROOT / "core" / "config_state_manager.py",
     ROOT / "cloud" / "backend_client.py",
+    ROOT / "storage" / "local_storage.py",
     ROOT / "utils" / "optimization_result_persistence.py",
     ROOT / "labels" / "transport_gate.py",
 )
@@ -58,7 +60,256 @@ _LEGACY_BACKEND = (
     "F1j; any change to these sites should move them to best_config_diagnostics and "
     "remove the entry. Reported as an open follow-up."
 )
+_STORE_ID = (
+    "interpolates only a session id (SDK-generated timestamp + sanitized code identifier, "
+    "or a backend-issued reference), counts, a status token, a score, or an exception "
+    "*type* name; PRE-EXISTING local-storage text, session ids not proven free of "
+    "customer text when externally supplied"
+)
 ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
+    (
+        "local_storage.py",
+        "LocalStorageManager._ensure_directories",
+        "raise",
+        "aa530486fb476013",
+    ): (
+        1,
+        "fixed text plus the exception type name (the OS text quoting the path is dropped)",
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager._resolve_primary_objective_band",
+        "raise",
+        "95a7b0c2896fc67a",
+    ): (
+        1,
+        "SDK-owned objective name from the session spec (code identifier), no artifact content",
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager._save_session",
+        "raise",
+        "53b5f20678b8b46f",
+    ): (
+        1,
+        "session id plus the exception type name; cause suppressed (from None)",
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager._try_cleanup_stale_lock",
+        "log",
+        "43f91e231f55aa2a",
+    ): (
+        1,
+        "lock name is an SDK constant; pid and timeout are numbers",
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.acquire_lock",
+        "log",
+        "77492c9cb356be1f",
+    ): (
+        1,
+        "lock name is an SDK constant; pid and timeout are numbers",
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.acquire_lock",
+        "log",
+        "bfa7beeaa54a7ed0",
+    ): (
+        1,
+        "lock name is an SDK constant; pid and timeout are numbers",
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.acquire_lock",
+        "raise",
+        "f2235393b29b118c",
+    ): (
+        1,
+        "lock name is an SDK constant; pid and timeout are numbers",
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.add_trial_result",
+        "log",
+        "80ebf4d5d5a8ad12",
+    ): (
+        1,
+        _STORE_ID,
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.add_trial_result",
+        "raise",
+        "f0bbf4bfdd69dbbe",
+    ): (
+        1,
+        _STORE_ID,
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.cleanup_old_sessions",
+        "log",
+        "4f7e58761a9f7f45",
+    ): (
+        1,
+        _STORE_ID,
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.create_session",
+        "log",
+        "13ce705fd54807a3",
+    ): (
+        1,
+        _STORE_ID,
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.delete_session",
+        "log",
+        "08d46702c0cda984",
+    ): (
+        1,
+        _STORE_ID,
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.delete_session",
+        "log",
+        "614a27cb0350800f",
+    ): (
+        1,
+        _STORE_ID,
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.export_session",
+        "log",
+        "15826609a3df0bd1",
+    ): (
+        1,
+        _STORE_ID,
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.export_session",
+        "log",
+        "46189f28af1987a7",
+    ): (
+        1,
+        _STORE_ID,
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.export_session",
+        "log",
+        "91b6ce588075d703",
+    ): (
+        1,
+        "UNVERIFIED: interpolates the caller-supplied export format token (documented domain: json); pre-existing",
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.export_session",
+        "raise",
+        "f0bbf4bfdd69dbbe",
+    ): (
+        1,
+        _STORE_ID,
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.finalize_session",
+        "log",
+        "204380f960282a35",
+    ): (
+        1,
+        _STORE_ID,
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.finalize_session",
+        "log",
+        "2e2cbb0f1715c74a",
+    ): (
+        1,
+        _STORE_ID,
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.find_cached_result",
+        "log",
+        "809166c6c2228661",
+    ): (
+        1,
+        _STORE_ID,
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.find_cached_result_across_sessions",
+        "log",
+        "d05caf4650cdd57a",
+    ): (
+        1,
+        _STORE_ID,
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.is_config_seen",
+        "log",
+        "c824c6bcea372ad2",
+    ): (
+        1,
+        _STORE_ID,
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.load_session",
+        "log",
+        "f43453674dbf60d8",
+    ): (
+        1,
+        _STORE_ID,
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.session_summaries",
+        "log",
+        "29bd4fa0f611c3a0",
+    ): (
+        1,
+        _STORE_ID,
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.update_session_status",
+        "log",
+        "665f9a0d44f2c50f",
+    ): (
+        1,
+        _STORE_ID,
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager.update_sync_state",
+        "log",
+        "1ee277ac3232528e",
+    ): (
+        1,
+        _STORE_ID,
+    ),
+    (
+        "local_storage.py",
+        "OptimizationSession._reconcile_total_trials",
+        "log",
+        "bc350e471d4068e7",
+    ): (
+        1,
+        _STORE_ID,
+    ),
     (
         "backend_client.py",
         "BackendIntegratedClient.__aenter__",
@@ -99,7 +350,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient._check_rate_limit",
         "raise",
-        "76c8c10f5574f6d6",
+        "142dd45d23238ed1",
     ): (
         1,
         "a computed wait time",
@@ -126,7 +377,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient._normalize_interaction_policy_payload",
         "raise",
-        "24d1c6f00285c2f4",
+        "116ff660cb9f2489",
     ): (
         1,
         "missing-field names of the backend's fixed policy schema",
@@ -135,7 +386,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient._normalize_interaction_policy_payload",
         "raise",
-        "ffcb05f152b3df8a",
+        "f48ebc28560af6f9",
     ): (
         1,
         "missing-field names of the backend's fixed policy schema",
@@ -189,7 +440,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.fetch_agent_head_generation_sync",
         "raise",
-        "8209411c7dd78e61",
+        "f7ce07afb6cace20",
     ): (
         1,
         "safe_http_error_summary only",
@@ -198,7 +449,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.fetch_best_config_sync",
         "raise",
-        "e7f0bf7ea4a2be08",
+        "ff9d0491839e1ca2",
     ): (
         1,
         "safe_http_error_summary only",
@@ -216,7 +467,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.get_interaction_policy",
         "raise",
-        "7aca6e937c1cd55d",
+        "133fb1c23887193a",
     ): (
         1,
         "safe_http_error_summary only",
@@ -225,7 +476,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.publish_best_config_sync",
         "raise",
-        "b059b7be5a3ecf39",
+        "2779b3ed27766a15",
     ): (
         1,
         "safe_http_error_summary only",
@@ -279,7 +530,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.upload_example_features",
         "log",
-        "f984be89a4d94951",
+        "6b381c0da720f7a0",
     ): (
         1,
         _LEGACY_BACKEND,
@@ -306,7 +557,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "_raise_for_transient_backend_response",
         "raise",
-        "5b157c2d6f67eef2",
+        "4213eec4251b9529",
     ): (
         1,
         "operation literal + safe_http_error_summary (status code and fixed summary only)",
@@ -315,7 +566,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "_run_sync_backend_request_with_retry",
         "raise",
-        "60b7196a634e59f4",
+        "402529dd40c51ccc",
     ): (
         1,
         "operation literal + pre-sanitized transient text or exception type name",
@@ -324,7 +575,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "_run_sync_backend_request_with_retry",
         "raise",
-        "892a75e340f4b806",
+        "9c8bd3bbaf3e6fe9",
     ): (
         1,
         "operation literal + pre-sanitized transient text or exception type name",
@@ -333,7 +584,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "_run_sync_backend_request_with_retry",
         "raise",
-        "dbc1ab4451f92868",
+        "f1072a0fa4f123e2",
     ): (
         1,
         "operation literal + pre-sanitized transient text or exception type name",
@@ -346,7 +597,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "best_config_runtime.py",
         "_validate_and_filter_config_keys",
         "log",
-        "3f5d12b9f5919481",
+        "d47702d2c7e74902",
     ): (
         1,
         _COUNT,
@@ -355,7 +606,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager._load_legacy_snapshot",
         "log",
-        "b1fbc64b907b761d",
+        "579848fd12e84dd6",
     ): (
         1,
         _LABEL,
@@ -364,7 +615,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager._load_legacy_snapshot",
         "log",
-        "cea3e679939c85b5",
+        "fe4a1d3b383f26c4",
     ): (
         1,
         _LABEL,
@@ -373,7 +624,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager._load_snapshot_from_file",
         "log",
-        "306e50e6919ef056",
+        "6c4b6d7db0b8d805",
     ): (
         1,
         "interpolates only _source_label() (fixed enum-derived label) and fixed reasons; refusal text via diag.fixed_reason",
@@ -382,7 +633,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager._load_snapshot_from_file",
         "log",
-        "c93a48b67cfaffc1",
+        "d83a569ecbe94f7d",
     ): (
         1,
         "interpolates only _source_label() (fixed enum-derived label) and fixed reasons; refusal text via diag.fixed_reason",
@@ -463,7 +714,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager._refuse_legacy_file",
         "log",
-        "5491ed5b0b45275f",
+        "3a8d0fbcfb9a537e",
     ): (
         1,
         "logs the already-built message: _LABEL text with a literal reason",
@@ -508,7 +759,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager.apply_best_config",
         "log",
-        "e73375ab325457d5",
+        "7221ddb91ed2b0a8",
     ): (
         1,
         _COUNT,
@@ -562,7 +813,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "_decode_legacy",
         "log",
-        "525f6bdf25886530",
+        "845f059f8627399f",
     ): (
         1,
         "legacy format literal + SDK dataclass field names; no artifact name",
@@ -598,7 +849,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "_decode_versioned",
         "log",
-        "e01c45b109519da2",
+        "2d1493ad10949247",
     ): (
         1,
         "interpolates the artifact label: only reached via decode_result; the best-config caller passes no artifact_name ('<unnamed>'); persistence.py callers name their own artifacts",
@@ -607,7 +858,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "_decode_versioned",
         "raise",
-        "83de48c3e6071b70",
+        "f68f4e7109eb1156",
     ): (
         1,
         _DECODER,
@@ -630,7 +881,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         1,
         "SDK-internal consistency error naming SDK-owned field names",
     ),
-    ("optimization_result_persistence.py", "_read_field", "log", "3e05b4376b977acb"): (
+    ("optimization_result_persistence.py", "_read_field", "log", "adea9fa45fc35ab8"): (
         1,
         "dataclass field name + type name (SDK-owned)",
     ),
@@ -647,7 +898,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "decode_result",
         "raise",
-        "0578d5df7a64095a",
+        "05fb740e7dd2607a",
     ): (
         1,
         _DECODER,
@@ -656,7 +907,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "decode_result",
         "raise",
-        "126a2d1e119cabbf",
+        "4afff28277651612",
     ): (
         1,
         _DECODER,
@@ -665,7 +916,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "decode_result",
         "raise",
-        "21404594fb6d3e6d",
+        "52448019bbf40e37",
     ): (
         1,
         _DECODER,
@@ -674,7 +925,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "decode_result",
         "raise",
-        "881773e24affc973",
+        "cdf1bfd8c277e80a",
     ): (
         1,
         _DECODER,
@@ -701,7 +952,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "verify_envelope_version",
         "raise",
-        "1114c29897b1ff84",
+        "326f46cf438c5571",
     ): (
         1,
         _DECODER,
@@ -710,7 +961,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "verify_envelope_version",
         "raise",
-        "ee54c085717d16c2",
+        "6c2e3f2e2a4362c1",
     ): (
         1,
         _DECODER,
@@ -724,7 +975,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         1,
         "route is a table template (never the request path) and the dict holds only violation-class counts",
     ),
-    ("transport_gate.py", "inspect_outgoing", "log", "6155e24cf2fbfce4"): (
+    ("transport_gate.py", "inspect_outgoing", "log", "0f4e66ea82fa23c1"): (
         1,
         "debug line of mode, route template and violation-class counts; no request path, header or body",
     ),
@@ -733,6 +984,12 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
 
 def _is_const(node: ast.AST) -> bool:
     return isinstance(node, ast.Constant)
+
+
+def _is_builtin_exception(func: ast.AST) -> bool:
+    name = getattr(func, "id", None)
+    obj = getattr(builtins, name, None) if isinstance(name, str) else None
+    return isinstance(obj, type) and issubclass(obj, BaseException)
 
 
 def _text_args(call: ast.Call) -> list[ast.AST]:
@@ -781,6 +1038,11 @@ class _Aliases(ast.NodeVisitor):
     def __init__(self) -> None:
         self.loggers: set[str] = set(_LOGGER_NAMES)
         self.bound: dict[str, str] = {}
+        # attribute-bound log methods: ``self._w = logger.warning`` -> {"_w": "warning"}
+        self.bound_attrs: dict[str, str] = {}
+        # local names for ``warnings.warn`` and for the ``warnings`` module
+        self.warn_names: set[str] = set()
+        self.warnings_modules: set[str] = {"warnings"}
 
     def _loggerish(self, expr: ast.AST) -> bool:
         if isinstance(expr, ast.Name):
@@ -789,11 +1051,14 @@ class _Aliases(ast.NodeVisitor):
             return expr.attr in self.loggers
         return _is_logger_factory(expr)
 
-    def visit_Assign(self, node: ast.Assign) -> None:
-        names = [t.id for t in node.targets if isinstance(t, ast.Name)]
-        value = node.value
+    def _bind(self, targets: list[ast.AST], value: ast.AST | None) -> None:
+        if value is None:
+            return
+        names = [t.id for t in targets if isinstance(t, ast.Name)]
+        attrs = [t.attr for t in targets if isinstance(t, ast.Attribute)]
         if self._loggerish(value):
             self.loggers.update(names)
+            self.loggers.update(attrs)
         elif (
             isinstance(value, ast.Attribute)
             and value.attr in LOG_METHODS
@@ -801,6 +1066,34 @@ class _Aliases(ast.NodeVisitor):
         ):
             for name in names:
                 self.bound[name] = value.attr
+            for attr in attrs:
+                self.bound_attrs[attr] = value.attr
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        self._bind(list(node.targets), node.value)
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        self._bind([node.target], node.value)
+        annotation = ast.unparse(node.annotation)
+        if "Logger" in annotation:
+            if isinstance(node.target, ast.Name):
+                self.loggers.add(node.target.id)
+            elif isinstance(node.target, ast.Attribute):
+                self.loggers.add(node.target.attr)
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if node.module == "warnings":
+            for alias in node.names:
+                if alias.name == "warn":
+                    self.warn_names.add(alias.asname or alias.name)
+        self.generic_visit(node)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            if alias.name == "warnings":
+                self.warnings_modules.add(alias.asname or alias.name)
         self.generic_visit(node)
 
     def visit_arg(self, node: ast.arg) -> None:
@@ -840,23 +1133,43 @@ class _Scan(ast.NodeVisitor):
 
     visit_FunctionDef = visit_AsyncFunctionDef = _fn  # noqa: N815
 
-    def _feeders(self, message: ast.AST) -> list[ast.AST]:
-        """Assignments to a prepared message variable, in the enclosing function."""
-        if not isinstance(message, ast.Name) or not self.funcs:
+    def _feeders(self, *exprs: ast.AST, transitive: bool = True) -> list[ast.AST]:
+        """Assignments (transitively) feeding every name in ``exprs``, in the function.
+
+        Following the chain means ``a = str(exc); b = a; raise E(b)`` hashes ``a``'s
+        assignment too, so changing a distant source alters the site's key.
+        """
+        if not self.funcs:
             return []
-        out: list[ast.AST] = []
-        for sub in ast.walk(self.funcs[-1]):
-            if isinstance(sub, ast.Assign) and any(
-                isinstance(t, ast.Name) and t.id == message.id for t in sub.targets
-            ):
-                out.append(sub)
-            elif (
-                isinstance(sub, (ast.AugAssign, ast.AnnAssign))
-                and isinstance(sub.target, ast.Name)
-                and sub.target.id == message.id
-            ):
-                out.append(sub)
-        return out
+        assigns = [
+            sub
+            for sub in ast.walk(self.funcs[-1])
+            if isinstance(sub, (ast.Assign, ast.AugAssign, ast.AnnAssign))
+        ]
+
+        def names_in(node: ast.AST | None) -> set[str]:
+            if node is None:
+                return set()
+            return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+
+        def targets(sub: ast.AST) -> set[str]:
+            raw = sub.targets if isinstance(sub, ast.Assign) else [sub.target]  # type: ignore[attr-defined]
+            return {t.id for t in raw if isinstance(t, ast.Name)}
+
+        wanted: set[str] = set()
+        for expr in exprs:
+            wanted |= names_in(expr)
+        picked: dict[int, ast.AST] = {}
+        changed = True
+        while changed:
+            changed = False
+            for sub in assigns:
+                if id(sub) not in picked and targets(sub) & wanted:
+                    picked[id(sub)] = sub
+                    if transitive:
+                        wanted |= names_in(getattr(sub, "value", None))
+                    changed = True
+        return sorted(picked.values(), key=lambda n: (n.lineno, n.col_offset))
 
     def _add(self, kind: str, node: ast.AST, extra: list[ast.AST], line: int) -> None:
         self.found.append(
@@ -884,15 +1197,23 @@ class _Scan(ast.NodeVisitor):
             if (
                 func.attr == "warn"
                 and isinstance(func.value, ast.Name)
-                and func.value.id == "warnings"
+                and func.value.id in self.aliases.warnings_modules
             ):
                 return "warn", args[:1]
+            if func.attr in self.aliases.bound_attrs:
+                method = self.aliases.bound_attrs[func.attr]
+                return method, args[1:] if method == "log" else args
         if isinstance(func, ast.Name):
             if func.id in self.aliases.bound:
                 method = self.aliases.bound[func.id]
                 return method, args[1:] if method == "log" else args
+            if func.id in self.aliases.warn_names:
+                return "warn", args[:1]
             if func.id == "print":
-                return "print", args
+                return "print", [
+                    *args,
+                    *(kw.value for kw in node.keywords if kw.arg in {"sep", "end"}),
+                ]
         return None
 
     def visit_Call(self, node: ast.Call) -> None:
@@ -920,16 +1241,30 @@ class _Scan(ast.NodeVisitor):
                 )
             )
             if bad or traceback_bearing:
-                feeders = self._feeders(first) if first is not None else []
+                feeders = self._feeders(*msgs, *(kw.value for kw in node.keywords))
                 self._add("log", node, feeders, node.lineno)
         self.generic_visit(node)
 
     def visit_Raise(self, node: ast.Raise) -> None:
         exc = node.exc
         if isinstance(exc, ast.Call):
-            feeders = [f for a in exc.args for f in self._feeders(a)]
-            builds_text = any(_formats_value(a) for a in exc.args) or any(
-                _formats_value(getattr(f, "value", None) or f) for f in feeders
+            raise_args = [*exc.args, *(kw.value for kw in exc.keywords)]
+            feeders = self._feeders(*raise_args)
+            # what *builds* the message is judged on its direct assignments only; the
+            # transitive chain is hashed (so a distant change alters the key)
+            direct = self._feeders(*raise_args, transitive=False)
+            builds_text = (
+                any(_formats_value(a) for a in exc.args)
+                or any(_formats_value(getattr(f, "value", None) or f) for f in direct)
+                # a bare value (name / attribute / subscript) as a builtin exception's
+                # message; SDK exception classes own their wording (see visit_ClassDef)
+                or (
+                    _is_builtin_exception(exc.func)
+                    and any(
+                        isinstance(a, (ast.Name, ast.Attribute, ast.Subscript))
+                        for a in exc.args
+                    )
+                )
             )
             if builds_text:
                 self._add("raise", node, feeders, node.lineno)
@@ -1034,6 +1369,31 @@ def _kinds(source: str) -> list[str]:
         ("def f(p):\n w = logger.warning\n w(f'{p}')\n", ["log"]),
         ("def f(p):\n warnings.warn(f'{p}')\n", ["log"]),
         ("def f(p):\n print(p)\n", ["log"]),
+        # F1l: bypasses found by the F1k review
+        (
+            "def f(p):\n lg: logging.Logger = logging.getLogger('x')\n lg.warning(p)\n",
+            ["log"],
+        ),
+        ("def f(p):\n lg: Logger = make()\n lg.warning(f'{p}')\n", ["log"]),
+        (
+            "class C:\n def f(self, p):\n  self._w = logger.warning\n  self._w(f'{p}')\n",
+            ["log"],
+        ),
+        ("from warnings import warn\ndef f(p):\n warn(f'{p}')\n", ["log"]),
+        ("from warnings import warn as w\ndef f(p):\n w(p)\n", ["log"]),
+        ("import warnings as wr\ndef f(p):\n wr.warn(f'{p}')\n", ["log"]),
+        ("def f(p):\n print('fixed', end=p)\n", ["log"]),
+        ("def f(p):\n print('fixed', sep=f'{p}')\n", ["log"]),
+        ("def f(p):\n raise ValueError(p)\n", ["raise"]),
+        ("def f(p):\n raise ValueError(p.path)\n", ["raise"]),
+        (
+            "def f(p):\n a = f'bad {p}'\n b = a\n raise ValueError(b)\n",
+            ["raise"],
+        ),
+        (
+            "def f(p):\n a = f'bad {p}'\n b = a\n logger.warning(b)\n",
+            ["log"],
+        ),
         ("def f(p):\n diag.log(logger, 30, f'{p}', category=c)\n", ["log"]),
         ("def f(p):\n logger.exception('fixed')\n", ["log"]),
         ("def f(p):\n logger.warning('fixed', exc_info=True)\n", ["log"]),
@@ -1075,3 +1435,35 @@ def test_swapping_a_safe_interpolation_for_an_unsafe_one_changes_the_key() -> No
     assert key_safe[:3] == key_unsafe[:3] and key_safe != key_unsafe
     # an allowlist entry for the safe expression does not admit the unsafe one
     assert {key_safe: (1, "safe")}.get(key_unsafe) is None
+
+
+def test_transitive_source_assignment_changes_the_key() -> None:
+    template = "def f(exc):\n detail = {src}\n logger.warning(f'failed {{detail}}')\n"
+    (safe,) = [
+        d
+        for _, _, _, d, _ in scan_source(
+            "x.py", template.format(src="type(exc).__name__")
+        )
+    ]
+    (unsafe,) = [
+        d for _, _, _, d, _ in scan_source("x.py", template.format(src="str(exc)"))
+    ]
+    assert safe != unsafe
+
+
+def test_two_hop_source_assignment_changes_the_key() -> None:
+    template = "def f(exc):\n a = {src}\n b = a\n raise ValueError(f'failed {{b}}')\n"
+    (safe,) = [
+        d
+        for _, _, _, d, _ in scan_source(
+            "x.py", template.format(src="type(exc).__name__")
+        )
+    ]
+    (unsafe,) = [
+        d for _, _, _, d, _ in scan_source("x.py", template.format(src="str(exc)"))
+    ]
+    assert safe != unsafe
+
+
+def test_local_storage_is_scanned() -> None:
+    assert "local_storage.py" in {p.name for p in FILES}

@@ -793,8 +793,77 @@ def _scn_write_manifest_is_dir(tmp_path, monkeypatch, strict):
     write_repo_best_config(target, config_id=CID, config={"t": 2})
 
 
+def _scn_save_traversal(tmp_path, monkeypatch, strict):
+    monkeypatch.chdir(tmp_path)
+    manager = _manager()
+    manager._optimization_results = _real_results()
+    manager.save_optimization_results(f"../{CANARY}/escape.json")
+
+
+def _scn_save_base_is_file(tmp_path, monkeypatch, strict):
+    blocker = tmp_path / f"file-{CANARY}"
+    blocker.write_text("x")
+    manager = _manager()
+    manager._optimization_results = _real_results()
+    manager.save_optimization_results(str(blocker / "r.json"))
+
+
+class _RaisingDeepcopy:
+    def __deepcopy__(self, memo):
+        raise RuntimeError(f"deepcopy of /work/{CANARY}")
+
+
+class _RaisingStr:
+    def __deepcopy__(self, memo):
+        return self
+
+    def __str__(self) -> str:
+        raise RuntimeError(f"str of /work/{CANARY}")
+
+
+def _scn_save_deepcopy_raises(tmp_path, monkeypatch, strict):
+    manager = _manager()
+    results = _real_results()
+    results.best_config = {"t": _RaisingDeepcopy()}
+    manager._optimization_results = results
+    manager.save_optimization_results(str(tmp_path / "r.json"))
+
+
+def _scn_save_str_raises(tmp_path, monkeypatch, strict):
+    manager = _manager()
+    results = _real_results()
+    results.best_config = {"t": _RaisingStr()}
+    manager._optimization_results = results
+    manager.save_optimization_results(str(tmp_path / "r.json"))
+
+
+def _scn_client_submit_result_load_session_permission(tmp_path, monkeypatch, strict):
+    client = BackendIntegratedClient(
+        api_key=FAKE_KEY,
+        base_url="https://api.test",
+        enable_fallback=True,
+        local_storage_path=str(tmp_path / "store"),
+    )
+    assert client.local_storage is not None
+    sessions = tmp_path / "store" / "sessions"
+    sessions.mkdir(parents=True, exist_ok=True)
+    (sessions / "opaque-session.json").write_text("{}")
+    err = PermissionError(
+        13, "Permission denied", f"/work/{CANARY}/sessions/opaque-session.json"
+    )
+    with patch("traigent.storage.local_storage.safe_open", side_effect=err):
+        client.submit_result("opaque-session", {"t": 2}, 1.0)
+
+
 def _scenarios() -> dict[str, Scenario]:
     s: dict[str, Scenario] = {}
+    s["results/save_traversal"] = _scn_save_traversal
+    s["results/save_base_is_file"] = _scn_save_base_is_file
+    s["results/save_deepcopy_raises"] = _scn_save_deepcopy_raises
+    s["results/save_str_raises"] = _scn_save_str_raises
+    s["client/submit_result_load_session_permission"] = (
+        _scn_client_submit_result_load_session_permission
+    )
     for entry in ("load_from", "env", "dev-log"):
         for name, payload in SPEC_VARIANTS.items():
             s[f"{entry}/{name}"] = _scn_manager_file(entry, payload)
@@ -904,7 +973,7 @@ def test_canary_never_appears_in_any_rendering(
 
 def test_scenario_matrix_is_not_empty() -> None:
     # inputs x entry points x renderings: guard against a silently shrunk matrix.
-    assert len(SCENARIOS) >= 113
+    assert len(SCENARIOS) >= 118
 
 
 def test_helper_keeps_rejected_values_on_details_only() -> None:
