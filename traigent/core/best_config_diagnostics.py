@@ -17,6 +17,30 @@ Rules this module enforces by construction:
   ``raise ... from None`` so a traceback cannot print the inner exception either.
 
 Callers pass only string *literals* as ``message``; nothing interpolated.
+
+Threat model
+------------
+The guarantee: accidental customer data values never enter SDK-authored diagnostic
+messages on the hardened paths. Those paths cover ordinary customer objects, exceptions
+raised by dependencies, and exception chaining.
+
+What is excluded:
+
+* deliberate use of the internal trust APIs (``_mark_safe``, ``_safe_error`` and the
+  registry behind them). Their leading underscore is a convention, not a security
+  boundary; a test confines their use to ``traigent/core`` but code that wants to forge
+  trust can still do so;
+* monkeypatching;
+* code identifiers such as class names, which are not customer content.
+
+This is not a sandbox and not a universal no-egress guarantee. In particular, exception
+text can still reach separately configured reporting paths: the observability client's
+record mode captures and posts exception text, and backend status reporting sends an
+``error_message``. Those paths are outside this module and need their own closure.
+
+Stopping rule: a new finding against this module counts as a blocker only if it shows an
+accidental data-value path that uses neither the internal trust APIs nor code
+identifiers.
 """
 
 from __future__ import annotations
@@ -69,25 +93,25 @@ def _trust(error: ConfigurationError) -> ConfigurationError:
 class SafeConfigurationError(ConfigurationError):
     """A ``ConfigurationError`` whose message is a fixed literal written in this SDK.
 
-    Build it only through :func:`safe_error`: an instance constructed any other way
+    Build it only through :func:`_safe_error`: an instance constructed any other way
     (customer code, a subclass, a copy) is not trusted and :func:`is_safe` is False.
     """
 
 
-def safe_error(message: str, **kwargs: Any) -> SafeConfigurationError:
+def _safe_error(message: str, **kwargs: Any) -> SafeConfigurationError:
     """Build a trusted :class:`SafeConfigurationError`; ``message`` is a string literal."""
 
     return _trust(SafeConfigurationError(message, **kwargs))  # type: ignore[return-value]
 
 
-def mark_safe(error: ConfigurationError) -> ConfigurationError:
+def _mark_safe(error: ConfigurationError) -> ConfigurationError:
     """Trust ``error`` as carrying a fixed, literal message (see :func:`fixed_reason`)."""
 
     return _trust(error)
 
 
 def is_safe(exc: BaseException) -> bool:
-    """True only for an instance registered by :func:`safe_error` / :func:`refusal`."""
+    """True only for an instance registered by :func:`_safe_error` / :func:`refusal`."""
 
     ref = _TRUSTED.get(id(exc))
     return ref is not None and ref() is exc and isinstance(exc, ConfigurationError)
@@ -150,7 +174,7 @@ def refusal(
     error = error_cls(message, details=payload)
     error.__cause__ = None
     error.__suppress_context__ = True
-    return mark_safe(error)
+    return _mark_safe(error)
 
 
 @contextmanager
@@ -180,8 +204,6 @@ __all__ = [
     "is_safe",
     "SafeConfigurationError",
     "log",
-    "mark_safe",
     "refusal",
-    "safe_error",
     "transport_failed_message",
 ]

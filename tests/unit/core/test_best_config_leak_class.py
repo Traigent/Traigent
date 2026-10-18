@@ -1366,7 +1366,7 @@ def test_safe_trust_is_unforgeable() -> None:
     assert not diag.is_safe(plain)
     assert not diag.is_safe(forged_attr)
 
-    trusted = diag.safe_error("fixed literal")
+    trusted = diag._safe_error("fixed literal")
     assert diag.is_safe(trusted)
     assert diag.fixed_reason(trusted) == "fixed literal"
     assert not diag.is_safe(copy.copy(trusted))
@@ -1379,7 +1379,7 @@ def test_helper_made_refusals_still_pass_through_unchanged(tmp_path) -> None:
     refused = diag.refusal("Fixed message", category=diag.Category.RESULT_INVALID)
     assert diag.is_safe(refused)
     assert diag.fixed_reason(refused) == "Fixed message"
-    marked = diag.mark_safe(ConfigurationError("literal"))
+    marked = diag._mark_safe(ConfigurationError("literal"))
     assert diag.is_safe(marked)
     # a refusal wrapping a trusted refusal keeps the original type name
     wrapped = diag.refusal("Outer", category=diag.Category.LOAD_FAILED, cause=refused)

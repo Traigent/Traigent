@@ -353,7 +353,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "best_config_runtime.py",
         "_normalize_json_value",
         "raise",
-        "2285344d7fb19497",
+        "60a9dc09402c9029",
     ): (
         1,
         _COUNT,

@@ -315,11 +315,11 @@ class BestConfigSnapshot:
 
         normalized_config = _normalize_json_value(copy.deepcopy(config))
         if not isinstance(normalized_config, dict):
-            raise diag.safe_error("Best config snapshot requires a dict config")
+            raise diag._safe_error("Best config snapshot requires a dict config")
         frozen_config = _deep_freeze(normalized_config)
         normalized_provenance = _normalize_json_value(copy.deepcopy(provenance or {}))
         if not isinstance(normalized_provenance, dict):
-            raise diag.safe_error("Best config provenance must be a dict")
+            raise diag._safe_error("Best config provenance must be a dict")
 
         return cls(
             config_id=config_id,
@@ -475,30 +475,30 @@ def snapshot_from_spec(
     """
 
     if not isinstance(spec, dict):
-        raise diag.safe_error("Best config spec must be a JSON object")
+        raise diag._safe_error("Best config spec must be a JSON object")
 
     unknown_top_level = set(spec) - _SPEC_ALLOWED_KEYS
     if unknown_top_level:
-        raise diag.safe_error(
+        raise diag._safe_error(
             "Unknown top-level best config fields",
             details={"fields": sorted(unknown_top_level)},
         )
 
     missing = _SPEC_REQUIRED_KEYS - set(spec)
     if missing:
-        raise diag.safe_error(
+        raise diag._safe_error(
             "Best config spec missing fields", details={"fields": sorted(missing)}
         )
 
     if spec["schema_version"] != BEST_CONFIG_SCHEMA_VERSION:
-        raise diag.safe_error(
+        raise diag._safe_error(
             "Unsupported best config schema_version",
             details={"schema_version": spec["schema_version"]},
         )
 
     config_id = _validate_config_id(spec["config_id"])
     if expected_config_id and config_id != expected_config_id:
-        raise diag.safe_error(
+        raise diag._safe_error(
             "Best config id does not match the requested config_id",
             details={"expected": expected_config_id, "actual": config_id},
         )
@@ -509,13 +509,13 @@ def snapshot_from_spec(
         # function: a missing / null ``function_ref`` cannot establish it. Only an
         # explicitly unbound read (no expected function) accepts a legacy unbound config.
         if function_ref is None:
-            raise diag.safe_error(
+            raise diag._safe_error(
                 "Best config function_ref mismatch: the config is not bound to a "
                 "function",
                 details={"expected": expected_function_ref},
             )
         if function_ref != expected_function_ref:
-            raise diag.safe_error(
+            raise diag._safe_error(
                 "Best config function_ref mismatch: the config is bound to "
                 "another function",
                 details={"expected": expected_function_ref, "actual": function_ref},
@@ -531,14 +531,14 @@ def snapshot_from_spec(
             else None
         )
         if effective != expected_environment.strip().lower():
-            raise diag.safe_error(
+            raise diag._safe_error(
                 "Best config environment mismatch: the spec is not for the "
                 "requested environment"
             )
 
     raw_config = spec["config"]
     if not isinstance(raw_config, dict):
-        raise diag.safe_error("Best config field 'config' must be an object")
+        raise diag._safe_error("Best config field 'config' must be an object")
 
     raw_config_hash = sha256_digest(canonical_json(raw_config))
     raw_spec_hash = compute_spec_hash(spec)
@@ -559,7 +559,7 @@ def snapshot_from_spec(
 
     provenance = spec.get("provenance", {})
     if not isinstance(provenance, dict):
-        raise diag.safe_error("Best config provenance must be an object")
+        raise diag._safe_error("Best config provenance must be an object")
 
     snapshot = BestConfigSnapshot.from_config(
         config,
@@ -584,7 +584,7 @@ def compute_spec_hash(spec: dict[str, Any], *, environment: str | None = None) -
 
     schema_version = spec.get("schema_version")
     if schema_version != BEST_CONFIG_SCHEMA_VERSION:
-        raise diag.safe_error(
+        raise diag._safe_error(
             "No spec_hash rule for this best config schema_version",
             details={"schema_version": schema_version},
         )
@@ -597,7 +597,7 @@ def _check_spec_hash_finite(value: Any) -> None:
     """Refuse NaN/Infinity anywhere in the ORIGINAL spec (before NFC and exclusions)."""
     if isinstance(value, float):
         if not math.isfinite(value):
-            raise diag.safe_error("Best config JSON values cannot be NaN/Infinity")
+            raise diag._safe_error("Best config JSON values cannot be NaN/Infinity")
     elif isinstance(value, dict):
         for item in value.values():
             _check_spec_hash_finite(item)
@@ -617,10 +617,10 @@ def check_publishable_spec(spec: Any) -> None:
         seen: set[str] = set()
         for key, item in spec.items():
             if not isinstance(key, str):
-                raise diag.safe_error("Best config JSON object keys must be strings")
+                raise diag._safe_error("Best config JSON object keys must be strings")
             normalized = unicodedata.normalize("NFC", key)
             if normalized in seen:
-                raise diag.safe_error(
+                raise diag._safe_error(
                     "Best config spec has object keys that are equal after Unicode "
                     "normalization (NFC); rename one before publishing"
                 )
@@ -633,7 +633,7 @@ def check_publishable_spec(spec: Any) -> None:
 
 def _check_spec_hash_depth(value: Any, depth: int = 0) -> None:
     if depth > _SPEC_HASH_MAX_JSON_DEPTH:
-        raise diag.safe_error("Best config spec exceeds the maximum JSON depth")
+        raise diag._safe_error("Best config spec exceeds the maximum JSON depth")
     if isinstance(value, dict):
         for item in value.values():
             _check_spec_hash_depth(item, depth + 1)
@@ -647,10 +647,10 @@ def _v1_hash_payload(spec: dict[str, Any], environment: str | None) -> dict[str,
     _check_spec_hash_depth(spec)
     normalized = _normalize_json_value(copy.deepcopy(spec))
     if not isinstance(normalized, dict):
-        raise diag.safe_error("Best config spec must be a JSON object")
+        raise diag._safe_error("Best config spec must be a JSON object")
     config_id = spec.get("config_id")
     if not isinstance(config_id, str):
-        raise diag.safe_error("Best config config_id must be a string")
+        raise diag._safe_error("Best config config_id must be a string")
     normalized["config_id"] = config_id.strip()  # trimmed, not NFC (the Backend rule)
     function_ref = spec.get("function_ref")
     if isinstance(function_ref, str):
@@ -659,7 +659,7 @@ def _v1_hash_payload(spec: dict[str, Any], environment: str | None) -> dict[str,
     if effective_environment is None:
         effective_environment = environment or _SPEC_HASH_DEFAULT_ENVIRONMENT
     if not isinstance(effective_environment, str):
-        raise diag.safe_error("Best config environment must be a string")
+        raise diag._safe_error("Best config environment must be a string")
     normalized["environment"] = effective_environment.strip().lower()
 
     payload = {key: normalized[key] for key in _SPEC_HASH_KEYS if key in normalized}
@@ -711,15 +711,15 @@ def load_manifest(directory: str | Path) -> dict[str, Any] | None:
         with manifest_path.open(encoding="utf-8") as handle:
             manifest = json.load(handle)
     if not isinstance(manifest, dict):
-        raise diag.safe_error("Best config manifest must be an object")
+        raise diag._safe_error("Best config manifest must be an object")
     if manifest.get("schema_version") != BEST_CONFIG_MANIFEST_SCHEMA_VERSION:
-        raise diag.safe_error(
+        raise diag._safe_error(
             "Unsupported best config manifest schema_version",
             details={"schema_version": manifest.get("schema_version")},
         )
     configs = manifest.get("configs")
     if not isinstance(configs, dict):
-        raise diag.safe_error("Best config manifest requires a configs object")
+        raise diag._safe_error("Best config manifest requires a configs object")
     return manifest
 
 
@@ -769,7 +769,7 @@ def write_repo_best_config(
     }
     configs = manifest["configs"]
     if not isinstance(configs, dict):
-        raise diag.safe_error("Best config manifest requires a configs object")
+        raise diag._safe_error("Best config manifest requires a configs object")
     configs[safe_config_id] = {
         "path": spec_path.name,
         "spec_hash": spec_hash,
@@ -790,7 +790,7 @@ def write_cloud_cache_best_config(
     """Write a fetched cloud best-config spec into the local cloud cache."""
 
     if not etag and version is None:
-        raise diag.safe_error("Cloud cache metadata requires etag or version")
+        raise diag._safe_error("Cloud cache metadata requires etag or version")
 
     snapshot = snapshot_from_spec(spec, source=BestConfigSource.CLOUD_CACHE.value)
     safe_config_id = _validate_config_id(snapshot.config_id)
@@ -800,7 +800,7 @@ def write_cloud_cache_best_config(
 
     normalized_spec = _normalize_json_value(copy.deepcopy(spec))
     if not isinstance(normalized_spec, dict):
-        raise diag.safe_error("Best config spec must be a JSON object")
+        raise diag._safe_error("Best config spec must be a JSON object")
     config_hash = sha256_digest(canonical_json(normalized_spec["config"]))
     spec_hash = compute_spec_hash(normalized_spec)
     spec_path = output_dir / f"{safe_config_id}.json"
@@ -816,7 +816,7 @@ def write_cloud_cache_best_config(
     }
     configs = manifest["configs"]
     if not isinstance(configs, dict):
-        raise diag.safe_error("Best config manifest requires a configs object")
+        raise diag._safe_error("Best config manifest requires a configs object")
 
     entry: dict[str, Any] = {
         "path": spec_path.name,
@@ -866,7 +866,7 @@ def resolve_repo_best_config(
             return None
         path = entry.get("path")
         if not isinstance(path, str) or not path:
-            raise diag.safe_error(
+            raise diag._safe_error(
                 "Manifest entry lacks path", details={"config_id": safe_config_id}
             )
         return load_best_config_spec(
@@ -933,7 +933,7 @@ def resolve_cloud_cache_best_config(
         if entry is None:
             return None
         if not (entry.get("etag") or entry.get("version")):
-            raise diag.safe_error("Cloud cache metadata requires etag or version")
+            raise diag._safe_error("Cloud cache metadata requires etag or version")
 
         loaded_at = _parse_datetime(entry.get("loaded_at"))
         max_age = (
@@ -986,20 +986,20 @@ def resolve_cloud_cache_best_config(
 
 def _validate_config_id(config_id: Any) -> str:
     if not isinstance(config_id, str) or not config_id:
-        raise diag.safe_error("Best config config_id must be a non-empty string")
+        raise diag._safe_error("Best config config_id must be a non-empty string")
     if "\x00" in config_id or "/" in config_id or "\\" in config_id:
-        raise diag.safe_error("Best config config_id must not contain path separators")
+        raise diag._safe_error("Best config config_id must not contain path separators")
     if config_id in {".", ".."}:
-        raise diag.safe_error("Best config config_id must not be a relative path")
+        raise diag._safe_error("Best config config_id must not be a relative path")
     return config_id
 
 
 def _resolve_entry_path(directory: Path, path: Any) -> Path:
     if not isinstance(path, str) or not path:
-        raise diag.safe_error("Best config manifest entry lacks path")
+        raise diag._safe_error("Best config manifest entry lacks path")
     relative_path = Path(path)
     if relative_path.is_absolute() or ".." in relative_path.parts or "\\" in path:
-        raise diag.safe_error(
+        raise diag._safe_error(
             "Best config manifest path must stay inside its directory"
         )
     return directory / relative_path
@@ -1019,7 +1019,7 @@ def _load_cache_entry(directory: Path, config_id: str) -> dict[str, Any] | None:
     with metadata_path.open(encoding="utf-8") as handle:
         metadata = json.load(handle)
     if not isinstance(metadata, dict):
-        raise diag.safe_error("Cloud cache metadata must be an object")
+        raise diag._safe_error("Cloud cache metadata must be an object")
     metadata.setdefault("path", spec_path.name)
     return metadata
 
@@ -1034,15 +1034,15 @@ def _verify_manifest_hashes(
     expected_config_hash = manifest_entry.get("config_hash")
     expected_spec_hash = manifest_entry.get("spec_hash")
     if expected_config_hash and expected_config_hash != config_hash:
-        raise diag.safe_error("Best config manifest config_hash mismatch")
+        raise diag._safe_error("Best config manifest config_hash mismatch")
     if expected_spec_hash and expected_spec_hash != spec_hash:
         if spec is not None and expected_spec_hash == _pre_alignment_spec_hash(spec):
-            raise diag.safe_error(
+            raise diag._safe_error(
                 "Best config manifest spec_hash was written with an older spec_hash "
                 "rule (it covered provenance) and is no longer valid; regenerate the "
                 "manifest entry or refetch the cloud best config"
             )
-        raise diag.safe_error("Best config manifest spec_hash mismatch")
+        raise diag._safe_error("Best config manifest spec_hash mismatch")
 
 
 def _validate_and_filter_config_keys(
@@ -1053,7 +1053,7 @@ def _validate_and_filter_config_keys(
 ) -> dict[str, Any]:
     normalized = _normalize_json_value(copy.deepcopy(config))
     if not isinstance(normalized, dict):
-        raise diag.safe_error("Best config must be an object")
+        raise diag._safe_error("Best config must be an object")
 
     if not configuration_space:
         return normalized
@@ -1071,7 +1071,7 @@ def _validate_and_filter_config_keys(
         )
 
     if not forward_compat:
-        raise diag.safe_error(
+        raise diag._safe_error(
             "Unknown best config keys", details={"keys": sorted(unknown)}
         )
 
@@ -1097,7 +1097,7 @@ def _normalize_json_value(value: Any, seen: set[int] | None = None) -> Any:
         return value
     if isinstance(value, float):
         if not math.isfinite(value):
-            raise diag.safe_error("Best config JSON values cannot be NaN/Infinity")
+            raise diag._safe_error("Best config JSON values cannot be NaN/Infinity")
         return value
     if isinstance(value, str):
         return unicodedata.normalize("NFC", value)
@@ -1105,12 +1105,12 @@ def _normalize_json_value(value: Any, seen: set[int] | None = None) -> Any:
     container_id = id(value)
     if isinstance(value, dict):
         if container_id in seen:
-            raise diag.safe_error("Best config contains a circular reference")
+            raise diag._safe_error("Best config contains a circular reference")
         seen.add(container_id)
         normalized: dict[str, Any] = {}
         for key, item in value.items():
             if not isinstance(key, str):
-                raise diag.safe_error("Best config JSON object keys must be strings")
+                raise diag._safe_error("Best config JSON object keys must be strings")
             normalized[unicodedata.normalize("NFC", key)] = _normalize_json_value(
                 item, seen
             )
@@ -1119,7 +1119,7 @@ def _normalize_json_value(value: Any, seen: set[int] | None = None) -> Any:
 
     if isinstance(value, list):
         if container_id in seen:
-            raise diag.safe_error("Best config contains a circular reference")
+            raise diag._safe_error("Best config contains a circular reference")
         seen.add(container_id)
         normalized_list = [_normalize_json_value(item, seen) for item in value]
         seen.remove(container_id)
@@ -1142,7 +1142,7 @@ def _normalize_json_value(value: Any, seen: set[int] | None = None) -> Any:
         if type(coerced) in (int, float, str, bool):
             return _normalize_json_value(coerced, seen)
 
-    raise diag.safe_error(
+    raise diag._safe_error(
         f"Best config contains non-JSON-native value {type(value).__name__}"
     )
 
@@ -1159,7 +1159,7 @@ def _deep_freeze(value: Any) -> Any:
 
 def _parse_datetime(value: Any) -> datetime:
     if not isinstance(value, str) or not value:
-        raise diag.safe_error("Cloud cache metadata requires loaded_at timestamp")
+        raise diag._safe_error("Cloud cache metadata requires loaded_at timestamp")
     normalized = value.replace("Z", "+00:00")
     parsed = datetime.fromisoformat(normalized)
     if parsed.tzinfo is None:

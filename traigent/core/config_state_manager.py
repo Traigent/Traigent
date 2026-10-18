@@ -468,7 +468,7 @@ class ConfigStateManager:
         cause: BaseException,
     ) -> CloudPublishUnavailable:
         """A fixed-message ``CloudPublishUnavailable``; the cause stays out of text/chain."""
-        error = diag.mark_safe(CloudPublishUnavailable(reason, message))
+        error = diag._mark_safe(CloudPublishUnavailable(reason, message))
         inner_type = (
             cause.details.get("error_type")
             if isinstance(cause, ConfigurationError)
@@ -501,7 +501,7 @@ class ConfigStateManager:
         version = envelope["schema_version"]
         if version == BEST_CONFIG_SCHEMA_VERSION:
             return spec_exc
-        return diag.mark_safe(
+        return diag._mark_safe(
             ConfigurationError(
                 "Unsupported best config schema_version",
                 details={"schema_version": version},
@@ -513,7 +513,7 @@ class ConfigStateManager:
         cls, exc: BaseException, path: str, label: str
     ) -> ConfigurationError:
         inner = exc.details if isinstance(exc, TraigentError) else {}
-        return diag.mark_safe(
+        return diag._mark_safe(
             ConfigurationError(
                 f"Failed to load best config ({label}): {cls._exception_text(exc)}",
                 details={**inner, "path": path},
