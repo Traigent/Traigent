@@ -485,6 +485,47 @@ def build_metric_functions(
     return effective_metric_functions
 
 
+def validate_metric_function_keys(
+    metric_functions: dict[str, Callable[..., Any]] | None,
+    objectives: Sequence[str],
+) -> None:
+    """Fail fast when a ``metric_functions`` key looks like a misspelt objective.
+
+    A key that names no objective is legitimate for an auxiliary/informational
+    metric, so unmatched keys alone are allowed. But a key that is a near miss
+    of an objective that has no function of its own (``"acuracy"`` for
+    ``"accuracy"``) is almost certainly a typo: the user's scorer would be
+    silently dropped and the built-in scorer would rank the trials instead
+    (Traigent#2659).
+
+    Raises:
+        ValidationError: If an unmatched key is a close match to an objective
+            that has no user metric function.
+    """
+    if not metric_functions:
+        return
+    import difflib
+
+    from traigent.utils.exceptions import ValidationError
+
+    objective_names = [str(o) for o in objectives]
+    uncovered = [o for o in objective_names if o not in metric_functions]
+    for key in metric_functions:
+        if key in objective_names:
+            continue
+        close = difflib.get_close_matches(str(key), uncovered, n=1, cutoff=0.75)
+        if not close:
+            # Also catch wrong-case near-misses ("Accuracy").
+            close = [o for o in uncovered if o.lower() == str(key).lower()]
+        if close:
+            raise ValidationError(
+                f"metric_functions key '{key}' matches no objective, so your "
+                f"scorer would be ignored and the built-in scorer used for "
+                f"'{close[0]}'. Did you mean '{close[0]}'? "
+                f"Objectives: {objective_names}."
+            )
+
+
 def validate_metric_function_bindability(
     effective_metric_functions: dict[str, Callable[..., Any]],
     objectives: Sequence[str],
@@ -715,6 +756,7 @@ def _create_local_evaluator(
     scoring_function: Callable[..., Any] | None,
 ) -> tuple[BaseEvaluator, None]:
     """Create the default local evaluator."""
+    validate_metric_function_keys(metric_functions, objectives)
     effective_metric_fns = build_metric_functions(
         metric_functions, scoring_function, objectives
     )
