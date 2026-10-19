@@ -131,7 +131,7 @@ def _mcq_accuracy(output: int | None, expected: int | None, llm_metrics=None) ->
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4.1-mini"],
+        "model": ["gpt-4.1-nano", "gpt-4.1-mini"],
         "temperature": [0.0, 0.3, 0.7],
         "max_tokens": [80, 120],
     },
@@ -142,7 +142,7 @@ def _mcq_accuracy(output: int | None, expected: int | None, llm_metrics=None) ->
     max_trials=10,
 )
 def select_answer(question: str, choices: list[str]) -> int:
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.0)
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
     labeled = "\n".join(f"{chr(65 + i)}. {opt}" for i, opt in enumerate(choices))
     prompt = f"Question: {question}\nOptions:\n{labeled}\nRespond with only the letter (A-D)."
     resp = llm.invoke([HumanMessage(content=prompt)])

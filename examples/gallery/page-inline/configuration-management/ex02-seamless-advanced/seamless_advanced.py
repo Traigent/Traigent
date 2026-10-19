@@ -105,9 +105,9 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
 @traigent.optimize(
     configuration_space={
         # Separate configs for different LLM roles
-        "analyzer_model": ["gpt-3.5-turbo", "gpt-4.1-mini"],
+        "analyzer_model": ["gpt-4.1-nano", "gpt-4.1-mini"],
         "analyzer_temp": [0.0, 0.1, 0.2],
-        "generator_model": ["gpt-3.5-turbo", "gpt-4.1"],
+        "generator_model": ["gpt-4.1-mini", "gpt-4.1"],
         "generator_temp": [0.5, 0.7, 0.9],
         "max_context": [2000, 4000, 8000],
     },
@@ -123,7 +123,7 @@ def intelligent_content_system(topic: str) -> str:
     # Step 1: Analyze topic requirements. The topic is untrusted user input.
     safe_topic = wrap_untrusted("topic", topic)
     analyzer = ChatOpenAI(
-        model="gpt-3.5-turbo",  # Uses analyzer_model from optimization
+        model="gpt-4.1-mini",  # Uses analyzer_model from optimization
         temperature=0.1,  # Uses analyzer_temp from optimization
         max_tokens=500,
     )

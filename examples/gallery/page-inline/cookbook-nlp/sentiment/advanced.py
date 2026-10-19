@@ -59,7 +59,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "sentiment_eval.jsonl")
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4.1-mini"],
+        "model": ["gpt-4.1-nano", "gpt-4.1-mini"],
         "temperature": [0.0, 0.1, 0.3],
         "use_examples": [True, False],
         "use_context": [True, False],
@@ -116,7 +116,7 @@ Text: {text}
 """.strip()
 
     llm = ChatOpenAI(
-        model=cfg.get("model", "gpt-3.5-turbo"), temperature=cfg.get("temperature", 0.0)
+        model=cfg.get("model", "gpt-4.1-mini"), temperature=cfg.get("temperature", 0.0)
     )
     raw = llm.invoke([HumanMessage(content=prompt)]).content
 

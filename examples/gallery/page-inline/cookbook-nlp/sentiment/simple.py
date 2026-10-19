@@ -61,7 +61,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "sentiment_eval.jsonl")
     max_trials=10,
 )
 def sentiment_analysis(text: str) -> str:
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.7)
     prompt = f"Classify sentiment (positive/negative/neutral): {text}\nReturn one label only."
     return llm.invoke([HumanMessage(content=prompt)]).content.strip().lower()
 

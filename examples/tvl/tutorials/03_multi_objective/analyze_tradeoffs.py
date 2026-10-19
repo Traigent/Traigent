@@ -29,17 +29,17 @@ def simulate_evaluation(config: dict) -> dict:
     model_quality = {
         "gpt-4.1": 0.92,
         "gpt-4.1-mini": 0.85,
-        "gpt-3.5-turbo": 0.75,
+        "gpt-4.1-nano": 0.75,
     }
     model_cost = {
         "gpt-4.1": 0.005,
         "gpt-4.1-mini": 0.00015,
-        "gpt-3.5-turbo": 0.0005,
+        "gpt-4.1-nano": 0.0005,
     }
     model_latency = {
         "gpt-4.1": 2000,
         "gpt-4.1-mini": 500,
-        "gpt-3.5-turbo": 300,
+        "gpt-4.1-nano": 300,
     }
 
     model = config["model"]
@@ -182,21 +182,21 @@ def main():
             "use_cot": True,
         },
         {
-            "model": "gpt-3.5-turbo",
+            "model": "gpt-4.1-nano",
             "temperature": 0.5,
             "max_tokens": 512,
             "retrieval_k": 5,
             "use_cot": False,
         },
         {
-            "model": "gpt-3.5-turbo",
+            "model": "gpt-4.1-nano",
             "temperature": 0.7,
             "max_tokens": 256,
             "retrieval_k": 3,
             "use_cot": False,
         },
         {
-            "model": "gpt-3.5-turbo",
+            "model": "gpt-4.1-nano",
             "temperature": 0.3,
             "max_tokens": 768,
             "retrieval_k": 7,

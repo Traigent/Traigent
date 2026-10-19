@@ -84,7 +84,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "support_eval.jsonl")
     max_trials=10,
 )
 def support_intent(message: str) -> str:
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.7)
     # The customer message is untrusted; isolate it so adversarial content
     # cannot rewrite the classifier's instructions.
     prompt = (

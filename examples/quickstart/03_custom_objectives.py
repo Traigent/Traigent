@@ -64,12 +64,12 @@ def _config_value(config, key: str, default):
 
 
 def _mock_answer_for_config(question: str, config) -> str:
-    model = str(_config_value(config, "model", "gpt-3.5-turbo"))
+    model = str(_config_value(config, "model", "gpt-4.1-mini"))
     temperature = float(_config_value(config, "temperature", 0.5) or 0.5)
     top_p = float(_config_value(config, "top_p", 0.7) or 0.7)
 
     answer_limit = {
-        "gpt-3.5-turbo": 3,
+        "gpt-4.1-nano": 3,
         "gpt-4.1-mini": 5,
     }.get(model, 3)
 
@@ -104,7 +104,7 @@ custom_objectives = ObjectiveSchema.from_objectives(
         # Use tuple for continuous ranges, list for categorical
         "temperature": (0.0, 1.0),  # Continuous range
         "top_p": (0.1, 1.0),  # Continuous range
-        "model": ["gpt-3.5-turbo", "gpt-4.1-mini"],  # Categorical
+        "model": ["gpt-4.1-nano", "gpt-4.1-mini"],  # Categorical
     },
     evaluation=EvaluationOptions(eval_dataset=str(DATASET_PATH)),
     execution=ExecutionOptions(offline=True),
@@ -137,7 +137,7 @@ async def main():
     print("-" * 40)
     print("  temperature: continuous (0.0, 1.0)")
     print("  top_p:       continuous (0.1, 1.0)")
-    print("  model:       categorical [gpt-3.5-turbo, gpt-4.1-mini]")
+    print("  model:       categorical [gpt-4.1-nano, gpt-4.1-mini]")
     print()
 
     print(f"Dataset: {DATASET_PATH}")

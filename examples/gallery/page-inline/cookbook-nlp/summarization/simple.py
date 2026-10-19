@@ -66,7 +66,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "summarization_eval.jsonl")
     max_trials=10,
 )
 def summarize(document: str) -> str:
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.7)
     prompt = f"Summarize in 1-2 sentences:\n\n{document}"
     return llm.invoke([HumanMessage(content=prompt)]).content.strip()
 

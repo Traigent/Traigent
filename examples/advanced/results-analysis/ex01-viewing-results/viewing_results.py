@@ -123,7 +123,7 @@ def _fallback_usage(text: str, prompt: str) -> str | dict:
         return text
     from traigent.utils.cost_calculator import cost_from_tokens
 
-    model = str((traigent.get_config() or {}).get("model", "gpt-3.5-turbo"))
+    model = str((traigent.get_config() or {}).get("model", "gpt-4.1-mini"))
     input_tokens = max(1, len(prompt) // 4)
     output_tokens = max(1, len(text) // 4)
     input_cost, output_cost = cost_from_tokens(input_tokens, output_tokens, model)
@@ -171,7 +171,7 @@ def _sentiment_accuracy(
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4.1-mini"],
+        "model": ["gpt-4.1-nano", "gpt-4.1-mini"],
         "temperature": [0.0, 0.3, 0.7],
     },
     eval_dataset=DATASET_FILE,
@@ -181,7 +181,7 @@ def _sentiment_accuracy(
     max_trials=10,
 )
 def sentiment_classifier(text: str) -> str | dict:
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.0)
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
     prompt = f"Classify sentiment as positive, negative, or neutral: {text}"
     resp = llm.invoke([HumanMessage(content=prompt)])
     return _fallback_usage(getattr(resp, "content", str(resp)), prompt)

@@ -57,7 +57,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "headlines_eval.jsonl")
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4.1-mini"],
+        "model": ["gpt-4.1-nano", "gpt-4.1-mini"],
         "temperature": [0.2, 0.6, 0.9],
         "style": ["neutral", "punchy", "formal"],
         "max_words": [8, 12],
@@ -79,7 +79,7 @@ def generate_headline(topic: str) -> str:
     }[cfg.get("style", "neutral")]
 
     llm = ChatOpenAI(
-        model=cfg.get("model", "gpt-3.5-turbo"), temperature=cfg.get("temperature", 0.6)
+        model=cfg.get("model", "gpt-4.1-mini"), temperature=cfg.get("temperature", 0.6)
     )
     prompt = (
         f"Write a {style_hint} headline about: {topic}\n"

@@ -24,7 +24,7 @@ def simulate_chatbot_response(model: str, temperature: float, max_tokens: int) -
     In a real application, this would call an LLM API.
     """
     # Simulate latency based on model
-    base_latency = 100 if model == "gpt-3.5-turbo" else 150
+    base_latency = 100 if model == "gpt-4.1-nano" else 150
     latency = base_latency + random.gauss(0, 10) + (max_tokens * 0.5)
 
     # Simulate quality (higher temperature = more creative but less consistent)

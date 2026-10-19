@@ -77,7 +77,7 @@ UntrustedPathError = _SAFE_HELPERS.UntrustedPathError
 
 
 _DEFAULT_CONFIG: dict[str, Any] = {
-    "model": "gpt-3.5-turbo",
+    "model": "gpt-4.1-mini",
     "temperature": 0.7,
     "max_tokens": 300,
     "response_style": "professional",
@@ -142,7 +142,7 @@ class OptimizedChatBot:
 
         @traigent.optimize(
             configuration_space={
-                "model": [config.get("model", "gpt-3.5-turbo")],
+                "model": [config.get("model", "gpt-4.1-mini")],
                 "temperature": [config.get("temperature", 0.7)],
                 "max_tokens": [config.get("max_tokens", 300)],
             },
@@ -154,7 +154,7 @@ class OptimizedChatBot:
         )
         def _generate_response(user_input: str, context: str = "") -> str:
             llm = ChatOpenAI(
-                model=str(config.get("model", "gpt-3.5-turbo")),
+                model=str(config.get("model", "gpt-4.1-mini")),
                 temperature=float(config.get("temperature", 0.7)),
                 max_tokens=int(config.get("max_tokens", 300)),
             )

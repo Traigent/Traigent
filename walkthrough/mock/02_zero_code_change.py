@@ -34,7 +34,7 @@ traigent.initialize(offline=True, minimal_logging=True)
 DATASETS = Path(__file__).parent.parent / "datasets"
 OBJECTIVES = ["accuracy", "cost"]
 CONFIG_SPACE = {
-    "model": ["gpt-3.5-turbo", "gpt-4.1-mini", "gpt-4.1"],
+    "model": ["gpt-4.1-nano", "gpt-4.1-mini", "gpt-4.1"],
     "temperature": [0.1, 0.5, 0.9],
 }
 
@@ -44,7 +44,7 @@ def results_match_score(
 ) -> float:
     """Simple scoring: 1.0 if expected answer appears in output, else 0.0.
 
-    In mock mode, returns model-dependent accuracy (gpt-4.1 > gpt-4.1-mini > gpt-3.5-turbo).
+    In mock mode, returns model-dependent accuracy (gpt-4.1 > gpt-4.1-mini > gpt-4.1-nano).
     In real mode, checks if the expected answer appears in the LLM output.
     """
     if os.getenv("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
@@ -70,7 +70,7 @@ def answer_question(question: str) -> str:
     """Your existing code - unchanged! Traigent intercepts the LLM call.
 
     In real mode, this would have:
-        llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)  # Hardcoded
+        llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.7)  # Hardcoded
         return llm.invoke(question).content
     Traigent intercepts and overrides those hardcoded values.
     """

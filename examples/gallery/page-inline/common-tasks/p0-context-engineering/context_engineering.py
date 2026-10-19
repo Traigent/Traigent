@@ -117,7 +117,7 @@ def _contains_accuracy(
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4.1-mini"],
+        "model": ["gpt-4.1-nano", "gpt-4.1-mini"],
         "temperature": [0.0, 0.3],
         "use_rag": [True, False],
         "top_k": [1, 2],
@@ -131,7 +131,7 @@ def _contains_accuracy(
 def answer_with_context(context: str, question: str) -> str:
     cfg = traigent.get_config()
     llm = ChatOpenAI(
-        model=cfg.get("model", "gpt-3.5-turbo"), temperature=cfg.get("temperature", 0.0)
+        model=cfg.get("model", "gpt-4.1-mini"), temperature=cfg.get("temperature", 0.0)
     )
     ctx = context if cfg.get("use_rag", True) else ""
     prompt = f"Context: {ctx}\nQuestion: {question}\nProvide the best concise answer."

@@ -469,7 +469,7 @@ def _dump_example_results(
             # "openai/invalid-model-xyz",  # Test invalid model
             "openai/gpt-4.1-mini",
             "openai/gpt-4.1-nano",
-            # "openai/gpt-3.5-turbo",
+            # "openai/gpt-4.1-mini",
             # "openai/gpt-5-nano",
         ],
         # "temperature": [0, 0.1, 0.3],  # Multiple values for Bayesian search

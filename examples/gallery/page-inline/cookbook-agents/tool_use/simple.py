@@ -61,7 +61,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "tool_use_eval.jsonl")
     max_trials=10,
 )
 def needs_tool(request: str) -> str:
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.0)
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
     prompt = (
         "Return needs_tool if the request requires a non-LLM action (API, calc), else no_tool.\n"
         f"Request: {request}\nOne label only."

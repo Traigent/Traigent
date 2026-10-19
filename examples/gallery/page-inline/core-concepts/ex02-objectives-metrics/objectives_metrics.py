@@ -163,7 +163,7 @@ def _min_quality_score(
 # Example 1: Single objective optimization
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4.1-mini"],
+        "model": ["gpt-4.1-nano", "gpt-4.1-mini"],
         "temperature": [0.1, 0.5, 0.9],
     },
     eval_dataset=DATASET_FILE,
@@ -173,7 +173,7 @@ def _min_quality_score(
 )
 def cost_optimized_bot(query: str) -> str:
     """Bot optimized purely for cost efficiency."""
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.5)
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.5)
     response = llm.invoke([HumanMessage(content=query)])
     return str(getattr(response, "content", response))
 
@@ -181,7 +181,7 @@ def cost_optimized_bot(query: str) -> str:
 # Example 2: Multi-objective optimization
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4.1-mini", "gpt-4.1"],
+        "model": ["gpt-4.1-nano", "gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.1, 0.3, 0.5, 0.7],
         "max_tokens": [100, 200, 300],
     },
@@ -196,7 +196,7 @@ def balanced_support_bot(query: str) -> str:
     config = current if isinstance(current, dict) else {}
 
     llm = ChatOpenAI(
-        model=config.get("model", "gpt-3.5-turbo"),
+        model=config.get("model", "gpt-4.1-mini"),
         temperature=config.get("temperature", 0.5),
         max_tokens=config.get("max_tokens", 200),
     )
@@ -209,7 +209,7 @@ def balanced_support_bot(query: str) -> str:
 # Example 3: Custom metrics with constraints
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4.1-mini", "gpt-4.1"],
+        "model": ["gpt-4.1-nano", "gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.1, 0.3, 0.5],
         "response_format": ["brief", "standard", "detailed"],
     },
@@ -238,7 +238,7 @@ def quality_constrained_bot(query: str) -> str:
     }
 
     llm = ChatOpenAI(
-        model=config.get("model", "gpt-3.5-turbo"),
+        model=config.get("model", "gpt-4.1-mini"),
         temperature=config.get("temperature", 0.3),
     )
 
@@ -292,7 +292,7 @@ def analyze_tradeoffs() -> None:
 
     tradeoffs = {
         "Cost vs Quality": {
-            "cheap": {"model": "gpt-3.5-turbo", "cost": "$0.002", "quality": "70%"},
+            "cheap": {"model": "gpt-4.1-mini", "cost": "$0.002", "quality": "70%"},
             "balanced": {"model": "gpt-4.1-mini", "cost": "$0.01", "quality": "85%"},
             "premium": {"model": "gpt-4.1", "cost": "$0.03", "quality": "95%"},
         },

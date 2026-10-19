@@ -87,7 +87,7 @@ def adaptive_chat_bot(user_message: str) -> str:
 
     # Map custom parameters to LLM settings
     model_map = {
-        "fast": "gpt-3.5-turbo",
+        "fast": "gpt-4.1-mini",
         "balanced": "gpt-4.1-mini",
         "accurate": "gpt-4.1",
     }

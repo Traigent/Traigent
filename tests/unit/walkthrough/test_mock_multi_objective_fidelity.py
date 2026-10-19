@@ -452,9 +452,9 @@ def test_example_09_smoke(offline_mock_env: dict[str, str]) -> None:
     assert completed.returncode == 0, combined
     assert "simulated from the static mock pricing/latency tables" in completed.stdout
     assert "uniformly constant" not in combined
-    assert "Model:        gpt-4.1-mini" in completed.stdout
-    assert "Latency:  825ms (simulated)" in completed.stdout
-    assert "Cost:     $0.012480 (simulated)" in completed.stdout
+    assert "Model:        gpt-4.1-nano" in completed.stdout
+    assert "Latency:  475ms (simulated)" in completed.stdout
+    assert "Cost:     $0.003120 (simulated)" in completed.stdout
     assert re.search(r"Latency:\s+0ms", completed.stdout) is None
 
     rows = _parse_results_table(completed.stdout)

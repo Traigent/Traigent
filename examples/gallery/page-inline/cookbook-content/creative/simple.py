@@ -66,7 +66,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "creative_eval.jsonl")
     max_trials=10,
 )
 def write_poem(prompt: str) -> str:
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.9)
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.9)
     p = f"Write a 3-line poem about: {prompt}"
     return llm.invoke([HumanMessage(content=p)]).content.strip()
 

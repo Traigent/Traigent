@@ -127,7 +127,7 @@ create_support_dataset()
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4.1-mini"],
+        "model": ["gpt-4.1-nano", "gpt-4.1-mini"],
         "temperature": [0.0, 0.1, 0.3, 0.5],
         "prompt_style": ["direct", "structured", "few_shot"],
         "max_tokens": [50, 100, 150],
@@ -232,7 +232,7 @@ Category:""",
 
     # Production mode would use actual LLM
     llm = ChatOpenAI(
-        model=config.get("model", "gpt-3.5-turbo"),
+        model=config.get("model", "gpt-4.1-mini"),
         temperature=config.get("temperature", 0.1),
         max_tokens=config.get("max_tokens", 50),
     )
