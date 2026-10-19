@@ -3,7 +3,7 @@ set -euo pipefail
 
 python -m pip install --upgrade pip
 
-# traigent-schema 5.0.0 is not on PyPI (newest published is 4.8.0), so this must
+# The pinned traigent-schema build is not on PyPI, so this must
 # be the exact Git pin, not a version specifier. The pin lives in
 # scripts/ci/schema-pin.txt — the single source of truth shared with pr-gate.yml
 # and publish.yml — and deliberately NOT in pyproject.toml, because PyPI rejects

@@ -21,9 +21,12 @@
 # WHY A COMMIT PIN AND NOT A VERSION
 # ----------------------------------
 # traigent/economics/schema.py fingerprints the exact economics contract, so the
-# SDK needs one specific TraigentSchema build. This pin is 5.8.0-line (build
-# 93030ccef7f50acbd205078b7da3e701f5b1dcf4, TraigentSchema develop tip as of
-# 2026-09-07), not on PyPI (the newest published traigent-schema is 4.8.0).
+# SDK needs one specific TraigentSchema build. The pin is the exact commit on
+# the requirement line at the bottom of this file (the single source of truth;
+# this comment deliberately names no SHA or version so it cannot go stale). It is
+# an intentional compatibility baseline for the economics/certification contract,
+# not a "latest major" target: major-version age alone is not a reason to bump,
+# and a bump is an owner-selected, reviewed commit (#2494). It is not on PyPI.
 # Bumping the pin means recomputing EXPECTED_ECONOMICS_SCHEMA_FINGERPRINT in
 # traigent/economics/schema.py against the newly pinned build (see that
 # module's docstring) -- a byte-exact mismatch fails closed even when the

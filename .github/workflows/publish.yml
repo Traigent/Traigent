@@ -112,7 +112,7 @@ jobs:
       # tests/unit/economics hard-requires the exact traigent-schema economics
       # contract (traigent/economics/schema.py fingerprints it and fails closed
       # with EconomicsSchemaUnavailable when it is absent). traigent-schema
-      # 5.0.0 is not on PyPI — the newest published there is 4.8.0 — so it must
+      # The pinned build is not on PyPI, so it must
       # come from the pinned commit, and `pip install -e ".[dev,all]"` above does
       # not bring it in. pr-gate.yml installs it explicitly for the same reason;
       # the publish lane must match, or main stays green on PRs and red here.

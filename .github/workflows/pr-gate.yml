@@ -372,7 +372,7 @@ jobs:
       - name: Install pinned economics Schema contract
         # The economics contract-drift tests (tests/unit/economics) hard-require
         # the exact TraigentSchema economics contract and must not silently
-        # skip. traigent-schema 5.0.0 is not on PyPI, so install it from the
+        # skip. the pinned traigent-schema build is not on PyPI, so install it from the
         # pinned commit in scripts/ci/schema-pin.txt -- the single source of
         # truth, shared with publish.yml. Restamp the SHA in that file only.
         #
