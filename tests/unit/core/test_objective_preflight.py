@@ -1,0 +1,37 @@
+"""Pre-trial objective-to-metric binding check (#2668)."""
+
+from __future__ import annotations
+
+import logging
+
+from traigent.core.objective_preflight import warn_unproducible_objectives
+
+
+def _warn(caplog, objectives, metric_functions=None, scoring_function=None):
+    with caplog.at_level(logging.WARNING, logger="traigent.core.objective_preflight"):
+        return warn_unproducible_objectives(
+            metric_functions or {}, objectives, scoring_function
+        )
+
+
+def test_typo_objective_warns_with_did_you_mean(caplog):
+    unmatched = _warn(caplog, ["acuracy"])
+    assert unmatched == ["acuracy"]
+    text = " ".join(r.getMessage() for r in caplog.records)
+    assert "acuracy" in text and "Did you mean 'accuracy'" in text
+
+
+def test_builtin_objectives_do_not_warn(caplog):
+    assert _warn(caplog, ["accuracy", "cost", "latency", "score"]) == []
+    assert not caplog.records
+
+
+def test_metric_function_covers_objective(caplog):
+    assert _warn(caplog, ["relevance"], {"relevance": lambda **_: 1.0}) == []
+
+
+def test_any_user_scorer_makes_binding_undecidable(caplog):
+    # A mapping-returning scorer may emit any key, so stay silent.
+    assert _warn(caplog, ["relevance"], {"scores": lambda **_: {}}) == []
+    assert _warn(caplog, ["relevance"], None, lambda **_: {}) == []
+    assert not caplog.records

@@ -29,6 +29,7 @@ from traigent.config.types import (
 from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
 from traigent.core.execution_policy_runtime import backend_egress_disabled
 from traigent.core.trace_env import is_trace_enabled
+from traigent.core.objective_preflight import warn_unproducible_objectives
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.evaluators.local import LocalEvaluator
 from traigent.utils.env_config import is_mock_llm
@@ -789,6 +790,7 @@ def _create_local_evaluator(
         metric_functions, scoring_function, objectives
     )
     validate_metric_function_bindability(effective_metric_fns, objectives)
+    warn_unproducible_objectives(metric_functions, objectives, scoring_function)
     effective_workers = resolve_effective_workers(
         effective_batch_size, effective_thread_workers
     )
