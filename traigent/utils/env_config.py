@@ -213,6 +213,11 @@ def _load_dotenv_files() -> None:
 
 _load_dotenv_files()
 
+# Advisory: name (never value) any misspelt TRAIGENT_* variable (#2669).
+from .env_audit import warn_unknown_traigent_env_vars  # noqa: E402
+
+warn_unknown_traigent_env_vars()
+
 _MIN_JWT_SECRET_LENGTH = 32
 _PRODUCTION_ENV_NAMES = {"prod", "production"}
 _NON_PRODUCTION_ENV_NAMES = {
