@@ -16,6 +16,7 @@ not know, and what a trial reports when nothing was captured.
 | `litellm.completion` / `litellm.acompletion` | always (patched by the evaluator) | streaming calls are not captured |
 | Traigent's `BedrockChatClient` | always | |
 | Raw OpenAI SDK: `openai.OpenAI` / `openai.AsyncOpenAI` `chat.completions.create` and `completions.create` | the OpenAI override is active (see below) | non-streaming calls that return `usage` |
+| Direct `google.genai` calls (Gemini API or Vertex AI client) | never | Traigent does not patch this client, so these calls are outside cost tracking. A trial can show a cost of 0.0, and a run with a cost cap can stop with an unmeasured-cost error. Calling Gemini through `litellm.completion` gets its usage captured. |
 
 ### Raw OpenAI SDK calls (including OpenAI-compatible gateways)
 
