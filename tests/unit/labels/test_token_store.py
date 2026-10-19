@@ -734,17 +734,100 @@ def test_resume_batches_every_pending_operation_before_new_work(server):
     assert server.issued == 2 and len(server.receipts) == 2
 
 
-def test_definitive_server_refusal_abandons_the_intent_so_it_does_not_fail_forever(
+_REFERENCE_NOT_FOUND = (
+    404,
+    {
+        "success": False,
+        "error": "reference_not_found",
+        "error_code": "reference_not_found",
+        "message": "Reference not found.",
+    },
+)
+_INVALID_REQUEST = (
+    400,
+    {
+        "success": False,
+        "error": "invalid_request",
+        "error_code": "invalid_request",
+        "message": "Request is invalid.",
+    },
+)
+
+
+def _state_on_disk() -> dict[str, Any]:
+    return json.loads(store_file(ns()).read_bytes()[1:])
+
+
+def test_lost_response_then_temporary_404_then_restored_access_resumes_same_key_and_refs(
     server,
 ):
-    ensure_tokens(ns(), knobs("model"), transport=server)
-    server.knobs.clear()  # the server no longer knows the parent: 404 reference_not_found
+    """K1: the Backend authorizes the agent BEFORE the receipt lookup, so a resumed 404 can
+    follow a committed-but-lost issuance; S0 must survive it."""
+    def committed_but_lost(body):
+        server(body)  # the server commits...
+        raise ConnectionError(f"reply lost {HEBREW}")  # ...the client never hears
+
     with pytest.raises(TokenStoreError) as err:
-        ensure_tokens(ns(), [("choice", "model", "gpt")], transport=server)
-    assert err.value.code == "token_refs_reference_not_found"
-    state = json.loads(store_file(ns()).read_bytes()[1:])
-    assert all(e["state"] != "intent" for e in state["tokens"].values())
-    assert len(state["operations"]) == 1  # only the knob's
+        ensure_tokens(ns(), knobs("model"), transport=committed_but_lost)
+    assert err.value.code == "token_refs_transport_failed"
+    assert server.issued == 1
+    key = server.calls[0]["operation_key"]
+
+    server.status_override = _REFERENCE_NOT_FOUND  # access temporarily lost
+    for _ in range(2):  # it keeps raising its closed code each time
+        with pytest.raises(TokenStoreError) as err:
+            ensure_tokens(ns(), knobs("model"), transport=server)
+        assert err.value.code == "token_refs_reference_not_found"
+        state = _state_on_disk()
+        assert list(state["operations"]) == [key]  # S0 retained, same key
+        assert {e["state"] for e in state["tokens"].values()} == {"intent"}
+
+    server.status_override = None  # access restored
+    got = ensure_tokens(ns(), knobs("model"), transport=server)
+    assert got[("knob", None, "model")] == server.refs[key][0]
+    assert {c["operation_key"] for c in server.calls} == {key}  # never a new key
+    assert server.issued == 1 and len(server.receipts) == 1  # no double issuance
+
+
+def test_invalid_request_400_retains_s0(server):
+    server.status_override = _INVALID_REQUEST
+    with pytest.raises(TokenStoreError) as err:
+        ensure_tokens(ns(), knobs("k"), transport=server)
+    assert err.value.code == "token_refs_invalid_request"
+    state = _state_on_disk()
+    assert len(state["operations"]) == 1
+    assert {e["state"] for e in state["tokens"].values()} == {"intent"}
+    key = server.calls[0]["operation_key"]
+    server.status_override = None
+    ensure_tokens(ns(), knobs("k"), transport=server)
+    assert {c["operation_key"] for c in server.calls} == {key}
+
+
+def test_explicit_abandon_is_the_only_way_to_drop_a_pending_intent(server):
+    server.status_override = _REFERENCE_NOT_FOUND
+    with pytest.raises(TokenStoreError):
+        ensure_tokens(ns(), knobs("k"), transport=server)
+    (key,) = ts.pending_operation_keys(ns())
+    with pytest.raises(TokenStoreError) as err:  # a key that is not pending
+        ts.abandon_pending_operation(ns(), operation_key="0" * 32)
+    assert err.value.code == "token_state_invalid"
+    with pytest.raises(TokenStoreError) as err:
+        ts.abandon_pending_operation(ns(), operation_key="not-a-key")
+    assert err.value.code == "token_request_invalid"
+    assert ts.pending_operation_keys(ns()) == [key]
+    assert ts.abandon_pending_operation(ns(), operation_key=key) == 1
+    assert ts.pending_operation_keys(ns()) == []
+    server.status_override = None
+    ensure_tokens(ns(), knobs("k"), transport=server)
+    assert server.calls[-1]["operation_key"] != key  # a NEW key, by the caller's choice
+    assert ts.abandon_pending_operation(ns()) == 0
+
+
+def test_abandon_requires_the_flag(server, monkeypatch):
+    monkeypatch.setenv(ts.ENV_FLAG, "false")
+    with pytest.raises(TokenStoreError) as err:
+        ts.abandon_pending_operation(ns())
+    assert err.value.code == "token_store_disabled"
 
 
 def test_ambiguous_failures_keep_the_intent_for_resume(server):

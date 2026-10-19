@@ -766,10 +766,6 @@ _REFUSALS: dict[str, tuple[int, str, str]] = {
     "internal_error": (500, "Internal error.", TOKEN_REFS_SERVER_ERROR),
 }
 _ENVELOPE_KEYS = frozenset({"success", "error", "error_code", "message"})
-#: Codes after which the server is known to have issued NOTHING for this operation.
-_NOTHING_ISSUED = frozenset(
-    {TOKEN_REFS_INVALID_REQUEST, TOKEN_REFS_REFERENCE_NOT_FOUND}
-)
 
 
 def backend_transport(client: Any) -> TokenRefsTransport:
@@ -844,12 +840,12 @@ def _issue(
     if outcome is not None:
         raise outcome from None
     if status != 200:
-        code = _refusal_code(status, payload)
-        if code in _NOTHING_ISSUED:
-            _abandon(
-                tx, op_key
-            )  # the server rolled back; the intent would only fail forever
-        raise TokenStoreError(code)
+        # S0 is NEVER deleted on a refusal. The Backend authorizes the agent before it looks
+        # up the receipt, so a 400/404 on a resumed key can follow an earlier attempt that
+        # DID commit (response lost, then access lost or revoked): dropping the key would let
+        # a later call mint a new one and double-issue. The intent keeps failing with its
+        # closed code until it succeeds or the caller deliberately abandons it.
+        raise TokenStoreError(_refusal_code(status, payload))
     refs = (
         payload.get("refs")
         if isinstance(payload, dict) and set(payload) == {"refs"}
@@ -883,6 +879,44 @@ def _abandon(tx: _Locked, op_key: str) -> None:
     for key in [k for k, e in tx.state["tokens"].items() if e["op"] == op_key]:
         del tx.state["tokens"][key]
     tx.write()
+
+
+@_closed_boundary
+def pending_operation_keys(namespace: TokenNamespace) -> list[str]:
+    """Operation keys still at S0 (sent or not, never answered), oldest-insertion first."""
+    _require_enabled()
+    with TokenStore(namespace).locked() as tx:
+        return [k for k, op in tx.state["operations"].items() if op["refs"] is None]
+
+
+@_closed_boundary
+def abandon_pending_operation(
+    namespace: TokenNamespace, *, operation_key: str | None = None
+) -> int:
+    """Deliberately give up S0 intents (all of them, or only ``operation_key``); returns how many.
+
+    WARNING: this may create DUPLICATE identities. If the earlier attempt reached the server
+    and committed (its response lost), the refs it issued are orphaned and the names are
+    issued again under a new operation_key. Use it only when the operator has decided that
+    the pending intent will never succeed. Nothing in the SDK calls it automatically; a
+    pending intent that keeps failing raises its closed code on every ``ensure_tokens``.
+    """
+    _require_enabled()
+    if operation_key is not None and (
+        not isinstance(operation_key, str) or not _OP_KEY.fullmatch(operation_key)
+    ):
+        raise TokenStoreError(TOKEN_REQUEST_INVALID)
+    with TokenStore(namespace).locked() as tx:
+        pending = [
+            k
+            for k, op in tx.state["operations"].items()
+            if op["refs"] is None and (operation_key is None or k == operation_key)
+        ]
+        if operation_key is not None and not pending:
+            raise TokenStoreError(TOKEN_STATE_INVALID)
+        for key in pending:
+            _abandon(tx, key)
+        return len(pending)
 
 
 def _journal(tx: _Locked, namespace: TokenNamespace, items: list[list[Any]]) -> str:
