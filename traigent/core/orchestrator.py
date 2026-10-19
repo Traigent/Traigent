@@ -4516,8 +4516,10 @@ class OptimizationOrchestrator:
                 result.metadata["persistence_error"] = str(exc)
                 logger.error(
                     "Backend persistence failed after optimization; backend session "
-                    "left RUNNING. Run `traigent local sync` or check portal to "
-                    "finalize or repair the session. Keeping result source=%s, "
+                    "left RUNNING. Check the portal for this session id to confirm "
+                    "whether it was finalized; do not run whole-store "
+                    "`traigent sync` to repair it (an offline sync creates a NEW "
+                    "backend session and can duplicate the run). Keeping result source=%s, "
                     "session_id=%s, and marking persistence_status=failed: %s",
                     result.source,
                     session_id,

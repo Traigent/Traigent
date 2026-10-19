@@ -366,4 +366,6 @@ async def test_finalize_terminal_failure_is_loud_but_result_remains_usable(
     assert result.persistence_failed is True
     assert "HTTP 500" in result.metadata["persistence_error"]
     assert "backend session left RUNNING" in caplog.text
-    assert "Run `traigent local sync` or check portal" in caplog.text
+    assert "Run `traigent local sync`" not in caplog.text
+    assert "Check the portal for this session id" in caplog.text
+    assert "can duplicate the run" in caplog.text

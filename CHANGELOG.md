@@ -1022,8 +1022,8 @@ transmission of results to the backend.
     not take one away either: the id is assigned before the finalize block, so
     a run that already qualified under another clause (e.g. partial
     acknowledgement) keeps the id it was given even if finalize then fails.
-    The existing log still advises `traigent local sync`, which is whole-store.
-    A targeted repair path is follow-up work.
+    The log no longer advises whole-store `traigent local sync` (#2028); it
+    points at the portal session id. A targeted repair path is follow-up work.
   - ~~A run that raises mid-flight re-raises instead of returning a result (the
     orchestrator's FAILED path), so no `sync_session_id` is delivered even
     though the local record holds the trials that completed.~~ **Closed by
