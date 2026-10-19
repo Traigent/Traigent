@@ -1536,11 +1536,27 @@ def results_rerank(
             console.print("[yellow]No trials found in this result[/yellow]")
             return
 
-        # Re-score trials using helper
+        # Re-score trials using helper, applying the same ranking eligibility
+        # as the terminal selector (partially covered trials are excluded;
+        # trials without comparability data, e.g. old results, are kept).
+        from traigent.core.result_selection import _is_ranking_eligible
+
+        result_objectives = getattr(result, "objectives", None) or []
+        primary = (
+            str(result_objectives[0])
+            if result_objectives
+            else max(weight_dict, key=lambda k: weight_dict[k])
+        )
+
+        def _rerank_eligible(trial: Any) -> bool:
+            eligible, unknown, _codes = _is_ranking_eligible(trial, primary, "warn")
+            return eligible or unknown
+
         scored_trials = [
             (score, trial)
             for trial in result.trials
-            if (score := _calculate_trial_score(trial, weight_dict)) is not None
+            if _rerank_eligible(trial)
+            and (score := _calculate_trial_score(trial, weight_dict)) is not None
         ]
 
         if not scored_trials:
@@ -1880,7 +1896,7 @@ def export(
         raise
     except FileNotFoundError as e:
         raise click.ClickException(
-            f"Result '{result_name}' not found ({e}). "
+            f"Result '{result_name}' not found. "
             "Use 'traigent results' to see available results"
         ) from e
     except Exception as e:

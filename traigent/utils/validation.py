@@ -427,7 +427,7 @@ class Validators:
             ):
                 result.add_error(
                     field_name,
-                    f"Path {resolved_path} escapes the allowed directories",
+                    "Path escapes the allowed directories",
                     error_code="SECURITY_ERROR",
                     suggestions=[
                         "Provide a path located within the project workspace "

@@ -163,3 +163,85 @@ def test_validate_config_valid_input_exits_zero(tmp_path: Path) -> None:
     good.write_text('{"configuration_space": {"v": ["aa", "bb"]}}')
     result = CliRunner().invoke(cli, ["validate-config", str(good)])
     assert result.exit_code == 0, result.output
+
+
+# ---- secrecy canaries --------------------------------------------------------
+def test_export_not_found_message_does_not_echo_storage_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    secret_dir = tmp_path / "SECRETCANARY-store"
+    secret_dir.mkdir()
+    result = CliRunner().invoke(cli, ["export", "nope", "-d", str(secret_dir)])
+    assert result.exit_code != 0
+    assert "SECRETCANARY" not in result.output
+
+
+def test_path_validation_error_does_not_echo_resolved_path(tmp_path: Path) -> None:
+    from traigent.utils.validation import Validators
+
+    secret = tmp_path / "SECRETCANARY" / "data.jsonl"
+    result = Validators.validate_path(
+        secret, "dataset", allowed_base_dirs=[tmp_path / "other"]
+    )
+    assert not result.is_valid
+    assert "SECRETCANARY" not in result.get_feedback()
+
+
+def test_rerank_applies_selector_eligibility_on_a_tie(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Partially covered v4 listed before fully covered v5 must not win (#2660)."""
+    from datetime import UTC, datetime
+
+    from traigent.api.types import TrialResult, TrialStatus
+
+    def comp(present: int) -> dict:
+        return {
+            "schema_version": "1.0",
+            "primary_objective": "accuracy",
+            "evaluation_mode": "evaluated",
+            "total_examples": 8,
+            "examples_with_primary_metric": present,
+            "coverage_ratio": present / 8,
+            "derivation_path": "none",
+            "ranking_eligible": present == 8,
+            "warning_codes": [] if present == 8 else ["MCI-002"],
+            "per_metric_coverage": {
+                "accuracy": {"present": present, "total": 8, "ratio": present / 8}
+            },
+        }
+
+    trials = [
+        TrialResult(
+            trial_id=tid,
+            config={"variant": tid},
+            metrics={"accuracy": 0.625},
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+            metadata={"comparability": comp(present)},
+        )
+        for tid, present in (("v4", 5), ("v5", 8))
+    ]
+    result = OptimizationResult(
+        trials=trials,
+        best_config={"variant": "v5"},
+        best_score=0.625,
+        optimization_id="opt-tie",
+        duration=1.0,
+        convergence_info={},
+        status=OptimizationStatus.COMPLETED,
+        objectives=["accuracy"],
+        algorithm="grid",
+        timestamp=datetime.now(),
+    )
+    store = tmp_path / "store"
+    PersistenceManager(str(store)).save_result(result, "tie")
+    monkeypatch.chdir(tmp_path)
+    out = CliRunner().invoke(
+        cli, ["results", "rerank", "tie", "-w", "accuracy=1.0", "-d", str(store)]
+    )
+    assert out.exit_code == 0, out.output
+    assert "v5" in out.output
+    assert "v4" not in out.output.split("New Best Configuration")[1].split("Best")[0]
