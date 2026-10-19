@@ -81,8 +81,8 @@ def build_answer(litellm_module: Any) -> Any:
     # algorithm="grid" is the current local-search selector. The runtime mode for
     # that path is local, and backend tracking remains enabled unless the
     # no-key quickstart bootstrap forced offline mode. Avoid passing the deprecated
-    # execution_mode="edge_analytics" decorator option here: current policy maps
-    # that legacy selector to offline=True for backward-compatible no-egress runs.
+    # execution_mode="edge_analytics" decorator option here: it has been removed
+    # and now raises; use offline=True for no-egress local runs.
     @traigent.optimize(
         experiment_name=EXPERIMENT_NAME,
         configuration_space=CONFIG_SPACE,

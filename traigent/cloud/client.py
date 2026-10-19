@@ -99,7 +99,7 @@ _CLIENT_SESSION_NOT_INITIALIZED = "Client session not initialized"
 _AGENT_SPEC_REQUIRED = "agent_spec is required"
 CLOUD_REMOTE_EXECUTION_UNAVAILABLE = (
     "Cloud remote execution is not available yet; use hybrid for "
-    "portal-tracked optimization. Supported modes are local/edge_analytics "
+    "portal-tracked optimization. Supported modes are local "
     "and hybrid."
 )
 

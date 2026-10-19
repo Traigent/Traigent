@@ -963,7 +963,7 @@ class OptimizedFunction(Generic[_P, _R]):
             config_param: Parameter name for injection_mode="parameter"
             auto_override_frameworks: Enable automatic framework parameter overrides
             framework_targets: List of framework class names to override (e.g., ["openai.OpenAI"])
-            execution_mode: Execution mode ("local", "hybrid", "hybrid_api"; "edge_analytics" and "privacy" are legacy aliases)
+            execution_mode: Execution mode ("local", "hybrid", "hybrid_api"; the removed "edge_analytics" selector raises, and "privacy" fails closed)
             local_storage_path: Custom path for local storage (local mode only)
             minimal_logging: Use minimal logging in local mode
             custom_evaluator: Custom evaluation function for advanced use cases
