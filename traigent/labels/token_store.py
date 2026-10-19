@@ -11,6 +11,12 @@ Design (PHASE1b-DESIGN-v2 sections 3.2, 3.3, 10.1', 10.2, 10.6, 10.7):
 
 * **Inert unless enabled.** ``TRAIGENT_TOKEN_STORE_ENABLED`` is read at call time; only
   ``true`` / ``1`` enable. Off: no file, no directory, no request.
+* **Directory trust is strict.** Every component of the state-root chain (default
+  ``~/.traigent``, or ``TRAIGENT_RESULTS_FOLDER``) must be owned by the user or root and must not
+  be group- or world-writable unless sticky (``/tmp``); group exclusivity is never inferred from
+  the group database. A violation is refused as ``token_store_insecure_permissions``; the remedy
+  is ``chmod g-w,o-w <dir>`` (the SDK never changes a mode it did not create). Symlinked
+  components are followed only from a trusted directory and when owned by the user or root.
 * **Namespace** = (normalized backend origin, agent_ref); one store file per namespace named by
   the sha256 of the canonical namespace (never a plaintext name or agent id). The same
   (kind, parent token ref, name) maps to the same token across specs of one agent; nothing is
