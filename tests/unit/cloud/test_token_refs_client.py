@@ -344,7 +344,10 @@ def test_direct_issuance_clears_exception_context_inside_a_callers_except(
     except ValueError:
         try:
             client.issue_token_refs_sync(body)
-        except (CloudServiceError, CloudEgressBlockedError) as exc:  # INSIDE the handler
+        except (
+            CloudServiceError,
+            CloudEgressBlockedError,
+        ) as exc:  # INSIDE the handler
             caught = exc
     assert caught is not None
     assert caught.__cause__ is None and caught.__context__ is None

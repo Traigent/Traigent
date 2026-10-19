@@ -94,7 +94,9 @@ def _merge_constraints(out: dict[str, Any], branch: dict[str, Any]) -> None:
         elif (old, new) in _IMPLYING_PATTERNS:
             out["pt"] = new
         elif (new, old) not in _IMPLYING_PATTERNS:
-            raise SystemExit("allOf pattern merge is not lossless: " + old + " & " + new)
+            raise SystemExit(
+                "allOf pattern merge is not lossless: " + old + " & " + new
+            )
     if "maxLength" in branch:
         out["ml"] = min(out.get("ml", branch["maxLength"]), branch["maxLength"])
     if "minLength" in branch:
@@ -303,7 +305,9 @@ def _add_endpoint_routes(comp: Compiler, endpoints_file: str, routes: list) -> N
             )
 
 
-def _assert_operation_key_lossless(comp: Compiler, routes: list[dict[str, Any]]) -> None:
+def _assert_operation_key_lossless(
+    comp: Compiler, routes: list[dict[str, Any]]
+) -> None:
     """The token-refs ``operation_key`` must compile to exactly 32 lowercase hex characters."""
     for route in routes:
         if route["template"] != "/api/v1/optimization/token-refs" or not route["body"]:
@@ -312,7 +316,11 @@ def _assert_operation_key_lossless(comp: Compiler, routes: list[dict[str, Any]])
         while "p" not in node and "ref" in node:
             node = comp.nodes[node["ref"]]
         key = node["p"]["operation_key"]
-        if key.get("pt") != "^[0-9a-f]{32}$" or key.get("mn") != 32 or key.get("ml") != 32:
+        if (
+            key.get("pt") != "^[0-9a-f]{32}$"
+            or key.get("mn") != 32
+            or key.get("ml") != 32
+        ):
             raise SystemExit("operation_key constraints were not preserved losslessly")
         return
     raise SystemExit("token-refs route missing from the compiled table")

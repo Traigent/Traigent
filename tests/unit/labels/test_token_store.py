@@ -1417,7 +1417,9 @@ def _use_root(monkeypatch, path):
     monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(path))
 
 
-def test_symlink_in_a_group_writable_directory_is_refused(server, tmp_path, monkeypatch):
+def test_symlink_in_a_group_writable_directory_is_refused(
+    server, tmp_path, monkeypatch
+):
     shared = tmp_path / "shared"
     shared.mkdir(mode=0o700)
     real = tmp_path / "real"
@@ -1431,7 +1433,9 @@ def test_symlink_in_a_group_writable_directory_is_refused(server, tmp_path, monk
     assert list(real.iterdir()) == []
 
 
-def test_symlink_in_a_world_writable_directory_is_refused(server, tmp_path, monkeypatch):
+def test_symlink_in_a_world_writable_directory_is_refused(
+    server, tmp_path, monkeypatch
+):
     shared = tmp_path / "shared"
     shared.mkdir(mode=0o700)
     real = tmp_path / "real"
