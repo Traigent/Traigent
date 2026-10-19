@@ -421,6 +421,25 @@ class PromotionGate:
         objective_results, raw_super_p = self._evaluate_objectives(
             incumbent_metrics, candidate_metrics
         )
+        # Fail closed (Traigent#2642): a declared objective with no samples on
+        # either side must never be silently dropped from the decision. This
+        # mirrors the chance-constraint path (missing data => not satisfied).
+        missing_objectives = [
+            obj.name
+            for obj in self._objective_list
+            if obj.name not in incumbent_metrics or obj.name not in candidate_metrics
+        ]
+        if objective_results and missing_objectives:
+            return PromotionDecision(
+                decision="reject",
+                reason=(
+                    "Missing metric data for declared objectives: "
+                    f"{', '.join(sorted(missing_objectives))}"
+                ),
+                objective_results=objective_results,
+                chance_results=self._evaluate_chance_constraints(constraint_data or {}),
+                dominance_satisfied=False,
+            )
         if not objective_results:
             return PromotionDecision(
                 decision="no_decision",
