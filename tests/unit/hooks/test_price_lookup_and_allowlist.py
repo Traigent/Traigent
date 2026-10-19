@@ -41,3 +41,13 @@ def test_loose_substrings_are_not_priced(name: str) -> None:
 )
 def test_versioned_names_use_longest_known_prefix(name: str, expected_key: str) -> None:
     assert AgentValidator._lookup_cost_per_1k(name) == MODEL_COST_PER_1K[expected_key]
+
+
+def test_default_init_allowlist_uses_current_sdk_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    path = create_default_config(tmp_path / "traigent.yml")
+    allowed = yaml.safe_load(path.read_text())["constraints"]["allowed_models"]
+    assert "claude-haiku-4-5-20251001" in allowed
+    assert "claude-sonnet-4-6" in allowed
