@@ -27,6 +27,14 @@ logger = get_logger(__name__)
 CONFIG_FILE_NAMES = ["traigent.yml", "traigent.yaml", ".traigent.yml", ".traigent.yaml"]
 
 
+def _first_set(*values: Any) -> Any:
+    """Return the first value that is not None (0 counts as set)."""
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
 @dataclass
 class CostConstraints:
     """Cost-related constraints for agent configurations."""
@@ -109,19 +117,26 @@ class HooksConfig:
         # Parse constraints
         cost_data = constraints_data.get("cost", {})
         cost_constraints = CostConstraints(
-            max_cost_per_query=cost_data.get("max_cost_per_query")
-            or constraints_data.get("max_cost_per_query"),
-            max_monthly_budget=cost_data.get("max_monthly_budget")
-            or constraints_data.get("max_monthly_budget"),
+            max_cost_per_query=_first_set(
+                cost_data.get("max_cost_per_query"),
+                constraints_data.get("max_cost_per_query"),
+            ),
+            max_monthly_budget=_first_set(
+                cost_data.get("max_monthly_budget"),
+                constraints_data.get("max_monthly_budget"),
+            ),
             warn_threshold_pct=cost_data.get("warn_threshold_pct", 0.8),
         )
 
         perf_data = constraints_data.get("performance", {})
         performance_constraints = PerformanceConstraints(
-            min_accuracy=perf_data.get("min_accuracy")
-            or constraints_data.get("min_accuracy"),
-            max_latency_ms=perf_data.get("max_latency_ms")
-            or constraints_data.get("max_latency_ms"),
+            min_accuracy=_first_set(
+                perf_data.get("min_accuracy"), constraints_data.get("min_accuracy")
+            ),
+            max_latency_ms=_first_set(
+                perf_data.get("max_latency_ms"),
+                constraints_data.get("max_latency_ms"),
+            ),
             min_success_rate=perf_data.get("min_success_rate"),
         )
 

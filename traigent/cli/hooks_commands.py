@@ -224,6 +224,7 @@ def validate(target: str, config: str | None, exit_code: bool, verbose: bool) ->
     console.print(f"Found {len(results)} decorated function(s)\n")
 
     has_failures = False
+    has_warnings = False
 
     for result in results:
         # Function header
@@ -253,6 +254,8 @@ def validate(target: str, config: str | None, exit_code: bool, verbose: bool) ->
                 console.print(f"    [dim]Suggestion: {issue.suggestion}[/dim]")
 
         # Warnings
+        if result.warnings:
+            has_warnings = True
         for warning in result.warnings:
             console.print(f"  [yellow]WARNING[/yellow]: {warning.message}")
 
@@ -265,6 +268,10 @@ def validate(target: str, config: str | None, exit_code: bool, verbose: bool) ->
     console.print("[bold]Summary:[/bold]")
     console.print(f"  [green]Passed[/green]: {passed}")
     console.print(f"  [red]Failed[/red]: {failed}")
+
+    if not has_failures and has_warnings and hooks_config.fail_on_warning:
+        has_failures = True
+        console.print("\n[red]Warnings present and fail_on_warning is enabled.[/red]")
 
     if has_failures:
         console.print("\n[red]Validation failed![/red]")

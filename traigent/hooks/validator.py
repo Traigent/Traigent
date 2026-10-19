@@ -297,6 +297,22 @@ class AgentValidator:
         cost_constraints = self.config.constraints.cost
         estimated_cost = self._estimate_cost_per_query(agent)
 
+        # Fail closed: a model with no known price must never count as free.
+        if cost_constraints.max_cost_per_query is not None:
+            unpriced = self._unpriced_models(agent)
+            if unpriced:
+                warnings.append(
+                    ValidationIssue(
+                        severity="warning",
+                        code="COST_UNKNOWN",
+                        message=(
+                            f"{len(unpriced)} configured model(s) have no known price, "
+                            "so max_cost_per_query cannot be verified"
+                        ),
+                        suggestion="Use a priced model or verify its cost manually",
+                    )
+                )
+
         if estimated_cost is None:
             return errors, warnings
 
@@ -327,6 +343,21 @@ class AgentValidator:
 
         return errors, warnings
 
+    @staticmethod
+    def _lookup_cost_per_1k(model: str) -> float | None:
+        """Return blended cost per 1K tokens for a model, or None if unpriced."""
+        cost_per_1k = MODEL_COST_PER_1K.get(model.lower())
+        if cost_per_1k is None:
+            # Try partial match for model variants
+            for known_model, known_cost in MODEL_COST_PER_1K.items():
+                if known_model in model.lower() or model.lower() in known_model:
+                    return known_cost
+        return cost_per_1k
+
+    def _unpriced_models(self, agent: AgentInfo) -> list[str]:
+        """Models in the agent config that have no known price."""
+        return [m for m in agent.models if self._lookup_cost_per_1k(m) is None]
+
     def _estimate_cost_per_query(self, agent: AgentInfo) -> float | None:
         """Estimate cost per query for an agent.
 
@@ -344,13 +375,7 @@ class AgentValidator:
         # Calculate max cost across all configured models
         costs = []
         for model in agent.models:
-            cost_per_1k = MODEL_COST_PER_1K.get(model.lower())
-            if cost_per_1k is None:
-                # Try partial match for model variants
-                for known_model, known_cost in MODEL_COST_PER_1K.items():
-                    if known_model in model.lower() or model.lower() in known_model:
-                        cost_per_1k = known_cost
-                        break
+            cost_per_1k = self._lookup_cost_per_1k(model)
 
             if cost_per_1k is not None:
                 costs.append(cost_per_1k * (max_tokens / 1000))
