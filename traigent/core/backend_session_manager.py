@@ -1964,6 +1964,7 @@ class BackendSessionManager:
         *,
         best_config: dict[str, Any] | None = None,
         best_score: float | None = None,
+        apply_best: bool = False,
     ) -> None:
         """Flip the LOCAL session record to a terminal status (#1939).
 
@@ -1995,6 +1996,7 @@ class BackendSessionManager:
                 optimization_status,
                 best_config=best_config,
                 best_score=best_score,
+                apply_best=apply_best,
             )
         except Exception as exc:
             # Only Exception: a KeyboardInterrupt/SystemExit raised through here
@@ -2021,6 +2023,7 @@ class BackendSessionManager:
         *,
         best_config: dict[str, Any] | None = None,
         best_score: float | None = None,
+        apply_best: bool = False,
     ) -> None:
         """Body of :meth:`finalize_local_session`; may raise, and is guarded there."""
         remote_finalize_owns_mirror = (
@@ -2040,12 +2043,14 @@ class BackendSessionManager:
             local_status = OptimizationStatus.CANCELLED.value
         else:
             local_status = OptimizationStatus.FAILED.value
-        if local_status == OptimizationStatus.COMPLETED.value and best_config:
+        if apply_best and local_status == OptimizationStatus.COMPLETED.value:
+            # Final selection is authoritative, including "no winner".
             storage.finalize_session(
                 session_id,
                 local_status,
                 best_config=best_config,
                 best_score=best_score,
+                apply_best=True,
             )
         else:
             storage.finalize_session(session_id, local_status)

@@ -660,6 +660,7 @@ class LocalStorageManager:
         *,
         best_config: dict[str, Any] | None = None,
         best_score: float | None = None,
+        apply_best: bool = False,
     ) -> OptimizationSession | None:
         """
         Finalize an optimization session.
@@ -673,6 +674,9 @@ class LocalStorageManager:
                 eligibility rules are applied once, by the selector;
                 Traigent#2660).
             best_score: Score of ``best_config``.
+            apply_best: When True the stored best is REPLACED by
+                ``best_config``/``best_score`` even if they are empty, i.e. a
+                final selection with no winner clears a stale incremental best.
 
         Returns:
             The finalized session data or None if not found
@@ -683,7 +687,10 @@ class LocalStorageManager:
             return None
 
         session.status = status or OptimizationStatus.COMPLETED.value
-        if best_config is not None:
+        if apply_best:
+            session.best_config = dict(best_config) if best_config else None
+            session.best_score = best_score if best_config else None
+        elif best_config is not None:
             session.best_config = dict(best_config)
             session.best_score = best_score
         # Re-assert the recorded-trial invariant at the end of the run: an

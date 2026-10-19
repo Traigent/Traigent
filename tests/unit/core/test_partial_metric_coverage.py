@@ -74,3 +74,16 @@ def test_partial_coverage_is_named_and_fields_agree(
         _find_best_trial_index(result, result.trials, [("quality", orientation)], None)
         is None
     )
+
+
+def test_stored_session_best_is_cleared_when_selection_has_no_winner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _run(tmp_path, monkeypatch, "maximize", {"other": 1.0})
+    assert result.best_config is None
+    sessions = sorted((tmp_path / "res" / "sessions").glob("*.json"))
+    assert sessions
+    stored = json.loads(sessions[-1].read_text())
+    assert stored["status"] == "completed"
+    assert stored["best_config"] is None
+    assert stored["best_score"] is None

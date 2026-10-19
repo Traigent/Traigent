@@ -4453,6 +4453,7 @@ class OptimizationOrchestrator:
             self._status,
             best_config=result.best_config,
             best_score=result.best_score,
+            apply_best=True,
         )
         # #2020: surface the syncable LOCAL session id on the result so the
         # caller can upload THIS run (`traigent sync r.sync_session_id`)
