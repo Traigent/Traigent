@@ -25,7 +25,8 @@ Design (PHASE1b-DESIGN-v2 sections 3.2, 3.3, 10.1', 10.2, 10.6, 10.7):
   must already be in the store (the server only accepts a parent issued by an EARLIER request).
 * **Journal.** S0 intent (operation_key + the exact ordered batch) is made durable BEFORE the
   network call; S1 (refs received, ``pending_label``) after; S2 (label acked, revision >= 1) and
-  S3 (spec committed) are store-level transitions here and are wired in 1b-2b / 1b-4. A
+  S3 (spec committed) are store-level transitions here; S2 is driven by
+  ``LabelSender.send_new`` on a negotiated label write (1b-2b), S3 is wired in 1b-4. A
   restart from S0 re-sends the SAME operation_key and the SAME ordered batch.
 * **Durability.** Every write is exclusive lock + temp file + fsync + ``os.replace`` + directory
   fsync, file mode 0600 in a 0700 directory, verified on open (a wrong mode is refused, never
@@ -953,6 +954,16 @@ class TokenStore:
             return str(_find_by_ref(tx.state, ref)["state"])
 
     @_closed_boundary
+    def state_if_known(self, ref: str) -> str | None:
+        """The journal state of ``ref``, or ``None`` when it is not a token of this namespace."""
+        with self.locked() as tx:
+            if isinstance(ref, str):
+                for entry in tx.state["tokens"].values():
+                    if entry["ref"] == ref:
+                        return str(entry["state"])
+            return None
+
+    @_closed_boundary
     def revision_of(self, ref: str) -> int:
         """The durable revision maximum recorded for ``ref`` (0 if none)."""
         with self.locked() as tx:
@@ -1071,7 +1082,7 @@ def _raise_revision(state: dict[str, Any], ref: str, revision: int) -> None:
 TokenRefsTransport = Callable[[dict[str, Any]], "tuple[Any, ...]"]
 
 #: Retry pacing for ``service_unavailable``: used when no ``Retry-After`` is given.
-_RETRY_BACKOFF_SECONDS = (0.5, 1.0, 2.0, 4.0, 8.0)
+RETRY_BACKOFF_SECONDS = (0.5, 1.0, 2.0, 4.0, 8.0)
 MAX_SERVICE_UNAVAILABLE_ATTEMPTS = 8
 _sleep = time.sleep  # indirection so tests can run the pacing without waiting
 
@@ -1243,7 +1254,7 @@ def _issue(
         delay = (
             retry_after
             if retry_after is not None
-            else _RETRY_BACKOFF_SECONDS[min(attempt, len(_RETRY_BACKOFF_SECONDS) - 1)]
+            else RETRY_BACKOFF_SECONDS[min(attempt, len(RETRY_BACKOFF_SECONDS) - 1)]
         )
         attempt += 1
         if attempt >= MAX_SERVICE_UNAVAILABLE_ATTEMPTS or delay >= (
