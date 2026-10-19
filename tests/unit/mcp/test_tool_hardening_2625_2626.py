@@ -63,7 +63,7 @@ def test_scaffold_write_refuses_symlink_at_open(tmp_path: Path) -> None:
     link = tmp_path / "link.json"
     link.symlink_to(target)
     with pytest.raises(OSError):
-        tools._write_text_nofollow(link, "x", overwrite=True)
+        tools._write_text_nofollow(link, "x", overwrite=True, root=tmp_path)
     assert not target.exists()
 
 
@@ -72,7 +72,9 @@ def test_scaffold_write_refuses_symlinked_parent(tmp_path: Path) -> None:
     real.mkdir()
     (tmp_path / "linkdir").symlink_to(real)
     with pytest.raises(OSError):
-        tools._write_text_nofollow(tmp_path / "linkdir" / "f.json", "x", overwrite=True)
+        tools._write_text_nofollow(
+            tmp_path / "linkdir" / "f.json", "x", overwrite=True, root=tmp_path
+        )
     assert not (real / "f.json").exists()
 
 
@@ -88,10 +90,10 @@ def test_scaffold_eval_race_symlink_inserted_after_check(
     link = ws / ("eval.draft.jsonl" + tools._EVAL_MANIFEST_SUFFIX)
     real_write = tools._write_text_nofollow
 
-    def racing(path: Path, text: str, *, overwrite: bool) -> None:
+    def racing(path: Path, text: str, *, overwrite: bool, **kw: object) -> None:
         if str(path).endswith(tools._EVAL_MANIFEST_SUFFIX):
             link.symlink_to(target)  # inserted after the pre-check
-        real_write(path, text, overwrite=overwrite)
+        real_write(path, text, overwrite=overwrite, **kw)
 
     monkeypatch.setattr(tools, "_write_text_nofollow", racing)
     result = tools.scaffold_eval_tool()
@@ -135,3 +137,56 @@ def test_scaffold_eval_overwrite_does_not_clobber_symlink_target(
 
     assert result["ok"] is False
     assert target.read_text(encoding="utf-8") == "keep"
+
+
+def test_write_refuses_intermediate_dir_swapped_to_symlink(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / "ws").mkdir()
+    (tmp_path / "ws" / "sub").symlink_to(outside)
+    with pytest.raises(OSError):
+        tools._write_text_nofollow(
+            tmp_path / "ws" / "sub" / "f.json",
+            "x",
+            overwrite=True,
+            root=tmp_path / "ws",
+        )
+    assert not (outside / "f.json").exists()
+
+
+def test_write_rejects_path_outside_root(tmp_path: Path) -> None:
+    (tmp_path / "ws").mkdir()
+    with pytest.raises(OSError):
+        tools._write_text_nofollow(
+            tmp_path / "elsewhere.json", "x", overwrite=True, root=tmp_path / "ws"
+        )
+
+
+def test_scaffold_works_without_o_nofollow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows-like platform: no O_NOFOLLOW/O_DIRECTORY; fallback still scaffolds."""
+    import os
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
+    monkeypatch.delattr(os, "O_DIRECTORY", raising=False)
+    result = tools.scaffold_eval_tool()
+    assert result["ok"] is True
+    assert (tmp_path / "eval.draft.jsonl").exists()
+
+
+def test_fallback_still_rejects_symlinked_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
+    monkeypatch.delattr(os, "O_DIRECTORY", raising=False)
+    (tmp_path / ("eval.draft.jsonl" + tools._EVAL_MANIFEST_SUFFIX)).symlink_to(
+        tmp_path / "gone"
+    )
+    result = tools.scaffold_eval_tool()
+    assert result["ok"] is False
+    assert not (tmp_path / "gone").exists()

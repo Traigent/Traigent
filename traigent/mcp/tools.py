@@ -91,20 +91,57 @@ def _optimization_failure(exc: Exception, *, mode: str) -> dict[str, Any]:
     return _failure(message, code="optimization_failed")
 
 
-def _write_text_nofollow(path: Path, text: str, *, overwrite: bool) -> None:
+def _write_text_nofollow(
+    path: Path, text: str, *, overwrite: bool, root: Path | None = None
+) -> None:
     """Write ``text`` without ever following a symlink (#2626).
 
-    Opens with ``O_NOFOLLOW`` so a link inserted after any earlier check is
-    refused at open time (``OSError``), and refuses a symlinked parent. Without
-    ``overwrite`` the open is also ``O_EXCL`` so an existing file is never
-    clobbered.
+    ``root`` is the trusted workspace root (default: the resolved cwd). Where
+    the platform has ``O_NOFOLLOW``, ``O_DIRECTORY`` and ``dir_fd`` support
+    (POSIX), the path is walked from ``root`` one component at a time, each
+    directory opened with ``O_NOFOLLOW`` relative to its parent's fd, and the
+    final file opened relative to the last directory fd, so a symlink swapped
+    in at ANY level after an earlier check is refused (``OSError``). Without
+    ``overwrite`` the final open is also ``O_EXCL``.
+
+    Reduced guarantee (e.g. Windows, no ``O_NOFOLLOW``/``dir_fd``): fall back to
+    ``lstat`` checks of every component under ``root`` followed by a plain
+    ``os.open``. That narrows but cannot close the check-then-open race.
     """
-    if path.parent.is_symlink():
-        raise OSError(f"refusing to write through symlinked directory: {path.parent}")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW
+    root = (root or Path.cwd()).resolve()
+    try:
+        rel_parts = path.relative_to(root).parts
+    except ValueError as exc:
+        raise OSError(f"path escapes the workspace root: {path}") from exc
+    if not rel_parts:
+        raise OSError("refusing to write to the workspace root itself")
+
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    o_directory = getattr(os, "O_DIRECTORY", 0)
+    flags = os.O_WRONLY | os.O_CREAT | no_follow
     flags |= os.O_TRUNC if overwrite else os.O_EXCL
-    fd = os.open(path, flags, 0o644)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+
+    if no_follow and o_directory and os.open in os.supports_dir_fd:
+        dir_flags = os.O_RDONLY | o_directory | no_follow
+        fd = os.open(root, os.O_RDONLY | o_directory)
+        try:
+            for part in rel_parts[:-1]:
+                next_fd = os.open(part, dir_flags, dir_fd=fd)
+                os.close(fd)
+                fd = next_fd
+            file_fd = os.open(rel_parts[-1], flags, 0o644, dir_fd=fd)
+        finally:
+            os.close(fd)
+    else:
+        current = root
+        for part in rel_parts[:-1]:
+            current = current / part
+            if current.is_symlink():
+                raise OSError(f"refusing to write through symlink: {current}")
+        if path.is_symlink():
+            raise OSError(f"refusing to write through symlink: {path}")
+        file_fd = os.open(path, flags, 0o644)
+    with os.fdopen(file_fd, "w", encoding="utf-8") as handle:
         handle.write(text)
 
 
