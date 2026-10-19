@@ -52,6 +52,9 @@ def generate_config(
     """
     file_path = Path(file_path)
     source_code = file_path.read_text()
+    # An unparseable file must fail, not yield a generic recommendation for
+    # code that was never analysed (#2648). SyntaxError propagates.
+    ast.parse(source_code)
 
     # Scope source to the selected function (if specified) so that
     # classification/objectives/safety are not influenced by unrelated
@@ -82,10 +85,7 @@ def _extract_function_source(source: str, function_name: str) -> str:
     ValueError
         If the named function is not found in the source.
     """
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return source
+    tree = ast.parse(source)
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
