@@ -69,6 +69,13 @@ def _is_truthy_env(value: str | None) -> bool:
 # bundled tables by default; TRAIGENT_LITELLM_LIVE_PRICES=1 opts back into
 # the live fetch (e.g. to pick up new-model prices before Traigent's next
 # release). ``setdefault`` so an explicit user value always wins.
+# litellm calls a bare load_dotenv() on import while LITELLM_MODE is "DEV" (its
+# default), ignoring TRAIGENT_SKIP_DOTENV (#2470). Honor the documented opt-out
+# here: LITELLM_MODE=PRODUCTION gates only that dotenv load in litellm, and an
+# explicit user value still wins. Only applied when the user opted out of .env.
+if _is_truthy_env(os.environ.get("TRAIGENT_SKIP_DOTENV")):
+    os.environ.setdefault("LITELLM_MODE", "PRODUCTION")
+
 if not _is_truthy_env(os.environ.get("TRAIGENT_LITELLM_LIVE_PRICES")):
     os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
     os.environ.setdefault("LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS", "True")
