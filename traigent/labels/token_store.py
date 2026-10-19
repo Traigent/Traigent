@@ -55,6 +55,7 @@ ENV_FLAG = "TRAIGENT_TOKEN_STORE_ENABLED"
 KINDS = ("knob", "choice", "metric", "template")
 MAX_ITEMS_PER_OPERATION = 200
 MAX_NAME_CHARS = 4096
+MAX_SPEC_HISTORY = 256
 MAX_COUNT = 2**53 - 1
 FORMAT_VERSION = 1
 
@@ -546,6 +547,7 @@ def _validate_state(state: Any, namespace: TokenNamespace) -> None:
             "op",
             "ordinal",
             "spec",
+            "spec_history",
         }:
             raise _bad()
         if not _valid_item([entry["kind"], entry["parent"], entry["name"]]):
@@ -577,6 +579,7 @@ def _validate_state(state: Any, namespace: TokenNamespace) -> None:
                 entry["ref"] is not None
                 or op["refs"] is not None
                 or entry["spec"] is not None
+                or entry["spec_history"] != []
             ):
                 raise _bad()
         else:
@@ -587,6 +590,17 @@ def _validate_state(state: Any, namespace: TokenNamespace) -> None:
                 raise _bad()
             if entry["spec"] is not None and not (
                 isinstance(entry["spec"], str) and _SPEC_REF.fullmatch(entry["spec"])
+            ):
+                raise _bad()
+            history = entry["spec_history"]
+            if (
+                not isinstance(history, list)
+                or len(history) > MAX_SPEC_HISTORY
+                or len(set(map(str, history))) != len(history)
+                or not all(
+                    isinstance(h, str) and _SPEC_REF.fullmatch(h) for h in history
+                )
+                or (history[-1:] or [None])[0] != entry["spec"]
             ):
                 raise _bad()
             if (
@@ -711,7 +725,13 @@ class TokenStore:
 
     @_closed_boundary
     def mark_spec_committed(self, ref: str, search_spec_ref: str) -> None:
-        """S2 -> S3: the spec commit's ``searchspecref_`` is known. Done."""
+        """S2 -> S3, and every later spec of the same token: record the ``searchspecref_``.
+
+        A token reused by a successor spec keeps its identity, label state and revision
+        maximum; each spec commit is recorded separately (the latest one in ``spec`` and the
+        bounded history in ``spec_history``), so successive specs never remint a token or lower
+        a revision. Committing the spec that is already the latest is idempotent.
+        """
         if not isinstance(search_spec_ref, str) or not _SPEC_REF.fullmatch(
             search_spec_ref
         ):
@@ -720,11 +740,20 @@ class TokenStore:
             entry = _find_by_ref(tx.state, ref)
             if entry["state"] == S3_SPEC_COMMITTED and entry["spec"] == search_spec_ref:
                 return
-            if entry["state"] != S2_LABEL_ACKED:
+            if entry["state"] not in (S2_LABEL_ACKED, S3_SPEC_COMMITTED):
                 raise TokenStoreError(TOKEN_STATE_INVALID)
+            history = [h for h in entry["spec_history"] if h != search_spec_ref]
+            history.append(search_spec_ref)
             entry["state"] = S3_SPEC_COMMITTED
             entry["spec"] = search_spec_ref
+            entry["spec_history"] = history[-MAX_SPEC_HISTORY:]
             tx.write()
+
+    @_closed_boundary
+    def spec_commits(self, ref: str) -> list[str]:
+        """The recorded spec commits of ``ref``, oldest first (the last is the latest)."""
+        with self.locked() as tx:
+            return list(_find_by_ref(tx.state, ref)["spec_history"])
 
 
 def _find_by_ref(state: dict[str, Any], ref: str) -> dict[str, Any]:
@@ -939,6 +968,7 @@ def _journal(tx: _Locked, namespace: TokenNamespace, items: list[list[Any]]) -> 
             "op": op_key,
             "ordinal": ordinal,
             "spec": None,
+            "spec_history": [],
         }
     tx.write()
     return op_key

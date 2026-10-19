@@ -881,6 +881,47 @@ def test_full_journal_walk_and_illegal_transitions(server):
     assert TokenStore(ns()).state_of(ref) == "spec_committed"
 
 
+def test_successive_specs_for_a_reused_token_are_recorded_without_remint(server):
+    """K7: S3 must not block the next spec of a stable token."""
+    store = TokenStore(ns())
+    ref = ensure_tokens(ns(), knobs("alpha"), transport=server)[("knob", None, "alpha")]
+    store.mark_label_acked(ref, 3)
+    spec_a, spec_b = "searchspecref_" + "a" * 32, "searchspecref_" + "b" * 32
+    store.mark_spec_committed(ref, spec_a)
+    assert ensure_tokens(ns(), knobs("alpha"), transport=server)[
+        ("knob", None, "alpha")
+    ] == ref
+    store.mark_spec_committed(ref, spec_b)  # second spec, same token
+    store.mark_spec_committed(ref, spec_b)  # same spec: idempotent
+    assert store.state_of(ref) == "spec_committed"
+    assert store.revision_of(ref) == 3  # never lowered
+    assert store.spec_commits(ref) == [spec_a, spec_b]
+    assert len(server.calls) == 1  # no remint, no second request
+    store.mark_spec_committed(ref, spec_a)  # an older spec re-committed becomes latest
+    assert store.spec_commits(ref) == [spec_b, spec_a]
+    # survives reload and whole-file re-validation
+    assert TokenStore(ns()).spec_commits(ref) == [spec_b, spec_a]
+    assert _state_on_disk()["tokens"][next(iter(_state_on_disk()["tokens"]))]["spec"] == spec_a
+
+
+def test_inconsistent_spec_history_is_refused_whole(server):
+    store = TokenStore(ns())
+    ref = ensure_tokens(ns(), knobs("alpha"), transport=server)[("knob", None, "alpha")]
+    store.mark_label_acked(ref, 1)
+    store.mark_spec_committed(ref, "searchspecref_" + "a" * 32)
+    raw = store_file(ns()).read_bytes()
+    state = json.loads(raw[1:])
+    entry = next(iter(state["tokens"].values()))
+    for history in ([], ["searchspecref_" + "b" * 32], ["not-a-ref"], "x"):
+        bad = copy.deepcopy(state)
+        next(iter(bad["tokens"].values()))["spec_history"] = history
+        store_file(ns()).write_bytes(ts._serialize(bad))
+        with pytest.raises(TokenStoreError) as err:
+            TokenStore(ns()).state_of(ref)
+        assert err.value.code == "token_map_not_persisted"
+    assert entry["spec"] == "searchspecref_" + "a" * 32
+
+
 def test_stale_revision_without_a_reader_becomes_label_conflict_unverified(server):
     store = TokenStore(ns())
     got = ensure_tokens(ns(), knobs("alpha", "beta"), transport=server)
