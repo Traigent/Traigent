@@ -1884,7 +1884,10 @@ def export(
             "Use 'traigent results' to see available results"
         ) from e
     except Exception as e:
-        raise click.ClickException(f"Error exporting result: {e}") from e
+        raise click.ClickException(
+            f"Error exporting result ({type(e).__name__}); re-run with the "
+            "result name and storage dir checked."
+        ) from e
 
 
 @cli.command()
