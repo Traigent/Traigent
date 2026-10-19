@@ -5383,6 +5383,9 @@ class OptimizationOrchestrator:
                         "(TRAIGENT_FALLBACK_TRIAL_LIMIT). Pass max_trials=... to "
                         "run more."
                     )
+            zero_trial = getattr(enforcer, "zero_trial_stop_detail", None)
+            if callable(zero_trial) and (detail := zero_trial(trials)):
+                return str(detail)
             return f"Stopped at {trials} trials: the cost limit was reached."
         if reason == "max_samples_reached":
             return f"Stopped at {trials} trials: max_total_examples reached."

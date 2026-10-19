@@ -2094,3 +2094,37 @@ def test_budget_block_message_keeps_fallback_prefix_when_trial_cap_hit_2675():
         p = e.acquire_permit()
         e.track_cost(None, permit=p)
     assert "fallback trial limit 2 reached at 2 trials" in e.budget_block_message(5)
+
+
+def test_zero_trial_cost_limit_stop_names_limit_and_reservation_2671():
+    """#2671: a cost_limit stop before any trial must say why and how to proceed."""
+    from types import SimpleNamespace
+
+    from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig
+    from traigent.core.orchestrator import OptimizationOrchestrator
+
+    enforcer = CostEnforcer(
+        CostEnforcerConfig(limit=0.002, estimated_cost_per_trial=0.05)
+    )
+    orch = SimpleNamespace(
+        _stop_reason="cost_limit", _trials=[], cost_enforcer=enforcer
+    )
+    detail = OptimizationOrchestrator._describe_stop(orch)
+    assert detail is not None
+    assert "$0.0020" in detail
+    assert "$0.0500" in detail
+    assert "Raise cost_limit" in detail
+
+
+def test_cost_limit_stop_after_trials_keeps_generic_detail_2671():
+    from types import SimpleNamespace
+
+    from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig
+    from traigent.core.orchestrator import OptimizationOrchestrator
+
+    enforcer = CostEnforcer(CostEnforcerConfig(limit=1.0))
+    orch = SimpleNamespace(
+        _stop_reason="cost_limit", _trials=[1], cost_enforcer=enforcer
+    )
+    detail = OptimizationOrchestrator._describe_stop(orch)
+    assert detail == "Stopped at 1 trials: the cost limit was reached."
