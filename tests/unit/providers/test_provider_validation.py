@@ -13,6 +13,7 @@ Tests cover:
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 import sys
 import threading
 from types import SimpleNamespace
@@ -158,7 +159,7 @@ class TestValidateModelNames:
 
     def test_all_valid_anthropic_models(self):
         """Test validation with all known Anthropic models."""
-        models = ["claude-haiku-4-5-20251001", "claude-sonnet-4-20250514"]
+        models = ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"]
         valid, unknown = validate_model_names(models, "anthropic")
         assert valid == models
         assert unknown == []
@@ -1375,3 +1376,40 @@ class TestValidateProvidersDocContractMatchesReality:
             )
             def sample(model: str) -> str:
                 return model
+
+
+class TestKnownModelsFollowBundledPriceTable:
+    """#2651 review: retired ids are unknown, current ids are known."""
+
+    def test_retired_claude_sonnet_4_is_unknown_current_is_known(self):
+        valid, unknown = validate_model_names(
+            ["claude-sonnet-4-6", "claude-sonnet-4-20250514"], "anthropic"
+        )
+        assert valid == ["claude-sonnet-4-6"]
+        assert unknown == ["claude-sonnet-4-20250514"]
+
+    def test_every_listed_id_with_a_table_entry_is_not_past_deprecation(self):
+        import json
+        from datetime import date
+
+        import litellm
+
+        path = Path(litellm.__file__).parent / (
+            "model_prices_and_context_window_backup.json"
+        )
+        table = json.loads(path.read_text())
+        today = date(2026, 10, 20)
+        for provider in ("anthropic", "openai"):
+            for model in _KNOWN_MODELS[provider]:
+                dep = (table.get(model) or {}).get("deprecation_date")
+                if dep:
+                    assert date.fromisoformat(dep) >= today, (model, dep)
+
+    def test_current_table_ids_are_known(self):
+        valid, unknown = validate_model_names(
+            ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5", "claude-opus-4-8"],
+            "anthropic",
+        )
+        assert unknown == [], unknown
+        valid, unknown = validate_model_names(["gpt-5.4-nano", "gpt-5.4"], "openai")
+        assert unknown == [], unknown

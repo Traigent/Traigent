@@ -95,15 +95,31 @@ _LITELLM_PREFIX_PATTERN = re.compile(r"^([a-z][a-z0-9_]*)[:/](.+)$")
 _KNOWN_MODELS: dict[str, frozenset[str]] = {
     "openai": frozenset(
         {
+            # Ids come from the bundled litellm price table; ids whose
+            # deprecation_date has passed are dropped (#2651).
             "gpt-3.5-turbo",
             "gpt-4",
             "gpt-4-turbo",
             "gpt-4o",
             "gpt-4o-mini",
+            "gpt-4.1",
+            "gpt-4.1-mini",
             "gpt-4.1-nano",
+            "gpt-5",
+            "gpt-5-mini",
             "gpt-5-nano",
             "gpt-5.1",
             "gpt-5.2",
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "gpt-5.4-nano",
+            "gpt-5.5",
+            "gpt-5.6",
+            "gpt-5.6-luna",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-6-astra",
+            "o3",
             # Retired o1-preview / o1-mini pruned (#1936/#1937).
             "o3-mini",
         }
@@ -116,16 +132,28 @@ _KNOWN_MODELS: dict[str, frozenset[str]] = {
             "claude-opus-4-8",
             "claude-sonnet-4-6",
             "claude-haiku-4-5-20251001",
-            # Claude 4 series (2025)
-            "claude-sonnet-4-20250514",
-            "claude-opus-4-20250514",
-            # Claude 3.7 Sonnet retired 2026-02-19 (#2646).
+            # Ids from the bundled litellm price table with no past
+            # deprecation_date (#2651). Retired claude-sonnet-4-20250514,
+            # claude-opus-4-20250514 (2026-06-15), claude-opus-4-1 (2026-08-05),
+            # claude-3-7-sonnet, claude-3-opus, claude-3-haiku are dropped.
+            "claude-haiku-4-5",
+            "claude-sonnet-4-5",
+            "claude-sonnet-4-5-20250929",
+            "claude-sonnet-5",
+            "claude-opus-4-5",
+            "claude-opus-4-5-20251101",
+            "claude-opus-4-6",
+            "claude-opus-4-6-20260205",
+            "claude-opus-4-7",
+            "claude-opus-4-7-20260416",
+            "claude-opus-5",
+            "claude-fable-5",
+            "claude-fable-5-1",
+            "claude-mythos-5",
+            "claude-mythos-5-1",
             # Claude 3.5 series (2024)
             "claude-3-5-sonnet-20241022",
             "claude-3-5-haiku-20241022",
-            # Claude 3 series (2024). Retired claude-3-opus-20240229 pruned
-            # (#1936/#1937); claude-3-haiku-20240307 retired 2026-04-20
-            # (#2646/#2651).
             "claude-3-sonnet-20240229",
         }
     ),
