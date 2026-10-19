@@ -38,6 +38,7 @@ place they exist.
 from __future__ import annotations
 
 import contextlib
+import errno
 import functools
 import hashlib
 import json
@@ -45,6 +46,8 @@ import os
 import re
 import secrets
 import stat
+import threading
+import time
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,6 +59,10 @@ KINDS = ("knob", "choice", "metric", "template")
 MAX_ITEMS_PER_OPERATION = 200
 MAX_NAME_CHARS = 4096
 MAX_SPEC_HISTORY = 256
+#: Longest a caller waits for a namespace lock held by someone else (then ``token_store_busy``).
+LOCK_TIMEOUT_SECONDS = 10.0
+#: Wall-clock bound for everything done while the lock is held (auth + every request).
+OPERATION_DEADLINE_SECONDS = 60.0
 MAX_COUNT = 2**53 - 1
 FORMAT_VERSION = 1
 
@@ -81,6 +88,8 @@ TOKEN_REFS_SERVER_ERROR = "token_refs_server_error"
 TOKEN_REFS_TRANSPORT_FAILED = "token_refs_transport_failed"
 TOKEN_REFS_RESPONSE_INVALID = "token_refs_response_invalid"
 LABEL_CONFLICT_UNVERIFIED = "label_conflict_unverified"
+TOKEN_STORE_BUSY = "token_store_busy"
+TOKEN_STORE_DEADLINE_EXCEEDED = "token_store_deadline_exceeded"
 TOKEN_STORE_INTERNAL = "token_store_internal"
 
 CODES = frozenset(
@@ -105,6 +114,8 @@ CODES = frozenset(
         TOKEN_REFS_TRANSPORT_FAILED,
         TOKEN_REFS_RESPONSE_INVALID,
         LABEL_CONFLICT_UNVERIFIED,
+        TOKEN_STORE_BUSY,
+        TOKEN_STORE_DEADLINE_EXCEEDED,
         TOKEN_STORE_INTERNAL,
     }
 )
@@ -306,42 +317,188 @@ def _key(kind: str, parent_ref: str | None, name: str) -> str:
     )
 
 
-def _ensure_dir(path: Path) -> None:
-    """Create the 0700 store directory, or verify an existing one (never repaired)."""
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+def _fault_point(name: str) -> None:
+    """Named boundaries inside the filesystem layer; a no-op (tests inject faults here)."""
+
+
+class _Anchor:
+    """A validated directory descriptor for the store directory.
+
+    Every lock, read, temp, replace and unlink goes through ``fd`` (``dir_fd=``), so they
+    all act on the one directory that passed validation even if a path component is
+    swapped afterwards. ``path`` is only used to re-check that the name still denotes it.
+    """
+
+    def __init__(self, fd: int, path: str) -> None:
+        self.fd = fd
+        self.path = path
+
+    def close(self) -> None:
+        with contextlib.suppress(OSError):
+            os.close(self.fd)
+
+    def verify(self) -> None:
+        """Refuse unless ``path`` still names the directory ``fd`` was validated as."""
         try:
-            os.mkdir(path, 0o700)
-        except FileExistsError:
-            pass
-        else:
-            os.chmod(
-                path, 0o700
-            )  # our own new directory: defeat a restrictive umask only
-        info = os.lstat(path)
+            mine = os.fstat(self.fd)
+            named = os.lstat(self.path)
+        except OSError:
+            raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS) from None
+        if (
+            not stat.S_ISDIR(named.st_mode)
+            or (named.st_ino, named.st_dev) != (mine.st_ino, mine.st_dev)
+            or mine.st_nlink == 0
+        ):
+            raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS)
+
+
+@dataclass(frozen=True)
+class _Place:
+    """A file name inside an :class:`_Anchor` directory."""
+
+    anchor: _Anchor
+    name: str
+
+
+def _require_dirfd_support() -> None:
+    """Fail closed where descriptor-relative operations are unavailable."""
+    supported = (
+        hasattr(os, "O_DIRECTORY")
+        and hasattr(os, "O_NOFOLLOW")
+        and {os.open, os.mkdir, os.unlink, os.rename, os.stat} <= os.supports_dir_fd
+        and os.scandir in os.supports_fd
+    )
+    if not supported:
+        raise TokenStoreError(TOKEN_MAP_NOT_PERSISTED)
+
+
+def _own_private_group(gid: int) -> bool:
+    """True when ``gid`` is this process's own group and nobody else is a member of it.
+
+    The usual per-user private group (Ubuntu/Fedora, umask 002) makes every directory the SDK
+    creates group-writable, but no other principal can use that bit. A shared group never
+    qualifies.
+    """
+    try:
+        import grp
+        import pwd
+
+        if gid != os.getegid():
+            return False
+        me = pwd.getpwuid(os.geteuid()).pw_name
+        group = grp.getgrgid(gid)
+        if any(member != me for member in group.gr_mem):
+            return False
+        # a user whose primary group is this gid but who is not us would also share it
+        return all(u.pw_uid == os.geteuid() for u in pwd.getpwall() if u.pw_gid == gid)
+    except (ImportError, KeyError, OSError):
+        return False
+
+
+def _trusted_dir(info: os.stat_result) -> bool:
+    """Owned by us or root and not writable by anyone else.
+
+    World-writable only if sticky and owned by us/root (``/tmp``); group-writable only if the
+    group is our own private group (:func:`_own_private_group`).
+    """
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, os.geteuid()):
+        return False
+    if info.st_mode & stat.S_ISVTX:
+        return True  # sticky: only an entry's owner (or the directory's) may rename or remove it
+    if info.st_mode & 0o002:
+        return False
+    return not (info.st_mode & 0o020 and not _own_private_group(info.st_gid))
+
+
+def _open_dir_nofollow(name: str, parent_fd: int) -> int:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    try:
+        return os.open(name, flags, dir_fd=parent_fd)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.ENOTDIR):  # a symlink or a non-directory
+            raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS) from None
+        raise
+
+
+def _open_anchor() -> _Anchor:
+    """Walk the state-root chain by descriptors, creating (and durably linking) what is missing.
+
+    The configured path is resolved once; below that, every component is opened with
+    ``O_DIRECTORY | O_NOFOLLOW`` relative to its parent and must be trusted (owned by this
+    user or root, not group/world-writable, never a symlink). A component created here is
+    ``0700`` and its parent directory is fsynced so the new entry survives power loss BEFORE
+    anything depends on it. The final ``token_store`` directory must be ours and ``0700``;
+    it is never repaired.
+    """
+    _require_dirfd_support()
+    # resolve the configured state root once; the store directory itself is never resolved
+    root = os.path.join(
+        os.path.realpath(os.path.abspath(_state_root())), _STORE_DIRNAME
+    )
+    parts = [p for p in root.split(os.sep) if p]
+    fd = os.open(os.sep, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for index, part in enumerate(parts):
+            created = False
+            try:
+                child = _open_dir_nofollow(part, fd)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(part, 0o700, dir_fd=fd)
+                    created = True
+                except FileExistsError:
+                    pass
+                child = _open_dir_nofollow(part, fd)
+            try:
+                info = os.fstat(child)
+                if created:
+                    os.fchmod(
+                        child, 0o700
+                    )  # our own new directory: defeat a restrictive umask
+                    os.fsync(child)
+                    os.fsync(fd)  # link the new entry into its parent durably
+                    info = os.fstat(child)
+                last = index == len(parts) - 1
+                if last:
+                    if (
+                        info.st_uid != os.geteuid()
+                        or stat.S_IMODE(info.st_mode) & 0o077
+                    ):
+                        raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS)
+                elif not _trusted_dir(info):
+                    raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS)
+            except BaseException:
+                os.close(child)
+                raise
+            os.close(fd)
+            fd = child
+        anchor = _Anchor(fd, root)
+        fd = -1
+        return anchor
+    except TokenStoreError:
+        raise
     except OSError:
         raise TokenStoreError(TOKEN_MAP_NOT_PERSISTED) from None
-    if (
-        not stat.S_ISDIR(info.st_mode)
-        or info.st_uid != os.geteuid()
-        or stat.S_IMODE(info.st_mode) & 0o077
-    ):
-        raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS)
-
-
-def _fsync_dir(path: Path) -> None:
-    fd = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(fd)
     finally:
-        os.close(fd)
+        if fd != -1:
+            os.close(fd)
 
 
-def _write_atomic(path: Path, payload: bytes) -> None:
-    """Durably replace ``path``: temp (0600) + fsync + ``os.replace`` + directory fsync."""
-    tmp = path.with_name(f"{path.name}.tmp{os.getpid()}.{secrets.token_hex(4)}")
+def _write_atomic(place: _Place, payload: bytes) -> None:
+    """Durably replace the file: temp (0600) + fsync + ``os.replace`` + directory fsync.
+
+    All steps are relative to the validated directory descriptor.
+    """
+    anchor, name = place.anchor, place.name
+    tmp = f"{name}.tmp{os.getpid()}.{secrets.token_hex(4)}"
     try:
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        anchor.verify()
+        fd = os.open(
+            tmp,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=anchor.fd,
+        )
         try:
             os.fchmod(fd, 0o600)
             with os.fdopen(fd, "wb") as handle:
@@ -352,26 +509,51 @@ def _write_atomic(path: Path, payload: bytes) -> None:
         finally:
             if fd != -1:
                 os.close(fd)
-        os.replace(tmp, path)
-        _fsync_dir(path.parent)
+        _fault_point("after_payload_flush")
+        anchor.verify()
+        os.replace(tmp, name, src_dir_fd=anchor.fd, dst_dir_fd=anchor.fd)
+        os.fsync(anchor.fd)
     except BaseException as exc:
         with contextlib.suppress(OSError):
-            os.unlink(tmp)
+            os.unlink(tmp, dir_fd=anchor.fd)
         if isinstance(exc, Exception):
+            if isinstance(exc, TokenStoreError):
+                raise
             raise TokenStoreError(TOKEN_MAP_NOT_PERSISTED) from None
         raise
 
 
+def _remove_stale_temps(place: _Place) -> None:
+    """Delete abandoned temp files of THIS namespace (a writer died between flush and replace).
+
+    Called under the namespace lock, so no live writer of this namespace exists. Only the
+    exact temp naming of this store file matches; nothing else in the directory is touched.
+    """
+    pattern = re.compile(rf"^{re.escape(place.name)}\.tmp[0-9]+\.[0-9a-f]{{8}}$")
+    try:
+        with os.scandir(place.anchor.fd) as entries:
+            stale = [e.name for e in entries if pattern.fullmatch(e.name)]
+        for name in stale:
+            os.unlink(name, dir_fd=place.anchor.fd)
+    except OSError:
+        raise TokenStoreError(TOKEN_MAP_NOT_PERSISTED) from None
+
+
 @contextlib.contextmanager
-def _exclusive_lock(path: Path) -> Iterator[None]:
-    """Cross-process exclusive lock on ``<store>.lock``; fails closed without ``fcntl``."""
+def _exclusive_lock(anchor: _Anchor, name: str, timeout: float) -> Iterator[None]:
+    """Cross-process exclusive lock on ``<name>`` in the anchored directory.
+
+    Bounded: tries without blocking until ``timeout`` elapses, then ``token_store_busy``.
+    Fails closed without ``fcntl``. After acquiring, the anchor is re-verified.
+    """
     try:
         import fcntl
     except ImportError:  # no advisory locks on this platform: fail closed
         raise TokenStoreError(TOKEN_MAP_NOT_PERSISTED) from None
-    lock_path = path.with_suffix(".lock")
     try:
-        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        fd = os.open(
+            name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=anchor.fd
+        )
     except OSError:
         raise TokenStoreError(TOKEN_MAP_NOT_PERSISTED) from None
     try:
@@ -382,10 +564,21 @@ def _exclusive_lock(path: Path) -> Iterator[None]:
             or stat.S_IMODE(info.st_mode) & 0o077
         ):
             raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-        except OSError:
-            raise TokenStoreError(TOKEN_MAP_NOT_PERSISTED) from None
+        give_up = time.monotonic() + max(0.0, timeout)
+        delay = 0.005
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= give_up:
+                    raise TokenStoreError(TOKEN_STORE_BUSY) from None
+                time.sleep(delay)
+                delay = min(delay * 2, 0.1)
+            except OSError:
+                raise TokenStoreError(TOKEN_MAP_NOT_PERSISTED) from None
+        _fault_point("after_lock")
+        anchor.verify()
         yield
     finally:
         os.close(fd)  # closing the descriptor releases the lock
@@ -400,10 +593,10 @@ def _empty_state(namespace: TokenNamespace) -> dict[str, Any]:
     }
 
 
-def _read_state(path: Path, namespace: TokenNamespace) -> dict[str, Any]:
+def _read_state(place: _Place, namespace: TokenNamespace) -> dict[str, Any]:
     """The validated state, a fresh empty one if the file does not exist, or a closed refusal."""
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(place.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=place.anchor.fd)
     except FileNotFoundError:
         return _empty_state(namespace)
     except OSError:
@@ -624,12 +817,14 @@ def _validate_state(state: Any, namespace: TokenNamespace) -> None:
 class _Locked:
     """The namespace's state while its lock is held; ``write`` persists durably."""
 
-    def __init__(self, path: Path, state: dict[str, Any]) -> None:
-        self.path = path
+    def __init__(self, place: _Place, state: dict[str, Any], deadline: float) -> None:
+        self.place = place
         self.state = state
+        #: ``time.monotonic()`` instant by which everything under this lock must be done
+        self.deadline = deadline
 
     def write(self) -> None:
-        _write_atomic(self.path, _serialize(self.state))
+        _write_atomic(self.place, _serialize(self.state))
 
 
 class TokenStore:
@@ -642,11 +837,30 @@ class TokenStore:
         self.path = store_path(namespace)
 
     @contextlib.contextmanager
-    def locked(self) -> Iterator[_Locked]:
+    def locked(self, *, deadline_seconds: float | None = None) -> Iterator[_Locked]:
         _require_enabled()
-        _ensure_dir(self.path.parent)
-        with _exclusive_lock(self.path):
-            yield _Locked(self.path, _read_state(self.path, self.namespace))
+        started = time.monotonic()
+        anchor = _open_anchor()
+        try:
+            name = self.path.name
+            _fault_point("after_validate")
+            with _exclusive_lock(
+                anchor, f"{self.namespace.digest}.lock", LOCK_TIMEOUT_SECONDS
+            ):
+                place = _Place(anchor, name)
+                _remove_stale_temps(place)
+                yield _Locked(
+                    place,
+                    _read_state(place, self.namespace),
+                    started
+                    + (
+                        OPERATION_DEADLINE_SECONDS
+                        if deadline_seconds is None
+                        else deadline_seconds
+                    ),
+                )
+        finally:
+            anchor.close()
 
     # -- reads -------------------------------------------------------------------------
 
@@ -850,6 +1064,39 @@ def _wire_body(
     }
 
 
+def _call_with_deadline(
+    transport: TokenRefsTransport, body: dict[str, Any], deadline: float
+) -> tuple[int, Any]:
+    """Run ``transport(body)`` (auth included) but give up at ``deadline`` (monotonic).
+
+    The call runs in a daemon thread so a stalled transport cannot hold the namespace lock
+    past the deadline; on timeout the call is abandoned (its result, if it ever arrives, is
+    discarded) and ``token_store_deadline_exceeded`` is raised with S0 intact, so a retry
+    re-sends the same operation_key. Any ``BaseException`` the callable raises is re-raised
+    here unchanged, exactly as if it had been called inline.
+    """
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TokenStoreError(TOKEN_STORE_DEADLINE_EXCEEDED)
+    box: list[Any] = []
+
+    def run() -> None:
+        try:
+            box.append((True, transport(body)))
+        except BaseException as exc:  # noqa: BLE001 - relayed to the caller below
+            box.append((False, exc))
+
+    worker = threading.Thread(target=run, name="token-refs-issue", daemon=True)
+    worker.start()
+    worker.join(remaining)
+    if worker.is_alive() or not box:
+        raise TokenStoreError(TOKEN_STORE_DEADLINE_EXCEEDED)
+    ok, value = box[0]
+    if not ok:
+        raise value
+    return value  # type: ignore[no-any-return]
+
+
 def _issue(
     tx: _Locked,
     namespace: TokenNamespace,
@@ -861,7 +1108,7 @@ def _issue(
     body = _wire_body(namespace, op_key, op["items"])
     outcome: TokenStoreError | None = None
     try:
-        status, payload = transport(body)
+        status, payload = _call_with_deadline(transport, body, tx.deadline)
     except TokenStoreError as exc:
         outcome = exc
     except Exception:  # noqa: BLE001 - a transport error can quote a URL or header
@@ -1006,6 +1253,7 @@ def ensure_tokens(
     requests: Sequence[TokenRequest],
     *,
     transport: TokenRefsTransport,
+    deadline_seconds: float | None = None,
 ) -> dict[TokenRequest, str]:
     """Return the issued ref for each ``(kind, parent_knob_name | None, local_name)``.
 
@@ -1016,13 +1264,16 @@ def ensure_tokens(
     refused, a new key is never minted silently. A ``choice`` needs its parent knob to be in
     the store already (issue knobs in an earlier call). The namespace lock is held for the
     whole call, so concurrent callers of one namespace produce one operation and one token.
+    Acquiring the lock is bounded (``token_store_busy``) and so is everything done under it
+    (``deadline_seconds``, default :data:`OPERATION_DEADLINE_SECONDS`, else
+    ``token_store_deadline_exceeded``); S0 survives a timeout.
     """
     _require_enabled()
     wanted = _validate_requests(requests)
     if not callable(transport):
         raise TokenStoreError(TOKEN_REQUEST_INVALID)
     store = TokenStore(namespace)
-    with store.locked() as tx:
+    with store.locked(deadline_seconds=deadline_seconds) as tx:
         for op_key in [
             k for k, op in tx.state["operations"].items() if op["refs"] is None
         ]:

@@ -458,13 +458,24 @@ def test_non_version_leading_byte_is_corruption_not_a_version(server, byte):
     assert err.value.code == "token_map_not_persisted"
 
 
-def test_stray_temp_file_from_a_torn_write_is_harmless(server):
+def test_stray_temp_file_from_a_torn_write_is_removed_under_the_lock(server):
+    """K6 (this test used to assert the stray temp REMAINS; a hard-killed writer's plaintext
+    temp must not outlive the next open of the namespace)."""
     ensure_tokens(ns(), knobs("a"), transport=server)
     path = store_file(ns())
     stray = path.with_name(path.name + ".tmp99999.deadbeef")
     stray.write_bytes(b"torn")
+    other_ns = store_file(ns(AGENT_B)).name + ".tmp99999.deadbeef"
+    unrelated = [
+        path.parent / other_ns,  # another namespace's temp: never ours to touch
+        path.with_name(path.name + ".tmpX.deadbeef"),  # not the exact naming
+        path.with_name("notes.txt"),
+    ]
+    for f in unrelated:
+        f.write_bytes(b"keep")
     assert ensure_tokens(ns(), knobs("a", "b"), transport=server)
-    assert stray.exists()
+    assert not stray.exists()
+    assert all(f.exists() for f in unrelated)
 
 
 # ------------------------------------------------------------ the flag (off = inert)
@@ -692,7 +703,7 @@ def test_torn_replace_leaves_the_previous_file_intact(server, monkeypatch):
     before = store_file(ns()).read_bytes()
     root = os.environ["TRAIGENT_RESULTS_FOLDER"]
 
-    def torn(src, dst):
+    def torn(src, dst, **kwargs):
         raise SimulatedCrash
 
     monkeypatch.setattr(ts.os, "replace", torn)
@@ -763,6 +774,7 @@ def test_lost_response_then_temporary_404_then_restored_access_resumes_same_key_
 ):
     """K1: the Backend authorizes the agent BEFORE the receipt lookup, so a resumed 404 can
     follow a committed-but-lost issuance; S0 must survive it."""
+
     def committed_but_lost(body):
         server(body)  # the server commits...
         raise ConnectionError(f"reply lost {HEBREW}")  # ...the client never hears
@@ -888,9 +900,10 @@ def test_successive_specs_for_a_reused_token_are_recorded_without_remint(server)
     store.mark_label_acked(ref, 3)
     spec_a, spec_b = "searchspecref_" + "a" * 32, "searchspecref_" + "b" * 32
     store.mark_spec_committed(ref, spec_a)
-    assert ensure_tokens(ns(), knobs("alpha"), transport=server)[
-        ("knob", None, "alpha")
-    ] == ref
+    assert (
+        ensure_tokens(ns(), knobs("alpha"), transport=server)[("knob", None, "alpha")]
+        == ref
+    )
     store.mark_spec_committed(ref, spec_b)  # second spec, same token
     store.mark_spec_committed(ref, spec_b)  # same spec: idempotent
     assert store.state_of(ref) == "spec_committed"
@@ -901,7 +914,10 @@ def test_successive_specs_for_a_reused_token_are_recorded_without_remint(server)
     assert store.spec_commits(ref) == [spec_b, spec_a]
     # survives reload and whole-file re-validation
     assert TokenStore(ns()).spec_commits(ref) == [spec_b, spec_a]
-    assert _state_on_disk()["tokens"][next(iter(_state_on_disk()["tokens"]))]["spec"] == spec_a
+    assert (
+        _state_on_disk()["tokens"][next(iter(_state_on_disk()["tokens"]))]["spec"]
+        == spec_a
+    )
 
 
 def test_inconsistent_spec_history_is_refused_whole(server):
@@ -1261,6 +1277,243 @@ def test_closed_boundary_inside_a_caller_except_does_not_reattach_context(
     assert caught.__cause__ is None and caught.__context__ is None
     text = _chain_text(caught)
     assert HEBREW not in text and EMAIL not in text
+
+
+# ------------------------------------------------ K2/K4/K6/K8: filesystem + time bounds
+
+
+def test_new_directories_are_durably_linked_before_any_request(
+    server, monkeypatch, tmp_path
+):
+    """K2: every newly created component's PARENT is fsynced before the first network call."""
+    events: list[tuple[str, tuple[int, int] | None]] = []
+    real_fsync = os.fsync
+
+    def spy(fd):
+        info = os.fstat(fd)
+        events.append(("fsync", (info.st_dev, info.st_ino)))
+        return real_fsync(fd)
+
+    def transport(body):
+        events.append(("request", None))
+        return server(body)
+
+    monkeypatch.setattr(os, "fsync", spy)
+    state = tmp_path / "state"
+    assert (
+        not state.exists()
+    )  # fresh tree: `state` and `state/token_store` are both new
+    ensure_tokens(ns(), knobs("k"), transport=transport)
+    request_at = events.index(("request", None))
+    before = {ident for kind, ident in events[:request_at] if kind == "fsync"}
+    for parent in (tmp_path, state):  # parent of `state`, parent of `token_store`
+        info = os.stat(parent)
+        assert (info.st_dev, info.st_ino) in before, parent
+
+
+def _swap_in_symlink(monkeypatch, at: str, tmp_path: Path):
+    store_dir = ts._store_dir()
+    decoy = tmp_path / "decoy"
+    decoy.mkdir(mode=0o700)
+    done: list[str] = []
+
+    def fault(name):
+        if name == at and not done:
+            done.append(name)
+            os.rename(store_dir, str(store_dir) + ".orig")
+            os.symlink(decoy, store_dir)
+
+    monkeypatch.setattr(ts, "_fault_point", fault)
+    return decoy, done
+
+
+@pytest.mark.parametrize("at", ["after_validate", "after_lock"])
+def test_directory_swapped_to_a_symlink_is_refused_and_nothing_lands_in_it(
+    server, monkeypatch, tmp_path, at
+):
+    """K4: validated directory descriptor, re-checked after the lock."""
+    ensure_tokens(ns(), knobs("seed"), transport=server)  # the directory exists
+    calls = len(server.calls)
+    decoy, done = _swap_in_symlink(monkeypatch, at, tmp_path)
+    with pytest.raises(TokenStoreError) as err:
+        ensure_tokens(ns(), knobs("victim"), transport=server)
+    assert done == [at]
+    assert err.value.code == "token_store_insecure_permissions"
+    assert list(decoy.iterdir()) == []  # no lock file, temp or store in the substitute
+    assert len(server.calls) == calls  # no request was made
+
+
+def test_preexisting_symlinked_store_directory_is_refused(server, tmp_path):
+    ensure_tokens(ns(), knobs("seed"), transport=server)
+    store_dir = ts._store_dir()
+    decoy = tmp_path / "decoy2"
+    decoy.mkdir(mode=0o700)
+    os.rename(store_dir, str(store_dir) + ".orig")
+    os.symlink(decoy, store_dir)
+    with pytest.raises(TokenStoreError) as err:
+        ensure_tokens(ns(), knobs("k"), transport=server)
+    assert err.value.code == "token_store_insecure_permissions"
+    assert list(decoy.iterdir()) == []
+
+
+def test_world_writable_state_root_is_refused(server, tmp_path):
+    state = tmp_path / "state"
+    state.mkdir()
+    os.chmod(state, 0o777)  # not sticky, other-writable: another actor can swap entries
+    with pytest.raises(TokenStoreError) as err:
+        ensure_tokens(ns(), knobs("k"), transport=server)
+    assert err.value.code == "token_store_insecure_permissions"
+    assert server.calls == []
+    assert stat.S_IMODE(state.stat().st_mode) == 0o777  # never repaired
+
+
+def test_group_writable_state_root_of_a_shared_group_is_refused(
+    server, tmp_path, monkeypatch
+):
+    state = tmp_path / "state"
+    state.mkdir()
+    os.chmod(state, 0o770)
+    monkeypatch.setattr(ts, "_own_private_group", lambda gid: False)
+    with pytest.raises(TokenStoreError) as err:
+        ensure_tokens(ns(), knobs("k"), transport=server)
+    assert err.value.code == "token_store_insecure_permissions"
+    monkeypatch.setattr(ts, "_own_private_group", lambda gid: True)
+    assert ensure_tokens(ns(), knobs("k"), transport=server)
+
+
+def test_platform_without_dir_fd_support_fails_closed(server, monkeypatch):
+    monkeypatch.setattr(os, "supports_dir_fd", set())
+    with pytest.raises(TokenStoreError) as err:
+        ensure_tokens(ns(), knobs("k"), transport=server)
+    assert err.value.code == "token_map_not_persisted"
+    assert server.calls == []
+
+
+_HARD_KILL = """
+import os, sys
+os.environ["TRAIGENT_RESULTS_FOLDER"] = sys.argv[1]
+os.environ["TRAIGENT_TOKEN_STORE_ENABLED"] = "true"
+from traigent.labels import token_store as ts
+ns = ts.TokenNamespace.for_backend(sys.argv[2], sys.argv[3])
+count = {"n": 0}
+def fault(name):
+    if name == "after_payload_flush":
+        count["n"] += 1
+        if count["n"] == 2:   # the S1 write: payload flushed, replace never happens
+            os._exit(137)
+ts._fault_point = fault
+def server(body):
+    return 200, {"refs": ["knobref_" + "ab" * 16]}
+ts.ensure_tokens(ns, [("knob", None, sys.argv[4])], transport=server)
+"""
+
+
+def test_hard_kill_inside_the_write_leaves_no_plaintext_name_after_restart(
+    server, tmp_path
+):
+    """K6: a real process dies after the payload flush; restart removes the stray temp."""
+    import subprocess
+    import sys
+
+    root = tmp_path / "state"
+    proc = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", _HARD_KILL, str(root), ORIGIN, AGENT_A, HEBREW],
+        capture_output=True,
+        timeout=60,
+        check=False,
+        env={**os.environ, "TRAIGENT_RESULTS_FOLDER": str(root)},
+    )
+    assert proc.returncode == 137, proc.stderr
+    store_dir = root / "token_store"
+    leftovers = [f for f in store_dir.iterdir() if ".tmp" in f.name]
+    assert leftovers, "the dying writer should have left its temp behind"
+    assert HEBREW.encode() in leftovers[0].read_bytes()
+    # restart: the namespace is opened again
+    ensure_tokens(ns(), knobs("later"), transport=server)
+    holders = [
+        f for f in root.rglob("*") if f.is_file() and HEBREW.encode() in f.read_bytes()
+    ]
+    assert holders == [store_file(ns())]  # names exist only in the store file
+    assert not [f for f in store_dir.iterdir() if ".tmp" in f.name]
+
+
+def _hold_lock(namespace):
+    import fcntl
+
+    ensure_tokens(namespace, knobs("seed"), transport=FakeServer())
+    lock = store_file(namespace).with_suffix(".lock")
+    fd = os.open(lock, os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    return fd
+
+
+def test_a_stalled_lock_holder_yields_token_store_busy_not_a_hang(server, monkeypatch):
+    """K8: bounded lock acquisition."""
+    import fcntl
+
+    fd = _hold_lock(ns())
+    monkeypatch.setattr(ts, "LOCK_TIMEOUT_SECONDS", 0.3)
+    started = time.monotonic()
+    try:
+        with pytest.raises(TokenStoreError) as err:
+            ensure_tokens(ns(), knobs("k"), transport=server)
+        assert err.value.code == "token_store_busy"
+        assert time.monotonic() - started < 5
+        assert server.calls == []
+        with pytest.raises(TokenStoreError) as err:  # reads are bounded too
+            TokenStore(ns()).conflicted_refs()
+        assert err.value.code == "token_store_busy"
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+    assert ensure_tokens(ns(), knobs("k"), transport=server)
+
+
+def test_a_stalled_transport_hits_the_overall_deadline_and_keeps_s0(server):
+    """K8: auth + request under the lock share one wall-clock deadline."""
+    import threading
+
+    release = threading.Event()
+
+    def stalled(body):
+        release.wait(30)
+        return server(body)
+
+    started = time.monotonic()
+    try:
+        with pytest.raises(TokenStoreError) as err:
+            ensure_tokens(ns(), knobs("k"), transport=stalled, deadline_seconds=0.3)
+        assert err.value.code == "token_store_deadline_exceeded"
+        assert time.monotonic() - started < 10
+    finally:
+        release.set()
+    state = _state_on_disk()
+    assert {e["state"] for e in state["tokens"].values()} == {"intent"}  # S0 kept
+    (key,) = state["operations"]
+    # the lock was released at the deadline: a retry re-sends the SAME key
+    got = ensure_tokens(ns(), knobs("k"), transport=server)
+    assert got
+    assert server.calls[-1]["operation_key"] == key
+
+
+def test_the_deadline_is_shared_across_operations(server):
+    import threading
+
+    gate = threading.Event()
+
+    def slow_then_stall(body):
+        if server.calls:
+            gate.wait(30)
+        time.sleep(0.2)
+        return server(body)
+
+    items = knobs(*[f"k{i}" for i in range(201)])  # two operations
+    try:
+        with pytest.raises(TokenStoreError) as err:
+            ensure_tokens(ns(), items, transport=slow_then_stall, deadline_seconds=0.5)
+        assert err.value.code == "token_store_deadline_exceeded"
+    finally:
+        gate.set()
 
 
 # ---------------------------------------------------------- privacy canary
