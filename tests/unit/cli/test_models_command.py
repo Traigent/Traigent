@@ -308,3 +308,17 @@ def test_alias_and_finetune_ids_are_never_failed_by_live_list(monkeypatch) -> No
         result, payload = _check(monkeypatch, LiveFakeDiscovery(["gpt-4o"]), model)
         assert result.exit_code == 0
         assert payload["verdict"] == "snapshot-only"
+
+
+def test_new_id_listed_live_passes_even_if_snapshot_has_never_heard_of_it(
+    monkeypatch,
+) -> None:
+    """The live catalog is consulted first (#1813 review)."""
+    result, payload = _check(
+        monkeypatch,
+        LiveFakeDiscovery(["claude-sonnet-5-5"], valid=False),
+        "claude-sonnet-5-5",
+    )
+    assert result.exit_code == 0, result.output
+    assert payload["verdict"] == "live"
+    assert payload["valid"] is True

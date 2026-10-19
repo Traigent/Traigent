@@ -577,19 +577,24 @@ _LIVE_NOTE = (
 
 
 def _model_verdict(provider: str, model_id: str, valid: bool, live_ids) -> str:
-    """Classify a --check result: live / not-live / snapshot-only / unknown-shape."""
-    if not valid:
-        return "unknown-shape"
+    """Classify a --check result: live / not-live / snapshot-only / unknown-shape.
+
+    The live catalog, when available, is authoritative: an id it lists is live
+    even if the bundled snapshot/shape rules have not heard of it yet (#1813).
+    Snapshot/shape rules decide only when no live list is available.
+    """
     if provider == "bedrock":
-        return "live"
-    if not live_ids:
-        return "snapshot-only"
-    if model_id in live_ids or f"models/{model_id}" in live_ids:
-        return "live"
-    # Aliases and per-account fine-tunes are not listed by catalog endpoints.
-    if model_id.endswith("-latest") or model_id.startswith("ft:"):
-        return "snapshot-only"
-    return "not-live"
+        return "live" if valid else "unknown-shape"
+    if live_ids:
+        if model_id in live_ids or f"models/{model_id}" in live_ids:
+            return "live"
+        if not valid:
+            return "unknown-shape"
+        # Aliases and per-account fine-tunes are not listed by catalog endpoints.
+        if model_id.endswith("-latest") or model_id.startswith("ft:"):
+            return "snapshot-only"
+        return "not-live"
+    return "snapshot-only" if valid else "unknown-shape"
 
 
 def _live_ids_for(provider: str):
@@ -677,7 +682,7 @@ def models(
             normalized_provider,
             model_id,
             bool(is_valid),
-            _live_ids_for(normalized_provider) if is_valid else None,
+            _live_ids_for(normalized_provider),
         )
         is_valid = verdict in {"live", "snapshot-only"}
 
