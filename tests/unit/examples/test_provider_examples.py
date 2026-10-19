@@ -289,3 +289,32 @@ def test_example_runs_end_to_end_in_mock(module_name):
     assert proc.returncode == 0, f"mock run failed:\n{combined[-2000:]}"
     assert "Trial Results" in combined
     assert "★" in combined
+
+
+def test_demo_cost_approval_is_scoped_to_run_optimization(monkeypatch):
+    """Review #2681: configure_demo_env must not leave process-wide approval."""
+    import os
+
+    from traigent.examples.providers import _demo
+
+    monkeypatch.delenv("TRAIGENT_COST_APPROVED", raising=False)
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    _demo.configure_demo_env({"env_vars": []})
+    assert "TRAIGENT_COST_APPROVED" not in os.environ
+
+    seen = {}
+
+    class _Fn:
+        async def optimize(self, **kw):
+            seen["approved"] = os.environ.get("TRAIGENT_COST_APPROVED")
+
+            class _R:
+                successful_trials = 1
+                trials = 1
+                success_rate = 1.0
+
+            return _R()
+
+    _demo.run_optimization(_Fn())
+    assert seen["approved"] == "true"
+    assert "TRAIGENT_COST_APPROVED" not in os.environ
