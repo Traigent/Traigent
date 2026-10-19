@@ -7,7 +7,7 @@
 # - Response quality (maximize)
 # - Response latency (minimize)
 #
-# Run with: traigent optimize --spec chatbot_optimization.tvl.yml
+# Run with (from repo root): python examples/tvl/tutorials/01_getting_started/run_optimization.py
 
 tvl:
   module: examples.chatbot_quickstart
