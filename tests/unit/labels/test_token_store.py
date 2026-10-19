@@ -1102,6 +1102,43 @@ def test_unexpected_exceptions_are_replaced_by_a_closed_one_without_cause(
     assert err.value.__cause__ is None and err.value.__context__ is None
 
 
+def _chain_text(exc: BaseException) -> str:
+    seen, parts, cur = set(), [], exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        parts.append(repr(cur) + str(cur))
+        cur = cur.__cause__ or cur.__context__
+    parts.append("".join(traceback.format_exception(exc)))
+    return "\n".join(parts)
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_closed_boundary_inside_a_caller_except_does_not_reattach_context(
+    server, monkeypatch, enabled
+):
+    """K5: an enclosing handler's exception (carrying names) must not become __context__."""
+    if not enabled:
+        monkeypatch.setenv(ts.ENV_FLAG, "false")  # a TokenStoreError raised inside
+    else:
+
+        def explode(*a, **k):
+            raise RuntimeError(f"boom {HEBREW} {EMAIL}")
+
+        monkeypatch.setattr(ts, "_write_atomic", explode)  # an unanticipated one
+    caught: TokenStoreError | None = None
+    try:
+        try:
+            raise ValueError(f"caller failure {HEBREW} {EMAIL}")
+        except ValueError:
+            ensure_tokens(ns(), knobs("k"), transport=server)
+    except TokenStoreError as exc:
+        caught = exc
+    assert caught is not None
+    assert caught.__cause__ is None and caught.__context__ is None
+    text = _chain_text(caught)
+    assert HEBREW not in text and EMAIL not in text
+
+
 # ---------------------------------------------------------- privacy canary
 
 

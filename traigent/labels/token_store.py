@@ -145,11 +145,17 @@ def _closed_boundary(func: _F) -> _F:
             error = exc
         except Exception:  # noqa: BLE001 - closed boundary: nothing else may escape
             error = TokenStoreError(TOKEN_STORE_INTERNAL)
-        # raised outside the ``except`` block: inside it the original would be chained
-        error.__cause__ = None
-        error.__context__ = None
-        error.__suppress_context__ = True
-        raise error from None
+        # Raised outside the ``except`` block, then cleared AFTER the raise has chained: when
+        # a caller invokes this inside its own ``except``, the interpreter attaches that
+        # handled exception as ``__context__`` during the raise, so clearing beforehand is
+        # not enough (same pattern as best_config_diagnostics.fs_guard); bare re-raise last.
+        try:
+            raise error from None
+        except TokenStoreError as raised:
+            raised.__cause__ = None
+            raised.__context__ = None
+            raised.__suppress_context__ = True
+            raise
 
     return wrapper  # type: ignore[return-value]
 
