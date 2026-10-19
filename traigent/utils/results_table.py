@@ -433,6 +433,15 @@ def _find_best_trial_index(
     best_trial_id = metadata.get("best_trial_id") or getattr(
         results, "best_trial_id", None
     )
+    # The terminal selector found no ranking-eligible trial: the result has no
+    # winner, so the table must not star one (Traigent#2664).
+    if (
+        best_trial_id is None
+        and getattr(results, "best_config", None) is None
+        and str(getattr(results, "reason_code", None) or "")
+        == "NO_RANKING_ELIGIBLE_TRIALS"
+    ):
+        return None
     best_index = _find_trial_index_by_id(trials, best_trial_id)
     if best_index is not None and _trial_rankable(trials[best_index], metric_names):
         return best_index

@@ -183,6 +183,39 @@ _OBJECTIVE_UNMATCHED_WARNING_CODE = "OBJECTIVE_UNMATCHED"
 # free/unpriceable model run). Sibling of _OBJECTIVE_UNMATCHED_WARNING_CODE
 # (#1691): same register/append/consume mechanism, warning-only (never fatal).
 _OBJECTIVE_INERT_CONSTANT_WARNING_CODE = "OBJECTIVE_INERT_CONSTANT"
+# (#2664): trials were excluded from ranking because the primary objective was
+# present on only some of their examples; named so the run never silently ends
+# with no winner.
+_METRIC_PARTIAL_COVERAGE_WARNING_CODE = "METRIC_PARTIAL_COVERAGE"
+
+
+def _partial_coverage_trials(
+    trials: Sequence[Any], primary_objective: str
+) -> list[tuple[str, int, int]]:
+    """Return (trial_id, present, total) for trials with partial primary coverage."""
+    found: list[tuple[str, int, int]] = []
+    key = primary_objective.strip().lower()
+    for trial in trials:
+        comparability = (getattr(trial, "metadata", None) or {}).get("comparability")
+        if hasattr(comparability, "to_dict"):
+            comparability = comparability.to_dict()
+        if not isinstance(comparability, dict):
+            continue
+        if str(comparability.get("primary_objective", "")).strip().lower() != key:
+            continue
+        codes = comparability.get("warning_codes") or []
+        if "MCI-002" not in codes:
+            continue
+        found.append(
+            (
+                str(getattr(trial, "trial_id", "")),
+                int(comparability.get("examples_with_primary_metric") or 0),
+                int(comparability.get("total_examples") or 0),
+            )
+        )
+    return found
+
+
 # Zero-span tolerance mirroring normalize_value()'s normative epsilon in
 # objectives.py (``abs(max - min) < 1e-9``): an objective whose observed span is
 # below this normalizes to a constant 0.5 on every trial, so its weight becomes a
@@ -5643,6 +5676,22 @@ class OptimizationOrchestrator:
             if result_status == OptimizationStatus.COMPLETED:
                 result_status = OptimizationStatus.FAILED
                 self._status = result_status
+
+        if primary_objective:
+            partial = _partial_coverage_trials(self._trials, primary_objective)
+            if partial:
+                tid, present, total = partial[0]
+                result_warnings.append(
+                    f"{len(partial)} trial(s) excluded from ranking: objective "
+                    f"'{primary_objective}' was reported on only {present}/{total} "
+                    f"examples (e.g. trial {tid}). "
+                    + (
+                        "No winner is declared."
+                        if selection.reason_code == NO_RANKING_ELIGIBLE_TRIALS
+                        else "The winner was chosen among fully covered trials."
+                    )
+                )
+                result_warning_codes.append(_METRIC_PARTIAL_COVERAGE_WARNING_CODE)
 
         # Issue #1832 (sibling of #1691): warn when a declared, weighted,
         # matched objective is uniformly constant across the ranking-eligible

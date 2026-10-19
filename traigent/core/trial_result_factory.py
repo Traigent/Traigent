@@ -199,8 +199,17 @@ def _build_warning_codes(
     return []
 
 
-def _build_fallback_comparability(eval_result: Any) -> dict[str, Any]:
-    """Build comparability metadata when evaluator did not provide one."""
+def _build_fallback_comparability(
+    eval_result: Any, run_primary_objective: str | None = None
+) -> dict[str, Any]:
+    """Build comparability metadata when evaluator did not provide one.
+
+    ``run_primary_objective`` is the run's real primary objective. When given,
+    coverage and eligibility are reported for IT, not for a metric guessed from
+    whatever happens to be present (which reported ``ranking_eligible=True`` for
+    an unrelated token metric while the selector excluded the trial for partial
+    coverage of the real objective; Traigent#2664).
+    """
     total_examples, example_results, has_detailed_example_results = (
         _infer_total_examples(eval_result)
     )
@@ -220,7 +229,10 @@ def _build_fallback_comparability(eval_result: Any) -> dict[str, Any]:
         for metric_name, count in per_metric_counts.items()
     }
 
-    primary_objective = _select_primary_objective(per_metric_counts)
+    if run_primary_objective and run_primary_objective != "unknown":
+        primary_objective = run_primary_objective
+    else:
+        primary_objective = _select_primary_objective(per_metric_counts)
     evaluation_mode = _infer_evaluation_mode(
         has_detailed_example_results,
         per_metric_counts,
@@ -478,7 +490,9 @@ def _reconcile_cost_with_total_cost(metrics: dict[str, Any], trial_id: str) -> N
     )
 
 
-def _extract_success_comparability(eval_result: Any) -> dict[str, Any]:
+def _extract_success_comparability(
+    eval_result: Any, run_primary_objective: str | None = None
+) -> dict[str, Any]:
     """Resolve comparability metadata from evaluator output or fallback synthesis."""
     comparability_payload = _validated_comparability_payload(
         getattr(eval_result, "comparability", None)
@@ -496,7 +510,7 @@ def _extract_success_comparability(eval_result: Any) -> dict[str, Any]:
             if summary_comp is not None:
                 return summary_comp
 
-    return _build_fallback_comparability(eval_result)
+    return _build_fallback_comparability(eval_result, run_primary_objective)
 
 
 def _validated_comparability_payload(
@@ -650,7 +664,9 @@ def build_success_result(
             eval_result.summary_stats
         )
 
-    trial_result.metadata["comparability"] = _extract_success_comparability(eval_result)
+    trial_result.metadata["comparability"] = _extract_success_comparability(
+        eval_result, primary_objective
+    )
 
     # Populate the optimization signal on the trial (issue #1845). Prefer the
     # primary objective's value (what best_config argmaxes); fall back to the
