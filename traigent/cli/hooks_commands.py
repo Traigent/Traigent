@@ -300,12 +300,18 @@ def check(quick: bool) -> None:
     if config_path:
         try:
             loaded = load_hooks_config(config_path)
-            console.print("[green]Configuration valid[/green]")
-            for key, hint in find_unknown_config_keys(loaded.raw_config):
-                msg = f"Unknown config key '{key}' is ignored"
+            unknown = find_unknown_config_keys(loaded.raw_config)
+            for key, hint in unknown:
+                msg = f"Unknown config key '{key}' would be ignored"
                 if hint:
                     msg += f" (did you mean '{hint}'?)"
-                console.print(f"[yellow]Warning: {msg}[/yellow]", markup=True)
+                console.print(f"[red]Error: {msg}[/red]", markup=True)
+            if unknown:
+                console.print("[red]Configuration invalid[/red]")
+                raise SystemExit(1)
+            console.print("[green]Configuration valid[/green]")
+        except SystemExit:
+            raise
         except Exception as e:
             console.print(f"[red]Configuration error: {e}[/red]")
             raise SystemExit(1) from e

@@ -44,15 +44,26 @@ def test_non_mapping_is_not_scanned() -> None:
     assert find_unknown_config_keys({"constraints": ["x"]}) == []
 
 
-def test_check_warns_without_value_and_exits_zero() -> None:
+def test_check_fails_on_unknown_keys_without_value_and_never_says_valid() -> None:
     runner = CliRunner()
     with runner.isolated_filesystem():
         Path("traigent.yml").write_text(
             "constrains:\n  blocked_model: [SECRET-VALUE-123]\n", encoding="utf-8"
         )
         result = runner.invoke(hooks, ["check", "--quick"])
-    assert result.exit_code == 0
-    assert "Configuration valid" in result.output
+    assert result.exit_code == 1
+    assert "Configuration valid" not in result.output
     assert "constrains" in result.output
     assert "constraints" in result.output
     assert "SECRET-VALUE-123" not in result.output
+
+
+def test_check_exits_zero_when_all_keys_known() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        Path("traigent.yml").write_text(
+            "constraints:\n  blocked_models: [x]\n", encoding="utf-8"
+        )
+        result = runner.invoke(hooks, ["check", "--quick"])
+    assert result.exit_code == 0
+    assert "Configuration valid" in result.output
