@@ -8,6 +8,7 @@ defined in traigent.yml.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,19 @@ from traigent.utils.cost_calculator import ESTIMATION_MODEL_PRICING, MODEL_NAME_
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+# Exact prices (USD per token) for ids the SDK itself recommends, taken from the
+# bundled litellm price table. Kept exact so a prefix/alias lookup can never
+# price one of them as an older generation.
+_EXTRA_EXACT_PRICING: dict[str, tuple[float, float]] = {
+    "claude-haiku-4-5-20251001": (1e-06, 5e-06),
+    "claude-haiku-4-5": (1e-06, 5e-06),
+    "claude-sonnet-4-6": (3e-06, 1.5e-05),
+}
+
+# A dated snapshot suffix of the SAME model id: -YYYYMMDD, -YYYY-MM-DD, @YYYYMMDD.
+_SNAPSHOT_SUFFIX = re.compile(r"^[-@](\d{8}|\d{4}-\d{2}-\d{2})$")
 
 
 def _build_model_cost_per_1k() -> dict[str, float]:
@@ -33,6 +47,9 @@ def _build_model_cost_per_1k() -> dict[str, float]:
         ) / 2
         result[model] = avg_per_token * 1000
 
+    for model, (inp, out) in _EXTRA_EXACT_PRICING.items():
+        result.setdefault(model, (inp + out) / 2 * 1000)
+
     # Compatibility aliases are sourced from the canonical pricing module
     # to avoid duplicated alias maps drifting over time.
     for alias, canonical in MODEL_NAME_ALIASES.items():
@@ -45,6 +62,12 @@ def _build_model_cost_per_1k() -> dict[str, float]:
 # Model cost estimates per 1K tokens (input + output average).
 # Derived from the canonical ESTIMATION_MODEL_PRICING in cost_calculator.py.
 MODEL_COST_PER_1K: dict[str, float] = _build_model_cost_per_1k()
+
+# Ids that may be the base of a dated-snapshot match. Family aliases
+# (``claude-haiku``) are exact-only: they must never price another generation.
+_SNAPSHOT_BASES: frozenset[str] = frozenset(ESTIMATION_MODEL_PRICING) | frozenset(
+    _EXTRA_EXACT_PRICING
+)
 
 # Default tokens per query estimate
 DEFAULT_TOKENS_PER_QUERY = 1000
@@ -348,20 +371,21 @@ class AgentValidator:
     def _lookup_cost_per_1k(model: str) -> float | None:
         """Return blended cost per 1K tokens for a model, or None if unpriced.
 
-        Exact match first, then the longest known model name that is a
-        version-style prefix of ``model`` (``gpt-4o-mini-2024-07-18`` ->
-        ``gpt-4o-mini``). Loose substring matches are never used, so an
-        unknown model is reported as unpriced rather than mis-priced.
+        Exact match first, then a dated snapshot of the same model id
+        (``gpt-4o-mini-2024-07-18`` -> ``gpt-4o-mini``,
+        ``claude-haiku-4-5-20260101`` -> ``claude-haiku-4-5``). Family aliases
+        and other-generation ids never match by prefix, so an unknown model is
+        reported as unpriced rather than mis-priced.
         """
         name = model.lower()
         exact = MODEL_COST_PER_1K.get(name)
         if exact is not None:
             return exact
         best: str | None = None
-        for known in MODEL_COST_PER_1K:
+        for known in _SNAPSHOT_BASES:
             if (
                 name.startswith(known)
-                and name[len(known)] in "-:@"
+                and _SNAPSHOT_SUFFIX.match(name[len(known) :])
                 and (best is None or len(known) > len(best))
             ):
                 best = known
