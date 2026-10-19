@@ -288,15 +288,24 @@ def check(quick: bool) -> None:
 
     Performs a lightweight check suitable for pre-commit hooks.
     """
-    from traigent.hooks.config import find_config_file, load_hooks_config
+    from traigent.hooks.config import (
+        find_config_file,
+        find_unknown_config_keys,
+        load_hooks_config,
+    )
 
     # Just verify config can be loaded
     config_path = find_config_file()
 
     if config_path:
         try:
-            load_hooks_config(config_path)
+            loaded = load_hooks_config(config_path)
             console.print("[green]Configuration valid[/green]")
+            for key, hint in find_unknown_config_keys(loaded.raw_config):
+                msg = f"Unknown config key '{key}' is ignored"
+                if hint:
+                    msg += f" (did you mean '{hint}'?)"
+                console.print(f"[yellow]Warning: {msg}[/yellow]", markup=True)
         except Exception as e:
             console.print(f"[red]Configuration error: {e}[/red]")
             raise SystemExit(1) from e

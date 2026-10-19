@@ -27,6 +27,57 @@ logger = get_logger(__name__)
 CONFIG_FILE_NAMES = ["traigent.yml", "traigent.yaml", ".traigent.yml", ".traigent.yaml"]
 
 
+_KNOWN_KEYS: dict[str, set[str]] = {
+    "": {"validation", "constraints"},
+    "validation": {"enabled", "fail_on_warning", "skip_patterns", "hooks"},
+    "constraints": {
+        "cost",
+        "performance",
+        "models",
+        "max_cost_per_query",
+        "max_monthly_budget",
+        "min_accuracy",
+        "max_latency_ms",
+        "allowed_models",
+        "blocked_models",
+    },
+    "constraints.cost": {
+        "max_cost_per_query",
+        "max_monthly_budget",
+        "warn_threshold_pct",
+    },
+    "constraints.performance": {"min_accuracy", "max_latency_ms", "min_success_rate"},
+    "constraints.models": {"allowed", "blocked", "blocked_reasons"},
+}
+
+
+def find_unknown_config_keys(data: Any) -> list[tuple[str, str | None]]:
+    """Return (dotted key path, did-you-mean path or None) for unrecognised keys.
+
+    Only key names are inspected; values are never read into the result.
+    """
+    import difflib
+
+    found: list[tuple[str, str | None]] = []
+
+    def walk(node: Any, prefix: str) -> None:
+        if not isinstance(node, dict):
+            return
+        known = _KNOWN_KEYS[prefix]
+        for key in node:
+            name = str(key)
+            path = f"{prefix}.{name}" if prefix else name
+            if name not in known:
+                near = difflib.get_close_matches(name, sorted(known), n=1, cutoff=0.7)
+                hint = (f"{prefix}.{near[0]}" if prefix else near[0]) if near else None
+                found.append((path, hint))
+            elif path in _KNOWN_KEYS:
+                walk(node[key], path)
+
+    walk(data, "")
+    return found
+
+
 def _first_set(*values: Any) -> Any:
     """Return the first value that is not None (0 counts as set)."""
     for value in values:
@@ -289,21 +340,10 @@ def create_default_config(output_path: Path | str | None = None) -> Path:
 validation:
   enabled: true
   fail_on_warning: false
-  hooks:
-    pre-push:
-      - traigent-validate
-      - traigent-performance
-    pre-commit:
-      - traigent-config-check
 
 constraints:
   # Cost constraints
   max_cost_per_query: 0.05      # $0.05 max per query
-  max_monthly_budget: 1000      # $1000/month limit
-
-  # Performance constraints
-  min_accuracy: 0.85            # 85% minimum accuracy
-  max_latency_ms: 500           # 500ms max response time
 
   # Model constraints
   allowed_models:
@@ -313,18 +353,6 @@ constraints:
     - claude-sonnet-4-6
   blocked_models:
     - gpt-4-32k                 # Too expensive for production
-
-# Environment-specific overrides (optional)
-environments:
-  development:
-    constraints:
-      max_cost_per_query: 0.10  # Higher limit for development
-      min_accuracy: 0.70        # Lower threshold for testing
-
-  production:
-    constraints:
-      max_cost_per_query: 0.03  # Stricter in production
-      min_accuracy: 0.90        # Higher accuracy required
 """
 
     safe_write_text(output_path, default_config, allowed_base, encoding="utf-8")
