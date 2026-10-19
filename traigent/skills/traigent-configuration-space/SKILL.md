@@ -193,9 +193,9 @@ batch = IntRange.batch_size()                     # [1, 64], default 16
 from traigent import Choices
 
 # Model selection
-model = Choices.model()                                   # Balanced: gpt-4o-mini, gpt-4o, claude-3-5-sonnet
+model = Choices.model()                                   # Balanced: gpt-4o-mini, gpt-4o, claude-sonnet-4-6
 model = Choices.model(provider="openai", tier="fast")     # Fast OpenAI: gpt-4o-mini
-model = Choices.model(provider="anthropic", tier="quality")  # Quality Anthropic: claude-3-opus
+model = Choices.model(provider="anthropic", tier="quality")  # Quality Anthropic: claude-opus-4-8
 
 # Prompting and RAG
 strategy = Choices.prompting_strategy()           # direct, chain_of_thought, react, self_consistency

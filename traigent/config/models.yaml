@@ -101,12 +101,15 @@ gemini:
   # Canonical provider name is "google"; this registry keys it under "gemini".
   support_level: validated
   known_models:
-    # Gemini 2.0. Retired/deprecated lines swept (#1936/#1937): the 2.0-exp
+    # Gemini 3.x (priced in the bundled table). gemini-2.0-flash shut down
+    # 2026-06-01 (#2650). Retired/deprecated lines swept (#1936/#1937): the 2.0-exp
     # preview, the deprecated Gemini 1.5 family, and the dead Gemini 1.0
     # family are no longer served by the discovery fallback. Explicit user
     # references to versioned IDs still validate via the pattern below
     # (bare/dead "gemini-pro" intentionally does not).
-    - gemini-2.0-flash
+    - gemini-3.8-flash
+    - gemini-3.7-flash
+    - gemini-3.5-flash-lite
   pattern: "^(gemini-[0-9]|models/gemini-)"
 
 azure_openai:
