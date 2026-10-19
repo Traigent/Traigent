@@ -55,7 +55,6 @@ OBJECTIVES = ObjectiveSchema.from_objectives(
 # Valid model names: https://models.litellm.ai/
 CONFIG_SPACE = {
     "model": [
-        "gpt-3.5-turbo",
         "gpt-4o-mini",
         "gpt-4o",
     ],

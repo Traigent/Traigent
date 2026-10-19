@@ -46,7 +46,7 @@ DATASETS = Path(__file__).parent.parent / "datasets"
 OBJECTIVES = ["accuracy", "cost"]
 # Valid model names: https://models.litellm.ai/
 CONFIG_SPACE = {
-    "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+    "model": ["gpt-4o-mini", "gpt-4o"],
     "temperature": [0.1, 0.5, 0.9],
 }
 
@@ -62,7 +62,7 @@ CONFIG_SPACE = {
 def answer_question(question: str) -> str:
     """Your existing code - Traigent overrides the hardcoded values below."""
     # These hardcoded values will be overridden by Traigent!
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
     try:
         response = llm.invoke(f"Answer: {question}")
         return str(response.content)

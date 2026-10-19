@@ -78,7 +78,6 @@ OBJECTIVES = ObjectiveSchema.from_objectives(
 
 CONFIG_SPACE = {
     "model": [
-        "gpt-3.5-turbo",
         "gpt-4o-mini",
         "gpt-4o",
         "gpt-5.2",
@@ -157,7 +156,7 @@ def rag_agent(question: str) -> str:
     docs = vectorstore.similarity_search(question, k=3)
     context = "\n".join(d.page_content for d in docs)
 
-    model = config.get("model", "gpt-3.5-turbo")
+    model = config.get("model", "gpt-4o-mini")
     temperature = config.get("temperature", 0.3)
     max_tokens = config.get("max_tokens", 100)
     prompt_style = config.get("prompt", "minimal")
