@@ -18,7 +18,8 @@ def test_typo_objective_warns_with_did_you_mean(caplog):
     unmatched = _warn(caplog, ["acuracy"])
     assert unmatched == ["acuracy"]
     text = " ".join(r.getMessage() for r in caplog.records)
-    assert "acuracy" in text and "Did you mean 'accuracy'" in text
+    assert "Did you mean 'accuracy'" in text
+    assert "acuracy" not in text  # customer-chosen names are never echoed
 
 
 def test_builtin_objectives_do_not_warn(caplog):
@@ -35,3 +36,13 @@ def test_any_user_scorer_makes_binding_undecidable(caplog):
     assert _warn(caplog, ["relevance"], {"scores": lambda **_: {}}) == []
     assert _warn(caplog, ["relevance"], None, lambda **_: {}) == []
     assert not caplog.records
+
+
+def test_hostile_objective_name_is_not_echoed(caplog):
+    evil = "x\nINFO forged /home/alice/secret.txt Alice_has_diabetes"
+    unmatched = _warn(caplog, [evil])
+    assert unmatched == [evil]
+    text = " ".join(r.getMessage() for r in caplog.records)
+    assert caplog.records
+    assert "forged" not in text and "alice" not in text.lower()
+    assert "\n" not in text

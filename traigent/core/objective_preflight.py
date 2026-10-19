@@ -47,14 +47,18 @@ def warn_unproducible_objectives(
         return []
     known = sorted(set(CANONICAL_OBJECTIVE_ORIENTATIONS) | _EXTRA_BUILTIN_METRICS)
     unmatched = [str(o) for o in objectives if str(o) not in known]
-    for name in unmatched:
+    # Objective names are customer-chosen text (paths, labels, newlines): never
+    # echo them. Log the ordinal plus, at most, the SDK's own known-name hint.
+    for ordinal, name in enumerate(unmatched, start=1):
         close = get_close_matches(name, known, n=1, cutoff=0.6)
         hint = f" Did you mean '{close[0]}'?" if close else ""
         logger.warning(
-            "Objective '%s' matches no built-in metric and no metric_functions/"
-            "scoring_function is configured, so it can never be measured and the "
-            "run will end OBJECTIVE_UNMATCHED after all trials.%s",
-            name,
+            "Objective #%d of %d unmatched objective(s) matches no built-in metric "
+            "and no metric_functions/scoring_function is configured, so it can "
+            "never be measured and the run will end OBJECTIVE_UNMATCHED after all "
+            "trials.%s",
+            ordinal,
+            len(unmatched),
             hint,
         )
     return unmatched
