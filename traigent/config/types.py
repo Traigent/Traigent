@@ -205,14 +205,9 @@ def _read_bool_env(name: str) -> bool:
 
 
 def is_traigent_offline_requested() -> bool:
-    """Return whether offline local mode is requested via the environment.
+    """Return whether ``TRAIGENT_OFFLINE`` requests zero-egress local mode."""
 
-    ``TRAIGENT_OFFLINE`` and ``TRAIGENT_OFFLINE_MODE`` are aliases: the
-    transport gate (``is_backend_offline``) already honored both, and the
-    execution-policy layer must agree with it (#1773).
-    """
-
-    return _read_bool_env("TRAIGENT_OFFLINE") or _read_bool_env("TRAIGENT_OFFLINE_MODE")
+    return _read_bool_env("TRAIGENT_OFFLINE")
 
 
 def is_content_identity_requested() -> bool:
