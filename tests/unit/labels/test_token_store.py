@@ -52,7 +52,9 @@ class FakeServer:
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
-        self.receipts: dict[str, tuple[str, str]] = {}  # key -> (agent, canonical items)
+        self.receipts: dict[
+            str, tuple[str, str]
+        ] = {}  # key -> (agent, canonical items)
         self.refs: dict[str, list[str]] = {}
         self.knobs: dict[str, str] = {}  # knob ref -> agent
         self.issued = 0
@@ -191,11 +193,15 @@ def test_bad_origin_is_refused_without_echo(bad):
 def test_store_filename_is_a_hash_not_the_agent_or_origin(server):
     ensure_tokens(ns(), knobs("k"), transport=server)
     name = store_file(ns()).name
-    assert name == hashlib.sha256(
-        json.dumps(
-            ["traigent-token-store-ns-v1", ORIGIN, AGENT_A], separators=(",", ":")
-        ).encode()
-    ).hexdigest() + ".json"
+    assert (
+        name
+        == hashlib.sha256(
+            json.dumps(
+                ["traigent-token-store-ns-v1", ORIGIN, AGENT_A], separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+        + ".json"
+    )
     assert AGENT_A not in str(store_file(ns())) and "traigent.test" not in name
 
 
@@ -352,25 +358,37 @@ def _mutations(state: dict[str, Any]) -> dict[str, bytes]:
         "token_missing_field": edit(lambda s: s["tokens"][first_key].pop("name")),
         "token_extra_field": edit(lambda s: s["tokens"][first_key].update(x=1)),
         "token_bad_kind": edit(lambda s: s["tokens"][first_key].update(kind="bogus")),
-        "token_bad_ref": edit(lambda s: s["tokens"][first_key].update(ref="knobref_zz")),
+        "token_bad_ref": edit(
+            lambda s: s["tokens"][first_key].update(ref="knobref_zz")
+        ),
         "token_wrong_ref_for_kind": edit(
             lambda s: s["tokens"][first_key].update(ref="metricref_" + "0" * 32)
         ),
         "token_key_mismatch": edit(
-            lambda s: s["tokens"].update({"[\"knob\",null,\"zzz\"]": s["tokens"].pop(first_key)})
+            lambda s: s["tokens"].update(
+                {'["knob",null,"zzz"]': s["tokens"].pop(first_key)}
+            )
         ),
         "token_bad_state": edit(lambda s: s["tokens"][first_key].update(state="weird")),
         "token_dangling_op": edit(lambda s: s["tokens"][first_key].update(op="f" * 32)),
         "token_bad_ordinal": edit(lambda s: s["tokens"][first_key].update(ordinal=99)),
-        "token_ordinal_bool": edit(lambda s: s["tokens"][first_key].update(ordinal=True)),
+        "token_ordinal_bool": edit(
+            lambda s: s["tokens"][first_key].update(ordinal=True)
+        ),
         "token_name_not_string": edit(lambda s: s["tokens"][first_key].update(name=5)),
         "partial_batch_missing_token": edit(lambda s: s["tokens"].pop(first_key)),
-        "op_refs_wrong_length": edit(lambda s: s["operations"][first_op].update(refs=[])),
-        "op_digest_mismatch": edit(lambda s: s["operations"][first_op].update(digest="0" * 64)),
+        "op_refs_wrong_length": edit(
+            lambda s: s["operations"][first_op].update(refs=[])
+        ),
+        "op_digest_mismatch": edit(
+            lambda s: s["operations"][first_op].update(digest="0" * 64)
+        ),
         "op_items_tampered": edit(
             lambda s: s["operations"][first_op]["items"][0].__setitem__(2, "other")
         ),
-        "op_bad_key": edit(lambda s: s["operations"].update({"nothex": s["operations"].pop(first_op)})),
+        "op_bad_key": edit(
+            lambda s: s["operations"].update({"nothex": s["operations"].pop(first_op)})
+        ),
         "revision_for_unknown_ref": edit(
             lambda s: s["revisions"].update({"knobref_" + "9" * 32: 1})
         ),
@@ -452,7 +470,9 @@ def test_stray_temp_file_from_a_torn_write_is_harmless(server):
 # ------------------------------------------------------------ the flag (off = inert)
 
 
-@pytest.mark.parametrize("value", ["", "false", "0", "no", "yes", "on", "TRUE-ish", "2"])
+@pytest.mark.parametrize(
+    "value", ["", "false", "0", "no", "yes", "on", "TRUE-ish", "2"]
+)
 def test_flag_off_means_no_file_no_dir_no_request(monkeypatch, tmp_path, server, value):
     monkeypatch.setenv(ts.ENV_FLAG, value)
     assert ts.is_enabled() is False
@@ -588,7 +608,7 @@ def test_crash_after_s0_before_the_request_resends_the_same_key_and_batch(server
         ensure_tokens(ns(), ITEMS, transport=crash_transport(server, before=True))
     assert server.calls == []
     state = json.loads(store_file(ns()).read_bytes()[1:])
-    (op_key, op), = state["operations"].items()
+    ((op_key, op),) = state["operations"].items()
     assert op["refs"] is None and len(op["items"]) == 3
     assert {e["state"] for e in state["tokens"].values()} == {"intent"}
     got = ensure_tokens(ns(), ITEMS, transport=server)
@@ -607,9 +627,13 @@ def test_crash_after_response_before_s1_resumes_to_the_same_refs(server, monkeyp
     assert {e["state"] for e in state["tokens"].values()} == {"intent"}
     got = ensure_tokens(ns(), ITEMS, transport=server)
     assert len(server.calls) == 2
-    assert server.calls[0] == server.calls[1]  # same key, same ordered batch, byte for byte
+    assert (
+        server.calls[0] == server.calls[1]
+    )  # same key, same ordered batch, byte for byte
     assert sorted(got.values()) == sorted(issued)
-    assert got[("knob", None, "alpha")] == issued[0]  # ordinal -> ref, in the original order
+    assert (
+        got[("knob", None, "alpha")] == issued[0]
+    )  # ordinal -> ref, in the original order
     _only_one_identity_each(server, 3)
 
 
@@ -687,7 +711,10 @@ def test_operation_key_conflict_on_resume_is_refused_and_never_remints(server):
         ensure_tokens(ns(), ITEMS, transport=crash_transport(server, before=True))
     state = json.loads(store_file(ns()).read_bytes()[1:])
     (op_key,) = state["operations"]
-    server.receipts[op_key] = (AGENT_A, "something else entirely")  # the key was used before
+    server.receipts[op_key] = (
+        AGENT_A,
+        "something else entirely",
+    )  # the key was used before
     before = store_file(ns()).read_bytes()
     for _ in range(2):
         with pytest.raises(TokenStoreError) as err:
@@ -699,13 +726,17 @@ def test_operation_key_conflict_on_resume_is_refused_and_never_remints(server):
 
 def test_resume_batches_every_pending_operation_before_new_work(server):
     with pytest.raises(SimulatedCrash):
-        ensure_tokens(ns(), knobs("one"), transport=crash_transport(server, before=True))
+        ensure_tokens(
+            ns(), knobs("one"), transport=crash_transport(server, before=True)
+        )
     got = ensure_tokens(ns(), knobs("one", "two"), transport=server)
     assert len(got) == 2
     assert server.issued == 2 and len(server.receipts) == 2
 
 
-def test_definitive_server_refusal_abandons_the_intent_so_it_does_not_fail_forever(server):
+def test_definitive_server_refusal_abandons_the_intent_so_it_does_not_fail_forever(
+    server,
+):
     ensure_tokens(ns(), knobs("model"), transport=server)
     server.knobs.clear()  # the server no longer knows the parent: 404 reference_not_found
     with pytest.raises(TokenStoreError) as err:
@@ -859,7 +890,9 @@ class FileServer:
             data["calls"] += 1
             key = body["operation_key"]
             if key not in data["receipts"]:
-                data["receipts"][key] = [f"{i['kind']}ref_{secrets.token_hex(16)}" for i in body["items"]]
+                data["receipts"][key] = [
+                    f"{i['kind']}ref_{secrets.token_hex(16)}" for i in body["items"]
+                ]
             Path(self.path).write_text(json.dumps(data))
             refs = data["receipts"][key]
         time.sleep(self.delay)
@@ -868,7 +901,9 @@ class FileServer:
 
 def _worker(server_path, barrier, queue):
     barrier.wait(30)
-    got = ensure_tokens(ns(), [("knob", None, "shared")], transport=FileServer(server_path, 0.4))
+    got = ensure_tokens(
+        ns(), [("knob", None, "shared")], transport=FileServer(server_path, 0.4)
+    )
     queue.put(got[("knob", None, "shared")])
 
 
@@ -876,7 +911,10 @@ def test_two_processes_ensuring_the_same_key_make_one_operation_and_one_token(tm
     ctx = multiprocessing.get_context("fork")
     barrier, queue = ctx.Barrier(2), ctx.Queue()
     server_path = str(tmp_path / "server.json")
-    procs = [ctx.Process(target=_worker, args=(server_path, barrier, queue)) for _ in range(2)]
+    procs = [
+        ctx.Process(target=_worker, args=(server_path, barrier, queue))
+        for _ in range(2)
+    ]
     for p in procs:
         p.start()
     for p in procs:
@@ -903,8 +941,10 @@ def test_more_than_200_items_split_into_journalled_operations(server):
     assert len(set(keys)) == 3
     state = json.loads(store_file(ns()).read_bytes()[1:])
     assert set(state["operations"]) == set(keys)  # each has its own S0 record
-    assert all(len(op["items"]) == s for op, s in zip(
-        (state["operations"][k] for k in keys), sizes, strict=True))
+    assert all(
+        len(op["items"]) == s
+        for op, s in zip((state["operations"][k] for k in keys), sizes, strict=True)
+    )
     # order is preserved: ordinal i of the first call is names[i]
     first = server.refs[keys[0]]
     assert [got[("knob", None, n)] for n in names[:200]] == first
@@ -967,30 +1007,59 @@ def test_wire_body_is_exactly_the_schema_shape_and_carries_no_name(server):
         ((302, None), "token_refs_response_invalid"),
         ((200, None), "token_refs_response_invalid"),
         ((200, {"refs": []}), "token_refs_response_invalid"),
-        ((200, {"refs": ["knobref_" + "1" * 32], "extra": 1}), "token_refs_response_invalid"),
+        (
+            (200, {"refs": ["knobref_" + "1" * 32], "extra": 1}),
+            "token_refs_response_invalid",
+        ),
         ((200, {"refs": ["metricref_" + "1" * 32]}), "token_refs_response_invalid"),
         ((200, {"refs": ["knobref_xyz"]}), "token_refs_response_invalid"),
         ((200, {"refs": [5]}), "token_refs_response_invalid"),
         (
-            (400, {"success": False, "error": "invalid_request", "error_code": "invalid_request",
-                   "message": "Request is invalid."}),
+            (
+                400,
+                {
+                    "success": False,
+                    "error": "invalid_request",
+                    "error_code": "invalid_request",
+                    "message": "Request is invalid.",
+                },
+            ),
             "token_refs_invalid_request",
         ),
         (
-            (409, {"success": False, "error": "operation_key_conflict",
-                   "error_code": "operation_key_conflict",
-                   "message": "Operation key conflicts with an earlier request."}),
+            (
+                409,
+                {
+                    "success": False,
+                    "error": "operation_key_conflict",
+                    "error_code": "operation_key_conflict",
+                    "message": "Operation key conflicts with an earlier request.",
+                },
+            ),
             "operation_key_conflict",
         ),
         (  # a closed code with the wrong status or wrong text is not trusted
-            (400, {"success": False, "error": "operation_key_conflict",
-                   "error_code": "operation_key_conflict",
-                   "message": "Operation key conflicts with an earlier request."}),
+            (
+                400,
+                {
+                    "success": False,
+                    "error": "operation_key_conflict",
+                    "error_code": "operation_key_conflict",
+                    "message": "Operation key conflicts with an earlier request.",
+                },
+            ),
             "token_refs_response_invalid",
         ),
         (
-            (404, {"success": False, "error": "reference_not_found",
-                   "error_code": "reference_not_found", "message": HEBREW}),
+            (
+                404,
+                {
+                    "success": False,
+                    "error": "reference_not_found",
+                    "error_code": "reference_not_found",
+                    "message": HEBREW,
+                },
+            ),
             "token_refs_unavailable",
         ),
     ],
@@ -1020,7 +1089,9 @@ def test_duplicate_refs_in_a_response_or_across_operations_are_refused(server):
     assert sorted(e["ref"] or "" for e in state["tokens"].values()).count(taken) == 1
 
 
-def test_unexpected_exceptions_are_replaced_by_a_closed_one_without_cause(server, monkeypatch):
+def test_unexpected_exceptions_are_replaced_by_a_closed_one_without_cause(
+    server, monkeypatch
+):
     def explode(*a, **k):
         raise RuntimeError(f"boom {HEBREW} {EMAIL}")
 
@@ -1047,7 +1118,9 @@ class _Capture(logging.Handler):
 def every_log():
     handler = _Capture()
     loggers = [logging.getLogger()] + [
-        lg for lg in logging.Logger.manager.loggerDict.values() if isinstance(lg, logging.Logger)
+        lg
+        for lg in logging.Logger.manager.loggerDict.values()
+        if isinstance(lg, logging.Logger)
     ]
     saved = [(lg, lg.level) for lg in loggers]
     for lg in loggers:
@@ -1073,9 +1146,14 @@ def test_canary_names_live_only_in_the_local_store_file(server, every_log, tmp_p
     ensure_tokens(ns(), knobs(*names), transport=server)
     ensure_tokens(
         ns(),
-        [("choice", HEBREW, EMAIL), ("choice", EMAIL, HEBREW), ("metric", None, HEBREW)],
+        [
+            ("choice", HEBREW, EMAIL),
+            ("choice", EMAIL, HEBREW),
+            ("metric", None, HEBREW),
+        ],
         transport=server,
     )
+
     # failure paths: transport error quoting names, server refusal, corruption, wrong mode
     def leaky(body):
         raise ConnectionError(f"{HEBREW} {EMAIL} " + json.dumps(body))
@@ -1101,7 +1179,11 @@ def test_canary_names_live_only_in_the_local_store_file(server, every_log, tmp_p
     os.chmod(path, 0o644)
     attempt(lambda: ensure_tokens(ns(), knobs(HEBREW), transport=server))
     os.chmod(path, 0o600)
-    attempt(lambda: ensure_tokens(ns(), [("choice", "missing-" + EMAIL, HEBREW)], transport=server))
+    attempt(
+        lambda: ensure_tokens(
+            ns(), [("choice", "missing-" + EMAIL, HEBREW)], transport=server
+        )
+    )
     assert len(errors) == 5
 
     # 1. the names ARE in the local store file (that is its job) ...
@@ -1112,7 +1194,12 @@ def test_canary_names_live_only_in_the_local_store_file(server, every_log, tmp_p
     for canary in CANARIES:
         assert canary not in on_wire
     for record in every_log.records:
-        text = record.getMessage() + repr(record.args) + str(record.exc_info) + str(record.__dict__)
+        text = (
+            record.getMessage()
+            + repr(record.args)
+            + str(record.exc_info)
+            + str(record.__dict__)
+        )
         for canary in CANARIES:
             assert canary not in text, record.name
     for exc in errors:
@@ -1167,7 +1254,9 @@ BE_VECTORS = [
 
 
 @pytest.mark.parametrize(("agent", "items", "canonical", "digest"), BE_VECTORS)
-def test_request_digest_matches_the_backends_pinned_vectors(agent, items, canonical, digest):
+def test_request_digest_matches_the_backends_pinned_vectors(
+    agent, items, canonical, digest
+):
     assert ts.request_digest(agent, items).hex() == digest
     assert hashlib.sha256(canonical.encode("utf-8")).hexdigest() == digest
 
@@ -1183,6 +1272,9 @@ def test_journalled_digest_is_over_the_wire_order(server):
     state = json.loads(store_file(ns()).read_bytes()[1:])
     (op,) = state["operations"].values()
     wire = server.calls[0]["items"]
-    assert op["digest"] == ts.request_digest(
-        AGENT_A, [(i["kind"], i.get("parent_ref")) for i in wire]
-    ).hex()
+    assert (
+        op["digest"]
+        == ts.request_digest(
+            AGENT_A, [(i["kind"], i.get("parent_ref")) for i in wire]
+        ).hex()
+    )

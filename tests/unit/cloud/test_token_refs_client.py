@@ -80,7 +80,9 @@ def _closed(code: str, message: str) -> dict[str, Any]:
 
 
 def test_issuance_uses_the_contract_route_auth_and_a_names_free_body():
-    wire, patcher = _wired((200, {"refs": ["knobref_" + "1" * 32, "metricref_" + "2" * 32]}))
+    wire, patcher = _wired(
+        (200, {"refs": ["knobref_" + "1" * 32, "metricref_" + "2" * 32]})
+    )
     client = _client()
     namespace = TokenNamespace.for_backend("https://api.test/api/v1", AGENT)
     with patcher:
@@ -125,8 +127,16 @@ def test_flag_off_server_404_is_token_refs_unavailable():
     [
         (401, {"success": False}, "token_refs_unauthenticated"),
         (403, {"success": False}, "token_refs_forbidden"),
-        (404, _closed("reference_not_found", "Reference not found."), "token_refs_reference_not_found"),
-        (400, _closed("invalid_request", "Request is invalid."), "token_refs_invalid_request"),
+        (
+            404,
+            _closed("reference_not_found", "Reference not found."),
+            "token_refs_reference_not_found",
+        ),
+        (
+            400,
+            _closed("invalid_request", "Request is invalid."),
+            "token_refs_invalid_request",
+        ),
         (500, _closed("internal_error", "Internal error."), "token_refs_server_error"),
     ],
 )
@@ -160,9 +170,13 @@ def test_replay_after_a_transport_failure_sends_the_same_key_and_batch():
     with patcher:
         client._protected_request = flaky  # type: ignore[method-assign]
         with pytest.raises(TokenStoreError) as err:
-            ensure_tokens(namespace, [("knob", None, "k")], transport=ts.backend_transport(client))
+            ensure_tokens(
+                namespace, [("knob", None, "k")], transport=ts.backend_transport(client)
+            )
         assert err.value.code == "token_refs_transport_failed"
-        got = ensure_tokens(namespace, [("knob", None, "k")], transport=ts.backend_transport(client))
+        got = ensure_tokens(
+            namespace, [("knob", None, "k")], transport=ts.backend_transport(client)
+        )
     assert got == {("knob", None, "k"): "knobref_" + "3" * 32}
     assert len(wire.requests) == 1  # the first attempt never reached the wire
 

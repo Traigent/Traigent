@@ -269,7 +269,13 @@ S1_PENDING_LABEL = "pending_label"
 S2_LABEL_ACKED = "label_acked"
 S3_SPEC_COMMITTED = "spec_committed"
 S_LABEL_CONFLICT = "label_conflict_unverified"
-STATES = (S0_INTENT, S1_PENDING_LABEL, S2_LABEL_ACKED, S3_SPEC_COMMITTED, S_LABEL_CONFLICT)
+STATES = (
+    S0_INTENT,
+    S1_PENDING_LABEL,
+    S2_LABEL_ACKED,
+    S3_SPEC_COMMITTED,
+    S_LABEL_CONFLICT,
+)
 
 
 def _state_root() -> Path:
@@ -288,7 +294,9 @@ def store_path(namespace: TokenNamespace) -> Path:
 
 
 def _key(kind: str, parent_ref: str | None, name: str) -> str:
-    return json.dumps([kind, parent_ref, name], separators=(",", ":"), ensure_ascii=False)
+    return json.dumps(
+        [kind, parent_ref, name], separators=(",", ":"), ensure_ascii=False
+    )
 
 
 def _ensure_dir(path: Path) -> None:
@@ -300,7 +308,9 @@ def _ensure_dir(path: Path) -> None:
         except FileExistsError:
             pass
         else:
-            os.chmod(path, 0o700)  # our own new directory: defeat a restrictive umask only
+            os.chmod(
+                path, 0o700
+            )  # our own new directory: defeat a restrictive umask only
         info = os.lstat(path)
     except OSError:
         raise TokenStoreError(TOKEN_MAP_NOT_PERSISTED) from None
@@ -375,7 +385,12 @@ def _exclusive_lock(path: Path) -> Iterator[None]:
 
 
 def _empty_state(namespace: TokenNamespace) -> dict[str, Any]:
-    return {"namespace": namespace.digest, "operations": {}, "tokens": {}, "revisions": {}}
+    return {
+        "namespace": namespace.digest,
+        "operations": {},
+        "tokens": {},
+        "revisions": {},
+    }
 
 
 def _read_state(path: Path, namespace: TokenNamespace) -> dict[str, Any]:
@@ -430,7 +445,11 @@ def _bad() -> TokenStoreError:
 
 
 def _is_int(value: Any, low: int = 0) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and low <= value <= MAX_COUNT
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and low <= value <= MAX_COUNT
+    )
 
 
 def _valid_name(value: Any) -> bool:
@@ -464,9 +483,15 @@ def _validate_state(state: Any, namespace: TokenNamespace) -> None:
         raise _bad()
     if state["namespace"] != namespace.digest:
         raise _bad()
-    operations, tokens, revisions = state["operations"], state["tokens"], state["revisions"]
+    operations, tokens, revisions = (
+        state["operations"],
+        state["tokens"],
+        state["revisions"],
+    )
     if not (
-        isinstance(operations, dict) and isinstance(tokens, dict) and isinstance(revisions, dict)
+        isinstance(operations, dict)
+        and isinstance(tokens, dict)
+        and isinstance(revisions, dict)
     ):
         raise _bad()
 
@@ -477,13 +502,19 @@ def _validate_state(state: Any, namespace: TokenNamespace) -> None:
         if not isinstance(op, dict) or set(op) != {"items", "digest", "refs"}:
             raise _bad()
         items, refs = op["items"], op["refs"]
-        if not isinstance(items, list) or not 1 <= len(items) <= MAX_ITEMS_PER_OPERATION:
+        if (
+            not isinstance(items, list)
+            or not 1 <= len(items) <= MAX_ITEMS_PER_OPERATION
+        ):
             raise _bad()
         if not all(_valid_item(i) for i in items):
             raise _bad()
         if not isinstance(op["digest"], str) or not _HEX64.fullmatch(op["digest"]):
             raise _bad()
-        if request_digest(namespace.agent_ref, [(i[0], i[1]) for i in items]).hex() != op["digest"]:
+        if (
+            request_digest(namespace.agent_ref, [(i[0], i[1]) for i in items]).hex()
+            != op["digest"]
+        ):
             raise _bad()
         if refs is not None:
             if not isinstance(refs, list) or len(refs) != len(items):
@@ -500,14 +531,27 @@ def _validate_state(state: Any, namespace: TokenNamespace) -> None:
     for key, entry in tokens.items():
         if not isinstance(key, str) or not isinstance(entry, dict):
             raise _bad()
-        if set(entry) != {"kind", "parent", "name", "ref", "state", "op", "ordinal", "spec"}:
+        if set(entry) != {
+            "kind",
+            "parent",
+            "name",
+            "ref",
+            "state",
+            "op",
+            "ordinal",
+            "spec",
+        }:
             raise _bad()
         if not _valid_item([entry["kind"], entry["parent"], entry["name"]]):
             raise _bad()
         if key != _key(entry["kind"], entry["parent"], entry["name"]):
             raise _bad()
         op_key, ordinal = entry["op"], entry["ordinal"]
-        if not isinstance(op_key, str) or op_key not in operations or not _is_int(ordinal):
+        if (
+            not isinstance(op_key, str)
+            or op_key not in operations
+            or not _is_int(ordinal)
+        ):
             raise _bad()
         op = operations[op_key]
         if ordinal >= len(op["items"]) or op["items"][ordinal] != [
@@ -523,7 +567,11 @@ def _validate_state(state: Any, namespace: TokenNamespace) -> None:
         if status not in STATES:
             raise _bad()
         if status == S0_INTENT:
-            if entry["ref"] is not None or op["refs"] is not None or entry["spec"] is not None:
+            if (
+                entry["ref"] is not None
+                or op["refs"] is not None
+                or entry["spec"] is not None
+            ):
                 raise _bad()
         else:
             if op["refs"] is None or entry["ref"] != op["refs"][ordinal]:
@@ -535,7 +583,10 @@ def _validate_state(state: Any, namespace: TokenNamespace) -> None:
                 isinstance(entry["spec"], str) and _SPEC_REF.fullmatch(entry["spec"])
             ):
                 raise _bad()
-            if status in (S2_LABEL_ACKED, S3_SPEC_COMMITTED) and revisions.get(entry["ref"], 0) < 1:
+            if (
+                status in (S2_LABEL_ACKED, S3_SPEC_COMMITTED)
+                and revisions.get(entry["ref"], 0) < 1
+            ):
                 raise _bad()
     # every journalled item has its token entry (no half-written batch)
     for op_key, op in operations.items():
@@ -603,7 +654,9 @@ class TokenStore:
         """Refs whose label write lost to another writer and cannot be verified (S1->S2)."""
         with self.locked() as tx:
             return sorted(
-                e["ref"] for e in tx.state["tokens"].values() if e["state"] == S_LABEL_CONFLICT
+                e["ref"]
+                for e in tx.state["tokens"].values()
+                if e["state"] == S_LABEL_CONFLICT
             )
 
     @_closed_boundary
@@ -653,7 +706,9 @@ class TokenStore:
     @_closed_boundary
     def mark_spec_committed(self, ref: str, search_spec_ref: str) -> None:
         """S2 -> S3: the spec commit's ``searchspecref_`` is known. Done."""
-        if not isinstance(search_spec_ref, str) or not _SPEC_REF.fullmatch(search_spec_ref):
+        if not isinstance(search_spec_ref, str) or not _SPEC_REF.fullmatch(
+            search_spec_ref
+        ):
             raise TokenStoreError(TOKEN_STATE_INVALID)
         with self.locked() as tx:
             entry = _find_by_ref(tx.state, ref)
@@ -691,7 +746,11 @@ TokenRefsTransport = Callable[[dict[str, Any]], "tuple[int, Any]"]
 #: Closed refusal envelope of the route (Schema ``TokenRefsRefusal``): code -> (status, message).
 _REFUSALS: dict[str, tuple[int, str, str]] = {
     "invalid_request": (400, "Request is invalid.", TOKEN_REFS_INVALID_REQUEST),
-    "reference_not_found": (404, "Reference not found.", TOKEN_REFS_REFERENCE_NOT_FOUND),
+    "reference_not_found": (
+        404,
+        "Reference not found.",
+        TOKEN_REFS_REFERENCE_NOT_FOUND,
+    ),
     "operation_key_conflict": (
         409,
         "Operation key conflicts with an earlier request.",
@@ -702,7 +761,9 @@ _REFUSALS: dict[str, tuple[int, str, str]] = {
 }
 _ENVELOPE_KEYS = frozenset({"success", "error", "error_code", "message"})
 #: Codes after which the server is known to have issued NOTHING for this operation.
-_NOTHING_ISSUED = frozenset({TOKEN_REFS_INVALID_REQUEST, TOKEN_REFS_REFERENCE_NOT_FOUND})
+_NOTHING_ISSUED = frozenset(
+    {TOKEN_REFS_INVALID_REQUEST, TOKEN_REFS_REFERENCE_NOT_FOUND}
+)
 
 
 def backend_transport(client: Any) -> TokenRefsTransport:
@@ -731,12 +792,18 @@ def _refusal_code(status: Any, payload: Any) -> str:
         return TOKEN_REFS_FORBIDDEN
     if status == 429:
         return TOKEN_REFS_QUOTA_EXCEEDED
-    if isinstance(status, int) and not isinstance(status, bool) and 500 <= status <= 599:
+    if (
+        isinstance(status, int)
+        and not isinstance(status, bool)
+        and 500 <= status <= 599
+    ):
         return TOKEN_REFS_SERVER_ERROR
     return TOKEN_REFS_RESPONSE_INVALID
 
 
-def _wire_body(namespace: TokenNamespace, op_key: str, items: list[list[Any]]) -> dict[str, Any]:
+def _wire_body(
+    namespace: TokenNamespace, op_key: str, items: list[list[Any]]
+) -> dict[str, Any]:
     """The request body exactly per Schema: kinds and parent refs only, never a name."""
     wire = []
     for kind, parent, _name in items:
@@ -773,9 +840,15 @@ def _issue(
     if status != 200:
         code = _refusal_code(status, payload)
         if code in _NOTHING_ISSUED:
-            _abandon(tx, op_key)  # the server rolled back; the intent would only fail forever
+            _abandon(
+                tx, op_key
+            )  # the server rolled back; the intent would only fail forever
         raise TokenStoreError(code)
-    refs = payload.get("refs") if isinstance(payload, dict) and set(payload) == {"refs"} else None
+    refs = (
+        payload.get("refs")
+        if isinstance(payload, dict) and set(payload) == {"refs"}
+        else None
+    )
     if (
         not isinstance(refs, list)
         or len(refs) != len(op["items"])
@@ -811,7 +884,9 @@ def _journal(tx: _Locked, namespace: TokenNamespace, items: list[list[Any]]) -> 
     op_key = secrets.token_hex(16)
     tx.state["operations"][op_key] = {
         "items": items,
-        "digest": request_digest(namespace.agent_ref, [(i[0], i[1]) for i in items]).hex(),
+        "digest": request_digest(
+            namespace.agent_ref, [(i[0], i[1]) for i in items]
+        ).hex(),
         "refs": None,
     }
     for ordinal, (kind, parent, name) in enumerate(items):
@@ -878,7 +953,9 @@ def ensure_tokens(
         raise TokenStoreError(TOKEN_REQUEST_INVALID)
     store = TokenStore(namespace)
     with store.locked() as tx:
-        for op_key in [k for k, op in tx.state["operations"].items() if op["refs"] is None]:
+        for op_key in [
+            k for k, op in tx.state["operations"].items() if op["refs"] is None
+        ]:
             _issue(tx, namespace, transport, op_key)
 
         resolved: list[tuple[TokenRequest, str, str | None]] = []
