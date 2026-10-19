@@ -372,42 +372,24 @@ def _require_dirfd_support() -> None:
         raise TokenStoreError(TOKEN_MAP_NOT_PERSISTED)
 
 
-def _own_private_group(gid: int) -> bool:
-    """True when ``gid`` is this process's own group and nobody else is a member of it.
-
-    The usual per-user private group (Ubuntu/Fedora, umask 002) makes every directory the SDK
-    creates group-writable, but no other principal can use that bit. A shared group never
-    qualifies.
-    """
-    try:
-        import grp
-        import pwd
-
-        if gid != os.getegid():
-            return False
-        me = pwd.getpwuid(os.geteuid()).pw_name
-        group = grp.getgrgid(gid)
-        if any(member != me for member in group.gr_mem):
-            return False
-        # a user whose primary group is this gid but who is not us would also share it
-        return all(u.pw_uid == os.geteuid() for u in pwd.getpwall() if u.pw_gid == gid)
-    except (ImportError, KeyError, OSError):
-        return False
-
-
 def _trusted_dir(info: os.stat_result) -> bool:
     """Owned by us or root and not writable by anyone else.
 
-    World-writable only if sticky and owned by us/root (``/tmp``); group-writable only if the
-    group is our own private group (:func:`_own_private_group`).
+    Strict: a group-writable or world-writable directory is refused unless it is sticky
+    (``/tmp``-style: only an entry's owner may rename or remove it). Group exclusivity is never
+    inferred from the group database (NSS/SSSD may hide members), so a group-writable component
+    is refused even if the group looks private. Remedy for the operator: ``chmod g-w,o-w <dir>``
+    (the SDK never changes the mode of a directory it did not create).
     """
     if not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, os.geteuid()):
         return False
     if info.st_mode & stat.S_ISVTX:
-        return True  # sticky: only an entry's owner (or the directory's) may rename or remove it
-    if info.st_mode & 0o002:
-        return False
-    return not (info.st_mode & 0o020 and not _own_private_group(info.st_gid))
+        return True
+    return not info.st_mode & 0o022
+
+
+class _LinkComponent(Exception):
+    """Internal: the component is a symlink (or not a directory); the caller decides."""
 
 
 def _open_dir_nofollow(name: str, parent_fd: int) -> int:
@@ -416,32 +398,70 @@ def _open_dir_nofollow(name: str, parent_fd: int) -> int:
         return os.open(name, flags, dir_fd=parent_fd)
     except OSError as exc:
         if exc.errno in (errno.ELOOP, errno.ENOTDIR):  # a symlink or a non-directory
-            raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS) from None
+            raise _LinkComponent from None
         raise
 
 
-def _open_anchor() -> _Anchor:
-    """Walk the state-root chain by descriptors, creating (and durably linking) what is missing.
+def _read_trusted_link(name: str, parent_fd: int) -> str:
+    """Target of symlink ``name`` in ``parent_fd``, refusing an untrusted link or container."""
+    try:
+        if not _trusted_dir(os.fstat(parent_fd)):
+            raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS)
+        info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        if not stat.S_ISLNK(info.st_mode) or info.st_uid not in (0, os.geteuid()):
+            raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS)
+        return os.readlink(name, dir_fd=parent_fd)
+    except OSError:
+        raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS) from None
 
-    The configured path is resolved once; below that, every component is opened with
-    ``O_DIRECTORY | O_NOFOLLOW`` relative to its parent and must be trusted (owned by this
-    user or root, not group/world-writable, never a symlink). A component created here is
-    ``0700`` and its parent directory is fsynced so the new entry survives power loss BEFORE
-    anything depends on it. The final ``token_store`` directory must be ours and ``0700``;
-    it is never repaired.
+
+_MAX_LINK_HOPS = 16
+
+
+def _open_anchor() -> _Anchor:
+    """Walk the ORIGINAL configured state-root chain by descriptors, creating what is missing.
+
+    The path is never ``realpath``-ed: it is walked component by component. Every directory is
+    opened with ``O_DIRECTORY | O_NOFOLLOW`` relative to its parent and must be trusted (owned by
+    this user or root; group/world-writable only if sticky). A symlink component is followed
+    only if the directory CONTAINING it is trusted and the link is owned by this user or root;
+    the walk then continues over the link target (absolute or relative; ``..`` in a target is
+    refused) with the same checks on every component, at most ``_MAX_LINK_HOPS`` links in all
+    (a loop is refused). The final ``token_store`` directory is never a link, must be ours and
+    ``0700``, and is never repaired. A component created here is ``0700`` and its parent is
+    fsynced so the new entry survives power loss BEFORE anything depends on it.
     """
     _require_dirfd_support()
-    # resolve the configured state root once; the store directory itself is never resolved
-    root = os.path.join(
-        os.path.realpath(os.path.abspath(_state_root())), _STORE_DIRNAME
-    )
-    parts = [p for p in root.split(os.sep) if p]
+    configured = os.path.abspath(_state_root())
+    pending: list[tuple[str, bool]] = [
+        (p, False) for p in configured.split(os.sep) if p
+    ]
+    pending.append((_STORE_DIRNAME, True))
+    pending.reverse()  # pop() takes the next component
+    hops = 0
     fd = os.open(os.sep, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        for index, part in enumerate(parts):
+        while pending:
+            part, is_store = pending.pop()
+            if part in (".", ""):
+                continue
+            if part == "..":
+                raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS)
             created = False
             try:
                 child = _open_dir_nofollow(part, fd)
+            except _LinkComponent:
+                if is_store:
+                    raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS) from None
+                hops += 1
+                target = _read_trusted_link(part, fd)
+                if hops > _MAX_LINK_HOPS:
+                    raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS) from None
+                if target.startswith(os.sep):
+                    os.close(fd)
+                    fd = os.open(os.sep, os.O_RDONLY | os.O_DIRECTORY)
+                pending.extend((p, False) for p in reversed(target.split(os.sep)) if p)
+                continue
             except FileNotFoundError:
                 try:
                     os.mkdir(part, 0o700, dir_fd=fd)
@@ -458,8 +478,7 @@ def _open_anchor() -> _Anchor:
                     os.fsync(child)
                     os.fsync(fd)  # link the new entry into its parent durably
                     info = os.fstat(child)
-                last = index == len(parts) - 1
-                if last:
+                if is_store:
                     if (
                         info.st_uid != os.geteuid()
                         or stat.S_IMODE(info.st_mode) & 0o077
@@ -472,7 +491,7 @@ def _open_anchor() -> _Anchor:
                 raise
             os.close(fd)
             fd = child
-        anchor = _Anchor(fd, root)
+        anchor = _Anchor(fd, os.path.join(configured, _STORE_DIRNAME))
         fd = -1
         return anchor
     except TokenStoreError:

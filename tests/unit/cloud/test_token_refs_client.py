@@ -69,7 +69,12 @@ def _env(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
     monkeypatch.setenv("TRAIGENT_API_KEY", "tg-fake-portal-key-token-store")
-    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path / "state"))
+    # the state root is created 0700 up front: the client may create it under a 0002 umask
+    # (0775), which the strict store refuses (non-sticky group-writable component)
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700, exist_ok=True)
+    state.chmod(0o700)
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(state))
     monkeypatch.setenv(ts.ENV_FLAG, "true")
     for name in ("TRAIGENT_ENVIRONMENT", "ENVIRONMENT", "TRAIGENT_ENV"):
         monkeypatch.delenv(name, raising=False)

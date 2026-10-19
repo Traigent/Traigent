@@ -1367,18 +1367,136 @@ def test_world_writable_state_root_is_refused(server, tmp_path):
     assert stat.S_IMODE(state.stat().st_mode) == 0o777  # never repaired
 
 
-def test_group_writable_state_root_of_a_shared_group_is_refused(
+def _no_group_members(monkeypatch):
+    """Make the group database show an empty, private-looking group (NSS/SSSD hiding members)."""
+    import grp
+
+    real = grp.getgrgid
+
+    def fake(gid):
+        entry = real(gid)
+        return grp.struct_group((entry.gr_name, entry.gr_passwd, entry.gr_gid, []))
+
+    monkeypatch.setattr(grp, "getgrgid", fake)
+
+
+def test_group_writable_state_root_is_refused_even_when_the_group_looks_private(
     server, tmp_path, monkeypatch
 ):
+    """L1: exclusivity is never inferred from the group database."""
+    _no_group_members(monkeypatch)
     state = tmp_path / "state"
     state.mkdir()
-    os.chmod(state, 0o770)
-    monkeypatch.setattr(ts, "_own_private_group", lambda gid: False)
+    os.chmod(state, 0o770)  # our own group, no visible members
     with pytest.raises(TokenStoreError) as err:
         ensure_tokens(ns(), knobs("k"), transport=server)
     assert err.value.code == "token_store_insecure_permissions"
-    monkeypatch.setattr(ts, "_own_private_group", lambda gid: True)
+    assert server.calls == []
+    assert stat.S_IMODE(state.stat().st_mode) == 0o770  # never repaired
+
+
+def test_group_writable_ancestor_is_refused_even_when_the_group_looks_private(
+    server, tmp_path, monkeypatch
+):
+    _no_group_members(monkeypatch)
+    os.chmod(tmp_path, 0o770)
+    with pytest.raises(TokenStoreError) as err:
+        ensure_tokens(ns(), knobs("k"), transport=server)
+    assert err.value.code == "token_store_insecure_permissions"
+
+
+def test_sticky_world_writable_tmp_style_ancestor_is_allowed(server, tmp_path):
+    os.chmod(tmp_path, 0o1777)  # /tmp-style: sticky, owned by us
     assert ensure_tokens(ns(), knobs("k"), transport=server)
+
+
+# --- L2: the configured path is walked, not realpath-ed --------------------------------------
+
+
+def _use_root(monkeypatch, path):
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(path))
+
+
+def test_symlink_in_a_group_writable_directory_is_refused(server, tmp_path, monkeypatch):
+    shared = tmp_path / "shared"
+    shared.mkdir(mode=0o700)
+    real = tmp_path / "real"
+    real.mkdir(mode=0o700)
+    os.symlink(real, shared / "state")
+    os.chmod(shared, 0o770)
+    _use_root(monkeypatch, shared / "state")
+    with pytest.raises(TokenStoreError) as err:
+        ensure_tokens(ns(), knobs("k"), transport=server)
+    assert err.value.code == "token_store_insecure_permissions"
+    assert list(real.iterdir()) == []
+
+
+def test_symlink_in_a_world_writable_directory_is_refused(server, tmp_path, monkeypatch):
+    shared = tmp_path / "shared"
+    shared.mkdir(mode=0o700)
+    real = tmp_path / "real"
+    real.mkdir(mode=0o700)
+    os.symlink(real, shared / "state")
+    os.chmod(shared, 0o777)
+    _use_root(monkeypatch, shared / "state")
+    with pytest.raises(TokenStoreError) as err:
+        ensure_tokens(ns(), knobs("k"), transport=server)
+    assert err.value.code == "token_store_insecure_permissions"
+
+
+def test_symlink_owned_by_another_user_is_refused(server, tmp_path, monkeypatch):
+    real = tmp_path / "real"
+    real.mkdir(mode=0o700)
+    os.symlink(real, tmp_path / "link")
+    _use_root(monkeypatch, tmp_path / "link")
+    me = os.geteuid()
+    real_stat = os.stat
+
+    def fake_stat(path, *args, **kwargs):
+        info = real_stat(path, *args, **kwargs)
+        if path == "link" and kwargs.get("follow_symlinks") is False:
+            fields = list(info)
+            fields[4] = me + 1  # st_uid
+            return os.stat_result(fields)
+        return info
+
+    monkeypatch.setattr(os, "stat", fake_stat)
+    monkeypatch.setattr(os, "supports_dir_fd", os.supports_dir_fd | {fake_stat})
+    with pytest.raises(TokenStoreError) as err:
+        ensure_tokens(ns(), knobs("k"), transport=server)
+    assert err.value.code == "token_store_insecure_permissions"
+    assert list(real.iterdir()) == []
+
+
+def test_trusted_home_style_symlink_chain_is_accepted(server, tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    data.mkdir(mode=0o700)
+    (data / "mid").mkdir(mode=0o700)
+    os.symlink(data / "mid", data / "hop")  # absolute target
+    os.symlink("data/hop", tmp_path / "home_traigent")  # relative target, chained
+    _use_root(monkeypatch, tmp_path / "home_traigent")
+    refs = ensure_tokens(ns(), knobs("k"), transport=server)
+    assert refs
+    assert (data / "mid" / "token_store").is_dir()
+    assert ensure_tokens(ns(), knobs("k"), transport=server) == refs
+
+
+def test_symlink_loop_is_refused(server, tmp_path, monkeypatch):
+    os.symlink("b", tmp_path / "a")
+    os.symlink("a", tmp_path / "b")
+    _use_root(monkeypatch, tmp_path / "a")
+    with pytest.raises(TokenStoreError) as err:
+        ensure_tokens(ns(), knobs("k"), transport=server)
+    assert err.value.code == "token_store_insecure_permissions"
+
+
+def test_dotdot_in_a_link_target_is_refused(server, tmp_path, monkeypatch):
+    (tmp_path / "d").mkdir(mode=0o700)
+    os.symlink("../d", tmp_path / "lnk")
+    _use_root(monkeypatch, tmp_path / "lnk")
+    with pytest.raises(TokenStoreError) as err:
+        ensure_tokens(ns(), knobs("k"), transport=server)
+    assert err.value.code == "token_store_insecure_permissions"
 
 
 def test_platform_without_dir_fd_support_fails_closed(server, monkeypatch):
