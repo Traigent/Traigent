@@ -386,7 +386,9 @@ class AgentValidator:
                 )
                 results.append(self.validate_agent(agent))
 
-        except Exception as e:
+        except (Exception, SystemExit) as e:
+            # SystemExit: a scanned module may call sys.exit() at import time;
+            # it must be reported as a failure, not terminate the validator.
             logger.warning(f"Failed to validate {file_path}: {e}")
             results.append(
                 ValidationResult(
@@ -423,9 +425,11 @@ class AgentValidator:
         pattern = "**/*.py" if recursive else "*.py"
         for py_file in directory.glob(pattern):
             # Skip common non-source directories
+            # Only inspect components below the scan root so an explicit
+            # target such as ``_agents/`` is not skipped.
             if any(
                 part.startswith((".", "_", "venv", "node_modules", "__pycache__"))
-                for part in py_file.parts
+                for part in py_file.relative_to(directory).parts
             ):
                 continue
 
