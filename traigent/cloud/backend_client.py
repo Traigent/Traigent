@@ -145,6 +145,57 @@ _AGENT_ID_HEADER = "X-Traigent-Agent-Id"
 _EXPECTED_HEAD_GENERATION_HEADER = "X-Traigent-Expected-Head-Generation"
 _AGENT_REF_HEADER = "X-Traigent-Agent-Ref"
 _MAX_HEAD_GENERATION = 9007199254740991
+
+# Closed request contract of POST /api/v1/optimization/token-refs (TraigentSchema
+# optimization/token_refs_schema.json). Enforced in the send method itself so no caller,
+# whatever it passes, can put a name or any other content on this route.
+_TOKEN_REFS_AGENT_REF = re.compile(r"agentref_[0-9a-f]{32}")
+_TOKEN_REFS_OPERATION_KEY = re.compile(r"[0-9a-f]{32}")
+_TOKEN_REFS_PARENT_REF = re.compile(r"knobref_[0-9a-f]{32}")
+_TOKEN_REFS_KINDS = frozenset({"knob", "choice", "metric", "template"})
+_TOKEN_REFS_MAX_ITEMS = 200
+
+
+def _token_refs_body_is_closed(body: Any) -> bool:
+    """True only for a body that is exactly the Schema's closed request shape."""
+    if not isinstance(body, dict) or set(body) != {
+        "schema_version",
+        "agent_ref",
+        "operation_key",
+        "items",
+    }:
+        return False
+    version = body["schema_version"]
+    agent_ref, key, items = body["agent_ref"], body["operation_key"], body["items"]
+    if (
+        isinstance(version, bool)
+        or not isinstance(version, int)
+        or version != 1
+        or not isinstance(agent_ref, str)
+        or not _TOKEN_REFS_AGENT_REF.fullmatch(agent_ref)
+        or not isinstance(key, str)
+        or not _TOKEN_REFS_OPERATION_KEY.fullmatch(key)
+        or not isinstance(items, list)
+        or not 1 <= len(items) <= _TOKEN_REFS_MAX_ITEMS
+    ):
+        return False
+    for item in items:
+        if not isinstance(item, dict) or not set(item) <= {"kind", "parent_ref"}:
+            return False
+        kind = item.get("kind")
+        if not isinstance(kind, str) or kind not in _TOKEN_REFS_KINDS:
+            return False
+        parent = item.get("parent_ref")
+        if kind == "choice":
+            if not isinstance(parent, str) or not _TOKEN_REFS_PARENT_REF.fullmatch(
+                parent
+            ):
+                return False
+        elif "parent_ref" in item:
+            return False
+    return True
+
+
 _STALE_HEAD_ERROR_CODE = "STALE_HEAD_GENERATION"
 #: Closed refusal envelope of best_config_head_refusal_schema.json:
 #: error_code -> (HTTP status the Schema pairs with it, fixed ``error``, fixed ``message``).
@@ -2460,6 +2511,11 @@ class BackendIntegratedClient:
         raised here. Idempotent by ``operation_key``, so a retry after any failure is safe.
         Transport failures surface as fixed text (``_protected_request``).
         """
+        if not _token_refs_body_is_closed(body):
+            # fixed text: the offending value (it may be a customer name) is never quoted
+            raise CloudServiceError(
+                "Token-refs request is not the closed contract shape"
+            )
         self._raise_if_backend_egress_disabled("issue token refs")
         url = self._build_token_refs_url()
         if not url:

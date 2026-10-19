@@ -192,3 +192,87 @@ def test_no_egress_client_sends_nothing():
             transport=ts.backend_transport(client),
         )
     assert wire.requests == []
+
+
+# ---- K3: the send method itself enforces the closed request contract ------------------
+
+
+def _good_body() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "agent_ref": AGENT,
+        "operation_key": "0" * 32,
+        "items": [
+            {"kind": "knob"},
+            {"kind": "choice", "parent_ref": "knobref_" + "b" * 32},
+        ],
+    }
+
+
+def _bad_bodies() -> list[dict[str, Any]]:
+    def mutate(fn):
+        body = _good_body()
+        fn(body)
+        return body
+
+    return [
+        mutate(lambda b: b["items"][0].update(name=EMAIL)),  # an extra name key
+        mutate(lambda b: b["items"][0].update(kind=EMAIL)),  # email as kind
+        mutate(
+            lambda b: b["items"][1].update(parent_ref=HEBREW)
+        ),  # Hebrew as parent_ref
+        mutate(lambda b: b.update(label=HEBREW)),  # extra top-level key
+        mutate(lambda b: b.update(operation_key=HEBREW)),
+        mutate(lambda b: b.update(agent_ref=EMAIL)),
+        mutate(lambda b: b.update(schema_version=True)),
+        mutate(lambda b: b.update(schema_version=2)),
+        mutate(lambda b: b.update(items=[])),
+        mutate(lambda b: b.update(items=[{"kind": "knob"}] * 201)),
+        mutate(lambda b: b["items"][0].update(parent_ref="knobref_" + "c" * 32)),
+        mutate(lambda b: b["items"][1].pop("parent_ref")),
+        mutate(lambda b: b["items"].append("not-an-object")),
+        mutate(lambda b: b.update(operation_key="0" * 32 + "\n")),
+        {"items": [{"kind": "knob", "name": HEBREW}]},
+        ["not", "a", "dict"],
+    ]
+
+
+@pytest.mark.parametrize("index", range(16))
+def test_malformed_or_content_bearing_bodies_never_reach_the_http_adapter(index):
+    body = _bad_bodies()[index]
+    wire, patcher = _wired((200, {"refs": ["knobref_" + "1" * 32]}))
+    with patcher, pytest.raises(CloudServiceError) as err:
+        _client().issue_token_refs_sync(body)
+    assert wire.requests == []  # nothing reached the adapter
+    blob = repr(err.value) + str(err.value)
+    assert HEBREW not in blob and EMAIL not in blob
+    assert str(err.value) == "Token-refs request is not the closed contract shape"
+    assert err.value.__cause__ is None
+
+
+def test_the_closed_body_is_still_sent():
+    wire, patcher = _wired(
+        (200, {"refs": ["knobref_" + "1" * 32, "choiceref_" + "2" * 32]})
+    )
+    with patcher:
+        status, payload = _client().issue_token_refs_sync(_good_body())
+    assert status == 200 and "refs" in payload
+    assert len(wire.requests) == 1
+
+
+def test_transport_gate_in_refusal_mode_classifies_the_route():
+    """The generated table now knows the route: a content body is refused, a closed one passes."""
+    from traigent.labels import transport_gate as gate
+
+    url = "https://api.test/api/v1/optimization/token-refs"
+    gate.set_mode("refuse")
+    gate.set_allowed_origins(["https://api.test"])
+    try:
+        counts = gate.inspect_outgoing("POST", url, json.dumps(_good_body()))
+        assert counts is not None and not any(counts.get(c, 0) for c in gate.BLOCKING)
+        for body in _bad_bodies()[:6]:
+            with pytest.raises(gate.TransportGateRefusal):
+                gate.inspect_outgoing("POST", url, json.dumps(body))
+    finally:
+        gate.set_mode(None)
+        gate.set_allowed_origins(None)

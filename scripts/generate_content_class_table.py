@@ -25,6 +25,8 @@ from urllib.parse import urljoin
 
 BASE = "https://schemas.traigent.ai/"
 ENDPOINTS = "optimization/optimization_endpoints.json"
+#: Content-less token issuance route (Schema 5ab2fd8): its own endpoint inventory file.
+TOKEN_REFS_ENDPOINTS = "optimization/token_refs_endpoints.json"
 LABEL_IO = "labels/label_io_schema.json"
 #: Label-service routes (Backend ``/api/v1/labels/*``): the Schema defines the write
 #: request in label_io_schema.json; the read request (a list of object refs) is defined
@@ -58,6 +60,35 @@ OUT = (
 )
 
 
+_CONSTRAINT_KEYS = frozenset({"pattern", "maxLength", "minLength", "description"})
+_REFINEMENT_KEYS = frozenset({"properties", "required", "not", "description"})
+
+
+def _constraint_only(branch: Any) -> bool:
+    return (
+        isinstance(branch, dict)
+        and "pattern" in branch
+        and set(branch) <= _CONSTRAINT_KEYS
+    )
+
+
+def _refinement_only(branch: Any, parent_properties: Any) -> bool:
+    """A oneOf/anyOf branch that only restricts the parent's already-declared properties."""
+    if (
+        not isinstance(branch, dict)
+        or not isinstance(parent_properties, dict)
+        or not set(branch) <= _REFINEMENT_KEYS
+    ):
+        return False
+    declared = branch.get("properties") or {}
+    if not isinstance(declared, dict) or not set(declared) <= set(parent_properties):
+        return False
+    return all(
+        isinstance(v, dict) and set(v) <= {"x-content-class", "const", "enum"}
+        for v in declared.values()
+    )
+
+
 class Compiler:
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -71,6 +102,9 @@ class Compiler:
             if isinstance(doc, dict) and isinstance(doc.get("$id"), str):
                 self.docs[doc["$id"]] = doc
         self.nodes: list[Any] = []
+        #: Only the token-refs inventory is compiled with the shape simplifications below,
+        #: so no other route's compiled classes can change (checked by prefix equality).
+        self.simplify = False
         self.memo: dict[int, int] = {}
 
     @staticmethod
@@ -155,8 +189,22 @@ class Compiler:
         if isinstance(node.get("items"), dict):
             out["i"] = self.compile(node["items"], base, scopes, doc)
         for src, dst in (("allOf", "all"), ("oneOf", "one"), ("anyOf", "any")):
-            if isinstance(node.get(src), list):
-                out[dst] = [self.compile(b, base, scopes, doc) for b in node[src]]
+            branches = node.get(src)
+            if not isinstance(branches, list):
+                continue
+            if self.simplify and src == "allOf":
+                # a branch that only adds a value constraint (pattern / length) carries no
+                # class and no structure: the walker would read it as an unclassified leaf
+                branches = [b for b in branches if not _constraint_only(b)]
+            elif self.simplify and all(
+                _refinement_only(b, node.get("properties")) for b in branches
+            ):
+                # branches that only refine which of the node's OWN properties are required
+                # or forbidden (cross-field rules) add no class information either; the
+                # request validator in token_store enforces those rules before sending
+                continue
+            if branches:
+                out[dst] = [self.compile(b, base, scopes, doc) for b in branches]
         return out
 
     def shared(self, target: Any, base: str, scopes: tuple[Any, ...], doc: Any) -> int:
@@ -170,12 +218,18 @@ class Compiler:
         return idx
 
 
-def build(schema_root: Path, commit: str | None = None) -> dict[str, Any]:
-    root = schema_root / "traigent_schema" / "schemas"
-    comp = Compiler(root)
-    uri = BASE + ENDPOINTS
+def add_endpoint_routes(comp: Compiler, endpoints_file: str, routes: list) -> None:
+    """Compile every route of one OpenAPI-style endpoint inventory file into ``routes``."""
+    comp.simplify = endpoints_file == TOKEN_REFS_ENDPOINTS
+    try:
+        _add_endpoint_routes(comp, endpoints_file, routes)
+    finally:
+        comp.simplify = False
+
+
+def _add_endpoint_routes(comp: Compiler, endpoints_file: str, routes: list) -> None:
+    uri = BASE + endpoints_file
     doc = comp.docs[uri]
-    routes = []
     for template, ops in doc["paths"].items():
         for method, op in ops.items():
             if not isinstance(op, dict):
@@ -206,6 +260,13 @@ def build(schema_root: Path, commit: str | None = None) -> dict[str, Any]:
                     "body": body,
                 }
             )
+
+
+def build(schema_root: Path, commit: str | None = None) -> dict[str, Any]:
+    root = schema_root / "traigent_schema" / "schemas"
+    comp = Compiler(root)
+    routes: list[dict[str, Any]] = []
+    add_endpoint_routes(comp, ENDPOINTS, routes)
     label_uri = BASE + LABEL_IO
     label_doc = comp.docs[label_uri]
     for method, template, schema in LABEL_ROUTES:
@@ -222,6 +283,8 @@ def build(schema_root: Path, commit: str | None = None) -> dict[str, Any]:
                 ),
             }
         )
+    # appended after the label routes so every earlier node index stays where it was
+    add_endpoint_routes(comp, TOKEN_REFS_ENDPOINTS, routes)
     manifest = schema_root / "docs" / "content-class-manifest.json"
     commit = (
         commit
