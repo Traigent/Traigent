@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 import traceback
 from pathlib import Path
 from typing import Any
@@ -902,3 +903,209 @@ def test_a_redirect_is_refused_by_the_strict_gate_and_never_followed(
     fake, err = _run(vectors, go)
     assert len(fake.neg_raw) == 1 and fake.legacy_raw == []
     assert HEBREW not in str(err) and "elsewhere" not in str(err)
+
+
+# ------------------------------------------------------------- round 1b-2b r2 (sol findings)
+
+
+def test_an_existing_revision_on_an_s1_token_is_label_conflict_unverified_not_a_skip(
+    tmp_path: Path, vectors: dict
+) -> None:
+    store, ref = _issue_one_token()
+
+    async def go(fake, base):
+        fake.revisions[ref] = (
+            1  # a lost-ack write of ours, or another writer's: same picture
+        )
+        with pytest.raises(LabelTransportError) as info:
+            await _sender(base, tmp_path, vectors, store).send_new(
+                {ref: ("knob", HEBREW)}
+            )
+        return info.value
+
+    fake, err = _run(vectors, go)
+    assert err.code == "label_conflict_unverified"
+    assert store.state_of(ref) == ts.S_LABEL_CONFLICT
+    assert fake.neg_raw == [] and fake.plaintexts == {}  # nothing written
+    rendered = "".join(traceback.format_exception(err)) + repr(err)
+    assert not any(c in rendered for c in CANARIES)
+    assert err.__cause__ is None and err.__context__ is None
+
+
+def test_an_existing_revision_on_a_non_token_object_is_still_left_alone(
+    tmp_path: Path, vectors: dict
+) -> None:
+    store, ref = _issue_one_token()
+
+    async def go(fake, base):
+        fake.revisions[AGENT_REF] = 3
+        return await _sender(base, tmp_path, vectors, store).send_new(
+            {AGENT_REF: ("label", HEBREW)}
+        )
+
+    fake, done = _run(vectors, go)
+    assert done == {} and fake.neg_raw == []
+    assert store.state_of(ref) == ts.S1_PENDING_LABEL
+
+
+def _budget(monkeypatch, seconds: float) -> None:
+    monkeypatch.setattr(tr, "_WRITE_DEADLINE_SECONDS", seconds)
+
+
+def test_a_stalled_headers_provider_is_bounded_by_the_operation_budget(
+    vectors: dict, monkeypatch
+) -> None:
+    _budget(monkeypatch, 0.3)
+
+    async def stalled() -> dict[str, str]:
+        await asyncio.sleep(60)
+        return {}
+
+    async def go(fake, base):
+        started = time.monotonic()
+        with pytest.raises(LabelTransportError) as info:
+            await _write(LabelTransport(base, stalled), vectors)
+        return info.value, time.monotonic() - started
+
+    fake, (err, took) = _run(vectors, go)
+    assert err.code == "service_unavailable" and err.status == 503
+    assert took < 5 and fake.neg_raw == []  # nothing was sent
+
+
+def test_a_slow_headers_provider_leaves_the_http_call_only_what_is_left(
+    vectors: dict, monkeypatch
+) -> None:
+    import aiohttp
+
+    _budget(monkeypatch, 2.0)
+    totals: list[float] = []
+    real = aiohttp.ClientTimeout
+
+    def spy(*args: Any, **kwargs: Any):
+        totals.append(kwargs["total"])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(aiohttp, "ClientTimeout", spy)
+
+    async def slow() -> dict[str, str]:
+        await asyncio.sleep(0.8)
+        return await _headers()
+
+    async def go(fake, base):
+        return await _write(LabelTransport(base, slow), vectors)
+
+    _fake, ack = _run(vectors, go)
+    assert ack["revision"] == 1
+    assert (
+        len(totals) == 1 and totals[0] <= 2.0 - 0.8 + 0.05
+    )  # remaining, not the original
+
+
+def test_a_provider_that_spends_the_whole_budget_sends_nothing(
+    vectors: dict, monkeypatch
+) -> None:
+    _budget(monkeypatch, 0.3)
+
+    async def slow() -> dict[str, str]:
+        await asyncio.sleep(0.2)
+        time.sleep(0.2)  # blocks past the budget without being cancellable
+        return await _headers()
+
+    async def go(fake, base):
+        with pytest.raises(LabelTransportError) as info:
+            await _write(LabelTransport(base, slow), vectors)
+        return info.value
+
+    fake, err = _run(vectors, go)
+    assert err.code == "service_unavailable" and fake.neg_raw == []
+
+
+def _chain_text(err: BaseException) -> str:
+    return (
+        "".join(traceback.format_exception(err))
+        + repr(err)
+        + str(err)
+        + repr(err.__cause__)
+        + repr(err.__context__)
+    )
+
+
+@pytest.mark.parametrize("where", ["local_validation", "headers_provider", "client"])
+def test_negotiated_errors_clear_cause_and_context_of_the_callers_handled_exception(
+    vectors: dict, monkeypatch, where: str
+) -> None:
+    import aiohttp
+
+    async def leaky_headers() -> dict[str, str]:
+        raise RuntimeError(f"auth failed for {EMAIL}")
+
+    class Refusing(aiohttp.ClientConnectionError):
+        pass
+
+    async def go(fake, base):
+        headers = leaky_headers if where == "headers_provider" else _headers
+        over: dict[str, Any] = (
+            {"object_ref": f"not-a-ref {EMAIL}"} if where == "local_validation" else {}
+        )
+        if where == "client":
+            monkeypatch.setattr(
+                aiohttp.ClientSession,
+                "request",
+                lambda *a, **k: (_ for _ in ()).throw(Refusing(EMAIL)),
+            )
+        try:
+            raise ValueError(EMAIL)  # the caller is handling an email-shaped error
+        except ValueError:
+            try:
+                await _write(LabelTransport(base, headers), vectors, **over)
+            except LabelTransportError as exc:
+                return exc
+        raise AssertionError("no error")
+
+    _fake, err = _run(vectors, go)
+    assert err.__cause__ is None and err.__context__ is None
+    assert err.__suppress_context__ is True
+    assert EMAIL not in _chain_text(err)
+
+
+@pytest.mark.parametrize(
+    "ack_over",
+    [
+        {"epoch": True},  # bool is not an int, even though True == 1
+        {"updated_at": "x"},
+        {"updated_at": "2026-10-19 00:00:02"},
+        {"updated_at": "2026-13-45T99:00:02Z"},
+        {"updated_at": "2026-10-19T00:00:02+02:00"},
+        {"updated_at": 1760832002},
+    ],
+)
+def test_ack_epoch_must_be_a_true_int_and_updated_at_a_utc_timestamp(
+    tmp_path: Path, vectors: dict, ack_over: dict[str, Any]
+) -> None:
+    store, ref = _issue_one_token()
+
+    async def go(fake, base):
+        fake.script = [
+            (
+                "json",
+                200,
+                {
+                    "object_ref": ref,
+                    "purpose": "knob",
+                    "revision": 1,
+                    "epoch": 1,
+                    "updated_at": "2026-10-19T00:00:02Z",
+                    **ack_over,
+                },
+                {},
+            )
+        ]
+        with pytest.raises(LabelTransportError) as info:
+            await _sender(base, tmp_path, vectors, store).send_new(
+                {ref: ("knob", HEBREW)}
+            )
+        return info.value
+
+    _fake, err = _run(vectors, go)
+    assert err.code == "internal_error"
+    assert store.state_of(ref) == ts.S1_PENDING_LABEL  # no S2 on a bad ack

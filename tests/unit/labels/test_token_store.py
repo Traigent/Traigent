@@ -2002,12 +2002,36 @@ def test_503_retry_after_beyond_the_deadline_is_closed_retryable_without_waiting
     )  # S0 survives: a later call resumes it
 
 
-def test_503_is_closed_after_the_deadline_budget_is_spent(server, sleeps):
-    flaky = _Flaky(server, 99)  # no Retry-After: 0.5, 1, 2 fit in 3s, 4 does not
+def test_503_is_closed_after_the_deadline_budget_is_spent(server, monkeypatch):
+    """A controlled clock advances with every simulated wait, so each delay is compared with
+    what is LEFT of the budget (not the original one): 0.5 + 1.0 leave 1.5s, and a 2s wait
+    does not fit."""
+
+    class Clock:
+        now = 1000.0
+
+        def monotonic(self) -> float:
+            return self.now
+
+    clock, waits = Clock(), []
+
+    def wait(delay: float) -> None:
+        waits.append(delay)
+        clock.now += delay
+
+    class FakeTime:  # token_store's time module with a controlled monotonic clock
+        monotonic = staticmethod(clock.monotonic)
+
+        def __getattr__(self, name: str):
+            return getattr(time, name)
+
+    monkeypatch.setattr(ts, "time", FakeTime())
+    monkeypatch.setattr(ts, "_sleep", wait)
+    flaky = _Flaky(server, 99)  # no Retry-After: backoff 0.5, 1, 2, 4
     with pytest.raises(TokenStoreError) as err:
         ensure_tokens(ns(), knobs("k"), transport=flaky, deadline_seconds=3.0)
     assert err.value.code == "token_refs_service_unavailable"
-    assert sleeps == [0.5, 1.0, 2.0] and len(flaky.keys) == 4
+    assert waits == [0.5, 1.0] and len(flaky.keys) == 3
 
 
 def test_503_attempts_are_capped_even_with_zero_retry_after(server, sleeps):

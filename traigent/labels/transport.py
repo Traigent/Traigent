@@ -34,7 +34,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import yaml
 
@@ -42,6 +42,7 @@ from traigent.utils.logging import get_logger
 
 from . import token_store
 from ._codec import unb64u
+from .transport_gate import TransportGateRefusal
 from .trust_anchor import TrustAnchor, TrustAnchorError, find_config, load_trust_anchor
 from .writer import LabelWriter
 
@@ -244,6 +245,33 @@ def _negotiated_refusal_code(status: int, body: Any) -> str:
     return INTERNAL_ERROR  # any other status or any envelope that is not exactly the contract
 
 
+_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]00:00)")
+
+
+def _is_timestamp(value: Any) -> bool:
+    """An RFC 3339 UTC ``date-time`` (Schema ``label_common_schema.json#/definitions/Timestamp``)."""
+    if type(value) is not str or not _TIMESTAMP.fullmatch(value):
+        return False
+    try:
+        datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+    except ValueError:
+        return False
+    return True
+
+
+def _raise_closed(error: Exception) -> NoReturn:
+    """Raise ``error`` with no ``__cause__`` / ``__context__`` (same pattern as the token-refs
+    boundary in ``backend_client``): the interpreter attaches the caller's handled exception as
+    ``__context__`` during the raise, so it is cleared AFTER the raise has chained."""
+    try:
+        raise error from None
+    except Exception as raised:
+        raised.__cause__ = None
+        raised.__context__ = None
+        raised.__suppress_context__ = True
+        raise
+
+
 def _negotiated_ack(body: Any, sent: Mapping[str, Any]) -> dict[str, Any]:
     """The label write response, exactly per Schema and consistent with what was sent."""
     if (
@@ -253,8 +281,9 @@ def _negotiated_ack(body: Any, sent: Mapping[str, Any]) -> dict[str, Any]:
         or body["purpose"] != sent["purpose"]
         or not _int(body["revision"], 1, _MAX_REVISION)
         or body["revision"] != sent["base_revision"] + 1
+        or type(body["epoch"]) is not int
         or body["epoch"] != sent["epoch"]
-        or not isinstance(body["updated_at"], str)
+        or not _is_timestamp(body["updated_at"])
     ):
         raise LabelTransportError(INTERNAL_ERROR)
     return dict(body)
@@ -292,9 +321,15 @@ class LabelTransport:
 
         from .transport_gate import gate_session
 
-        headers = dict(await self._headers())
+        # Authentication and the HTTP call share ONE budget: a stalled or slow headers
+        # provider cannot outlive it, and the HTTP timeout is what is left afterwards.
+        started = time.monotonic()
+        headers = dict(await asyncio.wait_for(self._headers(), total_timeout))
         headers.setdefault("Content-Type", "application/json")
-        timeout = aiohttp.ClientTimeout(total=total_timeout)
+        left = total_timeout - (time.monotonic() - started)
+        if left <= 0:
+            raise TimeoutError
+        timeout = aiohttp.ClientTimeout(total=left)
         try:
             async with (
                 gate_session(
@@ -385,7 +420,38 @@ class LabelTransport:
         ``label_route_unavailable`` and is NEVER retried on the legacy route (that would write
         an unvalidated ref while validation was asked for). Returns the validated response
         (``object_ref``, ``purpose``, ``revision``, ``epoch``, ``updated_at``).
+
+        Closed boundary: whatever fails inside (a headers provider, the transport, a local
+        validation) leaves as a :class:`LabelTransportError` with NO ``__cause__`` /
+        ``__context__`` (the caller's handled exception included), so nothing a lower layer
+        or the caller was holding can reach a traceback.
         """
+        error: Exception
+        try:
+            return await self._write_label_negotiated(
+                object_ref=object_ref,
+                purpose=purpose,
+                base_revision=base_revision,
+                epoch=epoch,
+                envelope=envelope,
+            )
+        except LabelTransportError as exc:
+            error = LabelTransportError(exc.code, exc.status)
+        except TransportGateRefusal as exc:
+            error = exc  # the gate's own closed refusal (counts only) keeps its type
+        except Exception:  # noqa: BLE001 - closed boundary: nothing else may escape
+            error = LabelTransportError(INTERNAL_ERROR)
+        _raise_closed(error)
+
+    async def _write_label_negotiated(
+        self,
+        *,
+        object_ref: str,
+        purpose: str,
+        base_revision: int,
+        epoch: int,
+        envelope: dict[str, Any],
+    ) -> dict[str, Any]:
         sent = _negotiated_body(object_ref, purpose, base_revision, epoch, envelope)
         url = f"{self._base}/optimization/labels"
         deadline = time.monotonic() + _WRITE_DEADLINE_SECONDS
@@ -399,6 +465,10 @@ class LabelTransport:
                     "POST", url, sent, min(_TIMEOUT_SECONDS, remaining)
                 )
             except TimeoutError:
+                if (
+                    deadline - time.monotonic() <= 0
+                ):  # authentication + call spent the budget
+                    raise LabelTransportError(SERVICE_UNAVAILABLE, 503) from None
                 raise LabelTransportError(UNAVAILABLE) from None
             if status == 200:
                 return _negotiated_ack(body, sent)
@@ -598,13 +668,23 @@ class LabelSender:
         }
         done: dict[str, int] = {}
         for object_ref, (purpose, text) in labels.items():
+            negotiated = token_store.is_enabled()
+            state = self._journal_state(object_ref) if negotiated else None
             if existing.get(object_ref):
+                if state in (
+                    token_store.S1_PENDING_LABEL,
+                    token_store.S_LABEL_CONFLICT,
+                ):
+                    # a token whose label was never acknowledged to us already holds a
+                    # revision: a lost-ack write of ours and another writer's label look the
+                    # same, and without an approved reader they cannot be told apart. Never
+                    # skip silently (S1 would stay pending forever): closed unverified state.
+                    self._mark_conflict(object_ref)
+                    _raise_closed(LabelTransportError(LABEL_CONFLICT_UNVERIFIED))
                 continue
             envelope = writer.seal(
                 text, purpose=purpose, object_ref=object_ref, base_revision=0
             )
-            negotiated = token_store.is_enabled()
-            state = self._journal_state(object_ref) if negotiated else None
             try:
                 ack = await self._transport.write_label(
                     object_ref=object_ref,
@@ -619,9 +699,9 @@ class LabelSender:
                     token_store.S_LABEL_CONFLICT,
                 ):
                     self._mark_conflict(object_ref)
-                    raise LabelTransportError(
-                        LABEL_CONFLICT_UNVERIFIED, exc.status
-                    ) from None
+                    _raise_closed(
+                        LabelTransportError(LABEL_CONFLICT_UNVERIFIED, exc.status)
+                    )
                 raise
             done[object_ref] = 1
             if state in (token_store.S1_PENDING_LABEL, token_store.S2_LABEL_ACKED):
