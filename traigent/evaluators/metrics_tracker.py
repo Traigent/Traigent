@@ -990,7 +990,7 @@ class MetricsTracker:
         # True when ANY measured example's token counts were fabricated from
         # character length (``LocalEvaluator._estimate_string_tokens``, #2263)
         # rather than captured from real usage. ``input_tokens``/
-        # ``output_tokens``/``total_tokens`` above are means over the SAME
+        # ``output_tokens``/``total_tokens`` below are totals over the SAME
         # measured rows, so this flag is the only signal that some of that
         # mean is a length-derived guess rather than measured usage --
         # without it a cost/token objective or the trial summary table
@@ -1003,6 +1003,26 @@ class MetricsTracker:
             1.0 if any(m.tokens.estimated for m in measured_metrics) else 0.0
         )
 
+        token_totals: dict[str, float | None]
+        if measured_metrics:
+            token_totals = {
+                "input_tokens": float(
+                    sum(m.tokens.input_tokens for m in measured_metrics)
+                ),
+                "output_tokens": float(
+                    sum(m.tokens.output_tokens for m in measured_metrics)
+                ),
+                "total_tokens": float(
+                    sum(m.tokens.total_tokens for m in measured_metrics)
+                ),
+            }
+        else:
+            # Nothing measured: mirror the mean's null/zero default.
+            token_totals = {
+                key: safe_get(aggregated, key, "mean")
+                for key in ("input_tokens", "output_tokens", "total_tokens")
+            }
+
         formatted = {
             # Core metrics (single values)
             "score": accuracy_value,  # Use actual accuracy for score
@@ -1013,10 +1033,12 @@ class MetricsTracker:
                 if isinstance(duration_value, (int, float))
                 else duration_value
             ),
-            # Use mean values as the primary metrics (without suffix)
-            "input_tokens": safe_get(aggregated, "input_tokens", "mean"),
-            "output_tokens": safe_get(aggregated, "output_tokens", "mean"),
-            "total_tokens": safe_get(aggregated, "total_tokens", "mean"),
+            # Per-trial TOTAL tokens over the same measured rows as ``cost``
+            # (#1906): totals beside a cost total, never per-example means.
+            # Per-example means remain in ``summary_stats``.
+            "input_tokens": token_totals["input_tokens"],
+            "output_tokens": token_totals["output_tokens"],
+            "total_tokens": token_totals["total_tokens"],
             "response_time_ms": safe_get(aggregated, "response_time_ms", "mean"),
             # Per-trial TOTAL cost (consistent scale across all three lanes).
             "cost": cost_total,
