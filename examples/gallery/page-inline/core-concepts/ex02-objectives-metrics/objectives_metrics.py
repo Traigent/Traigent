@@ -163,7 +163,7 @@ def _min_quality_score(
 # Example 1: Single objective optimization
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-nano", "gpt-4.1-mini"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.1, 0.5, 0.9],
     },
     eval_dataset=DATASET_FILE,
@@ -181,7 +181,7 @@ def cost_optimized_bot(query: str) -> str:
 # Example 2: Multi-objective optimization
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-nano", "gpt-4.1-mini", "gpt-4.1"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.1, 0.3, 0.5, 0.7],
         "max_tokens": [100, 200, 300],
     },
@@ -209,7 +209,7 @@ def balanced_support_bot(query: str) -> str:
 # Example 3: Custom metrics with constraints
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-nano", "gpt-4.1-mini", "gpt-4.1"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.1, 0.3, 0.5],
         "response_format": ["brief", "standard", "detailed"],
     },

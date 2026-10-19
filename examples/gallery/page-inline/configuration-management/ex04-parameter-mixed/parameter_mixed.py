@@ -83,7 +83,7 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
     configuration_space={
         # Standard parameters that Traigent can directly optimize
         "temperature": [0.1, 0.3, 0.5, 0.7, 0.9],
-        "model": ["gpt-4.1-nano", "gpt-4.1-mini", "gpt-4.1"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         # Custom parameters for business logic
         "content_style": ["technical", "creative", "balanced"],
         "audience_level": ["beginner", "intermediate", "expert"],

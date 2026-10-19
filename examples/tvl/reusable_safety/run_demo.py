@@ -616,7 +616,7 @@ def _run_single_qa_trial(
             "gpt-4.1": 0.94,
             "gpt-4.1-mini": 0.88,
             "claude-3-5-sonnet-latest": 0.92,
-            "claude-3-haiku-20240307": 0.82,
+            "claude-haiku-4-5-20251001": 0.82,
         }.get(model, 0.85)
 
         # Better retrieval = better accuracy
@@ -643,7 +643,7 @@ def _run_single_qa_trial(
             "gpt-4.1": 180,
             "gpt-4.1-mini": 120,
             "claude-3-5-sonnet-latest": 200,
-            "claude-3-haiku-20240307": 80,
+            "claude-haiku-4-5-20251001": 80,
         }.get(model, 100)
         latency = (
             base_latency + k * 10 + (50 if reranking else 0) + random.uniform(-20, 20)
@@ -654,7 +654,7 @@ def _run_single_qa_trial(
             "gpt-4.1": 0.015,
             "gpt-4.1-mini": 0.003,
             "claude-3-5-sonnet-latest": 0.012,
-            "claude-3-haiku-20240307": 0.001,
+            "claude-haiku-4-5-20251001": 0.001,
         }.get(model, 0.002)
 
     safety_passed = len(safety_violations) == 0
@@ -847,7 +847,7 @@ def _run_single_support_trial(
             "gpt-4.1": 180,
             "gpt-4.1-mini": 100,
             "claude-3-5-sonnet-latest": 160,
-            "claude-3-haiku-20240307": 60,
+            "claude-haiku-4-5-20251001": 60,
         }.get(model, 100)
 
         latency = base_latency * (0.6 if streaming else 1.0) + random.uniform(-15, 15)
@@ -856,7 +856,7 @@ def _run_single_support_trial(
             "gpt-4.1": 0.012,
             "gpt-4.1-mini": 0.002,
             "claude-3-5-sonnet-latest": 0.010,
-            "claude-3-haiku-20240307": 0.0008,
+            "claude-haiku-4-5-20251001": 0.0008,
         }.get(model, 0.002)
 
         # Resolution accuracy based on model
@@ -864,7 +864,7 @@ def _run_single_support_trial(
             "gpt-4.1": 0.92,
             "gpt-4.1-mini": 0.86,
             "claude-3-5-sonnet-latest": 0.90,
-            "claude-3-haiku-20240307": 0.80,
+            "claude-haiku-4-5-20251001": 0.80,
         }.get(model, 0.85) + random.uniform(-0.03, 0.03)
 
         # Customer satisfaction
@@ -946,7 +946,7 @@ def simulate_qa_agent_optimization() -> OptimizationResult:
                 "use_reranking": False,
             },
             {
-                "model": "claude-3-haiku-20240307",
+                "model": "claude-haiku-4-5-20251001",
                 "temperature": 0.1,
                 "retrieval_k": 5,
                 "chunk_size": 512,
@@ -961,7 +961,7 @@ def simulate_qa_agent_optimization() -> OptimizationResult:
                 "use_reranking": False,
             },
             {
-                "model": "claude-3-haiku-20240307",
+                "model": "claude-haiku-4-5-20251001",
                 "temperature": 0.5,
                 "retrieval_k": 3,
                 "chunk_size": 256,
@@ -1100,7 +1100,7 @@ def simulate_support_agent_optimization() -> OptimizationResult:
                 "canned_threshold": 0.85,
             },
             {
-                "model": "claude-3-haiku-20240307",
+                "model": "claude-haiku-4-5-20251001",
                 "temperature": 0.2,
                 "use_streaming": True,
                 "response_style": "concise",
@@ -1137,7 +1137,7 @@ def simulate_support_agent_optimization() -> OptimizationResult:
                 "canned_threshold": 0.50,
             },
             {
-                "model": "claude-3-haiku-20240307",
+                "model": "claude-haiku-4-5-20251001",
                 "temperature": 0.6,
                 "use_streaming": False,
                 "response_style": "concise",
@@ -1152,7 +1152,7 @@ def simulate_support_agent_optimization() -> OptimizationResult:
                 "canned_threshold": 0.85,
             },
             {
-                "model": "claude-3-haiku-20240307",
+                "model": "claude-haiku-4-5-20251001",
                 "temperature": 0.2,
                 "use_streaming": True,
                 "response_style": "friendly",

@@ -69,8 +69,8 @@ def _mock_answer_for_config(question: str, config) -> str:
     top_p = float(_config_value(config, "top_p", 0.7) or 0.7)
 
     answer_limit = {
-        "gpt-4.1-nano": 3,
         "gpt-4.1-mini": 5,
+        "gpt-4.1": 6,
     }.get(model, 3)
 
     if temperature <= 0.3:
@@ -104,7 +104,7 @@ custom_objectives = ObjectiveSchema.from_objectives(
         # Use tuple for continuous ranges, list for categorical
         "temperature": (0.0, 1.0),  # Continuous range
         "top_p": (0.1, 1.0),  # Continuous range
-        "model": ["gpt-4.1-nano", "gpt-4.1-mini"],  # Categorical
+        "model": ["gpt-4.1-mini", "gpt-4.1"],  # Categorical
     },
     evaluation=EvaluationOptions(eval_dataset=str(DATASET_PATH)),
     execution=ExecutionOptions(offline=True),
@@ -137,7 +137,7 @@ async def main():
     print("-" * 40)
     print("  temperature: continuous (0.0, 1.0)")
     print("  top_p:       continuous (0.1, 1.0)")
-    print("  model:       categorical [gpt-4.1-nano, gpt-4.1-mini]")
+    print("  model:       categorical [gpt-4.1-mini, gpt-4.1]")
     print()
 
     print(f"Dataset: {DATASET_PATH}")

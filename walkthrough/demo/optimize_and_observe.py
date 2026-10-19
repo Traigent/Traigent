@@ -80,7 +80,7 @@ ALL_MODEL_CANDIDATES = [
     "gpt-4.1-mini",
     "gpt-4.1",
     "claude-haiku-4-5-20251001",
-    "gemini-3.5-flash-lite",
+    "gemini-3.7-flash",
     "gemini-3.8-flash",
 ]
 
@@ -264,7 +264,7 @@ def available_real_models() -> list[str]:
     if os.getenv("ANTHROPIC_API_KEY"):
         available.append("claude-haiku-4-5-20251001")
     if os.getenv("GOOGLE_API_KEY"):
-        available.extend(["gemini-3.5-flash-lite", "gemini-3.8-flash"])
+        available.extend(["gemini-3.7-flash", "gemini-3.8-flash"])
     return available
 
 

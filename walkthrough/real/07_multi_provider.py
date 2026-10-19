@@ -79,7 +79,7 @@ traigent.initialize(offline=True, minimal_logging=True)
 # Models organized by provider (valid model names: https://models.litellm.ai/)
 OPENAI_MODELS = ["gpt-4.1-mini", "gpt-4.1"]
 ANTHROPIC_MODELS = ["claude-haiku-4-5-20251001"]
-GOOGLE_MODELS = ["gemini-3.5-flash-lite", "gemini-3.8-flash"]
+GOOGLE_MODELS = ["gemini-3.7-flash", "gemini-3.8-flash"]
 
 # All models we want to potentially use (5 models × 2 temperatures = 10 trials)
 ALL_MODELS = OPENAI_MODELS + ANTHROPIC_MODELS + GOOGLE_MODELS

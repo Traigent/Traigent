@@ -69,7 +69,7 @@ def my_function():
 
     # Your code sees this, but Traigent modified the parameters:
     llm = ChatOpenAI(
-        model=optimal_config["model"],  # Was "gpt-4.1-nano", now "gpt-4.1-mini"
+        model=optimal_config["model"],  # Was "gpt-4.1-mini", now "gpt-4.1"
         temperature=optimal_config["temperature"],  # Was 0.7, now 0.3
     )
     response = llm.invoke("Hello")

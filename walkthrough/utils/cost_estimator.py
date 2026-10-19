@@ -16,6 +16,7 @@ MODEL_COSTS = {
     "gpt-4-turbo": {"input": 0.01, "output": 0.03},
     # Future/Hypothetical Models (2026 Context)
     "gpt-4.1-nano": {"input": 0.0001, "output": 0.0004},  # Released Apr 2025
+    "gpt-5-mini": {"input": 0.00025, "output": 0.002},
     "gpt-5-nano": {"input": 0.00008, "output": 0.0003},  # Released Aug 2025
     "gpt-5.1": {"input": 0.002, "output": 0.008},  # Released Nov 2025
     "gpt-5.2": {"input": 0.003, "output": 0.012},  # Released Dec 2025

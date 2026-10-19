@@ -139,7 +139,7 @@ if model_env:
 else:
     MODEL_CHOICES = [
         "openai/gpt-4.1-mini",
-        "openai/gpt-4.1-nano",  # Very cheap baseline
+        "openai/gpt-4.1-mini",  # Very cheap baseline
         "openai/gpt-4.1",  # Noticeably more expensive, good pruning signal
     ]
 

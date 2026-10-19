@@ -35,7 +35,7 @@ DATASET_FILE = os.path.join(os.path.dirname(__file__), "math_qa.jsonl")
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-nano", "gpt-4.1-mini"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.0, 0.1, 0.3],
         "prompt_style": ["direct", "step-by-step", "chain-of-thought"],
         "max_tokens": [50, 100, 150],

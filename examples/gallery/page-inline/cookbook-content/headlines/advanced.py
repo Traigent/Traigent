@@ -57,7 +57,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "headlines_eval.jsonl")
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-nano", "gpt-4.1-mini"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.2, 0.6, 0.9],
         "style": ["neutral", "punchy", "formal"],
         "max_words": [8, 12],

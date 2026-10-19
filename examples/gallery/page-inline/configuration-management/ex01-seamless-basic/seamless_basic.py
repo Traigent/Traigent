@@ -93,7 +93,7 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-nano", "gpt-4.1-mini", "gpt-4.1"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.1, 0.3, 0.5, 0.7, 0.9],
         "max_tokens": [100, 150, 200, 300],
     },

@@ -131,7 +131,7 @@ def _mcq_accuracy(output: int | None, expected: int | None, llm_metrics=None) ->
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-nano", "gpt-4.1-mini"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.0, 0.3, 0.7],
         "max_tokens": [80, 120],
     },

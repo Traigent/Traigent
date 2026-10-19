@@ -74,7 +74,6 @@ def _mock_answer_for_config(question: str, config) -> str:
     temperature = float(_config_value(config, "temperature", 0.5) or 0.5)
 
     answer_limit = {
-        "gpt-4.1-nano": 3,
         "gpt-4.1-mini": 5,
         "gpt-4.1": len(MOCK_QA_ANSWERS),
     }.get(model, 3)
@@ -92,7 +91,7 @@ def _mock_answer_for_config(question: str, config) -> str:
 # Valid model names: https://models.litellm.ai/
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-nano", "gpt-4.1-mini", "gpt-4.1"],  # Tuned Variable #1
+        "model": ["gpt-4.1-mini", "gpt-4.1"],  # Tuned Variable #1
         "temperature": [0.1, 0.5, 0.9],  # Tuned Variable #2
     },
     objectives=["accuracy", "cost"],  # What to optimize for

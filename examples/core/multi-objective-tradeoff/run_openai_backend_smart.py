@@ -239,9 +239,9 @@ if model_env:
     MODEL_CHOICES = [m.strip() for m in model_env.split(",") if m.strip()]
 else:
     MODEL_CHOICES = [
-        "openai/gpt-4.1-nano",  # Very cheap baseline
+        "openai/gpt-4.1-mini",  # Very cheap baseline
         "openai/gpt-4.1-mini",
-        # "openai/gpt-5-nano-2025-08-07",
+        # "openai/gpt-5-nano",
         # "openai/gpt-4.1",  # Noticeably more expensive, good pruning signal
         # "openai/gpt-4.1"
     ]

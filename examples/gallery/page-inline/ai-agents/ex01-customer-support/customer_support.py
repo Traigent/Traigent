@@ -127,7 +127,7 @@ create_support_dataset()
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-nano", "gpt-4.1-mini"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.0, 0.1, 0.3, 0.5],
         "prompt_style": ["direct", "structured", "few_shot"],
         "max_tokens": [50, 100, 150],

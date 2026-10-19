@@ -65,7 +65,7 @@ import traigent
 @traigent.optimize(
     # Define TUNED VARIABLES - parameters to optimize
     configuration_space={
-        "model": ["gpt-4.1-nano", "gpt-4o-mini", "gpt-4o"],
+        "model": ["gpt-4.1-mini", "gpt-4o-mini", "gpt-4o"],
         "temperature": [0.1, 0.5, 0.9],
         "max_tokens": [500, 1000, 2000]
     },

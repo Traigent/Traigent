@@ -8,8 +8,11 @@ surfaces are.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
+
+import litellm
 
 REPO = Path(__file__).resolve().parents[3]
 SCAN_ROOTS = ("traigent/examples", "examples", "walkthrough")
@@ -66,3 +69,40 @@ def test_examples_walkthroughs_and_docs_do_not_use_gpt_3_5() -> None:
     if GPT35_PATTERN.search(readme):
         offenders.append("README.md")
     assert not offenders, offenders
+
+
+MODEL_ID = re.compile(
+    r"(?<![\w.-])(?:(?:openai|anthropic|gemini)/)?((?:gpt|claude|gemini|o[134])-[A-Za-z0-9][\w.-]*)"
+)
+
+
+def _litellm_table() -> dict:
+    path = Path(litellm.__file__).parent / "model_prices_and_context_window_backup.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_guarded_surfaces_mention_no_model_with_announced_shutdown() -> None:
+    """Any model id on a guarded surface must have no litellm deprecation_date."""
+    table = _litellm_table()
+    roots = [(r, SUFFIXES) for r in SCAN_ROOTS] + [
+        (r, DOCS_SUFFIXES) for r in DOCS_ROOTS
+    ]
+    files = [REPO / "README.md"]
+    for root, suffixes in roots:
+        files += [
+            p for p in (REPO / root).rglob("*") if p.is_file() and p.suffix in suffixes
+        ]
+    offenders: dict[str, set[str]] = {}
+    for path in files:
+        rel = path.relative_to(REPO).as_posix()
+        if path.name in SKIP_NAMES or rel in ALLOWED:
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for match in MODEL_ID.finditer(text):
+            model = match.group(1).rstrip(".-")
+            for key in (model, f"openai/{model}"):
+                if (table.get(key) or {}).get("deprecation_date"):
+                    offenders.setdefault(rel, set()).add(
+                        f"{model} ({table[key]['deprecation_date']})"
+                    )
+    assert not offenders, {k: sorted(v) for k, v in offenders.items()}

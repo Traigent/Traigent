@@ -31,7 +31,7 @@ traigent.initialize(offline=True, minimal_logging=True)
 DATASETS = Path(__file__).parent.parent / "datasets"
 OBJECTIVES = ["accuracy", "cost"]
 CONFIG_SPACE = {
-    "model": ["gpt-4.1-nano", "gpt-4.1-mini"],
+    "model": ["gpt-4.1-mini", "gpt-4.1"],
     "temperature": [0.0, 0.3, 0.7],
     "k": [1, 3, 5],
     "retrieval_method": ["similarity", "keyword"],

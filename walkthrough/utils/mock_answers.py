@@ -51,6 +51,7 @@ MOCK_MODEL_ACCURACY = {
     "gpt-4": 0.88,
     "gpt-4-turbo": 0.87,
     "gpt-4.1-nano": 0.70,  # Released Apr 2025, optimized for speed
+    "gpt-5-mini": 0.80,  # Mock value for walkthroughs
     "gpt-5-nano": 0.73,  # Released Aug 2025, improved over 4.1-nano
     "gpt-5.1": 0.91,  # Released Nov 2025, strong reasoning
     "gpt-5.2": 0.93,  # Released Dec 2025, best accuracy
@@ -74,6 +75,7 @@ MOCK_MODEL_COSTS = {
     "gpt-4.1": {"input": 0.002, "output": 0.008},
     "gpt-4.1-mini": {"input": 0.0004, "output": 0.0016},
     "gpt-4.1-nano": {"input": 0.0001, "output": 0.0004},  # Released Apr 2025
+    "gpt-5-mini": {"input": 0.00025, "output": 0.002},
     "gpt-5-nano": {"input": 0.00008, "output": 0.0003},  # Released Aug 2025
     "gpt-5.1": {"input": 0.002, "output": 0.008},  # Released Nov 2025
     "gpt-5.2": {"input": 0.003, "output": 0.012},  # Released Dec 2025
@@ -115,6 +117,7 @@ MOCK_MODEL_LATENCY = {
     "gpt-4-turbo": 0.8,  # Slower than 4o ("Turbo" is older tech now)
     "gpt-4": 1.5,  # Legacy GPT-4 is notoriously slow
     "gpt-4.1-nano": 0.15,  # Ultra-low latency, released Apr 2025
+    "gpt-5-mini": 0.2,  # Mock value for walkthroughs
     "gpt-5-nano": 0.12,  # Released Aug 2025, faster than 4.1-nano
     "gpt-5.1": 0.5,  # Released Nov 2025, improved reasoning
     "gpt-5.2": 0.6,  # Released Dec 2025, complex reasoning model

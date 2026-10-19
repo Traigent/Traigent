@@ -52,7 +52,7 @@ OBJECTIVES = ObjectiveSchema.from_objectives(
 
 CONFIG_SPACE = {
     "model": [
-        "gpt-4.1-nano",
+        "gpt-5-mini",
         "gpt-4.1-mini",
         "gpt-4.1",
         "gpt-5.2",
@@ -77,11 +77,11 @@ _REAL_ACCURACY: dict[tuple, float] = {
     ("gpt-5.1", "role_based", 0.3, "direct", 200): 0.811,
     ("gpt-4.1", "minimal", 0.2, "direct", 100): 0.741,
     ("gpt-4.1", "minimal", 0.3, "direct", 50): 0.710,
-    ("gpt-4.1-nano", "role_based", 0.1, "direct", 100): 0.874,
+    ("gpt-5-mini", "role_based", 0.1, "direct", 100): 0.874,
     ("gpt-5-nano", "role_based", 0.0, "direct", 200): 0.050,
-    ("gpt-4.1-nano", "role_based", 0.1, "direct", 200): 0.868,
+    ("gpt-5-mini", "role_based", 0.1, "direct", 200): 0.868,
     ("gpt-5-nano", "role_based", 0.9, "CoT", 200): 0.000,
-    ("gpt-4.1-nano", "minimal", 0.3, "direct", 50): 0.776,
+    ("gpt-5-mini", "minimal", 0.3, "direct", 50): 0.776,
     ("gpt-4.1-mini", "minimal", 0.6, "direct", 100): 0.738,
     ("gpt-5.1", "role_based", 0.2, "direct", 100): 0.711,
     ("gpt-4.1-mini", "role_based", 0.1, "CoT", 200): 0.864,
@@ -92,7 +92,7 @@ _RAG_MODEL_BASE = {
     "gpt-5.1": 0.75,
     "gpt-5.2": 0.70,
     "gpt-4.1-mini": 0.75,
-    "gpt-4.1-nano": 0.72,
+    "gpt-5-mini": 0.72,
     "gpt-4.1": 0.68,
     "gpt-5-nano": 0.03,
 }
@@ -101,7 +101,7 @@ _COT_SENSITIVITY = {
     "gpt-5.2": 0.02,
     "gpt-4.1": 0.05,
     "gpt-4.1-mini": 0.02,
-    "gpt-4.1-nano": 0.01,
+    "gpt-5-mini": 0.01,
 }
 
 

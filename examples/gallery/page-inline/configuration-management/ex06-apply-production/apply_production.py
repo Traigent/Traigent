@@ -133,7 +133,7 @@ class OptimizedChatService:
         # Define the optimized greeting function
         @traigent.optimize(
             configuration_space={
-                "model": ["gpt-4.1-nano", "gpt-4.1-mini"],
+                "model": ["gpt-4.1-mini", "gpt-4.1"],
                 "temperature": [0.1, 0.3, 0.5],
                 "max_tokens": [50, 100, 150],
                 "response_style": ["friendly", "professional", "casual"],
@@ -167,7 +167,7 @@ class OptimizedChatService:
         # Define the optimized response function
         @traigent.optimize(
             configuration_space={
-                "model": ["gpt-4.1-nano", "gpt-4.1-mini", "gpt-4.1"],
+                "model": ["gpt-4.1-mini", "gpt-4.1"],
                 "temperature": [0.3, 0.5, 0.7, 0.9],
                 "max_tokens": [200, 300, 500],
                 "creativity_mode": ["low", "medium", "high"],

@@ -81,7 +81,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "support_eval.jsonl")
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-nano", "gpt-4.1-mini"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.0, 0.1, 0.3],
         "use_examples": [True, False],
         "prompt_style": ["direct", "reasoned"],

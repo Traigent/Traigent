@@ -468,7 +468,7 @@ def _dump_example_results(
         "model": [
             # "openai/invalid-model-xyz",  # Test invalid model
             "openai/gpt-4.1-mini",
-            "openai/gpt-4.1-nano",
+            "openai/gpt-4.1-mini",
             # "openai/gpt-4.1-mini",
             # "openai/gpt-5-nano",
         ],

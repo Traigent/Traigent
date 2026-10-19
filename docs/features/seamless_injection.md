@@ -7,7 +7,7 @@ back to a runtime shim when no assignments can be rewritten.
 ## How It Works
 
 1. **AST rewrite first**: Traigent replaces literal assignments that match
-   configuration keys (for example `model = "gpt-4"`).
+   configuration keys (for example `model = "gpt-4.1"`).
 2. **Runtime shim fallback**: If nothing is rewritten and the configuration
    overlaps the function signature, Traigent injects values at call time.
 
@@ -17,8 +17,8 @@ parameters or defaults.
 ## Supported Patterns
 
 - Variable assignments inside the function body
-- Signature defaults (`def fn(model="gpt-4")`)
-- Keyword-only defaults (`def fn(*, model="gpt-4")`)
+- Signature defaults (`def fn(model="gpt-4.1")`)
+- Keyword-only defaults (`def fn(*, model="gpt-4.1")`)
 - Required parameters when callers omit them (shim fills from config)
 
 ## Known Limitations

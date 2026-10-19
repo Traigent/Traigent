@@ -26,7 +26,7 @@ tvars:
   # Enum type: choose from a fixed set of values
   - name: model
     type: enum[str]
-    domain: ["gpt-4.1-mini", "gpt-4.1-nano"]
+    domain: ["gpt-4.1-mini", "gpt-4.1"]
     default: "gpt-4.1-mini"
 
   # Float type with a continuous range

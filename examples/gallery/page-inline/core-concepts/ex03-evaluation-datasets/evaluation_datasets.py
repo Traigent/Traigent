@@ -111,7 +111,7 @@ def _records_to_dataset(records: list[dict[str, Any]], name: str) -> Dataset:
 # Example 1: Using JSONL file dataset
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-nano", "gpt-4.1-mini"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.1, 0.5, 0.9],
     },
     eval_dataset=DATASET_FILE,  # JSONL file
@@ -149,7 +149,7 @@ def create_python_dataset() -> Dataset:
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-nano", "gpt-4.1-mini"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.1, 0.3, 0.5],
         "prompt_style": ["direct", "detailed", "structured"],
     },
@@ -245,7 +245,7 @@ class DynamicDatasetGenerator:
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-nano", "gpt-4.1-mini"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.0, 0.1, 0.2],  # Low temp for math
         "reasoning_steps": [True, False],
     },

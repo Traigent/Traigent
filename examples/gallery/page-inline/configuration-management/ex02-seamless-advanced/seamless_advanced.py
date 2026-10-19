@@ -105,7 +105,7 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
 @traigent.optimize(
     configuration_space={
         # Separate configs for different LLM roles
-        "analyzer_model": ["gpt-4.1-nano", "gpt-4.1-mini"],
+        "analyzer_model": ["gpt-4.1-mini", "gpt-4.1"],
         "analyzer_temp": [0.0, 0.1, 0.2],
         "generator_model": ["gpt-4.1-mini", "gpt-4.1"],
         "generator_temp": [0.5, 0.7, 0.9],

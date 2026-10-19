@@ -73,7 +73,7 @@ wrap_untrusted = _SAFE_HELPERS.wrap_untrusted
 @traigent.optimize(
     configuration_space={
         # Direct LLM parameters (seamless injection)
-        "model": ["gpt-4.1-nano", "gpt-4.1-mini", "gpt-4.1"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.1, 0.5, 0.9],
         # Custom application parameters
         "summarization_style": ["bullet", "paragraph", "outline"],

@@ -117,7 +117,7 @@ def _contains_accuracy(
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-nano", "gpt-4.1-mini"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.0, 0.3],
         "use_rag": [True, False],
         "top_k": [1, 2],
