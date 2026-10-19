@@ -8,7 +8,7 @@ default_install_hook_types: [pre-commit, commit-msg, pre-push]
 repos:
   # Python import sorting
   - repo: https://github.com/pycqa/isort
-    rev: 5.13.2
+    rev: 9.0.1
     hooks:
       - id: isort
         exclude: ^traigent/generated/
@@ -18,7 +18,7 @@ repos:
   # --check); reformatting it here would desync the checked-in artifact from a
   # fresh regeneration (the trailing-whitespace lesson in that script's docstring).
   - repo: https://github.com/psf/black
-    rev: 26.3.1
+    rev: 26.5.1
     hooks:
       - id: black
         language_version: python3.12
@@ -70,7 +70,7 @@ repos:
 
   # Type checking - uses pyproject.toml [tool.mypy] configuration
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.14.1
+    rev: v2.3.1
     hooks:
       - id: mypy
         args:
