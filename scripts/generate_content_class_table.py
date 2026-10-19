@@ -60,16 +60,52 @@ OUT = (
 )
 
 
-_CONSTRAINT_KEYS = frozenset({"pattern", "maxLength", "minLength", "description"})
+_CONSTRAINT_KEYS = frozenset(
+    {"pattern", "maxLength", "minLength", "enum", "const", "description"}
+)
+_VALUE_KEYS = frozenset({"pattern", "maxLength", "minLength", "enum", "const"})
+#: (looser, stricter) pattern pairs where every string the stricter one accepts is also
+#: accepted by the looser one (hex digits are a subset of ``[A-Za-z0-9_-]``). The table carries
+#: ONE pattern per node, so a conjunction of two is representable losslessly only as the
+#: stricter of an implying pair; any other pair fails generation.
+_IMPLYING_PATTERNS = frozenset({("^[A-Za-z0-9_-]+$", "^[0-9a-f]{32}$")})
 _REFINEMENT_KEYS = frozenset({"properties", "required", "not", "description"})
 
 
 def _constraint_only(branch: Any) -> bool:
     return (
         isinstance(branch, dict)
-        and "pattern" in branch
+        and bool(set(branch) & _VALUE_KEYS)
         and set(branch) <= _CONSTRAINT_KEYS
     )
+
+
+def _merge_constraints(out: dict[str, Any], branch: dict[str, Any]) -> None:
+    """Fold a constraint-only ``allOf`` branch INTO the node's compiled form (conjunction).
+
+    Nothing is dropped: patterns keep the stricter of an implying pair (else generation
+    fails), lengths take the tighter bound, ``enum`` intersects, ``const`` must agree.
+    """
+    if "pattern" in branch:
+        new = branch["pattern"]
+        old = out.get("pt")
+        if old is None or old == new:
+            out["pt"] = new
+        elif (old, new) in _IMPLYING_PATTERNS:
+            out["pt"] = new
+        elif (new, old) not in _IMPLYING_PATTERNS:
+            raise SystemExit("allOf pattern merge is not lossless: " + old + " & " + new)
+    if "maxLength" in branch:
+        out["ml"] = min(out.get("ml", branch["maxLength"]), branch["maxLength"])
+    if "minLength" in branch:
+        out["mn"] = max(out.get("mn", branch["minLength"]), branch["minLength"])
+    if "enum" in branch:
+        allowed = branch["enum"]
+        out["e"] = [v for v in out["e"] if v in allowed] if "e" in out else allowed
+    if "const" in branch:
+        if "k" in out and out["k"][0] != branch["const"]:
+            raise SystemExit("allOf const merge is not lossless")
+        out["k"] = [branch["const"]]
 
 
 def _refinement_only(branch: Any, parent_properties: Any) -> bool:
@@ -159,6 +195,8 @@ class Compiler:
         for src, dst in simple.items():
             if src in node:
                 out[dst] = node[src]
+        if self.simplify and "minLength" in node:
+            out["mn"] = node["minLength"]  # only the token-refs inventory carries it
         if "enum" in node:
             out["e"] = node["enum"]
         if "const" in node:
@@ -195,6 +233,9 @@ class Compiler:
             if self.simplify and src == "allOf":
                 # a branch that only adds a value constraint (pattern / length) carries no
                 # class and no structure: the walker would read it as an unclassified leaf
+                for b in branches:
+                    if _constraint_only(b):
+                        _merge_constraints(out, b)
                 branches = [b for b in branches if not _constraint_only(b)]
             elif self.simplify and all(
                 _refinement_only(b, node.get("properties")) for b in branches
@@ -262,6 +303,21 @@ def _add_endpoint_routes(comp: Compiler, endpoints_file: str, routes: list) -> N
             )
 
 
+def _assert_operation_key_lossless(comp: Compiler, routes: list[dict[str, Any]]) -> None:
+    """The token-refs ``operation_key`` must compile to exactly 32 lowercase hex characters."""
+    for route in routes:
+        if route["template"] != "/api/v1/optimization/token-refs" or not route["body"]:
+            continue
+        node = route["body"]
+        while "p" not in node and "ref" in node:
+            node = comp.nodes[node["ref"]]
+        key = node["p"]["operation_key"]
+        if key.get("pt") != "^[0-9a-f]{32}$" or key.get("mn") != 32 or key.get("ml") != 32:
+            raise SystemExit("operation_key constraints were not preserved losslessly")
+        return
+    raise SystemExit("token-refs route missing from the compiled table")
+
+
 def build(schema_root: Path, commit: str | None = None) -> dict[str, Any]:
     root = schema_root / "traigent_schema" / "schemas"
     comp = Compiler(root)
@@ -285,6 +341,7 @@ def build(schema_root: Path, commit: str | None = None) -> dict[str, Any]:
         )
     # appended after the label routes so every earlier node index stays where it was
     add_endpoint_routes(comp, TOKEN_REFS_ENDPOINTS, routes)
+    _assert_operation_key_lossless(comp, routes)
     manifest = schema_root / "docs" / "content-class-manifest.json"
     commit = (
         commit

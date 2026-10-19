@@ -281,3 +281,29 @@ def test_transport_gate_in_refusal_mode_classifies_the_route():
     finally:
         gate.set_mode(None)
         gate.set_allowed_origins(None)
+
+
+@pytest.mark.parametrize(
+    "operation_key",
+    ["customer_name", "Alice_has_diabetes", "a" * 31, "A" * 32, "0" * 31 + "G", ""],
+)
+def test_gate_refuses_an_operation_key_that_is_not_32_lowercase_hex(operation_key):
+    """L3: the generated table keeps ``^[0-9a-f]{32}$`` (and minLength) for operation_key."""
+    from traigent.labels import transport_gate as gate
+
+    url = "https://api.test/api/v1/optimization/token-refs"
+    body = _good_body()
+    body["operation_key"] = operation_key
+    gate.set_mode("refuse")
+    gate.set_allowed_origins(["https://api.test"])
+    try:
+        with pytest.raises(gate.TransportGateRefusal):
+            gate.inspect_outgoing("POST", url, json.dumps(body))
+        good = gate.inspect_outgoing("POST", url, json.dumps(_good_body()))
+        assert good is not None and not any(good.get(c, 0) for c in gate.BLOCKING)
+        valid = _good_body()
+        valid["operation_key"] = "0123456789abcdef" * 2
+        assert gate.inspect_outgoing("POST", url, json.dumps(valid)) is not None
+    finally:
+        gate.set_mode(None)
+        gate.set_allowed_origins(None)

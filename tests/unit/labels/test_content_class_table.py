@@ -27,7 +27,7 @@ PINNED_SCHEMA_COMMIT = "5ab2fd82129b245bcb28b5c75e42e5facf6443cb"
 PINNED_MANIFEST_SHA256 = (
     "1b1d5233da1a4a55b3fee72eb97e7abc9a20eb678397e44639eafb414446b594"
 )
-PINNED_TABLE_SHA256 = "a355173359e077404b697f7491bba8d70a1371f4a820dc8bd9f648d3620d975d"
+PINNED_TABLE_SHA256 = "73a490e4236b75549c323969fe40610b85c53b9b6dd4f5262e38ca0e13bb9b5d"
 
 
 def test_table_sha256_and_provenance_are_pinned() -> None:
@@ -58,3 +58,28 @@ def test_table_regenerates_exactly_from_the_schema_checkout() -> None:
     assert mod.render(Path(SCHEMA_DIR or ""), PINNED_SCHEMA_COMMIT) == TABLE.read_text(
         "utf-8"
     )
+
+
+def _generator():
+    spec = importlib.util.spec_from_file_location(
+        "gen_cct_merge", ROOT / "scripts" / "generate_content_class_table.py"
+    )
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_allof_constraint_merge_keeps_the_stricter_pattern_and_bounds() -> None:
+    mod = _generator()
+    out = {"pt": "^[A-Za-z0-9_-]+$", "ml": 40, "mn": 1}
+    mod._merge_constraints(
+        out, {"pattern": "^[0-9a-f]{32}$", "maxLength": 32, "minLength": 32}
+    )
+    assert out == {"pt": "^[0-9a-f]{32}$", "ml": 32, "mn": 32}
+
+
+def test_allof_constraint_merge_that_would_lose_a_pattern_fails_generation() -> None:
+    mod = _generator()
+    with pytest.raises(SystemExit):
+        mod._merge_constraints({"pt": "^a+$"}, {"pattern": "^b+$"})

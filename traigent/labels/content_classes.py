@@ -230,6 +230,7 @@ class _Walker:
             and (
                 ("pt" in node and not _search(node["pt"], value))
                 or ("ml" in node and len(value) > node["ml"])
+                or ("mn" in node and len(value) < node["mn"])
             )
         ):
             self.record(path, "violation")
