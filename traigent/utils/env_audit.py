@@ -71,14 +71,18 @@ def warn_unknown_traigent_env_vars(
         return
     if not unknown:
         return
-    parts = [
-        f"{name} (did you mean {hint}?)" if hint else name
-        for name, hint in unknown.items()
-    ]
-    from traigent.utils.exceptions import TraigentWarning
+    try:
+        parts = [
+            f"{name} (did you mean {hint}?)" if hint else name
+            for name, hint in unknown.items()
+        ]
+        from traigent.utils.exceptions import TraigentWarning
 
-    warnings.warn(
-        "Unrecognised TRAIGENT_* environment variable(s) ignored: " + ", ".join(parts),
-        TraigentWarning,
-        stacklevel=2,
-    )
+        warnings.warn(
+            "Unrecognised TRAIGENT_* environment variable(s) ignored: "
+            + ", ".join(parts),
+            TraigentWarning,
+            stacklevel=2,
+        )
+    except Exception:  # advisory check must never raise (incl. -W error)
+        return

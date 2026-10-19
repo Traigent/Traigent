@@ -50,3 +50,14 @@ def test_no_warning_when_all_known():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         warn_unknown_traigent_env_vars({"TRAIGENT_RUN_COST_LIMIT": "1"})
+
+
+def test_audit_never_raises_under_warnings_as_errors():
+    """Review: warnings-as-errors must not break import via the audit."""
+    import warnings
+
+    from traigent.utils.env_audit import warn_unknown_traigent_env_vars
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        warn_unknown_traigent_env_vars({"TRAIGENT_TOTALLY_BOGUS_VAR": "x"})
