@@ -29,7 +29,6 @@ environment:
     price_catalog:
       gpt-4.1: 0.005
       gpt-4.1-mini: 0.00015
-      gpt-5-mini: 0.0005
     quotas:
       daily_budget_usd: 50.0
       max_requests_per_minute: 100
@@ -37,7 +36,7 @@ environment:
 tvars:
   - name: model
     type: enum[str]
-    domain: ["gpt-4.1", "gpt-4.1-mini", "gpt-5-mini"]
+    domain: ["gpt-4.1", "gpt-4.1-mini"]
     default: "gpt-4.1-mini"
 
   - name: temperature
@@ -91,9 +90,6 @@ objectives:
 constraints:
   structural:
     # Model-specific constraints
-    - when: "params.model == 'gpt-5-mini'"
-      then: "params.max_tokens <= 1024"
-
     - when: "params.model == 'gpt-4.1'"
       then: "params.use_cot == true"  # Use CoT for expensive model
 

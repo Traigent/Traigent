@@ -31,7 +31,6 @@ OBJECTIVES = ObjectiveSchema.from_objectives(
 
 CONFIG_SPACE = {
     "model": [
-        "gpt-5-mini",
         "gpt-4.1-mini",
         "gpt-4.1",
         "gpt-5.2",
@@ -57,18 +56,18 @@ TRIALS_DATA = [
     ("gpt-5.1", "role_based", 0.3, "direct", 200, 0.811, 0.00062, 1.573),
     ("gpt-4.1", "minimal", 0.2, "direct", 100, 0.741, 0.00094, 2.070),
     ("gpt-4.1", "minimal", 0.3, "direct", 50, 0.710, 0.00062, 1.460),
-    ("gpt-5-mini", "role_based", 0.1, "direct", 100, 0.874, 0.00008, 1.025),
+    ("gpt-4.1", "role_based", 0.1, "direct", 100, 0.874, 0.00008, 1.025),
     ("gpt-5-nano", "role_based", 0.0, "direct", 200, 0.050, 0.00008, 2.568),
-    ("gpt-5-mini", "role_based", 0.1, "direct", 200, 0.868, 0.00008, 0.996),
+    ("gpt-4.1", "role_based", 0.1, "direct", 200, 0.868, 0.00008, 0.996),
     ("gpt-5-nano", "role_based", 0.9, "CoT", 200, 0.000, 0.00008, 2.457),
-    ("gpt-5-mini", "minimal", 0.3, "direct", 50, 0.776, 0.00010, 1.198),
+    ("gpt-4.1", "minimal", 0.3, "direct", 50, 0.776, 0.00010, 1.198),
     ("gpt-4.1-mini", "minimal", 0.6, "direct", 100, 0.738, 0.00006, 1.840),
     ("gpt-5.1", "role_based", 0.2, "direct", 100, 0.711, 0.00061, 1.604),
     ("gpt-4.1-mini", "role_based", 0.1, "CoT", 200, 0.864, 0.00003, 1.163),
     ("gpt-5.1", "minimal", 0.2, "direct", 100, 0.335, 0.00082, 2.234),
 ]
 
-BEST_IDX = 7  # trial 8: gpt-5-mini, 87.4%
+BEST_IDX = 7  # trial 8: gpt-4.1, 87.4%
 
 
 @dataclass
