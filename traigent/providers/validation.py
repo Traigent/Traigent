@@ -131,6 +131,8 @@ _KNOWN_MODELS: dict[str, frozenset[str]] = {
     ),
     "google": frozenset(
         {
+            "gemini-3.8-flash",
+            "gemini-3.5-flash-lite",
             "gemini-2.0-flash",
             # Retired gemini-1.5 family, gemini-2.0-flash-exp preview, and
             # gemini-1.0-pro / gemini-pro pruned (#1936/#1937).
@@ -586,7 +588,7 @@ class ProviderValidator:
             client = Anthropic(api_key=key, timeout=self.timeout)
             # Use count_tokens - zero cost, validates auth
             client.messages.count_tokens(
-                model="claude-3-haiku-20240307",
+                model="claude-haiku-4-5-20251001",
                 messages=[{"role": "user", "content": "ping"}],
             )
             self._cache_success("anthropic", key)
@@ -937,7 +939,7 @@ def get_provider_for_model(model_name: str) -> str | None:
     """Detect provider from model name.
 
     Args:
-        model_name: Model name (e.g., "gpt-4o-mini", "claude-3-haiku-20240307").
+        model_name: Model name (e.g., "gpt-4o-mini", "claude-haiku-4-5-20251001").
 
     Returns:
         Provider name if detected, None otherwise.
@@ -945,7 +947,7 @@ def get_provider_for_model(model_name: str) -> str | None:
     Examples:
         >>> get_provider_for_model("gpt-4o-mini")
         'openai'
-        >>> get_provider_for_model("claude-3-haiku-20240307")
+        >>> get_provider_for_model("claude-haiku-4-5-20251001")
         'anthropic'
         >>> get_provider_for_model("gemini-1.5-flash")
         'google'
