@@ -345,14 +345,26 @@ class AgentValidator:
 
     @staticmethod
     def _lookup_cost_per_1k(model: str) -> float | None:
-        """Return blended cost per 1K tokens for a model, or None if unpriced."""
-        cost_per_1k = MODEL_COST_PER_1K.get(model.lower())
-        if cost_per_1k is None:
-            # Try partial match for model variants
-            for known_model, known_cost in MODEL_COST_PER_1K.items():
-                if known_model in model.lower() or model.lower() in known_model:
-                    return known_cost
-        return cost_per_1k
+        """Return blended cost per 1K tokens for a model, or None if unpriced.
+
+        Exact match first, then the longest known model name that is a
+        version-style prefix of ``model`` (``gpt-4o-mini-2024-07-18`` ->
+        ``gpt-4o-mini``). Loose substring matches are never used, so an
+        unknown model is reported as unpriced rather than mis-priced.
+        """
+        name = model.lower()
+        exact = MODEL_COST_PER_1K.get(name)
+        if exact is not None:
+            return exact
+        best: str | None = None
+        for known in MODEL_COST_PER_1K:
+            if (
+                name.startswith(known)
+                and name[len(known)] in "-:@"
+                and (best is None or len(known) > len(best))
+            ):
+                best = known
+        return MODEL_COST_PER_1K[best] if best is not None else None
 
     def _unpriced_models(self, agent: AgentInfo) -> list[str]:
         """Models in the agent config that have no known price."""

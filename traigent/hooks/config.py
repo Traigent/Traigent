@@ -309,8 +309,8 @@ constraints:
   allowed_models:
     - gpt-4o-mini
     - gpt-4o
-    - claude-3-haiku
-    - claude-3-sonnet
+    - claude-3-5-haiku-20241022
+    - claude-sonnet-4-20250514
   blocked_models:
     - gpt-4-32k                 # Too expensive for production
 
