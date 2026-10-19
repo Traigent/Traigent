@@ -7,6 +7,7 @@ import importlib.util
 import inspect
 import io
 import json
+import logging
 import os
 import sys
 from collections.abc import Iterator
@@ -23,6 +24,7 @@ from traigent.config.project import read_optional_project_env
 from traigent.config.tenant import TENANT_ENV_VAR, read_optional_env
 from traigent.evaluators.base import DATASET_ROOT_ENV, _resolve_dataset_source
 from traigent.hooks.validator import DEFAULT_TOKENS_PER_QUERY, MODEL_COST_PER_1K
+from traigent.security.redaction import redact_sensitive_text
 from traigent.tuned_variables.detection_types import DetectionResult
 from traigent.tuned_variables.detector import TunedVariableDetector
 from traigent.utils.exceptions import ValidationError as TraigentValidationError
@@ -47,6 +49,9 @@ _REAL_SPEND_MESSAGE = (
     "Real optimization spends provider tokens/money. Re-run with confirm=true "
     "and an explicit positive cost_limit to start a real run."
 )
+logger = logging.getLogger(__name__)
+
+_MAX_ERROR_MESSAGE_CHARS = 500
 _EVAL_MANIFEST_SUFFIX = ".traigent-eval.json"
 _APPROVED_EVAL_STATUSES = {"approved", "user_approved"}
 
@@ -57,6 +62,28 @@ class ToolInputError(ValueError):
 
 def _failure(message: str, *, code: str = "invalid_input") -> dict[str, Any]:
     return {"ok": False, "code": code, "message": message}
+
+
+def _optimization_failure(exc: Exception, *, mode: str) -> dict[str, Any]:
+    """Build a bounded, non-sensitive failure for a script/evaluator exception (#2625).
+
+    Exception text can carry prompts, completions or credentials, and the MCP
+    response lands in the coding assistant's transcript. Real runs return only
+    the exception class; mock runs return redacted, length-capped text so a
+    SyntaxError/ImportError in the user's script stays actionable. The full
+    redacted detail goes to the local log only.
+    """
+    error_type = type(exc).__name__
+    redacted = redact_sensitive_text(str(exc))
+    logger.error("run_optimization failed (%s): %s", error_type, redacted)
+    if mode == "real":
+        message = (
+            f"Optimization failed with {error_type}. Details are withheld for "
+            "real runs; see the local MCP server log."
+        )
+    else:
+        message = f"{error_type}: {redacted}"[:_MAX_ERROR_MESSAGE_CHARS]
+    return _failure(message, code="optimization_failed")
 
 
 def _serialize_validation_result(result: ValidationResult) -> dict[str, Any]:
@@ -386,6 +413,15 @@ def scaffold_eval_tool(
         return _failure(str(exc), code="path_rejected")
 
     manifest_path = _eval_manifest_path(resolved_path)
+    # The manifest name is derived lexically, so a pre-existing symlink there
+    # could redirect the write outside the workspace (#2626). `exists()` also
+    # follows links and reads a dangling one as absent, so check the link itself.
+    if manifest_path.is_symlink():
+        return _failure(
+            "The approval manifest path is a symbolic link; refusing to write "
+            "through it. Remove the link or choose a different output_path.",
+            code="path_rejected",
+        )
     if not overwrite and (resolved_path.exists() or manifest_path.exists()):
         return _failure(
             "Draft eval output or manifest already exists. Re-run with overwrite=true "
@@ -837,7 +873,7 @@ def run_optimization_tool(
                 algorithm=effective_algorithm,
             )
     except Exception as exc:
-        return _failure(str(exc), code="optimization_failed")
+        return _optimization_failure(exc, mode=mode)
 
     if mode == "real":
         # Real runs touch live providers; captured stdout/stderr can contain
