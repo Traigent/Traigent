@@ -1238,3 +1238,88 @@ def test_the_production_entry_without_an_agent_reference_opens_no_store(
 ) -> None:
     assert tr._token_store_for("https://x.test/api/v1", {"knob": KNOB_REF}) is None
     assert tr._token_store_for("not a url", {"agent": AGENT_REF}) is None
+
+
+# ------------- explicit issuance store; unknown token ref fails closed (round 1b-2b r4)
+
+OTHER_AGENT_REF = "agentref_" + "b2" * 16
+
+
+def test_a_token_issued_under_another_agent_is_token_ref_unknown_and_nothing_is_sent(
+    tmp_path: Path, vectors: dict, caplog
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    cfg = _config(tmp_path, vectors)
+
+    async def go(fake, base):
+        store, ref = _issue_for(base, AGENT_REF)
+        done = await send_session_labels(
+            {"knob": HEBREW},
+            {"knob": ref, "agent": OTHER_AGENT_REF},
+            base,
+            _headers,
+            cfg,
+        )
+        sender = tr.sender_from_config(
+            base,
+            _headers,
+            cfg,
+            token_store_=TokenStore(TokenNamespace.for_backend(base, OTHER_AGENT_REF)),
+        )
+        with pytest.raises(LabelTransportError) as info:
+            await sender.send_new({ref: ("knob", HEBREW)})
+        return store, ref, done, info.value
+
+    fake, (store, ref, done, err) = _run(vectors, go)
+    assert done == {}
+    assert err.code == "token_ref_unknown"
+    assert fake.neg_raw == [] and fake.legacy_raw == [] and fake.plaintexts == {}
+    assert store.state_of(ref) == ts.S1_PENDING_LABEL
+    rendered = "".join(traceback.format_exception(err)) + repr(err) + caplog.text
+    for secret in (*CANARIES, ref, OTHER_AGENT_REF, AGENT_REF):
+        assert secret not in rendered
+
+
+def test_an_explicit_store_wins_over_the_session_agent_and_advances_s1_to_s2(
+    tmp_path: Path, vectors: dict
+) -> None:
+    cfg = _config(tmp_path, vectors)
+
+    async def go(fake, base):
+        store, ref = _issue_for(base, AGENT_REF)
+        done = await send_session_labels(
+            {"knob": HEBREW},
+            {"knob": ref, "agent": OTHER_AGENT_REF},
+            base,
+            _headers,
+            cfg,
+            token_store_=store,
+        )
+        return store, ref, done
+
+    fake, (store, ref, done) = _run(vectors, go)
+    assert done == {ref: 1}
+    assert store.state_of(ref) == ts.S2_LABEL_ACKED
+
+
+def test_flag_off_a_token_ref_unknown_to_the_session_store_is_the_legacy_write(
+    tmp_path: Path, vectors: dict, monkeypatch
+) -> None:
+    cfg = _config(tmp_path, vectors)
+
+    async def go(fake, base):
+        store, ref = _issue_for(base, AGENT_REF)
+        monkeypatch.setenv(ts.ENV_FLAG, "false")
+        done = await send_session_labels(
+            {"knob": HEBREW},
+            {"knob": ref, "agent": OTHER_AGENT_REF},
+            base,
+            _headers,
+            cfg,
+        )
+        monkeypatch.setenv(ts.ENV_FLAG, "true")
+        return store, ref, done
+
+    fake, (store, ref, done) = _run(vectors, go)
+    assert done == {ref: 1} and fake.neg_raw == [] and len(fake.legacy_raw) == 1
+    assert store.state_of(ref) == ts.S1_PENDING_LABEL

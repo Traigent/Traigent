@@ -79,6 +79,9 @@ LABEL_ROUTE_UNAVAILABLE = "label_route_unavailable"
 LABEL_CONFLICT_UNVERIFIED = token_store.LABEL_CONFLICT_UNVERIFIED
 #: The write was acknowledged but the token journal could not record it (S1 stays pending).
 TOKEN_STATE_NOT_PERSISTED = "token_state_not_persisted"
+#: A label targets a token-kind ref the selected token journal does not know (issued under
+#: another namespace, or no journal given): nothing is sent, so no token is left un-advanced.
+TOKEN_REF_UNKNOWN = "token_ref_unknown"
 UNAUTHENTICATED = "unauthenticated"
 FORBIDDEN = "forbidden"
 RATE_LIMITED = "rate_limited"
@@ -680,6 +683,14 @@ class LabelSender:
         """
         if not labels:
             return {}
+        if token_store.is_enabled():
+            # fail closed BEFORE any network or write: a token-kind ref the selected journal
+            # does not know would be written yet never advance (silent S1 forever)
+            for object_ref in labels:
+                if _TOKEN_REF.fullmatch(object_ref) and (
+                    self._journal_state(object_ref) is None
+                ):
+                    _raise_closed(LabelTransportError(TOKEN_REF_UNKNOWN))
         writer = await self._verified_writer()
         existing = {
             item.get("object_ref"): item.get("revision")
@@ -799,11 +810,15 @@ async def send_session_labels(
     api_base_url: str,
     headers: HeadersProvider,
     config_path: Path | None = None,
+    *,
+    token_store_: token_store.TokenStore | None = None,
 ) -> dict[str, int]:
     """Best-effort: send the human names of a session's agent / dataset / evaluator.
 
     ``texts`` maps a reference kind to its local name; ``refs`` maps kinds to the opaque
     references the Backend issued. Without a configured trust anchor nothing is sent.
+    ``token_store_`` is the exact issuance journal for token-kind refs; when given it wins
+    over the one derived from the session's ``agent`` reference.
     Never raises: any failure means "label not sent" (closed code logged at debug).
     """
     labels = {
@@ -818,7 +833,11 @@ async def send_session_labels(
             api_base_url,
             headers,
             config_path,
-            token_store_=_token_store_for(api_base_url, refs),
+            token_store_=(
+                token_store_
+                if token_store_ is not None
+                else _token_store_for(api_base_url, refs)
+            ),
         )
         if sender is None:
             return {}
