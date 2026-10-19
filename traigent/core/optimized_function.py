@@ -123,6 +123,7 @@ from traigent.utils.cost_calculator import (
     get_pricing_provenance,
 )
 from traigent.utils.env_config import (
+    cost_preflight_mock_exempt,
     is_mock_llm,
     is_strict_cost_accounting,
     strict_cost_accounting_origin,
@@ -3341,8 +3342,8 @@ class OptimizedFunction(Generic[_P, _R]):
         *,
         cost_approved: bool = False,
     ) -> None:
-        """Warn or fail before trials when a real run includes unpriced models."""
-        if is_mock_llm():
+        """Warn or fail before trials when a run includes unpriced models."""
+        if cost_preflight_mock_exempt():
             return
 
         model_ids = _extract_config_space_model_ids(effective_config_space)
