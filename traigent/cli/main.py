@@ -1350,6 +1350,73 @@ def _merge_result_infos(
     return merged
 
 
+_LOCAL_RESULT_PREFIX = "local:"
+
+
+def _session_to_result_view(session: OptimizationSession) -> Any:
+    """Adapt a v2 local session to the result shape the results commands read."""
+    from types import SimpleNamespace
+
+    trials = [
+        SimpleNamespace(
+            trial_id=trial.trial_id,
+            config=dict(trial.config or {}),
+            metrics={"score": trial.score} if trial.score is not None else {},
+            status="failed" if trial.error is not None else "completed",
+            error=trial.error,
+        )
+        for trial in (session.trials or [])
+    ]
+    best_metrics = (
+        {"score": session.best_score} if session.best_score is not None else {}
+    )
+    return SimpleNamespace(
+        function_name=session.function_name,
+        algorithm=_local_session_algorithm(session),
+        trials=trials,
+        successful_trials=[t for t in trials if t.status == "completed"],
+        best_config=session.best_config,
+        best_score=session.best_score,
+        best_metrics=best_metrics,
+        stop_reason=session.status,
+        objectives=[],
+        metadata=session.metadata or {},
+        duration=None,
+    )
+
+
+def _load_cli_result(result_name: str, storage_dir: str | None) -> Any:
+    """Load a result by any name ``traigent results list`` prints.
+
+    Saved results resolve through ``PersistenceManager``; ``local:<session_id>``
+    rows (and a bare session id) resolve through the local session store.
+    Raises ``FileNotFoundError`` when neither store has the name.
+    """
+    is_local_name = result_name.startswith(_LOCAL_RESULT_PREFIX)
+    if not is_local_name:
+        try:
+            return PersistenceManager(storage_dir or ".traigent").load_result(
+                result_name
+            )
+        except FileNotFoundError:
+            pass
+    session_id = result_name.removeprefix(_LOCAL_RESULT_PREFIX)
+    try:
+        session = LocalStorageManager(storage_dir).load_session(session_id)
+    except Exception:  # noqa: BLE001 - an unreadable id is simply not found
+        session = None
+    if session is None:
+        raise FileNotFoundError(result_name)
+    return _session_to_result_view(session)
+
+
+def _result_not_found_error(result_name: str) -> click.ClickException:
+    """The shared not-found failure: stderr message, exit 1, no path echoed."""
+    return click.ClickException(
+        f"Result '{result_name}' not found. {_MSG_RESULTS_LIST_HINT}"
+    )
+
+
 @cli.group()
 def results() -> None:
     """Browse, compare, and manage optimization results.
@@ -1427,8 +1494,7 @@ def results_show(result_name: str, storage_dir: str, trials: bool) -> None:
     console.print(f"\n[bold blue]Optimization Result: {result_name}[/bold blue]\n")
 
     try:
-        persistence = PersistenceManager(storage_dir)
-        result = persistence.load_result(result_name)
+        result = _load_cli_result(result_name, storage_dir)
 
         _print_result_summary(result)
         _print_config_json(result.best_config)
@@ -1438,11 +1504,10 @@ def results_show(result_name: str, storage_dir: str, trials: bool) -> None:
         if trials:
             _print_trials_table(result.trials)
 
-    except FileNotFoundError:
-        console.print(f"[red]Result '{result_name}' not found[/red]")
-        console.print(_MSG_RESULTS_LIST_HINT)
+    except FileNotFoundError as e:
+        raise _result_not_found_error(result_name) from e
     except Exception as e:
-        console.print(f"[red]Error loading result: {e}[/red]")
+        raise click.ClickException(f"Error loading result ({type(e).__name__})") from e
 
 
 @results.command("compare")
@@ -1460,9 +1525,8 @@ def results_compare(result1: str, result2: str, storage_dir: str) -> None:
     console.print(f"\n[bold blue]Comparing: {result1} vs {result2}[/bold blue]\n")
 
     try:
-        persistence = PersistenceManager(storage_dir)
-        r1 = persistence.load_result(result1)
-        r2 = persistence.load_result(result2)
+        r1 = _load_cli_result(result1, storage_dir)
+        r2 = _load_cli_result(result2, storage_dir)
 
         # Summary comparison table
         summary_table = _build_comparison_summary_table(r1, r2, result1, result2)
@@ -1484,10 +1548,11 @@ def results_compare(result1: str, result2: str, storage_dir: str) -> None:
             console.print(metrics_table)
 
     except FileNotFoundError as e:
-        console.print(f"[red]Result not found: {e}[/red]")
-        console.print(_MSG_RESULTS_LIST_HINT)
+        raise click.ClickException(f"Result not found. {_MSG_RESULTS_LIST_HINT}") from e
     except Exception as e:
-        console.print(f"[red]Error comparing results: {e}[/red]")
+        raise click.ClickException(
+            f"Error comparing results ({type(e).__name__})"
+        ) from e
 
 
 @results.command("rerank")
@@ -1529,8 +1594,7 @@ def results_rerank(
         console.print(f"  {k}: {v:.2%}")
 
     try:
-        persistence = PersistenceManager(storage_dir)
-        result = persistence.load_result(result_name)
+        result = _load_cli_result(result_name, storage_dir)
 
         if not result.trials:
             console.print("[yellow]No trials found in this result[/yellow]")
@@ -1604,11 +1668,10 @@ def results_rerank(
             console.print("[dim]Original best config:[/dim]")
             console.print(json.dumps(result.best_config, indent=2))
 
-    except FileNotFoundError:
-        console.print(f"[red]Result '{result_name}' not found[/red]")
-        console.print(_MSG_RESULTS_LIST_HINT)
+    except FileNotFoundError as e:
+        raise _result_not_found_error(result_name) from e
     except Exception as e:
-        console.print(f"[red]Error re-ranking: {e}[/red]")
+        raise click.ClickException(f"Error re-ranking ({type(e).__name__})") from e
 
 
 def _select_run_failures(
@@ -1827,8 +1890,7 @@ def export(
     )
 
     try:
-        persistence = PersistenceManager(storage_dir)
-        result = persistence.load_result(result_name)
+        result = _load_cli_result(result_name, storage_dir)
 
         if not result.best_config:
             raise click.ClickException("No best configuration found in this result")
@@ -1910,10 +1972,7 @@ def export(
     except click.ClickException:
         raise
     except FileNotFoundError as e:
-        raise click.ClickException(
-            f"Result '{result_name}' not found. "
-            "Use 'traigent results' to see available results"
-        ) from e
+        raise _result_not_found_error(result_name) from e
     except Exception as e:
         raise click.ClickException(
             f"Error exporting result ({type(e).__name__}); re-run with the "
@@ -1940,18 +1999,16 @@ def plot(result_name: str, storage_dir: str, plot_type: str) -> None:
     )
 
     try:
-        persistence = PersistenceManager(storage_dir)
-        result = persistence.load_result(result_name)
+        result = _load_cli_result(result_name, storage_dir)
 
         # Generate plot
         plot_output = create_quick_plot(result, plot_type)
         console.print(plot_output)
 
-    except FileNotFoundError:
-        console.print(f"[red]Result '{result_name}' not found[/red]")
-        console.print("Use 'traigent results' to see available results")
+    except FileNotFoundError as e:
+        raise _result_not_found_error(result_name) from e
     except Exception as e:
-        console.print(f"[red]Error generating plot: {e}[/red]")
+        raise click.ClickException(f"Error generating plot ({type(e).__name__})") from e
 
 
 @cli.command()
