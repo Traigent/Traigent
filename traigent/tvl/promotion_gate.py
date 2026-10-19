@@ -290,7 +290,18 @@ class PromotionGate:
         Args:
             policy: Promotion policy configuration.
             objectives: List of objective specifications.
+
+        Raises:
+            ValueError: If ``policy.min_effect`` lacks an entry for any
+                objective (including misspelt or wrong-case keys).
         """
+        missing = [obj.name for obj in objectives if obj.name not in policy.min_effect]
+        if missing:
+            raise ValueError(
+                "PromotionPolicy.min_effect must name every objective; missing "
+                f"{sorted(missing)} (present keys: {sorted(policy.min_effect)}). "
+                "A missing min_effect is not treated as 0.0 (Traigent#2658)."
+            )
         self.policy = policy
         self.objectives = {obj.name: obj for obj in objectives}
         self._objective_list = objectives
@@ -507,7 +518,7 @@ class PromotionGate:
         Returns:
             ObjectiveResult with comparison outcome.
         """
-        epsilon = self.policy.get_epsilon(obj.name, 0.0)
+        epsilon = self.policy.get_epsilon(obj.name)
 
         inc_mean = sum(incumbent_samples) / len(incumbent_samples)
         cand_mean = sum(candidate_samples) / len(candidate_samples)

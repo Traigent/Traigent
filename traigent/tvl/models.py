@@ -359,17 +359,34 @@ class PromotionPolicy:
                     f"min_effect for '{name}' must be non-negative, got {epsilon}"
                 )
 
-    def get_epsilon(self, objective_name: str, default: float = 0.0) -> float:
+    def get_epsilon(self, objective_name: str, default: float | None = None) -> float:
         """Get the epsilon tolerance for an objective.
+
+        A missing entry is never treated as ``0.0`` (a zero tolerance would let
+        the gate promote on any noise-level difference; Traigent#2658).
 
         Args:
             objective_name: Name of the objective.
-            default: Default epsilon if not specified.
+            default: Explicit fallback epsilon; when omitted a missing
+                objective raises.
 
         Returns:
             The epsilon tolerance for the objective.
+
+        Raises:
+            ValueError: If the objective has no ``min_effect`` entry and no
+                explicit ``default`` was given.
         """
-        return self.min_effect.get(objective_name, default)
+        if objective_name in self.min_effect:
+            return self.min_effect[objective_name]
+        if default is not None:
+            return default
+        raise ValueError(
+            f"PromotionPolicy.min_effect has no entry for objective "
+            f"'{objective_name}' (present keys: {sorted(self.min_effect)}). "
+            "Every objective needs an explicit min_effect; a missing one is "
+            "not treated as 0.0."
+        )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PromotionPolicy:
