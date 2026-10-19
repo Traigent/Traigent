@@ -116,7 +116,7 @@ class CloudEgressBlockedError(OfflineModeError):
                 "Unset TRAIGENT_OFFLINE/TRAIGENT_OFFLINE_MODE or clear the "
                 "runtime no_egress policy before using backend communication."
             ),
-            docs_link="https://github.com/Traigent/Traigent#offline-mode",
+            docs_link="https://github.com/Traigent/Traigent#optimization-routing",
         )
 
 

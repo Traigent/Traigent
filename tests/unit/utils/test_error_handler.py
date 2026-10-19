@@ -118,7 +118,7 @@ class TestAPIKeyError:
         error = APIKeyError("TEST_KEY")
 
         assert error.docs_link is not None
-        assert "configuration" in error.docs_link.lower()
+        assert error.docs_link.endswith("#troubleshooting")
 
 
 class TestConfigurationError:
@@ -144,7 +144,7 @@ class TestConfigurationError:
 
         assert (
             error.docs_link
-            == "https://github.com/Traigent/Traigent#configuration-space"
+            == "https://github.com/Traigent/Traigent#using-it-in-your-own-code"
         )
 
 

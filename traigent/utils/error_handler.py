@@ -53,7 +53,7 @@ class APIKeyError(TraigentError):
         super().__init__(
             message=f"Missing or invalid API key: {key_name}",
             fix=f"Add {key_name} to your .env file or set as environment variable",
-            docs_link="https://github.com/Traigent/Traigent#configuration",
+            docs_link="https://github.com/Traigent/Traigent#troubleshooting",
         )
 
 
@@ -64,7 +64,7 @@ class ConfigurationError(TraigentError):
         super().__init__(
             message=f"Invalid configuration for '{param}': {issue}",
             fix="Check the configuration_space parameter in @traigent.optimize()",
-            docs_link="https://github.com/Traigent/Traigent#configuration-space",
+            docs_link="https://github.com/Traigent/Traigent#using-it-in-your-own-code",
         )
 
 
@@ -94,7 +94,7 @@ class OfflineModeError(TraigentError):
                 "— no data is sent to the Traigent backend."
             ),
             fix="Unset TRAIGENT_OFFLINE_MODE (or set it to 'false') to allow backend communication.",
-            docs_link="https://github.com/Traigent/Traigent#offline-mode",
+            docs_link="https://github.com/Traigent/Traigent#optimization-routing",
         )
 
 
@@ -175,7 +175,7 @@ class ErrorHandler:
                     raise TraigentError(
                         message=f"Cannot import {module_name}",
                         fix=f"Try: pip install {module_name}",
-                        docs_link="https://github.com/Traigent/Traigent#dependencies",
+                        docs_link="https://github.com/Traigent/Traigent#installation",
                     ) from error
 
     @classmethod
@@ -194,7 +194,7 @@ class ErrorHandler:
             raise TraigentError(
                 message="API authentication failed",
                 fix="Check your API keys in .env file",
-                docs_link="https://github.com/Traigent/Traigent#api-keys",
+                docs_link="https://github.com/Traigent/Traigent#troubleshooting",
             ) from error
 
     @classmethod
@@ -208,9 +208,9 @@ class ErrorHandler:
         ):
             raise TraigentError(
                 message="Cannot connect to Traigent backend",
-                fix="1. Start backend: cd backend && python app.py\n"
+                fix="1. Start your Traigent backend service\n"
                 "   2. Or use offline mode: TRAIGENT_OFFLINE_MODE=true",
-                docs_link="https://github.com/Traigent/Traigent#backend-setup",
+                docs_link="https://github.com/Traigent/Traigent#troubleshooting",
             ) from error
         else:
             raise TraigentError(
@@ -227,7 +227,7 @@ class ErrorHandler:
             fix="1. Check file permissions\n"
             "   2. Run in virtual environment\n"
             "   3. Use --user flag: pip install --user",
-            docs_link="https://github.com/Traigent/Traigent#permissions",
+            docs_link="https://github.com/Traigent/Traigent#troubleshooting",
         ) from error
 
     @classmethod
