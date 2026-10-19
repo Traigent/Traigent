@@ -2066,3 +2066,31 @@ class TestCostDivergenceNeedsObservedBaseline:
 
         assert "Cost divergence detected" in caplog.text
         assert "$0.1000" in caplog.text
+
+
+def test_budget_block_message_names_real_cause_when_limit_reached_2675():
+    """#2675: measured spend over the limit must not claim the trial limit."""
+    from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig
+
+    e = CostEnforcer(
+        CostEnforcerConfig(limit=1.0, fallback_trial_limit=10, limit_explicit=False)
+    )
+    p = e.acquire_permit()
+    e.track_cost(None, permit=p)
+    p = e.acquire_permit()
+    e.track_cost(1.50, permit=p)
+    msg = e.budget_block_message(8)
+    assert "fallback trial limit 10 reached" not in msg
+    assert "cost limit ($1.00) was reached" in msg
+
+
+def test_budget_block_message_keeps_fallback_prefix_when_trial_cap_hit_2675():
+    from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig
+
+    e = CostEnforcer(
+        CostEnforcerConfig(limit=100.0, fallback_trial_limit=2, limit_explicit=False)
+    )
+    for _ in range(2):
+        p = e.acquire_permit()
+        e.track_cost(None, permit=p)
+    assert "fallback trial limit 2 reached at 2 trials" in e.budget_block_message(5)

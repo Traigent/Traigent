@@ -795,12 +795,22 @@ class CostEnforcer:
                 else str(max(planned_trials, 0))
             )
             if self._unknown_cost_mode and not self._unknown_cost_cap_waived:
+                if _spend_reached_limit(self._accumulated_cost, self.config.limit):
+                    # #2675: measured spend stopped the run, not the trial cap.
+                    cause = (
+                        f"per-trial cost unknown: cost limit "
+                        f"${self.config.limit:.2f} reached at "
+                        f"{self._trial_count} trials"
+                    )
+                else:
+                    cause = (
+                        f"per-trial cost unknown: fallback trial limit "
+                        f"{self.config.fallback_trial_limit} reached at "
+                        f"{self._trial_count} trials; cost limit "
+                        f"${self.config.limit:.2f}"
+                    )
                 return (
-                    f"budget gate blocked {blocked} planned trials "
-                    f"(per-trial cost unknown: fallback trial limit "
-                    f"{self.config.fallback_trial_limit} reached at "
-                    f"{self._trial_count} trials; cost limit "
-                    f"${self.config.limit:.2f}). "
+                    f"budget gate blocked {blocked} planned trials ({cause}). "
                     + unmeasured_cost_stop_message(
                         self._trial_count,
                         self.config.fallback_trial_limit,
