@@ -631,7 +631,7 @@ To ensure runs appear in Traigent backend UI:
 
 1. Leave `offline=False` and do not set `TRAIGENT_OFFLINE=1`.
 2. Set a reachable backend (`TRAIGENT_BACKEND_URL` or `TRAIGENT_API_URL`).
-3. Set `TRAIGENT_API_KEY` (or `TRAIGENT_ACCESS_TOKEN`).
+3. Set `TRAIGENT_API_KEY`.
 4. Ensure network/DNS reachability to the backend from the runtime environment.
 
 If these are missing, optimization may still run locally but backend sync can be skipped.
