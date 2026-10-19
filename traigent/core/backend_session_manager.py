@@ -2043,7 +2043,10 @@ class BackendSessionManager:
             local_status = OptimizationStatus.CANCELLED.value
         else:
             local_status = OptimizationStatus.FAILED.value
-        if apply_best and local_status == OptimizationStatus.COMPLETED.value:
+        if apply_best and local_status in (
+            OptimizationStatus.COMPLETED.value,
+            OptimizationStatus.CANCELLED.value,
+        ):
             # Final selection is authoritative, including "no winner".
             storage.finalize_session(
                 session_id,

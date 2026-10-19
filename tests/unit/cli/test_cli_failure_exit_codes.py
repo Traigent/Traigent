@@ -235,6 +235,7 @@ def test_rerank_applies_selector_eligibility_on_a_tie(
         objectives=["accuracy"],
         algorithm="grid",
         timestamp=datetime.now(),
+        metadata={"session_summary": {"ranking": {"comparability_mode": "warn"}}},
     )
     store = tmp_path / "store"
     PersistenceManager(str(store)).save_result(result, "tie")
@@ -245,3 +246,87 @@ def test_rerank_applies_selector_eligibility_on_a_tie(
     assert out.exit_code == 0, out.output
     assert "v5" in out.output
     assert "v4" not in out.output.split("New Best Configuration")[1].split("Best")[0]
+
+
+def _partial_winner_result(mode: str | None):
+    from datetime import UTC, datetime
+
+    from traigent.api.types import TrialResult, TrialStatus
+
+    comp = {
+        "schema_version": "1.0",
+        "primary_objective": "accuracy",
+        "evaluation_mode": "evaluated",
+        "total_examples": 8,
+        "examples_with_primary_metric": 5,
+        "coverage_ratio": 5 / 8,
+        "derivation_path": "none",
+        "ranking_eligible": False,
+        "warning_codes": ["MCI-002"],
+        "per_metric_coverage": {"accuracy": {"present": 5, "total": 8, "ratio": 5 / 8}},
+    }
+    trial = TrialResult(
+        trial_id="v1",
+        config={"variant": "v1"},
+        metrics={"accuracy": 0.9},
+        status=TrialStatus.COMPLETED,
+        duration=1.0,
+        timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+        metadata={"comparability": comp},
+    )
+    metadata = (
+        {"session_summary": {"ranking": {"comparability_mode": mode}}} if mode else {}
+    )
+    return OptimizationResult(
+        trials=[trial],
+        best_config={"variant": "v1"},
+        best_score=0.9,
+        optimization_id="opt-legacy",
+        duration=1.0,
+        convergence_info={},
+        status=OptimizationStatus.COMPLETED,
+        objectives=["accuracy"],
+        algorithm="grid",
+        timestamp=datetime.now(),
+        metadata=metadata,
+    )
+
+
+@pytest.mark.parametrize("mode,kept", [("legacy", True), (None, True), ("warn", False)])
+def test_rerank_uses_the_recorded_eligibility_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None, kept: bool
+) -> None:
+    store = tmp_path / "store"
+    PersistenceManager(str(store)).save_result(_partial_winner_result(mode), "r")
+    monkeypatch.chdir(tmp_path)
+    out = CliRunner().invoke(
+        cli, ["results", "rerank", "r", "-w", "accuracy=1.0", "-d", str(store)]
+    )
+    assert out.exit_code == 0, out.output
+    assert ("New Best Configuration" in out.output) is kept
+
+
+def test_cancelled_finalize_clears_a_stale_stored_best() -> None:
+    from traigent.api.types import OptimizationStatus as S
+    from traigent.core.backend_session_manager import BackendSessionManager
+
+    calls: list[dict] = []
+
+    class _Storage:
+        def finalize_session(self, session_id, status, **kw):  # noqa: ANN001, ANN003, ANN202
+            calls.append({"status": status, **kw})
+
+    mgr = BackendSessionManager.__new__(BackendSessionManager)
+    mgr._backend_client = None
+    mgr._local_storage = lambda: _Storage()  # type: ignore[method-assign]
+    mgr._finalize_local_session_unguarded(
+        "sid", S.CANCELLED, best_config=None, best_score=None, apply_best=True
+    )
+    assert calls == [
+        {
+            "status": "cancelled",
+            "best_config": None,
+            "best_score": None,
+            "apply_best": True,
+        }
+    ]

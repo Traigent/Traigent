@@ -1548,8 +1548,23 @@ def results_rerank(
             else max(weight_dict, key=lambda k: weight_dict[k])
         )
 
+        # Use the eligibility mode the run recorded; a run without one is
+        # not filtered (the pre-existing behaviour).
+        metadata = getattr(result, "metadata", None) or {}
+        summary = (
+            metadata.get("session_summary") if isinstance(metadata, dict) else None
+        )
+        ranking = summary.get("ranking") if isinstance(summary, dict) else None
+        recorded_mode = (
+            ranking.get("comparability_mode") if isinstance(ranking, dict) else None
+        )
+
         def _rerank_eligible(trial: Any) -> bool:
-            eligible, unknown, _codes = _is_ranking_eligible(trial, primary, "warn")
+            if recorded_mode not in ("legacy", "warn", "strict"):
+                return True
+            eligible, unknown, _codes = _is_ranking_eligible(
+                trial, primary, recorded_mode
+            )
             return eligible or unknown
 
         scored_trials = [
