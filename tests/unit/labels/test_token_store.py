@@ -395,6 +395,32 @@ def _mutations(state: dict[str, Any]) -> dict[str, bytes]:
         "revision_zero": edit(
             lambda s: s["revisions"].update({s["tokens"][first_key]["ref"]: 0})
         ),
+        # sol 1b-2a r4 P3 (token_store.py:861): a non-integer revision value is an unreadable
+        # store (token_map_not_persisted), never a TypeError surfacing as token_store_internal
+        "acked_revision_null": edit(
+            lambda s: (
+                s["tokens"][first_key].update(state="label_acked"),
+                s["revisions"].update({s["tokens"][first_key]["ref"]: None}),
+            )
+        ),
+        "acked_revision_string": edit(
+            lambda s: (
+                s["tokens"][first_key].update(state="label_acked"),
+                s["revisions"].update({s["tokens"][first_key]["ref"]: "1"}),
+            )
+        ),
+        "acked_revision_object": edit(
+            lambda s: (
+                s["tokens"][first_key].update(state="label_acked"),
+                s["revisions"].update({s["tokens"][first_key]["ref"]: {}}),
+            )
+        ),
+        "acked_revision_list": edit(
+            lambda s: (
+                s["tokens"][first_key].update(state="label_acked"),
+                s["revisions"].update({s["tokens"][first_key]["ref"]: [1]}),
+            )
+        ),
         "acked_without_revision": edit(
             lambda s: s["tokens"][first_key].update(state="label_acked")
         ),
@@ -1154,6 +1180,12 @@ def test_wire_body_is_exactly_the_schema_shape_and_carries_no_name(server):
         ((200, {"refs": ["metricref_" + "1" * 32]}), "token_refs_response_invalid"),
         ((200, {"refs": ["knobref_xyz"]}), "token_refs_response_invalid"),
         ((200, {"refs": [5]}), "token_refs_response_invalid"),
+        ((200, {"refs": [5]}), "token_refs_response_invalid"),
+        # sol 1b-2a r4 P3 (token_store.py:1193): an unhashable element is a closed
+        # response-invalid, never a TypeError surfacing as token_store_internal
+        ((200, {"refs": [{}]}), "token_refs_response_invalid"),
+        ((200, {"refs": [[]]}), "token_refs_response_invalid"),
+        ((200, {"refs": [{"knobref": 1}]}), "token_refs_response_invalid"),
         (
             (
                 400,

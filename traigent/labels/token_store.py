@@ -754,6 +754,10 @@ def _validate_state(state: Any, namespace: TokenNamespace) -> None:
         and isinstance(revisions, dict)
     ):
         raise _bad()
+    # revision values are typed before any comparison below (a null / string / object value
+    # must refuse as an unreadable store, not surface as a TypeError)
+    if not all(isinstance(r, str) and _is_int(v, 1) for r, v in revisions.items()):
+        raise _bad()
 
     seen_refs: set[str] = set()
     for op_key, op in operations.items():
@@ -1190,11 +1194,13 @@ def _issue(
     if (
         not isinstance(refs, list)
         or len(refs) != len(op["items"])
-        or len(set(refs)) != len(refs)
+        # every element is a well-formed ref string BEFORE any set() (an unhashable nested
+        # value would otherwise raise a TypeError and surface as token_store_internal)
         or any(
             not isinstance(ref, str) or not _REF[item[0]].fullmatch(ref)
             for item, ref in zip(op["items"], refs, strict=True)
         )
+        or len(set(refs)) != len(refs)
         or any(ref in _all_refs(tx.state) for ref in refs)
     ):
         raise TokenStoreError(TOKEN_REFS_RESPONSE_INVALID)
