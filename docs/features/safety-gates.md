@@ -70,11 +70,10 @@ trusted root.
 ## Backend Validation Loopback Gate
 
 Loopback backend validation is default-closed. For local backend development,
-use an explicit non-production environment and opt in:
+use an explicit non-production environment:
 
 ```bash
 export ENVIRONMENT=development
-export TRAIGENT_ALLOW_INSECURE_BACKEND=true
 ```
 
 Do not use this override for production.

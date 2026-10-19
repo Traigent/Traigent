@@ -51,7 +51,6 @@ def test_edge_analytics_sync_lands_cost_in_configuration_run():
     os.environ.update(
         TRAIGENT_BACKEND_URL=_BACKEND,
         TRAIGENT_API_URL=_BACKEND,
-        TRAIGENT_ALLOW_INSECURE_BACKEND="true",
         ENVIRONMENT="development",
         TRAIGENT_RESULTS_FOLDER=store,
         TRAIGENT_API_KEY=_KEY,
