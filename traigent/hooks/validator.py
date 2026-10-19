@@ -297,19 +297,20 @@ class AgentValidator:
         cost_constraints = self.config.constraints.cost
         estimated_cost = self._estimate_cost_per_query(agent)
 
-        # Fail closed: a model with no known price must never count as free.
+        # Fail closed: a cost ceiling is a policy surface, so a model with no
+        # known price must never count as free (error, not warning).
         if cost_constraints.max_cost_per_query is not None:
             unpriced = self._unpriced_models(agent)
             if unpriced:
-                warnings.append(
+                errors.append(
                     ValidationIssue(
-                        severity="warning",
+                        severity="error",
                         code="COST_UNKNOWN",
                         message=(
                             f"{len(unpriced)} configured model(s) have no known price, "
                             "so max_cost_per_query cannot be verified"
                         ),
-                        suggestion="Use a priced model or verify its cost manually",
+                        suggestion="Use a model with a known price",
                     )
                 )
 
