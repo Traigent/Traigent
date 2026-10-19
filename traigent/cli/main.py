@@ -569,6 +569,38 @@ def _is_known_model_id(
     return bool(discovery and discovery.is_valid_model(model_id))
 
 
+_LIVE_NOTE = (
+    "Snapshot/shape check only: this does not confirm the model ID is live "
+    "with the provider (no provider key, or no live catalog available)."
+)
+
+
+def _model_verdict(provider: str, model_id: str, valid: bool, live_ids) -> str:
+    """Classify a --check result: live / not-live / snapshot-only / unknown-shape."""
+    if not valid:
+        return "unknown-shape"
+    if provider == "bedrock":
+        return "live"
+    if not live_ids:
+        return "snapshot-only"
+    if model_id in live_ids or f"models/{model_id}" in live_ids:
+        return "live"
+    # Aliases and per-account fine-tunes are not listed by catalog endpoints.
+    if model_id.endswith("-latest") or model_id.startswith("ft:"):
+        return "snapshot-only"
+    return "not-live"
+
+
+def _live_ids_for(provider: str):
+    if provider == "bedrock":
+        return None
+    from traigent.integrations.model_discovery import get_model_discovery
+
+    discovery = get_model_discovery(provider)
+    live = getattr(discovery, "live_model_ids", None)
+    return live() if callable(live) else None
+
+
 def _print_model_ids(provider: str, region: str | None, model_ids: list[str]) -> None:
     """Print discovered model IDs in a compact table."""
     title = f"Known {provider} models"
@@ -638,26 +670,48 @@ def models(
         else None
     )
 
+    verdict = None
+    if model_id:
+        verdict = _model_verdict(
+            normalized_provider,
+            model_id,
+            bool(is_valid),
+            _live_ids_for(normalized_provider) if is_valid else None,
+        )
+        is_valid = verdict in {"live", "snapshot-only"}
+
     if output_json:
         payload = {
             "provider": normalized_provider,
             "region": region if normalized_provider == "bedrock" else None,
             "model": model_id,
             "valid": is_valid,
+            "verdict": verdict,
             "models": model_ids,
             "note": (
                 "Bedrock validation lists regional foundation models only; it does "
                 "not invoke a model or prove account entitlement."
                 if normalized_provider == "bedrock"
-                else None
+                else (_LIVE_NOTE if verdict == "snapshot-only" else None)
             ),
         }
         click.echo(json.dumps(payload, indent=2))
     else:
         _print_model_ids(normalized_provider, region, model_ids)
         if model_id:
-            if is_valid:
-                console.print(f"\n[green]Model preflight passed:[/green] {model_id}")
+            if verdict == "not-live":
+                console.print(
+                    f"\n[red]Model preflight failed:[/red] {model_id} is not in the "
+                    f"live {normalized_provider} catalog (retired or unavailable "
+                    "for this key)."
+                )
+            elif is_valid:
+                label = "live" if verdict == "live" else "snapshot-only"
+                console.print(
+                    f"\n[green]Model preflight passed ({label}):[/green] {model_id}"
+                )
+                if verdict == "snapshot-only":
+                    console.print(f"[yellow]{_LIVE_NOTE}[/yellow]")
             else:
                 console.print(
                     f"\n[red]Model preflight failed:[/red] {model_id} is not in "

@@ -7,6 +7,7 @@ released Claude IDs are not rejected before the snapshot is refreshed.
 # Traceability: CONC-Layer-Integration FUNC-INTEGRATIONS REQ-INT-008
 
 import logging
+import os
 
 from traigent.integrations.model_discovery.base import ModelDiscovery
 from traigent.integrations.utils import Framework
@@ -64,6 +65,16 @@ class AnthropicDiscovery(ModelDiscovery):
 
     PROVIDER = "anthropic"
     FRAMEWORK = Framework.ANTHROPIC
+
+    def _fetch_live_model_ids(self) -> list[str]:
+        """List model IDs via the Anthropic models endpoint (no model is invoked)."""
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            return []
+        import anthropic
+
+        client = anthropic.Anthropic(api_key=api_key)
+        return [m.id for m in client.models.list(limit=1000)]
 
     def _fetch_models_from_sdk(self) -> list[str]:
         """Live Anthropic model listing is not wired into this discovery path.

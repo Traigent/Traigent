@@ -228,3 +228,83 @@ def test_models_command_validates_bedrock_model_without_invoke(
         "amazon.nova-lite-v1:0",
         "anthropic.claude-3-5-sonnet-20241022-v2:0",
     ]
+
+
+# --- #1813: liveness verdicts for --check -----------------------------------
+
+
+class LiveFakeDiscovery(FakeDiscovery):
+    def __init__(self, live: list[str] | None, valid: bool = True) -> None:
+        super().__init__(valid=valid)
+        self.live = live
+
+    def live_model_ids(self) -> list[str] | None:
+        return self.live
+
+
+def _check(monkeypatch, discovery, model: str):
+    monkeypatch.setattr(
+        "traigent.integrations.model_discovery.get_model_discovery",
+        lambda provider: discovery,
+    )
+    result = CliRunner().invoke(
+        cli, ["models", "--provider", "openai", "--check", model, "--json"]
+    )
+    return result, json.loads(result.output)
+
+
+def test_check_reports_live_when_provider_lists_model(monkeypatch) -> None:
+    result, payload = _check(
+        monkeypatch, LiveFakeDiscovery(["gpt-4o", "o3-mini"]), "gpt-4o"
+    )
+    assert result.exit_code == 0
+    assert payload["verdict"] == "live"
+    assert payload["valid"] is True
+
+
+def test_check_fails_when_snapshot_valid_but_delisted_live(monkeypatch) -> None:
+    result, payload = _check(monkeypatch, LiveFakeDiscovery(["gpt-4o"]), "gpt-3-gone")
+    assert result.exit_code == 1
+    assert payload["verdict"] == "not-live"
+    assert payload["valid"] is False
+
+
+def test_check_snapshot_only_without_live_source(monkeypatch) -> None:
+    result, payload = _check(monkeypatch, LiveFakeDiscovery(None), "gpt-4o")
+    assert result.exit_code == 0
+    assert payload["verdict"] == "snapshot-only"
+    assert payload["valid"] is True
+    assert "not confirm" in payload["note"]
+
+
+def test_check_snapshot_only_when_discovery_has_no_live_api(monkeypatch) -> None:
+    result, payload = _check(monkeypatch, FakeDiscovery(valid=True), "gpt-4o")
+    assert result.exit_code == 0
+    assert payload["verdict"] == "snapshot-only"
+
+
+def test_check_unknown_shape_verdict(monkeypatch) -> None:
+    result, payload = _check(
+        monkeypatch, LiveFakeDiscovery(["gpt-4o"], valid=False), "banana"
+    )
+    assert result.exit_code == 1
+    assert payload["verdict"] == "unknown-shape"
+
+
+def test_check_text_output_labels_snapshot_only(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "traigent.integrations.model_discovery.get_model_discovery",
+        lambda provider: LiveFakeDiscovery(None),
+    )
+    result = CliRunner().invoke(
+        cli, ["models", "--provider", "openai", "--check", "gpt-4o"]
+    )
+    assert result.exit_code == 0
+    assert "does not confirm" in result.output.replace("\n", " ")
+
+
+def test_alias_and_finetune_ids_are_never_failed_by_live_list(monkeypatch) -> None:
+    for model in ("claude-3-5-haiku-latest", "ft:gpt-4o:org::abc"):
+        result, payload = _check(monkeypatch, LiveFakeDiscovery(["gpt-4o"]), model)
+        assert result.exit_code == 0
+        assert payload["verdict"] == "snapshot-only"

@@ -63,6 +63,10 @@ class AzureOpenAIDiscovery(ModelDiscovery):
             return None
         return self._fingerprint(endpoint, api_key)
 
+    def live_model_ids(self) -> list[str] | None:
+        """Azure names are user-defined deployments; there is no global catalog."""
+        return None
+
     def _fetch_models_from_sdk(self) -> list[str]:
         """Attempt to fetch deployments from Azure.
 
