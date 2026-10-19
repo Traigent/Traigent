@@ -1451,9 +1451,9 @@ class OptimizationResult:
         from traigent.utils.multi_objective import (  # noqa: PLC0415
             _COST_OBJECTIVE_NAMES,
         )
-        from traigent.utils.trial_costs import is_cost_unmeasured  # noqa: PLC0415
+        from traigent.utils.trial_costs import is_cost_unranked  # noqa: PLC0415
 
-        return objective in _COST_OBJECTIVE_NAMES and is_cost_unmeasured(
+        return objective in _COST_OBJECTIVE_NAMES and is_cost_unranked(
             getattr(trial, "metrics", None)
         )
 

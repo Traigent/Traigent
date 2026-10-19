@@ -75,10 +75,18 @@ Coverage limits:
 
 Traigent prices tokens from LiteLLM's model table. A gateway alias such as
 `acme-gateway/house-model` is not in that table, so its calls are
-**unpriced**: tokens are recorded, cost is not known. With
-`TRAIGENT_STRICT_COST_ACCOUNTING=true` an unpriced model raises; otherwise its
-calls are recorded at `$0` and the run's result carries a warning naming the
-unpriced model.
+**unpriced**: tokens are recorded, cost is not known. What happens next
+depends on `TRAIGENT_STRICT_COST_ACCOUNTING`:
+
+- `true`: an unpriced model raises.
+- unset: a run whose objectives include `cost` is strict at runtime, so it
+  stops at the first call that has neither a table price nor a
+  provider-reported cost. A run without a `cost` objective records the call at
+  `$0` and the result carries an `UNPRICED_MODEL_RUNTIME` warning.
+- `false`: explicit opt-out. The call is recorded at `$0` with the same
+  warning. The trial is flagged `cost_unpriced`, and a flagged trial is left
+  out of cost ranking (best config, Pareto front, weighted scores), so a
+  placeholder `$0` never wins as "cheapest".
 
 Give the alias a price with `TRAIGENT_CUSTOM_MODEL_PRICING_JSON` (inline) or
 `TRAIGENT_CUSTOM_MODEL_PRICING_FILE` (path to the same JSON). Prices are USD
