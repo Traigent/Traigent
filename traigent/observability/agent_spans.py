@@ -120,6 +120,23 @@ def _normalize_span_type(span_type: str) -> str:
     return SpanType.NODE.value
 
 
+def _is_token_count_key(key: str) -> bool:
+    """True for ``*_tokens`` names whose remainder is not itself sensitive.
+
+    ``total_tokens`` / ``cache_read_tokens`` are LLM usage counts, not
+    credentials (#2057). ``auth_tokens`` or ``api_key_tokens`` stay sensitive
+    because the part before ``tokens`` is. The caller applies this only to
+    numeric values.
+    """
+    lowered = key.strip().lower()
+    if not lowered.endswith("tokens"):
+        return False
+    stem = lowered[: -len("tokens")].rstrip("_-. ")
+    if not stem:
+        return True
+    return not (is_credential_key_name(stem) or is_content_key_name(stem))
+
+
 def _is_sensitive_metadata_key(key: str) -> bool:
     """Delegates to the canonical `traigent.security.redaction` keyword sets.
 
@@ -145,7 +162,9 @@ def _sanitize_metadata(
 
     for raw_key, value in metadata.items():
         key = str(raw_key)
-        if _is_sensitive_metadata_key(key):
+        if _is_sensitive_metadata_key(key) and not (
+            _is_safe_number(value) and _is_token_count_key(key)
+        ):
             logger.debug("Dropping sensitive agent span metadata key %s", key)
             dropped.append(key)
             continue
@@ -190,6 +209,10 @@ def add_agent_span(
     `SpanResult` receipt saying whether the span was accepted, why not, and
     which metadata keys were dropped — so a caller can detect lost telemetry
     instead of inferring it from an empty dashboard.
+
+    ``metadata`` is numeric-only: non-numeric values and credential- or
+    content-shaped keys are dropped and listed in the receipt. A number under a
+    token-count key such as ``total_tokens`` is kept.
     """
 
     trace_context = get_workflow_trace_context()
