@@ -23,26 +23,46 @@ def _raise_cancel(signum: int, frame: FrameType | None) -> None:
     raise KeyboardInterrupt
 
 
+_LOCK = threading.Lock()
+_active_scopes = 0
+_saved_handler: object = signal.SIG_DFL
+
+
 @contextmanager
 def sigterm_as_cancellation() -> Iterator[None]:
-    """Context manager translating SIGTERM into ``KeyboardInterrupt``."""
+    """Context manager translating SIGTERM into ``KeyboardInterrupt``.
+
+    Re-entrant: overlapping scopes share one installed handler, which is
+    installed on the first enter and restored on the last exit.
+    """
+    global _active_scopes, _saved_handler
     sigterm = getattr(signal, "SIGTERM", None)
     if sigterm is None or threading.current_thread() is not threading.main_thread():
         yield
         return
-    try:
-        previous = signal.getsignal(sigterm)
-        if previous != signal.SIG_DFL:
-            yield
-            return
-        signal.signal(sigterm, _raise_cancel)
-    except (ValueError, OSError):
-        yield
-        return
+    counted = False
+    with _LOCK:
+        try:
+            if _active_scopes > 0:
+                _active_scopes += 1
+                counted = True
+            else:
+                previous = signal.getsignal(sigterm)
+                if previous == signal.SIG_DFL:
+                    signal.signal(sigterm, _raise_cancel)
+                    _saved_handler = previous
+                    _active_scopes = 1
+                    counted = True
+        except (ValueError, OSError):
+            counted = False
     try:
         yield
     finally:
-        try:
-            signal.signal(sigterm, previous)
-        except (ValueError, OSError):
-            pass
+        if counted:
+            with _LOCK:
+                _active_scopes -= 1
+                if _active_scopes == 0:
+                    try:
+                        signal.signal(sigterm, _saved_handler)  # type: ignore[arg-type]
+                    except (ValueError, OSError):
+                        pass

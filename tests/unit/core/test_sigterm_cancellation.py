@@ -108,3 +108,20 @@ def test_sigterm_mid_run_finalizes_as_cancelled_in_subprocess(tmp_path):
     assert proc.returncode != -signal.SIGTERM, proc.stderr[-500:]
     assert "RESULT" in proc.stdout, proc.stderr[-500:]
     assert "cancel" in proc.stdout.lower()
+
+
+def test_overlapping_scopes_keep_handler_until_last_exit():
+    """Review: A exiting first must not restore the default under active B."""
+    before = signal.getsignal(signal.SIGTERM)
+    a = sigterm_as_cancellation()
+    b = sigterm_as_cancellation()
+    a.__enter__()
+    b.__enter__()
+    try:
+        a.__exit__(None, None, None)
+        assert signal.getsignal(signal.SIGTERM) is not before
+        with pytest.raises(KeyboardInterrupt):
+            signal.raise_signal(signal.SIGTERM)
+    finally:
+        b.__exit__(None, None, None)
+    assert signal.getsignal(signal.SIGTERM) is before
