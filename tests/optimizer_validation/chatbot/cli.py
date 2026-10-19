@@ -245,7 +245,7 @@ Example Questions:
   "Tell me about the test called empty_dataset"
   "How many tests do we have for each algorithm?"
   "Find tests related to parallel execution"
-  "Which tests use context injection with edge_analytics?"
+  "Which tests use context injection with local execution mode?"
 
 Tips:
   - Be specific about what you're looking for
