@@ -189,6 +189,37 @@ _OBJECTIVE_INERT_CONSTANT_WARNING_CODE = "OBJECTIVE_INERT_CONSTANT"
 _METRIC_PARTIAL_COVERAGE_WARNING_CODE = "METRIC_PARTIAL_COVERAGE"
 
 
+def _format_partial_coverage_warning(
+    partial: Sequence[tuple[str, int, int]],
+    primary_objective: str,
+    reason_code: str | None,
+    best_config: Any,
+    eligible_ids: Sequence[str] | None,
+) -> str:
+    """Describe partial coverage in terms of what selection actually did."""
+    tid, present, total = partial[0]
+    eligible = set(eligible_ids or [])
+    excluded = [p for p in partial if p[0] not in eligible]
+    head = (
+        f"objective '{primary_objective}' was reported on only {present}/{total} "
+        f"examples (e.g. trial {tid}). "
+    )
+    if not excluded:
+        # Legacy comparability mode ranks partially covered trials.
+        return (
+            f"{len(partial)} trial(s) had partial coverage but were still "
+            f"eligible for ranking: " + head
+        )
+    prefix = f"{len(excluded)} trial(s) excluded from ranking: "
+    if reason_code == NO_RANKING_ELIGIBLE_TRIALS:
+        return prefix + head + "No winner is declared."
+    if not best_config:
+        return (
+            prefix + head + f"No winner was selected (reason: {reason_code or 'none'})."
+        )
+    return prefix + head + "The winner was chosen among the remaining eligible trials."
+
+
 def _partial_coverage_trials(
     trials: Sequence[Any], primary_objective: str
 ) -> list[tuple[str, int, int]]:
@@ -5681,15 +5712,13 @@ class OptimizationOrchestrator:
         if primary_objective:
             partial = _partial_coverage_trials(self._trials, primary_objective)
             if partial:
-                tid, present, total = partial[0]
                 result_warnings.append(
-                    f"{len(partial)} trial(s) excluded from ranking: objective "
-                    f"'{primary_objective}' was reported on only {present}/{total} "
-                    f"examples (e.g. trial {tid}). "
-                    + (
-                        "No winner is declared."
-                        if selection.reason_code == NO_RANKING_ELIGIBLE_TRIALS
-                        else "The winner was chosen among fully covered trials."
+                    _format_partial_coverage_warning(
+                        partial,
+                        primary_objective,
+                        selection.reason_code,
+                        selection.best_config,
+                        selection.ranking_eligible_trial_ids,
                     )
                 )
                 result_warning_codes.append(_METRIC_PARTIAL_COVERAGE_WARNING_CODE)

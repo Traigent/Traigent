@@ -87,3 +87,20 @@ def test_stored_session_best_is_cleared_when_selection_has_no_winner(
     assert stored["status"] == "completed"
     assert stored["best_config"] is None
     assert stored["best_score"] is None
+
+
+def test_warning_text_matches_selection_per_mode() -> None:
+    from traigent.core.orchestrator import _format_partial_coverage_warning as fmt
+
+    partial = [("t1", 17, 20)]
+    legacy = fmt(partial, "quality", None, {"t": 0.0}, ["t1"])
+    assert "still eligible" in legacy and "excluded" not in legacy
+    none_ranked = fmt(partial, "quality", "NO_RANKING_ELIGIBLE_TRIALS", None, [])
+    assert "No winner is declared" in none_ranked
+    uncertified = fmt(partial, "quality", "NO_CERTIFIED_SELECTION", None, [])
+    assert "winner was chosen" not in uncertified
+    assert "NO_CERTIFIED_SELECTION" in uncertified
+    strict_empty = fmt(partial, "quality", None, {}, [])
+    assert "winner was chosen" not in strict_empty
+    chosen = fmt(partial, "quality", None, {"t": 1}, ["t2"])
+    assert "winner was chosen among the remaining" in chosen
