@@ -270,6 +270,10 @@ class LLMCallMetrics:
     output_tokens: int = 0
     total_tokens: int = 0
     cost: float = 0.0
+    #: True when no cost could be established for this call (no usage or model
+    #: reported, an errored call, or a failed estimate): ``cost`` is then a
+    #: placeholder 0.0, not a measured $0 (Traigent#2517).
+    cost_unmeasured: bool = False
     error: str | None = None
 
     @property
@@ -307,6 +311,9 @@ class TraigentHandlerMetrics:
     llm_calls: list[LLMCallMetrics] = field(default_factory=list)
     tool_calls: list[ToolCallMetrics] = field(default_factory=list)
     total_cost: float = 0.0
+    #: True when some LLM call's cost is unmeasured: ``total_cost`` is then only
+    #: the priced part, and ``to_measures_dict`` withholds it (Traigent#2517).
+    cost_unmeasured: bool = False
     total_latency_ms: float = 0.0
     total_input_tokens: int = 0
     total_output_tokens: int = 0
@@ -329,7 +336,6 @@ class TraigentHandlerMetrics:
         import re
 
         measures: dict[str, float | int] = {
-            f"{prefix}total_cost": self.total_cost,
             f"{prefix}total_latency_ms": self.total_latency_ms,
             f"{prefix}total_input_tokens": self.total_input_tokens,
             f"{prefix}total_output_tokens": self.total_output_tokens,
@@ -337,16 +343,24 @@ class TraigentHandlerMetrics:
             f"{prefix}llm_call_count": len(self.llm_calls),
             f"{prefix}tool_call_count": len(self.tool_calls),
         }
+        if self.cost_unmeasured:
+            # Some call's spend is unknown: no total is claimed (#2517).
+            measures[f"{prefix}cost_unmeasured"] = 1.0
+        else:
+            measures[f"{prefix}total_cost"] = self.total_cost
 
         if include_per_node:
             # Aggregate by node
             node_costs: dict[str, float] = {}
+            node_cost_unmeasured: set[str] = set()
             node_latencies: dict[str, float] = {}
             node_tokens: dict[str, int] = {}
 
             for call in self.llm_calls:
                 node = call.node_name or "unknown"
                 node_costs[node] = node_costs.get(node, 0.0) + call.cost
+                if call.cost_unmeasured:
+                    node_cost_unmeasured.add(node)
                 node_latencies[node] = node_latencies.get(node, 0.0) + call.latency_ms
                 node_tokens[node] = node_tokens.get(node, 0) + call.total_tokens
 
@@ -355,6 +369,8 @@ class TraigentHandlerMetrics:
                 return re.sub(r"\W", "_", name, flags=re.ASCII)
 
             for node, cost in node_costs.items():
+                if node in node_cost_unmeasured:
+                    continue  # a node with an unmeasured call has no cost
                 safe_node = sanitize(node)
                 measures[f"{prefix}{safe_node}_cost"] = cost
             for node, latency in node_latencies.items():
@@ -535,17 +551,26 @@ class TraigentHandler(BaseCallbackHandler):
             if call.model is None:
                 call.model = _extract_response_model(response)
 
-            # Calculate cost (simplified - uses litellm if available)
+            # Calculate cost (simplified - uses litellm if available). A call
+            # with no reported usage or model, or one whose estimate failed,
+            # has an UNKNOWN cost: flagged, never recorded as a measured $0.
             if call.total_tokens > 0 and call.model:
-                call.cost = self._estimate_cost(
+                estimated = self._estimate_cost(
                     call.model, call.input_tokens, call.output_tokens
                 )
+                if estimated is None:
+                    call.cost_unmeasured = True
+                else:
+                    call.cost = estimated
+            else:
+                call.cost_unmeasured = True
 
             self._completed_llm_calls.append(call)
 
+        cost_text = "unmeasured" if call.cost_unmeasured else f"${call.cost:.6f}"
         logger.debug(
             f"LLM end: {call_id} tokens={call.total_tokens} "
-            f"latency={call.latency_ms:.1f}ms cost=${call.cost:.6f}"
+            f"latency={call.latency_ms:.1f}ms cost={cost_text}"
         )
 
     def on_llm_error(
@@ -566,6 +591,8 @@ class TraigentHandler(BaseCallbackHandler):
 
             call.end_time = time.time()
             call.error = str(error)
+            # An errored call reported no usage; it may still have been billed.
+            call.cost_unmeasured = True
             self._completed_llm_calls.append(call)
 
         logger.warning(f"LLM error: {call_id} error={error}")
@@ -713,10 +740,12 @@ class TraigentHandler(BaseCallbackHandler):
 
     def _estimate_cost(
         self, model: str, input_tokens: int, output_tokens: int
-    ) -> float:
+    ) -> float | None:
         """Estimate cost for LLM call via the canonical cost_from_tokens().
 
-        In default mode, unknown models return 0.0 with a warning.
+        In default mode an unknown model returns ``None`` (with a warning from
+        the runtime-unpriced-model machinery): unknown, never a measured $0.
+        A failed estimate returns ``None`` as well.
         When TRAIGENT_STRICT_COST_ACCOUNTING=true, unknown models raise.
         """
         strict_cost_accounting = self._strict_cost_accounting
@@ -725,6 +754,7 @@ class TraigentHandler(BaseCallbackHandler):
             from traigent.utils.cost_calculator import (
                 _estimation_cost_from_tokens,
                 cost_from_tokens,
+                model_pricing_resolves,
             )
 
             input_cost, output_cost = cost_from_tokens(
@@ -753,6 +783,23 @@ class TraigentHandler(BaseCallbackHandler):
                     )
                     return est_total
 
+            if (
+                not strict_cost_accounting
+                and total_cost <= 0.0
+                and total_tokens > 0
+                and not model_pricing_resolves(model)
+            ):
+                # Tokens were reported but no price resolves for the model: the
+                # zero is the absence of a price, not a free call. Unknown
+                # (``None``) so the call is flagged unmeasured (#2517). A price
+                # that resolves to zero (explicit custom rate) stays a measured $0.
+                from traigent.utils.cost_calculator import (
+                    record_unpriced_runtime_model,
+                )
+
+                record_unpriced_runtime_model(model)
+                return None
+
             return total_cost
         except Exception:
             if strict_cost_accounting:
@@ -762,7 +809,7 @@ class TraigentHandler(BaseCallbackHandler):
                 model,
                 total_tokens,
             )
-            return 0.0
+            return None
 
     def get_metrics(self) -> TraigentHandlerMetrics:
         """Get aggregated metrics from this handler session.
@@ -775,6 +822,7 @@ class TraigentHandler(BaseCallbackHandler):
             tool_calls = list(self._completed_tool_calls)
 
         total_cost = sum(call.cost for call in llm_calls)
+        cost_unmeasured = any(call.cost_unmeasured for call in llm_calls)
         total_latency = sum(call.latency_ms for call in llm_calls) + sum(
             call.latency_ms for call in tool_calls
         )
@@ -787,6 +835,7 @@ class TraigentHandler(BaseCallbackHandler):
             llm_calls=llm_calls,
             tool_calls=tool_calls,
             total_cost=total_cost,
+            cost_unmeasured=cost_unmeasured,
             total_latency_ms=total_latency,
             total_input_tokens=total_input,
             total_output_tokens=total_output,

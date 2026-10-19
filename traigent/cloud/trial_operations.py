@@ -11,6 +11,7 @@ import concurrent.futures
 import copy
 import hashlib
 import json
+import math
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -34,9 +35,14 @@ from traigent.config.backend_config import BackendConfig
 from traigent.core.session_types import safe_http_error_summary
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.logging import get_logger
+from traigent.utils.trial_costs import is_cost_unmeasured
 
 # HTTP Content-Type header constant
 _JSON_CONTENT_TYPE_HEADER = {"Content-Type": "application/json"}
+#: Summary aggregates whose mean is a placeholder when cost went unmeasured.
+_SUMMARY_COST_AGGREGATES = frozenset(
+    {"input_cost", "output_cost", "total_cost", "cost"}
+)
 
 # Optional aiohttp dependency handling
 try:
@@ -1146,7 +1152,13 @@ class TrialOperations:
             return {}
 
         projected: dict[str, Any] = {}
+        # Cost aggregates over examples that had no cost measurement are
+        # placeholders, not $0 (#2517): drop their means and send the flag
+        # (plus the reported floor) instead.
+        cost_flagged = is_cost_unmeasured(summary_metrics)
         for metric_name, aggregate in summary_metrics.items():
+            if cost_flagged and metric_name in _SUMMARY_COST_AGGREGATES:
+                continue
             if isinstance(aggregate, dict):
                 if "mean" not in aggregate:
                     continue
@@ -1159,6 +1171,17 @@ class TrialOperations:
             ):
                 continue
             projected[metric_name] = scalar
+
+        if cost_flagged:
+            projected["cost_unmeasured"] = 1.0
+            bound = summary_metrics.get("cost_lower_bound")
+            if (
+                isinstance(bound, (int, float))
+                and not isinstance(bound, bool)
+                and math.isfinite(bound)
+                and bound > 0
+            ):
+                projected["cost_lower_bound"] = float(bound)
 
         return dict(MeasuresDict(projected))
 

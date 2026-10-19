@@ -44,7 +44,7 @@ class APIKeyManager:
                 "1. Environment variables: OPENAI_API_KEY, ANTHROPIC_API_KEY\n"
                 "2. Configuration file with proper permissions\n"
                 "3. Key management service\n"
-                "See: https://docs.traigent.com/security/api-keys",
+                "See: https://traigent.github.io/Traigent/guides/secrets_management/",
                 UserWarning,
                 stacklevel=2,
             )

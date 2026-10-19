@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from tests.shared.mocks.optimizers import MockOptimizer
+from traigent.api.functions import with_usage
 from traigent.config.types import TraigentConfig
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -90,12 +91,12 @@ def _default_func_factory(is_async: bool) -> Callable[..., Any]:
 
         async def async_eval(example_value: int) -> dict[str, Any]:
             await asyncio.sleep(0)
-            return {"value": example_value}
+            return with_usage({"value": example_value}, total_cost=0.0)
 
         return async_eval
 
     def sync_eval(example_value: int) -> dict[str, Any]:
-        return {"value": example_value}
+        return with_usage({"value": example_value}, total_cost=0.0)
 
     return sync_eval
 
@@ -138,13 +139,13 @@ def _parameter_func_factory(is_async: bool) -> Callable[..., Any]:
 
         async def async_parameter_eval(**kwargs: Any) -> dict[str, Any]:
             await asyncio.sleep(0)
-            return {"value": kwargs.get("value")}
+            return with_usage({"value": kwargs.get("value")}, total_cost=0.0)
 
         async_parameter_eval._traigent_injection_mode = "parameter"  # type: ignore[attr-defined]
         return async_parameter_eval
 
     def parameter_eval(**kwargs: Any) -> dict[str, Any]:
-        return {"value": kwargs.get("value")}
+        return with_usage({"value": kwargs.get("value")}, total_cost=0.0)
 
     parameter_eval._traigent_injection_mode = "parameter"  # type: ignore[attr-defined]
     return parameter_eval

@@ -96,10 +96,35 @@ def test_observability_config_does_not_emit_unknown_environment_content(
 
     config = ObservabilityConfig(backend_origin="https://auth.example.com")
 
-    assert config.default_environment is None
+    assert config.default_environment == "default"
     assert sentinel not in json.dumps(config.__dict__)
     assert "Ignoring unknown environment label" in caplog.text
     assert sentinel not in caplog.text
+
+
+def test_observability_environment_follows_one_resolution_order(monkeypatch):
+    """TRAIGENT_ENVIRONMENT beats ENVIRONMENT on the config and on the trace."""
+    monkeypatch.setenv("TRAIGENT_ENVIRONMENT", "staging")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("TRAIGENT_ENV", raising=False)
+    monkeypatch.delenv("OTEL_RESOURCE_ATTRIBUTES", raising=False)
+    _mock_public_backend_dns(monkeypatch)
+    sent_batches: list[list[dict]] = []
+    config = ObservabilityConfig(
+        backend_origin="https://auth.example.com",
+        api_key="test-key",  # pragma: allowlist secret
+    )
+    assert config.default_environment == "staging"
+
+    client = ObservabilityClient(config, sender=sent_batches.append)
+    trace_id = client.start_trace("env-order", trace_id="trace_env_order")
+    client.end_trace(trace_id)
+    client.flush()
+    client.close()
+
+    traces = [t for batch in sent_batches for t in batch]
+    assert traces
+    assert {t.get("environment") for t in traces} == {"staging"}
 
 
 def test_observability_config_defaults_to_metadata_content_mode(monkeypatch):
@@ -496,8 +521,12 @@ def test_observability_client_offline_mode_blocks_request_api():
         request_sender=request_sender,
     )
 
-    with pytest.raises(ClientError, match="TRAIGENT_OFFLINE_MODE=true"):
+    # #2603: no offline env var is set here, so the message must name the
+    # config flag that actually caused it, not TRAIGENT_OFFLINE_MODE.
+    with pytest.raises(ClientError) as exc_info:
         client.list_sessions()
+    assert "ObservabilityConfig.offline_mode=True" in str(exc_info.value)
+    assert "TRAIGENT_OFFLINE_MODE" not in str(exc_info.value)
 
     client.close()
 
@@ -3352,6 +3381,28 @@ def test_trace_dto_rejects_invalid_status(status):
         TraceDTO(id="trace_bad_status", name="bad-trace", status=status)
 
 
+def test_trace_dto_status_omitted_is_none_and_not_serialized():
+    trace = TraceDTO(id="trace_no_status", name="t")
+    assert trace.status is None
+    assert "status" not in trace.to_dict()
+
+
+def test_trace_dto_status_explicit_none_is_not_serialized():
+    trace = TraceDTO(id="trace_none_status", name="t", status=None)
+    assert "status" not in trace.to_dict()
+
+
+@pytest.mark.parametrize("status", ["running", "completed", "failed", "rejected"])
+def test_trace_dto_explicit_write_status_is_serialized(status):
+    trace = TraceDTO(id="trace_ok_status", name="t", status=status)
+    assert trace.to_dict()["status"] == status
+
+
+def test_trace_dto_unknown_status_is_read_only_not_writable():
+    with pytest.raises(ValueError, match="status"):
+        TraceDTO(id="trace_unknown", name="t", status="unknown")
+
+
 def test_observation_dto_rejects_event_with_children():
     child = ObservationDTO(
         id="obs_child",
@@ -3916,7 +3967,7 @@ def test_observability_client_logs_ingest_warnings(monkeypatch, caplog):
     )
 
     monkeypatch.setattr(
-        client, "_open_http_request", lambda http_request: _FakeResponse()
+        client, "_open_http_request", lambda http_request, **_: _FakeResponse()
     )
 
     with caplog.at_level(logging.WARNING):
@@ -3977,7 +4028,7 @@ def test_observability_client_closes_http_errors(
     monkeypatch.setattr(
         client,
         "_open_http_request",
-        lambda http_request: (_ for _ in ()).throw(http_error),
+        lambda http_request, **_: (_ for _ in ()).throw(http_error),
     )
 
     with pytest.raises(ClientError, match=message):
@@ -4011,7 +4062,7 @@ def test_observability_ingest_http_error_attaches_retry_after(monkeypatch):
     monkeypatch.setattr(
         client,
         "_open_http_request",
-        lambda http_request: (_ for _ in ()).throw(http_error),
+        lambda http_request, **_: (_ for _ in ()).throw(http_error),
     )
 
     with pytest.raises(ClientError) as exc_info:
@@ -6427,9 +6478,8 @@ class TestFinding2RealTransportInterleavingRegression:
             index = next(call_index)
             if index == paused_call_index:
                 entered_pause.set()
-                assert proceed.wait(timeout=5.0), (
-                    "test never released the paused transport submission"
-                )
+                release_message = "test never released the paused transport submission"
+                assert proceed.wait(timeout=5.0), release_message
                 scrub_armed["on"] = True
             return real_prepare_payload(self, payload, state=state)
 
@@ -6464,9 +6514,8 @@ class TestFinding2RealTransportInterleavingRegression:
         )
         paused_thread.start()
 
-        assert entered_pause.wait(timeout=5.0), (
-            "paused submission never reached the transport prepare step"
-        )
+        pause_message = "paused submission never reached the transport prepare step"
+        assert entered_pause.wait(timeout=5.0), pause_message
 
         # Mutate the SAME trace from this (the main) thread while the
         # first observation's snapshot submission is paused: complete it,
@@ -6521,15 +6570,15 @@ class TestFinding2RealTransportInterleavingRegression:
 
         observations = final_payload.get("observations", [])
         observation_ids = {obs["id"] for obs in observations}
-        assert observation_ids == {first_observation_id}, (
-            f"expected only the frozen observation, got {observation_ids}"
-        )
+        ids_message = f"expected only the frozen observation, got {observation_ids}"
+        assert observation_ids == {first_observation_id}, ids_message
         matching = next(
             obs for obs in observations if obs["id"] == first_observation_id
         )
-        assert matching["status"] == "running", (
+        status_message = (
             f"expected the FROZEN pre-mutation status, got {matching['status']!r}"
         )
+        assert matching["status"] == "running", status_message
 
 
 def test_observability_client_sends_multi_tag_filters_as_repeated_keys():
@@ -6598,3 +6647,89 @@ def test_observability_client_sends_multi_tag_filters_as_repeated_keys():
     assert tags_of(request_paths[4]) == ["vip,beta"]
     assert tags_of(request_paths[5]) is None
     assert request_paths[1] == "/sessions?page=1&per_page=20&tags=vip&tags=beta"
+
+
+class TestFallbackSnapshotPreservesAbsentStatus:
+    """#2588: the M8/A5 fallback must not fabricate a "failed" status for a
+    trace that never carried one, while keeping an explicit valid status."""
+
+    @staticmethod
+    def _state(status: str | None):
+        from traigent.observability.client import _TraceState
+
+        return _TraceState(trace=TraceDTO(id="trace-1", name="n", status=status))
+
+    def test_serialization_failure_keeps_absent_status_absent(self, monkeypatch):
+        from traigent.observability.client import _capture_trace_snapshot
+
+        state = self._state(None)
+
+        def _boom():
+            raise RuntimeError("serialization exploded")
+
+        monkeypatch.setattr(state, "to_payload", _boom)
+        snapshot, _ = _capture_trace_snapshot(state)
+        assert "status" not in snapshot
+
+    def test_redaction_failure_keeps_absent_status_absent(self, monkeypatch):
+        from traigent.observability.client import _redact_trace_payload
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("redactor exploded")
+
+        monkeypatch.setattr(
+            "traigent.observability.client.redact_sensitive_data", _boom
+        )
+        snapshot = _redact_trace_payload({"id": "trace-1", "name": "n"})
+        assert "status" not in snapshot
+
+    def test_explicit_valid_status_survives_both_failure_paths(self, monkeypatch):
+        from traigent.observability.client import (
+            _capture_trace_snapshot,
+            _redact_trace_payload,
+        )
+
+        state = self._state("completed")
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(state, "to_payload", _boom)
+        snapshot, _ = _capture_trace_snapshot(state)
+        assert snapshot["status"] == "completed"
+
+        monkeypatch.setattr(
+            "traigent.observability.client.redact_sensitive_data", _boom
+        )
+        redacted = _redact_trace_payload(
+            {"id": "trace-1", "name": "n", "status": "completed"}
+        )
+        assert redacted["status"] == "completed"
+
+    def test_static_fallback_omits_status_when_allowlist_build_raises(
+        self, monkeypatch, caplog
+    ):
+        """#2588: `status` is trace status, not snapshot health. When the
+        allowlist builder itself raises, the static last-resort snapshot must
+        not claim the traced operation failed."""
+        from traigent.observability.client import (
+            _safe_allowlisted_snapshot_or_static_fallback,
+        )
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("allowlist construction exploded")
+
+        monkeypatch.setattr(
+            "traigent.observability.client._safe_allowlisted_snapshot", _boom
+        )
+        with caplog.at_level("ERROR"):
+            snapshot = _safe_allowlisted_snapshot_or_static_fallback(
+                {"id": "trace-1", "name": "n", "status": "completed"}
+            )
+        assert "status" not in snapshot
+        assert snapshot["name"] == "[REDACTED]"
+        assert snapshot["metadata"] == {}
+        assert any(
+            "static minimal snapshot" in record.getMessage()
+            for record in caplog.records
+        )

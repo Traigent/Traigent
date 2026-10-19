@@ -890,7 +890,7 @@ class TestBackendSessionManagerTrialSubmission:
         assert metrics_payload["cost"] == pytest.approx(0.37)
 
     @pytest.mark.asyncio
-    async def test_submit_trial_budget_session_backfills_zero_cost_without_telemetry(
+    async def test_submit_trial_budget_session_flags_unmeasured_cost_without_telemetry(
         self,
         backend_session_manager,
         mock_backend_client,
@@ -925,8 +925,11 @@ class TestBackendSessionManagerTrialSubmission:
                 "metrics"
             ]
         )
+        # Owner decision A: budget-armed sessions require a number, so send the
+        # reported lower bound (0.0 here) together with cost_unmeasured = 1.0.
         assert metrics_payload["cost"] == 0.0
-        assert "no cost telemetry; backfilling 0.0 for budget accounting" in caplog.text
+        assert metrics_payload["cost_unmeasured"] == 1.0
+        assert "submitting budgeted trial as cost_unmeasured" in caplog.text
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status", [TrialStatus.FAILED, TrialStatus.PRUNED])

@@ -32,7 +32,8 @@ Examples:
     ...     },
     ...     constraints=[
     ...         lambda config: config["temperature"] < 0.8 if config["model"] == "gpt-4" else True,
-    ...         lambda config, metrics: metrics.get("cost", 0) <= 0.10
+    ...         lambda config, metrics: metrics.get("cost") is not None
+    ...         and metrics["cost"] <= 0.10
     ...     ]
     ... )
     ... def process_ticket(ticket: str) -> str:
@@ -581,7 +582,7 @@ def _revalidate_same_named_twin(
         # spelling of the same name (they are disjoint in every bundle today).
         payload.setdefault(key, legacy_value)
     try:
-        return cast(BundleModel, model_cls.model_validate(payload))
+        rebuilt = cast(BundleModel, model_cls.model_validate(payload))
     except PydanticValidationError as exc:
         raise TypeError(
             f"{parameter_name} was given an instance of "
@@ -589,6 +590,14 @@ def _revalidate_same_named_twin(
             f"{model_cls.__module__} (a reloaded module), and its values "
             f"do not validate against this one: {exc}"
         ) from exc
+    # The rebuild passed every field, so pydantic marked all of them as set.
+    # Restore the twin's own explicitness: ``_explicit_bundle_value`` relies on
+    # ``model_fields_set`` to tell a caller-set value from a default (#2540).
+    live_fields = set(model_cls.model_fields)
+    rebuilt.__pydantic_fields_set__ = {
+        name for name in value.model_fields_set if name in live_fields
+    }
+    return rebuilt
 
 
 def _coerce_bundle(
@@ -1311,6 +1320,17 @@ class LegacyOptimizeArgs:
         ]
 
 
+def _explicit_bundle_value(bundle: Any, field_name: str) -> Any:
+    """Return a bundle field only if the caller set it explicitly.
+
+    Pydantic defaults (e.g. ``ExecutionOptions.algorithm == "auto"``) must not
+    be mistaken for explicit values that conflict with direct arguments.
+    """
+    if field_name not in bundle.model_fields_set:
+        return None
+    return getattr(bundle, field_name)
+
+
 def _resolve_option(
     parameter_name: str,
     current_value: Any,
@@ -1716,61 +1736,61 @@ def _resolve_execution_bundle_options(
         algorithm=_resolve_option(
             "algorithm",
             base_options.algorithm,
-            execution_bundle.algorithm,
+            _explicit_bundle_value(execution_bundle, "algorithm"),
             defaults,
         ),
         offline=_resolve_option(
             "offline",
             base_options.offline,
-            execution_bundle.offline,
+            _explicit_bundle_value(execution_bundle, "offline"),
             defaults,
         ),
         evaluator=_resolve_option(
             "evaluator",
             base_options.evaluator,
-            execution_bundle.evaluator,
+            _explicit_bundle_value(execution_bundle, "evaluator"),
             defaults,
         ),
         local_storage_path=_resolve_option(
             "local_storage_path",
             base_options.local_storage_path,
-            execution_bundle.local_storage_path,
+            _explicit_bundle_value(execution_bundle, "local_storage_path"),
             defaults,
         ),
         minimal_logging=_resolve_option(
             "minimal_logging",
             base_options.minimal_logging,
-            execution_bundle.minimal_logging,
+            _explicit_bundle_value(execution_bundle, "minimal_logging"),
             defaults,
         ),
         parallel_config=_resolve_option(
             "parallel_config",
             base_options.parallel_config,
-            execution_bundle.parallel_config,
+            _explicit_bundle_value(execution_bundle, "parallel_config"),
             defaults,
         ),
         max_total_examples=_resolve_option(
             "max_total_examples",
             base_options.max_total_examples,
-            execution_bundle.max_total_examples,
+            _explicit_bundle_value(execution_bundle, "max_total_examples"),
             defaults,
         ),
         samples_include_pruned=_resolve_option(
             "samples_include_pruned",
             base_options.samples_include_pruned,
-            execution_bundle.samples_include_pruned,
+            _explicit_bundle_value(execution_bundle, "samples_include_pruned"),
             defaults,
         ),
         smart_pruning=_resolve_option(
             "smart_pruning",
             base_options.smart_pruning,
-            execution_bundle.smart_pruning,
+            _explicit_bundle_value(execution_bundle, "smart_pruning"),
             defaults,
         ),
         winner_stability_reps=_resolve_option(
             "winner_stability_reps",
             base_options.winner_stability_reps,
-            execution_bundle.winner_stability_reps,
+            _explicit_bundle_value(execution_bundle, "winner_stability_reps"),
             defaults,
         ),
         legacy_options=legacy_options,
@@ -2824,7 +2844,8 @@ def optimize(  # NOSONAR(S107)
         ...     },
         ...     constraints=[
         ...         lambda cfg: cfg["max_tokens"] <= 500 if cfg["model"] == "gpt-4" else True,
-        ...         lambda cfg, metrics: metrics.get("cost", 0) <= 0.10
+        ...         lambda cfg, metrics: metrics.get("cost") is not None
+        ...         and metrics["cost"] <= 0.10
         ...     ]
         ... )
         ... def handle_ticket(ticket: str) -> str:

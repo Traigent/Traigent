@@ -71,6 +71,8 @@ from traigent.utils.logging import get_logger
 from traigent.utils.trial_costs import (
     TRIAL_COST_FIELDS,
     extract_trial_cost_metric,
+    lift_flagged_cost_to_floor,
+    is_cost_unmeasured,
     is_finite_numeric_cost,
 )
 
@@ -1042,6 +1044,23 @@ class BackendSessionManager:
         if trial_result.status != TrialStatus.COMPLETED:
             return
 
+        if is_cost_unmeasured(metrics_payload) or is_cost_unmeasured(
+            getattr(trial_result, "metrics", None)
+        ):
+            # Flagged unknown. A budget-armed session needs a numeric cost, so
+            # send the reported lower bound WITH the flag (the flag is the
+            # signal); a flagged ``cost`` of 0 never overrides reported spend.
+            # Elsewhere cost stays omitted.
+            if session_id in self._session_cost_budget_armed:
+                metrics_payload["cost_unmeasured"] = 1.0
+                lift_flagged_cost_to_floor(
+                    metrics_payload,
+                    getattr(trial_result, "metrics", None),
+                    getattr(trial_result, "metadata", None),
+                    metadata,
+                )
+            return
+
         if is_finite_numeric_cost(metrics_payload.get("cost")):
             return
 
@@ -1062,9 +1081,14 @@ class BackendSessionManager:
         if session_id not in self._session_cost_budget_armed:
             return
 
-        metrics_payload["cost"] = 0.0
+        # No cost and no flag: the spend is unknown, never a measured $0.
+        metrics_payload["cost_unmeasured"] = 1.0
+        metrics_payload["cost"] = 0.0  # lower bound: nothing reported
         if not self._cost_budget_zero_backfill_logged:
-            logger.debug("no cost telemetry; backfilling 0.0 for budget accounting")
+            logger.debug(
+                "no cost telemetry; submitting budgeted trial as "
+                "cost_unmeasured (not $0)"
+            )
             self._cost_budget_zero_backfill_logged = True
 
     def _flag_backend_degraded(

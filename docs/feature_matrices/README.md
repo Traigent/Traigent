@@ -81,8 +81,6 @@ for module in matrix['modules']:
 
 ## Related Documents
 
-- [Traceability Requirements](../traceability/requirements.yml)
-- [Traceability Schema](../traceability/schema.md)
 - [Optimizer Matrix](optimizers.yml)
 - [Invoker Matrix](invokers.yml)
 

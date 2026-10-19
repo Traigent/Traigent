@@ -90,6 +90,15 @@ def _optional_bool(payload: dict[str, Any], name: str) -> bool | None:
     return None if value is None else bool(value)
 
 
+def _optional_str(payload: dict[str, Any], name: str) -> str | None:
+    """``None`` when absent, null or blank; otherwise the value as ``str``."""
+    value = payload.get(name)
+    if value is None:
+        return None
+    text = str(value)
+    return text if text.strip() else None
+
+
 def _optional_str_list(payload: dict[str, Any], name: str) -> list[str] | None:
     value = payload.get(name)
     if value is None:
@@ -440,7 +449,7 @@ class TraceDTO:
 
     id: str
     name: str
-    status: str = "running"
+    status: str | None = None
     session_id: str | None = None
     user_id: str | None = None
     environment: str | None = None
@@ -461,7 +470,8 @@ class TraceDTO:
     def __post_init__(self) -> None:
         _validate_required_string("id", self.id, max_length=MAX_IDENTIFIER_LENGTH)
         _validate_required_string("name", self.name, max_length=MAX_NAME_LENGTH)
-        _validate_observability_status("status", self.status)
+        if self.status is not None:
+            _validate_observability_status("status", self.status)
         _validate_optional_string(
             "session_id", self.session_id, max_length=MAX_IDENTIFIER_LENGTH
         )
@@ -781,6 +791,12 @@ class TraceRecord:
     execution_context: dict[str, Any] | None = None
     session: SessionRecord | None = None
     collaboration: TraceCollaborationState | None = None
+    # Scope the backend stored this trace under. Optional: present on
+    # responses from backends that return it, ``None`` otherwise. Lets a
+    # caller confirm which project a trace landed in when the scope was
+    # resolved from the API key rather than configured (#2605).
+    tenant_id: str | None = None
+    project_id: str | None = None
 
     @classmethod
     def from_dict(
@@ -846,6 +862,8 @@ class TraceRecord:
                 if include_collaboration and isinstance(collaboration_payload, dict)
                 else None
             ),
+            tenant_id=_optional_str(payload, "tenant_id"),
+            project_id=_optional_str(payload, "project_id"),
         )
 
 
@@ -874,6 +892,9 @@ class SessionRecord:
     created_at: datetime | None = None
     updated_at: datetime | None = None
     traces: list[TraceRecord] = field(default_factory=list)
+    # See TraceRecord.tenant_id / project_id (#2605).
+    tenant_id: str | None = None
+    project_id: str | None = None
 
     @classmethod
     def from_dict(
@@ -918,6 +939,8 @@ class SessionRecord:
                 if include_traces
                 else []
             ),
+            tenant_id=_optional_str(payload, "tenant_id"),
+            project_id=_optional_str(payload, "project_id"),
         )
 
 

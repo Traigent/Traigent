@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import atexit
 import copy
+import hashlib
 import io
 import json
+import sys
 import threading
 import time
 import uuid
@@ -19,11 +21,16 @@ from urllib import error, request
 from urllib.parse import urlencode
 
 from traigent.cloud.async_batch_transport import BatchFlushResult
+from traigent.identity.agent_scope import ScopeLedger, new_trace_ledger
+from traigent.identity.workload import resolve_environment
 from traigent.observability.config import (
+    INGEST_MAX_OBSERVATIONS_PER_REQUEST,
+    INGEST_MAX_TRACES_PER_REQUEST,
     NOT_SUPPLIED,
     ObservabilityConfig,
     apply_content_mode,
     apply_content_mode_to_text,
+    describe_offline_mode_cause,
     most_restrictive_content_mode,
     nonblank_credential,
     redacted_content_marker,
@@ -434,9 +441,13 @@ def _safe_allowlisted_snapshot(
     safe: dict[str, Any] = {
         "id": safe_id if isinstance(safe_id, str) and safe_id else _new_trace_id(),
         "name": "[REDACTED]",
-        "status": _safe_scalar(payload.get("status")) or "failed",
         "metadata": {},
     }
+    # #2588: keep an explicitly supplied status; never fabricate one for a
+    # trace that carried none (downstream would otherwise record "failed").
+    safe_status = _safe_scalar(payload.get("status"))
+    if isinstance(safe_status, str) and safe_status:
+        safe["status"] = safe_status
     if payload.get("user_id") is not None:
         safe["user_id"] = "[REDACTED]"
     for field_name in _SAFE_SNAPSHOT_ID_FIELDS:
@@ -482,10 +493,11 @@ def _safe_allowlisted_snapshot_or_static_fallback(
                 "a static minimal snapshot instead of the caller's payload.",
                 exc_info=True,
             )
+    # #2588: no "status" here -- it is trace status, and a snapshot-builder
+    # failure says nothing about whether the traced operation failed.
     return {
         "id": _new_trace_id(),
         "name": "[REDACTED]",
-        "status": "failed",
         "metadata": {},
     }
 
@@ -616,6 +628,14 @@ class _TraceState:
     # that frozen snapshot -- never this dict -- is what threads through to
     # the transport (finding 2/A8/M4 snapshot immutability).
     content_history: dict[str, set[str]] = field(default_factory=dict)
+    # Number of snapshots captured from this trace so far (#2609). Advanced by
+    # `_build_fallback_descriptor`, under the client lock, so a snapshot's
+    # `capture_sequence` is its capture order whatever order the (lock-free)
+    # transport submissions later run in. One int per trace; never on the wire.
+    snapshot_sequence: int = 0
+    # Agent scopes seen inside this trace; decides the scope-derived agent_id
+    # that only the final (end_trace) snapshot may carry. Never on the wire.
+    scope_ledger: ScopeLedger = field(default_factory=ScopeLedger)
 
     def mark_content_history(self, entity_key: str, field_name: str) -> None:
         self.content_history.setdefault(entity_key, set()).add(field_name)
@@ -692,6 +712,11 @@ class _TraceFallbackDescriptor:
     had_prior_input_data: bool
     had_prior_output_data: bool
     observations: tuple[_ObservationFallbackDescriptor, ...]
+    # Capture order of this snapshot within its trace (#2609); the transport
+    # uses it, never the payload, to tell which of two same-trace snapshots is
+    # the newer. ``None`` for a caller that did not capture it (no ordering
+    # known: the transport then treats the submission as the newest).
+    capture_sequence: int | None = None
 
 
 def _build_fallback_descriptor(state: _TraceState) -> _TraceFallbackDescriptor:
@@ -741,12 +766,14 @@ def _build_fallback_descriptor(state: _TraceState) -> _TraceFallbackDescriptor:
                 ),
             )
         )
+    state.snapshot_sequence += 1
     return _TraceFallbackDescriptor(
         had_prior_input_data=state.had_prior_content(_TRACE_CONTENT_KEY, "input_data"),
         had_prior_output_data=state.had_prior_content(
             _TRACE_CONTENT_KEY, "output_data"
         ),
         observations=tuple(observation_descriptors),
+        capture_sequence=state.snapshot_sequence,
     )
 
 
@@ -776,6 +803,45 @@ def _safe_trace_snapshot(
     long after it was released -- reflects this snapshot, never whatever
     `state` mutates into by then.
     """
+    return _capture_trace_snapshot(state)
+
+
+# Test seam: called between serialization and the identity decision.
+_after_serialize_hook: Callable[[], None] | None = None
+
+
+def _stamp_scope_agent_id(state: _TraceState, payload: dict[str, Any]) -> None:
+    """Set or clear the generated ``execution_context.agent_id`` on ``payload``.
+
+    ``payload`` is the detached, already-serialized snapshot; the live trace is
+    never modified, so a generated id is "withdrawn" simply by not stamping it
+    again. Only a finalized (ended) trace may carry a scope-derived id, and only
+    the one the sealed, untainted ledger yields. An explicit ``agent_id``
+    (per-trace, ``TRAIGENT_AGENT_ID``, including an explicit clear) is present in
+    the payload already and is never touched. Nothing here runs caller code, so
+    it is safe under the ledger lock.
+    """
+    hook = _after_serialize_hook
+    if hook is not None:
+        hook()
+    if state.trace.ended_at is None:
+        return
+
+    def stamp(key: str | None) -> None:
+        if key is None:
+            return
+        context = payload.get("execution_context")
+        if context is None:
+            payload["execution_context"] = {"schema_version": "1.0", "agent_id": key}
+        elif isinstance(context, dict) and "agent_id" not in context:
+            context["agent_id"] = key
+
+    state.scope_ledger.finalize(stamp)
+
+
+def _capture_trace_snapshot(
+    state: _TraceState,
+) -> tuple[dict[str, Any], _TraceFallbackDescriptor]:
     descriptor = _build_fallback_descriptor(state)
     try:
         payload = state.to_payload()
@@ -790,28 +856,59 @@ def _safe_trace_snapshot(
         return (
             _safe_allowlisted_snapshot_or_static_fallback(
                 {
-                    "id": state.trace.id,
-                    "name": state.trace.name,
-                    "status": state.trace.status,
+                    key: value
+                    for key, value in (
+                        ("id", state.trace.id),
+                        ("name", state.trace.name),
+                        ("status", state.trace.status),
+                    )
+                    if value is not None
                 },
                 state=descriptor,
             ),
             descriptor,
         )
+    _stamp_scope_agent_id(state, payload)
     return _redact_trace_payload(payload, state=descriptor), descriptor
+
+
+def _count_payload_observations(payload: dict[str, Any]) -> int:
+    """Count observations the way the backend's ingest cap does: every
+    observation object, nested ``children`` included (#2600)."""
+    count = 0
+    pending: list[Any] = [payload.get("observations")]
+    while pending:
+        observations = pending.pop()
+        if not isinstance(observations, list):
+            continue
+        for observation in observations:
+            if isinstance(observation, dict):
+                count += 1
+                pending.append(observation.get("children"))
+    return count
 
 
 @dataclass(frozen=True)
 class _BufferedPayload:
     payload: dict[str, Any]
     payload_bytes: int
+    observation_count: int = 0
+    # Content digest of the encoded payload; lets the transport skip a
+    # snapshot identical to the one it last delivered for the item (#2604).
+    digest: bytes = b""
+    # Capture order of the snapshot (see `_TraceFallbackDescriptor.
+    # capture_sequence`), resolved to an int at admission (#2609).
+    generation: int = 0
 
 
 class _SyncBatchTransport:
     """Thread-safe batch transport that avoids cross-thread asyncio coordination.
 
     Failed snapshots remain in a bounded memory outbox for a later explicit
-    flush or submission after connectivity recovers. This transport does not
+    flush or submission after connectivity recovers. A submitted snapshot
+    identical to the one last delivered for the same item is not queued again
+    (counted in ``skipped_unchanged_items``), so repeated flushes of unchanged
+    traces cost no requests (#2604). This transport does not
     detect reconnects; exhausted attempts stop the current drain and its timer.
 
     ``health_callback`` receives snapshots after transport state has been
@@ -832,6 +929,8 @@ class _SyncBatchTransport:
         max_queue_size: int,
         max_batch_bytes: int,
         health_callback: Callable[[str, dict[str, Any]], None] | None = None,
+        max_traces_per_request: int | None = INGEST_MAX_TRACES_PER_REQUEST,
+        max_observations_per_request: int | None = INGEST_MAX_OBSERVATIONS_PER_REQUEST,
     ) -> None:
         self._sender = sender
         self._health_callback = health_callback
@@ -839,6 +938,16 @@ class _SyncBatchTransport:
         self.max_buffer_age = max_buffer_age
         self.max_queue_size = max_queue_size
         self.max_batch_bytes = max_batch_bytes
+        # Backend ingest caps (#2600); None disables a cap, for a custom
+        # sender whose sink is not the Traigent backend.
+        for name, cap in (
+            ("max_traces_per_request", max_traces_per_request),
+            ("max_observations_per_request", max_observations_per_request),
+        ):
+            if cap is not None and cap <= 0:
+                raise ValueError(f"{name} must be greater than 0 or None")
+        self.max_traces_per_request = max_traces_per_request
+        self.max_observations_per_request = max_observations_per_request
         self._retry_handler = RetryHandler(
             replace(CLOUD_API_RETRY_CONFIG, callback_on_retry=self._record_retry)
         )
@@ -859,6 +968,18 @@ class _SyncBatchTransport:
         self._errors: list[str] = []
         self._warnings: list[str] = []
         self._inflight_items = 0
+        # Item ids whose in-flight snapshot was superseded by a rejected update
+        # (#2601): a failed send must not retain them for another attempt.
+        self._superseded_inflight_ids: set[str] = set()
+        # Digests of the in-flight batch's snapshots, and of the last snapshot
+        # delivered per item (LRU, bounded by max_queue_size). Forgetting a
+        # delivered digest only costs a redundant resend, never a lost update.
+        self._inflight_digests: dict[str, bytes] = {}
+        # Generation of the in-flight batch's snapshots (bounded by the batch,
+        # cleared with it): a rejected update only supersedes a queued or
+        # in-flight snapshot of a lower generation (#2609).
+        self._inflight_generations: dict[str, int] = {}
+        self._delivered_digests: OrderedDict[str, bytes] = OrderedDict()
         self._oldest_inflight_started_at: float | None = None
         self._active_send_completion: threading.Event | None = None
         self._stats: dict[str, int] = {
@@ -870,6 +991,7 @@ class _SyncBatchTransport:
             "pending_items": 0,
             "background_flushes": 0,
             "retry_attempts": 0,
+            "skipped_unchanged_items": 0,
         }
         self._dropped_by_reason: dict[str, int] = {}
         self._health_dispatcher_thread: threading.Thread | None = None
@@ -889,6 +1011,9 @@ class _SyncBatchTransport:
         deadline: float | None = None,
         state: _TraceFallbackDescriptor | None = None,
     ) -> bool:
+        # Capture order of this snapshot within its item, or None when the
+        # caller (a direct transport user) has none: it is then the newest.
+        capture_sequence = getattr(state, "capture_sequence", None)
         try:
             buffered_payload = self._prepare_payload(payload, state=state)
         except TypeError as exc:
@@ -896,7 +1021,12 @@ class _SyncBatchTransport:
                 "observability payload for item "
                 f"'{item_id}' is not JSON serializable: {exc}; dropped"
             )
-            self._record_drop("payload_not_json_serializable", message, item_id=item_id)
+            self._reject_update(
+                "payload_not_json_serializable",
+                message,
+                item_id=item_id,
+                generation=capture_sequence,
+            )
             logger.warning(
                 "Observability transport dropped payload '%s' because "
                 "it is not JSON serializable: %s",
@@ -912,12 +1042,13 @@ class _SyncBatchTransport:
                 f"'{item_id}' is {item_bytes} bytes, exceeding "
                 f"max_batch_bytes={self.max_batch_bytes}; dropped"
             )
-            self._record_drop(
+            self._reject_update(
                 "payload_too_large",
                 message,
                 item_id=item_id,
                 item_bytes=item_bytes,
                 max_batch_bytes=self.max_batch_bytes,
+                generation=capture_sequence,
             )
             logger.warning(
                 "Observability transport dropped payload '%s' because "
@@ -925,6 +1056,34 @@ class _SyncBatchTransport:
                 item_id,
                 item_bytes,
                 self.max_batch_bytes,
+            )
+            return False
+
+        max_observations = self.max_observations_per_request
+        if (
+            max_observations is not None
+            and buffered_payload.observation_count > max_observations
+        ):
+            message = (
+                "observability payload for item "
+                f"'{item_id}' has {buffered_payload.observation_count} "
+                "observations, exceeding the backend's limit of "
+                f"{max_observations} per ingest request; dropped"
+            )
+            self._reject_update(
+                "too_many_observations",
+                message,
+                item_id=item_id,
+                observation_count=buffered_payload.observation_count,
+                max_observations=max_observations,
+                generation=capture_sequence,
+            )
+            logger.warning(
+                "Observability transport dropped payload '%s' because it has %d "
+                "observations, above the backend limit of %d per request",
+                item_id,
+                buffered_payload.observation_count,
+                max_observations,
             )
             return False
 
@@ -939,6 +1098,16 @@ class _SyncBatchTransport:
                     item_id=item_id,
                 )
             elif (
+                item_id not in self._buffer
+                and self._delivered_digests.get(item_id) == buffered_payload.digest
+                and self._inflight_digests.get(item_id, buffered_payload.digest)
+                == buffered_payload.digest
+            ):
+                # Already delivered exactly this snapshot, and nothing different
+                # is queued or in flight that would land after it: re-sending it
+                # would only repeat the same write.
+                self._stats["skipped_unchanged_items"] += 1
+            elif (
                 item_id not in self._buffer and len(self._buffer) >= self.max_queue_size
             ):
                 drop_event = self._record_drop_locked(
@@ -952,7 +1121,12 @@ class _SyncBatchTransport:
                 self._ensure_timer_locked()
             else:
                 self._buffer.pop(item_id, None)
-                self._buffer[item_id] = buffered_payload
+                self._buffer[item_id] = replace(
+                    buffered_payload,
+                    generation=self._resolve_generation_locked(
+                        item_id, capture_sequence
+                    ),
+                )
                 self._stats["submitted_items"] += 1
                 self._stats["pending_items"] = len(self._buffer)
 
@@ -1173,7 +1347,15 @@ class _SyncBatchTransport:
 
                     batch_items: list[tuple[str, dict[str, Any]]] = []
                     batch_body_bytes = 0
-                    for _ in range(min(self.batch_size, len(self._buffer))):
+                    batch_observations = 0
+                    # Every request fits the backend's per-request caps
+                    # (#2600), whatever batch_size the caller configured.
+                    max_batch_items = min(self.batch_size, len(self._buffer))
+                    if self.max_traces_per_request is not None:
+                        max_batch_items = min(
+                            max_batch_items, self.max_traces_per_request
+                        )
+                    for _ in range(max_batch_items):
                         item_id, buffered = next(iter(self._buffer.items()))
                         projected_body_bytes = batch_body_bytes + buffered.payload_bytes
                         if batch_items:
@@ -1181,11 +1363,30 @@ class _SyncBatchTransport:
                         projected_bytes = self._batch_payload_size_from_body(
                             projected_body_bytes
                         )
-                        if batch_items and projected_bytes > self.max_batch_bytes:
+                        projected_observations = (
+                            batch_observations + buffered.observation_count
+                        )
+                        if batch_items and (
+                            projected_bytes > self.max_batch_bytes
+                            or (
+                                self.max_observations_per_request is not None
+                                and projected_observations
+                                > self.max_observations_per_request
+                            )
+                        ):
                             break
                         self._buffer.popitem(last=False)
+                        self._inflight_digests[item_id] = buffered.digest
+                        self._inflight_generations[item_id] = buffered.generation
+                        # Once a send starts, the backend may end up holding
+                        # this snapshot whatever the outcome (a timeout after
+                        # commit, an exception escaping the send), so the
+                        # older delivered one is forgotten until this send
+                        # succeeds. The cost is at most one redundant resend.
+                        self._delivered_digests.pop(item_id, None)
                         batch_items.append((item_id, buffered.payload))
                         batch_body_bytes = projected_body_bytes
+                        batch_observations = projected_observations
                     self._inflight_items += len(batch_items)
                     if self._oldest_inflight_started_at is None:
                         self._oldest_inflight_started_at = time.monotonic()
@@ -1307,6 +1508,9 @@ class _SyncBatchTransport:
             self._inflight_items -= item_count
             if self._inflight_items == 0:
                 self._oldest_inflight_started_at = None
+                self._superseded_inflight_ids.clear()
+                self._inflight_digests.clear()
+                self._inflight_generations.clear()
             self._stats["pending_items"] = len(self._buffer) + self._inflight_items
             if completion is not None and self._active_send_completion is completion:
                 self._active_send_completion = None
@@ -1349,15 +1553,17 @@ class _SyncBatchTransport:
         # instead of a state-blind one -- see
         # `ObservabilityClient._submit_trace_snapshot`.
         redacted_payload = _redact_trace_payload(payload, state=state)
-        copied_payload = copy.deepcopy(redacted_payload)
-        return _BufferedPayload(
-            payload=copied_payload,
-            payload_bytes=self._payload_json_size(copied_payload),
-        )
+        return self._buffered_payload(copy.deepcopy(redacted_payload))
 
     @staticmethod
-    def _payload_json_size(payload: dict[str, Any]) -> int:
-        return len(json.dumps(payload).encode("utf-8"))
+    def _buffered_payload(payload: dict[str, Any]) -> _BufferedPayload:
+        encoded = json.dumps(payload).encode("utf-8")
+        return _BufferedPayload(
+            payload=payload,
+            payload_bytes=len(encoded),
+            observation_count=_count_payload_observations(payload),
+            digest=hashlib.blake2b(encoded, digest_size=16).digest(),
+        )
 
     @staticmethod
     def _batch_payload_size_from_body(body_bytes: int) -> int:
@@ -1371,12 +1577,31 @@ class _SyncBatchTransport:
         result = self._retry_handler.execute_with_result(self._sender, payloads)
 
         if result.success:
-            if isinstance(result.result, dict):
-                for warning in result.result.get("warnings") or []:
-                    events.append(self._append_warning(str(warning)))
+            raw_warnings = (
+                result.result.get("warnings")
+                if isinstance(result.result, dict)
+                else None
+            )
+            # Same tolerance as `_log_ingest_warnings_from_data`: a malformed
+            # warnings value must not raise out of a flush.
+            response_warnings = raw_warnings if isinstance(raw_warnings, list) else []
+            for warning in response_warnings:
+                events.append(self._append_warning(str(warning)))
             with self._lock:
                 self._stats["successful_batches"] += 1
                 self._stats["sent_items"] += len(payloads)
+                for item_id, _ in batch_items:
+                    digest = self._inflight_digests.pop(item_id, None)
+                    if digest is None or response_warnings:
+                        # A response with warnings (e.g. an unresolved prompt
+                        # link) may be resolved by a later re-send, so it does
+                        # not count as delivered for dedup.
+                        self._delivered_digests.pop(item_id, None)
+                        continue
+                    self._delivered_digests[item_id] = digest
+                    self._delivered_digests.move_to_end(item_id)
+                while len(self._delivered_digests) > self.max_queue_size:
+                    self._delivered_digests.popitem(last=False)
             return True, events
 
         with self._lock:
@@ -1384,9 +1609,16 @@ class _SyncBatchTransport:
             # The sender receives already prepared snapshots. Retain those exact
             # payloads; do not re-redact them using mutable live trace state.
             retained = OrderedDict(
-                (item_id, _BufferedPayload(payload, self._payload_json_size(payload)))
+                (
+                    item_id,
+                    replace(
+                        self._buffered_payload(payload),
+                        generation=self._inflight_generations.get(item_id, 0),
+                    ),
+                )
                 for item_id, payload in batch_items
                 if item_id not in self._buffer
+                and item_id not in self._superseded_inflight_ids
             )
             # Submissions made during the send are newer and must win on ID
             # collisions. Old retained entries come first for bounded eviction.
@@ -1480,9 +1712,58 @@ class _SyncBatchTransport:
                 self._warnings = self._warnings[-50:]
             return self._queue_health_event_locked("warning", {"message": message})
 
-    def _record_drop(self, event_type: str, message: str, **details: Any) -> None:
+    def _resolve_generation_locked(self, item_id: str, generation: int | None) -> int:
+        """Return ``generation``, or for a submission with no capture order a
+        value above every snapshot of ``item_id`` currently known (it is the
+        newest, as it was before capture order existed)."""
+        if generation is not None:
+            return generation
+        queued = self._buffer.get(item_id)
+        return 1 + max(
+            queued.generation if queued is not None else 0,
+            self._inflight_generations.get(item_id, 0),
+        )
+
+    def _reject_update(
+        self,
+        event_type: str,
+        message: str,
+        *,
+        item_id: str,
+        generation: int | None = None,
+        **details: Any,
+    ) -> None:
+        """Drop a submitted snapshot that can never be delivered, and the older
+        snapshot of the same item it was meant to replace (#2601).
+
+        The buffer holds the latest snapshot per item. When the latest one is
+        rejected (too large, not serializable, too many observations), sending
+        the older one still queued would report success for state the
+        application has already moved past, so it is evicted too. If that older
+        snapshot is already in flight it cannot be recalled, but it is marked so
+        a failed send does not put it back into the buffer.
+
+        Only snapshots captured before the rejected one are superseded
+        (#2609): submissions run outside the client's capture lock, so a newer
+        valid snapshot of the item may already be queued or in flight when an
+        older, rejected one reaches here, and it must survive.
+        """
         with self._lock:
-            event = self._record_drop_locked(event_type, message, **details)
+            rejected = self._resolve_generation_locked(item_id, generation)
+            queued = self._buffer.get(item_id)
+            evicted = queued is not None and queued.generation < rejected
+            if evicted:
+                del self._buffer[item_id]
+                self._stats["pending_items"] = len(self._buffer) + self._inflight_items
+            if self._inflight_generations.get(item_id, rejected) < rejected:
+                self._superseded_inflight_ids.add(item_id)
+            event = self._record_drop_locked(
+                event_type,
+                message,
+                item_id=item_id,
+                evicted_stale_snapshot=evicted,
+                **details,
+            )
         self._emit_health_events([event])
 
     def _record_drop_locked(
@@ -1790,6 +2071,9 @@ class ObservabilityClient:
         redact_output: bool = False,
     ) -> str:
         trace_id = trace_id or _new_trace_id()
+        # Read the ambient agent scope before any span of this trace opens: a
+        # scope that already encloses the trace belongs to it.
+        scope_ledger = new_trace_ledger()
         session_dto = self._coerce_session(session)
         if session_dto is not None and session_id is None:
             session_id = session_dto.id
@@ -1816,7 +2100,11 @@ class ObservabilityClient:
             status=status,
             session_id=session_id,
             user_id=user_id,
-            environment=environment or self.config.default_environment,
+            environment=(
+                resolve_environment(environment).environment
+                if environment is not None and environment.strip()
+                else self.config.default_environment
+            ),
             release=release or self.config.default_release,
             custom_trace_id=custom_trace_id,
             tags=list(tags or []),
@@ -1837,10 +2125,17 @@ class ObservabilityClient:
             content_mode is not None or self.config.content_mode_explicit
         )
         with self._lock:
+            previous = self._trace_states.get(trace_id)
             self._trace_states[trace_id] = _TraceState(
                 trace=trace,
                 resolved_content_mode=effective_content_mode,
                 content_mode_locked=content_mode_locked,
+                # Restarting a trace id keeps its capture order monotonic: the
+                # transport may still hold a snapshot of the earlier state.
+                snapshot_sequence=(
+                    previous.snapshot_sequence if previous is not None else 0
+                ),
+                scope_ledger=scope_ledger,
             )
 
         self._queue_trace_snapshot(trace_id)
@@ -2193,6 +2488,12 @@ class ObservabilityClient:
 
         self._queue_trace_snapshot(trace_id)
 
+    def scope_ledger(self, trace_id: str) -> ScopeLedger | None:
+        """The agent-scope ledger of a live trace (None for an unknown trace)."""
+        with self._lock:
+            state = self._trace_states.get(trace_id)
+            return state.scope_ledger if state is not None else None
+
     def flush(self, timeout: float | None = None) -> FlushResult:
         """Flush queued traces.
 
@@ -2201,11 +2502,17 @@ class ObservabilityClient:
         an immediate poll that does not emit a deadline warning.
         Health callbacks are asynchronous, so this can return before callbacks
         for delivery events from this flush have run.
+
+        When delivery is suppressed (offline mode, ``TRAIGENT_DISABLE_TELEMETRY``,
+        or no credential), the result keeps ``success=True`` so telemetry never
+        breaks the host application, but ``items_sent`` is 0 and ``warnings``
+        names the cause. Check ``items_sent`` rather than ``success`` alone to
+        confirm delivery.
         """
         deadline = self._flush_deadline(timeout)
         if self._ingest_suppressed:
             self._log_offline_mode_once()
-            return self._offline_flush_result()
+            return self._suppressed_flush_result()
         if not self._acquire_client_lock_until(deadline):
             return self._flush_lock_timeout_result(deadline)
         try:
@@ -2307,7 +2614,10 @@ class ObservabilityClient:
         if close_in_progress:
             return self._wait_for_concurrent_close(deadline)
         if already_closed:
-            return self._flush_transport_until(deadline)
+            closed_result = self._flush_transport_until(deadline)
+            if self._ingest_suppressed:
+                return self._with_suppressed_delivery_warning(closed_result)
+            return closed_result
 
         result: FlushResult | None = None
         transport_close_completed = False
@@ -2319,7 +2629,9 @@ class ObservabilityClient:
                     timeout=self._remaining_flush_time(deadline),
                     warn_on_deadline_expiry=timeout != 0,
                 )
-                result = self._flush_result_from_transport(transport_result)
+                result = self._with_suppressed_delivery_warning(
+                    self._flush_result_from_transport(transport_result)
+                )
             else:
                 if inflight_snapshot_submissions:
                     remaining = self._remaining_flush_time(deadline)
@@ -2852,6 +3164,9 @@ class ObservabilityClient:
         return SessionRecord.from_dict(self._unwrap_data(payload, "session detail"))
 
     def _create_transport(self) -> _SyncBatchTransport:
+        # The backend's per-request caps (#2600) bind only the SDK's own ingest
+        # sender; a custom sender's sink has its own limits.
+        backend_sink = self._sender_override is None
         return _SyncBatchTransport(
             self._send_payload_batch,
             batch_size=self.config.batch_size,
@@ -2859,6 +3174,12 @@ class ObservabilityClient:
             max_queue_size=self.config.max_queue_size,
             max_batch_bytes=self.config.max_batch_bytes,
             health_callback=self.config.health_callback,
+            max_traces_per_request=(
+                INGEST_MAX_TRACES_PER_REQUEST if backend_sink else None
+            ),
+            max_observations_per_request=(
+                INGEST_MAX_OBSERVATIONS_PER_REQUEST if backend_sink else None
+            ),
         )
 
     def _send_payload_batch(
@@ -2898,7 +3219,10 @@ class ObservabilityClient:
             method="POST",
         )
         try:
-            with self._open_http_request(http_request) as response:
+            with self._open_http_request(
+                http_request,
+                timeout=self.config.effective_request_timeout(len(traces)),
+            ) as response:
                 status_code = getattr(response, "status", 200)
                 body = response.read().decode("utf-8") if response else ""
                 if status_code >= 400:
@@ -2967,7 +3291,8 @@ class ObservabilityClient:
         if self.config.offline_mode:
             self._log_offline_mode_once()
             raise ClientError(
-                "Observability backend request skipped because TRAIGENT_OFFLINE_MODE=true"
+                "Observability backend request skipped because offline mode is "
+                f"enabled ({describe_offline_mode_cause()})"
             )
         if self._request_sender_override is not None:
             return cast(
@@ -3032,10 +3357,12 @@ class ObservabilityClient:
             raise ClientError(f"Unexpected response structure for {label}")
         return data
 
-    def _open_http_request(self, http_request: request.Request) -> Any:
+    def _open_http_request(
+        self, http_request: request.Request, timeout: float | None = None
+    ) -> Any:
         return self._http_opener.open(
             http_request,
-            timeout=self.config.request_timeout,
+            timeout=self.config.request_timeout if timeout is None else timeout,
         )
 
     @staticmethod
@@ -3189,8 +3516,26 @@ class ObservabilityClient:
         self._offline_notice_logged = True
         logger.info("Observability transport in offline mode; traces will not be sent")
 
-    @staticmethod
-    def _offline_flush_result() -> FlushResult:
+    def _suppressed_delivery_warning(self) -> str:
+        """Explain why trace delivery is suppressed, naming the real cause.
+
+        Suppression deliberately keeps ``FlushResult.success`` true (telemetry
+        must never break the host application), so this warning is what lets a
+        caller tell "nothing was delivered" apart from a real delivery (#2602).
+        """
+        if self.config.offline_mode:
+            cause = f"offline mode is enabled ({describe_offline_mode_cause()})"
+        else:
+            cause = (
+                "no credential resolved (set TRAIGENT_API_KEY or run "
+                "`traigent auth login`)"
+            )
+        return (
+            f"Observability trace delivery is suppressed because {cause}; "
+            "no traces were sent to the backend"
+        )
+
+    def _suppressed_flush_result(self) -> FlushResult:
         return FlushResult(
             success=True,
             items_sent=0,
@@ -3199,7 +3544,12 @@ class ObservabilityClient:
             successful_batches=0,
             failed_batches=0,
             errors=[],
-            warnings=[],
+            warnings=[self._suppressed_delivery_warning()],
+        )
+
+    def _with_suppressed_delivery_warning(self, result: FlushResult) -> FlushResult:
+        return replace(
+            result, warnings=[*result.warnings, self._suppressed_delivery_warning()]
         )
 
     def _build_query_string(self, **params: Any) -> str:
@@ -3377,9 +3727,25 @@ class ObservabilityClient:
             if self._closed:
                 return
         try:
-            self.close(timeout=self.config.flush_timeout)
+            result = self.close(timeout=self.config.flush_timeout)
         except Exception as exc:
             logger.warning("Observability atexit flush failed: %s", exc)
+            return
+        pending = getattr(result, "items_pending", 0)
+        if (
+            self.config.warn_on_undelivered_at_exit
+            and pending > 0
+            and not getattr(self, "_exit_warning_written", False)
+        ):
+            self._exit_warning_written = True
+            try:
+                sys.stderr.write(
+                    f"traigent: {pending} observability trace(s) were not "
+                    "delivered before exit; call flush() before exit or raise "
+                    "ObservabilityConfig.flush_timeout.\n"
+                )
+            except Exception:  # noqa: BLE001 - stderr may be closed at exit
+                pass
 
     def _flush_deadline(self, timeout: float | None) -> float | None:
         if timeout is None:

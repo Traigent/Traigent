@@ -2036,3 +2036,33 @@ class TestLimitExplicitFailsClosed:
     ) -> None:
         monkeypatch.setenv("TRAIGENT_RUN_COST_LIMIT", "  ")
         assert CostEnforcer().config.limit_explicit is False
+
+
+class TestCostDivergenceNeedsObservedBaseline:
+    """#2538: the divergence warning compares only against observed trial costs."""
+
+    def test_first_trial_never_warns_against_the_seed_estimate(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=1.0, approved=True))
+        permit = enforcer.acquire_permit()
+
+        with caplog.at_level("WARNING", logger="traigent.core.cost_enforcement"):
+            enforcer.track_cost(0.27, permit=permit)
+
+        assert "Cost divergence" not in caplog.text
+        assert enforcer._estimated_cost == pytest.approx(0.27)
+
+    def test_later_trial_warns_against_observed_mean(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0, approved=True))
+        first = enforcer.acquire_permit()
+        enforcer.track_cost(0.10, permit=first)
+        second = enforcer.acquire_permit()
+
+        with caplog.at_level("WARNING", logger="traigent.core.cost_enforcement"):
+            enforcer.track_cost(0.50, permit=second)
+
+        assert "Cost divergence detected" in caplog.text
+        assert "$0.1000" in caplog.text

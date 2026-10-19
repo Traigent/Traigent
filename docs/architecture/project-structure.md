@@ -26,7 +26,7 @@ Traigent/
 ```
 
 > **Note**: Use-cases, demos, playground, paper experiments, and non-essential tools
-> have been moved to the [TraigentDemo](https://github.com/Traigent/TraigentDemo) repository.
+> have been moved out of this repository.
 
 ## Key Directories Explained
 
@@ -51,8 +51,8 @@ Documentation content:
 - `examples/` canonical example guides and navigation docs
 - `api-reference/` API docs
 - `architecture/` design docs
-- `guides/`, `operations/`, `testing/` practitioner docs
-- `feature_matrices/`, `traceability/`, `internal/`, `reviews/`
+- `guides/`, `operations/` practitioner docs
+- `feature_matrices/` feature and optimizer matrices
 
 ### `/examples/`
 Usage examples, datasets, and the browser gallery assets (`examples/gallery/`).

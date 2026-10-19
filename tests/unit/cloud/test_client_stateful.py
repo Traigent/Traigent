@@ -362,7 +362,7 @@ class TestSessionCreation:
             assert "400" in str(e)
 
     @pytest.mark.asyncio
-    async def test_budgeted_direct_submit_backfills_missing_cost(
+    async def test_budgeted_direct_submit_flags_missing_cost_unmeasured(
         self, cloud_client, mock_session
     ):
         create_response = Mock()
@@ -400,7 +400,11 @@ class TestSessionCreation:
         )
 
         submitted_payload = mock_session.post.call_args.kwargs["json"]
+        # Owner decision A: a budget-armed session demands a number, so the
+        # reported spend (a lower bound, 0.0 when nothing was reported) is sent
+        # WITH cost_unmeasured = 1.0; the flag is the signal, never the number.
         assert submitted_payload["metrics"]["cost"] == 0.0
+        assert submitted_payload["metrics"]["cost_unmeasured"] == 1.0
 
 
 class TestTrialOperations:

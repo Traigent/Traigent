@@ -299,12 +299,8 @@ async def test_shipped_09_cost_dominant_weighting_selects_cheapest(
     assert "uniformly constant" not in caplog.text
 
 
-async def test_shipped_09_cost_is_inert_without_with_usage() -> None:
-    """The #2003 counterfactual: no usage injection leaves cost a constant $0.
-
-    Same scorer, same latency metric, same dataset as example 09 - only the
-    ``traigent.with_usage`` wrapper is gone.
-    """
+def _agent_09_without_usage() -> Any:
+    """Example 09's scorer, latency metric and dataset, minus ``traigent.with_usage``."""
     example = _example_09()
 
     @traigent.optimize(
@@ -327,11 +323,46 @@ async def test_shipped_09_cost_is_inert_without_with_usage() -> None:
         answer: str = RAG_ANSWERS.get(normalize_text(question), "I don't know.")
         return answer
 
-    results = await rag_agent_without_usage.optimize(
+    return rag_agent_without_usage
+
+
+async def test_shipped_09_cost_is_inert_without_with_usage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The #2003 counterfactual: no usage injection leaves cost with no signal.
+
+    Same scorer, same latency metric, same dataset as example 09 - only the
+    ``traigent.with_usage`` wrapper is gone. With ``cost`` an objective the
+    unpriced call is refused rather than recorded as $0 (honest cost); only the
+    documented opt-out reproduces the old constant $0.
+    """
+    from traigent.core.cost_enforcement import CostTrackingRequiredError
+    from traigent.utils.exceptions import OptimizationError
+
+    # (a) defaults: the run refuses and names the pricing remedy.
+    with pytest.raises(
+        OptimizationError, match="TRAIGENT_CUSTOM_MODEL_PRICING_JSON"
+    ) as excinfo:
+        await _agent_09_without_usage().optimize(
+            algorithm="grid", max_trials=len(DIVERGENT_RAG_MODELS)
+        )
+    refusal: BaseException | None = excinfo.value
+    while refusal is not None and not isinstance(refusal, CostTrackingRequiredError):
+        refusal = refusal.__cause__ or refusal.__context__
+    assert refusal is not None, "refusal must originate from CostTrackingRequiredError"
+
+    # (b) documented opt-out: cost is the constant $0 the old test expected.
+    monkeypatch.setenv("TRAIGENT_STRICT_COST_ACCOUNTING", "false")
+    monkeypatch.setenv("TRAIGENT_REQUIRE_COST_TRACKING", "false")
+    results = await _agent_09_without_usage().optimize(
         algorithm="grid", max_trials=len(DIVERGENT_RAG_MODELS)
     )
 
-    assert {trial.metrics.get("cost", 0.0) for trial in results.trials} == {0.0}
+    # Unknown spend stays unknown even with strict off: no cost number, flagged.
+    assert results.trials
+    for trial in results.trials:
+        assert "cost" not in trial.metrics
+        assert trial.metrics.get("cost_unmeasured")
 
 
 # ---------------------------------------------------------------------------

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import threading
 import time
@@ -120,6 +121,29 @@ def _to_float(value: Any) -> float:
         return 0.0
 
 
+def _reported_cost(value: Any) -> float | None:
+    """Return a cost Langfuse actually reported, else ``None``.
+
+    Only a finite, non-negative number (or a decimal string of one: v2 returns
+    costs as strings) is a reported cost. ``None``, an empty or non-numeric
+    string, a boolean, a negative and NaN/Inf are *not reported*: they are an
+    unknown cost, never a measured ``0.0`` (Traigent#2517).
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+    try:
+        cost = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(cost) or cost < 0:
+        return None
+    return cost
+
+
 def _to_int(value: Any) -> int:
     return int(_to_float(value))
 
@@ -143,6 +167,10 @@ class LangfuseObservation:
     output_tokens: int = 0
     total_tokens: int = 0
     cost: float = 0.0
+    #: False when Langfuse reported no cost for this observation (an LLM call
+    #: whose model it could not price): ``cost`` is then a placeholder 0.0, not
+    #: a measured $0 (Traigent#2517).
+    cost_reported: bool = True
     latency_ms: float = 0.0
     status: str = "success"
     parent_observation_id: str | None = None
@@ -179,6 +207,10 @@ class LangfuseTraceMetrics:
 
     trace_id: str
     total_cost: float = 0.0
+    #: True when some LLM-call (generation) observation carried no cost:
+    #: ``total_cost`` is then only the priced part, not the trace's cost, and
+    #: ``to_measures_dict`` withholds it (Traigent#2517).
+    cost_unmeasured: bool = False
     total_latency_ms: float = 0.0
     total_input_tokens: int = 0
     total_output_tokens: int = 0
@@ -216,13 +248,17 @@ class LangfuseTraceMetrics:
             (or "langfuse_total_cost" etc. if prefix is set)
         """
         measures: dict[str, float | int] = {
-            f"{prefix}total_cost": self.total_cost,
             f"{prefix}total_latency_ms": self.total_latency_ms,
             f"{prefix}total_input_tokens": self.total_input_tokens,
             f"{prefix}total_output_tokens": self.total_output_tokens,
             f"{prefix}total_tokens": self.total_tokens,
             f"{prefix}observations_partial": int(self.observations_partial),
         }
+        if self.cost_unmeasured:
+            # Part of the trace was never priced: no total is claimed.
+            measures[f"{prefix}cost_unmeasured"] = 1.0
+        else:
+            measures[f"{prefix}total_cost"] = self.total_cost
 
         if include_per_agent:
             # Add per-agent metrics with underscore naming
@@ -1149,9 +1185,17 @@ class LangfuseClient:
         )
 
         # Extract cost (v1: calculatedTotalCost number; v2: totalCost string)
-        cost = _to_float(obs_data.get("calculatedTotalCost")) or _to_float(
-            obs_data.get("totalCost")
-        )
+        reported_costs = [
+            reported
+            for reported in (
+                _reported_cost(obs_data.get("calculatedTotalCost")),
+                _reported_cost(obs_data.get("totalCost")),
+            )
+            if reported is not None
+        ]
+        cost_reported = bool(reported_costs)
+        # First non-zero reported cost wins; a reported 0.0 stays a measured 0.0.
+        cost = next((c for c in reported_costs if c), 0.0)
 
         # Calculate latency from timestamps
         latency_ms = 0.0
@@ -1185,6 +1229,7 @@ class LangfuseClient:
             output_tokens=output_tokens,
             total_tokens=total_tokens,
             cost=cost,
+            cost_reported=cost_reported,
             latency_ms=latency_ms,
             status="error" if obs_data.get("level") == "ERROR" else "success",
             parent_observation_id=obs_data.get("parentObservationId"),
@@ -1254,8 +1299,18 @@ class LangfuseClient:
         per_agent_costs: dict[str, float] = {}
         per_agent_latencies: dict[str, float] = {}
         per_agent_tokens: dict[str, int] = {}
+        # A truncated observation fetch cannot give a complete total: whatever
+        # was fetched is a floor, never the trace's cost (#2517).
+        cost_unmeasured = observations_partial
+        unmeasured_agents: set[str] = set()
 
         for obs in observations:
+            obs_unpriced = (
+                str(obs.observation_type).lower() == "generation"
+                and not obs.cost_reported
+            )
+            if obs_unpriced:
+                cost_unmeasured = True
             total_cost += obs.cost
             total_latency_ms += obs.latency_ms
             total_input_tokens += obs.input_tokens
@@ -1273,6 +1328,8 @@ class LangfuseClient:
                 per_agent_costs[safe_agent] = (
                     per_agent_costs.get(safe_agent, 0.0) + obs.cost
                 )
+                if obs_unpriced:
+                    unmeasured_agents.add(safe_agent)
                 per_agent_latencies[safe_agent] = (
                     per_agent_latencies.get(safe_agent, 0.0) + obs.latency_ms
                 )
@@ -1280,9 +1337,14 @@ class LangfuseClient:
                     per_agent_tokens.get(safe_agent, 0) + obs.total_tokens
                 )
 
+        # An agent with an unpriced LLM call has no cost to report (#2517).
+        for safe_agent in unmeasured_agents:
+            per_agent_costs.pop(safe_agent, None)
+
         return LangfuseTraceMetrics(
             trace_id=trace_id,
             total_cost=total_cost,
+            cost_unmeasured=cost_unmeasured,
             total_latency_ms=total_latency_ms,
             total_input_tokens=total_input_tokens,
             total_output_tokens=total_output_tokens,

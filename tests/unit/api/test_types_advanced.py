@@ -527,6 +527,8 @@ class TestOptimizationResultGetSummary:
                 duration=0.5,
                 timestamp=datetime.now(),
                 error_message="Error",
+                # Explicitly recorded zero attempts: no work, no spend.
+                metadata={"examples_attempted": 0},
             ),
         ]
 
@@ -672,7 +674,9 @@ class TestOptimizationResultGetSummary:
         summary = result.get_summary()
 
         # Should not raise, invalid values should be skipped
-        assert summary["total_cost"] == 0.0
+        # An invalid cost is unmeasured, not a fabricated $0.
+        assert summary["total_cost"] is None
+        assert summary["cost_unmeasured_trials"] == 1
         assert summary["total_examples_attempted"] == 0
 
 

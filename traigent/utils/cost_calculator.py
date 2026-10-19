@@ -1203,6 +1203,42 @@ def cost_from_tokens(
     return 0.0, 0.0
 
 
+def model_pricing_resolves(model: str) -> bool:
+    """True when a price (an explicit custom ``0`` rate included) resolves for ``model``.
+
+    Decides "unpriced" from lookup success, never from the dollar amount: a
+    model priced at a custom rate of zero is a measured $0, an unknown model is
+    not (#2517).
+    """
+    try:
+        input_cost, output_cost = cost_from_tokens(1, 1, model, strict=True)
+    except UnknownModelError:  # silent-ok: False is the answer
+        return False
+    except RuntimeError:  # silent-ok: no pricing backend means no price
+        return False
+    if input_cost > 0 or output_cost > 0:
+        return True
+    # A zero result is a price only when a source stated BOTH rates: an
+    # explicit custom entry, a built-in rate, or a litellm entry that carries
+    # both per-token fields. A metadata-only litellm entry (no token rates)
+    # also prices to zero, but nobody said the model is free.
+    if _try_custom_model_pricing(model) is not None:
+        return True
+    candidates = _build_model_candidates(model)
+    if _try_builtin_per_token_rates(candidates) is not None:
+        return True
+    model_cost = {k.lower(): v for k, v in litellm.model_cost.items()}
+    for candidate in candidates:
+        info = model_cost.get(candidate.lower())
+        if (
+            isinstance(info, dict)
+            and info.get("input_cost_per_token") is not None
+            and info.get("output_cost_per_token") is not None
+        ):
+            return True
+    return False
+
+
 def model_has_nonzero_price_coverage(model_name: str) -> bool:
     """Return whether a model resolves to non-zero pricing via the real path."""
     try:

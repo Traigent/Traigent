@@ -300,6 +300,183 @@ class TestSanitizeErrorMessage:
         assert "/Users/username" not in result
         assert "[PATH]" in result
 
+    @pytest.mark.parametrize(
+        ("msg", "leaked"),
+        [
+            ("auth failed: Authorization: Bearer abc123tokenvalue", "abc123tokenvalue"),
+            ("header Authorization: Basic dXNlcjpwYXNz sent", "dXNlcjpwYXNz"),
+            ("got Bearer abc123tokenvalue here", "abc123tokenvalue"),
+            ("bearer short-tok", "short-tok"),
+            ("connect password='hunter2' failed", "hunter2"),
+            ('connect password="hunter2" failed', "hunter2"),
+            ("connect pwd=hunter2 failed", "hunter2"),
+            ("connect passwd: hunter2 failed", "hunter2"),
+            ("PASSWORD='Hunter 2 x' failed", "Hunter 2"),
+            ("secret='s3cr3t' x", "s3cr3t"),
+            ("client_secret=abcdef123", "abcdef123"),
+            ("access_key=AKIDEXAMPLE1", "AKIDEXAMPLE1"),
+            ("apikey: 'k-12345'", "k-12345"),
+            ('{"api_key": "k-12345"}', "k-12345"),
+            ("db_password=hunter2", "hunter2"),
+            (r"Error in C:\Users\alice\proj\file.py", "alice"),
+            (r"Error in c:\users\Bob\x.py", "Bob"),
+            ("Error in C:/Users/alice/proj/file.py", "alice"),
+        ],
+    )
+    def test_additional_secret_shapes_redacted(self, msg, leaked):
+        """Bearer/Authorization, quoted key-value secrets, Windows user paths."""
+        result = self.ops.sanitize_error_message(msg)
+        assert leaked not in result
+        assert "REDACTED" in result or "[PATH]" in result
+
+    def test_windows_user_path_becomes_path_marker(self):
+        result = self.ops.sanitize_error_message(r"open C:\Users\alice\a\b.py failed")
+        assert result == "open [PATH] failed"
+
+    def test_windows_user_path_with_space_in_name(self):
+        result = self.ops.sanitize_error_message(
+            r"C:\Users\John Smith\data.csv not found"
+        )
+        assert "John" not in result
+        assert "Smith" not in result
+        assert "[PATH]" in result
+
+    def test_sentence_without_path_untouched(self):
+        msg = "The Users table is missing a column named John"
+        assert self.ops.sanitize_error_message(msg) == msg
+
+    @pytest.mark.parametrize(
+        "msg",
+        [
+            "invalid password",
+            "invalid password for user",
+            "Token expired, please retry",
+            "secret not found in vault",
+            "Authorization failed",
+            "bearer of bad news",
+            r"Error in C:\Program Files\App\x.py",
+        ],
+    )
+    def test_ordinary_text_not_over_redacted(self, msg):
+        assert self.ops.sanitize_error_message(msg) == msg
+
+    @pytest.mark.parametrize(
+        ("msg", "leaked"),
+        [
+            ('password="a\\"b-tail" x', "b-tail"),
+            ("connect password='unterminated-secret", "unterminated-secret"),
+            ("mail pw=abc12345 x", "abc12345"),
+            ("Cookie: sid=abc123; other=zzz999", "zzz999"),
+            ("Set-Cookie: sid=abc123", "abc123"),
+            ("url https://user:s3cretpass@host/x", "s3cretpass"),
+            ("x-api-key: abc123token", "abc123token"),
+            ("Proxy-Authorization: Basic Zm9vYmFy", "Zm9vYmFy"),
+            ("key AKIAABCDEFGHIJKLMNOP leaked", "AKIAABCDEFGHIJKLMNOP"),
+            ('{"Authorization": "Basic dXNlcjpwYXNz"}', "dXNlcjpwYXNz"),
+            ("{'Authorization': 'Bearer abc123xyz'}", "abc123xyz"),
+            ('{"Cookie": "sid=abc123"}', "abc123"),
+            ("password=alpha;private-tail", "private-tail"),
+            ("password=alpha,private-tail", "private-tail"),
+            ('Cookie: sid="alpha"; other=bravo', "bravo"),
+            ('Cookie: sid="alpha"; other=bravo', "alpha"),
+            ("password=alpha)private-tail", "private-tail"),
+            ("password=alpha}private-tail", "private-tail"),
+            ("authentication rejected: Basic dXNlcjpwYXNz", "dXNlcjpwYXNz"),
+            (r"C:\Users\Juan Carlos de la Cruz\file.txt", "Carlos"),
+            ("bAsIc dXNlcjpwYXNz", "dXNlcjpwYXNz"),
+            ("basic ajppajppajpp", "ajppajppajpp"),
+            ("auth failed: BASIC ajppajppajpp rejected", "ajppajppajpp"),
+            ("password=o'connor", "connor"),
+            ("https://private-token:password=abc123@host/path", "private-token"),
+            ("password=alpha]private-tail", "private-tail"),
+            ('password="hunter2\\', "hunter2"),
+            ("api_key_value=abc123", "abc123"),
+            ("password_value=hunter2", "hunter2"),
+            ("https://private-token@host/path", "private-token"),
+            ("https://alice:pw1@host/path", "alice"),
+            ("open /home/alice@example.com/file.py", "alice"),
+        ],
+    )
+    def test_more_secret_shapes_redacted(self, msg, leaked):
+        assert leaked not in self.ops.sanitize_error_message(msg)
+
+    def test_basic_token_cut_by_input_cap_is_redacted(self):
+        msg = " basic " + "ajpp" * 1025
+        assert "ajpp" not in self.ops.sanitize_error_message(msg)
+
+    def test_basic_credential_cut_to_few_chars_at_cap_edge_is_redacted(self):
+        msg = "Authorization: " + "x" * 4067 + "\nBasic " + "ajpp" * 100
+        out = self.ops.sanitize_error_message(msg)
+        assert "ajp" not in out
+        assert out.endswith("Basic [REDACTED]")
+
+    def test_basic_prose_before_long_text_is_unchanged(self):
+        msg = "basic usage of the API " + "x" * 5000
+        assert self.ops.sanitize_error_message(msg).startswith("basic usage of the API")
+
+    @pytest.mark.parametrize(
+        "msg",
+        [
+            "HTTP 500 code 123456789 failed",
+            "trace id 4111111111111111 failed",
+            "user a@b.com not found",
+            "max_tokens=100 exceeded",
+            "Basic authentication required",
+            "basic usage of the API",
+            "basic example configuration",
+        ],
+    )
+    def test_error_codes_and_ids_survive(self, msg):
+        """Credential scrubbing must not eat numeric codes, ids or emails."""
+        assert self.ops.sanitize_error_message(msg) == msg
+
+    def test_windows_path_keeps_text_after_username(self):
+        result = self.ops.sanitize_error_message(
+            r"C:\Users\alice: not found code E1234"
+        )
+        assert "alice" not in result
+        assert result == "[PATH]: not found code E1234"
+
+    @pytest.mark.parametrize(
+        ("msg", "leaked"),
+        [
+            ("Authorization: Negotiate YIIabc123xyz", "YIIabc123xyz"),
+            (
+                'Authorization: Digest username="alice", response="deadbeef"',
+                "alice",
+            ),
+            (
+                'Authorization: Digest username="alice", response="deadbeef"',
+                "deadbeef",
+            ),
+            ('{"Authorization": "Negotiate YIIabc123xyz"}', "YIIabc123xyz"),
+        ],
+    )
+    def test_full_authorization_value_redacted(self, msg, leaked):
+        assert leaked not in self.ops.sanitize_error_message(msg)
+
+    def test_credentials_cut_by_input_cap_are_redacted(self):
+        msg = "https://alice:hunter2" + "x" * 5000 + "@host/path"
+        result = self.ops.sanitize_error_message(msg)
+        assert "hunter2" not in result
+        assert "alice" not in result
+
+    def test_short_url_without_userinfo_survives(self):
+        msg = "GET https://example.com"
+        assert self.ops.sanitize_error_message(msg) == msg
+
+    @pytest.mark.parametrize(
+        "text",
+        ["a." * 50_000, "a" * 100_000, "password " * 20_000, "Bearer " * 20_000],
+    )
+    def test_pathological_input_is_fast(self, text):
+        """No catastrophic backtracking: bounded input, linear patterns."""
+        import time
+
+        start = time.perf_counter()
+        self.ops.sanitize_error_message(text)
+        assert time.perf_counter() - start < 1.0
+
     def test_long_message_truncated(self):
         """Test long messages are truncated."""
         msg = "x" * 2000

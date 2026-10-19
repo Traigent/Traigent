@@ -409,3 +409,28 @@ def test_smart_algorithm_resolves_cloud_required_policy() -> None:
     assert policy.algorithm == "tpe"
     assert policy.offline is False
     assert policy.allows_cloud_fallback is False
+
+
+def test_direct_algorithm_with_unset_execution_options_algorithm_is_not_a_conflict():
+    """#2540: ExecutionOptions' default algorithm must not count as explicit."""
+
+    @optimize(
+        configuration_space={"m": ["a", "b"]},
+        objectives=["accuracy"],
+        algorithm="grid",
+        execution=ExecutionOptions(offline=True),
+    )
+    def f(x):
+        return x
+
+    assert f.algorithm == "grid"
+
+
+def test_explicit_conflicting_execution_options_algorithm_still_raises():
+    with pytest.raises(TypeError, match="Conflicting values for 'algorithm'"):
+        optimize(
+            configuration_space={"m": ["a", "b"]},
+            objectives=["accuracy"],
+            algorithm="grid",
+            execution=ExecutionOptions(offline=True, algorithm="random"),
+        )(lambda x: x)

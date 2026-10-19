@@ -55,6 +55,11 @@ else:
 
 logger = get_logger(__name__)
 
+# Read-side filter values; ``unknown`` is returned by servers but never written.
+_TRACE_STATUS_FILTER_VALUES = frozenset(
+    {"running", "completed", "failed", "rejected", "unknown"}
+)
+
 ANALYTICS_TOOL_NAMES: tuple[str, ...] = (
     "health_check",
     "auth_status",
@@ -210,9 +215,8 @@ class _ToolInputError(ValueError):
 
 # === Director v0 (advisory-only) input validation ===
 #
-# C1 (frozen contract): the Director tools accept no client-composed free
-# text. Every field validated below is an enum, an integer, or a
-# server-issued identifier pattern.
+# The Director tools accept no client-composed free text. Every field
+# validated below is an enum, an integer, or an identifier pattern.
 _DIRECTOR_INSTRUCTION_ID_PATTERN = re.compile(r"^di_[0-9a-f]{32}$")
 
 
@@ -285,14 +289,13 @@ _DIRECTOR_VALIDITY_CHECKS_MAX_ITEMS = 20
 def _validate_director_client_report(
     value: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
-    """Validate ``client_report`` against the frozen contract (R1 feed).
+    """Validate the optional ``client_report`` block.
 
-    ``client_report.validity_checks`` feeds deterministic rule R1: a
-    client-reported failed/missing validity check BLOCKS ``run_optimization``
-    and ``promote_winner`` before any model call. Every element is validated
-    field-by-field against closed enums -- C1 still holds: there is no
-    ``detail``/``notes`` field anywhere on this object, and an unknown key on
-    either the outer object or an individual check is rejected outright.
+    ``client_report.validity_checks`` reports the outcome of local validity
+    checks. Every element is validated field-by-field against closed enums:
+    there is no ``detail``/``notes`` field anywhere on this object, and an
+    unknown key on either the outer object or an individual check is rejected
+    outright.
     """
     from traigent.cloud.analytics_client import (
         DIRECTOR_CONFIDENCE_LABELS,
@@ -402,7 +405,7 @@ def _bounded_cohort(value: object, *, field: str) -> dict[str, object]:
     statuses = _bounded_identifier_list(
         value.get("trace_statuses", []), field=f"{field}.trace_statuses", maximum=4
     )
-    if set(statuses).difference({"running", "completed", "failed", "rejected"}):
+    if set(statuses).difference(_TRACE_STATUS_FILTER_VALUES):
         raise _ToolInputError(f"{field}.trace_statuses contains an unsupported status.")
     sample_limit = value.get("sample_limit", 5000)
     if (
@@ -593,9 +596,8 @@ def _http_status_failure(
             backend_url=backend_url,
         )
     if status == 409:
-        # Director v0 state-rules.md §2: a stale-revision or idempotency
-        # conflict is a NORMAL, recoverable outcome -- never a generic
-        # failure. Surface the backend's own error code (and, for
+        # A stale-revision or idempotency conflict is a normal, recoverable
+        # outcome -- never a generic failure. Surface the error code (and, for
         # stale_revision, the current revision so the caller can re-read
         # state and retry) instead of collapsing it into backend_unavailable.
         payload = _response_payload(response)
@@ -1171,7 +1173,7 @@ async def observability_search_traces_tool(
         start, end = _bounded_time_window(start_time, end_time)
         page, per_page = _bounded_page(page, per_page)
         clean_status = _bounded_optional_text(status, field="status", maximum=32)
-        if clean_status not in {None, "running", "completed", "failed", "rejected"}:
+        if clean_status is not None and clean_status not in _TRACE_STATUS_FILTER_VALUES:
             raise _ToolInputError("status contains an unsupported trace status.")
         clean_environment = _bounded_optional_text(
             environment, field="environment", maximum=64
@@ -1757,12 +1759,11 @@ async def observability_build_change_brief_tool(
 
 # === Director v0 (advisory-only) tools ===
 #
-# Thin pass-throughs to the backend's three advisory Director endpoints
+# Thin pass-throughs to the three advisory Director endpoints
 # (BackendAnalyticsClient.director_start / director_turn / director_state).
-# Frozen contract: ~/.claude/plans/director-v0-contract/ rev 2. v0 is
-# ADVISORY ONLY -- these tools never authorize spend, promotion, or change.
+# Advisory only -- these tools never authorize spend, promotion, or change.
 #
-# C1: no free-text parameter anywhere. director_turn accepts only session
+# No free-text parameter anywhere. director_turn accepts only session
 # identity, the closed `intent` enum, and the typed `report` block.
 
 
@@ -1801,10 +1802,9 @@ async def director_turn_tool(
     rather than as a generic failure.
 
     ``client_report`` carries ``{validity_checks: [{check, status,
-    confidence_label?}]}`` and feeds deterministic rule R1 (a failed/missing
-    validity check blocks ``run_optimization``/``promote_winner`` before any
-    model call). Every element is validated against closed enums; there is
-    no free-text field on this object.
+    confidence_label?}]}``, the outcome of local validity checks. Every
+    element is validated against closed enums; there is no free-text field on
+    this object.
     """
     try:
         sid = _bounded_identifier(session_id, field="session_id")

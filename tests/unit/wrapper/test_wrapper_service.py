@@ -750,7 +750,11 @@ class TestHandleExecute:
             }
         )
         assert resp["outputs"][0]["output"] == "plain_string_result"
-        assert resp["outputs"][0]["cost_usd"] == 0.0
+        # A handler that reported no cost is "not reported", never a measured
+        # $0.0 (#2517): the optional per-item field is omitted and the batch
+        # total is flagged as not a measurement.
+        assert "cost_usd" not in resp["outputs"][0]
+        assert resp["operational_metrics"]["cost_unmeasured"] == 1.0
         assert "metrics" not in resp["outputs"][0]
 
     @pytest.mark.asyncio

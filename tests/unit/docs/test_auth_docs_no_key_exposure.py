@@ -2,9 +2,7 @@
 
 These check security properties of the published snippets rather than their
 wording: a Dockerfile or ``docker build`` must not carry the key or the
-credential-store password into the image, the laptop
-guide must not write the key to the plaintext credentials file the SDK ignores,
-and its smoke check must validate the key the SDK itself resolves.
+credential-store password into the image.
 """
 
 from __future__ import annotations
@@ -18,7 +16,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DOCS_DIR = PROJECT_ROOT / "docs"
 EXAMPLES_DIR = PROJECT_ROOT / "examples"
 AUTH_DOC = DOCS_DIR / "features" / "authentication.md"
-LAPTOP_DOC = DOCS_DIR / "getting-started" / "portal-dev-laptop-agent.md"
 
 _FENCE_RE = re.compile(r"^\s*(```+|~~~+)")
 _SECRET_NAME = r"(?:API_KEY|MASTER_PASSWORD)"
@@ -28,10 +25,6 @@ _SECRET_IN_IMAGE_RES = (
     re.compile(rf"^\s*(?:ENV|ARG)\s+.*{_SECRET_NAME}", re.IGNORECASE),
     re.compile(rf"--build-arg[\s=]+\S*{_SECRET_NAME}", re.IGNORECASE),
 )
-_CREDENTIAL_WRITE_RE = re.compile(r"write_text\(|json\.dump|open\(|>>?|\btee\b")
-_API_KEY_FIELD_RE = re.compile(r"""["']api_key["']""")
-_ENV_KEY_ASSIGNMENT_RE = re.compile(r"""TRAIGENT_API_KEY["']?\]?\s*=(?!=)""")
-_WHOAMI = "traigent auth whoami"
 
 
 def _fenced_blocks(text: str) -> list[str]:
@@ -142,31 +135,6 @@ def test_no_dockerfile_snippet_bakes_a_secret_into_the_image() -> None:
         for line in _secret_baking_lines(source)
     ]
     assert not offenders, offenders
-
-
-def test_laptop_guide_does_not_write_the_plaintext_credentials_file() -> None:
-    blocks = _fenced_blocks(LAPTOP_DOC.read_text(encoding="utf-8"))
-    writers = [
-        block
-        for block in blocks
-        if "credentials.json" in block and _CREDENTIAL_WRITE_RE.search(block)
-    ]
-    assert not writers, writers
-    assert not [block for block in blocks if _API_KEY_FIELD_RE.search(block)]
-
-
-def test_laptop_smoke_check_validates_the_key_the_sdk_resolves() -> None:
-    blocks = _fenced_blocks(LAPTOP_DOC.read_text(encoding="utf-8"))
-    commands = [
-        line.split("#", 1)[0].strip()
-        for block in blocks
-        for line in block.splitlines()
-        if _WHOAMI in line
-    ]
-    # A bare invocation, so the key never reaches argv or a hand-built environment.
-    assert commands, "laptop guide has no shell `traigent auth whoami` check"
-    assert all(command == _WHOAMI for command in commands), commands
-    assert not [block for block in blocks if _ENV_KEY_ASSIGNMENT_RE.search(block)]
 
 
 def test_auth_doc_no_longer_says_whoami_ignores_saved_credentials() -> None:

@@ -1,0 +1,1920 @@
+{
+  "contract": "identity_vectors",
+  "version": 1,
+  "description": "Version-pinned cross-SDK identity vectors (guard G1). Python SDK, JS SDK and Backend load this exact file and pin its sha256. Each vector names the rule it exercises in its rule field; the allowed values are closed_sets.rule.",
+  "sources": {
+    "python_registration_rule": "traigent/api/decorators.py:_build_default_experiment_name (L2433-2503) @cccae9c0; precedence traigent/core/optimized_function.py:4605-4625 (experiment_name getter)",
+    "js_registration_rule": "JS SDK: the registration key is agentName when set, otherwise the resolved function name (deriveFunctionName: trim, strip leading \"bound \" prefixes); see the vectors for the exact outcomes",
+    "backend_agent_key_rule": "Backend registration key: drop non-printable characters, collapse whitespace runs to one space, trim, empty -> traigent_function; keep a name matching [A-Za-z0-9_-]{1,128} as is; otherwise <slug>-<first 10 hex of sha256(UTF-8 text)> with the slug truncated to 117 characters; reference implementation: backend_agent_key() in tests/test_identity_vectors_v1.py",
+    "python_known_environment_labels": "Traigent traigent/utils/env_config.py:227 (_KNOWN_ENVIRONMENT_NAMES = _PRODUCTION_ENV_NAMES | _NON_PRODUCTION_ENV_NAMES | {\"ci\"}; sets at :224-226) @d33cc24cd (origin/develop); accepted-environment rule: an explicit argument is a free label; every environment-variable source accepts only the known labels"
+  },
+  "closed_sets": {
+    "provenance": [
+      "function_derived",
+      "user_named",
+      "ineligible"
+    ],
+    "attribution_reason": [
+      "attributed",
+      "conflict",
+      "ineligible",
+      "open_scope",
+      "incomplete",
+      "evidence_unavailable"
+    ],
+    "transport": [
+      "native",
+      "otlp"
+    ],
+    "scope_state": [
+      "open",
+      "closed"
+    ],
+    "environment_source": [
+      "explicit",
+      "traigent_environment",
+      "otel_resource",
+      "environment",
+      "traigent_env_legacy",
+      "default"
+    ],
+    "environment_warning": [
+      "legacy_env_var_deprecated",
+      "undeclared_default",
+      "invalid_env_value_ignored"
+    ],
+    "local_warning": [
+      "manifest_registration_mismatch",
+      "anonymous_registration"
+    ],
+    "rule": [
+      "attribution.late_after_record",
+      "attribution.legacy_trace_level",
+      "attribution.native.conflict",
+      "attribution.native.enclosing",
+      "attribution.native.neutral_root",
+      "attribution.native.no_scopes",
+      "attribution.native.not_finalized",
+      "attribution.native.open_scope",
+      "attribution.native.sealed_taint",
+      "attribution.native.unanimous",
+      "attribution.otlp.delivery_order",
+      "attribution.otlp.strict",
+      "attribution.otlp.unreadable_metadata",
+      "attribution.snapshot.early_ignored",
+      "attribution.snapshot.final_identity",
+      "attribution.snapshot.final_without_identity",
+      "attribution.snapshot.persisted_end_not_enough",
+      "attribution.snapshot.stale_early_erases",
+      "environment.env_var_known_only",
+      "environment.explicit_free_label",
+      "environment.never_infer",
+      "environment.order",
+      "provenance.anonymous_ineligible",
+      "provenance.function_derived",
+      "provenance.manifest_mismatch",
+      "provenance.unsupported_callable",
+      "provenance.user_named"
+    ],
+    "known_environment_labels": [
+      "ci",
+      "dev",
+      "development",
+      "local",
+      "prod",
+      "production",
+      "stage",
+      "staging",
+      "test",
+      "testing"
+    ]
+  },
+  "notes": [
+    "Native reason precedence when several apply: ineligible (any scope not function_derived, or empty ledger), then incomplete (never finalized), then conflict (different keys), then open_scope (a scope still open), else attributed.",
+    "OTLP strict rule: differing gen_ai.agent.id labels -> conflict; any span without a label -> incomplete; unreadable metadata -> evidence_unavailable; unreadable is checked first.",
+    "Environment: an explicit argument is a free label (trim + lower-case, at most 64 after trim, else error too_long, no fallthrough; the SDK raises; empty/whitespace = unset). EVERY env-var rung (TRAIGENT_ENVIRONMENT, OTel deployment.environment.name from OTEL_RESOURCE_ATTRIBUTES, ENVIRONMENT, TRAIGENT_ENV) is accepted only if its trimmed lower-cased value is in closed_sets.known_environment_labels; anything else (empty, over 64, unknown label, email-like text) is ignored with warning invalid_env_value_ignored (value-free) and resolution falls through; the warning field holds invalid_env_value_ignored in preference to later warnings. Result is default (warning invalid_env_value_ignored if something was ignored, else undeclared_default) when nothing valid remains. Free labels such as team/eu are valid only as an explicit argument.",
+    "Anchor: every vector is anchor=consumer. Each consumer MUST run its real production functions against every vector it covers (guard G1); the reference implementation in tests/test_identity_vectors_v1.py only proves the file is self-consistent. scripts/verify_identity_vectors_against_production.py is a one-off check of the Python SDK functions.",
+    "Native snapshots: process snapshots in delivery order. A snapshot with an incoming end time sets the stored identity to its agent_id; a snapshot without one clears it (a stale early snapshot erasing final identity is accepted recall loss). Attribution needs a stored identity at the end; no end-time snapshot -> incomplete; end-time snapshot without identity -> ineligible. persisted_ended_at_present never grants attribution.",
+    "trace_agent_id for function_derived is the canonical backend key, equal to backend_agent_key.",
+    "late_after_record vectors: the recorded result never changes; the counter increments."
+  ],
+  "provenance": [
+    {
+      "id": "prov-py-no-names",
+      "description": "Python, no names: self-describing default, function_derived",
+      "rule": "provenance.function_derived",
+      "input": {
+        "sdk": "python",
+        "function_name": "answer_question",
+        "objectives": [
+          "accuracy",
+          "cost"
+        ],
+        "knobs": [
+          "model",
+          "temperature"
+        ]
+      },
+      "expected": {
+        "registration_identity": "answer_question[accuracy,cost][model,temperature]",
+        "provenance": "function_derived",
+        "trace_agent_id": "answer_question-accuracy-cost-model-temperature-bbf58a0e16",
+        "local_warning": null,
+        "backend_agent_key": "answer_question-accuracy-cost-model-temperature-bbf58a0e16"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "prov-py-default-objective",
+      "description": "Python, no objectives given: the decorator supplies the default objective accuracy (decorators.py@36c18c9d:2007-2023,3280,3378-3380); a decorated function must have at least one knob (empty configuration space raises ValueError)",
+      "rule": "provenance.function_derived",
+      "input": {
+        "sdk": "python",
+        "function_name": "answer_question",
+        "objectives": null,
+        "knobs": [
+          "model"
+        ]
+      },
+      "expected": {
+        "registration_identity": "answer_question[accuracy][model]",
+        "provenance": "function_derived",
+        "trace_agent_id": "answer_question-accuracy-model-35871f9243",
+        "local_warning": null,
+        "backend_agent_key": "answer_question-accuracy-model-35871f9243"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "prov-py-knobs-over-max",
+      "description": "Python, more than max_knobs=4 knobs: first four then ,...",
+      "rule": "provenance.function_derived",
+      "input": {
+        "sdk": "python",
+        "function_name": "route",
+        "objectives": [
+          "accuracy"
+        ],
+        "knobs": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e"
+        ]
+      },
+      "expected": {
+        "registration_identity": "route[accuracy][a,b,c,d,...]",
+        "provenance": "function_derived",
+        "trace_agent_id": "route-accuracy-a-b-c-d-54973e7025",
+        "local_warning": null,
+        "backend_agent_key": "route-accuracy-a-b-c-d-54973e7025"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "prov-py-long-name-truncated",
+      "description": "Python, function-name prefix cut to the 120-char cap and marked ~",
+      "rule": "provenance.function_derived",
+      "input": {
+        "sdk": "python",
+        "function_name": "a_very_long_function_name_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "objectives": [
+          "accuracy"
+        ],
+        "knobs": [
+          "model"
+        ]
+      },
+      "expected": {
+        "registration_identity": "a_very_long_function_name_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx~[accuracy][model]",
+        "provenance": "function_derived",
+        "trace_agent_id": "a_very_long_function_name_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-accuracy-model-8de4c0472a",
+        "local_warning": null,
+        "backend_agent_key": "a_very_long_function_name_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-accuracy-model-8de4c0472a"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "prov-py-agent-name",
+      "description": "Python, explicit agent_name: user_named, no trace id",
+      "rule": "provenance.user_named",
+      "input": {
+        "sdk": "python",
+        "function_name": "answer_question",
+        "objectives": [
+          "accuracy"
+        ],
+        "knobs": [
+          "model"
+        ],
+        "agent_name": "support-bot"
+      },
+      "expected": {
+        "registration_identity": "support-bot",
+        "provenance": "user_named",
+        "trace_agent_id": null,
+        "local_warning": null,
+        "backend_agent_key": "support-bot"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "prov-py-env-name",
+      "description": "Python, TRAIGENT_EXPERIMENT_NAME set: user_named",
+      "rule": "provenance.user_named",
+      "input": {
+        "sdk": "python",
+        "function_name": "answer_question",
+        "objectives": [
+          "accuracy"
+        ],
+        "knobs": [
+          "model"
+        ],
+        "experiment_name_env": "team-experiment"
+      },
+      "expected": {
+        "registration_identity": "team-experiment",
+        "provenance": "user_named",
+        "trace_agent_id": null,
+        "local_warning": null,
+        "backend_agent_key": "team-experiment"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "prov-py-lambda",
+      "description": "Python lambda: __name__ contains '<', ineligible (registration unchanged)",
+      "rule": "provenance.anonymous_ineligible",
+      "input": {
+        "sdk": "python",
+        "function_name": "<lambda>",
+        "objectives": [
+          "accuracy"
+        ],
+        "knobs": [
+          "model"
+        ]
+      },
+      "expected": {
+        "registration_identity": "<lambda>[accuracy][model]",
+        "provenance": "ineligible",
+        "trace_agent_id": null,
+        "local_warning": "anonymous_registration",
+        "backend_agent_key": "lambda-accuracy-model-0b9512364d"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "prov-py-locals-nested",
+      "description": "Python nested function: __qualname__ has <locals> but __name__ does not; only a __name__ containing < is ineligible, so function_derived (same-name collisions are inherent to function-derived keys)",
+      "rule": "provenance.function_derived",
+      "input": {
+        "sdk": "python",
+        "function_name": "inner",
+        "qualname": "outer.<locals>.inner",
+        "objectives": [
+          "accuracy"
+        ],
+        "knobs": [
+          "model"
+        ]
+      },
+      "expected": {
+        "registration_identity": "inner[accuracy][model]",
+        "provenance": "function_derived",
+        "trace_agent_id": "inner-accuracy-model-5dd82892e7",
+        "local_warning": null,
+        "backend_agent_key": "inner-accuracy-model-5dd82892e7"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "prov-py-locals-in-name",
+      "description": "Python callable whose __name__ itself contains '<locals>': ineligible",
+      "rule": "provenance.anonymous_ineligible",
+      "input": {
+        "sdk": "python",
+        "function_name": "outer.<locals>.inner",
+        "objectives": [
+          "accuracy"
+        ],
+        "knobs": [
+          "model"
+        ]
+      },
+      "expected": {
+        "registration_identity": "outer.<locals>.inner[accuracy][model]",
+        "provenance": "ineligible",
+        "trace_agent_id": null,
+        "local_warning": "anonymous_registration",
+        "backend_agent_key": "outer-locals-inner-accuracy-model-0c9df5c238"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "prov-py-partial",
+      "description": "Python functools.partial: no __name__; real decoration raises AttributeError at decorators.py:3278, so the outcome is unsupported (not_decoratable), not a registration",
+      "rule": "provenance.unsupported_callable",
+      "input": {
+        "sdk": "python",
+        "function_name": null,
+        "objectives": [
+          "accuracy"
+        ],
+        "knobs": [
+          "model"
+        ]
+      },
+      "expected": {
+        "outcome": "unsupported",
+        "error": "not_decoratable",
+        "trace_agent_id": null
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "prov-py-lambda-with-agent-name",
+      "description": "Python lambda with explicit agent_name: user_named wins over ineligible",
+      "rule": "provenance.user_named",
+      "input": {
+        "sdk": "python",
+        "function_name": "<lambda>",
+        "objectives": [
+          "accuracy"
+        ],
+        "knobs": [
+          "model"
+        ],
+        "agent_name": "support-bot"
+      },
+      "expected": {
+        "registration_identity": "support-bot",
+        "provenance": "user_named",
+        "trace_agent_id": null,
+        "local_warning": null,
+        "backend_agent_key": "support-bot"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "prov-js-no-names",
+      "description": "JS, no names: registration key is the derived function name, function_derived",
+      "rule": "provenance.function_derived",
+      "input": {
+        "sdk": "js",
+        "function_name": "answerQuestion",
+        "objectives": [
+          "accuracy"
+        ],
+        "knobs": [
+          "model"
+        ]
+      },
+      "expected": {
+        "registration_identity": "answerQuestion",
+        "provenance": "function_derived",
+        "trace_agent_id": "answerQuestion",
+        "local_warning": null,
+        "backend_agent_key": "answerQuestion"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "prov-js-bound-name",
+      "description": "JS bound function: 'bound ' prefix stripped by deriveFunctionName",
+      "rule": "provenance.function_derived",
+      "input": {
+        "sdk": "js",
+        "function_name": "bound answerQuestion"
+      },
+      "expected": {
+        "registration_identity": "answerQuestion",
+        "provenance": "function_derived",
+        "trace_agent_id": "answerQuestion",
+        "local_warning": null,
+        "backend_agent_key": "answerQuestion"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "prov-js-agent-name",
+      "description": "JS agentName set (trimmed): user_named",
+      "rule": "provenance.user_named",
+      "input": {
+        "sdk": "js",
+        "function_name": "answerQuestion",
+        "agent_name": "  support-bot "
+      },
+      "expected": {
+        "registration_identity": "support-bot",
+        "provenance": "user_named",
+        "trace_agent_id": null,
+        "local_warning": null,
+        "backend_agent_key": "support-bot"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "prov-js-manifest-id-equal",
+      "description": "JS declared manifest agentId equal to the registration key: user_named",
+      "rule": "provenance.user_named",
+      "input": {
+        "sdk": "js",
+        "function_name": "answerQuestion",
+        "manifest_agent_id": "answerQuestion"
+      },
+      "expected": {
+        "registration_identity": "answerQuestion",
+        "provenance": "user_named",
+        "trace_agent_id": null,
+        "local_warning": null,
+        "backend_agent_key": "answerQuestion"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "prov-js-manifest-mismatch",
+      "description": "JS declared manifest agentId != registration key: user_named, trace id withheld, local warning",
+      "rule": "provenance.manifest_mismatch",
+      "input": {
+        "sdk": "js",
+        "function_name": "answerQuestion",
+        "manifest_agent_id": "other-agent"
+      },
+      "expected": {
+        "registration_identity": "answerQuestion",
+        "provenance": "user_named",
+        "trace_agent_id": null,
+        "local_warning": "manifest_registration_mismatch",
+        "backend_agent_key": "answerQuestion"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "prov-js-anonymous-engine-name",
+      "description": "JS function named 'anonymous': falls to anonymous_js_trial, ineligible",
+      "rule": "provenance.anonymous_ineligible",
+      "input": {
+        "sdk": "js",
+        "function_name": "anonymous"
+      },
+      "expected": {
+        "registration_identity": "anonymous_js_trial",
+        "provenance": "ineligible",
+        "trace_agent_id": null,
+        "local_warning": "anonymous_registration",
+        "backend_agent_key": "anonymous_js_trial"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "prov-js-no-function-name",
+      "description": "JS no function name and no agentName: anonymous_js_trial, ineligible",
+      "rule": "provenance.anonymous_ineligible",
+      "input": {
+        "sdk": "js",
+        "function_name": null
+      },
+      "expected": {
+        "registration_identity": "anonymous_js_trial",
+        "provenance": "ineligible",
+        "trace_agent_id": null,
+        "local_warning": "anonymous_registration",
+        "backend_agent_key": "anonymous_js_trial"
+      },
+      "anchor": "consumer"
+    }
+  ],
+  "trace_attribution": [
+    {
+      "id": "attr-native-single-scope",
+      "description": "One eligible scope A closed before end_trace",
+      "rule": "attribution.native.unanimous",
+      "input": {
+        "transport": "native",
+        "scopes": [
+          {
+            "scope_id": "s1",
+            "parent": null,
+            "key": "A",
+            "provenance": "function_derived",
+            "state_at_finalization": "closed"
+          }
+        ],
+        "early_flush_before_finalization": false,
+        "final_snapshot_delivered": true
+      },
+      "expected": {
+        "attributed_to": "A",
+        "reason": "attributed"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-native-nested-a-b",
+      "description": "Nested function-derived A -> B: conflict",
+      "rule": "attribution.native.conflict",
+      "input": {
+        "transport": "native",
+        "scopes": [
+          {
+            "scope_id": "s1",
+            "parent": null,
+            "key": "A",
+            "provenance": "function_derived",
+            "state_at_finalization": "closed"
+          },
+          {
+            "scope_id": "s2",
+            "parent": "s1",
+            "key": "B",
+            "provenance": "function_derived",
+            "state_at_finalization": "closed"
+          }
+        ],
+        "early_flush_before_finalization": false,
+        "final_snapshot_delivered": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "conflict"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-native-nested-same-key",
+      "description": "Nested scopes both function-derived with the same key A: attributed",
+      "rule": "attribution.native.unanimous",
+      "input": {
+        "transport": "native",
+        "scopes": [
+          {
+            "scope_id": "s1",
+            "parent": null,
+            "key": "A",
+            "provenance": "function_derived",
+            "state_at_finalization": "closed"
+          },
+          {
+            "scope_id": "s2",
+            "parent": "s1",
+            "key": "A",
+            "provenance": "function_derived",
+            "state_at_finalization": "closed"
+          }
+        ],
+        "early_flush_before_finalization": false,
+        "final_snapshot_delivered": true
+      },
+      "expected": {
+        "attributed_to": "A",
+        "reason": "attributed"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-native-unscoped-root-scoped-child",
+      "description": "Unscoped handler root (neutral, no scope) + one eligible scope A: attributed. Deliberate difference from OTLP, which is strict",
+      "rule": "attribution.native.neutral_root",
+      "input": {
+        "transport": "native",
+        "scopes": [
+          {
+            "scope_id": "s1",
+            "parent": null,
+            "key": "A",
+            "provenance": "function_derived",
+            "state_at_finalization": "closed"
+          }
+        ],
+        "early_flush_before_finalization": false,
+        "final_snapshot_delivered": true
+      },
+      "expected": {
+        "attributed_to": "A",
+        "reason": "attributed"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-native-a-then-user-named-b",
+      "description": "Function-derived A -> user_named B: poisoned",
+      "rule": "attribution.native.sealed_taint",
+      "input": {
+        "transport": "native",
+        "scopes": [
+          {
+            "scope_id": "s1",
+            "parent": null,
+            "key": "A",
+            "provenance": "function_derived",
+            "state_at_finalization": "closed"
+          },
+          {
+            "scope_id": "s2",
+            "parent": "s1",
+            "key": null,
+            "provenance": "user_named",
+            "state_at_finalization": "closed"
+          }
+        ],
+        "early_flush_before_finalization": false,
+        "final_snapshot_delivered": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "ineligible"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-native-a-then-anonymous-child",
+      "description": "Function-derived A -> anonymous child: poisoned",
+      "rule": "attribution.native.sealed_taint",
+      "input": {
+        "transport": "native",
+        "scopes": [
+          {
+            "scope_id": "s1",
+            "parent": null,
+            "key": "A",
+            "provenance": "function_derived",
+            "state_at_finalization": "closed"
+          },
+          {
+            "scope_id": "s2",
+            "parent": "s1",
+            "key": null,
+            "provenance": "ineligible",
+            "state_at_finalization": "closed"
+          }
+        ],
+        "early_flush_before_finalization": false,
+        "final_snapshot_delivered": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "ineligible"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-native-named-parent-anonymous-child",
+      "description": "user_named parent -> anonymous child: unattributed",
+      "rule": "attribution.native.sealed_taint",
+      "input": {
+        "transport": "native",
+        "scopes": [
+          {
+            "scope_id": "s1",
+            "parent": null,
+            "key": null,
+            "provenance": "user_named",
+            "state_at_finalization": "closed"
+          },
+          {
+            "scope_id": "s2",
+            "parent": "s1",
+            "key": null,
+            "provenance": "ineligible",
+            "state_at_finalization": "closed"
+          }
+        ],
+        "early_flush_before_finalization": false,
+        "final_snapshot_delivered": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "ineligible"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-native-outer-open-eligible",
+      "description": "Outer eligible A still open after inner B closed (end_trace ran inside A): withheld",
+      "rule": "attribution.native.enclosing",
+      "input": {
+        "transport": "native",
+        "scopes": [
+          {
+            "scope_id": "s1",
+            "parent": null,
+            "key": "A",
+            "provenance": "function_derived",
+            "state_at_finalization": "open"
+          },
+          {
+            "scope_id": "s2",
+            "parent": "s1",
+            "key": "B",
+            "provenance": "function_derived",
+            "state_at_finalization": "closed"
+          }
+        ],
+        "early_flush_before_finalization": false,
+        "final_snapshot_delivered": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "conflict"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-native-outer-open-same-key",
+      "description": "Outer eligible A still open, inner scope same key A closed: withheld as open_scope",
+      "rule": "attribution.native.open_scope",
+      "input": {
+        "transport": "native",
+        "scopes": [
+          {
+            "scope_id": "s1",
+            "parent": null,
+            "key": "A",
+            "provenance": "function_derived",
+            "state_at_finalization": "open"
+          },
+          {
+            "scope_id": "s2",
+            "parent": "s1",
+            "key": "A",
+            "provenance": "function_derived",
+            "state_at_finalization": "closed"
+          }
+        ],
+        "early_flush_before_finalization": false,
+        "final_snapshot_delivered": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "open_scope"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-native-outer-open-only",
+      "description": "Single eligible scope A still open at finalization: withheld as open_scope",
+      "rule": "attribution.native.open_scope",
+      "input": {
+        "transport": "native",
+        "scopes": [
+          {
+            "scope_id": "s1",
+            "parent": null,
+            "key": "A",
+            "provenance": "function_derived",
+            "state_at_finalization": "open"
+          }
+        ],
+        "early_flush_before_finalization": false,
+        "final_snapshot_delivered": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "open_scope"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-native-outer-open-ineligible",
+      "description": "Outer ineligible A open after inner B closed: withheld",
+      "rule": "attribution.native.enclosing",
+      "input": {
+        "transport": "native",
+        "scopes": [
+          {
+            "scope_id": "s1",
+            "parent": null,
+            "key": null,
+            "provenance": "ineligible",
+            "state_at_finalization": "open"
+          },
+          {
+            "scope_id": "s2",
+            "parent": "s1",
+            "key": "B",
+            "provenance": "function_derived",
+            "state_at_finalization": "closed"
+          }
+        ],
+        "early_flush_before_finalization": false,
+        "final_snapshot_delivered": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "ineligible"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-native-two-lambdas",
+      "description": "Two distinct lambdas with identical knobs in one trace: neither attributed",
+      "rule": "attribution.native.sealed_taint",
+      "input": {
+        "transport": "native",
+        "scopes": [
+          {
+            "scope_id": "s1",
+            "parent": null,
+            "key": null,
+            "provenance": "ineligible",
+            "state_at_finalization": "closed"
+          },
+          {
+            "scope_id": "s2",
+            "parent": null,
+            "key": null,
+            "provenance": "ineligible",
+            "state_at_finalization": "closed"
+          }
+        ],
+        "early_flush_before_finalization": false,
+        "final_snapshot_delivered": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "ineligible"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-native-no-scopes",
+      "description": "Standalone observed function, empty scope ledger: no agent id",
+      "rule": "attribution.native.no_scopes",
+      "input": {
+        "transport": "native",
+        "scopes": [],
+        "early_flush_before_finalization": false,
+        "final_snapshot_delivered": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "ineligible"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-native-early-flush-then-final",
+      "description": "Early batch/timer flush before finalization, then end_trace publishes the final snapshot: attributed from the final snapshot only",
+      "rule": "attribution.native.unanimous",
+      "input": {
+        "transport": "native",
+        "scopes": [
+          {
+            "scope_id": "s1",
+            "parent": null,
+            "key": "A",
+            "provenance": "function_derived",
+            "state_at_finalization": "closed"
+          }
+        ],
+        "early_flush_before_finalization": true,
+        "final_snapshot_delivered": true
+      },
+      "expected": {
+        "attributed_to": "A",
+        "reason": "attributed"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-native-early-flush-no-final",
+      "description": "Trace flushed early and never finalized: withheld",
+      "rule": "attribution.native.not_finalized",
+      "input": {
+        "transport": "native",
+        "scopes": [
+          {
+            "scope_id": "s1",
+            "parent": null,
+            "key": "A",
+            "provenance": "function_derived",
+            "state_at_finalization": "closed"
+          }
+        ],
+        "early_flush_before_finalization": true,
+        "final_snapshot_delivered": false
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "incomplete"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-native-child-closes-after-early-flush",
+      "description": "Child scope B closes after an early flush; final ledger is A -> B: conflict",
+      "rule": "attribution.native.conflict",
+      "input": {
+        "transport": "native",
+        "scopes": [
+          {
+            "scope_id": "s1",
+            "parent": null,
+            "key": "A",
+            "provenance": "function_derived",
+            "state_at_finalization": "closed"
+          },
+          {
+            "scope_id": "s2",
+            "parent": "s1",
+            "key": "B",
+            "provenance": "function_derived",
+            "state_at_finalization": "closed"
+          }
+        ],
+        "early_flush_before_finalization": true,
+        "final_snapshot_delivered": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "conflict"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-otlp-all-labelled",
+      "description": "Every span labelled A",
+      "rule": "attribution.otlp.strict",
+      "input": {
+        "transport": "otlp",
+        "deliveries": [
+          [
+            {
+              "span_id": "a",
+              "agent_id": "A"
+            },
+            {
+              "span_id": "b",
+              "agent_id": "A"
+            }
+          ]
+        ],
+        "metadata_readable": true
+      },
+      "expected": {
+        "attributed_to": "A",
+        "reason": "attributed"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-otlp-unscoped-root-labelled-child",
+      "description": "Unscoped root span (no gen_ai.agent.id) + scoped child: strict OTLP rule leaves the trace unattributed. Deliberate difference from native, where the unscoped root is neutral and the trace is attributed",
+      "rule": "attribution.otlp.strict",
+      "input": {
+        "transport": "otlp",
+        "deliveries": [
+          [
+            {
+              "span_id": "root",
+              "agent_id": null
+            },
+            {
+              "span_id": "child",
+              "agent_id": "A"
+            }
+          ]
+        ],
+        "metadata_readable": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "incomplete"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-otlp-nested-a-b",
+      "description": "Nested A -> B spans carry different labels: conflict",
+      "rule": "attribution.otlp.strict",
+      "input": {
+        "transport": "otlp",
+        "deliveries": [
+          [
+            {
+              "span_id": "a",
+              "agent_id": "A"
+            },
+            {
+              "span_id": "b",
+              "agent_id": "B"
+            }
+          ]
+        ],
+        "metadata_readable": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "conflict"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-otlp-a-then-user-named-b",
+      "description": "A -> user_named B: boundary span without label",
+      "rule": "attribution.otlp.strict",
+      "input": {
+        "transport": "otlp",
+        "deliveries": [
+          [
+            {
+              "span_id": "a",
+              "agent_id": "A"
+            },
+            {
+              "span_id": "b",
+              "agent_id": null
+            }
+          ]
+        ],
+        "metadata_readable": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "incomplete"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-otlp-a-then-anonymous-child",
+      "description": "A -> anonymous child: boundary span without label",
+      "rule": "attribution.otlp.strict",
+      "input": {
+        "transport": "otlp",
+        "deliveries": [
+          [
+            {
+              "span_id": "a",
+              "agent_id": "A"
+            },
+            {
+              "span_id": "b",
+              "agent_id": null
+            }
+          ]
+        ],
+        "metadata_readable": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "incomplete"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-otlp-named-parent-anonymous-child",
+      "description": "user_named parent -> anonymous child: neither labelled",
+      "rule": "attribution.otlp.strict",
+      "input": {
+        "transport": "otlp",
+        "deliveries": [
+          [
+            {
+              "span_id": "a",
+              "agent_id": null
+            },
+            {
+              "span_id": "b",
+              "agent_id": null
+            }
+          ]
+        ],
+        "metadata_readable": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "incomplete"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-otlp-js-constant-named-child",
+      "description": "JS A -> named B returning a constant: B emits an unlabelled boundary span",
+      "rule": "attribution.otlp.strict",
+      "input": {
+        "transport": "otlp",
+        "deliveries": [
+          [
+            {
+              "span_id": "a",
+              "agent_id": "A"
+            },
+            {
+              "span_id": "b",
+              "agent_id": null
+            }
+          ]
+        ],
+        "metadata_readable": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "incomplete"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-otlp-two-lambdas",
+      "description": "Two distinct JS anonymous scopes: unlabelled boundary spans",
+      "rule": "attribution.otlp.strict",
+      "input": {
+        "transport": "otlp",
+        "deliveries": [
+          [
+            {
+              "span_id": "a",
+              "agent_id": null
+            },
+            {
+              "span_id": "b",
+              "agent_id": null
+            }
+          ]
+        ],
+        "metadata_readable": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "incomplete"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-otlp-unlabelled-span",
+      "description": "One unlabelled span among labelled A spans",
+      "rule": "attribution.otlp.strict",
+      "input": {
+        "transport": "otlp",
+        "deliveries": [
+          [
+            {
+              "span_id": "a",
+              "agent_id": "A"
+            },
+            {
+              "span_id": "x",
+              "agent_id": null
+            },
+            {
+              "span_id": "b",
+              "agent_id": "A"
+            }
+          ]
+        ],
+        "metadata_readable": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "incomplete"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-otlp-in-order",
+      "description": "Spans delivered in order, one batch (control for the reorder/split vectors)",
+      "rule": "attribution.otlp.delivery_order",
+      "input": {
+        "transport": "otlp",
+        "deliveries": [
+          [
+            {
+              "span_id": "root",
+              "agent_id": "A"
+            },
+            {
+              "span_id": "child",
+              "agent_id": "A"
+            },
+            {
+              "span_id": "leaf",
+              "agent_id": "A"
+            }
+          ]
+        ],
+        "metadata_readable": true
+      },
+      "expected": {
+        "attributed_to": "A",
+        "reason": "attributed"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-otlp-reordered",
+      "description": "Same spans delivered child-first, root late, in separate batches: same result as in-order",
+      "rule": "attribution.otlp.delivery_order",
+      "input": {
+        "transport": "otlp",
+        "deliveries": [
+          [
+            {
+              "span_id": "leaf",
+              "agent_id": "A"
+            }
+          ],
+          [
+            {
+              "span_id": "child",
+              "agent_id": "A"
+            }
+          ],
+          [
+            {
+              "span_id": "root",
+              "agent_id": "A"
+            }
+          ]
+        ],
+        "metadata_readable": true,
+        "same_result_as": "attr-otlp-in-order"
+      },
+      "expected": {
+        "attributed_to": "A",
+        "reason": "attributed"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-otlp-split-delivery-conflict",
+      "description": "Conflicting spans split across two deliveries: conflict regardless of split",
+      "rule": "attribution.otlp.delivery_order",
+      "input": {
+        "transport": "otlp",
+        "deliveries": [
+          [
+            {
+              "span_id": "a",
+              "agent_id": "A"
+            }
+          ],
+          [
+            {
+              "span_id": "b",
+              "agent_id": "B"
+            }
+          ]
+        ],
+        "metadata_readable": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "conflict"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-otlp-split-delivery-unlabelled-late",
+      "description": "Unlabelled span arrives in a later batch before evaluation: unattributed",
+      "rule": "attribution.otlp.delivery_order",
+      "input": {
+        "transport": "otlp",
+        "deliveries": [
+          [
+            {
+              "span_id": "a",
+              "agent_id": "A"
+            },
+            {
+              "span_id": "b",
+              "agent_id": "A"
+            }
+          ],
+          [
+            {
+              "span_id": "c",
+              "agent_id": null
+            }
+          ]
+        ],
+        "metadata_readable": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "incomplete"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-otlp-unreadable-metadata",
+      "description": "Offloaded span metadata cannot be read at evaluation: fail closed",
+      "rule": "attribution.otlp.unreadable_metadata",
+      "input": {
+        "transport": "otlp",
+        "deliveries": [
+          [
+            {
+              "span_id": "a",
+              "agent_id": "A"
+            },
+            {
+              "span_id": "b",
+              "agent_id": "A"
+            }
+          ]
+        ],
+        "metadata_readable": false
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "evidence_unavailable"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-otlp-late-after-record",
+      "description": "Late unlabelled span after the window was recorded: recorded result unchanged, counter incremented",
+      "rule": "attribution.late_after_record",
+      "input": {
+        "transport": "otlp",
+        "deliveries": [
+          [
+            {
+              "span_id": "a",
+              "agent_id": "A"
+            }
+          ]
+        ],
+        "metadata_readable": true,
+        "window_recorded": true,
+        "late_deliveries": [
+          [
+            {
+              "span_id": "late",
+              "agent_id": null
+            }
+          ]
+        ]
+      },
+      "expected": {
+        "attributed_to": "A",
+        "reason": "attributed",
+        "late_after_record": 1
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-legacy-trace-level-only",
+      "description": "Legacy trace: trace-level agent_id only, no span keys: attributed as today",
+      "rule": "attribution.legacy_trace_level",
+      "input": {
+        "transport": "native",
+        "legacy_trace_level_agent_id": "A",
+        "scopes": [],
+        "early_flush_before_finalization": false,
+        "final_snapshot_delivered": true
+      },
+      "expected": {
+        "attributed_to": "A",
+        "reason": "attributed"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-snap-final-with-end-time",
+      "description": "Final snapshot carries the end time and K: attributed",
+      "rule": "attribution.snapshot.final_identity",
+      "input": {
+        "transport": "native",
+        "snapshots": [
+          {
+            "seq": 2,
+            "has_incoming_end_time": true,
+            "agent_id": "K"
+          }
+        ],
+        "persisted_ended_at_present": false
+      },
+      "expected": {
+        "attributed_to": "K",
+        "reason": "attributed"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-snap-early-with-k-no-final",
+      "description": "Early snapshot carries K but no end time and no final snapshot follows: ignored, incomplete",
+      "rule": "attribution.snapshot.early_ignored",
+      "input": {
+        "transport": "native",
+        "snapshots": [
+          {
+            "seq": 1,
+            "has_incoming_end_time": false,
+            "agent_id": "K"
+          }
+        ],
+        "persisted_ended_at_present": false
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "incomplete"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-snap-early-then-final",
+      "description": "Early snapshot without identity, then the final snapshot with end time and K: attributed",
+      "rule": "attribution.snapshot.final_identity",
+      "input": {
+        "transport": "native",
+        "snapshots": [
+          {
+            "seq": 1,
+            "has_incoming_end_time": false,
+            "agent_id": null
+          },
+          {
+            "seq": 2,
+            "has_incoming_end_time": true,
+            "agent_id": "K"
+          }
+        ],
+        "persisted_ended_at_present": false
+      },
+      "expected": {
+        "attributed_to": "K",
+        "reason": "attributed"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-snap-final-then-stale-early",
+      "description": "Final snapshot arrives before a stale early one; the stale snapshot erases identity on storage: accepted recall loss, incomplete",
+      "rule": "attribution.snapshot.stale_early_erases",
+      "input": {
+        "transport": "native",
+        "snapshots": [
+          {
+            "seq": 2,
+            "has_incoming_end_time": true,
+            "agent_id": "K"
+          },
+          {
+            "seq": 1,
+            "has_incoming_end_time": false,
+            "agent_id": null
+          }
+        ],
+        "persisted_ended_at_present": false
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "incomplete"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-snap-persisted-end-time-incoming-none",
+      "description": "Persisted ended_at present (rollup-synthesised) but the incoming snapshot has no end time: not attributed",
+      "rule": "attribution.snapshot.persisted_end_not_enough",
+      "input": {
+        "transport": "native",
+        "snapshots": [
+          {
+            "seq": 1,
+            "has_incoming_end_time": false,
+            "agent_id": "K"
+          }
+        ],
+        "persisted_ended_at_present": true
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "incomplete"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "attr-snap-final-without-identity",
+      "description": "Final snapshot with end time but no agent id: ineligible",
+      "rule": "attribution.snapshot.final_without_identity",
+      "input": {
+        "transport": "native",
+        "snapshots": [
+          {
+            "seq": 2,
+            "has_incoming_end_time": true,
+            "agent_id": null
+          }
+        ],
+        "persisted_ended_at_present": false
+      },
+      "expected": {
+        "attributed_to": null,
+        "reason": "ineligible"
+      },
+      "anchor": "consumer"
+    }
+  ],
+  "environment": [
+    {
+      "id": "env-explicit",
+      "description": "Explicit argument beats every env var",
+      "rule": "environment.explicit_free_label",
+      "input": {
+        "explicit": "staging",
+        "env": {
+          "TRAIGENT_ENVIRONMENT": "a",
+          "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=b",
+          "ENVIRONMENT": "c",
+          "TRAIGENT_ENV": "d"
+        }
+      },
+      "expected": {
+        "valid": true,
+        "environment": "staging",
+        "source": "explicit",
+        "warning": null
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-traigent-environment",
+      "description": "TRAIGENT_ENVIRONMENT beats OTel, ENVIRONMENT, TRAIGENT_ENV",
+      "rule": "environment.order",
+      "input": {
+        "env": {
+          "TRAIGENT_ENVIRONMENT": "prod",
+          "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=staging",
+          "ENVIRONMENT": "test",
+          "TRAIGENT_ENV": "dev"
+        }
+      },
+      "expected": {
+        "valid": true,
+        "environment": "prod",
+        "source": "traigent_environment",
+        "warning": null
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-otel-resource",
+      "description": "OTel deployment.environment.name (from OTEL_RESOURCE_ATTRIBUTES) beats ENVIRONMENT and TRAIGENT_ENV",
+      "rule": "environment.order",
+      "input": {
+        "env": {
+          "OTEL_RESOURCE_ATTRIBUTES": "service.name=svc,deployment.environment.name=staging,service.version=1",
+          "ENVIRONMENT": "test",
+          "TRAIGENT_ENV": "dev"
+        }
+      },
+      "expected": {
+        "valid": true,
+        "environment": "staging",
+        "source": "otel_resource",
+        "warning": null
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-environment-var",
+      "description": "ENVIRONMENT beats legacy TRAIGENT_ENV",
+      "rule": "environment.order",
+      "input": {
+        "env": {
+          "ENVIRONMENT": "test",
+          "TRAIGENT_ENV": "dev"
+        }
+      },
+      "expected": {
+        "valid": true,
+        "environment": "test",
+        "source": "environment",
+        "warning": null
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-legacy-traigent-env",
+      "description": "Legacy TRAIGENT_ENV is honoured with a deprecation warning",
+      "rule": "environment.order",
+      "input": {
+        "env": {
+          "TRAIGENT_ENV": "dev"
+        }
+      },
+      "expected": {
+        "valid": true,
+        "environment": "dev",
+        "source": "traigent_env_legacy",
+        "warning": "legacy_env_var_deprecated"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-none-default",
+      "description": "Nothing declared: 'default' plus a one-time warning",
+      "rule": "environment.order",
+      "input": {
+        "env": {}
+      },
+      "expected": {
+        "valid": true,
+        "environment": "default",
+        "source": "default",
+        "warning": "undeclared_default"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-never-infer-production",
+      "description": "Other well-known variables never imply an environment: NODE_ENV=production and similar are ignored",
+      "rule": "environment.never_infer",
+      "input": {
+        "env": {
+          "NODE_ENV": "production",
+          "FLASK_ENV": "production",
+          "AWS_EXECUTION_ENV": "AWS_Lambda_python3.12",
+          "KUBERNETES_SERVICE_HOST": "10.0.0.1"
+        }
+      },
+      "expected": {
+        "valid": true,
+        "environment": "default",
+        "source": "default",
+        "warning": "undeclared_default"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-normalize-trim-lower",
+      "description": "Explicit value is trimmed and lower-cased",
+      "rule": "environment.explicit_free_label",
+      "input": {
+        "explicit": " Prod ",
+        "env": {}
+      },
+      "expected": {
+        "valid": true,
+        "environment": "prod",
+        "source": "explicit",
+        "warning": null
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-normalize-env-var",
+      "description": "Env var value is trimmed and lower-cased",
+      "rule": "environment.env_var_known_only",
+      "input": {
+        "env": {
+          "TRAIGENT_ENVIRONMENT": "  STAGING\t"
+        }
+      },
+      "expected": {
+        "valid": true,
+        "environment": "staging",
+        "source": "traigent_environment",
+        "warning": null
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-free-text-slash",
+      "description": "Free text with a slash is valid and preserved (lower-cased) as an explicit argument",
+      "rule": "environment.explicit_free_label",
+      "input": {
+        "explicit": "Team/EU",
+        "env": {}
+      },
+      "expected": {
+        "valid": true,
+        "environment": "team/eu",
+        "source": "explicit",
+        "warning": null
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-length-64-valid",
+      "description": "64 characters after normalization is valid",
+      "rule": "environment.explicit_free_label",
+      "input": {
+        "explicit": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "env": {}
+      },
+      "expected": {
+        "valid": true,
+        "environment": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "source": "explicit",
+        "warning": null
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-length-65-invalid",
+      "description": "65 characters after normalization in the explicit argument is a programmer error: error too_long, no fallthrough (the SDK raises)",
+      "rule": "environment.explicit_free_label",
+      "input": {
+        "explicit": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "env": {
+          "TRAIGENT_ENVIRONMENT": "prod"
+        }
+      },
+      "expected": {
+        "valid": false,
+        "environment": null,
+        "source": null,
+        "error": "too_long",
+        "warning": null
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-explicit-empty-is-unset",
+      "description": "Empty or whitespace explicit argument is treated as unset",
+      "rule": "environment.explicit_free_label",
+      "input": {
+        "explicit": "   ",
+        "env": {
+          "TRAIGENT_ENVIRONMENT": "prod"
+        }
+      },
+      "expected": {
+        "valid": true,
+        "environment": "prod",
+        "source": "traigent_environment",
+        "warning": null
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-var-empty-falls-through",
+      "description": "Empty TRAIGENT_ENVIRONMENT is ignored with a warning; ENVIRONMENT is used",
+      "rule": "environment.env_var_known_only",
+      "input": {
+        "env": {
+          "TRAIGENT_ENVIRONMENT": "  ",
+          "ENVIRONMENT": "test"
+        }
+      },
+      "expected": {
+        "valid": true,
+        "environment": "test",
+        "source": "environment",
+        "warning": "invalid_env_value_ignored"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-var-65-falls-through",
+      "description": "65-char TRAIGENT_ENVIRONMENT is ignored with a warning; ENVIRONMENT is used",
+      "rule": "environment.env_var_known_only",
+      "input": {
+        "env": {
+          "TRAIGENT_ENVIRONMENT": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "ENVIRONMENT": "test"
+        }
+      },
+      "expected": {
+        "valid": true,
+        "environment": "test",
+        "source": "environment",
+        "warning": "invalid_env_value_ignored"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-var-invalid-then-default",
+      "description": "Only invalid env-var values: ignored with a warning, result default",
+      "rule": "environment.env_var_known_only",
+      "input": {
+        "env": {
+          "TRAIGENT_ENVIRONMENT": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+      },
+      "expected": {
+        "valid": true,
+        "environment": "default",
+        "source": "default",
+        "warning": "invalid_env_value_ignored"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-email-in-legacy-var-ignored",
+      "description": "An email-like value in TRAIGENT_ENV is not a known label: ignored with a value-free warning, result default",
+      "rule": "environment.env_var_known_only",
+      "input": {
+        "env": {
+          "TRAIGENT_ENV": "alice@example.com"
+        }
+      },
+      "expected": {
+        "valid": true,
+        "environment": "default",
+        "source": "default",
+        "warning": "invalid_env_value_ignored"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-unknown-traigent-environment-falls-to-environment",
+      "description": "An unknown label in TRAIGENT_ENVIRONMENT is ignored; a known ENVIRONMENT value is used",
+      "rule": "environment.env_var_known_only",
+      "input": {
+        "env": {
+          "TRAIGENT_ENVIRONMENT": "team/eu",
+          "ENVIRONMENT": "staging"
+        }
+      },
+      "expected": {
+        "valid": true,
+        "environment": "staging",
+        "source": "environment",
+        "warning": "invalid_env_value_ignored"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-unknown-otel-falls-through",
+      "description": "An unknown OTel deployment.environment.name is ignored; a known ENVIRONMENT value is used",
+      "rule": "environment.env_var_known_only",
+      "input": {
+        "env": {
+          "OTEL_RESOURCE_ATTRIBUTES": "service.name=svc,deployment.environment.name=eu-west",
+          "ENVIRONMENT": "prod"
+        }
+      },
+      "expected": {
+        "valid": true,
+        "environment": "prod",
+        "source": "environment",
+        "warning": "invalid_env_value_ignored"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-unknown-environment-var-then-default",
+      "description": "An unknown ENVIRONMENT value alone: ignored, result default",
+      "rule": "environment.env_var_known_only",
+      "input": {
+        "env": {
+          "ENVIRONMENT": "qa"
+        }
+      },
+      "expected": {
+        "valid": true,
+        "environment": "default",
+        "source": "default",
+        "warning": "invalid_env_value_ignored"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-unknown-then-legacy-known",
+      "description": "Unknown TRAIGENT_ENVIRONMENT falls through to a known legacy TRAIGENT_ENV; the ignored-value warning wins",
+      "rule": "environment.env_var_known_only",
+      "input": {
+        "env": {
+          "TRAIGENT_ENVIRONMENT": "qa",
+          "TRAIGENT_ENV": "ci"
+        }
+      },
+      "expected": {
+        "valid": true,
+        "environment": "ci",
+        "source": "traigent_env_legacy",
+        "warning": "invalid_env_value_ignored"
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-ci-is-known",
+      "description": "ci is a known label",
+      "rule": "environment.env_var_known_only",
+      "input": {
+        "env": {
+          "TRAIGENT_ENVIRONMENT": "CI"
+        }
+      },
+      "expected": {
+        "valid": true,
+        "environment": "ci",
+        "source": "traigent_environment",
+        "warning": null
+      },
+      "anchor": "consumer"
+    },
+    {
+      "id": "env-length-after-trim",
+      "description": "65 characters that trim to 64 is valid",
+      "rule": "environment.explicit_free_label",
+      "input": {
+        "explicit": " eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ",
+        "env": {}
+      },
+      "expected": {
+        "valid": true,
+        "environment": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "source": "explicit",
+        "warning": null
+      },
+      "anchor": "consumer"
+    }
+  ]
+}
