@@ -34,6 +34,22 @@ def test_correct_key_and_auxiliary_key_are_accepted() -> None:
     validate_metric_function_keys(None, ["accuracy"])
 
 
+def test_derived_auxiliary_names_are_not_typos() -> None:
+    validate_metric_function_keys({"latency_ms": _mine}, ["latency"])
+    validate_metric_function_keys({"accuracy_raw": _mine}, ["accuracy"])
+
+
+def test_key_for_objective_covered_by_scoring_function_is_not_rejected() -> None:
+    validate_metric_function_keys(
+        {"accuracy_raw": _mine}, ["accuracy"], scoring_function=_mine
+    )
+    # An objective covered by the scoring function is not "uncovered", so a
+    # near-miss of it is not rejected either.
+    validate_metric_function_keys(
+        {"acuracy": _mine}, ["accuracy"], scoring_function=_mine
+    )
+
+
 def _run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: str) -> float | None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")

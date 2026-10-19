@@ -485,38 +485,65 @@ def build_metric_functions(
     return effective_metric_functions
 
 
+def _edit_distance(a: str, b: str) -> int:
+    """Plain Levenshtein distance (inputs are short metric names)."""
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+def _is_derived_name(key: str, objective: str) -> bool:
+    """True for ``objective_suffix`` / ``suffix_objective`` style distinct names."""
+    for sep in ("_", "-", "."):
+        if key.startswith(objective + sep) or objective.startswith(key + sep):
+            return True
+        if key.endswith(sep + objective) or objective.endswith(sep + key):
+            return True
+    return False
+
+
 def validate_metric_function_keys(
     metric_functions: dict[str, Callable[..., Any]] | None,
     objectives: Sequence[str],
+    scoring_function: Callable[..., Any] | None = None,
 ) -> None:
-    """Fail fast when a ``metric_functions`` key looks like a misspelt objective.
+    """Fail fast when a ``metric_functions`` key is a typo of an objective.
 
-    A key that names no objective is legitimate for an auxiliary/informational
-    metric, so unmatched keys alone are allowed. But a key that is a near miss
-    of an objective that has no function of its own (``"acuracy"`` for
-    ``"accuracy"``) is almost certainly a typo: the user's scorer would be
-    silently dropped and the built-in scorer would rank the trials instead
-    (Traigent#2659).
+    A key naming no objective is legitimate for an auxiliary metric, so it is
+    only rejected when it is a true typo of an objective that would otherwise
+    have no user scorer: a case-only difference, or edit distance <= 2 without a
+    ``name_suffix`` style relationship (``latency_ms`` next to ``latency`` is a
+    distinct auxiliary metric). Objectives covered by ``scoring_function`` count
+    as covered (Traigent#2659).
 
     Raises:
-        ValidationError: If an unmatched key is a close match to an objective
-            that has no user metric function.
+        ValidationError: If an unmatched key is a typo of an uncovered objective.
     """
     if not metric_functions:
         return
-    import difflib
 
     from traigent.utils.exceptions import ValidationError
 
     objective_names = [str(o) for o in objectives]
-    uncovered = [o for o in objective_names if o not in metric_functions]
+    covered = build_metric_functions(metric_functions, scoring_function, objectives)
+    uncovered = [o for o in objective_names if o not in covered]
     for key in metric_functions:
-        if key in objective_names:
+        key_s = str(key)
+        if key_s in objective_names:
             continue
-        close = difflib.get_close_matches(str(key), uncovered, n=1, cutoff=0.75)
-        if not close:
-            # Also catch wrong-case near-misses ("Accuracy").
-            close = [o for o in uncovered if o.lower() == str(key).lower()]
+        close = [
+            o
+            for o in uncovered
+            if o.lower() == key_s.lower()
+            or (
+                _edit_distance(key_s.lower(), o.lower()) <= 2
+                and not _is_derived_name(key_s.lower(), o.lower())
+            )
+        ]
         if close:
             raise ValidationError(
                 f"metric_functions key '{key}' matches no objective, so your "
@@ -756,7 +783,7 @@ def _create_local_evaluator(
     scoring_function: Callable[..., Any] | None,
 ) -> tuple[BaseEvaluator, None]:
     """Create the default local evaluator."""
-    validate_metric_function_keys(metric_functions, objectives)
+    validate_metric_function_keys(metric_functions, objectives, scoring_function)
     effective_metric_fns = build_metric_functions(
         metric_functions, scoring_function, objectives
     )
