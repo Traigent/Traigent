@@ -735,6 +735,11 @@ class OptimizationLogger:
         objectives_data: dict[str, Any] | None
         objective_schema = normalize_objectives(objectives)
         objectives_data = objective_schema.to_dict() if objective_schema else None
+        self._primary_objective = (
+            objective_schema.objectives[0].name
+            if objective_schema and objective_schema.objectives
+            else None
+        )
 
         if objectives_data is not None and objective_schema is not None:
             objectives_data["metadata"] = {
@@ -875,9 +880,10 @@ class OptimizationLogger:
         """Append a human-readable summary table for one trial."""
         summary_file = self.run_path / "trials" / "trial_summary.txt"
         lines: list[str] = []
-        acc = trial.metrics.get("accuracy", "?") if trial.metrics else "?"
+        primary = getattr(self, "_primary_objective", None) or "accuracy"
+        acc = trial.metrics.get(primary, "?") if trial.metrics else "?"
         lines.append(
-            f"=== {trial.trial_id}  |  accuracy={acc}  |  config={trial.config} ==="
+            f"=== {trial.trial_id}  |  {primary}={acc}  |  config={trial.config} ==="
         )
         if serialized_examples:
             hdr = f"  {'example_id':<14} {'acc':>4}  {'expected':<22} {'response'}"

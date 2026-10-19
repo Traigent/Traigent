@@ -639,6 +639,31 @@ class LoggingCallback(OptimizationCallback):
         )
 
 
+def _primary_objective_name(objectives: Any) -> str | None:
+    """First declared objective name, or None when none was declared."""
+    if objectives:
+        first = objectives[0]
+        if isinstance(first, str) and first:
+            return first
+        name = getattr(first, "name", None)
+        if isinstance(name, str) and name:
+            return name
+    return None
+
+
+def _declared_objective_score(trial: Any, primary_objective: str | None) -> Any:
+    """The trial's value for the declared objective; None when unmeasured.
+
+    Never substitutes ``accuracy`` for a declared objective (#2676). Runs that
+    declared no objective keep the legacy ``accuracy`` then ``score`` lookup.
+    """
+    metrics = getattr(trial, "metrics", None) or {}
+    if primary_objective is not None:
+        return metrics.get(primary_objective)
+    value = metrics.get("accuracy")
+    return value if value is not None else metrics.get("score")
+
+
 class StatisticsCallback(OptimizationCallback):
     """Callback that collects optimization statistics."""
 
@@ -651,6 +676,7 @@ class StatisticsCallback(OptimizationCallback):
             "failure_reasons": [],
             "parameter_values": {},
         }
+        self._primary_objective: str | None = None
 
     def on_optimization_start(
         self, config_space: dict[str, Any], objectives: list[str], algorithm: str
@@ -659,6 +685,7 @@ class StatisticsCallback(OptimizationCallback):
         self.stats["algorithm"] = algorithm
         self.stats["objectives"] = objectives
         self.stats["config_space"] = config_space
+        self._primary_objective = _primary_objective_name(objectives)
 
         # Initialize parameter tracking
         for param in config_space.keys():
@@ -679,7 +706,7 @@ class StatisticsCallback(OptimizationCallback):
 
         if trial.status == "completed":
             # Extract primary objective score
-            score = trial.metrics.get("accuracy", 0.0)  # Default to accuracy
+            score = _declared_objective_score(trial, self._primary_objective)
             self.stats["scores_by_trial"].append(score)
         else:
             self.stats["scores_by_trial"].append(None)
@@ -758,6 +785,7 @@ class SimpleProgressCallback(OptimizationCallback):
         self.output = output
         self.show_details = show_details
         self.total_trials = 0
+        self._primary_objective: str | None = None
         self.current_trial = 0
         self.best_score: float | None = None
         self._output_handler = self._get_output_handler(output)
@@ -783,6 +811,7 @@ class SimpleProgressCallback(OptimizationCallback):
         self, config_space: dict[str, Any], objectives: list[str], algorithm: str
     ) -> None:
         """Called when optimization starts."""
+        self._primary_objective = _primary_objective_name(objectives)
         # Calculate total configurations
         if config_space:
             total_configs = 1
@@ -834,11 +863,7 @@ class SimpleProgressCallback(OptimizationCallback):
 
         if self.show_details and trial.status == "completed":
             # Extract primary metric
-            score = None
-            if trial.metrics:
-                score = trial.metrics.get("accuracy") or trial.metrics.get(
-                    "score", None
-                )
+            score = _declared_objective_score(trial, self._primary_objective)
 
             if score is not None:
                 self._output(
