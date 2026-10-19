@@ -1271,6 +1271,59 @@ def _validate_default_choice(
                 f"but does not match declared type {_type_name(choice)}",
             )
 
+    _warn_default_outside_space(param_name, value, "the choices")
+
+
+def _warn_default_outside_space(param_name: str, value: Any, domain: str) -> None:
+    """Warn that a default_config value lies outside its search space (#1797).
+
+    Allowed on purpose (a baseline may sit outside the tuned set), but the
+    default runs as trial 1, so the run reports a config not in the space.
+    Content-free by design: the value can be customer content (e.g. a prompt),
+    so only the parameter name, the value's type and the domain are logged.
+    """
+    logger.warning(
+        "default_config[%r] (type %s) is outside %s of configuration_space[%r]; "
+        "it will run as trial 1 and the reported configs will include a "
+        "value that is not in the search space.",
+        param_name,
+        _type_name(value),
+        domain,
+        param_name,
+    )
+
+
+def _numeric_bounds_domain(
+    param_name: str,
+    value: Any,
+    low: Any,
+    high: Any,
+    *,
+    integer: bool = False,
+    step: Any = None,
+) -> None:
+    def _is_num(x: Any) -> bool:
+        return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+    if not (_is_num(low) and _is_num(high)):
+        return
+    domain = f"the numeric range [{low}, {high}]"
+    if not _is_num(value) or not low <= value <= high:
+        _warn_default_outside_space(param_name, value, domain)
+        return
+    if integer and value != int(value):
+        _warn_default_outside_space(
+            param_name, value, f"the integer values of {domain}"
+        )
+        return
+    if _is_num(step) and step > 0 and value != high:
+        intervals = (value - low) / step
+        tolerance = 1e-9 * max(1.0, abs(intervals))
+        if abs(intervals - round(intervals)) > tolerance:
+            _warn_default_outside_space(
+                param_name, value, f"the step-{step} grid of {domain}"
+            )
+
 
 def _validate_default_config_value(
     param_name: str,
@@ -1287,6 +1340,7 @@ def _validate_default_config_value(
         return
 
     if isinstance(param_values, tuple) and len(param_values) == 2:
+        _numeric_bounds_domain(param_name, value, *param_values)
         return
 
     if isinstance(param_values, dict):
@@ -1298,7 +1352,16 @@ def _validate_default_config_value(
             return
 
         if param_type in Validators._NUMERIC_TYPES:
-            return
+            low = param_values.get("low", param_values.get("min"))
+            high = param_values.get("high", param_values.get("max"))
+            _numeric_bounds_domain(
+                param_name,
+                value,
+                low,
+                high,
+                integer=param_type in {"int", "integer"},
+                step=None if param_values.get("log") else param_values.get("step"),
+            )
 
 
 def _validate_default_config_against_config_space(

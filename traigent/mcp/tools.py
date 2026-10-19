@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
 import inspect
 import io
 import json
+import logging
 import os
 import sys
 from collections.abc import Iterator
@@ -47,6 +49,8 @@ _REAL_SPEND_MESSAGE = (
     "Real optimization spends provider tokens/money. Re-run with confirm=true "
     "and an explicit positive cost_limit to start a real run."
 )
+logger = logging.getLogger(__name__)
+
 _EVAL_MANIFEST_SUFFIX = ".traigent-eval.json"
 _APPROVED_EVAL_STATUSES = {"approved", "user_approved"}
 
@@ -57,6 +61,88 @@ class ToolInputError(ValueError):
 
 def _failure(message: str, *, code: str = "invalid_input") -> dict[str, Any]:
     return {"ok": False, "code": code, "message": message}
+
+
+def _optimization_failure(exc: Exception, *, mode: str) -> dict[str, Any]:
+    """Build a content-free failure for a script/evaluator exception (#2625).
+
+    Exception text can carry prompts, completions, customer data or credentials
+    that pattern redaction cannot reliably catch, and the MCP response lands in
+    the coding assistant's transcript. Both modes therefore return only a fixed
+    message plus the exception class name. The log records the class name and a
+    non-content fingerprint (length and a short hash of the message), never the
+    text. No dedicated log file is created or named: the server's logger
+    destination is deployer-configured, not a fixed path the SDK owns.
+    """
+    error_type = type(exc).__name__
+    raw = str(exc)
+    fingerprint = hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:12]
+    logger.error(
+        "run_optimization failed (mode=%s, type=%s, message_len=%d, sha256=%s)",
+        mode,
+        error_type,
+        len(raw),
+        fingerprint,
+    )
+    message = (
+        f"Optimization failed with {error_type}. Exception details are withheld "
+        "from the tool response; re-run the script directly to see them."
+    )
+    return _failure(message, code="optimization_failed")
+
+
+def _write_text_nofollow(
+    path: Path, text: str, *, overwrite: bool, root: Path | None = None
+) -> None:
+    """Write ``text`` without ever following a symlink (#2626).
+
+    ``root`` is the trusted workspace root (default: the resolved cwd). Where
+    the platform has ``O_NOFOLLOW``, ``O_DIRECTORY`` and ``dir_fd`` support
+    (POSIX), the path is walked from ``root`` one component at a time, each
+    directory opened with ``O_NOFOLLOW`` relative to its parent's fd, and the
+    final file opened relative to the last directory fd, so a symlink swapped
+    in at ANY level after an earlier check is refused (``OSError``). Without
+    ``overwrite`` the final open is also ``O_EXCL``.
+
+    Reduced guarantee (e.g. Windows, no ``O_NOFOLLOW``/``dir_fd``): fall back to
+    ``lstat`` checks of every component under ``root`` followed by a plain
+    ``os.open``. That narrows but cannot close the check-then-open race.
+    """
+    root = (root or Path.cwd()).resolve()
+    try:
+        rel_parts = path.relative_to(root).parts
+    except ValueError as exc:
+        raise OSError(f"path escapes the workspace root: {path}") from exc
+    if not rel_parts:
+        raise OSError("refusing to write to the workspace root itself")
+
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    o_directory = getattr(os, "O_DIRECTORY", 0)
+    flags = os.O_WRONLY | os.O_CREAT | no_follow
+    flags |= os.O_TRUNC if overwrite else os.O_EXCL
+
+    if no_follow and o_directory and os.open in os.supports_dir_fd:
+        dir_flags = os.O_RDONLY | o_directory | no_follow
+        fd = os.open(root, os.O_RDONLY | o_directory)
+        try:
+            for part in rel_parts[:-1]:
+                next_fd = os.open(part, dir_flags, dir_fd=fd)
+                os.close(fd)
+                fd = next_fd
+            file_fd = os.open(rel_parts[-1], flags, 0o644, dir_fd=fd)
+        finally:
+            os.close(fd)
+    else:
+        current = root
+        for part in rel_parts[:-1]:
+            current = current / part
+            if current.is_symlink():
+                raise OSError(f"refusing to write through symlink: {current}")
+        if path.is_symlink():
+            raise OSError(f"refusing to write through symlink: {path}")
+        file_fd = os.open(path, flags, 0o644)
+    with os.fdopen(file_fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
 
 
 def _serialize_validation_result(result: ValidationResult) -> dict[str, Any]:
@@ -386,6 +472,15 @@ def scaffold_eval_tool(
         return _failure(str(exc), code="path_rejected")
 
     manifest_path = _eval_manifest_path(resolved_path)
+    # The manifest name is derived lexically, so a pre-existing symlink there
+    # could redirect the write outside the workspace (#2626). `exists()` also
+    # follows links and reads a dangling one as absent, so check the link itself.
+    if manifest_path.is_symlink():
+        return _failure(
+            "The approval manifest path is a symbolic link; refusing to write "
+            "through it. Remove the link or choose a different output_path.",
+            code="path_rejected",
+        )
     if not overwrite and (resolved_path.exists() or manifest_path.exists()):
         return _failure(
             "Draft eval output or manifest already exists. Re-run with overwrite=true "
@@ -395,10 +490,17 @@ def scaffold_eval_tool(
 
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
     rows = [_draft_eval_row(index, agent_type) for index in range(1, example_count + 1)]
-    resolved_path.write_text(
-        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
-        encoding="utf-8",
-    )
+    try:
+        _write_text_nofollow(
+            resolved_path,
+            "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+            overwrite=overwrite,
+        )
+    except OSError:
+        return _failure(
+            "Could not write the draft eval file (symlink or existing file).",
+            code="path_rejected",
+        )
 
     now = datetime.now(UTC).isoformat()
     manifest = {
@@ -416,10 +518,17 @@ def scaffold_eval_tool(
             "Real optimization refuses this dataset until approval_status is user_approved or approved.",
         ],
     }
-    manifest_path.write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    try:
+        _write_text_nofollow(
+            manifest_path,
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            overwrite=overwrite,
+        )
+    except OSError:
+        return _failure(
+            "Could not write the approval manifest (symlink or existing file).",
+            code="path_rejected",
+        )
 
     validation = validate_dataset_tool(str(resolved_path))
     return {
@@ -837,7 +946,7 @@ def run_optimization_tool(
                 algorithm=effective_algorithm,
             )
     except Exception as exc:
-        return _failure(str(exc), code="optimization_failed")
+        return _optimization_failure(exc, mode=mode)
 
     if mode == "real":
         # Real runs touch live providers; captured stdout/stderr can contain
