@@ -495,9 +495,9 @@ def compute_ragas_metrics(
         values = np.asarray(result[metric.name], dtype=float)
         defined = values[~np.isnan(values)]
         denominator = len(defined) + failed_rows
-        if denominator == 0:
+        if len(defined) == 0:
             raise RagasConfigurationError(
-                f"ragas metric '{metric.name}' is undefined for every row; "
+                f"ragas metric '{metric.name}' has no defined judge score on any answered row; "
                 "refusing to report NaN as an objective value."
             )
         if len(defined) < len(values) or failed_rows:

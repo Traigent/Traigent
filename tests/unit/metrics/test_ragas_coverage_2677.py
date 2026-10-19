@@ -77,3 +77,11 @@ def test_fully_scored_batch_unchanged(stub) -> None:
     rows = [_row(i, "a") for i in range(4)]
     out = rm.compute_ragas_metrics(rows, ["faithfulness"], config=rm.RagasConfig())
     assert out["faithfulness"] == pytest.approx(0.775)
+
+
+def test_nan_answered_row_plus_failed_rows_still_raises(stub) -> None:
+    """Review: no defined judge score must fail even with agent-failed rows."""
+    stub(lambda n: [math.nan] * n)
+    rows = [_row(0, "answer"), _row(1, None)]
+    with pytest.raises(rm.RagasConfigurationError):
+        rm.compute_ragas_metrics(rows, ["faithfulness"], config=rm.RagasConfig())
