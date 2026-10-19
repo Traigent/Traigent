@@ -1,5 +1,5 @@
 {
- "_comment": "Leak identities (route, location, field_path, canary kind) the SDK egress canary run finds on the wire. 'baseline' is the set at creation (2026-10-16, after the coverage expansion) and is never edited. 'register' only shrinks: an identity leaves it only with an entry in leak_dispositions.json (route, location, field_path, kind, reason, reference) naming why it is gone. Additions fail the ratchet test; there is no pass that may add to the register.",
+ "_comment": "Leak identities (route, location, field_path, canary kind) the SDK egress canary run finds on the wire. 'baseline' is the set at creation (2026-10-16, after the coverage expansion) and is never edited. 'register' only shrinks: an identity leaves it only with an entry in leak_dispositions.json (route, location, field_path, kind, reason, reference) naming why it is gone. Additions fail the ratchet test; there is no pass that may add to the register. Single owner-approved exception: on 2026-10-19 decision card security-policy-2026-10-19-egress-primary-objective (option A) added exactly one identity (POST /api/v1/sessions/{id}/results, body.value, $.metadata.comparability.primary_objective, metric_name) to both baseline and register as an open phase-2 leak; no other addition is authorized.",
  "baseline": [
   {
    "route": "GET /api/v1/best-configs/{id}",
