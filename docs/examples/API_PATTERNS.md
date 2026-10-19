@@ -302,5 +302,6 @@ from traigent.testing import enable_mock_mode_for_quickstart
 enable_mock_mode_for_quickstart()
 ```
 
-Mock mode avoids provider spend and skips model-pricing preflight, but it is not
-a production billing bypass.
+Mock mode intercepts supported calls but does not skip the cost-approval or
+model-pricing preflights, because raw provider calls can still be real. Use
+`cost_approved=True` or `TRAIGENT_COST_APPROVED=true` for keyless demos.

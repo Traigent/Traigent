@@ -10,7 +10,7 @@ from traigent.api.types import TrialResult
 from traigent.core.cost_enforcement import CostEnforcer
 from traigent.evaluators.base import Dataset
 from traigent.utils.cost_calculator import UnknownModelError, get_model_token_pricing
-from traigent.utils.env_config import is_mock_llm
+from traigent.utils.env_config import is_mock_llm  # noqa: F401  (patched by tests; mock mode no longer skips the preflight, #2681)
 from traigent.utils.exceptions import CostLimitExceeded
 from traigent.utils.logging import get_logger
 from traigent.utils.trial_costs import is_cost_unmeasured, known_spend_lower_bound
@@ -227,13 +227,6 @@ class CostEstimator:
         Raises:
             CostLimitExceeded: If pre-run cost approval is declined.
         """
-        if is_mock_llm():
-            logger.info(
-                "Skipping optimized-function pricing preflight in mock LLM mode; "
-                "runtime CostEnforcer permits and accounting remain active."
-            )
-            return
-
         estimated_cost = self.estimate_optimization_cost(dataset)
         if not self._cost_enforcer.check_and_approve(
             estimated_cost,

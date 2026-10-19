@@ -174,12 +174,13 @@ class TestCostEnforcerNoMockBypass:
 
 
 class TestCostEstimatorMockPreflight:
-    """CostEstimator mock behavior is limited to optimized-function preflight."""
+    """Mock mode does not skip the optimized-function approval preflight (#2681)."""
 
-    def test_check_cost_approval_skips_only_preflight_when_mock_llm_enabled(
+    def test_check_cost_approval_not_skipped_when_mock_llm_enabled_2681(
         self, mock_env: dict[str, str]
     ) -> None:
         from traigent.core.cost_estimator import CostEstimator
+        from traigent.utils.exceptions import CostLimitExceeded
 
         with patch.dict(os.environ, mock_env, clear=False):
             enforcer = CostEnforcer(CostEnforcerConfig(limit=0.01, approved=False))
@@ -198,10 +199,11 @@ class TestCostEstimatorMockPreflight:
                     return_value=False,
                 ) as request_approval,
             ):
-                estimator.check_cost_approval(dataset=None)
+                with pytest.raises(CostLimitExceeded):
+                    estimator.check_cost_approval(dataset=None)
 
-            estimate_cost.assert_not_called()
-            request_approval.assert_not_called()
+            estimate_cost.assert_called_once()
+            request_approval.assert_called_once()
 
     def test_raw_mock_env_does_not_bypass_when_mock_sot_false(
         self, mock_env: dict[str, str]

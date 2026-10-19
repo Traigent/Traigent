@@ -102,6 +102,11 @@ def configure_demo_env(provider: dict[str, Any]) -> bool:
             continue
         os.environ.setdefault(name, "mock-key-for-demos")  # pragma: allowlist secret
 
+    # The mock-mode preflights stay on (#2681): raw provider calls can be real
+    # under the mock flag. These demos route every call through LangChain or
+    # LiteLLM, which the mock intercepts, so the demo itself pre-approves.
+    os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
     if not os.environ.get("TRAIGENT_API_KEY"):
         os.environ["TRAIGENT_OFFLINE_MODE"] = "true"
 

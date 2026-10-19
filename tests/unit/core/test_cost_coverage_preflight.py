@@ -466,10 +466,11 @@ async def test_cost_preflight_custom_pricing_json_counts_as_covered(
 
 
 @pytest.mark.asyncio
-async def test_cost_preflight_mock_mode_skips_warning_and_strict_block(
+async def test_cost_preflight_mock_mode_still_blocks_strict_unpriced_2681(
     monkeypatch: pytest.MonkeyPatch,
     one_example_dataset: Dataset,
 ) -> None:
+    """Raw provider calls can be real under mock, so the coverage check stays on."""
     monkeypatch.setenv("TRAIGENT_STRICT_COST_ACCOUNTING", "true")
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
     opt_func = OptimizedFunction(
@@ -479,18 +480,9 @@ async def test_cost_preflight_mock_mode_skips_warning_and_strict_block(
         max_trials=1,
     )
 
-    with (
-        patch("traigent.core.optimized_function.is_mock_llm", return_value=True),
-        warnings.catch_warnings(record=True) as captured,
-    ):
-        warnings.simplefilter("always")
-        await _run_with_mocked_orchestrator(opt_func)
-
-    assert not [
-        warning
-        for warning in captured
-        if "results will report $0" in str(warning.message)
-    ]
+    with patch("traigent.core.optimized_function.is_mock_llm", return_value=True):
+        with pytest.raises(UnknownModelError, match="Cost coverage preflight"):
+            await _run_with_mocked_orchestrator(opt_func)
 
 
 @pytest.mark.asyncio

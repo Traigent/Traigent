@@ -3342,9 +3342,6 @@ class OptimizedFunction(Generic[_P, _R]):
         cost_approved: bool = False,
     ) -> None:
         """Warn or fail before trials when a real run includes unpriced models."""
-        if is_mock_llm():
-            return
-
         model_ids = _extract_config_space_model_ids(effective_config_space)
         if not model_ids:
             model_ids = _dedupe_model_ids(

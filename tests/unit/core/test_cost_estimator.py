@@ -361,8 +361,8 @@ class TestEstimateOptimizationCost:
 
 
 class TestCheckCostApproval:
-    def test_skips_optimized_function_preflight_in_mock_mode(self) -> None:
-        """Mock provider calls spend $0, so dry-runs skip the pre-run estimate gate."""
+    def test_mock_mode_does_not_skip_approval_preflight_2681(self) -> None:
+        """Raw provider calls can still be real under mock, so approval stays on."""
         enforcer = MagicMock()
         enforcer.check_and_approve.return_value = True
         estimator = CostEstimator(enforcer, max_trials=5, max_total_examples=None)
@@ -375,8 +375,8 @@ class TestCheckCostApproval:
             ) as estimate_cost,
         ):
             estimator.check_cost_approval(_FakeDataset())
-        estimate_cost.assert_not_called()
-        enforcer.check_and_approve.assert_not_called()
+        estimate_cost.assert_called_once()
+        enforcer.check_and_approve.assert_called_once()
 
     def test_passes_when_approved(self) -> None:
         enforcer = MagicMock(is_mock_mode=False)
