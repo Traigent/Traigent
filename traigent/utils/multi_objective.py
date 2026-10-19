@@ -16,7 +16,16 @@ from ..core.objectives import ObjectiveSchema
 from .trial_costs import is_cost_unranked
 
 # Metric names that carry a trial's cost (mirrors evaluators.base.MEASURED_ONLY_METRICS).
-_COST_OBJECTIVE_NAMES = frozenset({"cost", "input_cost", "output_cost", "total_cost"})
+_COST_OBJECTIVE_NAMES = frozenset(
+    {
+        "cost",
+        "input_cost",
+        "output_cost",
+        "total_cost",
+        "cost_per_example_mean",
+        "cost_per_1k",
+    }
+)
 
 _COMPLETED_STATUS_TOKENS = {
     TrialStatus.COMPLETED.value.lower(),
