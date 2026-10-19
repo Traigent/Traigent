@@ -441,9 +441,13 @@ def _safe_allowlisted_snapshot(
     safe: dict[str, Any] = {
         "id": safe_id if isinstance(safe_id, str) and safe_id else _new_trace_id(),
         "name": "[REDACTED]",
-        "status": _safe_scalar(payload.get("status")) or "failed",
         "metadata": {},
     }
+    # #2588: keep an explicitly supplied status; never fabricate one for a
+    # trace that carried none (downstream would otherwise record "failed").
+    safe_status = _safe_scalar(payload.get("status"))
+    if isinstance(safe_status, str) and safe_status:
+        safe["status"] = safe_status
     if payload.get("user_id") is not None:
         safe["user_id"] = "[REDACTED]"
     for field_name in _SAFE_SNAPSHOT_ID_FIELDS:
@@ -489,10 +493,11 @@ def _safe_allowlisted_snapshot_or_static_fallback(
                 "a static minimal snapshot instead of the caller's payload.",
                 exc_info=True,
             )
+    # #2588: no "status" here -- it is trace status, and a snapshot-builder
+    # failure says nothing about whether the traced operation failed.
     return {
         "id": _new_trace_id(),
         "name": "[REDACTED]",
-        "status": "failed",
         "metadata": {},
     }
 
@@ -851,9 +856,13 @@ def _capture_trace_snapshot(
         return (
             _safe_allowlisted_snapshot_or_static_fallback(
                 {
-                    "id": state.trace.id,
-                    "name": state.trace.name,
-                    "status": state.trace.status,
+                    key: value
+                    for key, value in (
+                        ("id", state.trace.id),
+                        ("name", state.trace.name),
+                        ("status", state.trace.status),
+                    )
+                    if value is not None
                 },
                 state=descriptor,
             ),

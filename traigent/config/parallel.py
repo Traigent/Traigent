@@ -198,6 +198,10 @@ def _infer_resolved_mode(
     """Infer the resolved execution mode from config and concurrency values."""
     effective_mode = mode or "auto"
     if effective_mode == "auto":
+        if trial_concurrency == 1:
+            # Explicit single-trial concurrency means sequential trials; any
+            # example concurrency is preserved by the caller (#2542).
+            return "sequential"
         if (trial_concurrency or 0) > 1 or (example_concurrency or 0) > 1:
             return "parallel"
         return "sequential"
@@ -309,7 +313,14 @@ def resolve_parallel_config(
     # Resolve concurrency values based on mode
     if resolved_mode == "sequential":
         trial_concurrency = 1
-        example_concurrency = 1
+        # mode unset/auto with explicit trial_concurrency=1 keeps concurrent
+        # examples; an explicit mode="sequential" forces fully serial runs.
+        keep_examples = (
+            config.mode in (None, "auto")
+            and config.trial_concurrency == 1
+            and config.example_concurrency is not None
+        )
+        example_concurrency = config.example_concurrency if keep_examples else 1
     else:
         trial_concurrency, example_concurrency, thread_workers = (
             _resolve_parallel_concurrency(

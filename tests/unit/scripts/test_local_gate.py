@@ -118,3 +118,44 @@ def test_local_gate_runs_smoke_only_after_full_collection_passes(
         "tests/unit/test_init_imports.py tests/unit/api/test_types.py "
         "tests/unit/wrapper/test_wrapper_service.py -n 0"
     )
+
+
+def _install_fake_venv(repo: Path, log_path: Path, xdist_ok: bool) -> None:
+    venv_bin = repo / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    (venv_bin / "pytest").write_text(
+        f'#!/usr/bin/env bash\necho venv-pytest "$*" >> {log_path}\nexit 0\n',
+        encoding="utf-8",
+    )
+    (venv_bin / "ruff").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    (venv_bin / "python").write_text(
+        f"#!/usr/bin/env bash\nexit {0 if xdist_ok else 1}\n", encoding="utf-8"
+    )
+    for name in ("pytest", "ruff", "python"):
+        (venv_bin / name).chmod(0o755)
+
+
+def test_local_gate_prefers_repo_venv_pytest_over_path(tmp_path: Path) -> None:
+    repo, fake_bin = _make_gate_repo(tmp_path)
+    path_log = tmp_path / "pytest.log"
+    venv_log = tmp_path / "venv.log"
+    _install_fake_venv(repo, venv_log, xdist_ok=True)
+
+    result = _run_gate(repo, fake_bin, path_log, collection_rc=0)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "pytest=.venv/bin/pytest" in result.stdout
+    assert "ruff=.venv/bin/ruff" in result.stdout
+    assert venv_log.read_text(encoding="utf-8").count("venv-pytest") == 2
+    assert not path_log.exists()
+
+
+def test_local_gate_fails_clearly_when_venv_lacks_xdist(tmp_path: Path) -> None:
+    repo, fake_bin = _make_gate_repo(tmp_path)
+    _install_fake_venv(repo, tmp_path / "venv.log", xdist_ok=False)
+
+    result = _run_gate(repo, fake_bin, tmp_path / "pytest.log", collection_rc=0)
+
+    assert result.returncode == 1
+    assert "cannot import pytest-xdist" in result.stdout
+    assert ".venv/bin/python" in result.stdout

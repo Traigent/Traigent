@@ -55,6 +55,11 @@ else:
 
 logger = get_logger(__name__)
 
+# Read-side filter values; ``unknown`` is returned by servers but never written.
+_TRACE_STATUS_FILTER_VALUES = frozenset(
+    {"running", "completed", "failed", "rejected", "unknown"}
+)
+
 ANALYTICS_TOOL_NAMES: tuple[str, ...] = (
     "health_check",
     "auth_status",
@@ -400,7 +405,7 @@ def _bounded_cohort(value: object, *, field: str) -> dict[str, object]:
     statuses = _bounded_identifier_list(
         value.get("trace_statuses", []), field=f"{field}.trace_statuses", maximum=4
     )
-    if set(statuses).difference({"running", "completed", "failed", "rejected"}):
+    if set(statuses).difference(_TRACE_STATUS_FILTER_VALUES):
         raise _ToolInputError(f"{field}.trace_statuses contains an unsupported status.")
     sample_limit = value.get("sample_limit", 5000)
     if (
@@ -1168,7 +1173,7 @@ async def observability_search_traces_tool(
         start, end = _bounded_time_window(start_time, end_time)
         page, per_page = _bounded_page(page, per_page)
         clean_status = _bounded_optional_text(status, field="status", maximum=32)
-        if clean_status not in {None, "running", "completed", "failed", "rejected"}:
+        if clean_status is not None and clean_status not in _TRACE_STATUS_FILTER_VALUES:
             raise _ToolInputError("status contains an unsupported trace status.")
         clean_environment = _bounded_optional_text(
             environment, field="environment", maximum=64

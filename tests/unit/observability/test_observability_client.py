@@ -3381,6 +3381,28 @@ def test_trace_dto_rejects_invalid_status(status):
         TraceDTO(id="trace_bad_status", name="bad-trace", status=status)
 
 
+def test_trace_dto_status_omitted_is_none_and_not_serialized():
+    trace = TraceDTO(id="trace_no_status", name="t")
+    assert trace.status is None
+    assert "status" not in trace.to_dict()
+
+
+def test_trace_dto_status_explicit_none_is_not_serialized():
+    trace = TraceDTO(id="trace_none_status", name="t", status=None)
+    assert "status" not in trace.to_dict()
+
+
+@pytest.mark.parametrize("status", ["running", "completed", "failed", "rejected"])
+def test_trace_dto_explicit_write_status_is_serialized(status):
+    trace = TraceDTO(id="trace_ok_status", name="t", status=status)
+    assert trace.to_dict()["status"] == status
+
+
+def test_trace_dto_unknown_status_is_read_only_not_writable():
+    with pytest.raises(ValueError, match="status"):
+        TraceDTO(id="trace_unknown", name="t", status="unknown")
+
+
 def test_observation_dto_rejects_event_with_children():
     child = ObservationDTO(
         id="obs_child",
@@ -6625,3 +6647,89 @@ def test_observability_client_sends_multi_tag_filters_as_repeated_keys():
     assert tags_of(request_paths[4]) == ["vip,beta"]
     assert tags_of(request_paths[5]) is None
     assert request_paths[1] == "/sessions?page=1&per_page=20&tags=vip&tags=beta"
+
+
+class TestFallbackSnapshotPreservesAbsentStatus:
+    """#2588: the M8/A5 fallback must not fabricate a "failed" status for a
+    trace that never carried one, while keeping an explicit valid status."""
+
+    @staticmethod
+    def _state(status: str | None):
+        from traigent.observability.client import _TraceState
+
+        return _TraceState(trace=TraceDTO(id="trace-1", name="n", status=status))
+
+    def test_serialization_failure_keeps_absent_status_absent(self, monkeypatch):
+        from traigent.observability.client import _capture_trace_snapshot
+
+        state = self._state(None)
+
+        def _boom():
+            raise RuntimeError("serialization exploded")
+
+        monkeypatch.setattr(state, "to_payload", _boom)
+        snapshot, _ = _capture_trace_snapshot(state)
+        assert "status" not in snapshot
+
+    def test_redaction_failure_keeps_absent_status_absent(self, monkeypatch):
+        from traigent.observability.client import _redact_trace_payload
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("redactor exploded")
+
+        monkeypatch.setattr(
+            "traigent.observability.client.redact_sensitive_data", _boom
+        )
+        snapshot = _redact_trace_payload({"id": "trace-1", "name": "n"})
+        assert "status" not in snapshot
+
+    def test_explicit_valid_status_survives_both_failure_paths(self, monkeypatch):
+        from traigent.observability.client import (
+            _capture_trace_snapshot,
+            _redact_trace_payload,
+        )
+
+        state = self._state("completed")
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(state, "to_payload", _boom)
+        snapshot, _ = _capture_trace_snapshot(state)
+        assert snapshot["status"] == "completed"
+
+        monkeypatch.setattr(
+            "traigent.observability.client.redact_sensitive_data", _boom
+        )
+        redacted = _redact_trace_payload(
+            {"id": "trace-1", "name": "n", "status": "completed"}
+        )
+        assert redacted["status"] == "completed"
+
+    def test_static_fallback_omits_status_when_allowlist_build_raises(
+        self, monkeypatch, caplog
+    ):
+        """#2588: `status` is trace status, not snapshot health. When the
+        allowlist builder itself raises, the static last-resort snapshot must
+        not claim the traced operation failed."""
+        from traigent.observability.client import (
+            _safe_allowlisted_snapshot_or_static_fallback,
+        )
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("allowlist construction exploded")
+
+        monkeypatch.setattr(
+            "traigent.observability.client._safe_allowlisted_snapshot", _boom
+        )
+        with caplog.at_level("ERROR"):
+            snapshot = _safe_allowlisted_snapshot_or_static_fallback(
+                {"id": "trace-1", "name": "n", "status": "completed"}
+            )
+        assert "status" not in snapshot
+        assert snapshot["name"] == "[REDACTED]"
+        assert snapshot["metadata"] == {}
+        assert any(
+            "static minimal snapshot" in record.getMessage()
+            for record in caplog.records
+        )

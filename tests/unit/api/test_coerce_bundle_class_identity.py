@@ -106,6 +106,39 @@ class TestReloadedClassIsAccepted:
         assert answer.require_run_id is True
 
 
+class TestReloadedTwinPreservesExplicitness:
+    """Rebuilding a twin must not turn defaulted fields into explicit ones (#2540)."""
+
+    def test_unset_algorithm_does_not_conflict_with_direct_algorithm(
+        self, twin_classes
+    ):
+        pre_reload_cls, _ = twin_classes
+
+        @decorators_module.optimize(
+            configuration_space={"m": ["a", "b"]},
+            objectives=["accuracy"],
+            algorithm="grid",
+            execution=pre_reload_cls(offline=True),
+        )
+        def f(x):
+            return x
+
+        assert f is not None
+
+    def test_explicitly_conflicting_algorithm_still_raises(self, twin_classes):
+        pre_reload_cls, _ = twin_classes
+        with pytest.raises(TypeError, match="Conflicting values for 'algorithm'"):
+
+            @decorators_module.optimize(
+                configuration_space={"m": ["a", "b"]},
+                objectives=["accuracy"],
+                algorithm="grid",
+                execution=pre_reload_cls(offline=True, algorithm="random"),
+            )
+            def g(x):
+                return x
+
+
 class TestLegacyPrivateStateIsDerivedNotTransplanted:
     """The deprecated inputs are replayed through the live validator."""
 

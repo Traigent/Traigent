@@ -29,6 +29,18 @@ SelectionGrade = Literal["advisory"]
 ADVISORY_SELECTION_GRADE: SelectionGrade = "advisory"
 
 
+def _require_pandas() -> Any:
+    """Import pandas or raise an ImportError naming the extra to install."""
+    try:
+        import pandas as pd  # noqa: PLC0415
+    except ImportError as exc:
+        raise ImportError(
+            "pandas is required for this method but is not installed. "
+            'Install it with: pip install "traigent[analytics]"'
+        ) from exc
+    return pd
+
+
 def _name_suggests_minimize(name: str) -> bool:
     """Return the exact canonical SDK direction for a bare metric name."""
     return resolve_objective_orientation(name) == "minimize"
@@ -2358,7 +2370,7 @@ class OptimizationResult:
 
     def to_dataframe(self) -> pd.DataFrame:
         """Convert results to pandas DataFrame."""
-        import pandas as pd  # noqa: PLC0415
+        pd = _require_pandas()
 
         data = []
         for trial in self.trials:
@@ -2514,7 +2526,7 @@ class OptimizationResult:
                 - <metric>_mean for each metric present
                 - duration_mean
         """
-        import pandas as pd  # noqa: PLC0415
+        pd = _require_pandas()
 
         if not self.trials:
             return pd.DataFrame()
