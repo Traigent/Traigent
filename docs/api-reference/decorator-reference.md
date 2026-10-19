@@ -225,7 +225,7 @@ from traigent import Choices, Range
 
 @traigent.optimize(
     configuration_space={
-        "model": Choices(["gpt-4", "gpt-3.5"]),
+        "model": Choices(["gpt-4", "gpt-4.1-mini"]),
         "temperature": Range(0.0, 2.0),
     },
 )
@@ -292,7 +292,7 @@ def cost_constraint(config, metrics=None):
 ```python
 from traigent import Choices, Range, implies
 
-model = Choices(["gpt-4", "gpt-3.5"], name="model")
+model = Choices(["gpt-4", "gpt-4.1-mini"], name="model")
 temp = Range(0.0, 2.0, name="temperature")
 
 @traigent.optimize(

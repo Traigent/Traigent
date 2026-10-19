@@ -19,7 +19,7 @@ The DSL supports **three equivalent syntax styles**, allowing developers to choo
 from traigent import Range, Choices, implies, when
 
 temperature = Range(0.0, 2.0)
-model = Choices(["gpt-4", "gpt-3.5-turbo"])
+model = Choices(["gpt-4", "gpt-4.1-mini"])
 
 # 1. Functional style (canonical, explicit)
 implies(model.equals("gpt-4"), temperature.lte(0.7))
@@ -109,7 +109,7 @@ This is:
 | `.lt(v)` | Less than | `temp.lt(1.0)` |
 | `.lte(v)` | Less than or equal | `temp.lte(1.0)` |
 | `.is_in([...])` | In set of values (Choices only) | `model.is_in(["gpt-4", "gpt-4o"])` |
-| `.not_in([...])` | Not in set (Choices only) | `model.not_in(["gpt-3.5"])` |
+| `.not_in([...])` | Not in set (Choices only) | `model.not_in(["gpt-4.1-mini"])` |
 | `.in_range(lo, hi)` | Within range (numeric ranges) | `temp.in_range(0.3, 0.7)` |
 
 ### Constraint Builders
@@ -412,7 +412,7 @@ Convert a list of `Constraint` objects into callables for the decorator.
 ```python
 from traigent import Choices, Range, constraints_to_callables, implies
 
-model = Choices(["gpt-4", "gpt-3.5"], name="model")
+model = Choices(["gpt-4", "gpt-4.1-mini"], name="model")
 temp = Range(0.0, 2.0, name="temperature")
 
 constraint_fns = constraints_to_callables([
@@ -568,7 +568,7 @@ from traigent import Range, IntRange, Choices, implies, require, when
 # Define parameter ranges
 temperature = Range(0.0, 2.0)
 max_tokens = IntRange(100, 4096)
-model = Choices(["gpt-4", "gpt-4o", "gpt-3.5-turbo"])
+model = Choices(["gpt-4", "gpt-4o", "gpt-4.1-mini"])
 top_p = Range(0.0, 1.0)
 
 # Define constraints
@@ -580,7 +580,7 @@ constraints = [
     temperature.gt(1.0) >> top_p.equals(1.0),
 
     # GPT-3.5 with low temp needs more tokens
-    (model.equals("gpt-3.5-turbo") & temperature.lte(0.3)) >> max_tokens.gte(2000),
+    (model.equals("gpt-4.1-mini") & temperature.lte(0.3)) >> max_tokens.gte(2000),
 
     # Global requirement
     require(max_tokens.gte(100)),
@@ -610,7 +610,7 @@ constraints = [
 from traigent import optimize, Range, Choices, get_config
 
 temperature = Range(0.0, 2.0)
-model = Choices(["gpt-4", "gpt-3.5-turbo"])
+model = Choices(["gpt-4", "gpt-4.1-mini"])
 
 @optimize(
     configuration_space={
@@ -718,7 +718,7 @@ Every `BoolExpr` and `Constraint` has an `explain()` method that returns a human
 ```python
 from traigent import Range, Choices, implies, require
 
-model = Choices(["gpt-4", "gpt-3.5"], name="model")
+model = Choices(["gpt-4", "gpt-4.1-mini"], name="model")
 temp = Range(0.0, 2.0, name="temperature")
 
 # Explain a condition

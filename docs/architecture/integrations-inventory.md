@@ -204,8 +204,8 @@ max_retries -> max_retries
 
 **Supported Models**:
 - gpt-4 (all variants: 0314, 0613, 32k, turbo, 1106)
-- gpt-3.5-turbo (all variants)
-- gpt-4o, gpt-4o-mini
+- gpt-4.1, gpt-4.1-mini, gpt-4.1-nano
+- gpt-4o, gpt-4o-mini (legacy)
 - text-davinci-003, text-davinci-002
 
 **Methods Overridden**:

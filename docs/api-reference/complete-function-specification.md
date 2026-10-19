@@ -90,7 +90,7 @@ object with structured constraints.
 from traigent import Choices, ConfigSpace, Range, implies
 
 temp = Range(0.0, 2.0, name="temperature")
-model = Choices(["gpt-4", "gpt-3.5"], name="model")
+model = Choices(["gpt-4", "gpt-4.1-mini"], name="model")
 space = ConfigSpace(
     tvars={"temperature": temp, "model": model},
     constraints=[implies(model.equals("gpt-4"), temp.lte(0.7))],

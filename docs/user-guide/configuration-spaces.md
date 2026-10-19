@@ -48,9 +48,9 @@ and TVL export), `unit`, and `agent` for multi-agent grouping.
 | Method | Operator | Example |
 | --- | --- | --- |
 | `.equals(v)` | `==` | `model.equals("gpt-4")` |
-| `.not_equals(v)` | `!=` | `model.not_equals("gpt-3.5")` |
+| `.not_equals(v)` | `!=` | `model.not_equals("gpt-4.1-mini")` |
 | `.is_in(values)` | `in` | `model.is_in(["gpt-4", "gpt-4o"])` |
-| `.not_in(values)` | `not in` | `model.not_in(["gpt-3.5"])` |
+| `.not_in(values)` | `not in` | `model.not_in(["gpt-4.1-mini"])` |
 
 ### Boolean Combinators (`BoolExpr`)
 

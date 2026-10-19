@@ -159,7 +159,7 @@ validation:
 # User code
 client = OpenAI()
 response = client.chat.completions.create(
-    model="gpt-3.5-turbo",
+    model="gpt-4.1-mini",
     messages=[{"role": "user", "content": "Hello"}]
 )
 
