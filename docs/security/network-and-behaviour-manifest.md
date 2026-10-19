@@ -91,8 +91,8 @@ The SDK source can also launch these [S]:
 | Call site | Command (argv[0]) | Why | Trigger |
 |---|---|---|---|
 | `traigent/identity/agent_build.py:316` | `git -C <dir> rev-parse` / `status --porcelain` | Record the code revision of the optimized function for content identity | Connected run whose backend issued a content-identity grant (`traigent/core/orchestrator.py:3317`); no shell, fixed argv, timeout |
-| `traigent/cli/onboard_commands.py:125` | `traigent mcp --help` | Check the MCP server entry point works | `traigent onboard` CLI only |
-| `traigent/cli/onboard_commands.py:144` | `traigent mcp register --agent <name>` | Register the MCP server with a coding agent | `traigent onboard` CLI, after the user confirms |
+| `traigent/cli/onboard_commands.py:125` | `traigent mcp register --help` | Check the MCP registration subcommand exists before offering it | `traigent onboard` CLI only |
+| `traigent/cli/onboard_commands.py:138` | `traigent mcp register --agent <name>` | Register the MCP server with a coding agent (offered only when the probe above succeeds) | `traigent onboard` CLI, after the user confirms |
 | `traigent/examples/providers/_bootstrap.py:98` | `python -m pip install <pkg>` | Install a missing example dependency | Packaged provider examples only, after an interactive `[y/N]` prompt |
 
 Audit hooks do not see inside child processes; each launch above would need its
