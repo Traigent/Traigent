@@ -1247,10 +1247,42 @@ def _parse_weights(weights_str: str) -> dict[str, float] | None:
         return None
 
 
-def _calculate_trial_score(trial: Any, weight_dict: dict[str, float]) -> float | None:
-    """Calculate weighted score for a trial. Returns None if no valid metrics."""
+def _declared_result_orientations(result: Any) -> dict[str, str]:
+    """Per-objective orientations the run recorded in its objective schema."""
+    metadata = getattr(result, "metadata", None)
+    schema = metadata.get("objective_schema") if isinstance(metadata, dict) else None
+    definitions = (
+        schema.get("objectives")
+        if isinstance(schema, dict)
+        else getattr(schema, "objectives", None)
+    )
+    declared: dict[str, str] = {}
+    for definition in definitions or []:
+        if isinstance(definition, dict):
+            name, orientation = definition.get("name"), definition.get("orientation")
+        else:
+            name = getattr(definition, "name", None)
+            orientation = getattr(definition, "orientation", None)
+        if isinstance(name, str) and orientation in ("maximize", "minimize"):
+            declared[name] = orientation
+    return declared
+
+
+def _calculate_trial_score(
+    trial: Any,
+    weight_dict: dict[str, float],
+    orientations: dict[str, str] | None = None,
+) -> float | None:
+    """Calculate weighted score for a trial. Returns None if no valid metrics.
+
+    Minimize-oriented metrics (cost, latency, ...) subtract from the score so a
+    higher score is always better. A metric with no declared orientation and no
+    SDK-owned default raises ``ValueError`` rather than being guessed.
+    """
     if not trial.metrics:
         return None
+
+    from traigent.core.objective_directions import resolve_objective_orientation
 
     score = 0.0
     has_metrics = False
@@ -1259,7 +1291,11 @@ def _calculate_trial_score(trial: Any, weight_dict: dict[str, float]) -> float |
         if isinstance(metric_value, (int, float)) and not isinstance(
             metric_value, bool
         ):
-            score += weight * float(metric_value)
+            orientation = resolve_objective_orientation(
+                metric, (orientations or {}).get(metric)
+            )
+            sign = -1.0 if orientation == "minimize" else 1.0
+            score += sign * weight * float(metric_value)
             has_metrics = True
 
     return score if has_metrics else None
@@ -1631,12 +1667,26 @@ def results_rerank(
             )
             return eligible or unknown
 
-        scored_trials = [
-            (score, trial)
-            for trial in result.trials
-            if _rerank_eligible(trial)
-            and (score := _calculate_trial_score(trial, weight_dict)) is not None
-        ]
+        declared_orientations = _declared_result_orientations(result)
+        try:
+            scored_trials = [
+                (score, trial)
+                for trial in result.trials
+                if _rerank_eligible(trial)
+                and (
+                    score := _calculate_trial_score(
+                        trial, weight_dict, declared_orientations
+                    )
+                )
+                is not None
+            ]
+        except ValueError as exc:
+            # Direction is never guessed for a custom metric: say how to fix it.
+            raise click.ClickException(
+                "Cannot re-rank: a weighted metric has no declared orientation "
+                "(maximize/minimize) in this run and no built-in default. "
+                "Re-run with explicit objective orientations."
+            ) from exc
 
         if not scored_trials:
             console.print(
@@ -1668,6 +1718,8 @@ def results_rerank(
             console.print("[dim]Original best config:[/dim]")
             console.print(json.dumps(result.best_config, indent=2))
 
+    except click.ClickException:
+        raise
     except FileNotFoundError as e:
         raise _result_not_found_error(result_name) from e
     except Exception as e:
