@@ -68,6 +68,7 @@ from traigent.core.cost_enforcement import (
     validate_cost_limit,
 )
 from traigent.core.cost_estimator import CostEstimator
+from traigent.core.sigterm_cancellation import sigterm_as_cancellation
 from traigent.core.exception_handler import (
     VendorErrorCategory,
     classify_systematic_provider_failure,
@@ -3526,6 +3527,8 @@ class OptimizationOrchestrator:
 
         fetched_identity_keys = await self._fetch_run_content_identity_keys()
         identity_keys_token = bind_run_content_identity_keys(fetched_identity_keys)
+        sigterm_scope = sigterm_as_cancellation()  # #2667
+        sigterm_scope.__enter__()
         try:
             # Content identity v1: one snapshot per run, taken from the rows' and
             # the agent's CURRENT state before the session is created. None without
@@ -3558,6 +3561,7 @@ class OptimizationOrchestrator:
                     session_span=session_span,
                 )
         finally:
+            sigterm_scope.__exit__(None, None, None)
             reset_run_content_identity_keys(identity_keys_token)
 
     def _check_cost_approval(self, dataset: Dataset) -> None:
