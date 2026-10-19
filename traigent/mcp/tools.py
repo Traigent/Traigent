@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
 import inspect
 import io
@@ -24,7 +25,6 @@ from traigent.config.project import read_optional_project_env
 from traigent.config.tenant import TENANT_ENV_VAR, read_optional_env
 from traigent.evaluators.base import DATASET_ROOT_ENV, _resolve_dataset_source
 from traigent.hooks.validator import DEFAULT_TOKENS_PER_QUERY, MODEL_COST_PER_1K
-from traigent.security.redaction import redact_sensitive_text
 from traigent.tuned_variables.detection_types import DetectionResult
 from traigent.tuned_variables.detector import TunedVariableDetector
 from traigent.utils.exceptions import ValidationError as TraigentValidationError
@@ -51,7 +51,6 @@ _REAL_SPEND_MESSAGE = (
 )
 logger = logging.getLogger(__name__)
 
-_MAX_ERROR_MESSAGE_CHARS = 500
 _EVAL_MANIFEST_SUFFIX = ".traigent-eval.json"
 _APPROVED_EVAL_STATUSES = {"approved", "user_approved"}
 
@@ -65,25 +64,48 @@ def _failure(message: str, *, code: str = "invalid_input") -> dict[str, Any]:
 
 
 def _optimization_failure(exc: Exception, *, mode: str) -> dict[str, Any]:
-    """Build a bounded, non-sensitive failure for a script/evaluator exception (#2625).
+    """Build a content-free failure for a script/evaluator exception (#2625).
 
-    Exception text can carry prompts, completions or credentials, and the MCP
-    response lands in the coding assistant's transcript. Real runs return only
-    the exception class; mock runs return redacted, length-capped text so a
-    SyntaxError/ImportError in the user's script stays actionable. The full
-    redacted detail goes to the local log only.
+    Exception text can carry prompts, completions, customer data or credentials
+    that pattern redaction cannot reliably catch, and the MCP response lands in
+    the coding assistant's transcript. Both modes therefore return only a fixed
+    message plus the exception class name. The log records the class name and a
+    non-content fingerprint (length and a short hash of the message), never the
+    text. No dedicated log file is created or named: the server's logger
+    destination is deployer-configured, not a fixed path the SDK owns.
     """
     error_type = type(exc).__name__
-    redacted = redact_sensitive_text(str(exc))
-    logger.error("run_optimization failed (%s): %s", error_type, redacted)
-    if mode == "real":
-        message = (
-            f"Optimization failed with {error_type}. Details are withheld for "
-            "real runs; see the local MCP server log."
-        )
-    else:
-        message = f"{error_type}: {redacted}"[:_MAX_ERROR_MESSAGE_CHARS]
+    raw = str(exc)
+    fingerprint = hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:12]
+    logger.error(
+        "run_optimization failed (mode=%s, type=%s, message_len=%d, sha256=%s)",
+        mode,
+        error_type,
+        len(raw),
+        fingerprint,
+    )
+    message = (
+        f"Optimization failed with {error_type}. Exception details are withheld "
+        "from the tool response; re-run the script directly to see them."
+    )
     return _failure(message, code="optimization_failed")
+
+
+def _write_text_nofollow(path: Path, text: str, *, overwrite: bool) -> None:
+    """Write ``text`` without ever following a symlink (#2626).
+
+    Opens with ``O_NOFOLLOW`` so a link inserted after any earlier check is
+    refused at open time (``OSError``), and refuses a symlinked parent. Without
+    ``overwrite`` the open is also ``O_EXCL`` so an existing file is never
+    clobbered.
+    """
+    if path.parent.is_symlink():
+        raise OSError(f"refusing to write through symlinked directory: {path.parent}")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW
+    flags |= os.O_TRUNC if overwrite else os.O_EXCL
+    fd = os.open(path, flags, 0o644)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
 
 
 def _serialize_validation_result(result: ValidationResult) -> dict[str, Any]:
@@ -431,10 +453,17 @@ def scaffold_eval_tool(
 
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
     rows = [_draft_eval_row(index, agent_type) for index in range(1, example_count + 1)]
-    resolved_path.write_text(
-        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
-        encoding="utf-8",
-    )
+    try:
+        _write_text_nofollow(
+            resolved_path,
+            "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+            overwrite=overwrite,
+        )
+    except OSError:
+        return _failure(
+            "Could not write the draft eval file (symlink or existing file).",
+            code="path_rejected",
+        )
 
     now = datetime.now(UTC).isoformat()
     manifest = {
@@ -452,10 +481,17 @@ def scaffold_eval_tool(
             "Real optimization refuses this dataset until approval_status is user_approved or approved.",
         ],
     }
-    manifest_path.write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    try:
+        _write_text_nofollow(
+            manifest_path,
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            overwrite=overwrite,
+        )
+    except OSError:
+        return _failure(
+            "Could not write the approval manifest (symlink or existing file).",
+            code="path_rejected",
+        )
 
     validation = validate_dataset_tool(str(resolved_path))
     return {
