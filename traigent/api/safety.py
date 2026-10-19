@@ -88,7 +88,7 @@ class RAGASMetricNotAvailableError(ImportError):
         """
         super().__init__(
             f"RAGAS metric '{metric_name}' requires the 'ragas' package. "
-            f"Install with: pip install 'traigent[ragas]' or pip install ragas"
+            "Install with: pip install ragas"
         )
         self.metric_name = metric_name
 
@@ -1248,7 +1248,7 @@ def get_available_safety_presets() -> dict[str, SafetyMetric]:
         )
     else:
         warnings.warn(
-            "RAGAS metrics not available. Install with: pip install 'traigent[ragas]'",
+            "RAGAS metrics not available. Install with: pip install ragas",
             SafetyDependencyWarning,
             stacklevel=2,
         )
