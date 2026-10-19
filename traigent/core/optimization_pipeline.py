@@ -511,7 +511,7 @@ def validate_metric_function_keys(
     objectives: Sequence[str],
     scoring_function: Callable[..., Any] | None = None,
 ) -> None:
-    """Fail fast when a ``metric_functions`` key is a typo of an objective.
+    """Warn when a ``metric_functions`` key looks like a typo of an objective.
 
     A key naming no objective is legitimate for an auxiliary metric, so it is
     only rejected when it is a true typo of an objective that would otherwise
@@ -520,13 +520,12 @@ def validate_metric_function_keys(
     distinct auxiliary metric). Objectives covered by ``scoring_function`` count
     as covered (Traigent#2659).
 
-    Raises:
-        ValidationError: If an unmatched key is a typo of an uncovered objective.
+    This is a name heuristic, so it only logs a warning (key and suggested
+    objective, never values) and never rejects a configuration: a mapping-returning
+    scorer such as ``{"scores": fn}`` is valid.
     """
     if not metric_functions:
         return
-
-    from traigent.utils.exceptions import ValidationError
 
     objective_names = [str(o) for o in objectives]
     covered = build_metric_functions(metric_functions, scoring_function, objectives)
@@ -545,11 +544,13 @@ def validate_metric_function_keys(
             )
         ]
         if close:
-            raise ValidationError(
-                f"metric_functions key '{key}' matches no objective, so your "
-                f"scorer would be ignored and the built-in scorer used for "
-                f"'{close[0]}'. Did you mean '{close[0]}'? "
-                f"Objectives: {objective_names}."
+            logger.warning(
+                "metric_functions key '%s' matches no objective; if it is a typo "
+                "your scorer is ignored and the built-in scorer is used for "
+                "'%s'. Did you mean '%s'?",
+                key,
+                close[0],
+                close[0],
             )
 
 
