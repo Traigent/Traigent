@@ -310,25 +310,40 @@ class LabelTransport:
         return _data(body)
 
     async def _request(
-        self, method: str, url: str, payload: Any, total_timeout: float
+        self,
+        method: str,
+        url: str,
+        payload: Any,
+        total_timeout: float,
+        *,
+        bounded_auth: bool = False,
     ) -> tuple[int, Any, float | None]:
         """One gated, authenticated request: ``(status, parsed JSON | None, retry_after)``.
 
         ``retry_after`` is the ``Retry-After`` header as delta-seconds in ``[0, 3600]``
         (``None`` otherwise); no other header or body text is kept.
+
+        ``bounded_auth`` (the negotiated write only): authentication and the HTTP call share ONE
+        budget. Off (the legacy routes), the headers provider is awaited unbounded and the HTTP
+        call then gets the full ``total_timeout``, exactly as before the negotiated route.
         """
         import aiohttp
 
         from .transport_gate import gate_session
 
-        # Authentication and the HTTP call share ONE budget: a stalled or slow headers
-        # provider cannot outlive it, and the HTTP timeout is what is left afterwards.
-        started = time.monotonic()
-        headers = dict(await asyncio.wait_for(self._headers(), total_timeout))
-        headers.setdefault("Content-Type", "application/json")
-        left = total_timeout - (time.monotonic() - started)
-        if left <= 0:
-            raise TimeoutError
+        if bounded_auth:
+            # A stalled or slow headers provider cannot outlive the budget; the HTTP timeout
+            # is what is left afterwards.
+            started = time.monotonic()
+            headers = dict(await asyncio.wait_for(self._headers(), total_timeout))
+            headers.setdefault("Content-Type", "application/json")
+            left = total_timeout - (time.monotonic() - started)
+            if left <= 0:
+                raise TimeoutError
+        else:
+            headers = dict(await self._headers())
+            headers.setdefault("Content-Type", "application/json")
+            left = total_timeout
         timeout = aiohttp.ClientTimeout(total=left)
         try:
             async with (
@@ -462,7 +477,11 @@ class LabelTransport:
                 raise LabelTransportError(SERVICE_UNAVAILABLE, 503)
             try:
                 status, body, retry_after = await self._request(
-                    "POST", url, sent, min(_TIMEOUT_SECONDS, remaining)
+                    "POST",
+                    url,
+                    sent,
+                    min(_TIMEOUT_SECONDS, remaining),
+                    bounded_auth=True,
                 )
             except TimeoutError:
                 if (
@@ -751,6 +770,29 @@ def sender_from_config(
     )
 
 
+def _token_store_for(
+    api_base_url: str, refs: Mapping[str, str]
+) -> token_store.TokenStore | None:
+    """The token journal of this session's agent, when the token store is enabled.
+
+    The namespace is (normalized backend origin, the session's issued ``agent`` reference):
+    the same pair the tokens were issued under. Flag off, no agent reference or an invalid
+    namespace: ``None`` and nothing is opened (``TokenStore`` itself touches no file until a
+    token is looked up).
+    """
+    if not token_store.is_enabled():
+        return None
+    try:
+        agent_ref = refs.get("agent")
+        if not isinstance(agent_ref, str):
+            return None
+        return token_store.TokenStore(
+            token_store.TokenNamespace.for_backend(api_base_url, agent_ref)
+        )
+    except token_store.TokenStoreError:
+        return None
+
+
 async def send_session_labels(
     texts: Mapping[str, str | None],
     refs: Mapping[str, str],
@@ -772,7 +814,12 @@ async def send_session_labels(
     if not labels:
         return {}
     try:
-        sender = sender_from_config(api_base_url, headers, config_path)
+        sender = sender_from_config(
+            api_base_url,
+            headers,
+            config_path,
+            token_store_=_token_store_for(api_base_url, refs),
+        )
         if sender is None:
             return {}
         return await sender.send_new(labels)

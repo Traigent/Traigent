@@ -1109,3 +1109,132 @@ def test_ack_epoch_must_be_a_true_int_and_updated_at_a_utc_timestamp(
     _fake, err = _run(vectors, go)
     assert err.code == "internal_error"
     assert store.state_of(ref) == ts.S1_PENDING_LABEL  # no S2 on a bad ack
+
+
+# ------------------------------------------- legacy (flag off) timeout / error contract
+
+
+def test_flag_off_a_slow_provider_is_awaited_unbounded_and_the_http_budget_is_full(
+    vectors: dict, monkeypatch
+) -> None:
+    """Pins the legacy ``_call`` contract of 980e72515: the headers provider is NOT bounded
+    and the HTTP call still gets the whole ``_TIMEOUT_SECONDS`` (not what is left)."""
+    import aiohttp
+
+    monkeypatch.setenv(ts.ENV_FLAG, "false")
+    monkeypatch.setattr(tr, "_TIMEOUT_SECONDS", 0.3)
+    totals: list[float] = []
+    real = aiohttp.ClientTimeout
+
+    def spy(*args: Any, **kwargs: Any):
+        totals.append(kwargs["total"])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(aiohttp, "ClientTimeout", spy)
+
+    async def slow() -> dict[str, str]:
+        await asyncio.sleep(0.6)  # longer than the whole HTTP budget
+        return await _headers()
+
+    async def go(fake, base):
+        return await _write(
+            LabelTransport(base, slow), vectors, object_ref=VECTOR_REF, purpose="label"
+        )
+
+    fake, ack = _run(vectors, go)
+    assert ack["revision"] == 1 and len(fake.legacy_raw) == 1 and fake.neg_raw == []
+    assert totals == [0.3]  # full budget, not reduced by the provider's time
+
+
+def test_flag_off_a_provider_failure_escapes_unchanged_and_nothing_is_sent(
+    vectors: dict, monkeypatch
+) -> None:
+    monkeypatch.setenv(ts.ENV_FLAG, "false")
+
+    async def failing() -> dict[str, str]:
+        raise TimeoutError("provider")
+
+    async def go(fake, base):
+        with pytest.raises(TimeoutError) as info:  # not wrapped, as at 980e72515
+            await _write(LabelTransport(base, failing), vectors)
+        return info.value
+
+    fake, err = _run(vectors, go)
+    assert not isinstance(err, LabelTransportError)
+    assert fake.legacy_raw == [] and fake.neg_raw == []
+
+
+# ------------------------------- production entry wires the journal (S1 -> S2), flag on/off
+
+
+def _issue_for(base: str, agent_ref: str, name: str = HEBREW) -> tuple[TokenStore, str]:
+    namespace = TokenNamespace.for_backend(base, agent_ref)
+    ref = "knobref_" + "5a" * 16
+    ensure_tokens(
+        namespace, [("knob", None, name)], transport=lambda body: (200, {"refs": [ref]})
+    )
+    return TokenStore(namespace), ref
+
+
+def test_the_production_entry_moves_an_issued_token_from_s1_to_s2(
+    tmp_path: Path, vectors: dict
+) -> None:
+    cfg = _config(tmp_path, vectors)
+
+    async def go(fake, base):
+        store, ref = _issue_for(base, AGENT_REF)
+        assert store.state_of(ref) == ts.S1_PENDING_LABEL
+        done = await send_session_labels(
+            {"knob": HEBREW}, {"knob": ref, "agent": AGENT_REF}, base, _headers, cfg
+        )
+        return store, ref, done
+
+    fake, (store, ref, done) = _run(vectors, go)
+    assert done == {ref: 1}
+    assert fake.plaintexts == {ref: HEBREW}
+    assert store.state_of(ref) == ts.S2_LABEL_ACKED
+    assert store.revision_of(ref) == 1
+
+
+def test_the_production_entry_with_the_flag_off_never_touches_the_store(
+    tmp_path: Path, vectors: dict, monkeypatch
+) -> None:
+    cfg = _config(tmp_path, vectors)
+    created: list[Any] = []
+    real = ts.TokenStore.__init__
+
+    def spy(self, namespace):
+        created.append(namespace)
+        real(self, namespace)
+
+    async def go(fake, base):
+        store, ref = _issue_for(base, AGENT_REF)
+        monkeypatch.setenv(ts.ENV_FLAG, "false")
+        before = sorted(
+            (p.name, p.stat().st_mtime_ns)
+            for p in (tmp_path / "state" / "token_store").rglob("*")
+        )
+        monkeypatch.setattr(ts.TokenStore, "__init__", spy)
+        done = await send_session_labels(
+            {"knob": HEBREW}, {"knob": ref, "agent": AGENT_REF}, base, _headers, cfg
+        )
+        monkeypatch.setattr(ts.TokenStore, "__init__", real)
+        after = sorted(
+            (p.name, p.stat().st_mtime_ns)
+            for p in (tmp_path / "state" / "token_store").rglob("*")
+        )
+        monkeypatch.setenv(ts.ENV_FLAG, "true")
+        return store, ref, done, before, after
+
+    fake, (store, ref, done, before, after) = _run(vectors, go)
+    assert done == {ref: 1} and fake.neg_raw == [] and len(fake.legacy_raw) == 1
+    assert created == []  # no store object was even built
+    assert before == after  # no file created or changed
+    assert store.state_of(ref) == ts.S1_PENDING_LABEL
+
+
+def test_the_production_entry_without_an_agent_reference_opens_no_store(
+    tmp_path: Path, vectors: dict
+) -> None:
+    assert tr._token_store_for("https://x.test/api/v1", {"knob": KNOB_REF}) is None
+    assert tr._token_store_for("not a url", {"agent": AGENT_REF}) is None
