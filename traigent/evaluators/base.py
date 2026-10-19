@@ -4424,8 +4424,14 @@ class SimpleScoringEvaluator(BaseEvaluator):
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.warning(f"Metric function {metric_name} failed: {e}")
-                example_metrics[metric_name] = 0.0
+                # A failed scorer is a failed example, never a measured 0.0
+                # (#2653; same contract as compute_metrics, #1722).
+                raise EvaluationError(
+                    f"Metric function '{metric_name}' raised "
+                    f"{type(e).__name__}: {e}. Refusing to substitute a "
+                    "fabricated 0.0 score.",
+                    original_error=e,
+                ) from e
         return example_metrics
 
     def _call_scoring_function(
@@ -4465,8 +4471,12 @@ class SimpleScoringEvaluator(BaseEvaluator):
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.warning(f"Scoring function failed: {e}")
-            example_metrics["score"] = 0.0
+            # A failed scorer is a failed example, never a measured 0.0 (#2653).
+            raise EvaluationError(
+                f"Scoring function raised {type(e).__name__}: {e}. Refusing "
+                "to substitute a fabricated 0.0 score.",
+                original_error=e,
+            ) from e
         return example_metrics
 
     def _add_llm_metrics_to_example(
@@ -4694,14 +4704,15 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 config=self._get_ragas_config(),
             )
             aggregated_metrics.update(ragas_results)
-        except RagasConfigurationError as exc:
-            logger.warning("RAGAS metrics unavailable: %s", exc)
-            for name in ragas_metric_names:
-                aggregated_metrics.setdefault(name, 0.0)
-        except Exception as exc:  # pragma: no cover - defensive guard
-            logger.warning("Failed to compute ragas metrics: %s", exc)
-            for name in ragas_metric_names:
-                aggregated_metrics.setdefault(name, 0.0)
+        except Exception as exc:
+            # These are this evaluator's objectives: an unavailable or failed
+            # judge is an error, never a substituted 0.0 (#2653).
+            raise EvaluationError(
+                f"RAGAS metrics {ragas_metric_names} could not be computed "
+                f"({type(exc).__name__}: {exc}). Refusing to substitute a "
+                "fabricated 0.0 score for an optimization objective.",
+                original_error=exc,
+            ) from exc
 
     async def evaluate(
         self,
