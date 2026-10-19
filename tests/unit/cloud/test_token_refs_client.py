@@ -16,7 +16,7 @@ import pytest
 import requests
 
 from traigent.cloud.backend_client import BackendIntegratedClient
-from traigent.cloud.client import CloudServiceError
+from traigent.cloud.client import CloudEgressBlockedError, CloudServiceError
 from traigent.labels import token_store as ts
 from traigent.labels.token_store import TokenNamespace, TokenStoreError, ensure_tokens
 
@@ -307,3 +307,78 @@ def test_gate_refuses_an_operation_key_that_is_not_32_lowercase_hex(operation_ke
     finally:
         gate.set_mode(None)
         gate.set_allowed_origins(None)
+
+
+def _own_raises(case, client, monkeypatch):
+    """Arrange one of the method's OWN raise paths; return the body to send."""
+    body = _good_body()
+    if case == "validation":
+        body["items"][0]["name"] = EMAIL
+    elif case == "egress_disabled":
+        client.no_egress = True  # the real egress switch: CloudEgressBlockedError
+    elif case == "url_invalid":
+        monkeypatch.setattr(client, "_build_token_refs_url", lambda: None)
+    elif case == "transport":
+        monkeypatch.setattr(
+            client,
+            "_protected_request",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError(f"down {HEBREW}")),
+        )
+    return body
+
+
+@pytest.mark.parametrize(
+    "case", ["validation", "egress_disabled", "url_invalid", "transport"]
+)
+def test_direct_issuance_clears_exception_context_inside_a_callers_except(
+    case, monkeypatch
+):
+    """L4: the K5 boundary on the public client method, for each of its own raises."""
+    import traceback
+
+    client = _client()
+    body = _own_raises(case, client, monkeypatch)
+    caught: BaseException | None = None
+    try:
+        raise ValueError(f"customer {HEBREW} {EMAIL}")
+    except ValueError:
+        try:
+            client.issue_token_refs_sync(body)
+        except (CloudServiceError, CloudEgressBlockedError) as exc:  # INSIDE the handler
+            caught = exc
+    assert caught is not None
+    assert caught.__cause__ is None and caught.__context__ is None
+    rendered = "".join(traceback.format_exception(caught))
+    assert HEBREW not in rendered and EMAIL not in rendered
+    assert HEBREW not in str(caught) and EMAIL not in repr(caught)
+
+
+def test_direct_issuance_sends_the_validated_snapshot_not_the_callers_mutated_body():
+    """L5: a name inserted into the caller's body while auth blocks never reaches the wire."""
+    wire, patcher = _wired((200, {"refs": ["knobref_" + "1" * 32] * 2}))
+    client = _client()
+    body = _good_body()
+    original = json.loads(json.dumps(body))
+    real_headers = client._get_sync_auth_headers
+
+    def mutating_auth(*args, **kwargs):
+        body["operation_key"] = HEBREW  # another thread edits the shared dict mid-auth
+        body["items"][0]["name"] = EMAIL
+        return real_headers(*args, **kwargs)
+
+    client._get_sync_auth_headers = mutating_auth  # type: ignore[method-assign]
+    with patcher:
+        status, _ = client.issue_token_refs_sync(body)
+    assert status == 200
+    sent = wire.requests[0].body
+    sent_text = sent.decode() if isinstance(sent, bytes) else str(sent)
+    assert json.loads(sent_text) == original
+    assert HEBREW not in sent_text and EMAIL not in sent_text
+
+
+def test_direct_issuance_refuses_non_plain_data():
+    client = _client()
+    body = _good_body()
+    body["schema_version"] = 1.0  # a float is not plain contract data
+    with pytest.raises(CloudServiceError):
+        client.issue_token_refs_sync(body)

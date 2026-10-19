@@ -156,6 +156,38 @@ _TOKEN_REFS_KINDS = frozenset({"knob", "choice", "metric", "template"})
 _TOKEN_REFS_MAX_ITEMS = 200
 
 
+_NOT_PLAIN: Any = object()
+_PLAIN_SCALARS = (str, int, bool, type(None))
+
+
+def _plain_snapshot(value: Any, _depth: int = 0) -> Any:
+    """Deep plain-data copy (exact ``dict``/``list``/``str``/``int``/``bool``/``None`` only).
+
+    Anything else (subclasses, floats, non-string keys, cycles past a small depth) yields
+    ``_NOT_PLAIN``. The copy shares no object with the caller, so validating it and sending
+    it cannot be split by a concurrent mutation of the caller's body.
+    """
+    if _depth > 8:
+        return _NOT_PLAIN
+    kind = type(value)
+    if kind in _PLAIN_SCALARS:
+        return value
+    if kind is list:
+        out_list = [_plain_snapshot(v, _depth + 1) for v in list(value)]
+        return _NOT_PLAIN if any(v is _NOT_PLAIN for v in out_list) else out_list
+    if kind is dict:
+        out: dict[str, Any] = {}
+        for k, v in list(value.items()):
+            if type(k) is not str:
+                return _NOT_PLAIN
+            copied = _plain_snapshot(v, _depth + 1)
+            if copied is _NOT_PLAIN:
+                return _NOT_PLAIN
+            out[k] = copied
+        return out
+    return _NOT_PLAIN
+
+
 def _token_refs_body_is_closed(body: Any) -> bool:
     """True only for a body that is exactly the Schema's closed request shape."""
     if not isinstance(body, dict) or set(body) != {
@@ -2510,8 +2542,33 @@ class BackendIntegratedClient:
         interprets the status and body into closed codes, so nothing of the response is
         raised here. Idempotent by ``operation_key``, so a retry after any failure is safe.
         Transport failures surface as fixed text (``_protected_request``).
+
+        Closed boundary: every failure leaves as a ``CloudServiceError`` with fixed text and
+        NO ``__cause__`` / ``__context__`` (also when this is called inside the caller's own
+        ``except`` that holds a customer name). The body is snapshotted first and only the
+        validated snapshot is sent.
         """
-        if not _token_refs_body_is_closed(body):
+        error: Exception
+        try:
+            return self._issue_token_refs_checked(body)
+        except (CloudServiceError, CloudEgressBlockedError) as exc:
+            error = exc  # this module's own fixed-text types keep their type
+        except Exception:  # noqa: BLE001 - closed boundary: nothing else may escape
+            error = CloudServiceError("Token-refs issuance failed")
+        # Raised outside the ``except`` block, then cleared AFTER the raise has chained (the
+        # interpreter attaches the caller's handled exception as __context__ during the
+        # raise); bare re-raise last (same pattern as token_store / fs_guard).
+        try:
+            raise error from None
+        except Exception as raised:
+            raised.__cause__ = None
+            raised.__context__ = None
+            raised.__suppress_context__ = True
+            raise
+
+    def _issue_token_refs_checked(self, body: dict[str, Any]) -> tuple[int, Any]:
+        snapshot = _plain_snapshot(body)
+        if snapshot is _NOT_PLAIN or not _token_refs_body_is_closed(snapshot):
             # fixed text: the offending value (it may be a customer name) is never quoted
             raise CloudServiceError(
                 "Token-refs request is not the closed contract shape"
@@ -2525,7 +2582,7 @@ class BackendIntegratedClient:
             "POST",
             url,
             operation="Token-refs issuance",
-            json=body,
+            json=snapshot,  # the validated private copy, never the caller's mutable dict
             headers=headers,
         )
         status = getattr(response, "status_code", None)
