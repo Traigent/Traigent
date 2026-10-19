@@ -1941,3 +1941,101 @@ def test_journalled_digest_is_over_the_wire_order(server):
             AGENT_A, [(i["kind"], i.get("parent_ref")) for i in wire]
         ).hex()
     )
+
+
+# ---------------------------------------------- 503 service_unavailable (content-less 1b-2b)
+
+_UNAVAILABLE = {
+    "success": False,
+    "error": "service_unavailable",
+    "error_code": "service_unavailable",
+    "message": "Service is temporarily unavailable.",
+}
+
+
+class _Flaky:
+    """A transport that answers 503 (with an optional Retry-After) ``n`` times, then works."""
+
+    def __init__(self, server: FakeServer, n: int, retry_after: Any = None) -> None:
+        self.server, self.n, self.retry_after = server, n, retry_after
+        self.keys: list[str] = []
+
+    def __call__(self, body: dict[str, Any]) -> tuple[Any, ...]:
+        self.keys.append(body["operation_key"])
+        if len(self.keys) <= self.n:
+            return (503, dict(_UNAVAILABLE), self.retry_after)
+        return self.server(body)
+
+
+@pytest.fixture
+def sleeps(monkeypatch) -> list[float]:
+    recorded: list[float] = []
+    monkeypatch.setattr(ts, "_sleep", recorded.append)
+    return recorded
+
+
+def test_503_is_retried_with_the_same_key_honoring_retry_after(server, sleeps):
+    flaky = _Flaky(server, 2, retry_after=2.0)
+    got = ensure_tokens(ns(), knobs("k"), transport=flaky)
+    assert got[("knob", None, "k")].startswith("knobref_")
+    assert sleeps == [2.0, 2.0]
+    assert len(flaky.keys) == 3 and len(set(flaky.keys)) == 1  # one idempotent key
+    assert server.issued == 1
+
+
+def test_503_without_retry_after_uses_the_bounded_backoff(server, sleeps):
+    ensure_tokens(ns(), knobs("k"), transport=_Flaky(server, 3))
+    assert sleeps == [0.5, 1.0, 2.0]
+
+
+def test_503_retry_after_beyond_the_deadline_is_closed_retryable_without_waiting(
+    server, sleeps
+):
+    flaky = _Flaky(server, 99, retry_after=30.0)
+    with pytest.raises(TokenStoreError) as err:
+        ensure_tokens(ns(), knobs("k"), transport=flaky, deadline_seconds=5.0)
+    assert err.value.code == "token_refs_service_unavailable"
+    assert err.value.retryable is True
+    assert sleeps == [] and len(flaky.keys) == 1
+    assert (
+        len(ts.pending_operation_keys(ns())) == 1
+    )  # S0 survives: a later call resumes it
+
+
+def test_503_is_closed_after_the_deadline_budget_is_spent(server, sleeps):
+    flaky = _Flaky(server, 99)  # no Retry-After: 0.5, 1, 2 fit in 3s, 4 does not
+    with pytest.raises(TokenStoreError) as err:
+        ensure_tokens(ns(), knobs("k"), transport=flaky, deadline_seconds=3.0)
+    assert err.value.code == "token_refs_service_unavailable"
+    assert sleeps == [0.5, 1.0, 2.0] and len(flaky.keys) == 4
+
+
+def test_503_attempts_are_capped_even_with_zero_retry_after(server, sleeps):
+    flaky = _Flaky(server, 99, retry_after=0.0)
+    with pytest.raises(TokenStoreError) as err:
+        ensure_tokens(ns(), knobs("k"), transport=flaky)
+    assert err.value.code == "token_refs_service_unavailable"
+    assert len(flaky.keys) == ts.MAX_SERVICE_UNAVAILABLE_ATTEMPTS
+
+
+@pytest.mark.parametrize("bad", [-1.0, float("nan"), float("inf"), True, "5", None])
+def test_unreadable_retry_after_falls_back_to_the_backoff(server, sleeps, bad):
+    ensure_tokens(ns(), knobs("k"), transport=_Flaky(server, 1, retry_after=bad))
+    assert sleeps == [0.5]
+
+
+def test_503_that_is_not_the_closed_envelope_is_not_retried(server, sleeps):
+    server.status_override = (503, {**_UNAVAILABLE, "message": HEBREW})
+    with pytest.raises(TokenStoreError) as err:
+        ensure_tokens(ns(), knobs("k"), transport=server)
+    assert err.value.code == "token_refs_server_error"
+    assert sleeps == [] and len(server.calls) == 1
+
+
+def test_503_closed_error_carries_no_server_text_or_cause(server, sleeps):
+    flaky = _Flaky(server, 99, retry_after=999.0)
+    with pytest.raises(TokenStoreError) as err:
+        ensure_tokens(ns(), knobs("k"), transport=flaky, deadline_seconds=1.0)
+    text = "".join(traceback.format_exception(err.value)) + repr(err.value)
+    assert not any(c in text for c in (*CANARIES, "temporarily"))
+    assert err.value.__cause__ is None and err.value.__context__ is None

@@ -37,9 +37,11 @@ class _Wire:
 
     def send(self, request):
         self.requests.append(request)
-        status, body = self.responses.pop(0) if self.responses else (500, {})
+        status, body, *extra = self.responses.pop(0) if self.responses else (500, {})
         response = requests.Response()
         response.status_code = status
+        for name, value in (extra[0] if extra else {}).items():
+            response.headers[name] = value
         response._content = json.dumps(body).encode()
         response.headers["Content-Type"] = "application/json"
         response.url = request.url
@@ -401,3 +403,58 @@ def test_direct_issuance_refuses_non_plain_data():
     body["schema_version"] = 1.0  # a float is not plain contract data
     with pytest.raises(CloudServiceError):
         client.issue_token_refs_sync(body)
+
+
+_UNAVAILABLE = {
+    "success": False,
+    "error": "service_unavailable",
+    "error_code": "service_unavailable",
+    "message": "Service is temporarily unavailable.",
+}
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        ("7", 7.0),
+        ("0", 0.0),
+        ("999999", 3600.0),
+        ("nan", None),
+        ("inf", None),
+        (None, None),
+    ],
+)
+def test_503_retry_after_header_is_read_as_a_bounded_number_of_seconds(
+    header, expected
+):
+    """1b-2b: the client returns the Retry-After hint (closed number), never header text."""
+    headers = {} if header is None else {"Retry-After": header}
+    _wire, patcher = _wired((503, _UNAVAILABLE, headers))
+    with patcher:
+        status, payload, retry_after = _client().issue_token_refs_with_retry_after_sync(
+            _good_body()
+        )
+    assert status == 503 and payload == _UNAVAILABLE
+    assert retry_after == expected
+
+
+def test_503_end_to_end_retries_with_retry_after_then_issues(monkeypatch):
+    """1b-2b: ensure_tokens over the real client: 503 + Retry-After, then the same key succeeds."""
+    sleeps: list[float] = []
+    monkeypatch.setattr(ts, "_sleep", sleeps.append)
+    refs = ["knobref_" + "7" * 32]
+    wire, patcher = _wired(
+        (503, _UNAVAILABLE, {"Retry-After": "3"}), (200, {"refs": refs})
+    )
+    client = _client()
+    with patcher:
+        got = ensure_tokens(
+            TokenNamespace.for_backend("https://api.test", AGENT),
+            [("knob", None, HEBREW)],
+            transport=ts.backend_transport(client),
+        )
+    assert list(got.values()) == refs
+    assert sleeps == [3.0]
+    keys = {json.loads(r.body)["operation_key"] for r in wire.requests}
+    assert len(wire.requests) == 2 and len(keys) == 1
+    assert all(HEBREW not in str(r.body) for r in wire.requests)

@@ -48,6 +48,7 @@ import errno
 import functools
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -92,6 +93,8 @@ OPERATION_KEY_CONFLICT = "operation_key_conflict"
 TOKEN_REFS_QUOTA_EXCEEDED = "token_refs_quota_exceeded"
 TOKEN_REFS_SERVER_ERROR = "token_refs_server_error"
 TOKEN_REFS_TRANSPORT_FAILED = "token_refs_transport_failed"
+#: 503 ``service_unavailable`` answered until the operation deadline (retryable by the caller).
+TOKEN_REFS_SERVICE_UNAVAILABLE = "token_refs_service_unavailable"
 TOKEN_REFS_RESPONSE_INVALID = "token_refs_response_invalid"
 LABEL_CONFLICT_UNVERIFIED = "label_conflict_unverified"
 TOKEN_STORE_BUSY = "token_store_busy"
@@ -118,6 +121,7 @@ CODES = frozenset(
         TOKEN_REFS_QUOTA_EXCEEDED,
         TOKEN_REFS_SERVER_ERROR,
         TOKEN_REFS_TRANSPORT_FAILED,
+        TOKEN_REFS_SERVICE_UNAVAILABLE,
         TOKEN_REFS_RESPONSE_INVALID,
         LABEL_CONFLICT_UNVERIFIED,
         TOKEN_STORE_BUSY,
@@ -125,6 +129,10 @@ CODES = frozenset(
         TOKEN_STORE_INTERNAL,
     }
 )
+
+
+#: Codes a caller may retry later without changing anything (the intent keeps its key).
+RETRYABLE_CODES = frozenset({TOKEN_REFS_SERVICE_UNAVAILABLE})
 
 
 class TokenStoreError(Exception):
@@ -135,6 +143,10 @@ class TokenStoreError(Exception):
             code = TOKEN_STORE_INTERNAL
         super().__init__(code)
         self.code = code
+
+    @property
+    def retryable(self) -> bool:
+        return self.code in RETRYABLE_CODES
 
     def __str__(self) -> str:
         return self.code
@@ -1053,8 +1065,15 @@ def _raise_revision(state: dict[str, Any], ref: str, revision: int) -> None:
 
 # --- issuance client ----------------------------------------------------------------------
 
-#: ``transport(body) -> (http_status, parsed_json_or_None)``; may raise on a network failure.
-TokenRefsTransport = Callable[[dict[str, Any]], "tuple[int, Any]"]
+#: ``transport(body) -> (http_status, parsed_json_or_None)`` or, when the transport can read
+#: it, ``(http_status, parsed_json_or_None, retry_after_seconds_or_None)``; may raise on a
+#: network failure.
+TokenRefsTransport = Callable[[dict[str, Any]], "tuple[Any, ...]"]
+
+#: Retry pacing for ``service_unavailable``: used when no ``Retry-After`` is given.
+_RETRY_BACKOFF_SECONDS = (0.5, 1.0, 2.0, 4.0, 8.0)
+MAX_SERVICE_UNAVAILABLE_ATTEMPTS = 8
+_sleep = time.sleep  # indirection so tests can run the pacing without waiting
 
 #: Closed refusal envelope of the route (Schema ``TokenRefsRefusal``): code -> (status, message).
 _REFUSALS: dict[str, tuple[int, str, str]] = {
@@ -1071,13 +1090,18 @@ _REFUSALS: dict[str, tuple[int, str, str]] = {
     ),
     "quota_exceeded": (429, "Quota exceeded.", TOKEN_REFS_QUOTA_EXCEEDED),
     "internal_error": (500, "Internal error.", TOKEN_REFS_SERVER_ERROR),
+    "service_unavailable": (
+        503,
+        "Service is temporarily unavailable.",
+        TOKEN_REFS_SERVICE_UNAVAILABLE,
+    ),
 }
 _ENVELOPE_KEYS = frozenset({"success", "error", "error_code", "message"})
 
 
 def backend_transport(client: Any) -> TokenRefsTransport:
     """Adapt a ``BackendIntegratedClient`` (its auth, origin gate and egress switches)."""
-    return lambda body: client.issue_token_refs_sync(body)  # type: ignore[no-any-return]
+    return lambda body: client.issue_token_refs_with_retry_after_sync(body)  # type: ignore[no-any-return]
 
 
 def _refusal_code(status: Any, payload: Any) -> str:
@@ -1130,7 +1154,7 @@ def _wire_body(
 
 def _call_with_deadline(
     transport: TokenRefsTransport, body: dict[str, Any], deadline: float
-) -> tuple[int, Any]:
+) -> tuple[Any, ...]:
     """Run ``transport(body)`` (auth included) but give up at ``deadline`` (monotonic).
 
     The call runs in a daemon thread so a stalled transport cannot hold the namespace lock
@@ -1161,6 +1185,26 @@ def _call_with_deadline(
     return value  # type: ignore[no-any-return]
 
 
+def _answer(value: Any) -> tuple[Any, Any, float | None]:
+    """``(status, payload, retry_after)`` from a 2- or 3-tuple transport answer.
+
+    ``retry_after`` is kept only when it is a finite non-negative number; anything else is
+    ``None`` (the pacing default applies). A malformed answer raises ``ValueError``, which the
+    caller treats like any other transport failure.
+    """
+    if not isinstance(value, tuple) or len(value) not in (2, 3):
+        raise ValueError("transport answer")
+    retry_after = value[2] if len(value) == 3 else None
+    if (
+        isinstance(retry_after, bool)
+        or not isinstance(retry_after, (int, float))
+        or not math.isfinite(retry_after)
+        or retry_after < 0
+    ):
+        retry_after = None
+    return value[0], value[1], retry_after
+
+
 def _issue(
     tx: _Locked,
     namespace: TokenNamespace,
@@ -1170,22 +1214,43 @@ def _issue(
     """Send operation ``op_key`` (S0) with its journalled batch and persist S1, or refuse."""
     op = tx.state["operations"][op_key]
     body = _wire_body(namespace, op_key, op["items"])
-    outcome: TokenStoreError | None = None
-    try:
-        status, payload = _call_with_deadline(transport, body, tx.deadline)
-    except TokenStoreError as exc:
-        outcome = exc
-    except Exception:  # noqa: BLE001 - a transport error can quote a URL or header
-        outcome = TokenStoreError(TOKEN_REFS_TRANSPORT_FAILED)
-    if outcome is not None:
-        raise outcome from None
-    if status != 200:
+    attempt = 0
+    while True:
+        outcome: TokenStoreError | None = None
+        try:
+            status, payload, retry_after = _answer(
+                _call_with_deadline(transport, body, tx.deadline)
+            )
+        except TokenStoreError as exc:
+            outcome = exc
+        except Exception:  # noqa: BLE001 - a transport error can quote a URL or header
+            outcome = TokenStoreError(TOKEN_REFS_TRANSPORT_FAILED)
+        if outcome is not None:
+            raise outcome from None
+        if status == 200:
+            break
         # S0 is NEVER deleted on a refusal. The Backend authorizes the agent before it looks
         # up the receipt, so a 400/404 on a resumed key can follow an earlier attempt that
         # DID commit (response lost, then access lost or revoked): dropping the key would let
         # a later call mint a new one and double-issue. The intent keeps failing with its
         # closed code until it succeeds or the caller deliberately abandons it.
-        raise TokenStoreError(_refusal_code(status, payload))
+        code = _refusal_code(status, payload)
+        if code != TOKEN_REFS_SERVICE_UNAVAILABLE:
+            raise TokenStoreError(code)
+        # 503 service_unavailable: the SAME operation_key is re-sent (idempotent), paced by
+        # Retry-After when the server gave one, within the operation deadline; once the next
+        # wait would not fit (or the attempts are used up) the closed retryable code stands.
+        delay = (
+            retry_after
+            if retry_after is not None
+            else _RETRY_BACKOFF_SECONDS[min(attempt, len(_RETRY_BACKOFF_SECONDS) - 1)]
+        )
+        attempt += 1
+        if attempt >= MAX_SERVICE_UNAVAILABLE_ATTEMPTS or delay >= (
+            tx.deadline - time.monotonic()
+        ):
+            raise TokenStoreError(code)
+        _sleep(delay)
     refs = (
         payload.get("refs")
         if isinstance(payload, dict) and set(payload) == {"refs"}

@@ -10,6 +10,7 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -403,6 +404,22 @@ def _parse_retry_after(headers: Any) -> float | None:
     if retry_at.tzinfo is None:
         retry_at = retry_at.replace(tzinfo=UTC)
     return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
+
+
+def _retry_after_seconds(headers: Any) -> float | None:
+    """``Retry-After`` as delta-seconds in ``[0, 3600]``; ``None`` for anything else.
+
+    A date, a negative, a non-finite or a non-numeric value is ``None`` (the caller's own
+    pacing applies); the header text itself never leaves.
+    """
+    try:
+        value = headers.get("Retry-After") if headers else None
+        seconds = float(value) if value is not None else None
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if seconds is None or not math.isfinite(seconds) or seconds < 0:
+        return None
+    return min(seconds, 3600.0)
 
 
 def _raise_for_transient_backend_response(response: Any, operation: str) -> None:
@@ -2537,6 +2554,8 @@ class BackendIntegratedClient:
     def issue_token_refs_sync(self, body: dict[str, Any]) -> tuple[int, Any]:
         """``POST /api/v1/optimization/token-refs``: one attempt; ``(status, parsed JSON | None)``.
 
+        Same call as :meth:`issue_token_refs_with_retry_after_sync` without the retry hint.
+
         Contract: TraigentSchema ``optimization/token_refs_endpoints.json``. The body carries
         kinds and parent refs only (never a name); the caller (``traigent.labels.token_store``)
         interprets the status and body into closed codes, so nothing of the response is
@@ -2549,6 +2568,21 @@ class BackendIntegratedClient:
         or ``CloudServiceError`` (everything else), with NO ``__cause__`` / ``__context__`` (also when this is called inside the caller's own
         ``except`` that holds a customer name). The body is snapshotted first and only the
         validated snapshot is sent.
+        """
+        status, payload, _retry_after = self.issue_token_refs_with_retry_after_sync(
+            body
+        )
+        return status, payload
+
+    def issue_token_refs_with_retry_after_sync(
+        self, body: dict[str, Any]
+    ) -> tuple[int, Any, float | None]:
+        """One issuance attempt: ``(status, parsed JSON | None, retry_after_seconds | None)``.
+
+        ``retry_after_seconds`` is the response's ``Retry-After`` header read as a finite
+        number of seconds in ``[0, 3600]`` (``None`` when absent or unreadable); it is the
+        only header value that leaves this method. The closed-boundary guarantees of
+        :meth:`issue_token_refs_sync` are the same.
         """
         error: Exception
         try:
@@ -2573,7 +2607,9 @@ class BackendIntegratedClient:
             raised.__suppress_context__ = True
             raise
 
-    def _issue_token_refs_checked(self, body: dict[str, Any]) -> tuple[int, Any]:
+    def _issue_token_refs_checked(
+        self, body: dict[str, Any]
+    ) -> tuple[int, Any, float | None]:
         snapshot = _plain_snapshot(body)
         if snapshot is _NOT_PLAIN or not _token_refs_body_is_closed(snapshot):
             # fixed text: the offending value (it may be a customer name) is never quoted
@@ -2597,7 +2633,8 @@ class BackendIntegratedClient:
             payload = response.json()
         except Exception:  # noqa: BLE001  # silent-ok: an unreadable body is classified by status alone
             payload = None
-        return (status if isinstance(status, int) else 0), payload
+        retry_after = _retry_after_seconds(getattr(response, "headers", None))
+        return (status if isinstance(status, int) else 0), payload, retry_after
 
     def _publish_best_config_protected_sync(
         self,
