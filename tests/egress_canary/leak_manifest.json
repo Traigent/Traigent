@@ -508,6 +508,12 @@
   {
    "route": "POST /api/v1/sessions/{id}/results",
    "location": "body.value",
+   "field_path": "$.metadata.comparability.primary_objective",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
    "field_path": "$.metadata.tvar_observation_v1.primary_metric",
    "kind": "metric_name"
   },
@@ -1051,6 +1057,12 @@
    "route": "POST /api/v1/sessions/{id}/results",
    "location": "body.value",
    "field_path": "$.metadata.summary_stats.metadata.aggregation_summary.primary_objective",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.metadata.comparability.primary_objective",
    "kind": "metric_name"
   },
   {
