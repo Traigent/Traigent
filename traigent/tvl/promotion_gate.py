@@ -293,12 +293,18 @@ class PromotionGate:
 
         Raises:
             ValueError: If ``policy.min_effect`` lacks an entry for any
-                objective (including misspelt or wrong-case keys).
+                standard objective (including misspelt or wrong-case keys).
+                Banded objectives are exempt: they are judged by their band
+                (TOST), not by an epsilon, as in the TVL spec and linter.
         """
-        missing = [obj.name for obj in objectives if obj.name not in policy.min_effect]
+        missing = [
+            obj.name
+            for obj in objectives
+            if obj.direction != "band" and obj.name not in policy.min_effect
+        ]
         if missing:
             raise ValueError(
-                "PromotionPolicy.min_effect must name every objective; missing "
+                "PromotionPolicy.min_effect must name every standard objective; missing "
                 f"{sorted(missing)} (present keys: {sorted(policy.min_effect)}). "
                 "A missing min_effect is not treated as 0.0 (Traigent#2658)."
             )
@@ -537,7 +543,11 @@ class PromotionGate:
         Returns:
             ObjectiveResult with comparison outcome.
         """
-        epsilon = self.policy.get_epsilon(obj.name)
+        if obj.direction == "band":
+            # Banded objectives are exempt from the min_effect requirement.
+            epsilon = self.policy.get_epsilon(obj.name, default=0.0)
+        else:
+            epsilon = self.policy.get_epsilon(obj.name)
 
         inc_mean = sum(incumbent_samples) / len(incumbent_samples)
         cand_mean = sum(candidate_samples) / len(candidate_samples)
