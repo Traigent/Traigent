@@ -2432,6 +2432,53 @@ class BackendIntegratedClient:
             raise CloudServiceError("Agent-head response did not match its contract")
         return generation
 
+    def _build_token_refs_url(self) -> str | None:
+        """Sanitized ``<api base>/optimization/token-refs`` URL, or None if the base is unusable."""
+        parsed = urlparse(self.api_base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return None
+        if (
+            parsed.username
+            or parsed.password
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        path = f"{parsed.path.rstrip('/')}/optimization/token-refs"
+        return cast(
+            str,
+            urlunparse(parsed._replace(path=path, params="", query="", fragment="")),
+        )
+
+    def issue_token_refs_sync(self, body: dict[str, Any]) -> tuple[int, Any]:
+        """``POST /api/v1/optimization/token-refs``: one attempt; ``(status, parsed JSON | None)``.
+
+        Contract: TraigentSchema ``optimization/token_refs_endpoints.json``. The body carries
+        kinds and parent refs only (never a name); the caller (``traigent.labels.token_store``)
+        interprets the status and body into closed codes, so nothing of the response is
+        raised here. Idempotent by ``operation_key``, so a retry after any failure is safe.
+        Transport failures surface as fixed text (``_protected_request``).
+        """
+        self._raise_if_backend_egress_disabled("issue token refs")
+        url = self._build_token_refs_url()
+        if not url:
+            raise CloudServiceError("Backend token-refs URL is invalid")
+        headers = self._get_sync_auth_headers(target="backend")
+        response = self._protected_request(
+            "POST",
+            url,
+            operation="Token-refs issuance",
+            json=body,
+            headers=headers,
+        )
+        status = getattr(response, "status_code", None)
+        try:
+            payload = response.json()
+        except Exception:  # noqa: BLE001  # silent-ok: an unreadable body is classified by status alone
+            payload = None
+        return (status if isinstance(status, int) else 0), payload
+
     def _publish_best_config_protected_sync(
         self,
         spec: dict[str, Any],
