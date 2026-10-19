@@ -88,3 +88,26 @@ def test_default_storage_dir_matches_results_list(
     ):
         res = runner.invoke(cli, args)
         assert "not found" not in res.output.lower(), (args, res.output)
+
+
+@pytest.mark.parametrize("plot_type", ["progress", "pareto", "report"])
+def test_plot_works_for_completed_local_session(runner, local_store, plot_type):
+    """The local-session adapter must be plottable (#2507 review)."""
+    store, session_id = local_store
+    res = runner.invoke(
+        cli,
+        ["plot", f"local:{session_id}", "-d", str(store), "-p", plot_type],
+    )
+    assert res.exit_code == 0, res.output
+    assert "Error generating plot" not in res.output
+
+
+def test_report_plot_handles_missing_duration(local_store, monkeypatch):
+    from traigent.cli import main as cli_main
+
+    store, session_id = local_store
+    result = cli_main._load_cli_result(f"local:{session_id}", str(store))
+    result.duration = None
+    from traigent.visualization.plots import create_quick_plot
+
+    assert "Duration: N/A" in create_quick_plot(result, "report")

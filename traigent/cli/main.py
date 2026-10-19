@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -1443,35 +1444,63 @@ def _merge_result_infos(
 _LOCAL_RESULT_PREFIX = "local:"
 
 
-def _session_to_result_view(session: OptimizationSession) -> Any:
-    """Adapt a v2 local session to the result shape the results commands read."""
+def _local_session_duration(session: OptimizationSession) -> float | None:
+    """Seconds between the stored created/updated stamps, or None if unusable."""
+    try:
+        start = datetime.fromisoformat(str(session.created_at))
+        end = datetime.fromisoformat(str(session.updated_at))
+        seconds = (end - start).total_seconds()
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds >= 0 else None
+
+
+def _session_to_result_view(
+    session: OptimizationSession, storage: LocalStorageManager | None = None
+) -> Any:
+    """Adapt a v2 local session to the result shape the results commands read.
+
+    Objectives, orientation and duration come from the stored session; nothing
+    is invented (an undeclared orientation stays absent).
+    """
     from types import SimpleNamespace
+
+    storage = storage or LocalStorageManager(None)
+    config = session.optimization_config
+    objective = storage._resolve_primary_objective_name(config)
+    orientation = storage._resolve_primary_objective_orientation(config, objective)
+    metadata = dict(session.metadata or {})
+    if orientation is not None:
+        orientations = dict(metadata.get("objective_orientations") or {})
+        orientations.setdefault(objective, orientation)
+        metadata["objective_orientations"] = orientations
 
     trials = [
         SimpleNamespace(
             trial_id=trial.trial_id,
             config=dict(trial.config or {}),
-            metrics={"score": trial.score} if trial.score is not None else {},
+            metrics={objective: trial.score} if trial.score is not None else {},
             status="failed" if trial.error is not None else "completed",
             error=trial.error,
         )
         for trial in (session.trials or [])
     ]
     best_metrics = (
-        {"score": session.best_score} if session.best_score is not None else {}
+        {objective: session.best_score} if session.best_score is not None else {}
     )
     return SimpleNamespace(
         function_name=session.function_name,
         algorithm=_local_session_algorithm(session),
         trials=trials,
         successful_trials=[t for t in trials if t.status == "completed"],
+        success_rate=_local_session_success_rate(session),
         best_config=session.best_config,
         best_score=session.best_score,
         best_metrics=best_metrics,
         stop_reason=session.status,
-        objectives=[],
-        metadata=session.metadata or {},
-        duration=None,
+        objectives=[objective],
+        metadata=metadata,
+        duration=_local_session_duration(session),
     )
 
 
@@ -1491,13 +1520,14 @@ def _load_cli_result(result_name: str, storage_dir: str | None) -> Any:
         except FileNotFoundError:
             pass
     session_id = result_name.removeprefix(_LOCAL_RESULT_PREFIX)
+    local_storage = LocalStorageManager(storage_dir)
     try:
-        session = LocalStorageManager(storage_dir).load_session(session_id)
+        session = local_storage.load_session(session_id)
     except Exception:  # noqa: BLE001 - an unreadable id is simply not found
         session = None
     if session is None:
         raise FileNotFoundError(result_name)
-    return _session_to_result_view(session)
+    return _session_to_result_view(session, local_storage)
 
 
 def _result_not_found_error(result_name: str) -> click.ClickException:
