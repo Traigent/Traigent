@@ -150,7 +150,6 @@ def _build_optimize_kwargs(
         "algorithm": algorithm,
         "max_trials": max_trials,
         "timeout": timeout,
-        "verbose": verbose,
         "samples_include_pruned": samples_include_pruned,
     }
     if max_total_examples is not None:
