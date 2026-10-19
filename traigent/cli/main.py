@@ -1571,10 +1571,13 @@ def results_list(storage_dir: str | None) -> None:
 @results.command("show")
 @click.argument("result_name")
 @click.option(
-    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
+    "--storage-dir",
+    "-d",
+    default=None,
+    help="Traigent storage directory (default: same as 'results list')",
 )
 @click.option("--trials", "-t", is_flag=True, help="Show all trial details")
-def results_show(result_name: str, storage_dir: str, trials: bool) -> None:
+def results_show(result_name: str, storage_dir: str | None, trials: bool) -> None:
     """Show detailed view of a specific optimization run.
 
     Examples:
@@ -1604,9 +1607,12 @@ def results_show(result_name: str, storage_dir: str, trials: bool) -> None:
 @click.argument("result1")
 @click.argument("result2")
 @click.option(
-    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
+    "--storage-dir",
+    "-d",
+    default=None,
+    help="Traigent storage directory (default: same as 'results list')",
 )
-def results_compare(result1: str, result2: str, storage_dir: str) -> None:
+def results_compare(result1: str, result2: str, storage_dir: str | None) -> None:
     """Compare two optimization runs side-by-side.
 
     Examples:
@@ -1654,12 +1660,15 @@ def results_compare(result1: str, result2: str, storage_dir: str) -> None:
     help="Objective weights as key=value pairs (e.g., accuracy=0.7,cost=0.3)",
 )
 @click.option(
-    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
+    "--storage-dir",
+    "-d",
+    default=None,
+    help="Traigent storage directory (default: same as 'results list')",
 )
 def results_rerank(
     result_name: str,
     weights: str,
-    storage_dir: str,
+    storage_dir: str | None,
 ) -> None:
     """Recalculate best config with different objective weights.
 
@@ -1966,10 +1975,13 @@ def results_export_failures(
     help="Export format: slim (~1KB, git-friendly) or full (includes trials)",
 )
 @click.option(
-    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
+    "--storage-dir",
+    "-d",
+    default=None,
+    help="Traigent storage directory (default: same as 'results list')",
 )
 def export(
-    result_name: str, output: str | None, export_format: str, storage_dir: str
+    result_name: str, output: str | None, export_format: str, storage_dir: str | None
 ) -> None:
     """Export an optimization result to a portable config file.
 
@@ -2089,7 +2101,10 @@ def export(
 @cli.command()
 @click.argument("result_name")
 @click.option(
-    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
+    "--storage-dir",
+    "-d",
+    default=None,
+    help="Traigent storage directory (default: same as 'results list')",
 )
 @click.option(
     "--plot-type",
@@ -2098,7 +2113,7 @@ def export(
     default="progress",
     help="Type of plot to generate",
 )
-def plot(result_name: str, storage_dir: str, plot_type: str) -> None:
+def plot(result_name: str, storage_dir: str | None, plot_type: str) -> None:
     """Generate plots for optimization results."""
     console.print(
         f"\n[bold blue]Generating {plot_type} plot for: {result_name}[/bold blue]\n"

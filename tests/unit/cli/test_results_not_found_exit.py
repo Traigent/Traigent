@@ -65,3 +65,26 @@ def test_every_listed_name_round_trips_show_and_export(runner, local_store, tmp_
     assert exported.exit_code == 0, exported.output
     data = json.loads(out.read_text())
     assert data["config"] == {"temperature": 0.7}
+
+
+def test_default_storage_dir_matches_results_list(
+    runner, local_store, tmp_path, monkeypatch
+):
+    """A name printed by `results list` resolves without -d (#2507)."""
+    store, session_id = local_store
+    workdir = tmp_path / "elsewhere"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)  # no ./.traigent here
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(store))
+    name = f"local:{session_id}"
+    listed = runner.invoke(cli, ["results", "list"])
+    assert name in listed.output.replace("\n", "")
+    for args in (
+        ["results", "show", name],
+        ["results", "compare", name, name],
+        ["results", "rerank", name, "-w", "score=1"],
+        ["export", name, "-o", str(tmp_path / "out.json")],
+        ["plot", name, "-p", "pareto"],
+    ):
+        res = runner.invoke(cli, args)
+        assert "not found" not in res.output.lower(), (args, res.output)
