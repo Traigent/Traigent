@@ -163,7 +163,7 @@ async def main():
 
     # Show all trial results if available
     if hasattr(results, "trials") and results.trials:
-        print("All Trials:")
+        print("All Trials (composite score, not accuracy):")
         print("-" * 40)
         for i, trial in enumerate(results.trials, 1):
             # Handle different trial result formats
@@ -171,7 +171,7 @@ async def main():
                 "score", "N/A"
             )
             config = getattr(trial, "config", getattr(trial, "configuration", {}))
-            print(f"  Trial {i}: {config} -> score={score}")
+            print(f"  Trial {i}: {config} -> composite_score={score}")
 
     print()
     print("Next steps:")
