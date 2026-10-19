@@ -41,6 +41,9 @@ except Exception as exc:  # pragma: no cover - executed only when ragas missing
     ragas_evaluate = EvaluationDataset = SingleTurnSample = None
 
 from traigent.api.types import ExampleResult
+from traigent.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 POPULAR_RAGAS_METRICS: tuple[str, ...] = (
     "answer_relevancy",
@@ -461,6 +464,16 @@ def compute_ragas_metrics(
             "the required fields (user_input/response/reference/contexts)."
         )
 
+    # Rows the agent never answered (but that have a reference) are failures
+    # of the configuration under test, not rows to drop from the mean (#2677).
+    failed_rows = 0
+    for index, result in enumerate(example_results):
+        response = result.actual_output
+        if response is None and outputs is not None and index < len(outputs):
+            response = outputs[index]
+        if response is None and result.expected_output is not None:
+            failed_rows += 1
+
     dataset = EvaluationDataset(samples)
 
     # RAGAS uses asyncio under the hood; allow nested loops so evaluators can call
@@ -472,12 +485,33 @@ def compute_ragas_metrics(
         embeddings=config.embeddings,
         show_progress=False,
         allow_nest_asyncio=True,
+        # A judge call that raises must fail the metric, not come back as a
+        # NaN that the mean silently drops (#2677).
+        raise_exceptions=True,
     )
 
     aggregated: dict[str, float] = {}
     for metric in metrics:
-        values = result[metric.name]
-        aggregated[metric.name] = float(np.nanmean(values)) if len(values) else 0.0
+        values = np.asarray(result[metric.name], dtype=float)
+        defined = values[~np.isnan(values)]
+        denominator = len(defined) + failed_rows
+        if denominator == 0:
+            raise RagasConfigurationError(
+                f"ragas metric '{metric.name}' is undefined for every row; "
+                "refusing to report NaN as an objective value."
+            )
+        if len(defined) < len(values) or failed_rows:
+            logger.warning(
+                "ragas metric %r: %d of %d rows scored (%d undefined, %d agent "
+                "failures counted as 0.0)",
+                metric.name,
+                len(defined),
+                denominator,
+                len(values) - len(defined),
+                failed_rows,
+            )
+        # Agent-failed rows contribute 0.0 over the full denominator.
+        aggregated[metric.name] = float(defined.sum() / denominator)
 
     return aggregated
 
