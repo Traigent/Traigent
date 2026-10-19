@@ -654,7 +654,12 @@ class LocalStorageManager:
         )
 
     def finalize_session(
-        self, session_id: str, status: str | None = None
+        self,
+        session_id: str,
+        status: str | None = None,
+        *,
+        best_config: dict[str, Any] | None = None,
+        best_score: float | None = None,
     ) -> OptimizationSession | None:
         """
         Finalize an optimization session.
@@ -662,6 +667,12 @@ class LocalStorageManager:
         Args:
             session_id: Session identifier
             status: Final status (completed, failed, cancelled)
+            best_config: The terminal selector's winner. When given, it
+                replaces the incrementally tracked best so the stored session
+                names the same best as the returned result (tie-break and
+                eligibility rules are applied once, by the selector;
+                Traigent#2660).
+            best_score: Score of ``best_config``.
 
         Returns:
             The finalized session data or None if not found
@@ -672,6 +683,9 @@ class LocalStorageManager:
             return None
 
         session.status = status or OptimizationStatus.COMPLETED.value
+        if best_config is not None:
+            session.best_config = dict(best_config)
+            session.best_score = best_score
         # Re-assert the recorded-trial invariant at the end of the run: an
         # early-stopped run records fewer trials than it planned, and the count
         # that persists is the one that actually happened (#2032).

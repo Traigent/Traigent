@@ -4415,7 +4415,12 @@ class OptimizationOrchestrator:
         # runs have no backend finalize path, and sync eligibility requires a
         # terminal local status ("completed"). No-op for connected
         # tracking-enabled runs (their backend finalize owns the local mirror).
-        self.backend_session_manager.finalize_local_session(session_id, self._status)
+        self.backend_session_manager.finalize_local_session(
+            session_id,
+            self._status,
+            best_config=result.best_config,
+            best_score=result.best_score,
+        )
         # #2020: surface the syncable LOCAL session id on the result so the
         # caller can upload THIS run (`traigent sync r.sync_session_id`)
         # without --all or private-storage archaeology. Covers the runs the
