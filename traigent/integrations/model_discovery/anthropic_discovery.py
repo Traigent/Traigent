@@ -35,8 +35,7 @@ KNOWN_ANTHROPIC_MODELS = [
     "claude-sonnet-4-5-20250929",
     "claude-sonnet-4-20250514",
     "claude-haiku-4-5-20251001",
-    # Claude 3.7/3.5 family
-    "claude-3-7-sonnet-20250219",
+    # Claude 3.5 family (3.7 Sonnet and 3 Haiku retired, #2646)
     "claude-3-5-sonnet-20241022",
     "claude-3-5-sonnet-latest",
     "claude-3-5-haiku-20241022",
@@ -45,7 +44,6 @@ KNOWN_ANTHROPIC_MODELS = [
     # track (#1936/#1937) and swept from this served snapshot; see
     # traigent.config.retired_models.
     "claude-3-sonnet-20240229",
-    "claude-3-haiku-20240307",
     # Claude 2 family (legacy)
     "claude-2.1",
     "claude-2.0",

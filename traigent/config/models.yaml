@@ -81,7 +81,6 @@ anthropic:
     - claude-sonnet-4-20250514
     - claude-haiku-4-5-20251001
     # Claude 3.7/3.5 family
-    - claude-3-7-sonnet-20250219
     - claude-3-5-sonnet-20241022
     - claude-3-5-sonnet-latest
     - claude-3-5-haiku-20241022
@@ -90,7 +89,6 @@ anthropic:
     # from the discovery fallback; explicit references still validate via the
     # provider pattern below.
     - claude-3-sonnet-20240229
-    - claude-3-haiku-20240307
     # Claude 2 family (legacy)
     - claude-2.1
     - claude-2.0
@@ -196,7 +194,6 @@ bedrock:
     - anthropic.claude-3-5-sonnet-20241022-v2:0
     - anthropic.claude-3-5-haiku-20241022-v1:0
     - anthropic.claude-3-sonnet-20240229-v1:0
-    - anthropic.claude-3-haiku-20240307-v1:0
     - anthropic.claude-v2:1
     - anthropic.claude-v2
     - anthropic.claude-instant-v1

@@ -119,15 +119,14 @@ _KNOWN_MODELS: dict[str, frozenset[str]] = {
             # Claude 4 series (2025)
             "claude-sonnet-4-20250514",
             "claude-opus-4-20250514",
-            # Claude 3.7 series (2025)
-            "claude-3-7-sonnet-20250219",
+            # Claude 3.7 Sonnet retired 2026-02-19 (#2646).
             # Claude 3.5 series (2024)
             "claude-3-5-sonnet-20241022",
             "claude-3-5-haiku-20241022",
             # Claude 3 series (2024). Retired claude-3-opus-20240229 pruned
-            # (#1936/#1937).
+            # (#1936/#1937); claude-3-haiku-20240307 retired 2026-04-20
+            # (#2646/#2651).
             "claude-3-sonnet-20240229",
-            "claude-3-haiku-20240307",
         }
     ),
     "google": frozenset(

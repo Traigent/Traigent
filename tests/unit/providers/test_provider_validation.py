@@ -158,7 +158,7 @@ class TestValidateModelNames:
 
     def test_all_valid_anthropic_models(self):
         """Test validation with all known Anthropic models."""
-        models = ["claude-3-haiku-20240307", "claude-sonnet-4-20250514"]
+        models = ["claude-haiku-4-5-20251001", "claude-sonnet-4-20250514"]
         valid, unknown = validate_model_names(models, "anthropic")
         assert valid == models
         assert unknown == []
@@ -1265,7 +1265,7 @@ class TestModuleLevelConstants:
         # to be asserted here but was swept as retired (#1936/#1937); the
         # current Google entry is gemini-2.0-flash.
         assert "gpt-4o" in _KNOWN_MODELS["openai"]
-        assert "claude-3-haiku-20240307" in _KNOWN_MODELS["anthropic"]
+        assert "claude-haiku-4-5-20251001" in _KNOWN_MODELS["anthropic"]
         assert "gemini-2.0-flash" in _KNOWN_MODELS["google"]
 
     def test_auth_error_types_exist(self):
