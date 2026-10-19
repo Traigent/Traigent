@@ -108,6 +108,38 @@ class TestConfigurationErrors(DecoratorTestBase):
 
         assert hasattr(test_func, "optimize")
 
+    def test_default_config_outside_space_warns_trial_one(self):
+        """#1797 (owner ruling, card sdk-1797 option B): allowed, but warns."""
+        from unittest.mock import patch
+
+        with patch("traigent.utils.validation.logger") as log:
+            self._decorate_with_default_config(
+                {"model": ["gpt-3.5", "gpt-4"]}, {"model": "claude-2"}
+            )
+        log.warning.assert_called_once()
+        rendered = log.warning.call_args.args[0] % log.warning.call_args.args[1:]
+        assert "'model'" in rendered and "'claude-2'" in rendered
+        assert "trial 1" in rendered
+
+    def test_default_config_numeric_range_outside_space_warns(self):
+        from unittest.mock import patch
+
+        with patch("traigent.utils.validation.logger") as log:
+            self._decorate_with_default_config(
+                {"temperature": (0.0, 1.0)}, {"temperature": 2.0}
+            )
+        log.warning.assert_called_once()
+
+    def test_default_config_inside_space_does_not_warn(self):
+        from unittest.mock import patch
+
+        with patch("traigent.utils.validation.logger") as log:
+            self._decorate_with_default_config(
+                {"model": ["gpt-3.5"], "temperature": (0.0, 1.0)},
+                {"model": "gpt-3.5", "temperature": 0.5},
+            )
+        log.warning.assert_not_called()
+
     def test_default_config_strict_member_passes(self):
         test_func = self._decorate_with_default_config({"value": [0.0]}, {"value": 0.0})
 

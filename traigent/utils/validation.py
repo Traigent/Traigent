@@ -1271,6 +1271,24 @@ def _validate_default_choice(
                 f"but does not match declared type {_type_name(choice)}",
             )
 
+    _warn_default_outside_space(param_name, value)
+
+
+def _warn_default_outside_space(param_name: str, value: Any) -> None:
+    """Warn that a default_config value lies outside its search space (#1797).
+
+    Allowed on purpose (a baseline may sit outside the tuned set), but the
+    default runs as trial 1, so the run reports a config not in the space.
+    """
+    logger.warning(
+        "default_config[%r] value %r is outside configuration_space[%r]; "
+        "it will run as trial 1 and the reported configs will include a "
+        "value that is not in the search space.",
+        param_name,
+        value,
+        param_name,
+    )
+
 
 def _validate_default_config_value(
     param_name: str,
@@ -1287,6 +1305,15 @@ def _validate_default_config_value(
         return
 
     if isinstance(param_values, tuple) and len(param_values) == 2:
+        low, high = param_values
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and isinstance(low, (int, float))
+            and isinstance(high, (int, float))
+            and not low <= value <= high
+        ):
+            _warn_default_outside_space(param_name, value)
         return
 
     if isinstance(param_values, dict):
