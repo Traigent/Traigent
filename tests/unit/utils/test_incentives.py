@@ -567,7 +567,7 @@ class TestGetContextualHint:
         assert hint is not None
         assert "optimizations completed" in hint.lower()
         assert "traigent cloud" in hint.lower()
-        assert "traigent login" in hint.lower()
+        assert "traigent auth login" in hint.lower()
 
     def test_get_contextual_hint_returns_storage_growing_hint(
         self, manager: IncentiveManager
@@ -1335,7 +1335,7 @@ class TestShowOnboardingTips:
 
         assert "traigent local list" in tips_text
         assert "traigent local show" in tips_text
-        assert "traigent login" in tips_text
+        assert "traigent auth login" in tips_text
 
 
 class TestGlobalFunctions:

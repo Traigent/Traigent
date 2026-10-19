@@ -422,7 +422,7 @@ def storage_info() -> None:
             click.echo(f"   • Sync your {completed_count} completed sessions")
             click.echo("   • Get advanced analytics and visualizations")
             click.echo("   • Enable team collaboration")
-            click.echo("   Run 'traigent login' to get started")
+            click.echo("   Run 'traigent auth login' to get started")
 
     except Exception as e:
         click.echo(f"Error getting storage info: {e}", err=True)
