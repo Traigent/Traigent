@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any, cast
 
@@ -1942,7 +1943,7 @@ def validate_config(config_file: str) -> None:
             console.print("❌ [red]Configuration validation failed[/red]")
             for name in removed:
                 console.print(f"[red]{removed_mock_parameter_message(name)}[/red]")
-            return
+            sys.exit(1)
 
         # Extract configuration components
         config_space = config.get("configuration_space", {})
@@ -1961,11 +1962,13 @@ def validate_config(config_file: str) -> None:
             console.print("❌ [red]Configuration validation failed[/red]")
 
         console.print(result.get_feedback())
+        if not result.is_valid:
+            sys.exit(1)
 
     except json.JSONDecodeError as e:
-        console.print(f"[red]Invalid JSON in config file: {e}[/red]")
-    except Exception as e:
-        console.print(f"[red]Error reading config file: {e}[/red]")
+        raise click.ClickException(f"Invalid JSON in config file: {e}") from e
+    except (OSError, ValueError, AttributeError, TypeError) as e:
+        raise click.ClickException(f"Error reading config file: {e}") from e
 
 
 @cli.command()
