@@ -451,7 +451,10 @@ class AgentValidator:
         except (Exception, SystemExit) as e:
             # SystemExit: a scanned module may call sys.exit() at import time;
             # it must be reported as a failure, not terminate the validator.
-            logger.warning(f"Failed to validate {file_path}: {e}")
+            # Report only the exception class: the message may carry content
+            # from the scanned module (e.g. sys.exit("<secret>")).
+            error_type = type(e).__name__
+            logger.warning(f"Failed to validate file: {error_type}")
             results.append(
                 ValidationResult(
                     function_name=str(file_path),
@@ -460,7 +463,7 @@ class AgentValidator:
                         ValidationIssue(
                             severity="error",
                             code="DISCOVERY_ERROR",
-                            message=f"Failed to discover functions: {e}",
+                            message=f"Failed to discover functions ({error_type})",
                             suggestion="Check file syntax and imports",
                         )
                     ],

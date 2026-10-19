@@ -48,3 +48,17 @@ def test_directory_scan_still_skips_hidden_subdirs_under_target(
     validator.validate_file = lambda p: seen.append(Path(p).name) or []  # type: ignore[method-assign]
     validator.validate_directory(tmp_path)
     assert seen == ["ok.py"]
+
+
+def test_system_exit_message_is_not_logged_or_reported(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    mod = tmp_path / "m.py"
+    mod.write_text('import sys\nsys.exit("SYNTHETIC_SECRET_SENTINEL")\n')
+    with caplog.at_level("DEBUG"):
+        results = AgentValidator(HooksConfig()).validate_file(mod)
+    text = " ".join(i.message for r in results for i in r.issues) + caplog.text
+    assert "SYNTHETIC_SECRET_SENTINEL" not in text
+    assert any(i.code == "DISCOVERY_ERROR" for r in results for i in r.issues)
+    assert "SystemExit" in text  # class only, never the message
