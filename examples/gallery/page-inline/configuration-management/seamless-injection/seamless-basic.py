@@ -59,7 +59,7 @@ def generate_summary(text: str) -> str:
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+        "model": ["gpt-3.5-turbo", "gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.1, 0.3, 0.5, 0.7, 0.9],
         "max_tokens": [100, 150, 200, 300],
     },
@@ -79,7 +79,7 @@ def optimized_summary(text: str) -> str:
     return getattr(response, "content", str(response))
 
 
-# Traigent finds: model="gpt-4o-mini", temperature=0.3, max_tokens=200
+# Traigent finds: model="gpt-4.1-mini", temperature=0.3, max_tokens=200
 # Your function automatically uses these optimal values!
 
 if __name__ == "__main__":

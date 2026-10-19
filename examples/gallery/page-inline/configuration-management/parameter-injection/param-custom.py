@@ -88,8 +88,8 @@ def adaptive_chat_bot(user_message: str) -> str:
     # Map custom parameters to LLM settings
     model_map = {
         "fast": "gpt-3.5-turbo",
-        "balanced": "gpt-4o-mini",
-        "accurate": "gpt-4o",
+        "balanced": "gpt-4.1-mini",
+        "accurate": "gpt-4.1",
     }
 
     length_map = {"short": 100, "medium": 300, "long": 500}
@@ -100,7 +100,7 @@ def adaptive_chat_bot(user_message: str) -> str:
     temperature = float(config.get("llm_creativity", 0.5))
 
     llm = ChatOpenAI(
-        model=model_map.get(model_key, "gpt-4o-mini"),
+        model=model_map.get(model_key, "gpt-4.1-mini"),
         temperature=temperature,
         max_tokens=length_map.get(length_key, 300),
     )

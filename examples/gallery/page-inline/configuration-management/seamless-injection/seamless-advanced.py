@@ -73,9 +73,9 @@ wrap_untrusted = _SAFE_HELPERS.wrap_untrusted
 @traigent.optimize(
     configuration_space={
         # Separate configs for different LLM roles
-        "analyzer_model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+        "analyzer_model": ["gpt-3.5-turbo", "gpt-4.1-mini"],
         "analyzer_temp": [0.0, 0.1, 0.2],
-        "generator_model": ["gpt-3.5-turbo", "gpt-4o"],
+        "generator_model": ["gpt-3.5-turbo", "gpt-4.1"],
         "generator_temp": [0.5, 0.7, 0.9],
         "max_context": [2000, 4000, 8000],
     }
@@ -99,7 +99,7 @@ def intelligent_content_system(topic: str) -> str:
     # Step 2: Generate content based on analysis. Treat the analyzer's output
     # as untrusted as well, since it can echo adversarial topic content.
     generator = ChatOpenAI(
-        model="gpt-4o",  # Uses generator_model from optimization
+        model="gpt-4.1",  # Uses generator_model from optimization
         temperature=0.7,  # Uses generator_temp from optimization
         max_tokens=2000,  # Uses max_context from optimization
     )

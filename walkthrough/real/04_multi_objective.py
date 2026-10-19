@@ -55,8 +55,8 @@ OBJECTIVES = ObjectiveSchema.from_objectives(
 # Valid model names: https://models.litellm.ai/
 CONFIG_SPACE = {
     "model": [
-        "gpt-4o-mini",
-        "gpt-4o",
+        "gpt-4.1-mini",
+        "gpt-4.1",
     ],
     "prompt": ["minimal", "role_based"],
     "temperature": [0.0, 0.3],

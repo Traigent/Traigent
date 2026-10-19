@@ -211,7 +211,7 @@ def simulate_workflow_execution(
             input_tokens=1200,
             output_tokens=150,
             cost_usd=0.0018,
-            input_data={"model": "gpt-4o-mini", "temperature": 0.7},
+            input_data={"model": "gpt-4.1-mini", "temperature": 0.7},
             output_data={"response": "Generated answer based on context"},
         )
     )

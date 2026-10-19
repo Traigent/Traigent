@@ -47,7 +47,7 @@ DATASETS = Path(__file__).parent.parent / "datasets"
 OBJECTIVES = ["accuracy", "cost"]
 # Valid model names: https://models.litellm.ai/
 CONFIG_SPACE = {
-    "model": ["gpt-4o-mini", "gpt-4o"],
+    "model": ["gpt-4.1-mini", "gpt-4.1"],
     "temperature": [0.0, 0.5, 1.0],
     "max_tokens": [50, 150, 300],
     "use_system_prompt": [True, False],
@@ -64,7 +64,7 @@ CONFIG_SPACE = {
 )
 def answer_with_control(question: str, config: TraigentConfig) -> str:
     """Function with explicit configuration parameter."""
-    model = config.get("model", "gpt-4o-mini")
+    model = config.get("model", "gpt-4.1-mini")
     temperature = config.get("temperature", 0.5)
     max_tokens = config.get("max_tokens", 150)
     use_system = config.get("use_system_prompt", True)

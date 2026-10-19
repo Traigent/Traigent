@@ -14,7 +14,7 @@ def answer_question(query: str, context: str) -> str:  # noqa: ARG001
     """RAG-style agent with multiple tunable parameters."""
     # LLM configuration
     temperature = 0.7  # noqa: F841
-    model_name = "gpt-4o"  # noqa: F841
+    model_name = "gpt-4.1"  # noqa: F841
     max_tokens = 1024  # noqa: F841
 
     # Retrieval configuration
@@ -52,7 +52,7 @@ def multi_step_agent(query: str) -> str:
     adjusted_temp = base_temp  # 1 hop  # noqa: F841
     final_temp = adjusted_temp  # 2 hops from base_temp  # noqa: F841
 
-    model = "gpt-4o-mini"  # noqa: F841
+    model = "gpt-4.1-mini"  # noqa: F841
     prompt = f"Answer the question: {query}"  # noqa: F841
 
     # llm.invoke(prompt, temperature=final_temp, model=model)

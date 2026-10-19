@@ -27,8 +27,8 @@ environment:
   snapshot_id: "2025-01-15T00:00:00Z"
   components:
     price_catalog:
-      gpt-4o: 0.005
-      gpt-4o-mini: 0.00015
+      gpt-4.1: 0.005
+      gpt-4.1-mini: 0.00015
       gpt-3.5-turbo: 0.0005
     quotas:
       daily_budget_usd: 50.0
@@ -37,8 +37,8 @@ environment:
 tvars:
   - name: model
     type: enum[str]
-    domain: ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"]
-    default: "gpt-4o-mini"
+    domain: ["gpt-4.1", "gpt-4.1-mini", "gpt-3.5-turbo"]
+    default: "gpt-4.1-mini"
 
   - name: temperature
     type: float
@@ -94,7 +94,7 @@ constraints:
     - when: "params.model == 'gpt-3.5-turbo'"
       then: "params.max_tokens <= 1024"
 
-    - when: "params.model == 'gpt-4o'"
+    - when: "params.model == 'gpt-4.1'"
       then: "params.use_cot == true"  # Use CoT for expensive model
 
     # General constraints

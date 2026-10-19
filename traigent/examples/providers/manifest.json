@@ -13,7 +13,7 @@
       "import_line": "from langchain_openai import ChatOpenAI",
       "extra_imports": [],
       "llm_expr": "ChatOpenAI(model=cfg[\"model\"], temperature=cfg[\"temperature\"])",
-      "models": ["gpt-4o-mini", "gpt-4o"],
+      "models": ["gpt-4.1-mini", "gpt-4.1"],
       "env_vars": [{ "name": "TRAIGENT_MOCK_LLM", "placeholder": "true", "value": "true" }],
       "creds_note": "Mock mode — no LLM provider key needed. LLM calls are intercepted and return canned responses.",
       "run_command": "python -m traigent.examples.quickstart"
@@ -28,7 +28,7 @@
       "import_line": "from langchain_openai import ChatOpenAI",
       "extra_imports": [],
       "llm_expr": "ChatOpenAI(model=cfg[\"model\"], temperature=cfg[\"temperature\"])",
-      "models": ["gpt-4o-mini", "gpt-4o"],
+      "models": ["gpt-4.1-mini", "gpt-4.1"],
       "env_vars": [{ "name": "OPENAI_API_KEY", "placeholder": "sk-..." }],
       "creds_note": "Set OPENAI_API_KEY to your OpenAI key.",
       "run_command": "python -m traigent.examples.providers.openai"
@@ -58,7 +58,7 @@
       "import_line": "from langchain_openai import ChatOpenAI",
       "extra_imports": ["import os"],
       "llm_expr": "ChatOpenAI(model=cfg[\"model\"], temperature=cfg[\"temperature\"], base_url=\"https://openrouter.ai/api/v1\", api_key=os.environ[\"OPENROUTER_API_KEY\"])",
-      "models": ["openai/gpt-4o-mini", "openai/gpt-4o"],
+      "models": ["openai/gpt-4.1-mini", "openai/gpt-4.1"],
       "env_vars": [{ "name": "OPENROUTER_API_KEY", "placeholder": "sk-or-..." }],
       "creds_note": "Set OPENROUTER_API_KEY. OpenRouter is OpenAI-compatible, so it reuses langchain-openai's ChatOpenAI with base_url=https://openrouter.ai/api/v1.",
       "run_command": "python -m traigent.examples.providers.openrouter"
@@ -175,7 +175,7 @@
       "import_line": "import litellm",
       "extra_imports": [],
       "llm_expr": null,
-      "models": ["gpt-4o-mini", "claude-haiku-4-5-20251001", "groq/llama-3.3-70b-versatile"],
+      "models": ["gpt-4.1-mini", "claude-haiku-4-5-20251001", "groq/llama-3.3-70b-versatile"],
       "env_vars": [{ "name": "OPENAI_API_KEY", "placeholder": "set the key for whichever provider(s) your models use" }],
       "creds_note": "LiteLLM is a core Traigent dependency, so this works with no extra packages. Use provider-prefixed model strings (e.g. anthropic/..., groq/..., bedrock/...) and set the matching provider key(s). LiteLLM routes each call to the right provider.",
       "run_command": "python -m traigent.examples.providers.litellm_any"

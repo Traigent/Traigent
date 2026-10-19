@@ -77,8 +77,8 @@ DATASETS = Path(__file__).resolve().parent.parent / "datasets"
 DEFAULT_DATASET_PATH = DATASETS / "simple_questions.jsonl"
 
 ALL_MODEL_CANDIDATES = [
-    "gpt-4o-mini",
-    "gpt-4o",
+    "gpt-4.1-mini",
+    "gpt-4.1",
     "claude-haiku-4-5-20251001",
     "gemini-3.5-flash-lite",
     "gemini-3.8-flash",
@@ -260,7 +260,7 @@ def provider_for_model(model: str) -> str:
 def available_real_models() -> list[str]:
     available: list[str] = []
     if os.getenv("OPENAI_API_KEY"):
-        available.extend(["gpt-4o-mini", "gpt-4o"])
+        available.extend(["gpt-4.1-mini", "gpt-4.1"])
     if os.getenv("ANTHROPIC_API_KEY"):
         available.append("claude-haiku-4-5-20251001")
     if os.getenv("GOOGLE_API_KEY"):

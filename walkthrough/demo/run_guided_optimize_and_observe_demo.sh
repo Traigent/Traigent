@@ -195,7 +195,7 @@ echo "Inspect now in the FE:"
 echo "  Open $FRONTEND_URL/observability"
 echo "  Filter by tag run:$RUN_ID"
 echo "  Open a baseline trace and inspect record-execution-context"
-echo "  You should see the default config: model=gpt-4o-mini, temperature=0.7, response_style=bullet"
+echo "  You should see the default config: model=gpt-4.1-mini, temperature=0.7, response_style=bullet"
 echo
 
 pause_for_enter "Press Enter after you inspect baseline traces to run step 2: optimization... "

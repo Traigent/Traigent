@@ -100,7 +100,7 @@ def _json_accuracy(
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+        "model": ["gpt-3.5-turbo", "gpt-4.1-mini"],
         "temperature": [0.0, 0.1, 0.3],
         "use_examples": [True, False],
         "prompt_style": ["direct", "reasoned"],

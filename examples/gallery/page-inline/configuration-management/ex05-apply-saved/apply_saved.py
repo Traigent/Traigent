@@ -56,7 +56,7 @@ except ImportError:  # pragma: no cover - support IDE execution paths
 @traigent.optimize(
     configuration_space={
         # Keep grid size small so total trials stay reasonable (<=10)
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+        "model": ["gpt-3.5-turbo", "gpt-4.1-mini"],
         "temperature": [0.1, 0.5],
         "max_tokens": [100, 200],
     },
@@ -151,7 +151,7 @@ def load_and_apply_saved_config():
         # Create a new function instance with the saved config
         @traigent.optimize(
             configuration_space={
-                "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+                "model": ["gpt-3.5-turbo", "gpt-4.1-mini"],
                 "temperature": [0.1, 0.3, 0.5, 0.7],
                 "max_tokens": [100, 200, 300],
             },

@@ -27,7 +27,7 @@ from traigent.metrics import DeepEvalScorer
 
 scorer = DeepEvalScorer(
     ["relevancy", "faithfulness"],
-    model="gpt-4o-mini",  # judge model (used by DeepEval to score outputs)
+    model="gpt-4.1-mini",  # judge model (used by DeepEval to score outputs)
     threshold=0.5,
 )
 
@@ -40,7 +40,7 @@ scorer = DeepEvalScorer(
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4o"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": (0.0, 1.0),
     },
     metric_functions=scorer.to_metric_functions(),
@@ -62,7 +62,7 @@ def answer_question(question: str) -> str:
     """Simple Q&A agent whose parameters are optimized by Traigent."""
     from langchain_openai import ChatOpenAI
 
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.7)
     return llm.invoke(question).content
 
 

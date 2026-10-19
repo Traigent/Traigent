@@ -163,7 +163,7 @@ def _min_quality_score(
 # Example 1: Single objective optimization
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+        "model": ["gpt-3.5-turbo", "gpt-4.1-mini"],
         "temperature": [0.1, 0.5, 0.9],
     },
     eval_dataset=DATASET_FILE,
@@ -181,7 +181,7 @@ def cost_optimized_bot(query: str) -> str:
 # Example 2: Multi-objective optimization
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+        "model": ["gpt-3.5-turbo", "gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.1, 0.3, 0.5, 0.7],
         "max_tokens": [100, 200, 300],
     },
@@ -209,7 +209,7 @@ def balanced_support_bot(query: str) -> str:
 # Example 3: Custom metrics with constraints
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+        "model": ["gpt-3.5-turbo", "gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.1, 0.3, 0.5],
         "response_format": ["brief", "standard", "detailed"],
     },
@@ -293,8 +293,8 @@ def analyze_tradeoffs() -> None:
     tradeoffs = {
         "Cost vs Quality": {
             "cheap": {"model": "gpt-3.5-turbo", "cost": "$0.002", "quality": "70%"},
-            "balanced": {"model": "gpt-4o-mini", "cost": "$0.01", "quality": "85%"},
-            "premium": {"model": "gpt-4o", "cost": "$0.03", "quality": "95%"},
+            "balanced": {"model": "gpt-4.1-mini", "cost": "$0.01", "quality": "85%"},
+            "premium": {"model": "gpt-4.1", "cost": "$0.03", "quality": "95%"},
         },
         "Speed vs Accuracy": {
             "fast": {"max_tokens": 100, "time": "1s", "accuracy": "75%"},

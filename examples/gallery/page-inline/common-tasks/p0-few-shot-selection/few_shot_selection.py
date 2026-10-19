@@ -98,7 +98,7 @@ def _exact_match(output: str | None, expected: str | None, llm_metrics=None) -> 
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+        "model": ["gpt-3.5-turbo", "gpt-4.1-mini"],
         "temperature": [0.0, 0.3],
         "shots": [0, 1, 2],
         "selection_strategy": ["random", "semantic"],

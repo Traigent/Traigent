@@ -34,7 +34,7 @@ traigent.initialize(offline=True, minimal_logging=True)
 DATASETS = Path(__file__).parent.parent / "datasets"
 OBJECTIVES = ["accuracy", "cost"]
 CONFIG_SPACE = {
-    "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+    "model": ["gpt-3.5-turbo", "gpt-4.1-mini", "gpt-4.1"],
     "temperature": [0.1, 0.5, 0.9],
 }
 
@@ -44,7 +44,7 @@ def results_match_score(
 ) -> float:
     """Simple scoring: 1.0 if expected answer appears in output, else 0.0.
 
-    In mock mode, returns model-dependent accuracy (gpt-4o > gpt-4o-mini > gpt-3.5-turbo).
+    In mock mode, returns model-dependent accuracy (gpt-4.1 > gpt-4.1-mini > gpt-3.5-turbo).
     In real mode, checks if the expected answer appears in the LLM output.
     """
     if os.getenv("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):

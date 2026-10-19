@@ -58,7 +58,7 @@ DATASETS = Path(__file__).parent.parent / "datasets"
 OBJECTIVES = ["accuracy", "cost"]
 # Valid model names: https://models.litellm.ai/
 CONFIG_SPACE = {
-    "model": ["gpt-4o-mini", "gpt-4o"],
+    "model": ["gpt-4.1-mini", "gpt-4.1"],
     "temperature": [0.0, 0.3, 0.7],
     "k": [1, 3, 5],
     "retrieval_method": ["similarity", "keyword"],
@@ -142,7 +142,7 @@ def rag_qa(question: str) -> str:
 
     # Generate answer
     llm = ChatOpenAI(
-        model=config.get("model", "gpt-4o-mini"),
+        model=config.get("model", "gpt-4.1-mini"),
         temperature=config.get("temperature", 0.3),
     )
 

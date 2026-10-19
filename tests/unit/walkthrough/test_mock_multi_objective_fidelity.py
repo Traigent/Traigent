@@ -3,7 +3,7 @@
 Before the fix, ``walkthrough/mock/04_multi_objective.py`` recorded ``cost = 0.0``
 on every trial, so the declared 30% cost weight had no effect on ``best_config``
 and the SDK emitted the #1832 "uniformly constant" warning. Latency varied but
-was mis-ordered (``if "gpt-4o" in model`` also matched ``gpt-4o-mini``).
+was mis-ordered (``if "gpt-4.1" in model`` also matched ``gpt-4.1-mini``).
 
 The fix injects per-configuration usage with :func:`traigent.with_usage` and
 registers a ``latency`` metric function returning MILLISECONDS. These tests pin
@@ -58,7 +58,7 @@ EXAMPLE_04 = WALKTHROUGH / "mock" / "04_multi_objective.py"
 EXAMPLE_09 = WALKTHROUGH / "mock" / "09_rag_multi_objective.py"
 RAG_DATASET = WALKTHROUGH / "datasets" / "rag_questions.jsonl"
 
-MODELS = ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"]
+MODELS = ["gpt-3.5-turbo", "gpt-4.1-mini", "gpt-4.1"]
 DATASET_SIZE = 20
 RAG_DATASET_SIZE = 13
 
@@ -204,14 +204,14 @@ async def test_shipped_04_cost_dominant_weighting_selects_cheapest() -> None:
     """A cost-dominant weighting must pick the cheapest model."""
     results = await _run_04(_objectives(accuracy=0.02, cost=0.97, latency=0.01))
 
-    assert results.best_config["model"] == "gpt-4o-mini"
+    assert results.best_config["model"] == "gpt-4.1-mini"
 
 
 async def test_shipped_04_accuracy_dominant_weighting_selects_most_accurate() -> None:
     """The same example under an accuracy-dominant weighting picks the best model."""
     results = await _run_04(_objectives(accuracy=0.98, cost=0.01, latency=0.01))
 
-    assert results.best_config["model"] == "gpt-4o"
+    assert results.best_config["model"] == "gpt-4.1"
 
 
 async def test_shipped_04_trial_cost_is_per_trial_total() -> None:
@@ -419,10 +419,10 @@ def test_example_04_smoke(offline_mock_env: dict[str, str]) -> None:
     assert completed.returncode == 0, combined
     assert "simulated from the static mock pricing/latency tables" in completed.stdout
     assert "uniformly constant" not in combined
-    assert "Model: gpt-4o-mini" in completed.stdout
+    assert "Model: gpt-4.1-mini" in completed.stdout
     # The user-visible #2003 symptom was "Latency:  0ms" under every model.
     assert "Latency:  200ms (simulated, per call)" in completed.stdout
-    assert "Cost:     $0.00036 (simulated, 20 examples)" in completed.stdout
+    assert "Cost:     $0.00096 (simulated, 20 examples)" in completed.stdout
     assert re.search(r"Latency:\s+0ms", completed.stdout) is None
 
     rows = _parse_results_table(completed.stdout)
@@ -452,9 +452,9 @@ def test_example_09_smoke(offline_mock_env: dict[str, str]) -> None:
     assert completed.returncode == 0, combined
     assert "simulated from the static mock pricing/latency tables" in completed.stdout
     assert "uniformly constant" not in combined
-    assert "Model:        gpt-4o-mini" in completed.stdout
+    assert "Model:        gpt-4.1-mini" in completed.stdout
     assert "Latency:  825ms (simulated)" in completed.stdout
-    assert "Cost:     $0.004680 (simulated)" in completed.stdout
+    assert "Cost:     $0.012480 (simulated)" in completed.stdout
     assert re.search(r"Latency:\s+0ms", completed.stdout) is None
 
     rows = _parse_results_table(completed.stdout)

@@ -258,7 +258,7 @@ def _get_mock_cost_for_trial(trial: Any, task_type: str, dataset_size: int) -> f
     from utils.mock_answers import get_mock_cost
 
     config = getattr(trial, "config", {})
-    model = config.get("model", "gpt-4o-mini")
+    model = config.get("model", "gpt-4.1-mini")
     return float(get_mock_cost(model, task_type, dataset_size))
 
 
@@ -271,7 +271,7 @@ def _get_mock_latency_for_trial(trial: Any, task_type: str) -> float:
     from utils.mock_answers import get_mock_latency
 
     config = getattr(trial, "config", {})
-    model = config.get("model", "gpt-4o-mini")
+    model = config.get("model", "gpt-4.1-mini")
     return float(get_mock_latency(model, task_type)) * 1000.0
 
 

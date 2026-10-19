@@ -44,7 +44,7 @@ except ImportError:  # pragma: no cover - support IDE execution paths
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+        "model": ["gpt-3.5-turbo", "gpt-4.1-mini"],
         "temperature": [0.1, 0.5, 0.9],
     },
     debug=True,  # Enable debug mode
@@ -59,7 +59,7 @@ def debug_example(prompt: str) -> str:
     # Debug output will show:
     # [Traigent] Intercepted ChatOpenAI constructor
     # [Traigent] Original: model=gpt-3.5-turbo, temperature=0.7
-    # [Traigent] Optimized: model=gpt-4o-mini, temperature=0.1
+    # [Traigent] Optimized: model=gpt-4.1-mini, temperature=0.1
     # [Traigent] Injecting optimized parameters
 
     response = llm.invoke(prompt)

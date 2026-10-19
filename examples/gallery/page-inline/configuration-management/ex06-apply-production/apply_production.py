@@ -133,7 +133,7 @@ class OptimizedChatService:
         # Define the optimized greeting function
         @traigent.optimize(
             configuration_space={
-                "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+                "model": ["gpt-3.5-turbo", "gpt-4.1-mini"],
                 "temperature": [0.1, 0.3, 0.5],
                 "max_tokens": [50, 100, 150],
                 "response_style": ["friendly", "professional", "casual"],
@@ -167,7 +167,7 @@ class OptimizedChatService:
         # Define the optimized response function
         @traigent.optimize(
             configuration_space={
-                "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+                "model": ["gpt-3.5-turbo", "gpt-4.1-mini", "gpt-4.1"],
                 "temperature": [0.3, 0.5, 0.7, 0.9],
                 "max_tokens": [200, 300, 500],
                 "creativity_mode": ["low", "medium", "high"],
@@ -311,7 +311,7 @@ def demo_production_usage():
     # they live inside the same allowed root the loader resolves against.
     print("\n2. Using Saved Configuration:")
     saved_config = {
-        "model": "gpt-4o-mini",
+        "model": "gpt-4.1-mini",
         "temperature": 0.3,
         "max_tokens": 250,
         "response_style": "professional",

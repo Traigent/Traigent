@@ -59,7 +59,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "sentiment_eval.jsonl")
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+        "model": ["gpt-3.5-turbo", "gpt-4.1-mini"],
         "temperature": [0.0, 0.3],
         "output_format": ["label_only", "json"],
     },

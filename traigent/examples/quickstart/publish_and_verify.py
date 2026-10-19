@@ -35,7 +35,7 @@ if __doc__ is not None:
 
 EXPERIMENT_NAME = "Quickstart Publish and Verify"
 CONFIG_SPACE = {
-    "model": ["gpt-4o-mini", "gpt-4o"],
+    "model": ["gpt-4.1-mini", "gpt-4.1"],
     "temperature": [0.0, 0.7],
 }
 DATASET = [
@@ -63,7 +63,7 @@ def _demo_scorer(
         except Exception:
             cfg = {}
 
-    model_score = 0.85 if str(cfg.get("model")) == "gpt-4o" else 0.65
+    model_score = 0.85 if str(cfg.get("model")) == "gpt-4.1" else 0.65
     temperature_raw = cfg.get("temperature", 0.5)
     temperature = (
         float(temperature_raw)

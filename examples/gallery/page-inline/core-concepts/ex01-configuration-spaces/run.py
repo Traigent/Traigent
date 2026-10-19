@@ -60,7 +60,7 @@ def main() -> None:
         "best_configuration": best_config,
         "configuration_types": {
             "discrete_choices": {
-                "example": "model: ['gpt-3.5-turbo', 'gpt-4o-mini', 'gpt-4o']",
+                "example": "model: ['gpt-3.5-turbo', 'gpt-4.1-mini', 'gpt-4.1']",
                 "description": "Select from predefined options",
             },
             "numerical_ranges": {

@@ -18,8 +18,8 @@ metadata:
 tvars:
   - name: model
     type: enum[str]
-    domain: ["gpt-4o-mini", "claude-3-haiku-20240307"]
-    default: "gpt-4o-mini"
+    domain: ["gpt-4.1-mini", "claude-3-haiku-20240307"]
+    default: "gpt-4.1-mini"
 
   - name: temperature
     type: float
