@@ -424,6 +424,40 @@ def _read_trusted_link(name: str, parent_fd: int) -> str:
 _MAX_LINK_HOPS = 16
 
 
+def _configured_root() -> str:
+    """The configured state root as an absolute path, WITHOUT normalizing it.
+
+    ``os.path.abspath`` would collapse ``link/../state`` to ``<parent of link>/state`` before the
+    walk, but the filesystem resolves it through the link's target; the store would then look in
+    a different place than the operator configured (and could mint fresh identities). A ``..``
+    component in the configured value is therefore refused outright
+    (``token_store_insecure_permissions``, the code every other path-trust refusal uses; no new
+    closed code is needed). A relative value is joined to the working directory as-is.
+    """
+    configured = os.fspath(_state_root())
+    if not os.path.isabs(configured):
+        configured = os.path.join(os.getcwd(), configured)
+    if ".." in configured.split(os.sep):
+        raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS)
+    return configured
+
+
+def _open_root() -> int:
+    """Open ``/`` and hold it to the same trust predicate as every other directory."""
+    try:
+        fd = os.open(os.sep, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:
+        raise TokenStoreError(TOKEN_MAP_NOT_PERSISTED) from None
+    try:
+        trusted = _trusted_dir(os.fstat(fd))
+    except OSError:
+        trusted = False
+    if not trusted:
+        os.close(fd)
+        raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS)
+    return fd
+
+
 def _open_anchor() -> _Anchor:
     """Walk the ORIGINAL configured state-root chain by descriptors, creating what is missing.
 
@@ -438,14 +472,14 @@ def _open_anchor() -> _Anchor:
     fsynced so the new entry survives power loss BEFORE anything depends on it.
     """
     _require_dirfd_support()
-    configured = os.path.abspath(_state_root())
+    configured = _configured_root()
     pending: list[tuple[str, bool]] = [
         (p, False) for p in configured.split(os.sep) if p
     ]
     pending.append((_STORE_DIRNAME, True))
     pending.reverse()  # pop() takes the next component
     hops = 0
-    fd = os.open(os.sep, os.O_RDONLY | os.O_DIRECTORY)
+    fd = _open_root()
     try:
         while pending:
             part, is_store = pending.pop()
@@ -465,7 +499,8 @@ def _open_anchor() -> _Anchor:
                     raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS) from None
                 if target.startswith(os.sep):
                     os.close(fd)
-                    fd = os.open(os.sep, os.O_RDONLY | os.O_DIRECTORY)
+                    fd = -1  # never close a stale descriptor if the reopen is refused
+                    fd = _open_root()
                 pending.extend((p, False) for p in reversed(target.split(os.sep)) if p)
                 continue
             except FileNotFoundError:

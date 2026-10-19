@@ -1503,6 +1503,101 @@ def test_dotdot_in_a_link_target_is_refused(server, tmp_path, monkeypatch):
     assert err.value.code == "token_store_insecure_permissions"
 
 
+def test_dotdot_in_the_configured_root_is_refused_not_collapsed(
+    server, tmp_path, monkeypatch
+):
+    """M1: ``<link>/../state`` resolves through the link's target; abspath would hide that."""
+    (tmp_path / "elsewhere" / "child").mkdir(parents=True, mode=0o700)
+    os.symlink(tmp_path / "elsewhere" / "child", tmp_path / "link")
+    (tmp_path / "state").mkdir(mode=0o700)  # where a collapsing walk would have gone
+    _use_root(monkeypatch, f"{tmp_path}/link/../state")
+    with pytest.raises(TokenStoreError) as err:
+        ensure_tokens(ns(), knobs("k"), transport=server)
+    assert err.value.code == "token_store_insecure_permissions"
+    assert server.calls == []
+    assert (
+        list((tmp_path / "state").iterdir()) == []
+    )  # nothing landed in the collapsed place
+
+
+def test_dotdot_in_a_relative_configured_root_is_refused(server, tmp_path, monkeypatch):
+    (tmp_path / "a").mkdir(mode=0o700)
+    monkeypatch.chdir(tmp_path)
+    _use_root(monkeypatch, "a/../state")
+    with pytest.raises(TokenStoreError) as err:
+        ensure_tokens(ns(), knobs("k"), transport=server)
+    assert err.value.code == "token_store_insecure_permissions"
+
+
+def test_relative_configured_root_without_dotdot_still_works(
+    server, tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    _use_root(monkeypatch, "rel_state")
+    refs = ensure_tokens(ns(), knobs("k"), transport=server)
+    assert refs
+    assert (tmp_path / "rel_state" / "token_store").is_dir()
+    assert ensure_tokens(ns(), knobs("k"), transport=server) == refs
+
+
+def _untrusted_root_fstat(monkeypatch, which):
+    """Make the ``which``-th (1-based) open of ``/`` report a world-writable, non-sticky dir.
+
+    Only that descriptor is faked (``os.fstat`` is patched, the real ``/`` is never touched).
+    """
+    real_open, real_fstat = os.open, os.fstat
+    state = {"n": 0, "fake": set()}
+
+    def spy_open(path, *args, **kwargs):
+        fd = real_open(path, *args, **kwargs)
+        if path == os.sep and "dir_fd" not in kwargs:
+            state["n"] += 1
+            if state["n"] == which:
+                state["fake"].add(fd)
+        else:
+            state["fake"].discard(
+                fd
+            )  # a recycled descriptor number is a different file
+        return fd
+
+    def spy_fstat(fd):
+        info = real_fstat(fd)
+        if fd in state["fake"]:
+            fields = list(info)
+            fields[0] = stat.S_IFDIR | 0o777  # world-writable, no sticky bit
+            return os.stat_result(fields)
+        return info
+
+    monkeypatch.setattr(os, "open", spy_open)
+    monkeypatch.setattr(os, "fstat", spy_fstat)
+    # the store's capability probe looks the function object up in this set
+    monkeypatch.setattr(os, "supports_dir_fd", set(os.supports_dir_fd) | {spy_open})
+    return state
+
+
+def test_untrusted_initial_root_descriptor_is_refused(server, monkeypatch):
+    state = _untrusted_root_fstat(monkeypatch, 1)
+    with pytest.raises(TokenStoreError) as err:
+        ensure_tokens(ns(), knobs("k"), transport=server)
+    assert err.value.code == "token_store_insecure_permissions"
+    assert state["n"] >= 1 and server.calls == []
+
+
+def test_untrusted_root_reopened_for_an_absolute_link_target_is_refused(
+    server, tmp_path, monkeypatch
+):
+    real = tmp_path / "real"
+    real.mkdir(mode=0o700)
+    os.symlink(real, tmp_path / "abs_link")  # absolute target: the walk reopens "/"
+    _use_root(monkeypatch, tmp_path / "abs_link")
+    state = _untrusted_root_fstat(monkeypatch, 2)
+    with pytest.raises(TokenStoreError) as err:
+        ensure_tokens(ns(), knobs("k"), transport=server)
+    assert err.value.code == "token_store_insecure_permissions"
+    assert state["n"] == 2 and server.calls == []
+    assert list(real.iterdir()) == []
+
+
 def test_platform_without_dir_fd_support_fails_closed(server, monkeypatch):
     monkeypatch.setattr(os, "supports_dir_fd", set())
     with pytest.raises(TokenStoreError) as err:

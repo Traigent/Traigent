@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import requests
 
+from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.backend_client import BackendIntegratedClient
 from traigent.cloud.client import CloudEgressBlockedError, CloudServiceError
 from traigent.labels import token_store as ts
@@ -318,6 +319,12 @@ def _own_raises(case, client, monkeypatch):
         client.no_egress = True  # the real egress switch: CloudEgressBlockedError
     elif case == "url_invalid":
         monkeypatch.setattr(client, "_build_token_refs_url", lambda: None)
+    elif case == "auth_rejected":
+        from traigent.cloud.auth import InvalidCredentialsError
+
+        client.auth_manager.auth.get_headers = AsyncMock(
+            side_effect=InvalidCredentialsError(f"rejected {HEBREW} {EMAIL}")
+        )
     elif case == "transport":
         monkeypatch.setattr(
             client,
@@ -327,9 +334,16 @@ def _own_raises(case, client, monkeypatch):
     return body
 
 
-@pytest.mark.parametrize(
-    "case", ["validation", "egress_disabled", "url_invalid", "transport"]
-)
+_EXPECTED_TYPE = {
+    "validation": CloudServiceError,
+    "egress_disabled": CloudEgressBlockedError,
+    "url_invalid": CloudServiceError,
+    "auth_rejected": AuthenticationError,
+    "transport": CloudServiceError,
+}
+
+
+@pytest.mark.parametrize("case", list(_EXPECTED_TYPE))
 def test_direct_issuance_clears_exception_context_inside_a_callers_except(
     case, monkeypatch
 ):
@@ -347,9 +361,11 @@ def test_direct_issuance_clears_exception_context_inside_a_callers_except(
         except (
             CloudServiceError,
             CloudEgressBlockedError,
+            AuthenticationError,
         ) as exc:  # INSIDE the handler
             caught = exc
     assert caught is not None
+    assert type(caught) is _EXPECTED_TYPE[case]  # exact type, not "one of the families"
     assert caught.__cause__ is None and caught.__context__ is None
     rendered = "".join(traceback.format_exception(caught))
     assert HEBREW not in rendered and EMAIL not in rendered

@@ -2543,8 +2543,10 @@ class BackendIntegratedClient:
         raised here. Idempotent by ``operation_key``, so a retry after any failure is safe.
         Transport failures surface as fixed text (``_protected_request``).
 
-        Closed boundary: every failure leaves as a ``CloudServiceError`` with fixed text and
-        NO ``__cause__`` / ``__context__`` (also when this is called inside the caller's own
+        Closed boundary: every failure leaves with fixed text as one of the three families
+        the method could always raise: ``CloudEgressBlockedError`` (egress off),
+        ``AuthenticationError`` (a backend-rejected key; subclasses collapse to the base)
+        or ``CloudServiceError`` (everything else), with NO ``__cause__`` / ``__context__`` (also when this is called inside the caller's own
         ``except`` that holds a customer name). The body is snapshotted first and only the
         validated snapshot is sent.
         """
@@ -2553,6 +2555,11 @@ class BackendIntegratedClient:
             return self._issue_token_refs_checked(body)
         except (CloudServiceError, CloudEgressBlockedError) as exc:
             error = exc  # this module's own fixed-text types keep their type
+        except AuthenticationError:
+            # ``_get_sync_auth_headers`` documents that a backend-rejected key propagates as
+            # ``AuthenticationError`` so callers can ask for credentials; keep that family
+            # (fixed text: the original may quote a header or key fragment).
+            error = AuthenticationError("Token-refs issuance authentication failed")
         except Exception:  # noqa: BLE001 - closed boundary: nothing else may escape
             error = CloudServiceError("Token-refs issuance failed")
         # Raised outside the ``except`` block, then cleared AFTER the raise has chained (the
