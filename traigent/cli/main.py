@@ -1799,8 +1799,7 @@ def export(
         result = persistence.load_result(result_name)
 
         if not result.best_config:
-            console.print("[red]No best configuration found in this result[/red]")
-            return
+            raise click.ClickException("No best configuration found in this result")
 
         # Determine output path
         if output is None:
@@ -1809,6 +1808,10 @@ def export(
             output_path = Path(output)
 
         output_path = _resolve_user_cli_path(output_path, "Output file", for_write=True)
+        if output_path.is_dir():
+            raise click.ClickException(
+                f"Output file is a directory, not a file path: {output_path}"
+            )
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Build export data based on format
@@ -1872,11 +1875,15 @@ def export(
             f'[cyan]@traigent.optimize(load_from="{output_path}", ...)[/cyan]'
         )
 
-    except FileNotFoundError:
-        console.print(f"[red]Result '{result_name}' not found[/red]")
-        console.print("Use 'traigent results' to see available results")
+    except click.ClickException:
+        raise
+    except FileNotFoundError as e:
+        raise click.ClickException(
+            f"Result '{result_name}' not found ({e}). "
+            "Use 'traigent results' to see available results"
+        ) from e
     except Exception as e:
-        console.print(f"[red]Error exporting result: {e}[/red]")
+        raise click.ClickException(f"Error exporting result: {e}") from e
 
 
 @cli.command()
