@@ -1271,23 +1271,38 @@ def _validate_default_choice(
                 f"but does not match declared type {_type_name(choice)}",
             )
 
-    _warn_default_outside_space(param_name, value)
+    _warn_default_outside_space(param_name, value, "the choices")
 
 
-def _warn_default_outside_space(param_name: str, value: Any) -> None:
+def _warn_default_outside_space(param_name: str, value: Any, domain: str) -> None:
     """Warn that a default_config value lies outside its search space (#1797).
 
     Allowed on purpose (a baseline may sit outside the tuned set), but the
     default runs as trial 1, so the run reports a config not in the space.
+    Content-free by design: the value can be customer content (e.g. a prompt),
+    so only the parameter name, the value's type and the domain are logged.
     """
     logger.warning(
-        "default_config[%r] value %r is outside configuration_space[%r]; "
+        "default_config[%r] (type %s) is outside %s of configuration_space[%r]; "
         "it will run as trial 1 and the reported configs will include a "
         "value that is not in the search space.",
         param_name,
-        value,
+        _type_name(value),
+        domain,
         param_name,
     )
+
+
+def _numeric_bounds_domain(param_name: str, value: Any, low: Any, high: Any) -> None:
+    def _is_num(x: Any) -> bool:
+        return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+    if not (_is_num(low) and _is_num(high)):
+        return
+    if not _is_num(value) or not low <= value <= high:
+        _warn_default_outside_space(
+            param_name, value, f"the numeric range [{low}, {high}]"
+        )
 
 
 def _validate_default_config_value(
@@ -1305,15 +1320,7 @@ def _validate_default_config_value(
         return
 
     if isinstance(param_values, tuple) and len(param_values) == 2:
-        low, high = param_values
-        if (
-            isinstance(value, (int, float))
-            and not isinstance(value, bool)
-            and isinstance(low, (int, float))
-            and isinstance(high, (int, float))
-            and not low <= value <= high
-        ):
-            _warn_default_outside_space(param_name, value)
+        _numeric_bounds_domain(param_name, value, *param_values)
         return
 
     if isinstance(param_values, dict):
@@ -1325,7 +1332,9 @@ def _validate_default_config_value(
             return
 
         if param_type in Validators._NUMERIC_TYPES:
-            return
+            low = param_values.get("low", param_values.get("min"))
+            high = param_values.get("high", param_values.get("max"))
+            _numeric_bounds_domain(param_name, value, low, high)
 
 
 def _validate_default_config_against_config_space(

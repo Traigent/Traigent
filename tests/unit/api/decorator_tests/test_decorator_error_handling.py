@@ -108,27 +108,59 @@ class TestConfigurationErrors(DecoratorTestBase):
 
         assert hasattr(test_func, "optimize")
 
+    @staticmethod
+    def _rendered(log):
+        call = log.warning.call_args
+        return call.args[0] % call.args[1:]
+
     def test_default_config_outside_space_warns_trial_one(self):
         """#1797 (owner ruling, card sdk-1797 option B): allowed, but warns."""
         from unittest.mock import patch
 
+        canary = "CANARY-customer-prompt-text"
         with patch("traigent.utils.validation.logger") as log:
             self._decorate_with_default_config(
-                {"model": ["gpt-3.5", "gpt-4"]}, {"model": "claude-2"}
+                {"model": ["gpt-3.5", "gpt-4"]}, {"model": canary}
             )
         log.warning.assert_called_once()
-        rendered = log.warning.call_args.args[0] % log.warning.call_args.args[1:]
-        assert "'model'" in rendered and "'claude-2'" in rendered
-        assert "trial 1" in rendered
+        rendered = self._rendered(log)
+        assert "'model'" in rendered and "trial 1" in rendered
+        assert "type str" in rendered
+        assert canary not in rendered
 
-    def test_default_config_numeric_range_outside_space_warns(self):
+    def test_default_config_numeric_outside_space_warns_all_formats(self):
         from unittest.mock import patch
 
-        with patch("traigent.utils.validation.logger") as log:
-            self._decorate_with_default_config(
-                {"temperature": (0.0, 1.0)}, {"temperature": 2.0}
-            )
-        log.warning.assert_called_once()
+        from traigent.api.parameter_ranges import LogRange, Range
+
+        spaces = {
+            "tuple": (0.0, 1.0),
+            "dict": {"type": "float", "low": 0.0, "high": 1.0},
+            "dict_min_max": {"type": "float", "min": 0.0, "max": 1.0},
+            "int_dict": {"type": "int", "low": 0, "high": 1},
+            "range": Range(0.0, 1.0),
+            "stepped_range": Range(0.0, 1.0, step=0.5),
+            "log_range": LogRange(0.1, 1.0),
+        }
+        for name, space in spaces.items():
+            with patch("traigent.utils.validation.logger") as log:
+                self._decorate_with_default_config({"t": space}, {"t": 2})
+            assert log.warning.call_count == 1, name
+            assert "[" in self._rendered(log), name
+
+    def test_default_config_numeric_inside_space_does_not_warn_all_formats(self):
+        from unittest.mock import patch
+
+        from traigent.api.parameter_ranges import LogRange, Range
+
+        for space in (
+            {"type": "float", "low": 0.0, "high": 1.0},
+            Range(0.0, 1.0, step=0.5),
+            LogRange(0.1, 1.0),
+        ):
+            with patch("traigent.utils.validation.logger") as log:
+                self._decorate_with_default_config({"t": space}, {"t": 0.5})
+            log.warning.assert_not_called()
 
     def test_default_config_inside_space_does_not_warn(self):
         from unittest.mock import patch
