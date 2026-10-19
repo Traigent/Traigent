@@ -148,6 +148,38 @@ class TestConfigurationErrors(DecoratorTestBase):
             assert log.warning.call_count == 1, name
             assert "[" in self._rendered(log), name
 
+    def test_default_config_in_bounds_but_off_discrete_grid_warns(self):
+        """sol round 2: in-bounds defaults off the step grid / non-integer warn."""
+        from unittest.mock import patch
+
+        from traigent.api.parameter_ranges import Range
+
+        cases = [
+            (Range(0.0, 1.0, step=0.5), 0.25),
+            ({"type": "int", "low": 0, "high": 2}, 0.5),
+        ]
+        for space, default in cases:
+            with patch("traigent.utils.validation.logger") as log:
+                self._decorate_with_default_config({"t": space}, {"t": default})
+            assert log.warning.call_count == 1, space
+            assert "(type float)" in self._rendered(log)
+
+    def test_default_config_on_discrete_grid_does_not_warn(self):
+        from unittest.mock import patch
+
+        from traigent.api.parameter_ranges import Range
+
+        for space, default in [
+            (Range(0.0, 1.0, step=0.5), 0.5),
+            (Range(0.0, 1.0, step=0.1), 0.30000000000000004),
+            (Range(0.0, 1.0, step=0.3), 1.0),
+            ({"type": "int", "low": 0, "high": 2}, 1),
+            ({"type": "int", "low": 0, "high": 2}, 2.0),
+        ]:
+            with patch("traigent.utils.validation.logger") as log:
+                self._decorate_with_default_config({"t": space}, {"t": default})
+            log.warning.assert_not_called()
+
     def test_default_config_numeric_inside_space_does_not_warn_all_formats(self):
         from unittest.mock import patch
 

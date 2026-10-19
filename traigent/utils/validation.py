@@ -1293,16 +1293,36 @@ def _warn_default_outside_space(param_name: str, value: Any, domain: str) -> Non
     )
 
 
-def _numeric_bounds_domain(param_name: str, value: Any, low: Any, high: Any) -> None:
+def _numeric_bounds_domain(
+    param_name: str,
+    value: Any,
+    low: Any,
+    high: Any,
+    *,
+    integer: bool = False,
+    step: Any = None,
+) -> None:
     def _is_num(x: Any) -> bool:
         return isinstance(x, (int, float)) and not isinstance(x, bool)
 
     if not (_is_num(low) and _is_num(high)):
         return
+    domain = f"the numeric range [{low}, {high}]"
     if not _is_num(value) or not low <= value <= high:
+        _warn_default_outside_space(param_name, value, domain)
+        return
+    if integer and value != int(value):
         _warn_default_outside_space(
-            param_name, value, f"the numeric range [{low}, {high}]"
+            param_name, value, f"the integer values of {domain}"
         )
+        return
+    if _is_num(step) and step > 0 and value != high:
+        intervals = (value - low) / step
+        tolerance = 1e-9 * max(1.0, abs(intervals))
+        if abs(intervals - round(intervals)) > tolerance:
+            _warn_default_outside_space(
+                param_name, value, f"the step-{step} grid of {domain}"
+            )
 
 
 def _validate_default_config_value(
@@ -1334,7 +1354,14 @@ def _validate_default_config_value(
         if param_type in Validators._NUMERIC_TYPES:
             low = param_values.get("low", param_values.get("min"))
             high = param_values.get("high", param_values.get("max"))
-            _numeric_bounds_domain(param_name, value, low, high)
+            _numeric_bounds_domain(
+                param_name,
+                value,
+                low,
+                high,
+                integer=param_type in {"int", "integer"},
+                step=None if param_values.get("log") else param_values.get("step"),
+            )
 
 
 def _validate_default_config_against_config_space(
