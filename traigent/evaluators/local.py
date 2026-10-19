@@ -1648,6 +1648,10 @@ class LocalEvaluator(BaseEvaluator):
         accuracy_value = self._calculate_example_accuracy(output, expected_output)
         if accuracy_value is not None:
             example_metric.custom_metrics.setdefault("accuracy", accuracy_value)
+        elif example_metric.accuracy_eligible:
+            # Gold exists but nothing could be compared: unmeasured, never the
+            # tracker's success-implies-1.0 fallback (#2495).
+            example_metric.accuracy_unavailable = True
 
         # Merge per-example user metrics into custom_metrics, never overriding
         # an evaluator-computed key (e.g. accuracy stays the computed value).

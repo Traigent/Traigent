@@ -532,6 +532,11 @@ class ExampleMetrics:
     # defaults to true for tracker callers that do not have dataset context;
     # that preserves their established success/error fallback semantics.
     accuracy_eligible: bool = True
+    # ``LocalEvaluator`` sets this when the row had a gold value but built-in
+    # accuracy could not be computed (e.g. no output to compare). The row is
+    # then UNMEASURED for accuracy: it is left out of the accuracy denominator
+    # and never gets the tracker-only "success means 1.0" fallback (#2495).
+    accuracy_unavailable: bool = False
     # True (the default) when ``tokens``/``cost``/``response`` were actually
     # extracted or estimated from a real provider response. False marks an
     # example whose zeros are the ABSENCE of a measurement, not a measured
@@ -888,7 +893,11 @@ class MetricsTracker:
             # Fallback to success rate if no example metrics
             accuracy_value = safe_get(aggregated, "success_rate")
 
-        if accuracy_value is None and not strict_nulls:
+        accuracy_unmeasured = any(
+            m.accuracy_unavailable and m.custom_metrics.get("accuracy") is None
+            for m in self.example_metrics
+        )
+        if accuracy_value is None and not strict_nulls and not accuracy_unmeasured:
             accuracy_value = 0.0
 
         duration_value = safe_get(aggregated, "duration")
@@ -1101,6 +1110,10 @@ class MetricsTracker:
                 continue
 
             if not metric.accuracy_eligible:
+                continue
+
+            if raw_accuracy is None and metric.accuracy_unavailable:
+                # Unmeasured, not a miss and not a hit (#2495).
                 continue
 
             if metric.success:
