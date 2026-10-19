@@ -27,6 +27,8 @@ BASE = "https://schemas.traigent.ai/"
 ENDPOINTS = "optimization/optimization_endpoints.json"
 #: Content-less token issuance route (Schema 5ab2fd8): its own endpoint inventory file.
 TOKEN_REFS_ENDPOINTS = "optimization/token_refs_endpoints.json"
+#: Negotiated label-write route (Schema 31e0ddf, POST /api/v1/optimization/labels).
+LABEL_WRITE_ENDPOINTS = "optimization/label_write_endpoints.json"
 LABEL_IO = "labels/label_io_schema.json"
 #: Label-service routes (Backend ``/api/v1/labels/*``): the Schema defines the write
 #: request in label_io_schema.json; the read request (a list of object refs) is defined
@@ -349,6 +351,7 @@ def build(schema_root: Path, commit: str | None = None) -> dict[str, Any]:
         )
     # appended after the label routes so every earlier node index stays where it was
     add_endpoint_routes(comp, TOKEN_REFS_ENDPOINTS, routes)
+    add_endpoint_routes(comp, LABEL_WRITE_ENDPOINTS, routes)
     _assert_operation_key_lossless(comp, routes)
     manifest = schema_root / "docs" / "content-class-manifest.json"
     commit = (

@@ -23,11 +23,11 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 TABLE = ROOT / "traigent" / "labels" / "content_class_table.json"
 SCHEMA_DIR = os.environ.get("TRAIGENT_SCHEMA_DIR")
-PINNED_SCHEMA_COMMIT = "5ab2fd82129b245bcb28b5c75e42e5facf6443cb"
+PINNED_SCHEMA_COMMIT = "31e0ddf818766d4570a58b3601b99b70dcc4c46e"
 PINNED_MANIFEST_SHA256 = (
-    "1b1d5233da1a4a55b3fee72eb97e7abc9a20eb678397e44639eafb414446b594"
+    "f3ed961e9674b660b38a5e1fec706bab1a10cd547addf59c8369ad7081040c1b"
 )
-PINNED_TABLE_SHA256 = "73a490e4236b75549c323969fe40610b85c53b9b6dd4f5262e38ca0e13bb9b5d"
+PINNED_TABLE_SHA256 = "cd715b40b5262e7c8ad878ccbc0b91d14ff9494e75546e41adaac25758a11ce5"
 
 
 def test_table_sha256_and_provenance_are_pinned() -> None:
