@@ -61,8 +61,10 @@ Mock mode alone does not skip the pre-run cost approval or the model-price
 coverage preflight, so an agent that mixes real and mock calls is still checked.
 Keyless walkthroughs and tests that are genuinely fully mocked opt out with
 `TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT=true`. The exemption applies only when mock
-LLM mode is on and `ENVIRONMENT` is not production; it is test/walkthrough-only
-and must not be set for real-LLM runs. Runtime cost accounting stays active.
+LLM mode is on and the environment (`ENVIRONMENT`, `TRAIGENT_ENV` or
+`TRAIGENT_ENVIRONMENT`) is explicitly non-production, e.g. `ENVIRONMENT=development`.
+An unset or unknown environment counts as production and never gets the
+exemption. It is test/walkthrough-only and must not be set for real-LLM runs. Runtime cost accounting stays active.
 
 ## Dataset Path Containment
 

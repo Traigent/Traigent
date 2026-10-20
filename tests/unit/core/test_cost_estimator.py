@@ -424,6 +424,78 @@ class TestCheckCostApproval:
         ):
             assert cost_preflight_mock_exempt() is False
 
+    @pytest.mark.parametrize(
+        "env",
+        [
+            {"TRAIGENT_ENV": "production"},
+            {"TRAIGENT_ENVIRONMENT": "production"},
+            {"ENVIRONMENT": "production"},
+            {},
+            {"ENVIRONMENT": "banana"},
+            {"TRAIGENT_ENV": "banana"},
+        ],
+        ids=[
+            "traigent_env_production",
+            "traigent_environment_production",
+            "environment_production",
+            "unset",
+            "unknown_environment",
+            "unknown_traigent_env",
+        ],
+    )
+    def test_exemption_denied_unless_explicit_non_production(
+        self, env: dict[str, str]
+    ) -> None:
+        from traigent.utils.env_config import cost_preflight_mock_exempt
+
+        base = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("ENVIRONMENT", "TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT")
+        }
+        base["TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT"] = "true"
+        with (
+            patch.dict(os.environ, {**base, **env}, clear=True),
+            patch("traigent.utils.env_config.is_mock_llm", return_value=True),
+        ):
+            assert cost_preflight_mock_exempt() is False
+
+    @pytest.mark.parametrize("flag", ["false", "0", ""])
+    def test_exemption_denied_for_falsey_flag(self, flag: str) -> None:
+        from traigent.utils.env_config import cost_preflight_mock_exempt
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT": flag,
+                    "ENVIRONMENT": "development",
+                },
+            ),
+            patch("traigent.utils.env_config.is_mock_llm", return_value=True),
+        ):
+            assert cost_preflight_mock_exempt() is False
+
+    @pytest.mark.parametrize(
+        "key", ["ENVIRONMENT", "TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT"]
+    )
+    def test_exemption_allowed_for_explicit_non_production_with_mock(
+        self, key: str
+    ) -> None:
+        from traigent.utils.env_config import cost_preflight_mock_exempt
+
+        base = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("ENVIRONMENT", "TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT")
+        }
+        base.update({"TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT": "true", key: "development"})
+        with patch.dict(os.environ, base, clear=True):
+            with patch("traigent.utils.env_config.is_mock_llm", return_value=True):
+                assert cost_preflight_mock_exempt() is True
+            with patch("traigent.utils.env_config.is_mock_llm", return_value=False):
+                assert cost_preflight_mock_exempt() is False
+
     def test_passes_when_approved(self) -> None:
         enforcer = MagicMock(is_mock_mode=False)
         enforcer.check_and_approve.return_value = True

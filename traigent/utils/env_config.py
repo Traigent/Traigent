@@ -550,9 +550,12 @@ def cost_preflight_mock_exempt() -> bool:
     preflights (a mixed real/mock agent would otherwise run unchecked). The
     skip requires ALL of: mock LLM mode is on, the explicit test/walkthrough
     opt-in ``TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT`` is truthy, and the
-    environment is not production. Test and keyless-walkthrough use only.
+    environment is explicitly non-production (``ENVIRONMENT``/``TRAIGENT_ENV``/
+    ``TRAIGENT_ENVIRONMENT`` set to a known non-production name). Unset or
+    unknown environments count as production. Test and keyless-walkthrough
+    use only.
     """
-    if is_production_strict_env():
+    if treat_as_production_policy():
         return False
     if not is_truthy(os.environ.get(COST_PREFLIGHT_MOCK_EXEMPT_ENV)):
         return False
