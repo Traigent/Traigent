@@ -59,7 +59,10 @@ def test_semantically_misleading_custom_names_require_declaration(name: str) -> 
     message = str(error.value)
     assert "from traigent.core.objectives import create_default_objectives" in message
     assert f"create_default_objectives([{name!r}]" in message
-    assert f"orientations={{{name!r}: 'minimize'}}" in message
+    # #2421: never prescribe a single direction for a name the SDK knows
+    # nothing about; the snippet carries a placeholder naming both.
+    assert f"orientations={{{name!r}: '<maximize|minimize>'}}" in message
+    assert f"{name!r}: 'minimize'}}" not in message
 
 
 def test_accuracy_score_requires_explicit_direction() -> None:

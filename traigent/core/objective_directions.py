@@ -45,7 +45,10 @@ def _missing_orientation_error(name: str) -> ValueError:
         "example:\n\n"
         "from traigent.core.objectives import create_default_objectives\n"
         f"objectives = create_default_objectives([{name!r}], "
-        f"orientations={{{name!r}: 'minimize'}})"
+        f"orientations={{{name!r}: '<maximize|minimize>'}})\n\n"
+        "Replace the placeholder with 'maximize' if a higher value is better or "
+        "'minimize' if a lower value is better; the wrong choice ranks the worst "
+        "configuration first."
     )
 
 
