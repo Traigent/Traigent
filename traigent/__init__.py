@@ -212,6 +212,8 @@ except ModuleNotFoundError as exc:
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     # Main decorator and configuration API
     "optimize": ("traigent.api.decorators", "optimize"),
+    # Runtime requirements + reactive policies (lazy: no network, no TVL compiler)
+    "requirement": ("traigent.runtime.decorator", "requirement"),
     "ConfigSpace": ("traigent.api.config_space", "ConfigSpace"),
     "configure": ("traigent.api.functions", "configure"),
     "configure_for_budget": ("traigent.api.functions", "configure_for_budget"),
@@ -541,6 +543,7 @@ def _load_lazy_export(name: str):
 __all__ = [
     # Main decorator
     "optimize",
+    "requirement",
     # SE-friendly parameter range classes
     "Range",
     "IntRange",

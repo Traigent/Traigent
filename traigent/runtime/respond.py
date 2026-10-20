@@ -1,0 +1,212 @@
+"""``respond``: a human-approved fix for an open breach (design section 3.2).
+
+The response is a request to run the function's existing ``.optimize()`` under
+a declared cost ceiling.  Nothing is deployed.  Every start is preceded by a
+fresh, locally recorded human approval bound to the full-policy digest, rule,
+breach, occurrence, cost ceiling and an expiry, and by a second round of
+checks immediately before the run.  Any failed check holds: nothing runs.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from traigent.runtime import manifest
+from traigent.runtime.apply import matching_heads
+from traigent.runtime.client import RuntimeClient
+from traigent.runtime.model import (
+    E_APPROVAL_EXPIRED,
+    E_APPROVAL_REQUIRED,
+    E_FIX_CEILING,
+    E_HOLD,
+    E_NOT_APPLIED,
+    E_NOT_CURRENT,
+    E_OCCURRENCE_USED,
+    RuntimeRequirement,
+    RuntimeRequirementError,
+    normalise_environment,
+    positive_finite,
+)
+
+RESTORE_CODE = "RESTORE_PRODUCTION_REQUIREMENT"
+OCCURRENCE = 1  # PY-1: one human-approved start per (breach, rule)
+
+E_NO_RULE = "no_optimize_rule"
+E_NO_BREACH = "no_open_breach"
+E_NOT_RESTORE = "next_step_not_restore"
+E_RETIRED = "requirement_retired"
+E_POLICY_CHANGED = "policy_changed"
+
+
+class OccurrenceUsed(RuntimeRequirementError):
+    """This (breach, rule, occurrence) was already started; carries the earlier run id."""
+
+    def __init__(self, run_id: str | None = None) -> None:
+        super().__init__(E_OCCURRENCE_USED)
+        self.run_id = run_id
+
+
+@dataclass(frozen=True)
+class RespondResult:
+    breach_id: str
+    rule_id: str
+    occurrence: int
+    run_id: str | None
+    cost_ceiling_usd: float
+
+
+def _optimize_rule(requirement: RuntimeRequirement) -> str:
+    for rule in requirement.rules:
+        if rule.action == "optimize":
+            return rule.id
+    raise RuntimeRequirementError(E_NO_RULE)
+
+
+def _open_breach(
+    rows: list[dict[str, Any]], requirement: RuntimeRequirement
+) -> dict[str, Any]:
+    key = requirement.key()
+    for row in rows:
+        env = row.get("environment")
+        if (
+            row.get("kind") == key["kind"]
+            and row.get("latency_threshold_ms") == key["latency_threshold_ms"]
+            and isinstance(env, str)
+            and normalise_environment(env) == key["environment"]
+            and row.get("outcome") is None
+            and row.get("closed_at") is None
+            and isinstance(row.get("breach_id"), str)
+        ):
+            return row
+    raise RuntimeRequirementError(E_NO_BREACH)
+
+
+def _fresh_checks(
+    requirement: RuntimeRequirement,
+    api: RuntimeClient,
+    *,
+    project_id: str,
+    agent_id: str,
+    state: Path,
+) -> dict[str, Any]:
+    """Every precondition, read fresh; raises on the first one that fails (hold)."""
+    record = manifest.read_manifest(state, agent_id)["requirements"].get(
+        requirement.name
+    )
+    if not isinstance(record, dict) or not isinstance(record.get("receipt"), dict):
+        raise RuntimeRequirementError(E_NOT_APPLIED)
+    if record.get("full_policy_digest") != requirement.policy_digest():
+        raise RuntimeRequirementError(E_POLICY_CHANGED)
+    receipt = record["receipt"]
+    heads = matching_heads(api.list_requirements(), requirement, project_id, agent_id)
+    mine = [h for h in heads if h.get("head_id") == receipt.get("head_id")]
+    if len(mine) != 1:
+        raise RuntimeRequirementError(E_NOT_CURRENT, "head")
+    if mine[0].get("status") != "active":
+        raise RuntimeRequirementError(E_RETIRED)
+    if mine[0].get("revision_id") != receipt.get("revision_id"):
+        raise RuntimeRequirementError(E_NOT_CURRENT, "revision")
+    rows, _more = api.list_breaches(agent_id)
+    breach = _open_breach(rows, requirement)
+    step = api.get_next_step(agent_id).get("step")
+    code = step.get("code") if isinstance(step, dict) else None
+    if code != RESTORE_CODE:
+        raise RuntimeRequirementError(E_NOT_RESTORE)
+    return breach
+
+
+def _text(value: Any) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _run_id(result: Any) -> str | None:
+    value = getattr(result, "optimization_id", None)
+    if isinstance(value, str) and value and not value.startswith("unrestored-legacy:"):
+        return value
+    return None
+
+
+async def respond(
+    fn: Any,
+    requirement: RuntimeRequirement,
+    *,
+    project_id: str,
+    agent_id: str,
+    confirm: Callable[[dict[str, Any]], bool],
+    interactive: bool,
+    max_fix_cost_usd: float | None = None,
+    client: RuntimeClient | None = None,
+    state_dir: Path | None = None,
+    clock: Callable[[], datetime] = manifest.utcnow,
+) -> RespondResult:
+    """Ask a person, re-check, record the occurrence, then ``await fn.optimize(...)``."""
+    rule_id = _optimize_rule(requirement)
+    ceiling = (
+        max_fix_cost_usd
+        if max_fix_cost_usd is not None
+        else requirement.max_fix_cost_usd
+    )
+    if ceiling is None or not positive_finite(ceiling):
+        raise RuntimeRequirementError(E_FIX_CEILING, "max_fix_cost_usd")
+    if not interactive:
+        raise RuntimeRequirementError(E_APPROVAL_REQUIRED)
+    state = state_dir or manifest.default_state_dir()
+    api = client or RuntimeClient(project_id)
+
+    breach = _fresh_checks(
+        requirement, api, project_id=project_id, agent_id=agent_id, state=state
+    )
+    breach_id = str(breach["breach_id"])
+    key = manifest.occurrence_key(breach_id, rule_id, OCCURRENCE)
+    earlier = manifest.read_occurrence(state, agent_id, key)
+    if earlier is not None:
+        raise OccurrenceUsed(_text(earlier.get("run_id")))
+
+    facts = {
+        "requirement": requirement.name,
+        "breach_id": breach_id,
+        "opened_at": breach.get("opened_at"),
+        "latency_threshold_ms": requirement.latency_threshold_ms,
+        "environment": requirement.environment.strip(),
+        "rule_id": rule_id,
+        "occurrence": OCCURRENCE,
+        "cost_ceiling_usd": ceiling,
+    }
+    if not confirm(facts):
+        raise RuntimeRequirementError(E_APPROVAL_REQUIRED)
+    policy_digest = requirement.policy_digest()
+    manifest.write_approval(
+        state,
+        agent_id,
+        policy_digest=policy_digest,
+        rule_id=rule_id,
+        breach_id=breach_id,
+        occurrence=OCCURRENCE,
+        cost_ceiling_usd=float(ceiling),
+        now=clock(),
+    )
+
+    # Immediately before starting: approval valid and bound, then every check again.
+    approval = manifest.read_approval(state, agent_id, key)
+    if approval is None or approval.get("full_policy_digest") != policy_digest:
+        raise RuntimeRequirementError(E_HOLD, "approval")
+    if manifest.approval_expired(approval, clock()):
+        raise RuntimeRequirementError(E_APPROVAL_EXPIRED)
+    again = _fresh_checks(
+        requirement, api, project_id=project_id, agent_id=agent_id, state=state
+    )
+    if again.get("breach_id") != breach_id:
+        raise RuntimeRequirementError(E_HOLD, "breach")
+    if not manifest.reserve_occurrence(
+        state, agent_id, key, {"started_at": clock().isoformat(), "run_id": None}
+    ):
+        raise OccurrenceUsed()
+
+    result = await fn.optimize(cost_limit=float(ceiling))
+    run_id = _run_id(result)
+    manifest.update_occurrence(state, agent_id, key, {"run_id": run_id})
+    return RespondResult(breach_id, rule_id, OCCURRENCE, run_id, float(ceiling))
