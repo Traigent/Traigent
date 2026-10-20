@@ -201,7 +201,7 @@ def main():
 
     print("\n   Pareto-Optimal Configurations:")
     for i, (config, metrics) in enumerate(pareto_front):
-        print(f"\n   Solution {i+1}: {config['model']}")
+        print(f"\n   Solution {i + 1}: {config['model']}")
         print(
             f"     Config: temp={config['temperature']}, tokens={config['max_tokens']}, k={config['retrieval_k']}"
         )
@@ -232,7 +232,7 @@ def main():
         )
         accumulated_front.append(metrics)
         print(
-            f"   + Solution {i+1} ({config['model']}): HV improvement = {improvement:.4f}"
+            f"   + Solution {i + 1} ({config['model']}): HV improvement = {improvement:.4f}"
         )
 
     print("\n" + "=" * 60)

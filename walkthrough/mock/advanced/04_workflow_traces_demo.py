@@ -18,17 +18,6 @@ import os
 import uuid
 from datetime import UTC, datetime
 
-# Load .env file from project root (python-dotenv is optional)
-try:
-    from dotenv import load_dotenv
-except ImportError:  # pragma: no cover - optional convenience import
-
-    def load_dotenv() -> bool:
-        return False
-
-
-load_dotenv()  # Loads .env from current directory or parent directories
-
 from traigent.config.backend_config import BackendConfig
 
 # Import workflow traces components
@@ -42,6 +31,17 @@ from traigent.integrations.observability.workflow_traces import (
     WorkflowTracesClient,
     detect_loops_in_graph,
 )
+
+# Load .env file from project root (python-dotenv is optional)
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional convenience import
+
+    def load_dotenv() -> bool:
+        return False
+
+
+load_dotenv()  # Loads .env from current directory or parent directories
 
 
 def generate_trace_id() -> str:
@@ -247,8 +247,7 @@ def main() -> None:
 
     # Get backend URL and auth token (uses same env vars as rest of SDK)
     backend_url = (
-        os.environ.get("TRAIGENT_BACKEND_URL")
-        or BackendConfig.get_cloud_backend_url()
+        os.environ.get("TRAIGENT_BACKEND_URL") or BackendConfig.get_cloud_backend_url()
     )
     auth_token = os.environ.get("TRAIGENT_API_KEY")
     print(f"\nBackend URL: {backend_url}")
@@ -264,9 +263,7 @@ def main() -> None:
     # Use experiment ID from env var or generate a placeholder UUID
     # To use a real experiment, set DEMO_EXPERIMENT_ID to an ID from your backend:
     #   curl -H "X-API-Key: $TRAIGENT_API_KEY" https://portal.traigent.ai/api/v1/experiments
-    experiment_id = os.environ.get(
-        "DEMO_EXPERIMENT_ID", uuid.uuid4().hex
-    )
+    experiment_id = os.environ.get("DEMO_EXPERIMENT_ID", uuid.uuid4().hex)
     run_id = f"demo-run-{uuid.uuid4().hex[:8]}"
 
     print(f"\nExperiment ID: {experiment_id}")

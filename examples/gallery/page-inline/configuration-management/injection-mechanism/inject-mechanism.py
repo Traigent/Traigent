@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -14,7 +15,9 @@ else:
     for _depth in range(1, 7):
         try:
             _repo_root = _module_path.parents[_depth]
-            if (_repo_root / "traigent").is_dir() and (_repo_root / "examples").is_dir():
+            if (_repo_root / "traigent").is_dir() and (
+                _repo_root / "examples"
+            ).is_dir():
                 if str(_repo_root) not in sys.path:
                     sys.path.insert(0, str(_repo_root))
                 break

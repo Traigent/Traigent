@@ -75,7 +75,6 @@ _REAL_ACCURACY: dict[tuple, float] = {
     ("gpt-4.1-mini", "minimal", 0.8, "CoT", 200): 0.745,
     ("gpt-5.1", "role_based", 0.3, "direct", 200): 0.811,
     ("gpt-4.1", "minimal", 0.2, "direct", 100): 0.741,
-    ("gpt-4.1", "minimal", 0.3, "direct", 50): 0.710,
     ("gpt-4.1", "role_based", 0.1, "direct", 100): 0.874,
     ("gpt-5-nano", "role_based", 0.0, "direct", 200): 0.050,
     ("gpt-4.1", "role_based", 0.1, "direct", 200): 0.868,
