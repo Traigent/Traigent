@@ -266,3 +266,127 @@ def test_nested_call_to_a_different_model_is_captured_separately(
     chunks = list(_named_llm("outer-model").stream("hi"))
     assert chunks
     assert len(get_all_captured_responses()) == 2
+
+
+def test_same_instance_reentry_is_captured_separately(
+    monkeypatch: pytest.MonkeyPatch, connects: list[Any], mock_off: None
+) -> None:
+    """Sol r6: a callback re-invoking the SAME instance is a billed call too."""
+    llm = _fallback_llm()
+    state = {"depth": 0}
+
+    def _generate(self: Any, *a: Any, **k: Any) -> Any:
+        if state["depth"] == 0:
+            state["depth"] = 1
+            llm.invoke("nested")
+        return _canned_result()
+
+    async def _agenerate(self: Any, *a: Any, **k: Any) -> Any:
+        if state["depth"] == 0:
+            state["depth"] = 1
+            await llm.ainvoke("nested")
+        return _canned_result()
+
+    monkeypatch.setattr(ChatOpenAI, "_generate", _generate)
+    monkeypatch.setattr(ChatOpenAI, "_agenerate", _agenerate)
+
+    llm.invoke("hi")
+    assert len(get_all_captured_responses()) == 2
+    clear_captured_responses()
+    state["depth"] = 0
+    asyncio.run(llm.ainvoke("hi"))
+    assert len(get_all_captured_responses()) == 2
+    clear_captured_responses()
+    state["depth"] = 0
+    assert list(llm.stream("hi"))
+    assert len(get_all_captured_responses()) == 2  # fallback call + nested call
+
+
+def _streaming_llm() -> ChatOpenAI:
+    return ChatOpenAI(
+        api_key="sk-fake",
+        base_url="http://127.0.0.1:9/v1",
+        model="gpt-4o-mini",
+        max_retries=0,
+    )
+
+
+def _canned_chunks() -> list[Any]:
+    from langchain_core.messages import AIMessageChunk
+    from langchain_core.outputs import ChatGenerationChunk
+
+    first = AIMessageChunk(content="a")
+    last = AIMessageChunk(
+        content="b",
+        response_metadata={"model_name": "gpt-4o-mini"},
+        usage_metadata={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+    )
+    return [ChatGenerationChunk(message=first), ChatGenerationChunk(message=last)]
+
+
+def test_real_stream_records_once_and_nested_invoke_is_not_suppressed(
+    monkeypatch: pytest.MonkeyPatch, connects: list[Any], mock_off: None
+) -> None:
+    llm = _streaming_llm()
+    state = {"nested": False}
+
+    def _stream(self: Any, *a: Any, **k: Any) -> Any:
+        yield _canned_chunks()[0]
+        if state["nested"]:
+            _fallback_llm().invoke("nested")
+        yield _canned_chunks()[1]
+
+    monkeypatch.setattr(ChatOpenAI, "_stream", _stream)
+    monkeypatch.setattr(ChatOpenAI, "_generate", lambda self, *a, **k: _canned_result())
+
+    assert list(llm.stream("hi"))
+    assert len(get_all_captured_responses()) == 1
+    clear_captured_responses()
+    state["nested"] = True
+    assert list(llm.stream("hi"))
+    assert len(get_all_captured_responses()) == 2
+
+
+def test_real_stream_close_after_first_chunk_records_once(
+    monkeypatch: pytest.MonkeyPatch, connects: list[Any], mock_off: None
+) -> None:
+    def _stream(self: Any, *a: Any, **k: Any) -> Any:
+        yield from _canned_chunks()
+
+    async def _astream(self: Any, *a: Any, **k: Any) -> Any:
+        for chunk in _canned_chunks():
+            yield chunk
+
+    monkeypatch.setattr(ChatOpenAI, "_stream", _stream)
+    monkeypatch.setattr(ChatOpenAI, "_astream", _astream)
+
+    stream = _streaming_llm().stream("hi")
+    assert next(stream) is not None
+    stream.close()
+    assert len(get_all_captured_responses()) == 1
+    clear_captured_responses()
+
+    async def run() -> None:
+        astream = _streaming_llm().astream("hi")
+        assert await astream.__anext__() is not None
+        await astream.aclose()
+
+    asyncio.run(run())
+    assert len(get_all_captured_responses()) == 1
+
+
+def test_stream_falls_back_helper_degrades_when_check_unavailable() -> None:
+    """If LangChain's private ``_should_stream`` is gone or fails, report unknown."""
+    from traigent.utils.langchain_interceptor import _stream_falls_back
+
+    class NoCheck:
+        pass
+
+    class Raises:
+        def _should_stream(self, **_kw: Any) -> bool:
+            raise TypeError("signature changed")
+
+    assert _stream_falls_back(NoCheck(), async_api=False, kwargs={}) is None
+    assert _stream_falls_back(Raises(), async_api=True, kwargs={}) is None
+    assert _stream_falls_back(_fallback_llm(), async_api=False, kwargs={}) is True
+    assert _stream_falls_back(_streaming_llm(), async_api=False, kwargs={}) is False

@@ -98,27 +98,40 @@ def _owned_by(model: Any) -> Any:
 
 @contextmanager
 def _capture_ownership(model: Any) -> Iterator[bool]:
-    """Yield True when this wrapper is the outermost capturer of its call.
+    """Yield True when this invoke wrapper should record its own response.
 
-    LangChain methods call each other on the SAME model instance (``astream``
-    falls back to ``ainvoke`` for ``disable_streaming`` models; ``stream`` to
-    ``invoke``). Each of our wrappers records the response it sees, so a
-    nested pair would record one provider call twice and double its tokens
-    and cost. Ownership is keyed to the model instance: a wrapper entered on
-    an instance that already owns the capture skips its own, while an
-    independent nested call on a different model (e.g. a callback that
-    invokes a second model) is a separate provider call and is still
-    captured.
+    Normally always True: ``invoke``/``ainvoke`` wrappers record exactly once
+    per call, and nested independent calls (even a callback re-invoking the
+    SAME model instance) are separate provider calls that must each be
+    recorded. The stream wrappers avoid double counting instead by asking
+    LangChain up front whether a stream call falls back to invoke/ainvoke
+    (:func:`_stream_falls_back`) and not recording in that case.
+
+    Only when ``_should_stream`` is unavailable (``_stream_falls_back``
+    returns None) do the stream wrappers mark the instance as owning the
+    capture while the wrapped stream runs; this wrapper then yields False so
+    the fallback invoke is recorded once, by the stream wrapper. That legacy
+    path is instance-scoped and may drop a same-instance re-entrant call.
     """
-    key = id(model)
-    if key in _capture_owned.get():
-        yield False
-        return
-    token = _owned_by(model)
+    yield id(model) not in _capture_owned.get()
+
+
+def _stream_falls_back(model: Any, *, async_api: bool, kwargs: dict[str, Any]) -> Any:
+    """Ask LangChain whether ``stream``/``astream`` will fall back to invoke.
+
+    Mirrors the decision in ``BaseChatModel.stream``/``astream``:
+    ``not self._should_stream(async_api=..., **{**kwargs, "stream": True})``.
+    Returns True (falls back; the inner invoke wrapper records), False (really
+    streams) or None when the check is unavailable or fails (legacy
+    instance-scoped ownership applies).
+    """
+    should_stream = getattr(model, "_should_stream", None)
+    if not callable(should_stream):
+        return None
     try:
-        yield True
-    finally:
-        _capture_owned.reset(token)
+        return not should_stream(async_api=async_api, **{**kwargs, "stream": True})
+    except Exception:  # noqa: BLE001 - private LangChain API; degrade, don't fail
+        return None
 
 
 class capture_scope:
@@ -444,20 +457,22 @@ def _create_stream_wrapper(original_meth: Any, provider: str = "unknown") -> Any
             return
         start_time = time.perf_counter()
         last = None
-        owns = id(self) not in _capture_owned.get()
+        fallback = _stream_falls_back(self, async_api=False, kwargs=kwargs)
+        owns = fallback is not True and id(self) not in _capture_owned.get()
         iterator = iter(original_meth(self, *args, **kwargs))
         try:
             while True:
-                # Own the capture only while the wrapped stream runs (not
-                # across our yields), so a stream->invoke fallback is
-                # captured once.
-                token = _owned_by(self)
+                # Legacy only (``_should_stream`` unavailable): own the
+                # capture while the wrapped stream runs, so a stream->invoke
+                # fallback is captured once.
+                token = _owned_by(self) if fallback is None else None
                 try:
                     chunk = next(iterator)
                 except StopIteration:
                     break
                 finally:
-                    _capture_owned.reset(token)
+                    if token is not None:
+                        _capture_owned.reset(token)
                 last = chunk
                 yield chunk
         except GeneratorExit:
@@ -481,20 +496,20 @@ def _create_astream_wrapper(original_meth: Any, provider: str = "unknown") -> An
             return
         start_time = time.perf_counter()
         last = None
-        owns = id(self) not in _capture_owned.get()
+        fallback = _stream_falls_back(self, async_api=True, kwargs=kwargs)
+        owns = fallback is not True and id(self) not in _capture_owned.get()
         iterator = original_meth(self, *args, **kwargs).__aiter__()
         try:
             while True:
-                # Own the capture only while the wrapped stream runs (not
-                # across our yields), so an astream->ainvoke fallback is
-                # captured once.
-                token = _owned_by(self)
+                # Legacy only: see stream_wrapper.
+                token = _owned_by(self) if fallback is None else None
                 try:
                     chunk = await iterator.__anext__()
                 except StopAsyncIteration:
                     break
                 finally:
-                    _capture_owned.reset(token)
+                    if token is not None:
+                        _capture_owned.reset(token)
                 last = chunk
                 yield chunk
         except GeneratorExit:
