@@ -29,10 +29,14 @@ OBJECTIVES = ObjectiveSchema.from_objectives(
     ]
 )
 
+# recorded-historical-begin: this block replays a past real API run and keeps
+# the model ids it was measured on. A measurement is never relabeled to a
+# different model. This script only displays it and never calls these models.
 CONFIG_SPACE = {
     "model": [
-        "gpt-4.1-mini",
-        "gpt-4.1",
+        "gpt-3.5-turbo",
+        "gpt-4o-mini",
+        "gpt-4o",
         "gpt-5.2",
         "gpt-5-nano",
         "gpt-5.1",
@@ -50,24 +54,25 @@ TRIALS_DATA = [
     # ``latency_seconds`` is wall-clock elapsed time; the canonical ``latency``
     # metric is in MILLISECONDS, so build_results() multiplies it by 1000.
     ("gpt-5.1", "minimal", 0.0, "direct", 50, 0.180, 0.00055, 2.747),
-    ("gpt-4.1-mini", "minimal", 0.1, "CoT", 200, 0.771, 0.00010, 3.728),
+    ("gpt-4o-mini", "minimal", 0.1, "CoT", 200, 0.771, 0.00010, 3.728),
     ("gpt-5.2", "minimal", 0.0, "CoT", 50, 0.128, 0.00079, 1.665),
-    ("gpt-4.1-mini", "minimal", 0.8, "CoT", 200, 0.745, 0.00010, 3.783),
+    ("gpt-4o-mini", "minimal", 0.8, "CoT", 200, 0.745, 0.00010, 3.783),
     ("gpt-5.1", "role_based", 0.3, "direct", 200, 0.811, 0.00062, 1.573),
-    ("gpt-4.1", "minimal", 0.2, "direct", 100, 0.741, 0.00094, 2.070),
-    ("gpt-4.1", "minimal", 0.3, "direct", 50, 0.710, 0.00062, 1.460),
-    ("gpt-4.1", "role_based", 0.1, "direct", 100, 0.874, 0.00008, 1.025),
+    ("gpt-4o", "minimal", 0.2, "direct", 100, 0.741, 0.00094, 2.070),
+    ("gpt-4o", "minimal", 0.3, "direct", 50, 0.710, 0.00062, 1.460),
+    ("gpt-3.5-turbo", "role_based", 0.1, "direct", 100, 0.874, 0.00008, 1.025),
     ("gpt-5-nano", "role_based", 0.0, "direct", 200, 0.050, 0.00008, 2.568),
-    ("gpt-4.1", "role_based", 0.1, "direct", 200, 0.868, 0.00008, 0.996),
+    ("gpt-3.5-turbo", "role_based", 0.1, "direct", 200, 0.868, 0.00008, 0.996),
     ("gpt-5-nano", "role_based", 0.9, "CoT", 200, 0.000, 0.00008, 2.457),
-    ("gpt-4.1", "minimal", 0.3, "direct", 50, 0.776, 0.00010, 1.198),
-    ("gpt-4.1-mini", "minimal", 0.6, "direct", 100, 0.738, 0.00006, 1.840),
+    ("gpt-3.5-turbo", "minimal", 0.3, "direct", 50, 0.776, 0.00010, 1.198),
+    ("gpt-4o-mini", "minimal", 0.6, "direct", 100, 0.738, 0.00006, 1.840),
     ("gpt-5.1", "role_based", 0.2, "direct", 100, 0.711, 0.00061, 1.604),
-    ("gpt-4.1-mini", "role_based", 0.1, "CoT", 200, 0.864, 0.00003, 1.163),
+    ("gpt-4o-mini", "role_based", 0.1, "CoT", 200, 0.864, 0.00003, 1.163),
     ("gpt-5.1", "minimal", 0.2, "direct", 100, 0.335, 0.00082, 2.234),
 ]
 
-BEST_IDX = 7  # trial 8: gpt-4.1, 87.4%
+BEST_IDX = 7  # trial 8: gpt-3.5-turbo, 87.4%
+# recorded-historical-end
 
 
 @dataclass

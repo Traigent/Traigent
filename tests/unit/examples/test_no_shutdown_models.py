@@ -26,8 +26,31 @@ ALLOWED = {
     "walkthrough/utils/mock_answers.py",
 }
 SKIP_NAMES = {"raw_results.json"}
+# Recorded historical measurements keep the model they were measured on. Only
+# these files may carry a ``# recorded-historical-begin`` ... ``-end`` block,
+# which the guard excludes from scanning. Such a file must only display the
+# recorded data and never call the recorded model.
+RECORDED_HISTORICAL_FILES = {"walkthrough/demo/optimize_rag.py"}
+_RECORDED_BLOCK = re.compile(
+    r"^# recorded-historical-begin.*?^# recorded-historical-end[^\n]*$",
+    re.DOTALL | re.MULTILINE,
+)
 PATTERN = re.compile(r"gpt-4o(?![\w.-]*(?:audio|search))")
 GPT35_PATTERN = re.compile(r"gpt-3\.5")
+
+
+def _read_guarded(path: Path) -> str:
+    """File text with the narrow recorded-historical exemption applied."""
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    rel = path.relative_to(REPO).as_posix()
+    if rel in RECORDED_HISTORICAL_FILES:
+        text = _RECORDED_BLOCK.sub("", text)
+    elif (
+        "recorded-historical-begin" in text
+        and rel != "tests/unit/examples/test_no_shutdown_models.py"
+    ):
+        raise AssertionError(f"{rel} is not allowed a recorded-historical block")
+    return text
 
 
 def _guarded_files(root: str) -> list[Path]:
@@ -67,7 +90,7 @@ def test_examples_and_manifest_do_not_use_gpt_4o_family() -> None:
             rel = path.relative_to(REPO).as_posix()
             if rel in ALLOWED:
                 continue
-            if PATTERN.search(path.read_text(encoding="utf-8", errors="ignore")):
+            if PATTERN.search(_read_guarded(path)):
                 offenders.append(rel)
     assert not offenders, offenders
 
@@ -88,7 +111,7 @@ def test_examples_walkthroughs_and_docs_do_not_use_gpt_3_5() -> None:
             rel = path.relative_to(REPO).as_posix()
             if rel in ALLOWED:
                 continue
-            if GPT35_PATTERN.search(path.read_text(encoding="utf-8", errors="ignore")):
+            if GPT35_PATTERN.search(_read_guarded(path)):
                 offenders.append(rel)
     readme = (REPO / "README.md").read_text(encoding="utf-8", errors="ignore")
     if GPT35_PATTERN.search(readme):
@@ -122,7 +145,7 @@ def test_guarded_surfaces_mention_no_model_with_announced_shutdown() -> None:
         rel = path.relative_to(REPO).as_posix()
         if path.name in SKIP_NAMES or rel in ALLOWED:
             continue
-        text = path.read_text(encoding="utf-8", errors="ignore")
+        text = _read_guarded(path)
         for match in MODEL_ID.finditer(text):
             model = match.group(1).rstrip(".-")
             for key in (model, f"openai/{model}"):
@@ -131,3 +154,13 @@ def test_guarded_surfaces_mention_no_model_with_announced_shutdown() -> None:
                         f"{model} ({table[key]['deprecation_date']})"
                     )
     assert not offenders, {k: sorted(v) for k, v in offenders.items()}
+
+
+def test_recorded_historical_block_is_narrow_and_present() -> None:
+    """The exemption removes only the marked block, not the whole file."""
+    path = REPO / "walkthrough/demo/optimize_rag.py"
+    raw = path.read_text(encoding="utf-8")
+    stripped = _read_guarded(path)
+    assert "recorded-historical-begin" in raw
+    assert GPT35_PATTERN.search(raw) and not GPT35_PATTERN.search(stripped)
+    assert "def main" in stripped
