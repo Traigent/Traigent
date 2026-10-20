@@ -12,10 +12,10 @@ not know, and what a trial reports when nothing was captured.
 
 | Client | Captured when | Notes |
 | --- | --- | --- |
-| LangChain `ChatOpenAI.invoke`, `ChatAnthropic.invoke`, Bedrock chat models | always (patched by the evaluator) | synchronous `invoke` only: `ainvoke`/`abatch` are not captured yet ([#2445](https://github.com/Traigent/Traigent/issues/2445)); `stream`/`astream` capture the last chunk, which carries usage only with `stream_usage=True` |
+| LangChain `ChatOpenAI`, `ChatAnthropic`, Bedrock chat models: `invoke`, `ainvoke`, `abatch`, `stream`, `astream` | always (patched by the evaluator) | `ainvoke`/`abatch` are captured ([#2424](https://github.com/Traigent/Traigent/issues/2424), [#2445](https://github.com/Traigent/Traigent/issues/2445)). `stream`/`astream` capture the last chunk, which carries usage only with `stream_usage=True`; without it the call is reported as unmeasured, not `$0` |
 | `litellm.completion` / `litellm.acompletion` | always (patched by the evaluator) | streaming calls are not captured |
 | Traigent's `BedrockChatClient` | always | |
-| Raw OpenAI SDK: `openai.OpenAI` / `openai.AsyncOpenAI` `chat.completions.create` and `completions.create` | the OpenAI override is active (see below) | non-streaming calls that return `usage` |
+| Raw OpenAI SDK, sync and async: `chat.completions.create`, `chat.completions.parse` (also `beta.chat.completions.parse`), `completions.create`, `responses.create`, `responses.parse`, and the `with_raw_response` form of each | the OpenAI override is active (see below) | non-streaming calls that return `usage`. Responses API `input_tokens`/`output_tokens` are counted as prompt/completion tokens. Your code still receives the normal return value; a `with_raw_response` result is parsed once and the parsed object is cached, so your own `.parse()` returns it |
 | Direct `google.genai` calls (Gemini API or Vertex AI client) | never | Traigent does not patch this client, so these calls are outside cost tracking. A trial can show a cost of 0.0, and a run with a cost cap can stop with an unmeasured-cost error. Calling Gemini through `litellm.completion` gets its usage captured. |
 
 ### Raw OpenAI SDK calls (including OpenAI-compatible gateways)
@@ -65,8 +65,16 @@ Coverage limits:
   unmeasured, not as `$0`.
 - **Responses without `usage`** (some gateways omit it) are not captured.
   They are reported as unmeasured.
-- `client.chat.completions.with_raw_response.create(...)` and the Responses
-  API (`client.responses.create`) are not captured.
+- **Not captured:** streaming forms (`stream=True`, `chat.completions.stream`,
+  `responses.stream`), `completions.create` on a gateway that omits `usage`,
+  and any other method (embeddings, images, audio, `responses.retrieve`).
+  A client whose `with_raw_response` accessor was first used before the
+  override was activated keeps the unpatched method: build the client after
+  enabling the override, or access `with_raw_response` only afterwards.
+- The new parse and Responses paths are capture-only: Traigent records their
+  usage but does not inject trial parameters (`model`, `temperature`, ...)
+  into them. Only `chat.completions.create` and `completions.create` receive
+  injected parameters.
 - When LangChain's `ChatOpenAI.invoke` or `litellm.completion` makes the
   OpenAI call for you, that wrapper records the usage and the underlying
   OpenAI call is not counted a second time.
@@ -175,7 +183,7 @@ argument; passing the same value as the default counts.
 To continue after the safety stop, either:
 
 1. **Get cost measured for every configuration.** Call the model through a
-   captured client (the table above; for LangChain, the synchronous `invoke`).
+   captured client (the table above).
    In a mixed run, find why the unmeasured configurations report no usage: a
    gateway that omits `usage`, a streaming call, or an uncaptured client. A
    fully measured run is bounded by its cost budget instead of the trial limit,
