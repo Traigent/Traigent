@@ -235,6 +235,15 @@ def _cache_path() -> Path:
     return root / "content_less_refs.json"
 
 
+def _is_local_file(path: Path) -> bool:
+    """True when ``path`` is not a symlink and resolves inside its own directory.
+
+    The cache path is SDK-built (``TRAIGENT_RESULTS_FOLDER`` or ``~/.traigent`` plus a fixed
+    name), never from a server response; this stops a planted link redirecting reads/writes.
+    """
+    return not path.is_symlink() and path.resolve().parent == path.parent.resolve()
+
+
 class RefCache:
     """Local cache of Backend-issued opaque references, per (tenant, project).
 
@@ -252,8 +261,10 @@ class RefCache:
 
     def _load(self) -> dict[str, Any]:
         try:
+            if not _is_local_file(self._path):
+                raise OSError("not a plain local file")
             data = json.loads(self._path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, RuntimeError, ValueError):
             return {"version": 1, "scopes": {}, "scope_index": {}}
         if not isinstance(data, dict) or data.get("version") != 1:
             return {"version": 1, "scopes": {}, "scope_index": {}}
@@ -265,9 +276,11 @@ class RefCache:
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._path.with_suffix(".tmp")
+            if not (_is_local_file(self._path) and _is_local_file(tmp)):
+                raise OSError("not a plain local file")
             tmp.write_text(json.dumps(data, sort_keys=True), encoding="utf-8")
             os.replace(tmp, self._path)
-        except OSError:
+        except (OSError, RuntimeError):
             logger.debug("content-less ref cache could not be written")
 
     @staticmethod

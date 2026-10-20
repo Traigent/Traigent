@@ -362,3 +362,31 @@ def test_environment_aliases(alias: str, expected: str) -> None:
     assert cl.resolve_environment(alias, {}) == expected
     assert cl.resolve_environment(None, {"ENVIRONMENT": alias}) == expected
     assert cl.resolve_environment(None, {"TRAIGENT_ENV": alias}) == expected
+
+
+def test_ref_cache_ignores_a_symlinked_cache_file(tmp_path: Path) -> None:
+    outside = tmp_path / "outside.json"
+    outside.write_text(
+        json.dumps(
+            {"version": 1, "scopes": {"s": {"k": "v"}}, "scope_index": {"p": "s"}}
+        ),
+        encoding="utf-8",
+    )
+    path = tmp_path / "base" / "content_less_refs.json"
+    path.parent.mkdir()
+    path.symlink_to(outside)
+    cache = cl.RefCache(path)
+    assert cache._load() == {"version": 1, "scopes": {}, "scope_index": {}}
+    before = outside.read_text(encoding="utf-8")
+    cache._save({"version": 1, "scopes": {}, "scope_index": {}})
+    assert outside.read_text(encoding="utf-8") == before
+
+
+def test_ref_cache_does_not_write_through_a_symlinked_tmp(tmp_path: Path) -> None:
+    victim = tmp_path / "victim"
+    victim.write_text("keep", encoding="utf-8")
+    path = tmp_path / "content_less_refs.json"
+    path.with_suffix(".tmp").symlink_to(victim)
+    cl.RefCache(path)._save({"version": 1, "scopes": {}, "scope_index": {}})
+    assert victim.read_text(encoding="utf-8") == "keep"
+    assert not path.exists()

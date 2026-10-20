@@ -538,8 +538,24 @@ def _state_path() -> Path:
 SEQUENCE_NOT_PERSISTED = "sequence_not_persisted"
 
 
+def _require_local_file(path: Path) -> None:
+    """Refuse a state/lock/temp file that is a symlink or resolves outside its own directory.
+
+    The path is SDK-built (``TRAIGENT_RESULTS_FOLDER`` or ``~/.traigent`` plus a fixed file
+    name), never taken from a server response; this keeps a planted link in that directory
+    from redirecting the replay-protection journal elsewhere. Fails closed.
+    """
+    try:
+        parent = path.parent.resolve()
+        if path.is_symlink() or path.resolve().parent != parent:
+            raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
+    except (OSError, RuntimeError):
+        raise LabelTransportError(SEQUENCE_NOT_PERSISTED) from None
+
+
 def _read_state(path: Path) -> dict[str, Any]:
     """The retained-sequence map. Missing file = empty; unreadable/corrupt = closed refusal."""
+    _require_local_file(path)
     try:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -576,7 +592,11 @@ def _retain_sequence(path: Path, scope: str, sequence: int) -> None:
         raise LabelTransportError(SEQUENCE_NOT_PERSISTED) from None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path.with_suffix(".lock"), "a+") as lock:
+        lock_path = path.with_suffix(".lock")
+        tmp = path.with_suffix(f".tmp{os.getpid()}")
+        for candidate in (path, lock_path, tmp):
+            _require_local_file(candidate)
+        with open(lock_path, "a+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             data = _read_state(path)
             current = data.get(scope, 0)
@@ -585,7 +605,6 @@ def _retain_sequence(path: Path, scope: str, sequence: int) -> None:
             if sequence < current:
                 raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
             data[scope] = max(sequence, current)
-            tmp = path.with_suffix(f".tmp{os.getpid()}")
             with open(tmp, "w", encoding="utf-8") as handle:
                 handle.write(json.dumps(data, sort_keys=True))
                 handle.flush()

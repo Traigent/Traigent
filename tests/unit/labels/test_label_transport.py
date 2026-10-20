@@ -973,3 +973,45 @@ def test_strict_httpx_caller_overrides_cannot_follow_a_redirect() -> None:
         gate.set_mode(None)
         _stop(target, first)
     assert seen == []  # the redirect target never saw a request
+
+
+@pytest.mark.parametrize("target", ["outside.json", "../outside.json"])
+def test_symlinked_state_file_is_refused(tmp_path: Path, target: str) -> None:
+    from traigent.labels import transport as t
+
+    base = tmp_path / "base"
+    base.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"s": 5}', encoding="utf-8")
+    state = base / "labels_state.json"
+    state.symlink_to(base / target)
+    with pytest.raises(t.LabelTransportError) as exc:
+        t._retained_sequence(state, "s")
+    assert t.SEQUENCE_NOT_PERSISTED in str(exc.value)
+    with pytest.raises(t.LabelTransportError):
+        t._retain_sequence(state, "s", 9)
+    assert outside.read_text(encoding="utf-8") == '{"s": 5}'
+
+
+def test_symlinked_state_directory_component_stays_contained(tmp_path: Path) -> None:
+    from traigent.labels import transport as t
+
+    real = tmp_path / "real"
+    real.mkdir()
+    (tmp_path / "link").symlink_to(real)
+    # A symlinked directory is operator-chosen config; the file inside is still plain.
+    state = tmp_path / "link" / "labels_state.json"
+    t._retain_sequence(state, "s", 3)
+    assert t._retained_sequence(state, "s") == 3
+
+
+def test_symlinked_lock_file_is_refused(tmp_path: Path) -> None:
+    from traigent.labels import transport as t
+
+    outside = tmp_path / "victim"
+    outside.write_text("keep", encoding="utf-8")
+    state = tmp_path / "labels_state.json"
+    state.with_suffix(".lock").symlink_to(outside)
+    with pytest.raises(t.LabelTransportError):
+        t._retain_sequence(state, "s", 1)
+    assert outside.read_text(encoding="utf-8") == "keep"
