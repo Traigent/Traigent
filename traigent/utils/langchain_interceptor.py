@@ -318,8 +318,78 @@ def capture_key(key: Any):
         _metadata_capture.clear_current_key()
 
 
+def _mock_chat_message(client: Any, provider: str, *, chunk: bool = False) -> Any:
+    """Build the canned LangChain message mock mode returns for ``provider``."""
+    from langchain_core.messages import AIMessage, AIMessageChunk
+
+    from traigent.integrations.utils.mock_adapter import MockAdapter
+
+    message_cls = AIMessageChunk if chunk else AIMessage
+    if provider == "openai":
+        model_name = getattr(client, "model_name", None) or getattr(
+            client, "model", "mock-model"
+        )
+        data = MockAdapter.get_mock_response("openai", model=model_name)
+        usage = data["usage"]
+        return message_cls(
+            content=data["choices"][0]["message"]["content"],
+            response_metadata={
+                "model_name": data["model"],
+                "finish_reason": data["choices"][0]["finish_reason"],
+                "response_time_ms": 0.0,
+            },
+            usage_metadata={
+                "input_tokens": usage["prompt_tokens"],
+                "output_tokens": usage["completion_tokens"],
+                "total_tokens": usage["total_tokens"],
+            },
+        )
+    if provider == "bedrock":
+        model_name = (
+            getattr(client, "model_id", None)
+            or getattr(client, "model", None)
+            or "mock-model"
+        )
+        data = MockAdapter.get_mock_response("bedrock", model=str(model_name))
+    else:
+        data = MockAdapter.get_mock_response(
+            "anthropic", model=getattr(client, "model", "mock-model")
+        )
+    usage = data["usage"]
+    return message_cls(
+        content=data["content"][0]["text"],
+        response_metadata={
+            "model_name": data["model"],
+            "stop_reason": data["stop_reason"],
+            "response_time_ms": 0.0,
+        },
+        usage_metadata={
+            "input_tokens": usage["input_tokens"],
+            "output_tokens": usage["output_tokens"],
+            "total_tokens": usage["input_tokens"] + usage["output_tokens"],
+        },
+    )
+
+
+_MOCKABLE_PROVIDERS = frozenset({"openai", "anthropic", "bedrock"})
+
+
+def _mock_enabled(provider: str) -> bool:
+    if provider not in _MOCKABLE_PROVIDERS:
+        return False
+    from traigent.integrations.utils.mock_adapter import MockAdapter
+
+    return MockAdapter.is_mock_enabled(provider)
+
+
 def _create_stream_wrapper(original_meth: Any, provider: str = "unknown") -> Any:
     def stream_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        if _mock_enabled(provider):
+            # Mock mode: never reach the provider (#2424).
+            response = _mock_chat_message(self, provider, chunk=True)
+            capture_langchain_response(response)
+            yield response
+            return
         start_time = time.perf_counter()
         last = None
         for chunk in original_meth(self, *args, **kwargs):
@@ -330,6 +400,8 @@ def _create_stream_wrapper(original_meth: Any, provider: str = "unknown") -> Any
             if not hasattr(last, "response_metadata"):
                 last.response_metadata = {}
             last.response_metadata["response_time_ms"] = response_time_ms
+            # A stream chunk without usage_metadata is captured as-is: the
+            # downstream metrics treat missing usage as unmeasured, not $0.
             capture_observed_response(
                 last, provider=provider, requested_model=requested_model_of(self)
             )
@@ -339,6 +411,11 @@ def _create_stream_wrapper(original_meth: Any, provider: str = "unknown") -> Any
 
 def _create_astream_wrapper(original_meth: Any, provider: str = "unknown") -> Any:
     async def astream_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        if _mock_enabled(provider):
+            response = _mock_chat_message(self, provider, chunk=True)
+            capture_langchain_response(response)
+            yield response
+            return
         start_time = time.perf_counter()
         last = None
         async for chunk in original_meth(self, *args, **kwargs):
@@ -354,6 +431,45 @@ def _create_astream_wrapper(original_meth: Any, provider: str = "unknown") -> An
             )
 
     return astream_wrapper
+
+
+def _create_ainvoke_wrapper(original_meth: Any, provider: str = "unknown") -> Any:
+    """Wrap ``ainvoke`` so mock mode covers it and its cost is captured (#2424, #2445).
+
+    ``abatch`` is covered through this wrapper: LangChain's default
+    ``abatch`` dispatches every item to ``self.ainvoke``.
+    """
+
+    async def ainvoke_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        if _mock_enabled(provider):
+            response = _mock_chat_message(self, provider)
+            capture_langchain_response(response)
+            return response
+        start_time = time.perf_counter()
+        with instrumented_provider_call():
+            response = await original_meth(self, *args, **kwargs)
+        response_time_ms = (time.perf_counter() - start_time) * 1000
+        if not hasattr(response, "response_metadata"):
+            response.response_metadata = {}
+        response.response_metadata["response_time_ms"] = response_time_ms
+        capture_observed_response(
+            response, provider=provider, requested_model=requested_model_of(self)
+        )
+        return response
+
+    return ainvoke_wrapper
+
+
+def _patch_ainvoke(model_cls: Any, class_name: str, provider: str) -> bool:
+    """Patch ``model_cls.ainvoke`` once; returns True if newly patched."""
+    flag = "_traigent_patched_ainvoke"
+    # Check the class's own namespace: a subclass must not inherit "patched".
+    if flag in vars(model_cls) or not hasattr(model_cls, "ainvoke"):
+        return False
+    model_cls.ainvoke = _create_ainvoke_wrapper(model_cls.ainvoke, provider)
+    setattr(model_cls, flag, True)
+    logger.info("Patched %s.ainvoke for metadata capture", class_name)
+    return True
 
 
 def _patch_langchain_bedrock_model(model_cls: Any, class_name: str) -> bool:
@@ -417,6 +533,9 @@ def _patch_langchain_bedrock_model(model_cls: Any, class_name: str) -> bool:
         model_cls.invoke = invoke_with_capture_bedrock
         model_cls._traigent_patched_invoke = True
         logger.info("✅ Patched %s.invoke for metadata capture", class_name)
+        patched_any = True
+
+    if _patch_ainvoke(model_cls, class_name, "bedrock"):
         patched_any = True
 
     for meth_name, flag in [
@@ -516,6 +635,9 @@ def patch_langchain_for_metadata_capture() -> bool:
             logger.info("✅ Patched ChatAnthropic.invoke for metadata capture")
             patched_any = True
 
+        if _patch_ainvoke(ChatAnthropic, "ChatAnthropic", "anthropic"):
+            patched_any = True
+
         # Patch stream methods if available
         for meth_name, flag in [
             ("stream", "_traigent_patched_stream"),
@@ -610,6 +732,9 @@ def patch_langchain_for_metadata_capture() -> bool:
             ChatOpenAI.invoke = invoke_with_capture_openai
             ChatOpenAI._traigent_patched_invoke = True
             logger.info("✅ Patched ChatOpenAI.invoke for metadata capture")
+            patched_any = True
+
+        if _patch_ainvoke(ChatOpenAI, "ChatOpenAI", "openai"):
             patched_any = True
 
         for meth_name, flag in [
