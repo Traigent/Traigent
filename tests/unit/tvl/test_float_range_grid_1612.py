@@ -36,3 +36,26 @@ def test_int_range_with_resolution_unchanged():
 def test_huge_grid_rejected():
     with pytest.raises(ValueError, match="too many grid points"):
         _entry(0.0, 1.0, resolution=1e-6)
+
+
+def test_tiny_resolution_keeps_first_value_and_bounds():
+    """sol r9: a fixed 12-place rounding emitted 0.0 below the minimum."""
+    values = _entry(4e-13, 2.4e-12, resolution=1e-12)
+    assert values[0] == 4e-13
+    assert all(4e-13 <= v <= 2.4e-12 for v in values)
+    assert values == pytest.approx([4e-13, 1.4e-12, 2.4e-12], rel=1e-9)
+    assert len(set(values)) == len(values)
+
+
+def test_sub_picoscale_steps_stay_distinct_and_even():
+    values = _entry(0.0, 5e-15, resolution=1e-15)
+    assert len(values) == 6
+    assert len(set(values)) == 6
+    assert values[0] == 0.0
+    assert values == pytest.approx([i * 1e-15 for i in range(6)], rel=1e-9)
+    assert max(values) <= 5e-15
+
+
+def test_step_finer_than_float_precision_fails_closed():
+    with pytest.raises(ValueError, match="finer than"):
+        _entry(1.0, 1.0 + 1e-15, resolution=1e-17)

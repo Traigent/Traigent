@@ -11,6 +11,7 @@ Sync: SYNC-OptimizationFlow
 
 from __future__ import annotations
 
+import decimal
 import math
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, cast, runtime_checkable
@@ -812,14 +813,24 @@ _MAX_TUPLE_PRODUCT = 10_000  # guard against combinatorial explosion
 def _float_grid(lo: float, hi: float, step: float, label: str) -> list[float]:
     """Enumerate ``lo, lo+step, ...`` up to ``hi`` (never exceeding it).
 
-    The upper bound is emitted only when it lies on the grid (within float
-    tolerance). Values are rounded to suppress accumulated float error.
+    The upper bound is emitted only when it lies on the grid. Points are
+    computed in exact decimal arithmetic from the shortest repr of the bounds
+    and the step, so the first value is ``lo`` exactly, every value lies in
+    ``[lo, hi]``, spacing is even at any scale (no fixed rounding precision),
+    and ``0.1``-type steps give clean values. A step too fine for float
+    precision at ``lo`` would collapse distinct points, so it fails closed.
     """
-    # Floor with a tolerance for float error.
-    n_steps = int(math.floor((hi - lo) / step + 1e-9))
-    if n_steps + 1 > _MAX_TUPLE_PRODUCT:
-        raise ValueError(f"{label} range enumerates too many grid points")
-    return [min(round(lo + i * step, 12), hi) for i in range(n_steps + 1)]
+    with decimal.localcontext() as ctx:
+        # Enough digits to add any two finite doubles exactly.
+        ctx.prec = 800
+        d_lo, d_hi, d_step = (decimal.Decimal(repr(float(v))) for v in (lo, hi, step))
+        n_steps = int((d_hi - d_lo) // d_step)
+        if n_steps + 1 > _MAX_TUPLE_PRODUCT:
+            raise ValueError(f"{label} range enumerates too many grid points")
+        values = [float(d_lo + i * d_step) for i in range(n_steps + 1)]
+    if len(set(values)) != len(values):
+        raise ValueError(f"{label} resolution is finer than float precision allows")
+    return values
 
 
 def _tuple_component_values(name: str, idx: int, comp: Any) -> list[Any]:
