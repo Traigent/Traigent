@@ -429,3 +429,165 @@ def test_model_less_agent_retries_priced_by_each_calls_requested_model() -> None
             sum(_cost(r, "gpt-4o") for r in seen[i])
         )
     assert not res.aggregated_metrics.get("cost_unmeasured")
+
+
+# --------------------------------------------------------------------------- #
+# Round 4 (sol r14)
+# --------------------------------------------------------------------------- #
+def _dict_resp(model: str | None, inp: int, out: int) -> dict[str, Any]:
+    resp: dict[str, Any] = {
+        "usage": {"prompt_tokens": inp, "completion_tokens": out},
+    }
+    if model:
+        resp["model"] = model
+    return resp
+
+
+def test_returned_dict_response_is_priced_by_its_own_model() -> None:
+    returned = _dict_resp("gpt-4o", 1000, 500)  # config says gpt-4o-mini
+
+    def fn(text: str, **_cfg: Any) -> Any:
+        return returned
+
+    res = _evaluate(fn, 1)
+    expected = float(
+        extract_llm_metrics(response=returned, model_name="gpt-4o").cost.total_cost
+    )
+    assert expected != pytest.approx(_cost(_Resp(1000, 500)))
+    assert res.example_results[0].metrics["total_cost"] == pytest.approx(expected)
+
+
+def test_returned_dict_response_with_captured_sibling_is_not_ignored() -> None:
+    captured = _Resp(1000, 500)
+    returned = _dict_resp("gpt-4o", 9000, 3000)
+
+    def fn(text: str, **_cfg: Any) -> Any:
+        capture_langchain_response(captured)
+        return returned
+
+    res = _evaluate(fn, 1, detailed=False)
+    m = res.aggregated_metrics
+    ret_cost = float(
+        extract_llm_metrics(response=returned, model_name="gpt-4o").cost.total_cost
+    )
+    assert m["cost_unmeasured"] == 1.0 and m.get("cost") is None
+    assert m["cost_lower_bound"] == pytest.approx(max(_cost(captured), ret_cost))
+
+
+def _judge_evaluator(judge: Any, **kw: Any) -> LocalEvaluator:
+    return LocalEvaluator(
+        metrics=["accuracy"],
+        metric_functions={"judge": judge},
+        timeout=10.0,
+        max_workers=1,
+        detailed=True,
+        **kw,
+    )
+
+
+def _run_judge(fn: Any, judge: Any, n: int = 1, config: Any = None) -> Any:
+    ev = _judge_evaluator(judge)
+    return asyncio.run(
+        ev.evaluate(
+            fn,
+            config=config if config is not None else {"model": MODEL},
+            dataset=_dataset(n),
+        )
+    )
+
+
+def test_priced_judge_on_unpriced_agent_row_withdraws_costs_everywhere() -> None:
+    judge_resp = _Resp(2000, 700)
+    seen: dict[str, Any] = {}
+
+    def fn(text: str, **_cfg: Any) -> str:
+        capture_langchain_response(_Resp(1000, 500, model=None))
+        capture_langchain_response(_Resp(1100, 400, model=None))
+        return "ok"
+
+    def judge(output: Any, expected: Any, llm_metrics: Any = None) -> float:
+        seen["payload"] = dict(llm_metrics or {})
+        capture_langchain_response(judge_resp)
+        return 0.5
+
+    res = _run_judge(fn, judge)
+    row = res.example_results[0].metrics
+    for key in ("total_cost", "input_cost", "output_cost", "cost"):
+        assert key not in row
+    assert row["cost_unmeasured"] == 1.0
+    assert row["cost_lower_bound"] == pytest.approx(_cost(judge_resp))
+    assert seen["payload"].get("total_cost") is None  # unknown is not a number
+
+
+def test_judge_response_owned_by_another_example_is_not_charged_to_the_judge() -> None:
+    from traigent.utils import langchain_interceptor as li
+
+    agent = _Resp(1000, 500)
+    foreign = _Resp(5000, 900)
+
+    def fn(text: str, **_cfg: Any) -> str:
+        capture_langchain_response(agent)
+        return "ok"
+
+    def judge(output: Any, expected: Any, llm_metrics: Any = None) -> float:
+        with li.capture_owner(99):  # e.g. a worker that outlived its timeout
+            capture_langchain_response(foreign)
+        return 0.5
+
+    res = _run_judge(fn, judge)
+    assert res.example_results[0].metrics["total_cost"] == pytest.approx(_cost(agent))
+    m = res.aggregated_metrics
+    assert m["cost_unmeasured"] == 1.0
+    assert m["cost_lower_bound"] == pytest.approx(_cost(agent) + _cost(foreign))
+
+
+def test_modelless_judge_priced_by_its_requested_model() -> None:
+    from traigent.utils.langchain_interceptor import capture_observed_response
+
+    judge_resp = _Resp(2000, 700, model=None)
+
+    def fn(text: str, **_cfg: Any) -> str:
+        capture_langchain_response(_Resp(1000, 500))
+        return "ok"
+
+    def judge(output: Any, expected: Any, llm_metrics: Any = None) -> float:
+        capture_observed_response(
+            judge_resp, provider="openai", requested_model="gpt-4o"
+        )
+        return 0.5
+
+    res = _run_judge(fn, judge)
+    assert res.example_results[0].metrics["evaluation_cost"] == pytest.approx(
+        _cost(judge_resp, "gpt-4o")
+    )
+
+
+def test_unidentifiable_judge_with_tokens_stays_unknown_not_measured_zero() -> None:
+    def fn(text: str, **_cfg: Any) -> str:
+        capture_langchain_response(_Resp(1000, 500))
+        return "ok"
+
+    def judge(output: Any, expected: Any, llm_metrics: Any = None) -> float:
+        capture_langchain_response(_Resp(2000, 700, model=None))
+        return 0.5
+
+    res = _run_judge(fn, judge)
+    row = res.example_results[0].metrics
+    assert "total_cost" not in row and row["cost_unmeasured"] == 1.0
+    assert res.aggregated_metrics["cost_unmeasured"] == 1.0
+
+
+def test_sibling_inferred_model_never_prices_a_model_less_primary() -> None:
+    sibling = _Resp(1000, 500, model="gpt-4o")
+    sibling.llm_output = {"model_name": "gpt-4o"}  # what inference reads
+    primary = _Resp(3000, 900, model=None)
+
+    def fn(text: str, **_cfg: Any) -> Any:
+        capture_langchain_response(sibling)
+        capture_langchain_response(primary)
+        return {"text": "ok", "raw_response": primary}
+
+    res = _run_judge(fn, lambda o, e, llm_metrics=None: 1.0, config={})
+    m = res.aggregated_metrics
+    assert m["cost_unpriced"] == 1.0
+    assert m["cost_unmeasured"] == 1.0

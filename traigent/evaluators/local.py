@@ -40,8 +40,6 @@ from traigent.evaluators.metrics_tracker import (
 from traigent.utils.exceptions import EvaluationError
 from traigent.utils.langchain_interceptor import (
     capture_scope,
-    clear_captured_responses,
-    get_all_captured_responses,
     get_captured_response_by_key,
     drain_captured_responses,
     patch_langchain_for_metadata_capture,
@@ -361,6 +359,12 @@ class _CaptureOwnership:
 
     def example_responses(self, example_index: int) -> list[Any]:
         return [self.responses[p] for p in self.by_example.get(example_index, [])]
+
+    def add_late(self, response: Any, requested: str | None) -> None:
+        """A call that surfaced after the main drain and belongs to no judge."""
+        self.responses.append(response)
+        self.requested.append(requested)
+        self.unowned.append(len(self.responses) - 1)
 
     def leftover(self) -> list[tuple[Any, str | None]]:
         """Captured calls no row has included, with their requested model."""
@@ -715,7 +719,9 @@ class LocalEvaluator(BaseEvaluator):
         """
         if captures is None:
             return index, all_captured_responses
-        return 0, captures.example_responses(index)
+        # Ownership mode: a sibling call's reported model is never provenance
+        # for another call (#2444); only the output's own identity applies.
+        return 0, []
 
     def _extract_response_text(self, output: Any) -> str | None:
         """Extract text content from various output types.
@@ -1029,6 +1035,7 @@ class LocalEvaluator(BaseEvaluator):
         example_index: int,
         *,
         metric_errors: list[dict[str, Any]] | None = None,
+        captures: _CaptureOwnership | None = None,
     ) -> list[str]:
         """Apply user-defined metric functions for a single example.
 
@@ -1055,13 +1062,16 @@ class LocalEvaluator(BaseEvaluator):
             (a mapping-returning function never populates ``custom_metrics``
             under its own name).
         """
+        cost_known = example_metric.cost_measured
         llm_payload = {
             "total_tokens": example_metric.tokens.total_tokens,
             "prompt_tokens": example_metric.tokens.input_tokens,
             "completion_tokens": example_metric.tokens.output_tokens,
-            "total_cost": example_metric.cost.total_cost,
-            "input_cost": example_metric.cost.input_cost,
-            "output_cost": example_metric.cost.output_cost,
+            # Unknown cost is None for a metric function, never a placeholder
+            # or partial figure that reads as spend (#2444).
+            "total_cost": example_metric.cost.total_cost if cost_known else None,
+            "input_cost": example_metric.cost.input_cost if cost_known else None,
+            "output_cost": example_metric.cost.output_cost if cost_known else None,
             "response_time_ms": example_metric.response.response_time_ms,
         }
 
@@ -1276,8 +1286,8 @@ class LocalEvaluator(BaseEvaluator):
 
         if not example_metric.cost_measured:
             # Unknown cost: no $0 in the progress payload (#2517).
-            payload_metrics.pop("total_cost", None)
-            payload_metrics.pop("cost", None)
+            for cost_key in ("input_cost", "output_cost", "total_cost", "cost"):
+                payload_metrics.pop(cost_key, None)
             payload_metrics["cost_unmeasured"] = 1.0
             floor = LocalEvaluator._example_cost_floor(example_metric)
             if floor > 0:
@@ -1289,6 +1299,13 @@ class LocalEvaluator(BaseEvaluator):
         if self.detailed and example_result is not None:
             for key, value in example_result.metrics.items():
                 if key in {"cost", "total_cost"} and key in payload_metrics:
+                    continue
+                if not example_metric.cost_measured and key in {
+                    "input_cost",
+                    "output_cost",
+                    "total_cost",
+                    "cost",
+                }:
                     continue
                 payload_metrics.setdefault(key, value)
 
@@ -1338,6 +1355,7 @@ class LocalEvaluator(BaseEvaluator):
             return example_metric
 
         model_name = config.get("model") or config.get("model_name")
+        configured_model = model_name if isinstance(model_name, str) else None
 
         # Fallback: try to extract model name from the output or captured responses
         # when the optimization config does not include "model" as a parameter.
@@ -1378,6 +1396,7 @@ class LocalEvaluator(BaseEvaluator):
                 dataset,
                 captures,
                 model_name=model_name,
+                configured_model=configured_model,
                 original_prompt=original_prompt,
                 prompt_length=prompt_length,
                 response_length=response_length,
@@ -1422,7 +1441,13 @@ class LocalEvaluator(BaseEvaluator):
     @staticmethod
     def _looks_like_usage_response(obj: Any) -> bool:
         """A returned object that carries LLM usage (not text/dict/list)."""
-        if obj is None or isinstance(obj, (str, bytes, dict, list, tuple, int, float)):
+        if isinstance(obj, dict):
+            # The dict shapes extract_llm_metrics supports (DictResponseHandler).
+            return any(
+                key in obj
+                for key in ("input_tokens", "output_tokens", "total_tokens", "usage")
+            )
+        if obj is None or isinstance(obj, (str, bytes, list, tuple, int, float)):
             return False
         return any(
             getattr(obj, attr, None) is not None
@@ -1520,6 +1545,7 @@ class LocalEvaluator(BaseEvaluator):
         captures: _CaptureOwnership,
         *,
         model_name: str | None,
+        configured_model: str | None,
         original_prompt: Any,
         prompt_length: int | None,
         response_length: int | None,
@@ -1562,7 +1588,7 @@ class LocalEvaluator(BaseEvaluator):
             calls.append(
                 self._price_one_call(
                     primary,
-                    agent_model=model_name,
+                    agent_model=configured_model,
                     is_agent_call=True,
                     requested_model=primary_requested,
                     **prompt_kwargs,
@@ -1573,7 +1599,7 @@ class LocalEvaluator(BaseEvaluator):
             calls.append(
                 self._price_one_call(
                     captures.responses[position],
-                    agent_model=model_name,
+                    agent_model=configured_model,
                     is_agent_call=sole_call,
                     requested_model=captures.requested[position],
                     **prompt_kwargs,
@@ -1586,7 +1612,7 @@ class LocalEvaluator(BaseEvaluator):
             # unknown, with the largest spend both readings agree on.
             returned_call = self._price_one_call(
                 uncaptured,
-                agent_model=model_name,
+                agent_model=configured_model,
                 is_agent_call=False,
                 **{},
             )
@@ -2006,6 +2032,7 @@ class LocalEvaluator(BaseEvaluator):
                 config,
                 index,
                 metric_errors=metric_errors,
+                captures=captures,
             )
 
             # Fold LLM spend made *inside* a metric function / judge (e.g. an
@@ -2028,7 +2055,7 @@ class LocalEvaluator(BaseEvaluator):
                 else None
             )
             self._fold_metric_function_llm_cost(
-                example_metric, example_result=target_result
+                example_metric, example_result=target_result, captures=captures
             )
 
             # Transfer custom metrics to example_results if in detailed mode.
@@ -2077,6 +2104,7 @@ class LocalEvaluator(BaseEvaluator):
         example_metric: ExampleMetrics,
         *,
         example_result: Any = None,
+        captures: _CaptureOwnership | None = None,
     ) -> None:
         """Attribute LLM spend made by a metric function to this example.
 
@@ -2147,10 +2175,15 @@ class LocalEvaluator(BaseEvaluator):
                 ``metrics`` dict earlier in ``_process_single_output``; when
                 given, this refreshes that copy so it doesn't go stale.
         """
-        eval_responses = get_all_captured_responses()
-        if not eval_responses:
+        # One atomic take of the buffer (a late call from a timed-out worker
+        # can never fall between a snapshot and a clear).
+        drained, drained_owners, drained_requested = drain_captured_responses()
+        if not drained:
             return
-        clear_captured_responses()
+        if drained_owners is None or len(drained_owners) != len(drained):
+            drained_owners = [None] * len(drained)
+        if drained_requested is None or len(drained_requested) != len(drained):
+            drained_requested = [None] * len(drained)
 
         eval_input_cost = 0.0
         eval_output_cost = 0.0
@@ -2159,13 +2192,30 @@ class LocalEvaluator(BaseEvaluator):
         eval_output_tokens = 0
         eval_tokens = 0
         judge_unmeasured = False
-        for response in eval_responses:
-            metrics = extract_llm_metrics(response=response, model_name=None)
-            # A judge call whose usage was not captured is an unknown spend,
-            # not a free one: it makes this example's cost unmeasured (#2517).
+        for response, owner, requested in zip(
+            drained, drained_owners, drained_requested, strict=True
+        ):
+            if owner is not None:
+                # Made by an example's own evaluation (e.g. a worker that outlived
+                # its timeout), not by this judge: never charge it here. It stays
+                # unknown spend with its exact priceable floor, reported once at
+                # trial level (#2444).
+                if captures is not None:
+                    captures.add_late(response, requested)
+                continue
+            metrics = self._price_one_call(
+                response,
+                agent_model=None,
+                is_agent_call=False,
+                requested_model=requested,
+            )
+            # A judge call with unknown cost (no usage, or no identifiable
+            # model/price) is an unknown spend, not a free one: it makes this
+            # example's cost unmeasured (#2517).
             judge_unmeasured = judge_unmeasured or not (
                 metrics.measured
                 and not metrics.cost.unmeasured
+                and not metrics.cost.unpriced
                 and (
                     metrics.tokens.total_tokens
                     or metrics.cost.total_cost
@@ -2233,12 +2283,6 @@ class LocalEvaluator(BaseEvaluator):
         # `_process_single_output`, before metric functions ran) consistent
         # with the now-updated totals, and surface the judge's own share.
         example_metric.custom_metrics["evaluation_cost"] = eval_total_cost
-        if not agent_cost_unmeasured:
-            example_metric.custom_metrics["input_cost"] = example_metric.cost.input_cost
-            example_metric.custom_metrics["output_cost"] = (
-                example_metric.cost.output_cost
-            )
-            example_metric.custom_metrics["total_cost"] = example_metric.cost.total_cost
         example_metric.custom_metrics["input_tokens"] = (
             example_metric.tokens.input_tokens
         )
@@ -2248,18 +2292,48 @@ class LocalEvaluator(BaseEvaluator):
         example_metric.custom_metrics["total_tokens"] = (
             example_metric.tokens.total_tokens
         )
-
         if example_result is not None:
-            if not agent_cost_unmeasured:
-                example_result.metrics["input_cost"] = example_metric.cost.input_cost
-                example_result.metrics["output_cost"] = example_metric.cost.output_cost
-                example_result.metrics["total_cost"] = example_metric.cost.total_cost
             example_result.metrics["input_tokens"] = example_metric.tokens.input_tokens
             example_result.metrics["output_tokens"] = (
                 example_metric.tokens.output_tokens
             )
             example_result.metrics["total_tokens"] = example_metric.tokens.total_tokens
             example_result.metrics["evaluation_cost"] = eval_total_cost
+
+        # One notion of "known cost" on every channel: a measured row shows its
+        # refreshed numeric cost; an unknown row (unmeasured OR unpriced) has
+        # every numeric cost withdrawn and carries the flag and exact floor.
+        if example_metric.cost_measured:
+            example_metric.custom_metrics["input_cost"] = example_metric.cost.input_cost
+            example_metric.custom_metrics["output_cost"] = (
+                example_metric.cost.output_cost
+            )
+            example_metric.custom_metrics["total_cost"] = example_metric.cost.total_cost
+            if example_result is not None:
+                example_result.metrics["input_cost"] = example_metric.cost.input_cost
+                example_result.metrics["output_cost"] = example_metric.cost.output_cost
+                example_result.metrics["total_cost"] = example_metric.cost.total_cost
+        else:
+            self._withdraw_numeric_cost(example_metric, example_result)
+
+    @classmethod
+    def _withdraw_numeric_cost(
+        cls, example_metric: ExampleMetrics, example_result: Any
+    ) -> None:
+        """Remove numeric costs from an unknown-cost row; emit flag + floor."""
+        floor = cls._example_cost_floor(example_metric)
+        cost_keys = ("input_cost", "output_cost", "total_cost", "cost")
+        for key in cost_keys:
+            example_metric.custom_metrics.pop(key, None)
+        example_metric.custom_metrics["cost_unmeasured"] = 1.0
+        if floor > 0:
+            example_metric.custom_metrics["cost_lower_bound"] = floor
+        if example_result is not None:
+            for key in cost_keys:
+                example_result.metrics.pop(key, None)
+            example_result.metrics["cost_unmeasured"] = 1.0
+            if floor > 0:
+                example_result.metrics["cost_lower_bound"] = floor
 
     @staticmethod
     def _mark_example_cost_unmeasured_by_judge(
@@ -2275,16 +2349,7 @@ class LocalEvaluator(BaseEvaluator):
         if not example_metric.cost.unmeasured:
             example_metric.cost.known_cost += example_metric.cost.total_cost
             example_metric.cost.unmeasured = True
-        floor = float(example_metric.cost.known_cost)
-        cost_keys = ("input_cost", "output_cost", "total_cost", "cost")
-        for key in cost_keys:
-            example_metric.custom_metrics.pop(key, None)
-        if example_result is not None:
-            for key in cost_keys:
-                example_result.metrics.pop(key, None)
-            example_result.metrics["cost_unmeasured"] = 1.0
-            if floor > 0:
-                example_result.metrics["cost_lower_bound"] = floor
+        LocalEvaluator._withdraw_numeric_cost(example_metric, example_result)
 
     def _log_dual_scorer_notice_once(self) -> None:
         """Emit a single run-level notice when both scorers appear (issue #1845).
