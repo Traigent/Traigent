@@ -8,6 +8,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Failed custom-evaluator rows are now visible (#2422).** When a
+  `custom_evaluator` raises on some but not all rows of a trial, the trial
+  metadata records `custom_evaluator_failed_rows` and
+  `custom_evaluator_total_rows`, and `result.warning_codes` contains
+  `CUSTOM_EVALUATOR_ROWS_FAILED` (per-trial counts in
+  `result.metadata["session_summary"]["custom_evaluator_failed_rows_by_trial"]`).
+  Counts only. Scoring is unchanged: a raising row still scores 0.0 on quality
+  metrics.
 - **`TraceRecord` and `SessionRecord` expose `tenant_id` and `project_id`
   (#2605).** Both are optional and filled from the backend's trace and session
   read responses, so a caller can confirm which project its traces landed in

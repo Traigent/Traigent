@@ -882,6 +882,17 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             f"duration: {duration:.2f}s, metrics: {aggregated_metrics}"
         )
 
+        # Visibility only (#2422): rows whose custom_evaluator raised keep their
+        # documented 0.0 score; partially failed trials are counted so the
+        # orchestrator can surface CUSTOM_EVALUATOR_ROWS_FAILED. Counts only.
+        failed_rows = len(example_results) - success_count
+        summary_stats: dict[str, Any] | None = None
+        if 0 < failed_rows < len(example_results):
+            summary_stats = {
+                "custom_evaluator_failed_rows": failed_rows,
+                "custom_evaluator_total_rows": len(example_results),
+            }
+
         result = EvaluationResult(
             config=config,
             example_results=example_results,
@@ -889,6 +900,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             total_examples=len(example_results),
             successful_examples=success_count,
             duration=duration,
+            summary_stats=summary_stats,
             sample_budget_exhausted=budget_exhausted,
             examples_consumed=consumed_examples,
             metrics=aggregated_metrics,

@@ -334,6 +334,13 @@ def _build_success_trial_metadata(
     if isinstance(model_costs, list) and model_costs:
         trial_metadata["model_costs"] = model_costs
 
+    summary_stats = getattr(eval_result, "summary_stats", None)
+    if isinstance(summary_stats, dict):
+        for key in ("custom_evaluator_failed_rows", "custom_evaluator_total_rows"):
+            value = summary_stats.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                trial_metadata[key] = value
+
     provider_summary = _provider_failure_summary(eval_result, examples_attempted)
     if provider_summary is not None:
         trial_metadata["provider_failure_summary"] = provider_summary

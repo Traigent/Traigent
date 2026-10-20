@@ -188,6 +188,9 @@ _OBJECTIVE_INERT_CONSTANT_WARNING_CODE = "OBJECTIVE_INERT_CONSTANT"
 # present on only some of their examples; named so the run never silently ends
 # with no winner.
 _METRIC_PARTIAL_COVERAGE_WARNING_CODE = "METRIC_PARTIAL_COVERAGE"
+# (#2422): a custom_evaluator raised on some (not all) rows of a trial; those
+# rows scored 0.0 on quality metrics. Visibility only, scoring is unchanged.
+_CUSTOM_EVALUATOR_ROWS_FAILED_WARNING_CODE = "CUSTOM_EVALUATOR_ROWS_FAILED"
 
 
 def _format_partial_coverage_warning(
@@ -5729,6 +5732,31 @@ class OptimizationOrchestrator:
                     )
                 )
                 result_warning_codes.append(_METRIC_PARTIAL_COVERAGE_WARNING_CODE)
+
+        failed_row_counts = {
+            str(trial.trial_id): int(count)
+            for trial in self._trials
+            if isinstance(
+                count := (getattr(trial, "metadata", None) or {}).get(
+                    "custom_evaluator_failed_rows"
+                ),
+                int,
+            )
+            and not isinstance(count, bool)
+            and count > 0
+        }
+        if failed_row_counts:
+            result_warnings.append(
+                f"{len(failed_row_counts)} trial(s) had rows where the "
+                "custom_evaluator raised; those rows scored 0.0 on quality "
+                "metrics. See trial metadata 'custom_evaluator_failed_rows'."
+            )
+            result_warning_codes.append(_CUSTOM_EVALUATOR_ROWS_FAILED_WARNING_CODE)
+            if session_summary is None:
+                session_summary = {}
+            else:
+                session_summary = dict(session_summary)
+            session_summary["custom_evaluator_failed_rows_by_trial"] = failed_row_counts
 
         # Issue #1832 (sibling of #1691): warn when a declared, weighted,
         # matched objective is uniformly constant across the ranking-eligible
