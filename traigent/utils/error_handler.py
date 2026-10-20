@@ -47,14 +47,50 @@ class DependencyError(TraigentError):
 
 
 class APIKeyError(TraigentError):
-    """Error for missing or invalid API keys."""
+    """Error for missing or invalid API keys.
 
-    def __init__(self, key_name: str) -> None:
+    Pass ``key_name`` for the classic "add KEY to your .env" form, or pass
+    ``message`` (and optionally ``fix``) for a fully formed explanation. A
+    message is never treated as a key name (Traigent#2417).
+    """
+
+    def __init__(
+        self,
+        key_name: str | None = None,
+        *,
+        message: str | None = None,
+        fix: str | None = None,
+    ) -> None:
+        if message is None:
+            name = key_name or "API key"
+            message = f"Missing or invalid API key: {name}"
+            if fix is None:
+                fix = f"Add {name} to your .env file or set as environment variable"
         super().__init__(
-            message=f"Missing or invalid API key: {key_name}",
-            fix=f"Add {key_name} to your .env file or set as environment variable",
+            message=message,
+            fix=fix,
             docs_link="https://github.com/Traigent/Traigent#troubleshooting",
         )
+
+    @classmethod
+    def from_provider_error(cls, error: BaseException) -> "APIKeyError":
+        """Build the error for a credential failure raised by user code."""
+        from traigent.utils.env_config import is_mock_llm
+
+        message = f"API key error detected. Original error: {error}"
+        if is_mock_llm():
+            fix = (
+                "Mock mode (TRAIGENT_MOCK_LLM) is already on, but this client checks "
+                "for a key when it is constructed, before mock interception can "
+                "run. Set a placeholder key (for example OPENAI_API_KEY=mock-key), "
+                "route the call through LiteLLM, or stub the client."
+            )
+        else:
+            fix = (
+                "Set the required API key environment variable, or use "
+                "TRAIGENT_MOCK_LLM=true for testing."
+            )
+        return cls(message=message, fix=fix)
 
 
 class ConfigurationError(TraigentError):

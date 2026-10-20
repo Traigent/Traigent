@@ -154,11 +154,7 @@ class LocalInvoker(BaseInvoker):
                 token in lowered
                 for token in ("api key", "api_key", "authentication", "openai_api_key")
             ):
-                raise APIKeyError(
-                    f"API key error detected. Set the required API key environment "
-                    f"variable or use TRAIGENT_MOCK_LLM=true for testing. "
-                    f"Original error: {e}"
-                ) from e
+                raise APIKeyError.from_provider_error(e) from e
 
             logger.warning(error_msg)
 

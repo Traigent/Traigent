@@ -2808,11 +2808,7 @@ class BaseEvaluator(ABC):
         """
         api_key_tokens = ("api key", "api_key", "authentication", "openai_api_key")
         if any(token in str(error).lower() for token in api_key_tokens):
-            raise APIKeyError(
-                f"API key error detected. Set the required API key environment "
-                f"variable or use TRAIGENT_MOCK_LLM=true for testing. "
-                f"Original error: {error}"
-            ) from error
+            raise APIKeyError.from_provider_error(error) from error
 
     async def _execute_function(
         self,
