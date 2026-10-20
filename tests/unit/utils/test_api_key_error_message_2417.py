@@ -28,3 +28,41 @@ def test_key_name_form_unchanged():
     assert (
         err.fix == "Add OPENAI_API_KEY to your .env file or set as environment variable"
     )
+
+
+def test_error_never_echoes_exception_text(monkeypatch):
+    for mock in ("true", "false"):
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", mock)
+        exc = RuntimeError(
+            "Incorrect API key provided: sk-SECRETMARKER123 for prompt "
+            "PROMPTMARKER-hello reading /home/x/data.csv"
+        )
+        err = APIKeyError.from_provider_error(exc)
+        shown = f"{err} {err.message} {err.fix}"
+        for marker in ("sk-SECRETMARKER123", "PROMPTMARKER", "/home/x/data.csv"):
+            assert marker not in shown
+        assert "RuntimeError" in err.message
+        assert "category: auth" in err.message
+
+
+def test_original_exception_stays_chained_at_call_site():
+    from traigent.evaluators.base import SimpleScoringEvaluator
+
+    exc = ValueError("authentication failed sk-SECRETMARKER123")
+    try:
+        SimpleScoringEvaluator._check_api_key_error(None, exc)
+    except APIKeyError as err:
+        assert err.__cause__ is exc
+        assert "sk-SECRETMARKER123" not in str(err)
+    else:
+        raise AssertionError("expected APIKeyError")
+
+
+def test_category_is_closed_set():
+    for text, cat in (
+        ("permission denied", "permission"),
+        ("missing key", "missing-key"),
+        ("something odd", "unknown"),
+    ):
+        err = APIKeyError.from_provider_error(RuntimeError(text))
+        assert f"category: {cat}" in err.message

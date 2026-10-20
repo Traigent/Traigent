@@ -46,6 +46,27 @@ class DependencyError(TraigentError):
         )
 
 
+_SAFE_CLASS_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+
+
+def _classify_credential_error(error: BaseException) -> str:
+    """Map a credential failure to a closed category without echoing its text."""
+    text = str(error).lower()
+    if any(t in text for t in ("permission", "forbidden", "not authorized", "403")):
+        return "permission"
+    if any(
+        t in text
+        for t in ("missing", "not set", "no api key", "must be set", "required")
+    ):
+        return "missing-key"
+    if any(
+        t in text
+        for t in ("invalid", "incorrect", "authentication", "unauthorized", "401")
+    ):
+        return "auth"
+    return "unknown"
+
+
 class APIKeyError(TraigentError):
     """Error for missing or invalid API keys.
 
@@ -77,7 +98,19 @@ class APIKeyError(TraigentError):
         """Build the error for a credential failure raised by user code."""
         from traigent.utils.env_config import is_mock_llm
 
-        message = f"API key error detected. Original error: {error}"
+        # Never interpolate the exception text: it can carry a rejected key,
+        # prompt text or a file path. Only the exception class name and a
+        # closed category derived from the text are reported; the original
+        # exception stays chained (``raise ... from error``) for local debugging.
+        category = _classify_credential_error(error)
+        class_name = type(error).__name__
+        if not _SAFE_CLASS_NAME.fullmatch(class_name):
+            class_name = "Exception"
+        message = (
+            "API key error detected "
+            f"(category: {category}, error type: {class_name}). "
+            "Details are withheld; see the chained exception for the original error."
+        )
         if is_mock_llm():
             fix = (
                 "Mock mode (TRAIGENT_MOCK_LLM) is already on, but this client checks "
