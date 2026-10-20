@@ -67,6 +67,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Mock mode no longer skips the cost preflights (#2681).** The pre-run cost
+  approval and the model-price coverage preflight now run under plain
+  `TRAIGENT_MOCK_LLM`, unless `TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT=true` is set
+  (honored only in mock mode outside production). Fully mocked tests and keyless
+  walkthroughs that relied on the skip must set the exemption.
 - **BREAKING: non-string hybrid example ids are refused (#2575).** When the
   id a row resolves to (`example_id`, else `input_id`) is not a string (an
   int, float, bool, list or dict), the trial now fails with a

@@ -277,6 +277,9 @@ def test_example_runs_end_to_end_in_mock(module_name):
         "HOME": __import__("os").environ.get("HOME", ""),
         "ENVIRONMENT": "development",
         "TRAIGENT_MOCK_LLM": "true",
+        # Keyless mock walkthroughs opt out of the pre-run cost preflights;
+        # some provider demos use models without bundled pricing (#2681).
+        "TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT": "true",
     }
     proc = subprocess.run(
         [sys.executable, "-m", f"traigent.examples.providers.{module_name}"],

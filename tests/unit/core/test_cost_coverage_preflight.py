@@ -99,7 +99,10 @@ async def test_cost_preflight_blocks_unpriced_models_non_interactive_by_default(
     )
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
 
-    with patch("traigent.core.optimized_function.is_mock_llm", return_value=False):
+    with patch(
+        "traigent.core.optimized_function.cost_preflight_mock_exempt",
+        return_value=False,
+    ):
         with patch(
             "traigent.core.optimized_function.OptimizationOrchestrator"
         ) as mock_orchestrator_cls:
@@ -129,7 +132,10 @@ async def test_cost_preflight_env_approved_warns_with_exact_unpriced_models(
     monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")
 
     with (
-        patch("traigent.core.optimized_function.is_mock_llm", return_value=False),
+        patch(
+            "traigent.core.optimized_function.cost_preflight_mock_exempt",
+            return_value=False,
+        ),
         warnings.catch_warnings(record=True) as captured,
     ):
         warnings.simplefilter("always")
@@ -166,7 +172,10 @@ async def test_cost_preflight_cost_approved_param_skips_prompt_non_interactive(
     )
 
     with (
-        patch("traigent.core.optimized_function.is_mock_llm", return_value=False),
+        patch(
+            "traigent.core.optimized_function.cost_preflight_mock_exempt",
+            return_value=False,
+        ),
         warnings.catch_warnings(record=True) as captured,
     ):
         warnings.simplefilter("always")
@@ -201,7 +210,10 @@ async def test_cost_preflight_string_cost_approved_param_blocks_non_interactive(
     )
 
     with (
-        patch("traigent.core.optimized_function.is_mock_llm", return_value=False),
+        patch(
+            "traigent.core.optimized_function.cost_preflight_mock_exempt",
+            return_value=False,
+        ),
         patch(
             "traigent.core.optimized_function.OptimizationOrchestrator"
         ) as mock_orchestrator_cls,
@@ -239,7 +251,10 @@ async def test_cost_preflight_token_approval_skips_prompt_non_interactive(
     )
 
     with (
-        patch("traigent.core.optimized_function.is_mock_llm", return_value=False),
+        patch(
+            "traigent.core.optimized_function.cost_preflight_mock_exempt",
+            return_value=False,
+        ),
         warnings.catch_warnings(record=True) as captured,
     ):
         warnings.simplefilter("always")
@@ -270,7 +285,10 @@ async def test_cost_preflight_interactive_decline_blocks_before_any_trial(
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda _prompt="": choice)
 
-    with patch("traigent.core.optimized_function.is_mock_llm", return_value=False):
+    with patch(
+        "traigent.core.optimized_function.cost_preflight_mock_exempt",
+        return_value=False,
+    ):
         with patch(
             "traigent.core.optimized_function.OptimizationOrchestrator"
         ) as mock_orchestrator_cls:
@@ -300,7 +318,10 @@ async def test_cost_preflight_interactive_eof_blocks_before_any_trial(
 
     monkeypatch.setattr("builtins.input", raise_eof)
 
-    with patch("traigent.core.optimized_function.is_mock_llm", return_value=False):
+    with patch(
+        "traigent.core.optimized_function.cost_preflight_mock_exempt",
+        return_value=False,
+    ):
         with patch(
             "traigent.core.optimized_function.OptimizationOrchestrator"
         ) as mock_orchestrator_cls:
@@ -330,7 +351,10 @@ async def test_cost_preflight_interactive_keyboard_interrupt_blocks_before_any_t
 
     monkeypatch.setattr("builtins.input", raise_keyboard_interrupt)
 
-    with patch("traigent.core.optimized_function.is_mock_llm", return_value=False):
+    with patch(
+        "traigent.core.optimized_function.cost_preflight_mock_exempt",
+        return_value=False,
+    ):
         with patch(
             "traigent.core.optimized_function.OptimizationOrchestrator"
         ) as mock_orchestrator_cls:
@@ -356,7 +380,10 @@ async def test_cost_preflight_interactive_yes_proceeds(
     monkeypatch.setattr("builtins.input", lambda _prompt="": "y")
 
     with (
-        patch("traigent.core.optimized_function.is_mock_llm", return_value=False),
+        patch(
+            "traigent.core.optimized_function.cost_preflight_mock_exempt",
+            return_value=False,
+        ),
         warnings.catch_warnings(record=True) as captured,
     ):
         warnings.simplefilter("always")
@@ -389,7 +416,10 @@ async def test_cost_preflight_strict_blocks_before_any_trial(
         lambda _prompt="": pytest.fail("strict mode should not prompt"),
     )
 
-    with patch("traigent.core.optimized_function.is_mock_llm", return_value=False):
+    with patch(
+        "traigent.core.optimized_function.cost_preflight_mock_exempt",
+        return_value=False,
+    ):
         with pytest.raises(UnknownModelError, match=FAKE_MODEL):
             await opt_func.optimize(progress_bar=False)
 
@@ -408,7 +438,10 @@ async def test_cost_preflight_fully_priced_space_has_no_warning(
     )
 
     with (
-        patch("traigent.core.optimized_function.is_mock_llm", return_value=False),
+        patch(
+            "traigent.core.optimized_function.cost_preflight_mock_exempt",
+            return_value=False,
+        ),
         warnings.catch_warnings(record=True) as captured,
     ):
         warnings.simplefilter("always")
@@ -452,7 +485,10 @@ async def test_cost_preflight_custom_pricing_json_counts_as_covered(
     )
 
     with (
-        patch("traigent.core.optimized_function.is_mock_llm", return_value=False),
+        patch(
+            "traigent.core.optimized_function.cost_preflight_mock_exempt",
+            return_value=False,
+        ),
         warnings.catch_warnings(record=True) as captured,
     ):
         warnings.simplefilter("always")
@@ -471,6 +507,8 @@ async def test_cost_preflight_mock_mode_skips_warning_and_strict_block(
     one_example_dataset: Dataset,
 ) -> None:
     monkeypatch.setenv("TRAIGENT_STRICT_COST_ACCOUNTING", "true")
+    monkeypatch.setenv("TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT", "true")
+    monkeypatch.setenv("ENVIRONMENT", "development")
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
     opt_func = OptimizedFunction(
         func=CountedFunction(),
@@ -480,7 +518,7 @@ async def test_cost_preflight_mock_mode_skips_warning_and_strict_block(
     )
 
     with (
-        patch("traigent.core.optimized_function.is_mock_llm", return_value=True),
+        patch("traigent.utils.env_config.is_mock_llm", return_value=True),
         warnings.catch_warnings(record=True) as captured,
     ):
         warnings.simplefilter("always")
@@ -491,6 +529,29 @@ async def test_cost_preflight_mock_mode_skips_warning_and_strict_block(
         for warning in captured
         if "results will report $0" in str(warning.message)
     ]
+
+
+@pytest.mark.asyncio
+async def test_cost_preflight_plain_mock_without_exemption_still_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+    one_example_dataset: Dataset,
+) -> None:
+    monkeypatch.setenv("TRAIGENT_STRICT_COST_ACCOUNTING", "true")
+    monkeypatch.delenv("TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT", raising=False)
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    opt_func = OptimizedFunction(
+        func=CountedFunction(),
+        configuration_space={"model": [FAKE_MODEL]},
+        eval_dataset=one_example_dataset,
+        max_trials=1,
+    )
+
+    with (
+        patch("traigent.utils.env_config.is_mock_llm", return_value=True),
+        pytest.raises(UnknownModelError),
+    ):
+        await _run_with_mocked_orchestrator(opt_func)
 
 
 @pytest.mark.asyncio
@@ -508,7 +569,10 @@ async def test_cost_preflight_checks_default_model_when_model_is_fixed(
     )
 
     with (
-        patch("traigent.core.optimized_function.is_mock_llm", return_value=False),
+        patch(
+            "traigent.core.optimized_function.cost_preflight_mock_exempt",
+            return_value=False,
+        ),
         warnings.catch_warnings(record=True) as captured,
     ):
         warnings.simplefilter("always")
