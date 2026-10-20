@@ -6,6 +6,7 @@ that would otherwise be lost when functions return only strings.
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Observability CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
 
+import importlib.util
 import threading
 import time
 from collections.abc import Iterator
@@ -664,6 +665,21 @@ INSTALL_NOT_APPLICABLE = "not-applicable"
 INSTALL_FAILED = "failed"
 
 
+def classify_import_failure(top_level_package: str) -> str:
+    """Outcome for an ``ImportError`` raised while installing one provider.
+
+    ``not-applicable`` only when the optional top-level package is provably
+    absent (``find_spec`` returns None). A package that is present but fails
+    to import (a broken transitive dependency, an incompatible version) is a
+    ``failed`` install: the provider would otherwise reach the real API.
+    """
+    try:
+        absent = importlib.util.find_spec(top_level_package) is None
+    except (ImportError, ValueError):
+        absent = False
+    return INSTALL_NOT_APPLICABLE if absent else INSTALL_FAILED
+
+
 def patch_langchain_for_metadata_capture(
     outcomes: dict[str, str] | None = None,
 ) -> bool:
@@ -780,8 +796,13 @@ def patch_langchain_for_metadata_capture(
 
         out["anthropic"] = INSTALL_INSTALLED if patched_any else INSTALL_ALREADY
     except ImportError:
-        out["anthropic"] = INSTALL_NOT_APPLICABLE
-        logger.debug("ChatAnthropic not available, skipping")
+        out["anthropic"] = classify_import_failure("langchain_anthropic")
+        if out["anthropic"] == INSTALL_FAILED:
+            logger.error(
+                "Failed to patch langchain_anthropic: import error in an installed package"
+            )
+        else:
+            logger.debug("ChatAnthropic not available, skipping")
     except Exception as e:
         out["anthropic"] = INSTALL_FAILED
         logger.error(f"Failed to patch ChatAnthropic: {e}")
@@ -879,8 +900,13 @@ def patch_langchain_for_metadata_capture(
 
         out["openai"] = INSTALL_INSTALLED if patched_any else INSTALL_ALREADY
     except ImportError:
-        out["openai"] = INSTALL_NOT_APPLICABLE
-        logger.debug("ChatOpenAI not available, skipping")
+        out["openai"] = classify_import_failure("langchain_openai")
+        if out["openai"] == INSTALL_FAILED:
+            logger.error(
+                "Failed to patch langchain_openai: import error in an installed package"
+            )
+        else:
+            logger.debug("ChatOpenAI not available, skipping")
     except Exception as e:
         out["openai"] = INSTALL_FAILED
         logger.error(f"Failed to patch ChatOpenAI: {e}")
@@ -901,8 +927,13 @@ def patch_langchain_for_metadata_capture(
 
         out["bedrock"] = INSTALL_INSTALLED if patched_any else INSTALL_ALREADY
     except ImportError:
-        out["bedrock"] = INSTALL_NOT_APPLICABLE
-        logger.debug("langchain_aws not available, skipping Bedrock")
+        out["bedrock"] = classify_import_failure("langchain_aws")
+        if out["bedrock"] == INSTALL_FAILED:
+            logger.error(
+                "Failed to patch langchain_aws: import error in an installed package"
+            )
+        else:
+            logger.debug("langchain_aws not available, skipping Bedrock")
     except Exception as e:
         out["bedrock"] = INSTALL_FAILED
         logger.error(f"Failed to patch langchain_aws Bedrock models: {e}")

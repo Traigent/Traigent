@@ -15,6 +15,7 @@ import time
 from typing import Any
 
 from traigent.utils.langchain_interceptor import (
+    classify_import_failure,
     capture_langchain_response,
     capture_observed_response,
     instrumented_provider_call,
@@ -171,8 +172,13 @@ def patch_litellm_for_metadata_capture(
     try:
         import litellm
     except ImportError:
-        out["litellm"] = "not-applicable"
-        logger.debug("LiteLLM not available, skipping interceptor")
+        # Absent only when the package itself cannot be found; a present but
+        # broken/incompatible install must not be reported as "not applicable".
+        out["litellm"] = classify_import_failure("litellm")
+        if out["litellm"] == "failed":
+            logger.error("LiteLLM is installed but could not be imported")
+        else:
+            logger.debug("LiteLLM not available, skipping interceptor")
         return False
 
     configure_litellm_logging(litellm_module=litellm)

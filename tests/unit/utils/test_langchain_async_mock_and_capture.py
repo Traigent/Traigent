@@ -390,3 +390,60 @@ def test_stream_falls_back_helper_degrades_when_check_unavailable() -> None:
     assert _stream_falls_back(Raises(), async_api=True, kwargs={}) is None
     assert _stream_falls_back(_fallback_llm(), async_api=False, kwargs={}) is True
     assert _stream_falls_back(_streaming_llm(), async_api=False, kwargs={}) is False
+
+
+@pytest.mark.parametrize(
+    ("key", "package"),
+    [
+        ("openai", "langchain_openai"),
+        ("anthropic", "langchain_anthropic"),
+        ("bedrock", "langchain_aws"),
+        ("litellm", "litellm"),
+    ],
+)
+def test_import_error_outcome_distinguishes_absent_from_broken(
+    monkeypatch: pytest.MonkeyPatch, key: str, package: str
+) -> None:
+    """Sol r6: only a provably absent package is not-applicable."""
+    import builtins
+    import importlib.util
+
+    from traigent.utils.langchain_interceptor import (
+        patch_langchain_for_metadata_capture,
+    )
+    from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
+
+    real_import = builtins.__import__
+
+    def fake_import(name: str, *a: Any, **k: Any) -> Any:
+        if name == package:
+            raise ImportError("transitive dependency broke")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    patch = (
+        patch_litellm_for_metadata_capture
+        if key == "litellm"
+        else patch_langchain_for_metadata_capture
+    )
+
+    real_find_spec = importlib.util.find_spec
+    # Package present on disk but failing to import -> failed.
+    monkeypatch.setattr(
+        importlib.util,
+        "find_spec",
+        lambda n, *a: object() if n == package else real_find_spec(n, *a),
+    )
+    broken: dict[str, str] = {}
+    patch(broken)
+    assert broken[key] == "failed"
+
+    # Package provably absent -> not-applicable.
+    monkeypatch.setattr(
+        importlib.util,
+        "find_spec",
+        lambda n, *a: None if n == package else real_find_spec(n, *a),
+    )
+    absent: dict[str, str] = {}
+    patch(absent)
+    assert absent[key] == "not-applicable"
