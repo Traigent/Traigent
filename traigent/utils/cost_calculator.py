@@ -126,6 +126,19 @@ ESTIMATION_MODEL_PRICING = {
         "input_cost_per_token": 15.0e-6,
         "output_cost_per_token": 75.0e-6,
     },
+    # Current-generation ids the SDK itself recommends (bundled litellm table).
+    "claude-haiku-4-5-20251001": {
+        "input_cost_per_token": 1.0e-6,
+        "output_cost_per_token": 5.0e-6,
+    },
+    "claude-haiku-4-5": {
+        "input_cost_per_token": 1.0e-6,
+        "output_cost_per_token": 5.0e-6,
+    },
+    "claude-sonnet-4-6": {
+        "input_cost_per_token": 3.0e-6,
+        "output_cost_per_token": 15.0e-6,
+    },
     # Google
     "gemini-1.5-pro": {
         "input_cost_per_token": 1.25e-6,
