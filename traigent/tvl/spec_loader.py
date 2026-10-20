@@ -439,6 +439,24 @@ def _validate_range_membership(
     return issues
 
 
+def _validate_tuple_components(
+    name: str, domain: dict[str, Any], default: Any, raw_type: str | None
+) -> list[str]:
+    """Validate a canonical tuple ``components`` domain and default membership."""
+    from traigent.tvl.models import _enumerate_tuple_components
+
+    try:
+        values = _enumerate_tuple_components(name, domain["components"])
+    except ValueError as exc:
+        return [str(exc)]
+    if default is _MISSING:
+        return []
+    candidate = tuple(default) if isinstance(default, list) else default
+    if candidate not in values:
+        return [f"TVAR '{name}' default {default!r} is outside declared tuple domain"]
+    return []
+
+
 def _validate_domain_structure(
     name: str,
     domain: Any,
@@ -486,9 +504,12 @@ def _validate_domain_structure(
             return issues
         if "registry" in domain or domain_type == "registry":
             return issues
+        if "components" in domain and normalized_type == "tuple":
+            return _validate_tuple_components(name, domain, default, raw_type)
 
         issues.append(
-            f"TVAR '{name}' domain must define one of range, set, values, or registry"
+            f"TVAR '{name}' domain must define one of range, set, values, "
+            "registry, or (tuple types) components"
         )
         return issues
 
@@ -1448,7 +1469,12 @@ def _parse_tvars(
             configuration_space[name] = domain.to_configuration_space_entry()
 
         if default is not None:
-            defaults[name] = default
+            # YAML spells a tuple default as a list; config-space values are tuples.
+            defaults[name] = (
+                tuple(default)
+                if tvar_type == "tuple" and isinstance(default, list)
+                else default
+            )
 
     return tvars, configuration_space, defaults, units
 

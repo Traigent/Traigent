@@ -792,6 +792,93 @@ def _parse_range_domain(
     )
 
 
+_MAX_TUPLE_PRODUCT = 10_000  # guard against combinatorial explosion
+
+
+def _tuple_component_values(name: str, idx: int, comp: Any) -> list[Any]:
+    """Resolve one canonical tuple component into its finite domain values."""
+    label = f"TVAR '{name}' tuple component {idx}"
+    if isinstance(comp, list):
+        return list(comp)
+    if not isinstance(comp, dict):
+        raise ValueError(f"{label} must be a list or a domain mapping")
+    if "values" in comp:
+        return list(comp["values"])
+    if "set" in comp:
+        return list(comp["set"])
+    if "components" in comp:
+        return _enumerate_tuple_components(name, comp["components"])
+    if "registry" in comp:
+        raise ValueError(
+            f"{label} uses a registry domain, which is not supported inside "
+            "tuple components"
+        )
+    if "range" in comp:
+        rng = comp["range"]
+        if not (isinstance(rng, list) and len(rng) == 2):
+            raise ValueError(f"{label} range must be [min, max]")
+        lo_raw, hi_raw = rng
+        if any(isinstance(b, bool) or not isinstance(b, (int, float)) for b in rng):
+            raise ValueError(f"{label} range bounds must be numbers")
+        resolution = comp.get("resolution")
+        if resolution is not None:
+            if (
+                isinstance(resolution, bool)
+                or not isinstance(resolution, (int, float))
+                or resolution <= 0
+            ):
+                raise ValueError(f"{label} resolution must be a positive number")
+            if hi_raw < lo_raw:
+                raise ValueError(f"{label} range min must not exceed max")
+            step = float(resolution)
+            n_steps = int(round((float(hi_raw) - float(lo_raw)) / step))
+            if n_steps + 1 > _MAX_TUPLE_PRODUCT:
+                raise ValueError(f"{label} range enumerates too many grid points")
+            vals = [round(float(lo_raw) + i * step, 12) for i in range(n_steps + 1)]
+            if (
+                isinstance(lo_raw, int)
+                and isinstance(hi_raw, int)
+                and (isinstance(resolution, int) or float(resolution).is_integer())
+            ):
+                return [int(v) for v in vals]
+            return vals
+        if isinstance(lo_raw, float) or isinstance(hi_raw, float):
+            raise ValueError(
+                f"{label} has a float range but no 'resolution'; add a "
+                "resolution to enumerate grid points"
+            )
+        if hi_raw < lo_raw:
+            raise ValueError(f"{label} range min must not exceed max")
+        if hi_raw - lo_raw + 1 > _MAX_TUPLE_PRODUCT:
+            raise ValueError(f"{label} range enumerates too many grid points")
+        return list(range(int(lo_raw), int(hi_raw) + 1))
+    raise ValueError(f"{label} must define one of values, set, range, or components")
+
+
+def _enumerate_tuple_components(name: str, components: Any) -> list[Any]:
+    """Cartesian product of canonical TVL ``components`` domains (as tuples)."""
+    if not isinstance(components, list) or not components:
+        raise ValueError(
+            f"TVAR '{name}' tuple domain must define a non-empty 'components' list"
+        )
+    import itertools
+
+    axes: list[list[Any]] = []
+    size = 1
+    for idx, comp in enumerate(components):
+        vals = _tuple_component_values(name, idx, comp)
+        if not vals:
+            raise ValueError(f"TVAR '{name}' tuple component {idx} has empty domain")
+        axes.append(vals)
+        size *= len(vals)
+        if size > _MAX_TUPLE_PRODUCT:
+            raise ValueError(
+                f"TVAR '{name}' tuple product size exceeds limit "
+                f"{_MAX_TUPLE_PRODUCT}; reduce component domains"
+            )
+    return [tuple(combo) for combo in itertools.product(*axes)]
+
+
 def _parse_dict_domain(
     tvar_name: str, tvar_type: TVarType, domain_data: dict[str, Any]
 ) -> DomainSpec | None:
@@ -803,6 +890,11 @@ def _parse_dict_domain(
         return _parse_range_domain(tvar_name, tvar_type, domain_data)
     if "set" in domain_data:
         return DomainSpec(kind="set", values=domain_data["set"])
+    if "components" in domain_data and tvar_type == "tuple":
+        return DomainSpec(
+            kind="enum",
+            values=_enumerate_tuple_components(tvar_name, domain_data["components"]),
+        )
     if "registry" in domain_data:
         return DomainSpec(
             kind="registry",
