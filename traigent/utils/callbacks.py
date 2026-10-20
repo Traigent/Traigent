@@ -562,7 +562,7 @@ class ManagedProgressCallback(OptimizationCallback):
         elapsed = _format_elapsed(progress.elapsed_time)
         _safe_print(
             f"[traigent] config {progress.completed_trials}/{total} {status} "
-            f"best={best_score_str} elapsed={elapsed}",
+            f"best_single={best_score_str} elapsed={elapsed}",
             flush=True,
         )
 
