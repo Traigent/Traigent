@@ -81,6 +81,8 @@ def aggregate_costs(trials: list[Any]) -> dict[str, Any]:
     unbounded = 0
     for trial in trials:
         if not isinstance(trial, dict):
+            # A malformed entry has unknown cost: unmeasured and unbounded.
+            unbounded += 1
             continue
         cost = measured_cost(trial)
         if cost is not None:
@@ -144,6 +146,8 @@ def calculate_metrics(results: dict[str, Any]) -> dict[str, float]:
     tokens = []
 
     for trial in trials:
+        if not isinstance(trial, dict):
+            continue
         if isinstance(trial.get("score"), (int, float)):
             scores.append(trial["score"])
         if isinstance(trial.get("latency"), (int, float)):

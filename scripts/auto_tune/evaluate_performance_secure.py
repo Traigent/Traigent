@@ -168,6 +168,8 @@ def aggregate_costs(trials: list[Any]) -> dict[str, Any]:
     unbounded = 0
     for trial in trials:
         if not isinstance(trial, dict):
+            # A malformed entry has unknown cost: unmeasured and unbounded.
+            unbounded += 1
             continue
         cost = measured_cost(trial)
         if cost is not None:
@@ -198,6 +200,26 @@ def budget_status(metrics: dict[str, Any], max_budget: float) -> str:
     if isinstance(floor, (int, float)) and floor > max_budget:
         return "exceeded"
     return "unverifiable"
+
+
+def budget_remaining(metrics: dict[str, Any], max_budget: float) -> float | None:
+    """Remaining budget from the snapshot; None unless the total is exact."""
+    total = metrics.get("total_cost")
+    if isinstance(total, (int, float)):
+        return max(0.0, max_budget - total)
+    return None
+
+
+def budget_remaining_at_most(
+    metrics: dict[str, Any], max_budget: float
+) -> float | None:
+    """Upper bound on remaining budget from the known floor, else None."""
+    known = metrics.get("total_cost")
+    if not isinstance(known, (int, float)):
+        known = metrics.get("cost_lower_bound_total")
+    if isinstance(known, (int, float)):
+        return max(0.0, max_budget - known)
+    return None
 
 
 def calculate_metrics(results: dict[str, Any]) -> dict[str, float]:
@@ -260,10 +282,10 @@ def calculate_metrics(results: dict[str, Any]) -> dict[str, float]:
     if latencies:
         metrics["avg_latency"] = statistics.mean(latencies)
 
+    # Read-only accounting: the snapshot is evaluated, never added to persisted
+    # spend (CostController.track_spending is additive, so re-evaluating the same
+    # results would double-count).
     metrics.update(aggregate_costs(trials))
-    if metrics["cost_lower_bound_total"] is not None:
-        # Track the known spend (measured + floors); never less than was incurred.
-        cost_controller.track_spending(metrics["cost_lower_bound_total"])
 
     if tokens:
         metrics["tokens_used"] = sum(tokens)
@@ -511,7 +533,12 @@ def main():
                 "spent": current_metrics["total_cost"],
                 "spent_at_least": current_metrics["cost_lower_bound_total"],
                 "status": budget_state,
-                "remaining": cost_controller.remaining_budget(),
+                "remaining": budget_remaining(
+                    current_metrics, cost_controller.max_budget
+                ),
+                "remaining_at_most": budget_remaining_at_most(
+                    current_metrics, cost_controller.max_budget
+                ),
                 "limit": cost_controller.max_budget,
             },
         }

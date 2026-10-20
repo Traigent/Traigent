@@ -199,3 +199,39 @@ def test_report_shows_at_least_for_lower_bound():
     unknown = {**base, "total_cost": None, "cost_lower_bound_total": None}
     md = gen.generate_markdown_report({"current_metrics": unknown}, {}, PARAMS)
     assert "**Total Cost:** unmeasured" in md
+
+
+def test_malformed_trial_entry_is_unmeasured_and_unbounded(secure_eval):
+    ev = _load("scripts/auto_tune/evaluate_performance.py", "ci_eval_perf4")
+    for mod in (ev, secure_eval):
+        m = mod.calculate_metrics({"trials": [{"cost": 0.5}, None]})
+        assert m["total_cost"] is None
+        assert m["cost_trials_unmeasured"] == 1
+        assert m["cost_trials_unbounded"] == 1
+        assert m["cost_lower_bound_total"] == pytest.approx(0.5)
+    m = secure_eval.calculate_metrics({"trials": [{"cost": 0.5}, "x"]})
+    assert secure_eval.budget_status(m, 5.0) == "unverifiable"
+    assert secure_eval.budget_remaining(m, 5.0) is None
+    assert secure_eval.budget_remaining_at_most(m, 5.0) == pytest.approx(4.5)
+
+
+def test_evaluation_is_read_only_for_spend(secure_eval, tmp_path):
+    trials = {"trials": [{"score": 1.0, "cost": 2.0}, {"score": 1.0, "cost": 1.0}]}
+    first = secure_eval.calculate_metrics(trials)
+    second = secure_eval.calculate_metrics(trials)
+    assert first == second
+    assert first["total_cost"] == pytest.approx(3.0)
+    assert secure_eval.cost_controller.spent == 0.0
+    assert not (tmp_path / "cost_tracking.json").exists()
+    assert secure_eval.budget_status(second, 5.0) == "within"
+    assert secure_eval.budget_remaining(second, 5.0) == pytest.approx(2.0)
+    assert secure_eval.budget_status(second, 2.5) == "exceeded"
+    assert secure_eval.budget_remaining(second, 2.5) == 0.0
+
+
+def test_repeat_evaluation_logs_no_budget_alert(secure_eval, caplog):
+    trials = {"trials": [{"score": 1.0, "cost": 2.0}, {"score": 1.0, "cost": 2.0}]}
+    with caplog.at_level("CRITICAL"):
+        for _ in range(3):
+            secure_eval.calculate_metrics(trials)
+    assert not [r for r in caplog.records if "BUDGET ALERT" in r.getMessage()]
