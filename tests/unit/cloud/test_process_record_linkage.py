@@ -527,6 +527,21 @@ def test_link_commitments_refused_off_posix_before_any_secret(
     assert client.sent == [] and not (tmp_path / "b.json").exists()
 
 
+def test_bundle_only_refused_off_posix_before_any_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from traigent.cloud import process_record_linkage as prl
+
+    monkeypatch.setattr(prl, "_is_posix", lambda: False)
+    client = FakeClient()
+    with pytest.raises(CommitmentLinkageClientError) as err:
+        finalize_process_record(
+            client, SESSION, PAYLOAD, bundle_path=tmp_path / "b.json"
+        )
+    assert err.value.code == "LINKAGE_UNSUPPORTED_PLATFORM"
+    assert client.sent == [] and not (tmp_path / "b.json").exists()
+
+
 def test_bundle_owned_by_another_uid_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -370,12 +370,13 @@ def finalize_process_record(
     created (or an existing one for this session reused) and flushed to disk
     before anything is sent.
     """
+    if link_commitments or bundle_path is not None:
+        # A bundle is written for either flag; refuse off POSIX before any work.
+        require_posix_platform()
     if not _SESSION_ID_RE.fullmatch(build_session_row_id):
         raise CommitmentLinkageClientError("BAD_SESSION_ID")
     if "openings" in request_payload:
         raise CommitmentLinkageClientError("REQUEST_HAS_OPENINGS")
-    if link_commitments:
-        require_posix_platform()
     if bundle_path is None:
         if link_commitments:
             raise CommitmentLinkageClientError("BUNDLE_REQUIRED")

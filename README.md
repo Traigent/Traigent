@@ -278,7 +278,7 @@ def multi_provider_agent(question: str) -> str:
 
 Python 3.11+ on Linux, macOS, or Windows. The published package on [PyPI](https://pypi.org/project/traigent/) is the recommended way to install — `pip install "traigent[recommended]"` or `uv add "traigent[recommended]"`. No repository checkout is required to use the SDK or its `traigent` CLI.
 
-Commitment linking (`traigent certify finalize --link-commitments` and `traigent certify verify --open-commitments`) is POSIX-only for now: it relies on owner-only (mode 0600) bundle files and directory fsync. On other platforms both flags refuse with `LINKAGE_UNSUPPORTED_PLATFORM` before any secret is generated or read.
+Commitment linking is POSIX-only for now: it relies on owner-only (mode 0600) bundle files and directory fsync. `traigent certify finalize` is POSIX-only for now, with or without `--link-commitments`, because it always writes a client bundle; `traigent certify verify --open-commitments` is likewise POSIX-only. On other platforms these commands refuse with `LINKAGE_UNSUPPORTED_PLATFORM` before any secret is generated or read and before any request is sent.
 
 | Feature Set | Description |
 |-------------|-------------|

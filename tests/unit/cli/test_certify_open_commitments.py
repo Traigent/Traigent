@@ -340,6 +340,19 @@ def test_open_commitments_refused_off_posix_before_reading_anything(
     assert "LINKAGE_UNSUPPORTED_PLATFORM" in result.output
 
 
+def test_finalize_default_off_refused_off_posix_before_any_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from traigent.cloud import process_record_linkage as prl
+
+    monkeypatch.setattr(prl, "_is_posix", lambda: False)
+    backend = _FakeBackend({"success": True, "data": {}})
+    result = _finalize(tmp_path, monkeypatch, backend)
+    assert result.exit_code == 1
+    assert "LINKAGE_UNSUPPORTED_PLATFORM" in result.output
+    assert backend.sent == [] and not (tmp_path / "b.json").exists()
+
+
 def test_finalize_link_commitments_refused_off_posix(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

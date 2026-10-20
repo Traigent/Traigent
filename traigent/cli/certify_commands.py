@@ -841,8 +841,9 @@ def _make_backend_client() -> Any:
     help=(
         "Opt in: also request the commitment-linkage sidecar for the dataset "
         "and config_space declarations. Fresh openings are written to --bundle "
-        "BEFORE the request is sent and reused on retry. Default off. POSIX-only "
-        "for now: on other platforms it refuses with LINKAGE_UNSUPPORTED_PLATFORM."
+        "BEFORE the request is sent and reused on retry. Default off. The command "
+        "as a whole is POSIX-only for now: on other platforms it refuses with "
+        "LINKAGE_UNSUPPORTED_PLATFORM."
     ),
 )
 @click.option(
@@ -859,20 +860,25 @@ def finalize(
     link_commitments: bool,
     fp_digest: tuple[str, ...],
 ) -> None:
-    """Finalize BUILD_SESSION_ID's process record on the backend (opt-in client)."""
+    """Finalize BUILD_SESSION_ID's process record on the backend (opt-in client).
+
+    POSIX-only for now: every invocation writes a client bundle, so on other
+    platforms it refuses with LINKAGE_UNSUPPORTED_PLATFORM before doing any work.
+    """
     from traigent.cloud.process_record_linkage import (
         CommitmentLinkageClientError,
         finalize_process_record,
     )
 
-    if link_commitments:
-        from traigent.cloud.process_record_linkage import require_posix_platform
+    # finalize always writes a client bundle (--bundle is mandatory), so the
+    # POSIX guard applies to every invocation, not only --link-commitments.
+    from traigent.cloud.process_record_linkage import require_posix_platform
 
-        try:
-            require_posix_platform()
-        except CommitmentLinkageClientError as err:
-            click.echo(f"FINALIZE_REFUSED {err.code}", err=True)
-            raise click.exceptions.Exit(1) from None
+    try:
+        require_posix_platform()
+    except CommitmentLinkageClientError as err:
+        click.echo(f"FINALIZE_REFUSED {err.code}", err=True)
+        raise click.exceptions.Exit(1) from None
     digests: dict[str, str] = {}
     for item in fp_digest:
         role, sep, value = item.partition("=")
