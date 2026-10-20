@@ -5,6 +5,7 @@ Compares optimization results against baseline with security controls.
 """
 
 import json
+import math
 import os
 import statistics
 import sys
@@ -144,14 +145,71 @@ def measured_cost(trial: dict[str, Any]) -> float | None:
     return float(cost)
 
 
+def known_cost_floor(trial: dict[str, Any]) -> float | None:
+    """A positive, finite exported ``cost_lower_bound`` for an unmeasured trial."""
+    floor = trial.get("cost_lower_bound")
+    if isinstance(floor, bool) or not isinstance(floor, (int, float)):
+        return None
+    if not math.isfinite(floor) or floor <= 0:
+        return None
+    return float(floor)
+
+
+def aggregate_costs(trials: list[Any]) -> dict[str, Any]:
+    """Exact total only when every trial is measured; else a lower bound.
+
+    ``total_cost`` is None when any trial is unmeasured. ``cost_lower_bound_total``
+    is measured spend plus the known floors of unmeasured trials, or None when
+    nothing is known. ``cost_trials_unbounded`` counts unmeasured trials with no
+    floor (spend we cannot bound at all).
+    """
+    measured: list[float] = []
+    floors: list[float] = []
+    unbounded = 0
+    for trial in trials:
+        if not isinstance(trial, dict):
+            continue
+        cost = measured_cost(trial)
+        if cost is not None:
+            measured.append(cost)
+            continue
+        floor = known_cost_floor(trial)
+        if floor is None:
+            unbounded += 1
+        else:
+            floors.append(floor)
+    unmeasured = len(floors) + unbounded
+    known = measured + floors
+    return {
+        "total_cost": sum(measured) if measured and not unmeasured else None,
+        "cost_lower_bound_total": sum(known) if known else None,
+        "cost_trials_measured": len(measured),
+        "cost_trials_unmeasured": unmeasured,
+        "cost_trials_unbounded": unbounded,
+    }
+
+
+def budget_status(metrics: dict[str, Any], max_budget: float) -> str:
+    """``exceeded`` / ``within`` / ``unverifiable``; never passes on unknown spend."""
+    total = metrics.get("total_cost")
+    if isinstance(total, (int, float)):
+        return "exceeded" if total > max_budget else "within"
+    floor = metrics.get("cost_lower_bound_total")
+    if isinstance(floor, (int, float)) and floor > max_budget:
+        return "exceeded"
+    return "unverifiable"
+
+
 def calculate_metrics(results: dict[str, Any]) -> dict[str, float]:
     """Calculate performance metrics with validation."""
     metrics = {
         "accuracy": 0.0,
         "avg_latency": 0.0,
         "total_cost": None,  # None = unmeasured, never 0
+        "cost_lower_bound_total": None,  # measured + known floors
         "cost_trials_measured": 0,
         "cost_trials_unmeasured": 0,
+        "cost_trials_unbounded": 0,
         "tokens_used": 0,
         "trials_completed": 0,
         "best_score": 0.0,
@@ -168,7 +226,7 @@ def calculate_metrics(results: dict[str, Any]) -> dict[str, float]:
         return metrics
 
     # Validate and extract metrics
-    scores, latencies, costs, tokens = [], [], [], []
+    scores, latencies, tokens = [], [], []
 
     for i, trial in enumerate(trials):
         try:
@@ -183,10 +241,6 @@ def calculate_metrics(results: dict[str, Any]) -> dict[str, float]:
 
             if "latency" in trial and isinstance(trial["latency"], (int, float)):
                 latencies.append(float(trial["latency"]))
-
-            cost = measured_cost(trial)
-            if cost is not None:
-                costs.append(cost)
 
             if "tokens" in trial and isinstance(trial["tokens"], int):
                 tokens.append(trial["tokens"])
@@ -206,12 +260,10 @@ def calculate_metrics(results: dict[str, Any]) -> dict[str, float]:
     if latencies:
         metrics["avg_latency"] = statistics.mean(latencies)
 
-    metrics["cost_trials_measured"] = len(costs)
-    metrics["cost_trials_unmeasured"] = len(trials) - len(costs)
-    if costs:
-        metrics["total_cost"] = sum(costs)
-        # Track spending
-        cost_controller.track_spend(metrics["total_cost"])
+    metrics.update(aggregate_costs(trials))
+    if metrics["cost_lower_bound_total"] is not None:
+        # Track the known spend (measured + floors); never less than was incurred.
+        cost_controller.track_spending(metrics["cost_lower_bound_total"])
 
     if tokens:
         metrics["tokens_used"] = sum(tokens)
@@ -330,7 +382,7 @@ def generate_plots_data(results: dict[str, Any]) -> dict[str, Any]:
     }
 
     trials = results.get("trials", [])
-    cumulative_cost = 0.0
+    cumulative_cost: float | None = 0.0
 
     for i, trial in enumerate(trials):
         if not isinstance(trial, dict):
@@ -342,8 +394,11 @@ def generate_plots_data(results: dict[str, Any]) -> dict[str, Any]:
         cost = measured_cost(trial)
         plots_data["costs"].append(cost)
 
-        # Known-cost floor only: unmeasured trials add nothing and are not 0.
-        cumulative_cost += cost or 0.0
+        # Unknown from the first unmeasured trial onward; never a made-up 0.
+        if cost is None:
+            cumulative_cost = None
+        elif cumulative_cost is not None:
+            cumulative_cost += cost
         plots_data["cumulative_cost"].append(cumulative_cost)
 
     return plots_data
@@ -362,7 +417,7 @@ def main():
             "evaluate_start",
             {
                 "start_time": start_time.isoformat(),
-                "remaining_budget": cost_controller.get_remaining_budget(),
+                "remaining_budget": cost_controller.remaining_budget(),
             },
         )
 
@@ -385,18 +440,28 @@ def main():
         # Calculate current metrics
         current_metrics = calculate_metrics(results)
 
-        # Check budget
-        if (
-            current_metrics["total_cost"] is not None
-            and current_metrics["total_cost"] > cost_controller.max_budget
-        ):
-            logger.critical(f"Budget exceeded: ${current_metrics['total_cost']:.2f}")
+        # Check budget against the exact total, else the known lower bound
+        budget_state = budget_status(current_metrics, cost_controller.max_budget)
+        if budget_state == "exceeded":
+            spent = current_metrics["total_cost"]
+            if spent is None:
+                spent = current_metrics["cost_lower_bound_total"]
+            logger.critical(f"Budget exceeded: at least ${spent:.2f}")
             audit_logger.log_event(
                 "budget_exceeded",
                 {
-                    "spent": current_metrics["total_cost"],
+                    "spent_at_least": spent,
+                    "exact": current_metrics["total_cost"] is not None,
                     "budget": cost_controller.max_budget,
                 },
+                success=False,
+            )
+        elif budget_state == "unverifiable":
+            logger.warning("Budget unverifiable: some trial costs are unmeasured")
+            print("⚠️  Budget unverifiable: some trial costs are unmeasured")
+            audit_logger.log_event(
+                "budget_unverifiable",
+                {"budget": cost_controller.max_budget},
                 success=False,
             )
 
@@ -444,7 +509,9 @@ def main():
             },
             "budget": {
                 "spent": current_metrics["total_cost"],
-                "remaining": cost_controller.get_remaining_budget(),
+                "spent_at_least": current_metrics["cost_lower_bound_total"],
+                "status": budget_state,
+                "remaining": cost_controller.remaining_budget(),
                 "limit": cost_controller.max_budget,
             },
         }
@@ -474,6 +541,10 @@ def main():
                 "duration_seconds": (datetime.now(UTC) - start_time).total_seconds(),
             },
         )
+
+        # A floor already over budget fails the run
+        if budget_state == "exceeded":
+            return 1
 
         # Return non-zero if regression detected
         if comparison.get("has_regression"):

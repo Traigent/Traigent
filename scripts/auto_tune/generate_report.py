@@ -53,7 +53,10 @@ def generate_recommendations(
         )
 
     # Cost optimization
-    current_cost = performance.get("current_metrics", {}).get("total_cost")
+    _cost_metrics = performance.get("current_metrics", {})
+    current_cost = _cost_metrics.get("total_cost")
+    if current_cost is None:
+        current_cost = _cost_metrics.get("cost_lower_bound_total")
     if isinstance(current_cost, (int, float)) and current_cost > 10:
         recommendations.append(
             "💰 **High Cost Alert**: Consider using more cost-effective models or reducing trial count."
@@ -107,16 +110,17 @@ def generate_markdown_report(
     report.append(f"- **Trials Completed:** {current.get('trials_completed', 0)}")
     report.append(f"- **Best Score:** {current.get('best_score', 0):.3f}")
     total_cost = current.get("total_cost")
+    floor = current.get("cost_lower_bound_total")
     unmeasured = current.get("cost_trials_unmeasured") or 0
-    if total_cost is None:
-        report.append("- **Total Cost:** unmeasured")
-    elif unmeasured:
+    if total_cost is not None and not unmeasured:
+        report.append(f"- **Total Cost:** ${total_cost:.2f}")
+    elif isinstance(floor, (int, float)):
         report.append(
-            f"- **Total Cost:** at least ${total_cost:.2f} "
+            f"- **Total Cost:** at least ${floor:.2f} "
             f"({unmeasured} trial(s) unmeasured)"
         )
     else:
-        report.append(f"- **Total Cost:** ${total_cost:.2f}")
+        report.append("- **Total Cost:** unmeasured")
     report.append(f"- **Average Latency:** {current.get('avg_latency', 0):.2f}s")
     report.append("")
 

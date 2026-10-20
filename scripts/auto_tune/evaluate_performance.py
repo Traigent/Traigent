@@ -5,6 +5,7 @@ Compares current results with baseline and generates metrics.
 """
 
 import json
+import math
 import os
 import statistics
 from pathlib import Path
@@ -57,6 +58,61 @@ def measured_cost(trial: dict[str, Any]) -> float | None:
     return float(cost)
 
 
+def known_cost_floor(trial: dict[str, Any]) -> float | None:
+    """A positive, finite exported ``cost_lower_bound`` for an unmeasured trial."""
+    floor = trial.get("cost_lower_bound")
+    if isinstance(floor, bool) or not isinstance(floor, (int, float)):
+        return None
+    if not math.isfinite(floor) or floor <= 0:
+        return None
+    return float(floor)
+
+
+def aggregate_costs(trials: list[Any]) -> dict[str, Any]:
+    """Exact total only when every trial is measured; else a lower bound.
+
+    ``total_cost`` is None when any trial is unmeasured. ``cost_lower_bound_total``
+    is measured spend plus the known floors of unmeasured trials, or None when
+    nothing is known. ``cost_trials_unbounded`` counts unmeasured trials with no
+    floor (spend we cannot bound at all).
+    """
+    measured: list[float] = []
+    floors: list[float] = []
+    unbounded = 0
+    for trial in trials:
+        if not isinstance(trial, dict):
+            continue
+        cost = measured_cost(trial)
+        if cost is not None:
+            measured.append(cost)
+            continue
+        floor = known_cost_floor(trial)
+        if floor is None:
+            unbounded += 1
+        else:
+            floors.append(floor)
+    unmeasured = len(floors) + unbounded
+    known = measured + floors
+    return {
+        "total_cost": sum(measured) if measured and not unmeasured else None,
+        "cost_lower_bound_total": sum(known) if known else None,
+        "cost_trials_measured": len(measured),
+        "cost_trials_unmeasured": unmeasured,
+        "cost_trials_unbounded": unbounded,
+    }
+
+
+def budget_status(metrics: dict[str, Any], max_budget: float) -> str:
+    """``exceeded`` / ``within`` / ``unverifiable``; never passes on unknown spend."""
+    total = metrics.get("total_cost")
+    if isinstance(total, (int, float)):
+        return "exceeded" if total > max_budget else "within"
+    floor = metrics.get("cost_lower_bound_total")
+    if isinstance(floor, (int, float)) and floor > max_budget:
+        return "exceeded"
+    return "unverifiable"
+
+
 def calculate_metrics(results: dict[str, Any]) -> dict[str, float]:
     """
     Calculate performance metrics from optimization results.
@@ -65,8 +121,10 @@ def calculate_metrics(results: dict[str, Any]) -> dict[str, float]:
         "accuracy": 0.0,
         "avg_latency": 0.0,
         "total_cost": None,  # None = unmeasured, never 0
+        "cost_lower_bound_total": None,  # measured + known floors
         "cost_trials_measured": 0,
         "cost_trials_unmeasured": 0,
+        "cost_trials_unbounded": 0,
         "tokens_used": 0,
         "trials_completed": 0,
         "best_score": 0.0,
@@ -83,7 +141,6 @@ def calculate_metrics(results: dict[str, Any]) -> dict[str, float]:
     # Calculate metrics
     scores = []
     latencies = []
-    costs = []
     tokens = []
 
     for trial in trials:
@@ -91,9 +148,6 @@ def calculate_metrics(results: dict[str, Any]) -> dict[str, float]:
             scores.append(trial["score"])
         if isinstance(trial.get("latency"), (int, float)):
             latencies.append(trial["latency"])
-        cost = measured_cost(trial)
-        if cost is not None:
-            costs.append(cost)
         if "tokens" in trial:
             tokens.append(trial["tokens"])
 
@@ -104,10 +158,7 @@ def calculate_metrics(results: dict[str, Any]) -> dict[str, float]:
     if latencies:
         metrics["avg_latency"] = statistics.mean(latencies)
 
-    metrics["cost_trials_measured"] = len(costs)
-    metrics["cost_trials_unmeasured"] = len(trials) - len(costs)
-    if costs:
-        metrics["total_cost"] = sum(costs)
+    metrics.update(aggregate_costs(trials))
 
     if tokens:
         metrics["tokens_used"] = sum(tokens)

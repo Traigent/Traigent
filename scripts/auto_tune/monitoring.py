@@ -268,12 +268,24 @@ class PipelineMonitor:
                             ),
                         ]
                     )
-                    # An unmeasured cost is omitted, never reported as 0.
+                    # Exact cost only; a lower bound is a separate metric and
+                    # an unmeasured cost is omitted, never reported as 0.
                     if isinstance(current.get("total_cost"), (int, float)):
                         metrics.append(
                             Metric(
                                 name="cost",
                                 value=current["total_cost"],
+                                unit="usd",
+                                timestamp=datetime.now().isoformat(),
+                            )
+                        )
+                    elif isinstance(
+                        current.get("cost_lower_bound_total"), (int, float)
+                    ):
+                        metrics.append(
+                            Metric(
+                                name="cost_lower_bound",
+                                value=current["cost_lower_bound_total"],
                                 unit="usd",
                                 timestamp=datetime.now().isoformat(),
                             )

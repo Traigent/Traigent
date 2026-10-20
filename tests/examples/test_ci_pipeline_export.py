@@ -93,7 +93,9 @@ def test_downstream_evaluate_treats_unknown_cost_as_unmeasured():
         ]
     }
     m = ev.calculate_metrics(results)
-    assert m["total_cost"] == 0.5
+    # Incomplete: no exact total; the measured spend survives as a lower bound.
+    assert m["total_cost"] is None
+    assert m["cost_lower_bound_total"] == 0.5
     assert (m["cost_trials_measured"], m["cost_trials_unmeasured"]) == (1, 2)
     none = ev.calculate_metrics(
         {"trials": [{"score": 1.0, "cost_status": "unmeasured"}]}
@@ -102,3 +104,98 @@ def test_downstream_evaluate_treats_unknown_cost_as_unmeasured():
     cmp = ev.compare_with_baseline(none, {"accuracy": 1.0, "total_cost": 0.0}, 0.05)
     assert "total_cost" not in cmp["metrics"]
     assert not cmp["has_regression"]
+
+
+@pytest.fixture
+def secure_eval(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # log/audit/cost files stay in tmp
+    monkeypatch.syspath_prepend(str(ROOT / "scripts" / "auto_tune"))
+    return _load("scripts/auto_tune/evaluate_performance_secure.py", "ci_eval_secure")
+
+
+FLOOR_TRIALS = [
+    {"score": 1.0, "cost": 0.5, "cost_status": "measured"},
+    {
+        "score": 1.0,
+        "cost": None,
+        "cost_status": "unmeasured",
+        "cost_lower_bound": 7.0,
+    },
+    {"score": 1.0, "cost": None, "cost_status": "unmeasured"},
+]
+
+
+def test_known_floor_survives_downstream_aggregation(secure_eval):
+    ev = _load("scripts/auto_tune/evaluate_performance.py", "ci_eval_perf2")
+    for mod in (ev, secure_eval):
+        m = mod.calculate_metrics({"trials": FLOOR_TRIALS})
+        assert m["total_cost"] is None
+        assert m["cost_lower_bound_total"] == pytest.approx(7.5)
+        assert m["cost_trials_unmeasured"] == 2
+        assert m["cost_trials_unbounded"] == 1
+
+
+def test_all_measured_total_is_exact(secure_eval):
+    ev = _load("scripts/auto_tune/evaluate_performance.py", "ci_eval_perf3")
+    trials = [{"score": 1.0, "cost": 0.25}, {"score": 1.0, "cost": 0.5}]
+    for mod in (ev, secure_eval):
+        m = mod.calculate_metrics({"trials": trials})
+        assert m["total_cost"] == pytest.approx(0.75)
+        assert m["cost_lower_bound_total"] == pytest.approx(0.75)
+        assert m["cost_trials_unmeasured"] == 0
+
+
+def test_budget_floor_over_budget_fails(secure_eval):
+    m = secure_eval.calculate_metrics({"trials": FLOOR_TRIALS})
+    assert secure_eval.budget_status(m, 5.0) == "exceeded"
+    # Floor 7.5 is under a bigger budget but spend is still incomplete.
+    assert secure_eval.budget_status(m, 10.0) == "unverifiable"
+
+
+def test_budget_unknown_without_floor_is_unverifiable(secure_eval):
+    m = secure_eval.calculate_metrics(
+        {"trials": [{"score": 1.0, "cost": None, "cost_status": "unmeasured"}]}
+    )
+    assert m["total_cost"] is None and m["cost_lower_bound_total"] is None
+    assert secure_eval.budget_status(m, 5.0) == "unverifiable"
+
+
+def test_budget_exact_total_checked(secure_eval):
+    assert secure_eval.budget_status({"total_cost": 6.0}, 5.0) == "exceeded"
+    assert secure_eval.budget_status({"total_cost": 1.0}, 5.0) == "within"
+
+
+def test_cumulative_series_stays_unknown_after_first_unknown(secure_eval):
+    trials = [
+        {"score": 1.0, "cost": 0.5, "cost_status": "measured"},
+        {"score": 1.0, "cost": None, "cost_status": "unmeasured"},
+        {"score": 1.0, "cost": 0.5, "cost_status": "measured"},
+    ]
+    plots = secure_eval.generate_plots_data({"trials": trials})
+    assert plots["cumulative_cost"] == [0.5, None, None]
+    first_unknown = secure_eval.generate_plots_data(
+        {"trials": [{"score": 1.0, "cost_status": "unmeasured"}]}
+    )
+    assert first_unknown["cumulative_cost"] == [None]
+
+
+PARAMS = {
+    "optimize": {"strategy": "random", "max_trials": 3, "budget": 5},
+    "evaluate": {"threshold": 0.05},
+}
+
+
+def test_report_shows_at_least_for_lower_bound():
+    gen = _load("scripts/auto_tune/generate_report.py", "ci_gen_report")
+    base = {"trials_completed": 3, "best_score": 1.0, "avg_latency": 0.1}
+    partial = {
+        **base,
+        "total_cost": None,
+        "cost_lower_bound_total": 7.5,
+        "cost_trials_unmeasured": 2,
+    }
+    md = gen.generate_markdown_report({"current_metrics": partial}, {}, PARAMS)
+    assert "at least $7.50" in md
+    unknown = {**base, "total_cost": None, "cost_lower_bound_total": None}
+    md = gen.generate_markdown_report({"current_metrics": unknown}, {}, PARAMS)
+    assert "**Total Cost:** unmeasured" in md
