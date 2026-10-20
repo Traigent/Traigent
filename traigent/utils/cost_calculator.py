@@ -58,6 +58,52 @@ except (ImportError, KeyError):
     litellm = None  # type: ignore[assignment]
     LITELLM_AVAILABLE = False
 
+# Provider price families that litellm's *remote* price map can drop wholesale
+# while still passing litellm's own shrink check (#2652: the remote map had zero
+# ``openrouter/`` entries, the bundled one ~500). Those entries are filled in from
+# litellm's bundled backup file, never over an entry litellm already holds.
+_BUNDLED_FALLBACK_PRICE_PREFIXES: tuple[str, ...] = ("openrouter/",)
+_bundled_price_merge_lock = threading.Lock()
+
+
+def ensure_bundled_provider_prices() -> int:
+    """Merge missing bundled provider price entries into ``litellm.model_cost``.
+
+    Makes the result independent of import order and of
+    ``TRAIGENT_LITELLM_LIVE_PRICES``. Existing entries (live prices included)
+    are never overridden, and a model absent from both maps stays unpriced.
+    Idempotent and offline: reads only the file shipped inside litellm.
+
+    Returns:
+        Number of entries added.
+    """
+    if not LITELLM_AVAILABLE:
+        return 0
+    try:
+        from litellm.litellm_core_utils.get_model_cost_map import GetModelCostMap
+
+        with _bundled_price_merge_lock:
+            bundled = GetModelCostMap.load_local_model_cost_map()
+            current = litellm.model_cost
+            added = 0
+            for key, value in bundled.items():
+                if (
+                    isinstance(key, str)
+                    and key.startswith(_BUNDLED_FALLBACK_PRICE_PREFIXES)
+                    and isinstance(value, dict)
+                    and key not in current
+                ):
+                    current[key] = value
+                    added += 1
+            return added
+    except Exception as exc:  # silent-ok: pricing stays "unknown", never $0
+        logger.debug("bundled provider price merge skipped: %s", type(exc).__name__)
+        return 0
+
+
+if LITELLM_AVAILABLE:
+    ensure_bundled_provider_prices()
+
 # Privacy/network default: counting tokens is not a reason to download a
 # tokenizer. For a handful of models (Llama 2/3, Cohere command-r, older
 # non-claude-3 Anthropic ids) litellm's *exact* tokenizer lives on
