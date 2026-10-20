@@ -3597,6 +3597,29 @@ class BaseEvaluator(ABC):
         if response_metrics is None:
             return {}, None
 
+        if not response_metrics.cost_measured:
+            # Unknown cost (no usage, or usage no price covers): never write a
+            # placeholder/partial number into the row or the progress payload;
+            # carry the flag and the exact known floor only (#2444).
+            from traigent.evaluators.metrics_tracker import (
+                enforce_unknown_cost_invariant,
+            )
+
+            cost = response_metrics.cost
+            floor = float(cost.known_cost) + (
+                0.0 if cost.unmeasured else float(cost.total_cost)
+            )
+            result.metrics.update(
+                {
+                    "input_tokens": response_metrics.tokens.input_tokens,
+                    "output_tokens": response_metrics.tokens.output_tokens,
+                    "total_tokens": response_metrics.tokens.total_tokens,
+                }
+            )
+            enforce_unknown_cost_invariant(result.metrics, unknown=True, floor=floor)
+            update: dict[str, float] = {}
+            enforce_unknown_cost_invariant(update, unknown=True, floor=floor)
+            return update, response_metrics
         result.metrics.update(
             {
                 "input_tokens": response_metrics.tokens.input_tokens,
@@ -3695,6 +3718,19 @@ class BaseEvaluator(ABC):
                 example_id=example_id,
             )
         metrics_payload.update(metrics_update)
+        # One emit-boundary rule: unknown-cost rows leave with no numeric cost.
+        from traigent.evaluators.metrics_tracker import (
+            enforce_unknown_cost_invariant,
+        )
+
+        enforce_unknown_cost_invariant(
+            metrics_payload,
+            unknown=bool(
+                metrics_payload.get("cost_unmeasured")
+                or (result.metrics or {}).get("cost_unmeasured")
+            ),
+            floor=(result.metrics or {}).get("cost_lower_bound"),
+        )
 
         payload: dict[str, Any] = {
             "success": result.success,

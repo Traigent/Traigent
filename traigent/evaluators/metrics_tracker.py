@@ -512,6 +512,51 @@ class CostMetrics:
         self.total_cost = self.input_cost + self.output_cost
 
 
+def is_cost_value_key(key: Any) -> bool:
+    """True for any numeric cost field name (``cost``, ``*_cost``)."""
+    return isinstance(key, str) and (key == "cost" or key.endswith("_cost"))
+
+
+def enforce_unknown_cost_invariant(
+    mapping: dict[Any, Any],
+    *,
+    unknown: bool | None = None,
+    floor: float | None = None,
+    nullify: bool = False,
+) -> bool:
+    """The one emit-boundary rule for unknown cost (#2444).
+
+    A row or aggregate whose cost is unknown (unmeasured OR unpriced) carries NO
+    numeric value in any cost field -- ``cost``, ``total_cost``, ``input_cost``,
+    ``output_cost``, ``evaluation_cost`` or any other ``*_cost`` key -- only the
+    ``cost_unmeasured`` flag plus the exact known floor in ``cost_lower_bound``.
+    Unknown is not $0 and a partial sum is not the cost.
+
+    ``unknown`` defaults to the mapping's own ``cost_unmeasured`` flag.  Cost
+    fields are removed (or set to ``None`` with ``nullify=True``, for schemas that
+    require the key).  ``floor`` raises ``cost_lower_bound`` when larger.
+    Returns True when the invariant was applied.
+    """
+    if unknown is None:
+        unknown = bool(mapping.get("cost_unmeasured"))
+    if not unknown:
+        return False
+    for key in [k for k in mapping if is_cost_value_key(k)]:
+        if nullify:
+            mapping[key] = None
+        else:
+            del mapping[key]
+    mapping["cost_unmeasured"] = 1.0
+    existing = mapping.get("cost_lower_bound")
+    best = max(
+        float(floor or 0.0),
+        float(existing) if isinstance(existing, (int, float)) else 0.0,
+    )
+    if best > 0:
+        mapping["cost_lower_bound"] = best
+    return True
+
+
 _COST_DESCRIBE_KEYS = ("input_cost", "output_cost", "total_cost")
 
 

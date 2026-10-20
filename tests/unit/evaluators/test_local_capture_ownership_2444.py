@@ -591,3 +591,252 @@ def test_sibling_inferred_model_never_prices_a_model_less_primary() -> None:
     m = res.aggregated_metrics
     assert m["cost_unpriced"] == 1.0
     assert m["cost_unmeasured"] == 1.0
+
+
+# --------------------------------------------------------------------------- #
+# Round 5 (sol r15): one invariant, enforced at every emit boundary
+# --------------------------------------------------------------------------- #
+def _walk(node: Any, where: str) -> list[str]:
+    """Violations of the unknown-cost rule anywhere in an emitted structure.
+
+    Every dict that declares ``cost_unmeasured`` must carry no numeric value in
+    any ``cost`` / ``*_cost`` field (only the flag and ``cost_lower_bound``).
+    """
+    bad: list[str] = []
+    if isinstance(node, dict):
+        if node.get("cost_unmeasured"):
+            for key, value in node.items():
+                if (key == "cost" or str(key).endswith("_cost")) and value is not None:
+                    bad.append(f"{where}.{key}={value!r}")
+        for key, value in node.items():
+            bad.extend(_walk(value, f"{where}.{key}"))
+    elif isinstance(node, (list, tuple)):
+        for i, value in enumerate(node):
+            bad.extend(_walk(value, f"{where}[{i}]"))
+    elif hasattr(node, "__dict__") and not isinstance(node, type):
+        for key, value in vars(node).items():
+            if key in {"config", "outputs", "errors"}:
+                continue
+            bad.extend(_walk(value, f"{where}.{key}"))
+    return bad
+
+
+class _Usageless:
+    content = "ok"
+    response_metadata = {"model_name": "gpt-4o-mini"}
+
+
+def _scenario_unpriced_model(payloads: list[Any]) -> Any:
+    def fn(text: str, **_cfg: Any) -> str:
+        capture_langchain_response(_Resp(1000, 500, model="zz-unpriceable-model"))
+        return "ok"
+
+    ev = LocalEvaluator(
+        metrics=["accuracy"], timeout=10.0, max_workers=1, detailed=True
+    )
+    return asyncio.run(
+        ev.evaluate(
+            fn,
+            config={"model": "zz-unpriceable-model"},
+            dataset=_dataset(2),
+            progress_callback=lambda i, p: payloads.append(p),
+        )
+    )
+
+
+def _scenario_usageless_async_detailed_progress(payloads: list[Any]) -> Any:
+    async def fn(text: str, **_cfg: Any) -> str:
+        capture_langchain_response(_Usageless())
+        return "ok"
+
+    ev = LocalEvaluator(
+        metrics=["accuracy"], timeout=10.0, max_workers=1, detailed=True
+    )
+    return asyncio.run(
+        ev.evaluate(
+            fn,
+            config={"model": MODEL},
+            dataset=_dataset(2),
+            progress_callback=lambda i, p: payloads.append(p),
+        )
+    )
+
+
+def _judge_scenario(judge_calls: list[Any]) -> Any:
+    def make(payloads: list[Any]) -> Any:
+        def fn(text: str, **_cfg: Any) -> str:
+            capture_langchain_response(_Resp(1000, 500))
+            return "ok"
+
+        def judge(output: Any, expected: Any, llm_metrics: Any = None) -> float:
+            for r in judge_calls:
+                capture_langchain_response(r)
+            return 0.5
+
+        ev = _judge_evaluator(judge)
+        return asyncio.run(
+            ev.evaluate(
+                fn,
+                config={"model": MODEL},
+                dataset=_dataset(2),
+                progress_callback=lambda i, p: payloads.append(p),
+            )
+        )
+
+    return make
+
+
+def _scenario_cost_metric_unpriced_non_strict(payloads: list[Any]) -> Any:
+    def fn(text: str, **_cfg: Any) -> str:
+        capture_langchain_response(_Resp(1000, 500, model="zz-unpriceable-model"))
+        return "ok"
+
+    ev = LocalEvaluator(metrics=["cost"], timeout=10.0, max_workers=1, detailed=True)
+    return asyncio.run(
+        ev.evaluate(
+            fn,
+            config={"model": "zz-unpriceable-model"},
+            dataset=_dataset(2),
+            progress_callback=lambda i, p: payloads.append(p),
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        pytest.param(_scenario_unpriced_model, id="unpriced-model"),
+        pytest.param(
+            _scenario_usageless_async_detailed_progress, id="usageless-async-progress"
+        ),
+        pytest.param(
+            _judge_scenario([_Resp(2000, 700, model=None)]), id="modelless-judge"
+        ),
+        pytest.param(
+            _judge_scenario([_Resp(2000, 700), _Resp(3000, 800, model=None)]),
+            id="priced-plus-unidentified-judge",
+        ),
+        pytest.param(
+            _scenario_cost_metric_unpriced_non_strict, id="cost-metric-non-strict"
+        ),
+    ],
+)
+def test_unknown_cost_invariant_holds_on_every_emitted_structure(
+    scenario: Any,
+) -> None:
+    payloads: list[Any] = []
+    res = scenario(payloads)
+    assert res.aggregated_metrics.get("cost_unmeasured") == 1.0
+    violations = (
+        _walk(res.aggregated_metrics, "aggregated")
+        + _walk(res.metrics, "metrics")
+        + [v for er in res.example_results for v in _walk(er.metrics, "row")]
+        + _walk(getattr(res, "summary_stats", None), "summary_stats")
+        + _walk(payloads, "progress")
+    )
+    # Flag-bearing rows must be the ones that actually lost their numbers.
+    assert violations == []
+    assert any(er.metrics.get("cost_unmeasured") for er in res.example_results)
+    for payload in payloads:
+        metrics = payload.get("metrics") or {}
+        if metrics.get("cost_unmeasured"):
+            assert not any(k == "cost" or k.endswith("_cost") for k in metrics), metrics
+
+
+def test_capture_arriving_after_the_last_drain_reaches_the_floor() -> None:
+    late = _Resp(7000, 2000)
+
+    def fn(text: str, **_cfg: Any) -> str:
+        capture_langchain_response(_Resp(1000, 500))
+        return "ok"
+
+    def on_progress(index: int, payload: Any) -> None:
+        # A worker that outlived its timeout captures while a callback runs.
+        capture_langchain_response(late)
+
+    ev = LocalEvaluator(
+        metrics=["accuracy"], timeout=10.0, max_workers=1, detailed=True
+    )
+    res = asyncio.run(
+        ev.evaluate(
+            fn,
+            config={"model": MODEL},
+            dataset=_dataset(1),
+            progress_callback=on_progress,
+        )
+    )
+    m = res.aggregated_metrics
+    assert m["cost_unmeasured"] == 1.0
+    assert m["cost_lower_bound"] >= _cost(late)
+
+
+def test_response_returned_by_two_examples_is_charged_once() -> None:
+    shared = _Resp(1000, 500)
+
+    def fn(text: str, **_cfg: Any) -> Any:
+        if text == "0":
+            capture_langchain_response(shared)
+        return {"text": "ok", "raw_response": shared}
+
+    res = _evaluate(fn, 2, detailed=False)
+    m = res.aggregated_metrics
+    assert m["cost_lower_bound"] == pytest.approx(_cost(shared)) or m[
+        "cost"
+    ] == pytest.approx(_cost(shared))
+
+
+class _GenericResp:
+    def __init__(self, model: str | None, inp: int, out: int) -> None:
+        self.metadata = {"usage": {"prompt_tokens": inp, "completion_tokens": out}}
+        if model:
+            self.model = model
+
+
+def test_generic_metadata_usage_response_takes_the_per_call_path() -> None:
+    returned = _GenericResp("gpt-4o", 1000, 500)  # config says gpt-4o-mini
+
+    def fn(text: str, **_cfg: Any) -> Any:
+        return returned
+
+    res = _evaluate(fn, 1)
+    expected = float(
+        extract_llm_metrics(response=returned, model_name="gpt-4o").cost.total_cost
+    )
+    assert expected > 0
+    assert res.example_results[0].metrics["total_cost"] == pytest.approx(expected)
+
+
+def test_generic_metadata_usage_response_with_captured_sibling_is_not_ignored() -> None:
+    captured = _Resp(1000, 500)
+    returned = _GenericResp("gpt-4o", 9000, 3000)
+
+    def fn(text: str, **_cfg: Any) -> Any:
+        capture_langchain_response(captured)
+        return returned
+
+    res = _evaluate(fn, 1, detailed=False)
+    m = res.aggregated_metrics
+    ret = float(
+        extract_llm_metrics(response=returned, model_name="gpt-4o").cost.total_cost
+    )
+    assert m["cost_unmeasured"] == 1.0
+    assert m["cost_lower_bound"] == pytest.approx(max(_cost(captured), ret))
+
+
+def test_metadata_reconciliation_keeps_the_response_model_not_configuration() -> None:
+    mini = _Resp(1000, 500, model="gpt-4o-mini")
+    reported = _cost(mini, "gpt-4o-mini")
+
+    def fn(text: str, **_cfg: Any) -> Any:
+        capture_langchain_response(mini)
+        return {
+            "text": "ok",
+            "raw_response": mini,
+            "__traigent_meta__": {"total_cost": reported},
+        }
+
+    ev = LocalEvaluator(
+        metrics=["accuracy"], timeout=10.0, max_workers=1, detailed=True
+    )
+    res = asyncio.run(ev.evaluate(fn, config={"model": "gpt-4o"}, dataset=_dataset(1)))
+    assert res.example_results[0].metrics["total_cost"] == pytest.approx(reported)
