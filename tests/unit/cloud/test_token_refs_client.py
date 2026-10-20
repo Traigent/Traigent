@@ -421,6 +421,11 @@ _UNAVAILABLE = {
         ("999999", 3600.0),
         ("nan", None),
         ("inf", None),
+        ("-5", None),
+        ("abc", None),
+        ("Wed, 21 Oct 2026 07:28:00 GMT", None),
+        ("1e3", None),
+        (" 2.5 ", 2.5),
         (None, None),
     ],
 )
@@ -458,3 +463,28 @@ def test_503_end_to_end_retries_with_retry_after_then_issues(monkeypatch):
     keys = {json.loads(r.body)["operation_key"] for r in wire.requests}
     assert len(wire.requests) == 2 and len(keys) == 1
     assert all(HEBREW not in str(r.body) for r in wire.requests)
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected"),
+    [
+        ({"Retry-After": True}, None),
+        ({"Retry-After": False}, None),
+        ({"Retry-After": [3]}, None),
+        ({"Retry-After": b"3"}, None),
+        ({"Retry-After": -1}, None),
+        ({"Retry-After": float("nan")}, None),
+        ({"Retry-After": 4}, 4.0),
+        ({"Retry-After": 2.5}, 2.5),
+        ({"Retry-After": 99999}, 3600.0),
+        (object(), None),
+        ("Retry-After: 3", None),
+        (None, None),
+        ({}, None),
+    ],
+)
+def test_retry_after_seconds_validates_types_without_swallowing(headers, expected):
+    """1b-2b: wrong types are rejected by explicit checks, never by catching errors."""
+    from traigent.cloud.backend_client import _retry_after_seconds
+
+    assert _retry_after_seconds(headers) == expected

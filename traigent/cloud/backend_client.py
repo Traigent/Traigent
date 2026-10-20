@@ -406,18 +406,30 @@ def _parse_retry_after(headers: Any) -> float | None:
     return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
 
 
+_RETRY_AFTER_DECIMAL_RE = re.compile(r"[0-9]+(?:\.[0-9]+)?")
+
+
 def _retry_after_seconds(headers: Any) -> float | None:
     """``Retry-After`` as delta-seconds in ``[0, 3600]``; ``None`` for anything else.
 
     A date, a negative, a non-finite or a non-numeric value is ``None`` (the caller's own
     pacing applies); the header text itself never leaves.
     """
-    try:
-        value = headers.get("Retry-After") if headers else None
-        seconds = float(value) if value is not None else None
-    except (AttributeError, TypeError, ValueError):
+    if not headers or not callable(getattr(headers, "get", None)):
         return None
-    if seconds is None or not math.isfinite(seconds) or seconds < 0:
+    value = headers.get("Retry-After")
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not _RETRY_AFTER_DECIMAL_RE.fullmatch(text):
+            return None
+        seconds = float(text)
+    elif isinstance(value, int | float):
+        seconds = float(value)
+    else:
+        return None
+    if not math.isfinite(seconds) or seconds < 0:
         return None
     return min(seconds, 3600.0)
 
