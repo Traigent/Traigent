@@ -12,6 +12,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -296,7 +297,7 @@ _CONTENT_LOGGING_DISABLED_VALUES = {"0", "false", "no", "off", ""}
 
 ENV_OPTIMIZATION_LOG_MAX_RUNS = "TRAIGENT_OPTIMIZATION_LOG_MAX_RUNS"
 # Matches the run_id format minted in OptimizationLogger.__init__:
-# f"{YYYYMMDD_HHMMSS}_{session_short}". Anything not matching this is left
+# f"{YYYYMMDD_HHMMSS}_{session_short}_{random6}". Anything not matching this is left
 # alone by retention pruning — better to skip than to guess.
 _RUN_DIR_NAME_PATTERN = re.compile(r"^\d{8}_\d{6}_.+$")
 # Terminal statuses written by log_session_end() -> _update_status(); a run
@@ -459,7 +460,10 @@ class OptimizationLogger:
 
         timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         session_short = session_id[:8] if len(session_id) >= 8 else session_id
-        self.run_id = f"{timestamp}_{session_short}"
+        # Random suffix: two same-name runs started in the same second may share
+        # the same session prefix (e.g. "local-session"); without a uniquifier
+        # they would share one run directory and overwrite each other's files.
+        self.run_id = f"{timestamp}_{session_short}_{uuid.uuid4().hex[:6]}"
 
         self.run_path = resolve_path_components(
             self.base_path / "experiments",
