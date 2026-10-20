@@ -16,7 +16,12 @@ CODE = "CUSTOM_EVALUATOR_ROWS_FAILED"
 SECRET = "row-secret-text-do-not-leak"
 
 
-def _run(tmp_path, monkeypatch, raising_rows: set[int]):
+def _run(
+    tmp_path,
+    monkeypatch,
+    raising_rows: set[int],
+    returned_failure_rows: set[int] = frozenset(),
+):
     monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path))
 
     def target(value: int, **_config) -> int:
@@ -26,6 +31,7 @@ def _run(tmp_path, monkeypatch, raising_rows: set[int]):
         index = example.input_data["value"]
         if index in raising_rows:
             raise RuntimeError(SECRET)
+        returned_failure = index in returned_failure_rows
         return ExampleResult(
             example_id=f"row-{index}",
             input_data=example.input_data,
@@ -33,8 +39,8 @@ def _run(tmp_path, monkeypatch, raising_rows: set[int]):
             actual_output=func(**example.input_data),
             metrics={"accuracy": 1.0},
             execution_time=0.0,
-            success=True,
-            error_message=None,
+            success=not returned_failure,
+            error_message="unsuccessful" if returned_failure else None,
             metadata={},
         )
 
@@ -85,3 +91,20 @@ def test_all_rows_raising_fails_trial_without_code(tmp_path, monkeypatch):
 
     assert all(t.status == TrialStatus.FAILED for t in result.trials)
     assert CODE not in result.warning_codes
+
+
+def test_returned_unsuccessful_row_is_not_counted_as_exception(tmp_path, monkeypatch):
+    result = _run(tmp_path, monkeypatch, set(), returned_failure_rows={1})
+
+    trial = result.trials[0]
+    assert "custom_evaluator_failed_rows" not in trial.metadata
+    assert CODE not in result.warning_codes
+
+
+def test_mixed_raise_and_returned_failure_counts_only_raised(tmp_path, monkeypatch):
+    result = _run(tmp_path, monkeypatch, {0}, returned_failure_rows={1})
+
+    trial = result.trials[0]
+    assert trial.metadata["custom_evaluator_failed_rows"] == 1
+    assert trial.metadata["custom_evaluator_total_rows"] == 3
+    assert CODE in result.warning_codes

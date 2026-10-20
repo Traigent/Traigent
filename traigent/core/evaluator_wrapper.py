@@ -725,6 +725,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         outputs = []
         errors: list[str | None] = []
         consumed_examples = 0
+        raised_rows = 0
         budget_exhausted = False
 
         for i, example in enumerate(dataset.examples):
@@ -840,6 +841,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 failed_result = self._create_failed_example_result(example, i, e)
                 example_results.append(failed_result)
                 consumed_examples += 1
+                raised_rows += 1
                 if sample_lease:
                     sample_lease.mark_completed()
                 if progress_callback:
@@ -885,7 +887,9 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         # Visibility only (#2422): rows whose custom_evaluator raised keep their
         # documented 0.0 score; partially failed trials are counted so the
         # orchestrator can surface CUSTOM_EVALUATOR_ROWS_FAILED. Counts only.
-        failed_rows = len(example_results) - success_count
+        # Only rows that entered the exception handler count; a returned
+        # ExampleResult(success=False) is the evaluator's own verdict.
+        failed_rows = raised_rows
         summary_stats: dict[str, Any] | None = None
         if 0 < failed_rows < len(example_results):
             summary_stats = {
