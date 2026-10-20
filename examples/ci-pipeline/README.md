@@ -9,7 +9,7 @@ CI-driven LLM tuning.
 | Stage | Script | Purpose |
 |---|---|---|
 | `prepare_dataset` | `scripts/auto_tune/prepare_dataset.py` | Split raw data into train/test |
-| `optimize` | `python -m traigent optimize optimize_target.py` | Run Traigent optimization loop on your `@traigent.optimize` file |
+| `optimize` | `python -m traigent optimize optimize_target.py`, then `export_results.py` | Run the optimization loop on your `@traigent.optimize` file, then export the persisted result as `optimization_results/latest.json` and `metrics.json` |
 | `evaluate` | `scripts/auto_tune/evaluate_performance.py` | Compare against baseline |
 | `report` | `scripts/auto_tune/generate_report.py` | Generate performance report |
 
@@ -20,7 +20,7 @@ CI-driven LLM tuning.
 pip install dvc "traigent[recommended]"
 
 # Copy pipeline files to your project root
-cp dvc.yaml params.yaml /path/to/your/project/
+cp dvc.yaml params.yaml export_results.py /path/to/your/project/
 
 # Initialize DVC and run
 cd /path/to/your/project
@@ -33,6 +33,11 @@ dvc repro
 The `optimize` stage runs `python -m traigent optimize` on `optimize_target.py`,
 a Python file in your project root containing your `@traigent.optimize`
 function. Create it before running `dvc repro`.
+
+The CLI persists each run under `optimization_results/<function>_<algorithm>_<max_trials>/`.
+`export_results.py` reads the newest such run and writes the flat
+`optimization_results/latest.json` and `metrics.json` that the DVC outputs and
+the downstream `evaluate` and `report` stages consume.
 
 Edit `params.yaml` to control:
 

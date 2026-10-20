@@ -11,14 +11,17 @@ stages:
       - data/prepared
 
   optimize:
-    cmd: >-
-      python -m traigent optimize optimize_target.py
-      --algorithm ${optimize.strategy}
-      --max-trials ${optimize.max_trials}
-      --timeout ${optimize.timeout}
-      --output-dir optimization_results
+    cmd:
+      - >-
+        python -m traigent optimize optimize_target.py
+        --algorithm ${optimize.strategy}
+        --max-trials ${optimize.max_trials}
+        --timeout ${optimize.timeout}
+        --output-dir optimization_results
+      - python export_results.py optimization_results
     deps:
       - optimize_target.py
+      - export_results.py
       - data/prepared
     params:
       - optimize.max_trials
