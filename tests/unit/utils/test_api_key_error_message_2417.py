@@ -1,7 +1,21 @@
 """APIKeyError built from a provider failure: readable fix line, mock-aware
 hint (#2417)."""
 
+from collections.abc import Iterator
+
+import pytest
+
+from traigent import testing as traigent_testing
 from traigent.utils.error_handler import APIKeyError
+
+
+@pytest.fixture(autouse=True)
+def reset_mock_mode_flag() -> Iterator[None]:
+    # The in-code mock flag leaks from other tests in the same xdist worker;
+    # is_mock_llm() reads it, so the mock-aware hint would flip under us.
+    traigent_testing._reset_for_tests()
+    yield
+    traigent_testing._reset_for_tests()
 
 
 def test_message_is_not_treated_as_key_name(monkeypatch):
