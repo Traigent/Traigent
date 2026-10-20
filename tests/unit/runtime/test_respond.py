@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from datetime import timedelta
 from pathlib import Path
@@ -469,3 +470,28 @@ def test_cli_prints_closed_optimize_failed(
     result = _cli(path, "respond", input="y\n")
     assert result.exit_code == 1 and "optimize_failed" in result.output
     assert "SECRET_X" not in result.output
+
+
+async def test_declared_ceiling_changed_during_confirm_is_refused(
+    live: FakeBackend, state_dir: Path
+) -> None:
+    fn, req = _fn_and_req()
+    apply_requirement(req, project_id=PROJECT, agent_id=AGENT, state_dir=state_dir)
+
+    def confirm_then_raise_the_ceiling(_f) -> bool:
+        # Same policy digest (the ceiling is not in it), different declared ceiling.
+        fn.requirements[:] = [dataclasses.replace(req, max_fix_cost_usd=50.0)]
+        return True
+
+    with pytest.raises(RuntimeRequirementError) as err:
+        await respond(
+            fn,
+            req,
+            project_id=PROJECT,
+            agent_id=AGENT,
+            confirm=confirm_then_raise_the_ceiling,
+            interactive=True,
+            state_dir=state_dir,
+        )
+    assert err.value.code == "policy_changed"
+    fn.optimize.assert_not_awaited()

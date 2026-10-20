@@ -330,6 +330,8 @@ def load_fragment(
 ) -> RuntimeRequirement:
     """Read a fragment file with the safe YAML loader and parse it."""
     target = Path(path)
+    doc: Any = None
+    failed = False
     try:
         if target.stat().st_size > _MAX_FRAGMENT_BYTES:
             raise RuntimeRequirementError(E_FRAGMENT, "<file>")
@@ -337,7 +339,11 @@ def load_fragment(
     except RuntimeRequirementError:
         raise
     except (OSError, UnicodeDecodeError, yaml.YAMLError):
-        raise RuntimeRequirementError(E_FRAGMENT, "<file>") from None
+        failed = True
+    # Raised outside the except block: a YAML error message quotes source text, and
+    # leaving it as __context__ would carry that text into any traceback or log.
+    if failed:
+        raise RuntimeRequirementError(E_FRAGMENT, "<file>")
     return parse_fragment(
         doc,
         max_fix_cost_usd=max_fix_cost_usd,

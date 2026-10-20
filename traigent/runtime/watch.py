@@ -8,8 +8,10 @@ production alerts are the backend webhook (a later slice).
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -78,18 +80,36 @@ def _owner(
     return None
 
 
+async def _await(awaitable: Awaitable[object]) -> object:
+    return await awaitable
+
+
+def _run_hook(outcome: object) -> None:
+    """Await a hook's awaitable to completion; refuse when a loop already runs here."""
+    if not inspect.isawaitable(outcome):
+        return
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(_await(outcome))  # type: ignore[arg-type]
+        return
+    if inspect.iscoroutine(outcome):
+        outcome.close()  # never leave an un-awaited coroutine behind
+    raise RuntimeError("on_event awaitable cannot run inside a running event loop")
+
+
 def _emit(logger: logging.Logger, req: RuntimeRequirement, event: RuntimeEvent) -> None:
+    # Log the event kind and the breach id only: the requirement name is customer text.
     logger.log(
         _LEVELS.get(event.severity, logging.INFO),
-        "%s breach=%s requirement=%s severity=%s",
+        "%s breach=%s severity=%s",
         event.event,
         event.breach_id,
-        event.requirement,
         event.severity,
     )
     if req.on_event is not None:
         try:
-            req.on_event(event)
+            _run_hook(req.on_event(event))
         except Exception:  # noqa: BLE001 - a customer hook never breaks the watcher
             logger.warning("on_event_hook_failed event=%s", event.event)
 

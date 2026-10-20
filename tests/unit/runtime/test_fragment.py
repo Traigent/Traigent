@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import pytest
@@ -214,3 +215,17 @@ def test_profile_fields_are_exactly_the_backend_evidence_profile() -> None:
         "false_alarm_budget",
         "horizon_days",
     }
+
+
+def test_yaml_failure_carries_no_source_text_in_error_context(tmp_path: Path) -> None:
+    canary = "CANARY_YAML_SOURCE_c0de"
+    bad = tmp_path / "bad.yml"
+    bad.write_text(f"a: !!python/object/apply:os.system [{canary}\n")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(RuntimeRequirementError) as err:
+            load_fragment(bad)
+    assert err.value.code == "tvl_fragment_invalid"
+    assert canary not in str(err.value) and canary not in repr(err.value)
+    assert err.value.__context__ is None
+    assert all(canary not in str(w.message) for w in caught)

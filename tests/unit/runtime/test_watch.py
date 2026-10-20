@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -150,5 +151,50 @@ def test_hook_failure_log_never_carries_the_exception_text(
     backend.on(*LIST, 200, {"items": [breach("b1")], "has_more": False})
     with caplog.at_level(logging.DEBUG, logger="traigent.runtime"):
         _poll(_declare("alert", hook=boom))
+    assert sentinel not in caplog.text
+    assert all(r.exc_info is None for r in caplog.records)
+
+
+def test_event_log_line_never_carries_the_requirement_name(
+    backend: FakeBackend, caplog: pytest.LogCaptureFixture
+) -> None:
+    canary = "CANARY_REQ_NAME_7f2e"
+    backend.on(*LIST, 200, {"items": [breach("b1")], "has_more": False})
+    with caplog.at_level(logging.DEBUG, logger="traigent.runtime"):
+        result = _poll(_declare("alert", name=canary))
+    assert [e.event for e in result.events] == ["episode_opened"]
+    assert "episode_opened" in caplog.text
+    assert canary not in caplog.text
+
+
+def test_async_on_event_hook_is_awaited(backend: FakeBackend) -> None:
+    seen: list[RuntimeEvent] = []
+
+    async def hook(event: RuntimeEvent) -> None:
+        await asyncio.sleep(0)
+        seen.append(event)
+
+    backend.on(*LIST, 200, {"items": [breach("b1")], "has_more": False})
+    result = _poll(_declare("alert", hook=hook))
+    assert seen == result.events and len(seen) == 1
+
+
+def test_async_on_event_hook_failure_is_fixed_code_without_text(
+    backend: FakeBackend, caplog: pytest.LogCaptureFixture
+) -> None:
+    sentinel = "SECRET_ASYNC_TEXT_44b1"
+
+    async def boom(_event: RuntimeEvent) -> None:
+        await asyncio.sleep(0)
+        raise RuntimeError(sentinel)
+
+    backend.on(*LIST, 200, {"items": [breach("b1")], "has_more": False})
+    with caplog.at_level(logging.DEBUG, logger="traigent.runtime"):
+        result = _poll(_declare("alert", hook=boom))
+    assert len(result.events) == 1
+    assert any(
+        r.levelno == logging.WARNING and "on_event_hook_failed" in r.getMessage()
+        for r in caplog.records
+    )
     assert sentinel not in caplog.text
     assert all(r.exc_info is None for r in caplog.records)

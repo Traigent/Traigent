@@ -192,6 +192,8 @@ async def respond(
         "occurrence": OCCURRENCE,
         "cost_ceiling_usd": ceiling,
     }
+    # The ceiling is not part of the policy digest, so it is compared on its own.
+    declared_ceiling = requirement.max_fix_cost_usd
     if not confirm(facts):
         raise RuntimeRequirementError(E_APPROVAL_REQUIRED)
     policy_digest = requirement.policy_digest()
@@ -218,6 +220,7 @@ async def respond(
         current is None
         or current.policy_digest() != policy_digest
         or _optimize_rule(current) != rule_id
+        or current.max_fix_cost_usd != declared_ceiling
     ):
         raise RuntimeRequirementError(E_POLICY_CHANGED)
     again = _fresh_checks(
