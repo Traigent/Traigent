@@ -88,9 +88,10 @@ def _install_mock_interceptors() -> None:
     They are otherwise installed lazily when an evaluator is built inside an
     optimization run, so calls made earlier (or from a standalone
     ``ExampleSynthesizer``) would reach the real provider right after the
-    "mock mode is now ACTIVE" warning. Installation is idempotent and never
-    raises: a failure is logged at WARNING because the user was just told
-    calls are intercepted.
+    "mock mode is now ACTIVE" warning. Installation is idempotent. A failure
+    raises ``RuntimeError`` (content-free; the cause is chained) so activation
+    fails closed instead of announcing interception that is not in place; a
+    retry after the cause is fixed re-runs the install and can succeed.
     """
     try:
         from traigent.utils.langchain_interceptor import (
@@ -102,12 +103,12 @@ def _install_mock_interceptors() -> None:
 
         patch_litellm_for_metadata_capture()
         patch_langchain_for_metadata_capture()
-    except Exception:  # noqa: BLE001 - enabling mock mode must not crash
-        _logger.warning(
-            "[traigent.testing] could not install the LiteLLM/LangChain mock "
-            "interceptors; calls made before the first optimization run may "
-            "reach the real provider."
-        )
+    except Exception as exc:  # noqa: BLE001 - re-raised as a closed error
+        raise RuntimeError(
+            "traigent.testing could not install the LiteLLM/LangChain mock "
+            "interceptors; mock mode was NOT enabled. Fix the installation "
+            "problem and call enable_mock_mode_for_quickstart() again."
+        ) from exc
 
 
 def enable_mock_mode_for_quickstart() -> None:
@@ -148,8 +149,9 @@ def enable_mock_mode_for_quickstart() -> None:
                 "of real LLM calls. If you want a keyless demo, run with "
                 "ENVIRONMENT!=production."
             )
-        _enabled = True
+        # Install first: only mark enabled once interception is in place.
         _install_mock_interceptors()
+        _enabled = True
         if not _activation_logged:
             _activation_logged = True
             _logger.warning(

@@ -103,3 +103,39 @@ def test_reenabling_after_disable_logs_activation_warning_again(
         traigent_testing.enable_mock_mode_for_quickstart()
 
     assert any("ACTIVE" in record.message for record in caplog.records)
+
+
+def test_enable_fails_closed_when_interceptor_install_fails_then_retry_works(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Sol r4 finding 5: a failed install must not leave mock mode 'enabled'."""
+    import traigent.utils.langchain_interceptor as lc
+    import traigent.utils.litellm_interceptor as ll
+
+    calls = {"litellm": 0, "langchain": 0}
+    real_lc = lc.patch_langchain_for_metadata_capture
+
+    def litellm_ok() -> bool:
+        calls["litellm"] += 1
+        return True
+
+    def langchain_boom() -> bool:
+        calls["langchain"] += 1
+        raise ValueError("secret-marker-xyz")  # partial install: litellm done
+
+    monkeypatch.setattr(ll, "patch_litellm_for_metadata_capture", litellm_ok)
+    monkeypatch.setattr(lc, "patch_langchain_for_metadata_capture", langchain_boom)
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(RuntimeError) as excinfo:
+            traigent_testing.enable_mock_mode_for_quickstart()
+
+    assert "secret-marker-xyz" not in str(excinfo.value)
+    assert traigent_testing.is_mock_mode_enabled() is False
+    assert "now ACTIVE" not in caplog.text
+
+    # Retry after the cause is fixed succeeds (not short-circuited).
+    monkeypatch.setattr(lc, "patch_langchain_for_metadata_capture", real_lc)
+    traigent_testing.enable_mock_mode_for_quickstart()
+    assert traigent_testing.is_mock_mode_enabled() is True
+    assert calls["litellm"] == 2
