@@ -37,6 +37,9 @@ def _make_mock_litellm_module():
 
     mock_module.acompletion = _async_completion
     mock_module.pre_call_rules = []
+    mock_module.utils = types.SimpleNamespace(
+        function_setup=lambda original_function, *a, **kw: (None, kw)
+    )
     mock_module._traigent_patched_completion = False
     mock_module._traigent_patched_acompletion = False
     return mock_module
@@ -404,6 +407,7 @@ class TestMockModeBoundaryGuard:
             list(litellm.pre_call_rules),
             getattr(litellm, "_traigent_patched_completion", False),
             getattr(litellm, "_traigent_patched_acompletion", False),
+            litellm.utils.function_setup,
         )
         # Capture the unwrapped references BEFORE patching, as an agent
         # factory that imported them earlier would.
@@ -424,6 +428,7 @@ class TestMockModeBoundaryGuard:
             litellm.pre_call_rules[:] = saved[2]
             litellm._traigent_patched_completion = saved[3]
             litellm._traigent_patched_acompletion = saved[4]
+            litellm.utils.function_setup = saved[5]
 
     @pytest.fixture()
     def mock_enabled(self):
@@ -494,3 +499,50 @@ class TestMockModeBoundaryGuard:
         li.patch_litellm_for_metadata_capture()
         assert litellm.pre_call_rules.count(li._mock_mode_pre_call_guard) == 1
         assert li._mock_mode_pre_call_guard("text") is True
+
+    def test_contentless_first_message_and_replaced_rules_still_blocked(
+        self, real_litellm, transport_spy, mock_enabled
+    ):
+        """Sol r5 F1: LiteLLM skips pre_call_rules for a first message without
+        ``content`` and a user can replace the rules list; the
+        ``function_setup`` boundary must still fail closed."""
+        litellm, li, orig_completion, orig_acompletion = real_litellm
+        li.patch_litellm_for_metadata_capture()
+        litellm.pre_call_rules = []  # user replaces the list wholesale
+        messages = [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "f", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "c1", "content": "x"},
+        ]
+        try:
+            with pytest.raises(li.MockModeBypassError):
+                orig_completion(
+                    model="gpt-4o-mini", api_key="sk-test", messages=messages
+                )
+            with pytest.raises(li.MockModeBypassError):
+                asyncio.run(
+                    orig_acompletion(
+                        model="gpt-4o-mini", api_key="sk-test", messages=messages
+                    )
+                )
+        finally:
+            litellm.pre_call_rules = []
+        assert transport_spy == []
+
+    def test_function_setup_guard_idempotent_and_inert_when_mock_off(
+        self, real_litellm
+    ):
+        litellm, li, *_ = real_litellm
+        li.patch_litellm_for_metadata_capture()
+        first = litellm.utils.function_setup
+        li.patch_litellm_for_metadata_capture()
+        assert litellm.utils.function_setup is first
+        assert first._traigent_original is not first

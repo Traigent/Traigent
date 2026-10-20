@@ -49,6 +49,16 @@ def _mock_mode_pre_call_guard(_input: Any = None) -> bool:
     and never get here, so a call that does arrive while mock mode is on is a
     bypass and must not reach the provider. The message is content-free.
     """
+    _raise_if_mock_bypass()
+    return True
+
+
+_GUARDED_CALL_TYPES = frozenset(
+    {"completion", "acompletion", "text_completion", "atext_completion"}
+)
+
+
+def _raise_if_mock_bypass() -> None:
     from traigent.integrations.utils.mock_adapter import MockAdapter
 
     if MockAdapter.is_mock_enabled("litellm"):
@@ -57,23 +67,51 @@ def _mock_mode_pre_call_guard(_input: Any = None) -> bool:
             "reaching the provider. Call litellm.completion/acompletion after "
             "mock mode is enabled, or re-fetch the function reference."
         )
-    return True
+
+
+def _install_function_setup_guard(litellm: Any) -> None:
+    """Guard ``litellm.utils.function_setup``, the unconditional entry point.
+
+    Every ``@client``-decorated ``completion``/``acompletion`` call looks up
+    ``function_setup`` by module-global name before any provider transport,
+    whatever the message shape and whether or not ``pre_call_rules`` was
+    replaced or skipped (LiteLLM only runs rules for messages that carry a
+    ``content`` key). Wrapping it covers stale references of every kind. An
+    exception raised here propagates to the caller (verified on 1.100.5 and
+    1.103.5). Raises ``RuntimeError`` when the hook point is missing so the
+    caller can fail closed.
+    """
+    utils_mod = getattr(litellm, "utils", None)
+    current = getattr(utils_mod, "function_setup", None)
+    if not callable(current):
+        raise RuntimeError(
+            "litellm.utils.function_setup is unavailable; cannot guarantee "
+            "that mock mode blocks provider calls."
+        )
+    if getattr(current, "_traigent_mock_guard", False):
+        return
+
+    def function_setup_with_mock_guard(
+        original_function: Any, *args: Any, **kwargs: Any
+    ) -> Any:
+        if original_function in _GUARDED_CALL_TYPES:
+            _raise_if_mock_bypass()
+        return current(original_function, *args, **kwargs)
+
+    function_setup_with_mock_guard._traigent_mock_guard = True  # type: ignore[attr-defined]
+    function_setup_with_mock_guard._traigent_original = current  # type: ignore[attr-defined]
+    utils_mod.function_setup = function_setup_with_mock_guard
 
 
 def _install_mock_guard(litellm: Any) -> None:
-    """Register the fail-closed mock guard once (idempotent)."""
-    rules = getattr(litellm, "pre_call_rules", None)
-    if not isinstance(rules, list):
-        from traigent.integrations.utils.mock_adapter import MockAdapter
+    """Install the fail-closed mock guards (idempotent).
 
-        if MockAdapter.is_mock_enabled("litellm"):
-            raise RuntimeError(
-                "litellm.pre_call_rules is unavailable; cannot guarantee that "
-                "mock mode blocks provider calls."
-            )
-        logger.debug("litellm.pre_call_rules unavailable; mock guard not installed")
-        return
-    if _mock_mode_pre_call_guard not in rules:
+    Primary: the ``function_setup`` boundary (unconditional). Second layer:
+    a ``pre_call_rules`` entry, when LiteLLM exposes the list.
+    """
+    _install_function_setup_guard(litellm)
+    rules = getattr(litellm, "pre_call_rules", None)
+    if isinstance(rules, list) and _mock_mode_pre_call_guard not in rules:
         rules.append(_mock_mode_pre_call_guard)
 
 
