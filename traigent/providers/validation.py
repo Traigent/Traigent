@@ -151,10 +151,14 @@ _KNOWN_MODELS: dict[str, frozenset[str]] = {
             "claude-fable-5-1",
             "claude-mythos-5",
             "claude-mythos-5-1",
-            # Claude 3.5 series (2024)
-            "claude-3-5-sonnet-20241022",
-            "claude-3-5-haiku-20241022",
-            "claude-3-sonnet-20240229",
+            # Claude 5.5 family: current Anthropic model ids that are not yet
+            # in the bundled litellm price table, so they are listed
+            # explicitly (review r2). claude-fable-5-1 is listed above.
+            "claude-opus-5-5",
+            "claude-sonnet-5-5",
+            "claude-haiku-5-5",
+            # Retired claude-3* ids (3.5 Sonnet/Haiku, 3 Sonnet) were removed
+            # from this list per Anthropic's deprecations page (#2646).
         }
     ),
     "google": frozenset(

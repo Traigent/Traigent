@@ -164,6 +164,28 @@ class TestValidateModelNames:
         assert valid == models
         assert unknown == []
 
+    def test_claude5_family_valid_and_retired_claude3_not(self):
+        """Claude 5 ids validate; retired claude-3.x ids do not (review r2)."""
+        valid, unknown = validate_model_names(
+            [
+                "claude-opus-5-5",
+                "claude-sonnet-5-5",
+                "claude-haiku-5-5",
+                "claude-fable-5-1",
+                "claude-3-5-haiku-20241022",
+                "claude-3-5-sonnet-20241022",
+                "claude-3-sonnet-20240229",
+            ],
+            "anthropic",
+        )
+        assert valid == [
+            "claude-opus-5-5",
+            "claude-sonnet-5-5",
+            "claude-haiku-5-5",
+            "claude-fable-5-1",
+        ]
+        assert "claude-3-5-haiku-20241022" in unknown
+
     def test_mixed_valid_and_unknown(self):
         """Test validation with mix of valid and unknown models."""
         models = ["gpt-4o", "gpt-6-ultra", "gpt-3.5-turbo"]
