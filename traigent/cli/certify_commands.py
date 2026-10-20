@@ -278,8 +278,14 @@ def _read_json(path: Path, description: str) -> dict[str, Any]:
     try:
         with path.open(encoding="utf-8") as handle:
             value = json.load(handle)
-    except (OSError, json.JSONDecodeError) as exc:
-        raise click.UsageError(f"could not read {description}: {exc}") from exc
+    except (OSError, json.JSONDecodeError):
+        failed = True
+    else:
+        failed = False
+    # Raised OUTSIDE the except block: JSONDecodeError.doc holds the file text
+    # (which may be a commitments bundle), so it must not stay as __context__.
+    if failed:
+        raise click.UsageError(f"could not read {description}")
     if not isinstance(value, dict):
         raise click.UsageError(f"{description} must contain a JSON object")
     return value
@@ -707,7 +713,20 @@ def _open_commitments(record_bundle: dict[str, Any], commitments_path: Path) -> 
             "(need the pin in scripts/ci/schema-pin.txt)"
         ) from exc
 
-    payload = _read_json(commitments_path, "commitments bundle")
+    from traigent.cloud.process_record_linkage import (
+        CommitmentLinkageClientError,
+        read_private_json,
+    )
+
+    refused: str | None = None
+    payload: dict[str, Any] = {}
+    try:
+        payload = read_private_json(commitments_path)
+    except CommitmentLinkageClientError as err:
+        refused = err.code
+    if refused is not None:
+        click.echo(f"COMMITMENT_BUNDLE_REFUSED {refused}")
+        raise click.exceptions.Exit(1)
     if payload.get("schema") != BUNDLE_SCHEMA:
         raise click.UsageError("commitments bundle has an unsupported schema")
     linkage = payload.get("commitment_linkage")
@@ -742,6 +761,17 @@ def _open_commitments(record_bundle: dict[str, Any], commitments_path: Path) -> 
 
     import base64
 
+    # Authenticate the sidecar against the verified record FIRST, so a forged
+    # or foreign sidecar is rejected even when no local fp/opening is present.
+    invalid: str | None = None
+    try:
+        cl.verify_commitment_linkage(linkage, context=context)
+    except cl.CommitmentLinkageError as err:
+        invalid = err.code
+    if invalid is not None:
+        click.echo(f"COMMITMENT_LINKAGE_INVALID {invalid}")
+        raise click.exceptions.Exit(1)
+
     results: list[tuple[str, str]] = []
     mismatch = False
     for role in OPENING_ROLES:
@@ -750,17 +780,20 @@ def _open_commitments(record_bundle: dict[str, Any], commitments_path: Path) -> 
         if not isinstance(fp, str) or not isinstance(opening_b64, str):
             results.append((role, cl.COMMITMENT_UNAVAILABLE))
             continue
+        outcome = ""
+        invalid = None
         try:
             opening = base64.b64decode(opening_b64, validate=True)
             outcome = cl.verify_and_open_commitment(
                 linkage, context=context, role=role, fp_digest=fp, opening=opening
             )
         except cl.CommitmentLinkageError as err:
-            click.echo(f"COMMITMENT_LINKAGE_INVALID {err.code}")
-            raise click.exceptions.Exit(1) from None
+            invalid = err.code
         except ValueError:
-            click.echo("COMMITMENT_LINKAGE_INVALID OPENING_SHAPE")
-            raise click.exceptions.Exit(1) from None
+            invalid = "OPENING_SHAPE"
+        if invalid is not None:
+            click.echo(f"COMMITMENT_LINKAGE_INVALID {invalid}")
+            raise click.exceptions.Exit(1)
         mismatch = mismatch or outcome == cl.COMMITMENT_OPENED_MISMATCH
         results.append((role, outcome))
     for role, outcome in results:

@@ -263,6 +263,110 @@ def test_issuer_key_comes_from_record_not_from_sidecar(
     assert "COMMITMENT_LINKAGE_INVALID KEY_MISMATCH" in result.output
 
 
+def test_verify_refuses_group_readable_bundle(
+    tmp_path: Path, stub_record_verification: None
+) -> None:
+    record = _record()
+    bundle = _bundle_file(tmp_path, _sidecar(record), fp=FP_BOTH)
+    os.chmod(bundle, 0o644)
+    result = _verify(tmp_path, record, bundle)
+    assert result.exit_code == 1
+    assert "BUNDLE_PERMISSIONS" in result.output
+    assert "MATCH" not in result.output
+
+
+def test_malformed_bundle_on_verify_echoes_no_content(
+    tmp_path: Path, stub_record_verification: None
+) -> None:
+    record = _record()
+    bundle = tmp_path / "commitments.json"
+    bundle.write_text('{"openings": {"dataset": "OPENING-SECRET-GGGG"')
+    os.chmod(bundle, 0o600)
+    result = _verify(tmp_path, record, bundle)
+    assert result.exit_code == 1
+    assert "OPENING-SECRET" not in result.output
+
+
+def test_unreadable_json_error_chain_holds_no_file_text(tmp_path: Path) -> None:
+    bad = tmp_path / "x.json"
+    bad.write_text('{"a": "OPENING-SECRET-HHHH"')
+    with pytest.raises(Exception) as err:
+        cc._read_json(bad, "thing")
+    assert err.value.__cause__ is None and err.value.__context__ is None
+    assert "OPENING-SECRET" not in repr(err.value) + str(err.value)
+
+
+def test_invalid_signature_with_no_local_inputs_is_invalid_not_unavailable(
+    tmp_path: Path, stub_record_verification: None
+) -> None:
+    record = _record()
+    sidecar = _sidecar(record)
+    sidecar["signature"]["signature"] = base64.b64encode(b"\x00" * 64).decode()
+    result = _verify(
+        tmp_path,
+        record,
+        _bundle_file(tmp_path, sidecar, fp=None, openings=False),
+    )
+    assert result.exit_code == 1
+    assert "COMMITMENT_LINKAGE_INVALID" in result.output
+    assert "UNAVAILABLE" not in result.output
+
+
+def test_foreign_record_sidecar_with_no_local_inputs_is_invalid(
+    tmp_path: Path, stub_record_verification: None
+) -> None:
+    record = _record()
+    sidecar = _sidecar(record)
+    other = copy.deepcopy(record)
+    other["signature"]["unsigned_manifest_digest"] = "sha256:" + "11" * 32
+    result = _verify(
+        tmp_path, other, _bundle_file(tmp_path, sidecar, fp=None, openings=False)
+    )
+    assert result.exit_code == 1
+    assert "COMMITMENT_LINKAGE_INVALID RECORD_BINDING_MISMATCH" in result.output
+    assert "UNAVAILABLE" not in result.output
+
+
+def test_arbitrary_sidecar_dict_is_not_reported_unavailable(
+    tmp_path: Path, stub_record_verification: None
+) -> None:
+    record = _record()
+    result = _verify(
+        tmp_path,
+        record,
+        _bundle_file(tmp_path, {"anything": 1}, fp=None, openings=False),
+    )
+    assert result.exit_code == 1
+    assert "COMMITMENT_LINKAGE_INVALID" in result.output
+
+
+def test_failed_record_verification_attempts_no_opening(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = cc._load_certification_schema()
+    patched = SimpleNamespace(**vars(real))
+
+    def failing(*_a: Any, **_k: Any) -> Any:
+        raise real.ProcessRecordVerificationError("SIGNATURE_INVALID")
+
+    patched.verify_process_record_certificate = failing
+    monkeypatch.setattr(cc, "_load_certification_schema", lambda: patched)
+    called: list[str] = []
+    monkeypatch.setattr(
+        cl, "verify_and_open_commitment", lambda *a, **k: called.append("open")
+    )
+    monkeypatch.setattr(
+        cl, "verify_commitment_linkage", lambda *a, **k: called.append("verify")
+    )
+    record = _record()
+    result = _verify(
+        tmp_path, record, _bundle_file(tmp_path, _sidecar(record), fp=FP_BOTH)
+    )
+    assert result.exit_code != 0
+    assert called == []
+    assert "COMMITMENT_OPENED" not in result.output
+
+
 def test_open_commitments_requires_process_record_kind(tmp_path: Path) -> None:
     result = CliRunner().invoke(
         certify,

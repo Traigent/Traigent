@@ -3024,24 +3024,38 @@ class BackendIntegratedClient:
         headers = self._get_sync_auth_headers(target="backend")
         headers["Cache-Control"] = "no-store"
         preflight_requests(method, url, json=body)
-        response = requests.request(  # nosec B113 - timeout is provided
-            method,
-            url,
-            headers=headers,
-            json=body,
-            timeout=(min(self.timeout, 5.0), self.timeout),
-            allow_redirects=False,
-        )
-        if response.status_code not in (200, 201):
-            raise ProcessRecordRequestError(
-                response.status_code, _envelope_error_code(response)
-            )
+        # Every failure below is re-raised as a closed ProcessRecordRequestError
+        # OUTSIDE the except blocks: a requests/urllib3 exception carries the
+        # prepared request (body with openings, X-API-Key header) and a JSON
+        # decode error carries the response body; none may stay as
+        # __cause__/__context__.
+        failure: str | None = None
+        response: Any = None
+        payload: Any = None
+        status = 0
+        code: str | None = None
         try:
-            payload = response.json()
-        except ValueError:
-            raise ProcessRecordRequestError(response.status_code, None) from None
+            response = requests.request(  # nosec B113 - timeout is provided
+                method,
+                url,
+                headers=headers,
+                json=body,
+                timeout=(min(self.timeout, 5.0), self.timeout),
+                allow_redirects=False,
+            )
+            status = int(response.status_code)
+            if status not in (200, 201):
+                code = _envelope_error_code(response)
+            else:
+                payload = response.json()
+        except Exception:  # noqa: BLE001 - closed re-raise below
+            failure = "TRANSPORT_ERROR"
+        if failure is not None:
+            raise ProcessRecordRequestError(None, failure)
+        if status not in (200, 201):
+            raise ProcessRecordRequestError(status, code)
         if not isinstance(payload, dict):
-            raise ProcessRecordRequestError(response.status_code, None)
+            raise ProcessRecordRequestError(status, None)
         return payload
 
     def finalize_process_record_sync(
@@ -3054,7 +3068,9 @@ class BackendIntegratedClient:
 
     def get_process_record_sync(self, build_session_row_id: str) -> dict[str, Any]:
         """``GET /certification/process-records/<id>``; returns the full envelope."""
-        return self._process_records_request_sync("GET", f"/{build_session_row_id}", None)
+        return self._process_records_request_sync(
+            "GET", f"/{build_session_row_id}", None
+        )
 
     def upload_example_features(
         self,

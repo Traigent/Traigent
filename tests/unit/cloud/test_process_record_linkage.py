@@ -358,3 +358,199 @@ def test_backend_client_transport_posts_finalize_and_keeps_errors_content_free(
         client.finalize_process_record_sync(SESSION, {})
     assert err.value.status_code == 409 and err.value.error_code == "DUPLICATE_ISSUANCE"
     assert "SECRET-BODY" not in str(err.value)
+
+
+# --- r2 review fixes ---------------------------------------------------------------------
+
+
+def _chain_text(exc: BaseException) -> str:
+    """repr + traceback text + every linked exception's repr/args (cause AND context)."""
+    seen: list[str] = []
+    stack: list[BaseException | None] = [exc]
+    visited: set[int] = set()
+    while stack:
+        cur = stack.pop()
+        if cur is None or id(cur) in visited:
+            continue
+        visited.add(id(cur))
+        seen.append(repr(cur) + str(cur) + repr(cur.args))
+        stack.extend([cur.__cause__, cur.__context__])
+    return "".join(seen) + "".join(traceback.format_exception(exc)) + repr(exc)
+
+
+def test_concurrent_first_init_sends_one_set_of_openings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    from traigent.cloud import process_record_linkage as prl
+
+    path = tmp_path / "b.json"
+    barrier = threading.Barrier(2, timeout=10)
+    real = prl.generate_openings
+
+    def racing() -> dict[str, bytes]:
+        openings = real()
+        barrier.wait()  # both callers hold distinct openings before either publishes
+        return openings
+
+    monkeypatch.setattr(prl, "generate_openings", racing)
+    clients = [FakeClient(_ok()), FakeClient(_ok())]
+    errors: list[BaseException] = []
+
+    def run(client: FakeClient) -> None:
+        try:
+            finalize_process_record(
+                client, SESSION, PAYLOAD, link_commitments=True, bundle_path=path
+            )
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run, args=(c,)) for c in clients]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=20)
+    assert not errors
+    assert len(clients[0].sent) == 1 and len(clients[1].sent) == 1
+    assert clients[0].sent[0]["openings"] == clients[1].sent[0]["openings"]
+    stored = json.loads(path.read_text())["openings"]
+    assert stored == clients[0].sent[0]["openings"]
+    assert not [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
+
+
+def test_exclusive_create_never_replaces_an_existing_bundle(tmp_path: Path) -> None:
+    path = tmp_path / "b.json"
+    CommitmentBundle.create(path, SESSION, with_openings=True)
+    first = path.read_text()
+    with pytest.raises(CommitmentLinkageClientError) as err:
+        CommitmentBundle.create(path, SESSION, with_openings=True)
+    assert err.value.code == "BUNDLE_EXISTS"
+    assert path.read_text() == first
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '{"schema": "OPENING-SECRET-AAAA", "openings": {"dataset": "OPENING-SECRET-BBBB"',
+        '{"openings": {"dataset": "OPENING-SECRET-CCCC"}} trailing',
+    ],
+)
+def test_malformed_bundle_error_chain_holds_no_opening(
+    tmp_path: Path, body: str
+) -> None:
+    path = tmp_path / "b.json"
+    path.write_text(body)
+    os.chmod(path, 0o600)
+    with pytest.raises(CommitmentLinkageClientError) as err:
+        CommitmentBundle.load(path)
+    assert err.value.code == "BUNDLE_CORRUPT"
+    assert err.value.__cause__ is None and err.value.__context__ is None
+    assert "OPENING-SECRET" not in _chain_text(err.value)
+
+
+def test_bundle_with_bad_opening_value_has_clean_chain(tmp_path: Path) -> None:
+    path = tmp_path / "b.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": BUNDLE_SCHEMA,
+                "build_session_row_id": SESSION,
+                "openings": {"dataset": "OPENING-SECRET-DDDD!!"},
+            }
+        )
+    )
+    os.chmod(path, 0o600)
+    with pytest.raises(CommitmentLinkageClientError) as err:
+        CommitmentBundle.load(path)
+    assert err.value.__cause__ is None and err.value.__context__ is None
+    assert "OPENING-SECRET" not in _chain_text(err.value)
+
+
+def _transport_client(monkeypatch: pytest.MonkeyPatch, adapter_exc: Exception) -> Any:
+    from traigent.cloud import backend_client as bc
+
+    import requests
+
+    def failing_request(method: str, url: str, **kw: Any) -> Any:
+        raise adapter_exc
+
+    monkeypatch.setattr(requests, "request", failing_request)
+    client = bc.BackendIntegratedClient.__new__(bc.BackendIntegratedClient)
+    client.api_base_url = "https://api.example.test/api/v1"
+    client.timeout = 30.0
+    monkeypatch.setattr(
+        client,
+        "_raise_if_backend_egress_disabled",
+        lambda *_a, **_k: None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        client,
+        "_get_sync_auth_headers",
+        lambda target="backend": {"X-API-Key": "KEY-SECRET-ZZZZ"},
+        raising=False,
+    )
+    return client
+
+
+def test_transport_failing_adapter_leaks_no_openings_or_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import requests
+
+    # Built from parts so the literal is not in any traceback source line.
+    secret = "OPEN" + "ING-SECRET-EEEE"
+    api_key = "KEY-" + "SECRET-ZZZZ"
+    body = {"openings": {"dataset": secret}}
+    prepared = requests.Request(
+        "POST",
+        "https://api.example.test/x",
+        headers={"X-API-Key": api_key},
+        json=body,
+    ).prepare()
+    client = _transport_client(
+        monkeypatch, requests.ConnectionError("boom " + secret, request=prepared)
+    )
+    for call in (
+        lambda: client.finalize_process_record_sync(SESSION, body),
+        lambda: client.get_process_record_sync(SESSION),
+    ):
+        with pytest.raises(ProcessRecordRequestError) as err:
+            call()
+        assert err.value.error_code == "TRANSPORT_ERROR"
+        assert err.value.__cause__ is None and err.value.__context__ is None
+        text = _chain_text(err.value)
+        assert "OPENING-SECRET" not in text and "KEY-SECRET" not in text
+
+
+def test_transport_malformed_response_has_clean_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from traigent.cloud import backend_client as bc
+
+    import requests
+
+    class Resp:
+        status_code = 201
+
+        def json(self) -> Any:
+            return json.loads('{"x": "OPENING-SECRET-FFFF"')
+
+    monkeypatch.setattr(requests, "request", lambda *a, **k: Resp())
+    client = bc.BackendIntegratedClient.__new__(bc.BackendIntegratedClient)
+    client.api_base_url = "https://api.example.test/api/v1"
+    client.timeout = 30.0
+    monkeypatch.setattr(
+        client,
+        "_raise_if_backend_egress_disabled",
+        lambda *_a, **_k: None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        client, "_get_sync_auth_headers", lambda target="backend": {}, raising=False
+    )
+    with pytest.raises(ProcessRecordRequestError) as err:
+        client.get_process_record_sync(SESSION)
+    assert err.value.__cause__ is None and err.value.__context__ is None
+    assert "OPENING-SECRET" not in _chain_text(err.value)

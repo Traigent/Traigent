@@ -34,7 +34,7 @@ import secrets
 import stat
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 BUNDLE_SCHEMA = "traigent.commitment_bundle.v1"
 
@@ -66,6 +66,7 @@ ERROR_TEXT: dict[str, str] = {
     "BUNDLE_SESSION_MISMATCH": "the bundle file belongs to a different build session",
     "BUNDLE_CORRUPT": "the bundle file is not a valid commitment bundle",
     "BUNDLE_PERMISSIONS": "the bundle file is readable by other users; expected mode 0600",
+    "BUNDLE_EXISTS": "the bundle file already exists",
     "BUNDLE_WRITE_FAILED": "the bundle file could not be written; nothing was sent",
     "BUNDLE_REQUIRED": "a bundle path is required",
     "REQUEST_HAS_OPENINGS": "the request payload must not carry openings",
@@ -126,13 +127,15 @@ def _b64(opening: bytes) -> str:
 
 
 def _decode_opening(value: Any) -> bytes:
-    if type(value) is not str:
-        raise CommitmentLinkageClientError("BUNDLE_CORRUPT")
-    try:
-        raw = base64.b64decode(value, validate=True)
-    except (binascii.Error, ValueError):
-        raise CommitmentLinkageClientError("BUNDLE_CORRUPT") from None
-    if len(raw) != _OPENING_BYTES:
+    raw = b""
+    ok = type(value) is str
+    if ok:
+        try:
+            raw = base64.b64decode(value, validate=True)
+        except (binascii.Error, ValueError):
+            ok = False
+    # Raised OUTSIDE the except block so no decoder exception stays as __context__.
+    if not ok or len(raw) != _OPENING_BYTES:
         raise CommitmentLinkageClientError("BUNDLE_CORRUPT")
     return _Opening(raw)
 
@@ -194,6 +197,12 @@ class CommitmentBundle:
     def create(
         cls, path: Path, build_session_row_id: str, *, with_openings: bool
     ) -> CommitmentBundle:
+        """Create the bundle EXCLUSIVELY; raises ``BUNDLE_EXISTS`` if one is already there.
+
+        The finished (fsynced, 0600) file is hard-linked into place, so the
+        destination either does not exist or is complete, and an existing
+        bundle is never replaced.
+        """
         data: dict[str, Any] = {
             "schema": BUNDLE_SCHEMA,
             "build_session_row_id": build_session_row_id,
@@ -202,27 +211,14 @@ class CommitmentBundle:
             data["openings"] = {
                 role: _b64(o) for role, o in generate_openings().items()
             }
-        bundle = cls(path, data)
-        bundle.save()
-        return bundle
+        _atomic_write_private(path, data, exclusive=True)
+        return cls(path, data)
 
     @classmethod
     def load(cls, path: Path) -> CommitmentBundle:
-        try:
-            mode = stat.S_IMODE(path.stat().st_mode)
-        except OSError:
-            raise CommitmentLinkageClientError("BUNDLE_CORRUPT") from None
-        if mode & 0o077:
-            raise CommitmentLinkageClientError("BUNDLE_PERMISSIONS")
-        try:
-            with path.open(encoding="utf-8") as handle:
-                data = json.load(handle)
-        except (OSError, ValueError):
-            raise CommitmentLinkageClientError("BUNDLE_CORRUPT") from None
-        if (
-            not isinstance(data, dict)
-            or data.get("schema") != BUNDLE_SCHEMA
-            or not isinstance(data.get("build_session_row_id"), str)
+        data = read_private_json(path)
+        if data.get("schema") != BUNDLE_SCHEMA or not isinstance(
+            data.get("build_session_row_id"), str
         ):
             raise CommitmentLinkageClientError("BUNDLE_CORRUPT")
         bundle = cls(path, data)
@@ -230,11 +226,48 @@ class CommitmentBundle:
         return bundle
 
 
-def _atomic_write_private(path: Path, data: Mapping[str, Any]) -> None:
-    """Write ``data`` as JSON to ``path`` with mode 0600: temp file, fsync, rename, fsync dir."""
+def read_private_json(path: Path) -> dict[str, Any]:
+    """Read a bundle file that must be private (no group/other bits, owned by us).
+
+    Every failure is a closed ``CommitmentLinkageClientError`` raised OUTSIDE
+    any ``except`` block: no ``__cause__``/``__context__`` survives, so a
+    ``JSONDecodeError.doc`` holding the file's contents never escapes.
+    """
+    code: str | None = None
+    data: Any = None
+    try:
+        st = path.stat()
+    except OSError:
+        code = "BUNDLE_CORRUPT"
+    else:
+        if stat.S_IMODE(st.st_mode) & 0o077 or st.st_uid != os.geteuid():
+            code = "BUNDLE_PERMISSIONS"
+        else:
+            try:
+                with path.open(encoding="utf-8") as handle:
+                    data = json.load(handle)
+            except (OSError, ValueError):
+                code = "BUNDLE_CORRUPT"
+    if code is None and not isinstance(data, dict):
+        code = "BUNDLE_CORRUPT"
+    if code is not None:
+        raise CommitmentLinkageClientError(code)
+    return cast("dict[str, Any]", data)
+
+
+def _atomic_write_private(
+    path: Path, data: Mapping[str, Any], *, exclusive: bool = False
+) -> None:
+    """Write ``data`` as JSON to ``path`` with mode 0600: temp file, fsync, publish, fsync dir.
+
+    ``exclusive=True`` publishes with ``os.link`` (fails if ``path`` exists)
+    instead of ``os.replace``; the loser gets ``BUNDLE_EXISTS``.
+    """
     payload = json.dumps(data, sort_keys=True, indent=2).encode("utf-8")
     tmp = path.with_name(f".{path.name}.{secrets.token_hex(6)}.tmp")
     fd = -1
+    exists = False
+    failed = False
     try:
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         view = memoryview(payload)
@@ -243,20 +276,31 @@ def _atomic_write_private(path: Path, data: Mapping[str, Any]) -> None:
         os.fsync(fd)
         os.close(fd)
         fd = -1
-        os.replace(tmp, path)
+        if exclusive:
+            os.link(tmp, path)
+            tmp.unlink()
+        else:
+            os.replace(tmp, path)
         dir_fd = os.open(path.parent, os.O_RDONLY)
         try:
             os.fsync(dir_fd)
         finally:
             os.close(dir_fd)
+    except FileExistsError:
+        exists = True
     except OSError:
+        failed = True
+    if exists or failed:
         if fd >= 0:
             os.close(fd)
         try:
             tmp.unlink()
         except OSError:  # silent-ok: best-effort cleanup of our own temp file
             pass
-        raise CommitmentLinkageClientError("BUNDLE_WRITE_FAILED") from None
+    if exists:
+        raise CommitmentLinkageClientError("BUNDLE_EXISTS")
+    if failed:
+        raise CommitmentLinkageClientError("BUNDLE_WRITE_FAILED")
 
 
 def _closed_error(exc: ProcessRecordRequestError) -> CommitmentLinkageClientError:
@@ -297,16 +341,22 @@ def finalize_process_record(
         )
 
     path = Path(bundle_path)
-    if path.exists():
+    bundle: CommitmentBundle | None = None
+    if not path.exists():
+        try:
+            bundle = CommitmentBundle.create(
+                path, build_session_row_id, with_openings=link_commitments
+            )
+        except CommitmentLinkageClientError as err:
+            if err.code != "BUNDLE_EXISTS":
+                raise
+            # Lost the creation race: fall through and reuse the winner's bundle.
+    if bundle is None:
         bundle = CommitmentBundle.load(path)
         if bundle.build_session_row_id != build_session_row_id:
             raise CommitmentLinkageClientError("BUNDLE_SESSION_MISMATCH")
         if link_commitments and set(bundle.openings) != set(OPENING_ROLES):
             raise CommitmentLinkageClientError("BUNDLE_CORRUPT")
-    else:
-        bundle = CommitmentBundle.create(
-            path, build_session_row_id, with_openings=link_commitments
-        )
     if fp_digests:
         bundle.set_fp_digests(fp_digests)
 
@@ -391,4 +441,5 @@ __all__ = [
     "ProcessRecordRequestError",
     "finalize_process_record",
     "generate_openings",
+    "read_private_json",
 ]
