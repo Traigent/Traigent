@@ -10,7 +10,9 @@ len(text) // 4 — producing inaccurate cost data.
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Observability FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
 
+import functools
 import sys
+import threading
 import time
 from typing import Any
 
@@ -70,6 +72,9 @@ def _raise_if_mock_bypass() -> None:
         )
 
 
+_guard_install_lock = threading.RLock()
+
+
 def _install_function_setup_guard(litellm: Any) -> None:
     """Guard ``litellm.utils.function_setup``, the unconditional entry point.
 
@@ -92,6 +97,7 @@ def _install_function_setup_guard(litellm: Any) -> None:
     if getattr(current, "_traigent_mock_guard", False):
         return
 
+    @functools.wraps(current)
     def function_setup_with_mock_guard(
         original_function: Any, *args: Any, **kwargs: Any
     ) -> Any:
@@ -110,10 +116,13 @@ def _install_mock_guard(litellm: Any) -> None:
     Primary: the ``function_setup`` boundary (unconditional). Second layer:
     a ``pre_call_rules`` entry, when LiteLLM exposes the list.
     """
-    _install_function_setup_guard(litellm)
-    rules = getattr(litellm, "pre_call_rules", None)
-    if isinstance(rules, list) and _mock_mode_pre_call_guard not in rules:
-        rules.append(_mock_mode_pre_call_guard)
+    # Serialized: the check-then-wrap in the guard installers must not run
+    # concurrently, or a second wrapper is stacked over the first.
+    with _guard_install_lock:
+        _install_function_setup_guard(litellm)
+        rules = getattr(litellm, "pre_call_rules", None)
+        if isinstance(rules, list) and _mock_mode_pre_call_guard not in rules:
+            rules.append(_mock_mode_pre_call_guard)
 
 
 def _rebind_imported_names(original: Any, wrapper: Any) -> int:
@@ -185,9 +194,11 @@ def patch_litellm_for_metadata_capture(
 
     # Safety net for references the rebinding cannot reach (closures, default
     # arguments, stored callables): fail closed inside LiteLLM itself.
+    guard_failed = False
     try:
         _install_mock_guard(litellm)
     except Exception:
+        guard_failed = True
         out["litellm"] = "failed"
         from traigent.integrations.utils.mock_adapter import MockAdapter
 
@@ -311,7 +322,12 @@ def patch_litellm_for_metadata_capture(
         if original is not None and _rebind_imported_names(original, wrapper):
             logger.debug("Rebound imported litellm.%s names to the interceptor", attr)
 
-    out.setdefault("litellm", "installed" if patched_any else "already-installed")
+    # This invocation's final outcome, assigned explicitly so a successful
+    # retry with a reused dict does not keep a stale "failed".
+    if guard_failed:
+        out["litellm"] = "failed"
+    else:
+        out["litellm"] = "installed" if patched_any else "already-installed"
     if not patched_any:
         logger.debug("LiteLLM functions already patched, skipping")
 

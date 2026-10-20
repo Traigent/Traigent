@@ -584,3 +584,61 @@ class TestInstallOutcomes:
         with patch.dict("sys.modules", {"litellm": None}):
             assert patch_litellm_for_metadata_capture(outcomes) is False
         assert outcomes["litellm"] == "not-applicable"
+
+
+class TestGuardHardening:
+    """Sol r6: signature preserved, retry outcome, concurrent install."""
+
+    def test_function_setup_guard_preserves_signature(self, litellm_module):
+        import inspect
+
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
+
+        def function_setup(original_function, rules_obj, start_time, *args, **kwargs):
+            """Doc."""
+            return None, kwargs
+
+        litellm_module.utils = types.SimpleNamespace(function_setup=function_setup)
+        patch_litellm_for_metadata_capture({})
+        guarded = litellm_module.utils.function_setup
+        assert guarded is not function_setup
+        assert inspect.signature(guarded) == inspect.signature(function_setup)
+        assert guarded.__name__ == "function_setup"
+        assert guarded.__doc__ == "Doc."
+
+    def test_successful_retry_with_same_dict_replaces_failed(self, litellm_module):
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
+
+        good_utils = litellm_module.utils
+        litellm_module.utils = types.SimpleNamespace()  # guard unavailable
+        outcomes: dict[str, str] = {}
+        patch_litellm_for_metadata_capture(outcomes)
+        assert outcomes["litellm"] == "failed"
+        litellm_module.utils = good_utils  # cause fixed; retry, same dict
+        patch_litellm_for_metadata_capture(outcomes)
+        assert outcomes["litellm"] in {"installed", "already-installed"}
+
+    def test_concurrent_installation_wraps_once(self, litellm_module):
+        import threading as th
+
+        from traigent.utils import litellm_interceptor as li
+
+        original = litellm_module.utils.function_setup
+        barrier = th.Barrier(8)
+
+        def worker() -> None:
+            barrier.wait()
+            li._install_mock_guard(litellm_module)
+
+        threads = [th.Thread(target=worker) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        guarded = litellm_module.utils.function_setup
+        assert guarded._traigent_original is original
+        assert litellm_module.pre_call_rules.count(li._mock_mode_pre_call_guard) == 1
