@@ -326,15 +326,23 @@ def _prepare_samples(
         if response is None:
             continue
 
-        reference = result.expected_output
+        # A mapped ``reference`` column wins; expected_output is the fallback
+        # (and the only source when the column is unmapped). A missing reference
+        # drops the row only when the selected metrics require it (#2472).
+        reference = None
+        if config.column_map and "reference" in config.column_map:
+            reference_keys = _determine_column_keys(config.column_map, "reference")
+            reference = _extract_candidate(
+                [*metadata_sources, *input_sources], reference_keys
+            )
         if reference is None:
-            continue
+            reference = result.expected_output
 
         user_input_keys = _determine_column_keys(config.column_map, "user_input")
         user_input = _extract_candidate(input_sources, user_input_keys)
         if user_input is None and hasattr(result, "input_data"):
             user_input = str(result.input_data)
-        if user_input is None:
+        if user_input is None and reference is not None:
             user_input = str(reference)
 
         contexts_keys = _determine_column_keys(config.column_map, "retrieved_contexts")
@@ -377,6 +385,33 @@ def _prepare_samples(
     return samples
 
 
+def layer_over_global_defaults(config: RagasConfig | None) -> RagasConfig:
+    """Return ``config`` with unset fields filled from the global defaults.
+
+    A field set on ``config`` (not ``None``) wins; any field left unset takes the
+    value registered through :func:`configure_ragas_defaults` (Traigent#2473).
+    """
+    with _RAGAS_CONFIG_LOCK:
+        global_map = (
+            dict(_GLOBAL_RAGAS_CONFIG.column_map)
+            if _GLOBAL_RAGAS_CONFIG.column_map
+            else None
+        )
+        global_llm = _GLOBAL_RAGAS_CONFIG.llm
+        global_embeddings = _GLOBAL_RAGAS_CONFIG.embeddings
+    if config is None:
+        return RagasConfig(
+            column_map=global_map, llm=global_llm, embeddings=global_embeddings
+        )
+    return RagasConfig(
+        column_map=config.column_map if config.column_map else global_map,
+        llm=config.llm if config.llm is not None else global_llm,
+        embeddings=(
+            config.embeddings if config.embeddings is not None else global_embeddings
+        ),
+    )
+
+
 def compute_ragas_metrics(
     example_results: Sequence[ExampleResult],
     metric_names: Sequence[str],
@@ -407,17 +442,7 @@ def compute_ragas_metrics(
 
     _ensure_ragas_available()
 
-    if config is None:
-        with _RAGAS_CONFIG_LOCK:
-            config = RagasConfig(
-                column_map=(
-                    dict(_GLOBAL_RAGAS_CONFIG.column_map)
-                    if _GLOBAL_RAGAS_CONFIG.column_map
-                    else None
-                ),
-                llm=_GLOBAL_RAGAS_CONFIG.llm,
-                embeddings=_GLOBAL_RAGAS_CONFIG.embeddings,
-            )
+    config = layer_over_global_defaults(config)
 
     example_results = list(example_results)
     if (not example_results) and dataset_examples is not None:

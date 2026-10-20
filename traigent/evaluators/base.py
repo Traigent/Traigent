@@ -531,6 +531,7 @@ try:  # pragma: no cover - import guard for optional dependency
         RagasConfig,
         RagasConfigurationError,
         compute_ragas_metrics,
+        layer_over_global_defaults,
     )
 except ImportError:  # pragma: no cover - executed only when module missing
     POPULAR_RAGAS_METRICS = ()
@@ -545,6 +546,9 @@ except ImportError:  # pragma: no cover - executed only when module missing
     RagasConfig = _FallbackRagasConfig  # type: ignore[misc, assignment]
     RagasConfigurationError = RuntimeError  # type: ignore[misc, assignment]
     compute_ragas_metrics = None  # type: ignore[assignment]
+
+    def layer_over_global_defaults(config: Any) -> Any:  # type: ignore[misc]
+        return config
 
 
 DATASET_ROOT_ENV = "TRAIGENT_DATASET_ROOT"
@@ -1795,10 +1799,17 @@ class BaseEvaluator(ABC):
             mapping = self.config["ragas_column_map"]
             if isinstance(mapping, Mapping):
                 column_map = mapping
-        return RagasConfig(
-            column_map=column_map,
-            llm=self.config.get("ragas_llm"),
-            embeddings=self.config.get("ragas_embeddings"),
+        # Evaluator kwargs win field by field; globals from
+        # configure_ragas_defaults() fill the gaps (Traigent#2473).
+        return cast(
+            RagasConfig,
+            layer_over_global_defaults(
+                RagasConfig(
+                    column_map=column_map,
+                    llm=self.config.get("ragas_llm"),
+                    embeddings=self.config.get("ragas_embeddings"),
+                )
+            ),
         )
 
     def override_metric(self, name: str, func: Callable[..., Any]) -> None:
