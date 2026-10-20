@@ -68,8 +68,10 @@ EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY = "EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY
 # Schema aacd5db (#563) moved `return Draft7Validator(...)` out of the try block in
 # the verifier module (behaviour-preserving). Owner card
 # feature-pick-2026-10-20-sdk-verifier-revision-rerecord, answered A.
+# Pin moved to d5d0cb6 (commitment-linkage reader, C1 step 1) with verifier_revision
+# UNCHANGED for both evaluator-quality and agent-quality (recomputed on both installs).
 EVALUATOR_QUALITY_POLICY_DISPOSITION = {
-    "schema_pin": "31e0ddf818766d4570a58b3601b99b70dcc4c46e",
+    "schema_pin": "d5d0cb6d1caf0cf0b90983afc312412e82b79a42",
     "verifier_revision": "887114f799459df27269463cb73e1bc1ff9c4a948d73dddb83db4b88cc3e831f",
     "reviewed_by": "maintainers",
     "date": "2026-10-20",
@@ -146,7 +148,7 @@ def evaluator_quality_verifier_revision(files: list[Path] | None = None) -> str:
 # the verifier module (behaviour-preserving). Owner card
 # feature-pick-2026-10-20-sdk-verifier-revision-rerecord, answered A.
 AGENT_QUALITY_POLICY_DISPOSITION = {
-    "schema_pin": "31e0ddf818766d4570a58b3601b99b70dcc4c46e",
+    "schema_pin": "d5d0cb6d1caf0cf0b90983afc312412e82b79a42",
     "verifier_revision": "18ce9e7d7576b0eccc1dcbbcbf1e7d7643dae72ff2a5077c20fdd0f4b90d02de",
     "reviewed_by": "maintainers",
     "date": "2026-10-20",
@@ -546,6 +548,19 @@ def certify() -> None:
     ),
 )
 @click.option(
+    "--open-commitments",
+    "open_commitments",
+    type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
+    default=None,
+    help=(
+        "Client bundle written by `certify finalize --link-commitments`. After "
+        "the process record verifies, open the dataset and config_space "
+        "commitments in its sidecar and print COMMITMENT_OPENED_MATCH, "
+        "_MISMATCH or COMMITMENT_UNAVAILABLE per role (MISMATCH exits 1). "
+        "Only valid with --kind process-record."
+    ),
+)
+@click.option(
     "--json",
     "as_json",
     is_flag=True,
@@ -560,6 +575,7 @@ def verify(
     process_record: Path | None,
     kind: str | None,
     development_integration: bool,
+    open_commitments: Path | None,
     as_json: bool,
 ) -> None:
     """Verify BUNDLE using independently supplied context and public anchor."""
@@ -574,6 +590,8 @@ def verify(
     )
 
     resolved_kind = _resolve_kind(kind, context_payload)
+    if open_commitments is not None and resolved_kind != "process-record":
+        raise click.UsageError("--open-commitments requires --kind process-record")
 
     if resolved_kind == "evaluator-quality":
         if process_record is not None:
@@ -661,6 +679,172 @@ def verify(
     if hasattr(result, "trust_status_evidence"):
         click.echo(f"trust_status_evidence={result.trust_status_evidence}")
         click.echo(f"trust_status_effective_time={result.trust_status_effective_time}")
+    if open_commitments is not None:
+        _open_commitments(bundle_payload, open_commitments)
+
+
+def _open_commitments(record_bundle: dict[str, Any], commitments_path: Path) -> None:
+    """Open the dataset/config_space commitments of an already-verified record.
+
+    The sidecar is verified against the record's own digest, project and
+    session refs and the ISSUER KEY COPIED FROM THAT VERIFIED RECORD
+    (``verification_materials_v0.issuer``), never from the sidecar. Openings
+    and fingerprint digests come from the client bundle; they are never
+    printed. A role with no opening or no local fp1 digest is reported
+    COMMITMENT_UNAVAILABLE rather than guessed.
+    """
+    from traigent.cloud.process_record_linkage import (
+        DISCLOSURE_LINE,
+        OPENING_ROLES,
+        BUNDLE_SCHEMA,
+    )
+
+    try:
+        from traigent_schema.certification import commitment_linkage as cl
+    except ImportError as exc:
+        raise click.UsageError(
+            "the pinned traigent-schema does not provide commitment linkage "
+            "(need the pin in scripts/ci/schema-pin.txt)"
+        ) from exc
+
+    payload = _read_json(commitments_path, "commitments bundle")
+    if payload.get("schema") != BUNDLE_SCHEMA:
+        raise click.UsageError("commitments bundle has an unsupported schema")
+    linkage = payload.get("commitment_linkage")
+    if not isinstance(linkage, dict):
+        raise click.UsageError("commitments bundle has no commitment_linkage")
+    raw_openings = payload.get("openings")
+    raw_openings = raw_openings if isinstance(raw_openings, dict) else {}
+    fp_digests = payload.get("fp_digests")
+    fp_digests = fp_digests if isinstance(fp_digests, dict) else {}
+
+    try:
+        manifest = record_bundle["unsigned_manifest"]
+        issuer = record_bundle["verification_materials_v0"]["issuer"]
+        context = cl.CommitmentLinkageVerificationContext(
+            expected_process_record_digest=record_bundle["signature"][
+                "unsigned_manifest_digest"
+            ],
+            expected_project_ref=manifest["project_ref"],
+            expected_build_session_ref=manifest["build_session_ref"],
+            issuer_key=cl.LinkageIssuerKeyV1(
+                key_ref=issuer["key_ref"],
+                trust_ring_ref=issuer["trust_ring_ref"],
+                algorithm=issuer["algorithm"],
+                public_key_der_b64=issuer["public_key_der_b64"],
+                public_key_digest=issuer["public_key_digest"],
+            ),
+        )
+    except (KeyError, TypeError, cl.CommitmentLinkageError):
+        raise click.UsageError(
+            "record bundle lacks the fields needed to open commitments"
+        ) from None
+
+    import base64
+
+    results: list[tuple[str, str]] = []
+    mismatch = False
+    for role in OPENING_ROLES:
+        fp = fp_digests.get(role)
+        opening_b64 = raw_openings.get(role)
+        if not isinstance(fp, str) or not isinstance(opening_b64, str):
+            results.append((role, cl.COMMITMENT_UNAVAILABLE))
+            continue
+        try:
+            opening = base64.b64decode(opening_b64, validate=True)
+            outcome = cl.verify_and_open_commitment(
+                linkage, context=context, role=role, fp_digest=fp, opening=opening
+            )
+        except cl.CommitmentLinkageError as err:
+            click.echo(f"COMMITMENT_LINKAGE_INVALID {err.code}")
+            raise click.exceptions.Exit(1) from None
+        except ValueError:
+            click.echo("COMMITMENT_LINKAGE_INVALID OPENING_SHAPE")
+            raise click.exceptions.Exit(1) from None
+        mismatch = mismatch or outcome == cl.COMMITMENT_OPENED_MISMATCH
+        results.append((role, outcome))
+    for role, outcome in results:
+        click.echo(f"{role}: {outcome}")
+    click.echo(DISCLOSURE_LINE)
+    if mismatch:
+        raise click.exceptions.Exit(1)
+
+
+def _make_backend_client() -> Any:
+    from traigent.cloud.backend_client import BackendIntegratedClient
+
+    return BackendIntegratedClient()
+
+
+@certify.command()
+@click.argument("build_session_id")
+@click.option(
+    "--request",
+    "request_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
+    help="JSON finalize payload (refs, base certificate, verification materials).",
+)
+@click.option(
+    "--bundle",
+    "bundle_path",
+    required=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Client bundle file (mode 0600) that receives the record and sidecar.",
+)
+@click.option(
+    "--link-commitments",
+    is_flag=True,
+    default=False,
+    help=(
+        "Opt in: also request the commitment-linkage sidecar for the dataset "
+        "and config_space declarations. Fresh openings are written to --bundle "
+        "BEFORE the request is sent and reused on retry. Default off."
+    ),
+)
+@click.option(
+    "--fp-digest",
+    "fp_digest",
+    multiple=True,
+    metavar="ROLE=sha256:HEX",
+    help="Locally known fp1 digest for dataset or config_space (stored in the bundle).",
+)
+def finalize(
+    build_session_id: str,
+    request_path: Path,
+    bundle_path: Path,
+    link_commitments: bool,
+    fp_digest: tuple[str, ...],
+) -> None:
+    """Finalize BUILD_SESSION_ID's process record on the backend (opt-in client)."""
+    from traigent.cloud.process_record_linkage import (
+        CommitmentLinkageClientError,
+        finalize_process_record,
+    )
+
+    digests: dict[str, str] = {}
+    for item in fp_digest:
+        role, sep, value = item.partition("=")
+        if not sep:
+            raise click.UsageError("--fp-digest must look like ROLE=sha256:HEX")
+        digests[role] = value
+    payload = _read_json(request_path, "request")
+    try:
+        outcome = finalize_process_record(
+            _make_backend_client(),
+            build_session_id,
+            payload,
+            link_commitments=link_commitments,
+            bundle_path=bundle_path,
+            fp_digests=digests or None,
+        )
+    except CommitmentLinkageClientError as err:
+        click.echo(f"FINALIZE_REFUSED {err.code}", err=True)
+        raise click.exceptions.Exit(1) from None
+    click.echo("FINALIZED")
+    click.echo(
+        f"commitment_linkage={'present' if outcome['commitment_linkage'] else 'absent'}"
+    )
 
 
 def _verify_evaluator_quality(

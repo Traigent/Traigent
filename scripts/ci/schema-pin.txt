@@ -25,7 +25,7 @@
 # the requirement line at the bottom of this file (the single source of truth).
 # Current compatibility target (checked against the requirement line when this
 # comment was last refreshed): TraigentSchema commit
-# 31e0ddf818766d4570a58b3601b99b70dcc4c46e. The same SHA is recorded in the
+# d5d0cb6d1caf0cf0b90983afc312412e82b79a42. The same SHA is recorded in the
 # disposition dicts in traigent/cli/certify_commands.py; if you bump the pin,
 # change all three together. It is an intentional compatibility baseline
 # for the economics/certification contract, not a "latest major" target:
@@ -49,4 +49,4 @@
 # truth for the pin — update it here only. uv.lock does not reference
 # traigent-schema (the pin is not a declared dependency), so there is nothing
 # to keep in step there.
-traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@31e0ddf818766d4570a58b3601b99b70dcc4c46e
+traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@d5d0cb6d1caf0cf0b90983afc312412e82b79a42

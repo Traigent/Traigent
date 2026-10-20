@@ -2985,6 +2985,77 @@ class BackendIntegratedClient:
             raise PurposeKeyGrantFetchError(200, "non_object_body")
         return grant
 
+    def _process_records_url(self, suffix: str) -> str | None:
+        """URL under ``<api base>/certification/process-records``, or ``None`` if unusable."""
+        parsed = urlparse(self.api_base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return None
+        if (
+            parsed.username
+            or parsed.password
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        path = f"{parsed.path.rstrip('/')}/certification/process-records{suffix}"
+        return cast(
+            str,
+            urlunparse(parsed._replace(path=path, params="", query="", fragment="")),
+        )
+
+    def _process_records_request_sync(
+        self, method: str, suffix: str, body: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        """One un-retried process-record call; raises a content-free error on any refusal.
+
+        The request body may carry commitment openings, so it is never logged
+        and no response body is ever put in an exception: only the HTTP status
+        and the envelope's plain ``error_code`` token survive.
+        """
+        from traigent.cloud.process_record_linkage import ProcessRecordRequestError
+
+        self._raise_if_backend_egress_disabled("call the process-record service")
+        import requests
+
+        url = self._process_records_url(suffix)
+        if not url:
+            raise ProcessRecordRequestError(None, "invalid_backend_url")
+        headers = self._get_sync_auth_headers(target="backend")
+        headers["Cache-Control"] = "no-store"
+        preflight_requests(method, url, json=body)
+        response = requests.request(  # nosec B113 - timeout is provided
+            method,
+            url,
+            headers=headers,
+            json=body,
+            timeout=(min(self.timeout, 5.0), self.timeout),
+            allow_redirects=False,
+        )
+        if response.status_code not in (200, 201):
+            raise ProcessRecordRequestError(
+                response.status_code, _envelope_error_code(response)
+            )
+        try:
+            payload = response.json()
+        except ValueError:
+            raise ProcessRecordRequestError(response.status_code, None) from None
+        if not isinstance(payload, dict):
+            raise ProcessRecordRequestError(response.status_code, None)
+        return payload
+
+    def finalize_process_record_sync(
+        self, build_session_row_id: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """``POST /certification/process-records/<id>/finalize``; returns the full envelope."""
+        return self._process_records_request_sync(
+            "POST", f"/{build_session_row_id}/finalize", payload
+        )
+
+    def get_process_record_sync(self, build_session_row_id: str) -> dict[str, Any]:
+        """``GET /certification/process-records/<id>``; returns the full envelope."""
+        return self._process_records_request_sync("GET", f"/{build_session_row_id}", None)
+
     def upload_example_features(
         self,
         experiment_run_id: str,
