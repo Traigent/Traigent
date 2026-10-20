@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from traigent.labels.transport_gate import client_origins, gate_session
 from traigent._version import get_version
 from traigent.cloud.client import (
     CloudEgressBlockedError,
@@ -345,7 +346,10 @@ class TrialOperations:
         if not _sync_registration_loop.get():
             yield await self.client._ensure_session()
             return
-        async with aiohttp.ClientSession(trust_env=True) as session:
+        async with gate_session(
+            aiohttp.ClientSession(trust_env=True),
+            origins=client_origins(self.client),
+        ) as session:
             yield session
 
     async def register_trial_start(

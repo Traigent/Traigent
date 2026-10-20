@@ -19,6 +19,7 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any, cast
 
+from traigent.labels.transport_gate import gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.core.constants import MAX_RETRIES
@@ -281,7 +282,7 @@ class PasswordAuthHandler:
         )
 
         async def perform_login():
-            async with aiohttp.ClientSession(trust_env=True) as session:
+            async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
                 async with session.post(
                     login_url,
                     json={

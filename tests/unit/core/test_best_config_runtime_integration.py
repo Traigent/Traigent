@@ -604,7 +604,8 @@ def test_decorator_non_safety_drift_still_falls_back_when_not_strict(
 
     assert wrapped.current_config == {"quality": "baseline"}
     assert wrapped.best_config_snapshot.source == BestConfigSource.DEFAULT.value
-    assert "Ignoring repo best config relaxed-answerer" in caplog.text
+    assert "Ignoring repo best config after validation failure" in caplog.text
+    assert "relaxed-answerer" not in caplog.text
 
     with pytest.raises(ConfigurationError, match="Unknown best config keys"):
         optimize(
@@ -627,8 +628,17 @@ def test_decorator_enable_auto_load_dev_logs_reads_latest_config(tmp_path):
         / "artifacts"
     )
     artifacts_dir.mkdir(parents=True)
+    # The artifact carries the identity the SDK's own logger stamps on it: an
+    # identity-free dev log is no longer auto-loaded (F1e ruling d; see
+    # test_best_config_legacy_identity.py).
     (artifacts_dir / "best_config.json").write_text(
-        json.dumps({"config": {"temperature": 0.6}}),
+        json.dumps(
+            {
+                "function_ref": function_ref_for(context_answer),
+                "environment": "default",
+                "config": {"temperature": 0.6},
+            }
+        ),
         encoding="utf-8",
     )
 

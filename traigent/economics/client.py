@@ -36,6 +36,7 @@ from email.utils import parsedate_to_datetime
 from types import MappingProxyType
 from typing import Any, cast
 
+from traigent.labels.transport_gate import gate_session
 from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.economics.contract import (
@@ -231,14 +232,16 @@ class EconomicsTelemetryClient:
             headers = self._auth_headers()
             headers.setdefault("User-Agent", get_sdk_user_agent())
             headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
-            self._client = httpx.AsyncClient(
-                base_url=self.backend_url,
-                headers=headers,
-                timeout=self.timeout,
-                # Never auto-follow redirects: a 3xx would otherwise re-send the
-                # auth credential (X-API-Key / Authorization) to a redirect target.
-                # A redirect surfaces as a transport error instead.
-                follow_redirects=False,
+            self._client = gate_session(
+                httpx.AsyncClient(
+                    base_url=self.backend_url,
+                    headers=headers,
+                    timeout=self.timeout,
+                    # Never auto-follow redirects: a 3xx would otherwise re-send the
+                    # auth credential (X-API-Key / Authorization) to a redirect target.
+                    # A redirect surfaces as a transport error instead.
+                    follow_redirects=False,
+                )
             )
         return self._client
 

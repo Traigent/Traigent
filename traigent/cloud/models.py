@@ -678,6 +678,10 @@ class SessionCreationRequest:
     # shape the JS SDK sends -- until milestone M3 gives it a typed contract.
     # Digests, ids, revisions and project-relative file names only.
     content_identity: dict[str, Any] | None = None
+    # Content-less session create (phase 3 group 1): ``ContentLessOptions`` from
+    # ``optimize(content_less=..., agent_ref=..., environment=...)``. ``None`` = the
+    # legacy request, byte for byte, unless TRAIGENT_CONTENT_LESS opts the process in.
+    content_less: Any = None
 
     def __post_init__(self) -> None:
         """Handle default values and alternative parameter names."""

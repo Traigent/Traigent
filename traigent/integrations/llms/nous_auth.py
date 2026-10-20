@@ -45,6 +45,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from traigent.labels.transport_gate import preflight_requests
 from traigent.utils.exceptions import TraigentError
 
 logger = logging.getLogger(__name__)
@@ -374,6 +375,7 @@ def _request_new_token(
     # assumption on par with the URL / auth.json schema / model-id spellings the
     # other OWNER: markers flag, so it must be confirmed against real
     # hermes-agent output before merge.
+    preflight_requests("POST", token_url, json={"refresh_token": refresh_token})
     response = requests.post(
         token_url,
         json={"refresh_token": refresh_token},

@@ -14,6 +14,7 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
+from traigent.labels.transport_gate import gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.core.constants import MAX_RETRIES
@@ -361,7 +362,7 @@ class TokenManager:
         )
 
         async def perform_refresh():
-            async with aiohttp.ClientSession(trust_env=True) as session:
+            async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
                 async with session.post(
                     refresh_url,
                     json={"refresh_token": refresh_token_value},
@@ -546,7 +547,7 @@ class TokenManager:
         # invalid_grant) should also invalidate stored credentials, that
         # behavior should be added explicitly here.
         try:
-            async with aiohttp.ClientSession(trust_env=True) as session:
+            async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
                 async with session.post(token_url, data=data) as response:
                     if response.status != 200:
                         await (

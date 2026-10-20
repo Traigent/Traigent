@@ -10,6 +10,7 @@ OptimizedFunction to reduce class complexity.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import copy
 import threading
@@ -17,22 +18,25 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from traigent.api.types import OptimizationResult, OptimizationStatus
+from traigent.core import best_config_diagnostics as diag
 from traigent.core.best_config_runtime import (
     BEST_CONFIG_SCHEMA_VERSION,
     BestConfigSnapshot,
     BestConfigSource,
     BestConfigSourceMode,
+    CloudBestConfigHeadRefusedError,
     CloudBestConfigStaleHeadError,
     CloudPublishUnavailable,
     CloudPublishUnavailableReason,
+    HeadRefusalCode,
     SafetySensitiveBestConfigError,
     canonical_json,
+    check_publishable_spec,
     compute_spec_hash,
     function_ref_for,
-    load_best_config_spec,
     resolve_cloud_cache_best_config,
     resolve_repo_best_config,
     sha256_digest,
@@ -45,6 +49,7 @@ from traigent.core.best_config_runtime import (
 from traigent.utils.exceptions import (
     ConfigurationError,
     OptimizationStateError,
+    TraigentError,
 )
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import (
@@ -56,6 +61,30 @@ from traigent.utils.secure_path import (
 
 logger = get_logger(__name__)
 
+# Legacy files the user named themselves. A discovered dev log is not one of them.
+_EXPLICIT_LEGACY_SOURCES = frozenset(
+    {BestConfigSource.LOAD_FROM.value, BestConfigSource.ENV.value}
+)
+
+# What a log line or exception text calls a best-config file. The path is chosen by the
+# user (it can carry a customer or project name), so it is never interpolated into a log
+# line or a message: it travels only as ``ConfigurationError.details["path"]``.
+_SOURCE_LABELS = {
+    BestConfigSource.LOAD_FROM.value: "load_from",
+    BestConfigSource.ENV.value: "TRAIGENT_CONFIG_PATH",
+    BestConfigSource.DEV_LOG.value: "dev-log",
+}
+_FALLBACK_SOURCE_LABEL = "best config file"
+
+# A schema_version in this namespace marks a canonical best-config envelope.
+_CANONICAL_SCHEMA_NAMESPACE = "traigent.best_config."
+_CANONICAL_ENVELOPE_KEYS = frozenset({"schema_version", "config_id", "config"})
+
+
+def _source_label(source: str) -> str:
+    return _SOURCE_LABELS.get(source, _FALLBACK_SOURCE_LABEL)
+
+
 _T = TypeVar("_T")
 
 DEFAULT_OPTIMIZATION_HISTORY_LIMIT = 100
@@ -63,6 +92,14 @@ DEFAULT_OPTIMIZATION_HISTORY_LIMIT = 100
 
 class CloudBestConfigIntegrityError(ConfigurationError):
     """Raised when a cloud best-config response fails hash integrity checks."""
+
+
+class ResultNotPersistableError(ConfigurationError, ValueError):
+    """Refusal to write a result its own loader could not read back.
+
+    A ``ValueError`` too, so callers that caught the encoder's error keep working; the
+    message is a fixed literal and the rejected value is never in it.
+    """
 
 
 class OptimizationState(Enum):
@@ -130,6 +167,38 @@ def _redact_example_content_for_disk_save(result_dict: dict[str, Any]) -> None:
                     example[field_name] = None
 
 
+def _integrity_error(message: str) -> CloudBestConfigIntegrityError:
+    """A trusted integrity error; ``message`` is a literal written in this module."""
+
+    return cast(
+        CloudBestConfigIntegrityError,
+        diag._mark_safe(CloudBestConfigIntegrityError(message)),
+    )
+
+
+def _cloud_unavailable(
+    reason: CloudPublishUnavailableReason, message: str
+) -> CloudPublishUnavailable:
+    """A trusted ``CloudPublishUnavailable``; ``message`` is a literal."""
+
+    return cast(
+        CloudPublishUnavailable,
+        diag._mark_safe(CloudPublishUnavailable(reason, message)),
+    )
+
+
+def _publish_boundary_failure(exc: BaseException) -> ConfigurationError:
+    """What an unanticipated failure in ``publish_best_config`` leaves as: the class
+    callers already catch on that path, with a fixed message and the type name only."""
+
+    return ConfigStateManager._unavailable(
+        CloudPublishUnavailableReason.REQUEST_FAILED,
+        "Cloud best-config publish failed",
+        diag.Category.PUBLISH_FAILED,
+        exc,
+    )
+
+
 class ConfigStateManager:
     """Manages optimization config state: results, history, load/save/export.
 
@@ -185,6 +254,12 @@ class ConfigStateManager:
         self.best_config_stale_ok_ttl_seconds = best_config_stale_ok_ttl_seconds
         self.best_config_environment = self._resolve_best_config_environment(
             best_config_environment
+        )
+        # Whether the environment was SET (argument or TRAIGENT_BEST_CONFIG_ENVIRONMENT)
+        # rather than defaulted: an explicit value, "default" included, outranks
+        # TRAIGENT_ENVIRONMENT when a content-less run picks its environment.
+        self.best_config_environment_explicit = (
+            self._best_config_environment_is_explicit(best_config_environment)
         )
         self.enable_auto_load_dev_logs = (
             auto_load_best
@@ -285,6 +360,10 @@ class ConfigStateManager:
 
     # -- Query methods -----------------------------------------------------
 
+    @diag.boundary(
+        diag.Category.RESULT_INVALID,
+        "Best config could not be read",
+    )
     def get_best_config(self) -> dict[str, Any] | None:
         """Get the best configuration found or loaded for runtime use."""
         if self._optimization_results and self._optimization_results.best_config:
@@ -349,23 +428,35 @@ class ConfigStateManager:
             source=source,
         )
 
+    @staticmethod
+    def _read_spec_file(path: str, label: str) -> Any:
+        """Decode a JSON file; a read failure never echoes the (user-chosen) path."""
+        try:
+            with Path(path).open(encoding="utf-8") as handle:
+                return json.load(handle)
+        except OSError:
+            raise diag._safe_error(
+                f"Best config file could not be read ({label})",
+                details={"path": path},
+            ) from None
+
     def _load_snapshot_from_file(
         self,
         path: str,
         *,
         source: str,
     ) -> BestConfigSnapshot | None:
+        label = _source_label(source)
         try:
-            snapshot = load_best_config_spec(
-                path,
+            spec = self._read_spec_file(path, label)
+            snapshot = snapshot_from_spec(
+                spec,
                 configuration_space=self.configuration_space,
                 expected_config_id=self.config_id,
                 expected_function_ref=function_ref_for(self.func),
+                expected_environment=self.best_config_environment,
                 source=source,
-                strict=True,
             )
-            if snapshot is None:
-                raise ConfigurationError(f"Failed to load best config from {path}")
             merged = {**self.default_config, **thaw_config(snapshot.config)}
             return BestConfigSnapshot.from_config(
                 merged,
@@ -377,35 +468,197 @@ class ConfigStateManager:
         except Exception as spec_exc:
             if isinstance(spec_exc, SafetySensitiveBestConfigError):
                 raise
-            if self._path_has_best_config_schema(path):
+            envelope = self._canonical_envelope_data(path)
+            if envelope is not None:
+                # A canonical envelope (its schema_version is in the best-config
+                # namespace, or it has the envelope shape) is final: a version this
+                # SDK does not support, or any other canonical refusal, never falls
+                # back to the identity-blind legacy reader.
+                refusal = self._canonical_refusal(envelope, spec_exc)
                 if self.best_config_strict:
-                    if isinstance(spec_exc, ConfigurationError):
-                        raise spec_exc
-                    raise ConfigurationError(
-                        f"Failed to load best config from {path}: {spec_exc}"
-                    ) from spec_exc
+                    raise self._canonical_failure(refusal, path, label) from None
                 logger.warning(
-                    "Ignoring invalid canonical best config %s: %s",
-                    path,
-                    spec_exc,
+                    "Ignoring invalid canonical best config (%s): %s",
+                    label,
+                    self._exception_text(refusal),
                 )
                 return None
 
-            loaded_config = self._load_config_from_path(path)
-            if loaded_config:
-                return self._snapshot_from_plain_config(loaded_config, source=source)
+            is_legacy_config, legacy = self._load_legacy_snapshot(path, source=source)
+            if is_legacy_config:
+                return legacy
             if self.best_config_strict:
-                if isinstance(spec_exc, ConfigurationError):
-                    raise spec_exc
-                raise ConfigurationError(
-                    f"Failed to load best config from {path}: {spec_exc}"
-                ) from spec_exc
+                raise self._canonical_failure(spec_exc, path, label) from None
             logger.warning(
-                "Failed to load best config from %s: %s. Function will use fallback.",
-                path,
-                spec_exc,
+                "Failed to load best config (%s): %s. Function will use fallback.",
+                label,
+                self._exception_text(spec_exc),
             )
             return None
+
+    @staticmethod
+    def _unavailable(
+        reason: CloudPublishUnavailableReason,
+        message: str,
+        category: diag.Category,
+        cause: BaseException,
+    ) -> CloudPublishUnavailable:
+        """A fixed-message ``CloudPublishUnavailable``; the cause stays out of text/chain."""
+        error = diag._mark_safe(CloudPublishUnavailable(reason, message))
+        inner_type = (
+            cause.details.get("error_type")
+            if isinstance(cause, ConfigurationError) and diag.is_safe(cause)
+            else None
+        )
+        error.details.update(
+            {
+                "category": category.value,
+                "error_type": inner_type or type(cause).__name__,
+            }
+        )
+        error.__cause__ = None
+        error.__suppress_context__ = True
+        return error
+
+    @staticmethod
+    def _exception_text(exc: BaseException) -> str:
+        """Fixed, log-safe text: a refusal's fixed message, else the exception type.
+
+        Rejected values, keys and paths live on ``exc.details`` only.
+        """
+
+        return diag.fixed_reason(exc)
+
+    @staticmethod
+    def _canonical_refusal(
+        envelope: dict[str, Any], spec_exc: BaseException
+    ) -> BaseException:
+        """Name an unsupported ``schema_version`` as such, whatever else is wrong."""
+        version = envelope["schema_version"]
+        if version == BEST_CONFIG_SCHEMA_VERSION:
+            return spec_exc
+        return diag._mark_safe(
+            ConfigurationError(
+                "Unsupported best config schema_version",
+                details={"schema_version": version},
+            )
+        )
+
+    @classmethod
+    def _canonical_failure(
+        cls, exc: BaseException, path: str, label: str
+    ) -> ConfigurationError:
+        inner = exc.details if isinstance(exc, TraigentError) else {}
+        return diag._mark_safe(
+            ConfigurationError(
+                f"Failed to load best config ({label}): {cls._exception_text(exc)}",
+                details={**inner, "path": path},
+            )
+        )
+
+    def _refuse_legacy_file(self, path: str, label: str, reason: str) -> None:
+        """Refuse a legacy file: strict raises; non-strict warns and the caller skips."""
+        message = f"Refusing legacy best config ({label}): {reason}"
+        if self.best_config_strict:
+            raise diag._safe_error(message, details={"path": path})
+        logger.warning("%s", message)
+
+    def _legacy_identity_mismatch(self, data: dict[str, Any]) -> str | None:
+        """Name the first identity field of a legacy file that contradicts the request.
+
+        Same normalisation as the canonical path: ``config_id`` / ``function_ref`` are
+        trimmed, the environment is trimmed and lower-cased, and an absent environment
+        is ``default``. ``None`` fields are treated as absent. Values are not echoed.
+        """
+
+        if data.get("config_id") is not None and self.config_id:
+            value = data["config_id"]
+            if not isinstance(value, str) or value.strip() != self.config_id.strip():
+                return "config_id does not match the requested config_id"
+        if data.get("function_ref") is not None:
+            value = data["function_ref"]
+            if not isinstance(value, str) or value.strip() != function_ref_for(
+                self.func
+            ):
+                return "function_ref does not match the requested function"
+        if data.get("environment") is not None:
+            value = data["environment"]
+            if (
+                not isinstance(value, str)
+                or value.strip().lower() != self.best_config_environment
+            ):
+                return "environment does not match the requested environment"
+        return None
+
+    def _load_legacy_snapshot(
+        self, path: str, *, source: str
+    ) -> tuple[bool, BestConfigSnapshot | None]:
+        """Read a legacy (non-canonical) file under the request's identity.
+
+        Returns ``(False, None)`` when the file holds no legacy config at all (the
+        caller then reports the canonical failure); ``(True, None)`` when the file is
+        refused or skipped; otherwise ``(True, snapshot)``.
+
+        * identity fields that contradict the request: refused, always;
+        * a file bound to the requested function (``function_ref`` present and equal)
+          loads;
+        * an identity-free file (or one that cannot establish the function) loads only
+          when the user named it (``load_from`` / ``TRAIGENT_CONFIG_PATH``), with a
+          warning; ``best_config_strict`` refuses it. A discovered dev log is skipped.
+        """
+
+        label = _source_label(source)
+        payload = self._read_legacy_payload(path, label)
+        if payload is None:
+            return False, None
+        data, loaded_config = payload
+        if not loaded_config:
+            return False, None
+
+        mismatch = self._legacy_identity_mismatch(data)
+        if mismatch is not None:
+            self._refuse_legacy_file(path, label, f"identity mismatch: {mismatch}")
+            return True, None
+
+        function_ref = data.get("function_ref")
+        if not (isinstance(function_ref, str) and function_ref.strip()):
+            if source not in _EXPLICIT_LEGACY_SOURCES:
+                logger.debug(
+                    "Skipping identity-free discovered best config (%s): it cannot "
+                    "establish which function it belongs to",
+                    label,
+                )
+                return True, None
+            if self.best_config_strict:
+                self._refuse_legacy_file(
+                    path,
+                    label,
+                    "no function identity (function_ref); best_config_strict only "
+                    "loads a best config bound to the requested function",
+                )
+                return True, None
+            logger.warning(
+                "Loading legacy best config (%s) without verifying its identity: the "
+                "file names no function_ref, so it may belong to another function "
+                "or environment",
+                label,
+            )
+        elif data.get("environment") is None and self.best_config_environment != (
+            "default"
+        ):
+            self._refuse_legacy_file(
+                path,
+                label,
+                "identity mismatch: environment does not match the requested "
+                "environment",
+            )
+            return True, None
+        return True, self._snapshot_from_plain_config(loaded_config, source=source)
+
+    @staticmethod
+    def _best_config_environment_is_explicit(explicit: str | None) -> bool:
+        raw = explicit or os.environ.get("TRAIGENT_BEST_CONFIG_ENVIRONMENT") or ""
+        return bool(raw.strip())
 
     @staticmethod
     def _resolve_best_config_environment(explicit: str | None) -> str:
@@ -422,27 +675,212 @@ class ConfigStateManager:
         response_spec_hash = data.get("spec_hash")
         response_config_hash = data.get("config_hash")
         if not isinstance(response_spec_hash, str) or not response_spec_hash:
-            raise CloudBestConfigIntegrityError(
+            raise _integrity_error(
                 "Cloud best-config response did not include spec_hash"
             )
         if not isinstance(response_config_hash, str) or not response_config_hash:
-            raise CloudBestConfigIntegrityError(
+            raise _integrity_error(
                 "Cloud best-config response did not include config_hash"
             )
         config = spec.get("config")
         if not isinstance(config, dict):
-            raise CloudBestConfigIntegrityError(
-                "Cloud best-config spec.config must be an object"
-            )
+            raise _integrity_error("Cloud best-config spec.config must be an object")
 
         actual_spec_hash = compute_spec_hash(spec)
         actual_config_hash = sha256_digest(canonical_json(config))
         if response_spec_hash != actual_spec_hash:
-            raise CloudBestConfigIntegrityError("Cloud best-config spec_hash mismatch")
+            raise _integrity_error("Cloud best-config spec_hash mismatch")
         if response_config_hash != actual_config_hash:
-            raise CloudBestConfigIntegrityError(
-                "Cloud best-config config_hash mismatch"
+            raise _integrity_error("Cloud best-config config_hash mismatch")
+
+    @staticmethod
+    def _verify_publish_response(
+        result: Any, sent_spec: dict[str, Any], *, environment: str | None = None
+    ) -> None:
+        """Verify a publish answer against the spec the Backend RETURNED.
+
+        The Backend normalizes a request before it hashes it (trimmed ``config_id``,
+        effective environment), so the digest it returns belongs to the stored spec.
+        The client recomputes it independently under the one frozen v1 rule; it never
+        just accepts the returned digest, and it never hashes its own request instead.
+
+        The returned digest is additionally bound to the request: the frozen rule applied
+        to the SENT spec (with the request envelope ``environment``) must give the same
+        digest. That admits exactly the documented normalization (``config_id`` trim,
+        NFC, environment precedence, validation stripping) and refuses a stored spec for
+        a different environment, function or config.
+        """
+
+        stored = result.get("spec") if isinstance(result, dict) else None
+        if not isinstance(stored, dict):
+            raise _integrity_error(
+                "Cloud best-config publish response did not include the stored spec"
             )
+        ConfigStateManager._verify_cloud_response_hashes(result, stored)
+        sent_config = sent_spec.get("config")
+        sent_id = sent_spec.get("config_id")
+        if not isinstance(sent_config, dict) or not isinstance(sent_id, str):
+            raise _integrity_error(
+                "Published best-config spec lacks a config object or config_id"
+            )
+        if result.get("config_hash") != sha256_digest(canonical_json(sent_config)):
+            raise _integrity_error("Cloud best-config config_hash mismatch")
+        try:
+            expected_spec_hash = compute_spec_hash(sent_spec, environment=environment)
+        except ConfigurationError as exc:
+            raise diag.refusal(
+                "Published best-config spec cannot be hashed",
+                category=diag.Category.PUBLISH_INTEGRITY_FAILED,
+                cause=exc,
+                error_cls=CloudBestConfigIntegrityError,
+            ) from None
+        if result.get("spec_hash") != expected_spec_hash:
+            raise _integrity_error(
+                "Cloud best-config spec_hash mismatch: the response is not for the "
+                "published spec (environment, function or content differs)"
+            )
+        if stored.get("config_id") != sent_id.strip():
+            raise _integrity_error(
+                "Cloud best-config response is for a different config_id"
+            )
+        ConfigStateManager._verify_top_level_identity(
+            result, stored, request_environment=environment
+        )
+
+    @staticmethod
+    def _verify_top_level_identity(
+        data: dict[str, Any],
+        spec: dict[str, Any],
+        *,
+        request_environment: str | None = None,
+    ) -> None:
+        """The response's own ``config_id`` / ``environment`` / ``function_ref`` must agree
+        with the verified spec (after the documented normalization: ``config_id`` and
+        ``function_ref`` trimmed, ``environment`` trimmed and lower-cased). A key the
+        response omits cannot contradict; a present key must match exactly.
+        """
+
+        spec_id = spec.get("config_id")
+        spec_environment = spec.get("environment")
+        spec_ref = spec.get("function_ref")
+        expected = {
+            "config_id": spec_id.strip() if isinstance(spec_id, str) else spec_id,
+            "environment": (
+                spec_environment.strip().lower()
+                if isinstance(spec_environment, str)
+                else (request_environment or "default").strip().lower()
+            ),
+            "function_ref": spec_ref.strip() if isinstance(spec_ref, str) else spec_ref,
+        }
+        for key, want in expected.items():
+            if key not in data:
+                continue
+            got = data[key]
+            if isinstance(got, str):
+                got = got.strip().lower() if key == "environment" else got.strip()
+            if got != want:
+                raise _integrity_error(
+                    f"Cloud best-config response top-level {key} does not match "
+                    "the verified spec"
+                )
+
+    @staticmethod
+    def _verify_returned_identity(
+        data: Any,
+        *,
+        config_id: str,
+        function_ref: str | None,
+        environment: str | None,
+    ) -> None:
+        """Bind a backend answer to the request at the transport boundary.
+
+        Same normalization as the runtime fetch path (``config_id`` / ``function_ref``
+        trimmed, ``environment`` trimmed and lower-cased, absent environment =
+        ``"default"``). With a stored ``spec`` the full binding applies; without one,
+        whatever top-level identity the answer carries must still match the request.
+        A request with no ``function_ref`` is explicitly unbound and constrains none.
+        """
+
+        if not isinstance(data, dict):
+            return
+        requested_environment = (environment or "default").strip().lower() or "default"
+        spec = data.get("spec")
+        if isinstance(spec, dict):
+            ConfigStateManager._verify_fetch_binding(
+                data,
+                spec,
+                config_id=config_id,
+                function_ref=function_ref,
+                environment=requested_environment,
+            )
+            return
+        view = (
+            data
+            if function_ref
+            else {key: value for key, value in data.items() if key != "function_ref"}
+        )
+        ConfigStateManager._verify_top_level_identity(
+            view,
+            {
+                "config_id": config_id,
+                "environment": requested_environment,
+                "function_ref": function_ref,
+            },
+            request_environment=requested_environment,
+        )
+
+    @staticmethod
+    def _verify_fetch_binding(
+        data: dict[str, Any],
+        spec: dict[str, Any],
+        *,
+        config_id: str,
+        function_ref: str | None,
+        environment: str,
+    ) -> None:
+        """Bind a fetched spec to the request: config id, function and effective environment.
+
+        A spec for another environment, function or config is never loaded (and never
+        cached), whatever its hashes say. When the caller names a function, a spec with
+        no ``function_ref`` (missing or null) is refused too: it cannot establish that it
+        belongs to that function. An explicitly unbound request (``function_ref`` None)
+        keeps accepting legacy unbound configs.
+        """
+
+        spec_id = spec.get("config_id")
+        if not isinstance(spec_id, str) or spec_id.strip() != config_id.strip():
+            raise _integrity_error(
+                "Cloud best-config response is not for the requested config_id"
+            )
+        spec_ref = spec.get("function_ref")
+        if function_ref:
+            if spec_ref is None:
+                raise _integrity_error(
+                    "Cloud best-config response is not bound to the requested "
+                    "function_ref"
+                )
+            if (
+                not isinstance(spec_ref, str)
+                or spec_ref.strip() != function_ref.strip()
+            ):
+                raise _integrity_error(
+                    "Cloud best-config response is not for the requested function_ref"
+                )
+        spec_environment = spec.get("environment")
+        if spec_environment is None:
+            effective = "default"
+        elif isinstance(spec_environment, str):
+            effective = spec_environment.strip().lower()
+        else:
+            effective = None
+        if effective != environment.strip().lower():
+            raise _integrity_error(
+                "Cloud best-config response is not for the requested environment "
+                "(request mismatch)"
+            )
+        ConfigStateManager._verify_top_level_identity(
+            data, spec, request_environment=environment
+        )
 
     def _is_pure_cloud_source_mode(self) -> bool:
         mode_value = (
@@ -466,17 +904,23 @@ class ConfigStateManager:
         )
         if not data:
             if self._is_pure_cloud_source_mode():
-                raise CloudPublishUnavailable(
+                raise _cloud_unavailable(
                     CloudPublishUnavailableReason.REQUEST_FAILED,
                     "Cloud best-config fetch returned no active config",
                 )
             return None
         spec = data.get("spec")
         if not isinstance(spec, dict):
-            raise ConfigurationError(
-                "Cloud best-config response did not include a spec"
-            )
+            raise diag._safe_error("Cloud best-config response did not include a spec")
         self._verify_cloud_response_hashes(data, spec)
+        # Bind the answer to the request BEFORE it can be cached or loaded.
+        self._verify_fetch_binding(
+            data,
+            spec,
+            config_id=self.config_id,
+            function_ref=function_ref_for(self.func),
+            environment=self.best_config_environment,
+        )
 
         if self.best_config_cache_dir:
             try:
@@ -490,12 +934,18 @@ class ConfigStateManager:
                 )
             except Exception as cache_exc:
                 if self.best_config_strict:
-                    raise ConfigurationError(
-                        f"Failed to update cloud best-config cache: {cache_exc}"
-                    ) from cache_exc
-                logger.warning(
-                    "Fetched cloud best config but failed to update cache: %s",
-                    cache_exc,
+                    raise diag.refusal(
+                        "Failed to update cloud best-config cache",
+                        category=diag.Category.CACHE_WRITE_FAILED,
+                        cause=cache_exc,
+                        cache_dir=str(self.best_config_cache_dir),
+                    ) from None
+                diag.log(
+                    logger,
+                    logging.WARNING,
+                    "Fetched cloud best config but failed to update cache",
+                    category=diag.Category.CACHE_WRITE_FAILED,
+                    exc=cache_exc,
                 )
 
         snapshot = snapshot_from_spec(
@@ -503,6 +953,7 @@ class ConfigStateManager:
             configuration_space=self.configuration_space,
             expected_config_id=self.config_id,
             expected_function_ref=function_ref_for(self.func),
+            expected_environment=self.best_config_environment,
             source=BestConfigSource.CLOUD_FETCH.value,
         )
         merged = {**self.default_config, **thaw_config(snapshot.config)}
@@ -524,6 +975,7 @@ class ConfigStateManager:
                         repo_root=Path.cwd(),
                         configuration_space=self.configuration_space,
                         expected_function_ref=function_ref_for(self.func),
+                        expected_environment=self.best_config_environment,
                         strict=self.best_config_strict,
                     )
                 elif source is BestConfigSource.CLOUD_CACHE:
@@ -534,6 +986,8 @@ class ConfigStateManager:
                         ttl_seconds=self.best_config_cache_ttl_seconds,
                         stale_ok_ttl_seconds=self.best_config_stale_ok_ttl_seconds,
                         strict=self.best_config_strict,
+                        expected_function_ref=function_ref_for(self.func),
+                        expected_environment=self.best_config_environment,
                     )
                 elif source is BestConfigSource.CLOUD_FETCH:
                     snapshot = self._resolve_cloud_fetch_best_config()
@@ -554,27 +1008,36 @@ class ConfigStateManager:
                     if isinstance(exc, CloudPublishUnavailable):
                         raise
                     if isinstance(exc, CloudBestConfigIntegrityError):
-                        raise CloudPublishUnavailable(
+                        raise self._unavailable(
                             CloudPublishUnavailableReason.INTEGRITY_FAILED,
-                            f"Cloud best-config integrity check failed: {exc}",
-                        ) from exc
-                    raise CloudPublishUnavailable(
+                            "Cloud best-config integrity check failed",
+                            diag.Category.FETCH_INTEGRITY_FAILED,
+                            exc,
+                        ) from None
+                    raise self._unavailable(
                         CloudPublishUnavailableReason.REQUEST_FAILED,
-                        f"Cloud best-config fetch failed: {exc}",
-                    ) from exc
+                        "Cloud best-config fetch failed",
+                        diag.Category.FETCH_FAILED,
+                        exc,
+                    ) from None
                 if self.best_config_strict:
                     raise
                 if isinstance(exc, CloudBestConfigIntegrityError):
-                    logger.error(
-                        "Cloud best-config integrity failure; ignoring %s source: %s",
-                        source.value,
-                        exc,
+                    diag.log(
+                        logger,
+                        logging.ERROR,
+                        f"Cloud best-config integrity failure; ignoring "
+                        f"{source.value} source",
+                        category=diag.Category.FETCH_INTEGRITY_FAILED,
+                        exc=exc,
                     )
                 else:
-                    logger.warning(
-                        "Ignoring %s best-config source after failure: %s",
-                        source.value,
-                        exc,
+                    diag.log(
+                        logger,
+                        logging.WARNING,
+                        f"Ignoring {source.value} best-config source after failure",
+                        category=diag.Category.SOURCE_IGNORED,
+                        exc=exc,
                     )
                 snapshot = None
             if snapshot is not None:
@@ -602,8 +1065,16 @@ class ConfigStateManager:
         self._setup_wrapper_callback()
         logger.info(f"Reset optimization state for {self.func.__name__}")
 
+    @diag.boundary(
+        diag.Category.RESULT_INVALID,
+        "Best config could not be set",
+    )
     def set_config(self, config: dict[str, Any]) -> None:
-        """Set current configuration manually as a sticky override."""
+        """Set current configuration manually as a sticky override.
+
+        An explicit user call with the values in hand: it does not verify stored
+        identity (``config_id`` / ``function_ref`` / environment) of anything.
+        """
         with self._state_lock:
             snapshot = self._snapshot_from_plain_config(
                 config, source=BestConfigSource.OVERRIDE.value
@@ -611,8 +1082,14 @@ class ConfigStateManager:
             self._set_snapshot(snapshot, best_config=config)
             self._override_sticky = True
             self._setup_wrapper_callback()
-        logger.debug(f"Set configuration for {self.func.__name__}: {config}")
+        logger.debug(
+            "Set configuration for %s (%d knobs)", self.func.__name__, len(config)
+        )
 
+    @diag.boundary(
+        diag.Category.RESULT_INVALID,
+        "Best config could not be applied",
+    )
     def apply_best_config(
         self,
         results: OptimizationResult | None = None,
@@ -621,6 +1098,9 @@ class ConfigStateManager:
         set_wrapped_func: Callable[[Any], None] | None = None,
     ) -> bool:
         """Apply best configuration from optimization results.
+
+        An explicit user call with the result in hand: it does not verify the stored
+        identity (``config_id`` / ``function_ref`` / environment) of ``results``.
 
         Args:
             results: OptimizationResult to use (defaults to latest optimization)
@@ -637,7 +1117,7 @@ class ConfigStateManager:
             results = self._optimization_results
 
         if not results or not results.best_config:
-            raise ConfigurationError(
+            raise diag._safe_error(
                 "No optimization results available to apply. "
                 "Please run optimization first using .optimize()"
             )
@@ -680,12 +1160,17 @@ class ConfigStateManager:
                 raise
 
         logger.info(
-            f"Applied best config for {self.func.__name__}: {results.best_config} "
-            f"(previous: {old_config})"
+            "Applied best config for %s (%d knobs)",
+            self.func.__name__,
+            len(results.best_config),
         )
 
         return True
 
+    @diag.boundary(
+        diag.Category.LOAD_FAILED,
+        "Best config override could not be cleared",
+    )
     def clear_override(self) -> bool:
         """Clear any sticky per-instance config override and re-resolve sources."""
         with self._state_lock:
@@ -696,6 +1181,10 @@ class ConfigStateManager:
 
     # -- Persistence methods -----------------------------------------------
 
+    @diag.boundary(
+        diag.Category.RESULT_INVALID,
+        "Failed to save optimization results",
+    )
     def save_optimization_results(self, path: str) -> None:
         """Save optimization results to file.
 
@@ -705,7 +1194,7 @@ class ConfigStateManager:
                 :meth:`load_optimization_results` could not read back.
         """
         if not self._optimization_results:
-            raise ConfigurationError("No optimization results to save")
+            raise diag._safe_error("No optimization results to save")
 
         from traigent.utils.optimization_result_persistence import (
             encode_whole_result_dump,
@@ -720,7 +1209,27 @@ class ConfigStateManager:
         # version-1 artifact its own loader then refused: a bare `asdict` +
         # `json.dump(default=str)` wrote `timestamp: None` happily and
         # load_optimization_results raised on it, one process later.
-        result_dict = encode_whole_result_dump(self._optimization_results)
+        try:
+            result_dict = encode_whole_result_dump(self._optimization_results)
+        except (ValueError, TypeError) as exc:
+            # the encoder's text quotes the rejected value; keep it off str / args /
+            # traceback (the offending field's type name lives on details)
+            raise diag.refusal(
+                "Cannot persist optimization result: invalid 'status' or "
+                "'timestamp' field",
+                category=diag.Category.RESULT_INVALID,
+                cause=exc,
+                error_cls=ResultNotPersistableError,
+            ) from None
+        except Exception as exc:
+            # an arbitrary value's own __deepcopy__ / __str__ can raise text that
+            # quotes customer content; only the exception type name is kept
+            raise diag.refusal(
+                "Cannot persist optimization result: serialization failed",
+                category=diag.Category.RESULT_INVALID,
+                cause=exc,
+                error_cls=ResultNotPersistableError,
+            ) from None
 
         # #2223: this writer had no idea `TRAIGENT_LOG_EXAMPLE_CONTENT` exists.
         # `optimization_logger.py` already honors it for the trial jsonl (its
@@ -731,18 +1240,48 @@ class ConfigStateManager:
         # on every artifact this SDK writes, not just the jsonl trial log.
         _redact_example_content_for_disk_save(result_dict)
 
-        output_path = Path(path).expanduser()
-        base_dir = (
-            output_path.parent if output_path.is_absolute() else Path.cwd().resolve()
-        )
-        output_path = validate_path(output_path, base_dir, must_exist=False)
-        with safe_open(output_path, base_dir, mode="w", encoding="utf-8") as f:
-            json.dump(result_dict, f, indent=2, default=str)
+        try:
+            with diag.fs_guard("Failed to save optimization results"):
+                output_path = Path(path).expanduser()
+                base_dir = (
+                    output_path.parent
+                    if output_path.is_absolute()
+                    else Path.cwd().resolve()
+                )
+                output_path = validate_path(output_path, base_dir, must_exist=False)
+                with safe_open(output_path, base_dir, mode="w", encoding="utf-8") as f:
+                    json.dump(result_dict, f, indent=2, default=str)
+        except ConfigurationError as exc:
+            if diag.is_safe(exc):
+                raise
+            # a value's own __str__ can raise ConfigurationError(<customer text>):
+            # only a refusal built by this SDK passes unchanged
+            raise diag.refusal(
+                "Failed to save optimization results",
+                category=diag.Category.FILESYSTEM_FAILED,
+                cause=exc,
+            ) from None
+        except Exception as exc:
+            # PathTraversalError / secure_path's ValueError quote the path, and a
+            # value's own __str__ can raise customer text: fixed refusal, type only
+            raise diag.refusal(
+                "Failed to save optimization results",
+                category=diag.Category.FILESYSTEM_FAILED,
+                cause=exc,
+            ) from None
 
-        logger.info(f"Saved optimization results to {output_path}")
+        logger.info("Saved optimization results")
 
+    @diag.boundary(
+        diag.Category.LOAD_FAILED,
+        "Failed to load optimization results",
+    )
     def load_optimization_results(self, path: str) -> None:
         """Load optimization results from file.
+
+        An explicit user call with a saved result in hand: it does not verify the
+        stored identity (``config_id`` / ``function_ref`` / environment) of the file
+        and installs its winner as a sticky override.
 
         Raises:
             ConfigurationError: If results cannot be loaded
@@ -797,7 +1336,6 @@ class ConfigStateManager:
                 result_dict,
                 trials=trials,
                 legacy_format="config_state",
-                artifact_name=str(input_path),
             )
             self.append_optimization_result(self._optimization_results)
 
@@ -819,13 +1357,23 @@ class ConfigStateManager:
             else:
                 self._state = OptimizationState.OPTIMIZED
 
-            logger.info(f"Loaded optimization results from {path}")
+            logger.info("Loaded optimization results")
 
         except Exception as e:
-            raise ConfigurationError(f"Failed to load optimization results: {e}") from e
+            raise diag.refusal(
+                "Failed to load optimization results",
+                category=diag.Category.LOAD_FAILED,
+                cause=e,
+                path=str(path),
+                reason=str(e),  # details only: may quote file content or the path
+            ) from None
 
     # -- Auto-load methods -------------------------------------------------
 
+    @diag.boundary(
+        diag.Category.LOAD_FAILED,
+        "Failed to load best config",
+    )
     def maybe_auto_load_config(self) -> None:
         """Resolve startup best config from explicit, repo, cache, or dev sources."""
         with self._state_lock:
@@ -835,7 +1383,7 @@ class ConfigStateManager:
         resolved: BestConfigSnapshot | None = None
 
         if self._load_from:
-            logger.debug("Using explicit load_from path: %s", self._load_from)
+            logger.debug("Using explicit load_from path")
             resolved = self._load_snapshot_from_file(
                 self._load_from, source=BestConfigSource.LOAD_FROM.value
             )
@@ -843,7 +1391,7 @@ class ConfigStateManager:
         if resolved is None:
             env_path = os.environ.get("TRAIGENT_CONFIG_PATH")
             if env_path:
-                logger.debug("Using TRAIGENT_CONFIG_PATH: %s", env_path)
+                logger.debug("Using TRAIGENT_CONFIG_PATH")
                 resolved = self._load_snapshot_from_file(
                     env_path, source=BestConfigSource.ENV.value
                 )
@@ -854,7 +1402,7 @@ class ConfigStateManager:
         if resolved is None and self.enable_auto_load_dev_logs:
             dev_log_path = self._find_latest_config_path()
             if dev_log_path:
-                logger.debug("Auto-found latest dev log config: %s", dev_log_path)
+                logger.debug("Auto-found latest dev log config")
                 resolved = self._load_snapshot_from_file(
                     dev_log_path, source=BestConfigSource.DEV_LOG.value
                 )
@@ -874,7 +1422,16 @@ class ConfigStateManager:
             )
 
     def _find_latest_config_path(self) -> str | None:
-        """Find the most recent best_config file in optimization logs."""
+        """Find the newest best_config artifact in the optimization logs that is ours.
+
+        The log directory is keyed on the bare function name, so two functions in
+        different modules share it. An artifact is only a candidate when it names the
+        requested function's qualified ``function_ref``: identity-free artifacts and
+        another function's artifacts are skipped. Among candidates the newest one
+        bound to the requested environment (and config id) wins; when none is, the
+        newest function-matching artifact is returned so that loading it refuses it
+        (strict raises, non-strict skips) rather than silently serving defaults.
+        """
         log_dirs = [
             Path.cwd() / ".traigent" / "optimization_logs",
             Path(os.environ.get("TRAIGENT_RESULTS_FOLDER", Path.home() / ".traigent"))
@@ -885,6 +1442,7 @@ class ConfigStateManager:
             log_dirs.insert(0, Path(self.local_storage_path) / "optimization_logs")
 
         func_name = getattr(self.func, "__name__", "unknown")
+        fallback: str | None = None
 
         for log_dir in log_dirs:
             experiments_dir = log_dir / "experiments" / func_name / "runs"
@@ -902,66 +1460,130 @@ class ConfigStateManager:
                     run_dir / "artifacts" / "best_config_v2.json",
                     run_dir / "artifacts" / "best_config.json",
                 ]:
-                    if config_file.exists():
+                    if not config_file.exists():
+                        continue
+                    verdict = self._dev_log_candidate(config_file)
+                    if verdict == "match":
                         return str(config_file)
+                    if verdict == "function" and fallback is None:
+                        fallback = str(config_file)
 
-        return None
+        return fallback
+
+    def _dev_log_candidate(self, config_file: Path) -> str | None:
+        """Classify a dev-log artifact: ``match``, ``function`` (only) or ``None``."""
+        try:
+            with open(config_file, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:  # noqa: BLE001 - an unreadable artifact is not a candidate
+            return None
+        if not isinstance(data, dict):
+            return None
+        function_ref = data.get("function_ref")
+        if not isinstance(function_ref, str):
+            return None
+        if function_ref.strip() != function_ref_for(self.func):
+            return None
+        if self._legacy_identity_mismatch(data) is None and (
+            data.get("environment") is not None
+            or self.best_config_environment == "default"
+        ):
+            return "match"
+        return "function"
 
     @staticmethod
-    def _path_has_best_config_schema(path: str) -> bool:
-        """Return True when a file declares the canonical best-config schema."""
+    def _declares_canonical_envelope(data: Any) -> bool:
+        """Return True when decoded JSON is a canonical best-config envelope.
+
+        An envelope is a ``schema_version`` in the ``traigent.best_config.`` namespace,
+        or the envelope shape (``schema_version`` + ``config_id`` + ``config``). Any other
+        ``schema_version`` is an ordinary key of a legacy / bare config: a knob may well
+        be called ``schema_version``.
+        """
+        if not isinstance(data, dict) or "schema_version" not in data:
+            return False
+        version = data["schema_version"]
+        if isinstance(version, str) and version.startswith(_CANONICAL_SCHEMA_NAMESPACE):
+            return True
+        return _CANONICAL_ENVELOPE_KEYS <= data.keys()
+
+    @classmethod
+    def _canonical_envelope_data(cls, path: str) -> dict[str, Any] | None:
+        """The decoded file when it is a canonical envelope, else ``None``."""
         try:
             config_path = validate_user_path(path, for_write=False)
             with open(config_path, encoding="utf-8") as f:
                 data = json.load(f)
-            return (
-                isinstance(data, dict)
-                and data.get("schema_version") == BEST_CONFIG_SCHEMA_VERSION
-            )
-        except Exception:
-            return False
+        except Exception:  # noqa: BLE001 - an unreadable file is not an envelope
+            return None
+        return data if cls._declares_canonical_envelope(data) else None
 
     @staticmethod
-    def _load_config_from_path(path: str) -> dict[str, Any] | None:
-        """Load configuration from a JSON file."""
+    def _read_legacy_payload(
+        path: str, label: str = _FALLBACK_SOURCE_LABEL
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        """Read a legacy file: ``(whole decoded object, extracted config)``.
+
+        Returns ``None`` (after the historical warning) when the file cannot be read or
+        holds no recognisable config. Warnings name ``label``, never the path.
+        """
         try:
             config_path = validate_user_path(path, for_write=False)
             if not config_path.exists():
-                logger.warning(f"Config file not found: {path}")
+                logger.warning("Config file not found (%s)", label)
                 return None
 
             with open(config_path, encoding="utf-8") as f:
                 data = json.load(f)
 
+            if not isinstance(data, dict):
+                logger.warning("Unrecognized config format (%s).", label)
+                return None
             if "config" in data:
                 config = data["config"]
-                return dict(config) if config is not None else None
+                return (data, dict(config)) if config is not None else None
             elif "best_config" in data:
                 best_config = data["best_config"]
-                return dict(best_config) if best_config is not None else None
-            elif isinstance(data, dict) and not any(
-                k in data for k in ["trials", "metrics", "metadata"]
-            ):
-                return dict(data)
+                return (data, dict(best_config)) if best_config is not None else None
+            elif not any(k in data for k in ["trials", "metrics", "metadata"]):
+                # A bare config dict: its top-level identity fields (config_id /
+                # function_ref / environment) are still checked against the request, so a
+                # file naming another agent, function or environment is never loaded.
+                return data, dict(data)
             else:
                 logger.warning(
-                    f"Unrecognized config format in {path}. "
-                    "Expected 'config' or 'best_config' key, or direct config dict."
+                    "Unrecognized config format (%s). "
+                    "Expected 'config' or 'best_config' key, or direct config dict.",
+                    label,
                 )
                 return None
 
         except json.JSONDecodeError as e:
-            logger.warning(f"Invalid JSON in config file {path}: {e}")
+            logger.warning("Invalid JSON in config file (%s): %s", label, e.msg)
             return None
-        except PathTraversalError as e:
-            logger.warning(f"Security: {e}")
+        except PathTraversalError:
+            logger.warning("Security: config path rejected (%s)", label)
             return None
         except Exception as e:
-            logger.warning(f"Error loading config from {path}: {e}")
+            logger.warning("Error loading config (%s): %s", label, type(e).__name__)
             return None
+
+    @staticmethod
+    def _load_config_from_path(path: str) -> dict[str, Any] | None:
+        """Load the bare configuration from a JSON file (no identity check).
+
+        Low-level read: it returns only the config dict. Identity-bound loading goes
+        through ``_load_snapshot_from_file``.
+        """
+        payload = ConfigStateManager._read_legacy_payload(path)
+        return payload[1] if payload else None
 
     # -- Export methods ----------------------------------------------------
 
+    @diag.boundary(
+        diag.Category.FILESYSTEM_FAILED,
+        "Config could not be exported",
+    )
     def export_config(
         self,
         path: str | Path,
@@ -971,7 +1593,7 @@ class ConfigStateManager:
     ) -> Path:
         """Export the best configuration to a file."""
         if not self._best_config:
-            raise ConfigurationError(
+            raise diag._safe_error(
                 "No best configuration available to export. "
                 "Please run optimization first using .optimize() or load a config."
             )
@@ -984,16 +1606,30 @@ class ConfigStateManager:
         elif format == "full":
             export_data = self._create_full_export(include_metadata)
         else:
-            raise ConfigurationError(
-                f"Unknown export format: {format}. Use 'slim' or 'full'."
+            # the caller-supplied format token is a rejected value: details only
+            raise diag._safe_error(
+                "Unknown export format. Use 'slim' or 'full'.",
+                details={"format": format},
             )
 
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(export_data, f, indent=2, default=str)
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(export_data, f, indent=2, default=str)
+        except UnicodeEncodeError:
+            # repr/args of the encode error carry the unencodable customer string
+            raise diag.refusal(
+                "Config could not be exported",
+                category=diag.Category.FILESYSTEM_FAILED,
+                error_type="UnicodeEncodeError",
+            ) from None
 
-        logger.info(f"Exported config for {self.func.__name__} to {output_path}")
+        logger.info("Exported config for %s", self.func.__name__)
         return output_path
 
+    @diag.boundary(
+        diag.Category.FILESYSTEM_FAILED,
+        "Best config could not be exported",
+    )
     def export_best_config(
         self,
         directory: str | Path = ".traigent/best-configs",
@@ -1003,7 +1639,7 @@ class ConfigStateManager:
     ) -> Path:
         """Export the active best config as a canonical repo runtime spec."""
         if not self._best_config:
-            raise ConfigurationError(
+            raise diag._safe_error(
                 "No best configuration available to export. "
                 "Please run optimization first using .optimize() or load a config."
             )
@@ -1029,10 +1665,15 @@ class ConfigStateManager:
             environment=self.best_config_environment,
         )
 
+    @diag.boundary(
+        diag.Category.PUBLISH_FAILED,
+        "Cloud best-config publish failed",
+        convert=_publish_boundary_failure,
+    )
     def publish_best_config(self, *, target: str = "cloud") -> dict[str, Any]:
         """Publish the active best config to durable backend cloud storage."""
         if target != "cloud":
-            raise CloudPublishUnavailable(
+            raise _cloud_unavailable(
                 CloudPublishUnavailableReason.DISABLED_BY_CONFIG,
                 "Only target='cloud' is reserved for best-config publishing. "
                 "Use export_best_config() for local repo artifacts.",
@@ -1044,7 +1685,7 @@ class ConfigStateManager:
         # cannot pair this config with another run's head generation.
         with self._state_lock:
             if not self._best_config:
-                raise ConfigurationError(
+                raise diag._safe_error(
                     "No best configuration available to publish. "
                     "Please run optimization first using .optimize() or load a config."
                 )
@@ -1066,12 +1707,30 @@ class ConfigStateManager:
                 "config": copy.deepcopy(thaw_config(self._best_config)),
                 "provenance": provenance,
             }
+            # A NEW publish with object keys equal after NFC is refused by the Backend;
+            # fail here, before any request (the message never echoes a key).
+            check_publishable_spec(spec)
             # Detached from the live state and from the run's result, so later
             # mutation of either cannot change what is reported on refusal.
             refused_config = copy.deepcopy(spec["config"])
-            precondition_kwargs = self._promotion_precondition_kwargs(
-                self._best_config_precondition, environment
-            )
+            try:
+                precondition_kwargs = self._promotion_precondition_kwargs(
+                    self._best_config_precondition, environment
+                )
+            except CloudBestConfigHeadRefusedError as refusal:
+                # Refused locally, before any request: the caller keeps the config.
+                refusal.best_config = copy.deepcopy(refused_config)
+                raise
+            # A protected publish names the session it came from; the Backend
+            # resolves the authoritative agent/environment binding from it (without
+            # it the request is refused head_capture_invalid).
+            captured = self._best_config_precondition
+            if isinstance(captured, dict) and captured.get("protected") is True:
+                provenance["source_session_id"] = captured["session_id"]
+                # The session-bound environment (already canonical) is the one the
+                # Backend stored at session create and compares the publish with.
+                environment = captured["environment"]
+                spec["environment"] = environment
         try:
             client = get_backend_client(enable_fallback=False)
             current = client.fetch_best_config_sync(
@@ -1090,25 +1749,34 @@ class ConfigStateManager:
                 if_match=if_match,
                 **precondition_kwargs,
             )
-            self._verify_cloud_response_hashes(result, spec)
+            self._verify_publish_response(result, spec, environment=environment)
             return result
         except CloudBestConfigStaleHeadError as exc:
             # The backend refused and wrote nothing. Keep the refused config on
             # the error so the caller can re-publish it deliberately.
             exc.best_config = copy.deepcopy(refused_config)
             raise
+        except CloudBestConfigHeadRefusedError as exc:
+            # Closed refusal from the protected path (stale included). Nothing was
+            # written and nothing is retried or re-read here: the caller decides.
+            exc.best_config = copy.deepcopy(refused_config)
+            raise
         except CloudPublishUnavailable:
             raise
         except CloudBestConfigIntegrityError as exc:
-            raise CloudPublishUnavailable(
+            raise ConfigStateManager._unavailable(
                 CloudPublishUnavailableReason.INTEGRITY_FAILED,
-                f"Cloud best-config publish integrity check failed: {exc}",
-            ) from exc
+                "Cloud best-config publish integrity check failed",
+                diag.Category.PUBLISH_INTEGRITY_FAILED,
+                exc,
+            ) from None
         except Exception as exc:
-            raise CloudPublishUnavailable(
+            raise ConfigStateManager._unavailable(
                 CloudPublishUnavailableReason.REQUEST_FAILED,
-                f"Cloud best-config publish failed: {exc}",
-            ) from exc
+                "Cloud best-config publish failed",
+                diag.Category.PUBLISH_FAILED,
+                exc,
+            ) from None
 
     @staticmethod
     def _promotion_precondition_kwargs(
@@ -1124,6 +1792,10 @@ class ConfigStateManager:
         if not isinstance(captured, dict):
             logger.debug("No agent head generation captured; publishing without one")
             return {}
+        if captured.get("protected") is True:
+            return ConfigStateManager._protected_precondition_kwargs(
+                captured, environment
+            )
         agent_id = captured.get("agent_id")
         generation = captured.get("generation")
         if (
@@ -1136,14 +1808,59 @@ class ConfigStateManager:
             logger.debug("Captured agent head generation is malformed; ignoring it")
             return {}
         if captured.get("environment") != environment:
+            # both environments are caller/captured input: not logged
             logger.debug(
-                "Agent head generation was captured for environment %r, not %r; "
-                "publishing without one",
-                captured.get("environment"),
-                environment,
+                "Agent head generation was captured for a different environment; "
+                "publishing without one"
             )
             return {}
         return {"agent_id": agent_id, "expected_head_generation": generation}
+
+    @staticmethod
+    def _protected_precondition_kwargs(
+        captured: dict[str, Any], environment: str
+    ) -> dict[str, Any]:
+        """Head precondition of a content-less (protected) session.
+
+        Unlike the legacy path this NEVER degrades to "publish without one": if the
+        run could not capture its head (no ``agent_ref``, failed head read), or the
+        capture is malformed or for another environment, the publish is refused here,
+        locally, with a closed code and nothing is sent.
+        """
+        refusal = captured.get("capture_refusal")
+        if isinstance(refusal, str) and refusal:
+            try:
+                code = HeadRefusalCode(refusal)
+            except ValueError:
+                code = HeadRefusalCode.CAPTURE_MISSING
+            raise CloudBestConfigHeadRefusedError(
+                code,
+                reason=CloudPublishUnavailableReason.HEAD_CAPTURE_MISSING,
+            )
+        agent_ref = captured.get("agent_ref")
+        generation = captured.get("generation")
+        session_id = captured.get("session_id")
+        if (
+            not isinstance(session_id, str)
+            or not session_id
+            or not isinstance(agent_ref, str)
+            or not agent_ref
+            or isinstance(generation, bool)
+            or not isinstance(generation, int)
+            or generation < 0
+        ):
+            raise CloudBestConfigHeadRefusedError(
+                HeadRefusalCode.CAPTURE_MISSING,
+                reason=CloudPublishUnavailableReason.HEAD_CAPTURE_MISSING,
+            )
+        from traigent.cloud.content_less import ENVIRONMENTS
+
+        if captured.get("environment") not in ENVIRONMENTS:
+            raise CloudBestConfigHeadRefusedError(
+                HeadRefusalCode.HEAD_CAPTURE_INVALID,
+                reason=CloudPublishUnavailableReason.HEAD_CAPTURE_MISSING,
+            )
+        return {"agent_ref": agent_ref, "expected_head_generation": generation}
 
     def _create_slim_export(self, include_metadata: bool) -> dict[str, Any]:
         """Create a slim export suitable for git and deployment."""

@@ -1,0 +1,29 @@
+{
+ "_comment": "Audit trail for removals from leak_manifest.json 'register'. Each entry: route, location, field_path, kind, reason, reference (PR/commit). An entry whose identity still leaks, or that is not a removal from 'baseline', fails the test.",
+ "dispositions": [
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.agent_id",
+   "kind": "agent_name",
+   "reason": "Phase 3 group 1 (identity): an opt-in content-less session create (capability content_less_v1) declared agent identity: the content-less create sends agent_ref (or the function-derived code identifier) and strips agent_id/agent_key; Backend counterpart forbids them (CHECKLIST S1 req.agent_id/req.agent_key). Only the legacy-shape direct paths still produce agent_key, kept open.",
+   "reference": "traigent/cloud/content_less.py:77"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.dataset_metadata.name",
+   "kind": "evaluation_set",
+   "reason": "Phase 3 group 1 (identity): an opt-in content-less session create (capability content_less_v1) dataset_metadata.name (evaluation-set label) is stripped from the content-less create; the evaluation set is named by evaluation_set_ref/dataset_ref (CHECKLIST S1 req.dataset_metadata.name).",
+   "reference": "traigent/cloud/content_less.py:91"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.evaluator_id",
+   "kind": "evaluator_id",
+   "reason": "Phase 3 group 1 (identity): an opt-in content-less session create (capability content_less_v1) evaluator_id/evaluator_definition_id are stripped from the content-less create; the evaluator is named by evaluator_ref (CHECKLIST S1 req.evaluator_id).",
+   "reference": "traigent/cloud/content_less.py:83"
+  }
+ ]
+}

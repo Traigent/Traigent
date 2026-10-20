@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/best_config_publish_409_schema.json",
+  "title": "BestConfigProtectedPublish409",
+  "description": "The 409 body of a PROTECTED POST /api/v1/best-configs: the closed refusal envelope (best_config_head_refusal_schema.json) restricted to head_environment_mismatch, head_agent_mismatch, head_generation_stale and head_publish_conflict. A malformed protected body (right code, wrong text, extra member) matches nothing. The execution endpoint combines this with the unchanged legacy 409 bodies in two DISJOINT branches (the legacy branch must not carry one of these codes).",
+  "allOf": [
+    {
+      "$ref": "./best_config_head_refusal_schema.json"
+    },
+    {
+      "properties": {
+        "error_code": {
+          "x-content-class": "closed_enum",
+          "enum": [
+            "head_environment_mismatch",
+            "head_agent_mismatch",
+            "head_generation_stale",
+            "head_publish_conflict"
+          ]
+        }
+      }
+    }
+  ]
+}

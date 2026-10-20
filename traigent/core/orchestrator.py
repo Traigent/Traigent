@@ -453,9 +453,16 @@ class OptimizationOrchestrator:
         self._run_title: str | None = kwargs.pop("run_title", None)
         self._run_description: str | None = kwargs.pop("run_description", None)
         self._agent_key: str | None = kwargs.pop("agent_key", None)
+        # Content-less session options (group 1); None unless optimize() set them.
+        self._content_less: Any = kwargs.pop("content_less", None)
         # Best-config environment whose agent head is captured at step start,
         # and the promotion precondition captured for the current run.
         self.head_environment: str | None = None
+        self.head_environment_explicit: bool = False
+        # Identity the development log is stamped with (set by OptimizedFunction),
+        # so auto-discovery loads only artifacts that are this function's.
+        self.head_function_ref: str | None = None
+        self.head_config_id: str | None = None
         self._promotion_precondition: dict[str, Any] | None = None
         self._smart_pruning: dict[str, Any] | None = kwargs.pop("smart_pruning", None)
         self._config_metrics_history: dict[str, dict[str, list[float]]] = {}
@@ -2071,6 +2078,7 @@ class OptimizationOrchestrator:
                 ExecutionMode | str,
                 self.traigent_config.execution_mode or "local",
             ),
+            best_config_identity=self._best_config_identity(),
         )
         self._logger_facade.attach(self._logger)
 
@@ -2087,6 +2095,16 @@ class OptimizationOrchestrator:
                 "name": getattr(dataset, "name", "unknown"),
             },
         )
+
+    def _best_config_identity(self) -> dict[str, str] | None:
+        """The identity stamped on the development log's best-config artifacts."""
+        identity = {
+            "config_id": self.head_config_id,
+            "function_ref": self.head_function_ref,
+            "environment": self.head_environment,
+        }
+        present = {key: value for key, value in identity.items() if value}
+        return present or None
 
     def _build_logger_run_config(self) -> dict[str, Any]:
         resolved_algorithm = self.optimizer.__class__.__name__
@@ -3118,7 +3136,12 @@ class OptimizationOrchestrator:
         optimization_strategy_payload = self._backend_optimization_strategy_for_run()
         self._promotion_precondition = None
         head_environment_kwargs: dict[str, Any] = (
-            {"head_environment": self.head_environment} if self.head_environment else {}
+            {
+                "head_environment": self.head_environment,
+                "head_environment_explicit": self.head_environment_explicit,
+            }
+            if self.head_environment
+            else {}
         )
         session_context = self.backend_session_manager.create_session(
             func=func,
@@ -3150,6 +3173,7 @@ class OptimizationOrchestrator:
             task_type=getattr(self, "task_type", None),
             dataset_id=getattr(self, "dataset_id", None),
             **head_environment_kwargs,
+            **({"content_less": self._content_less} if self._content_less else {}),
         )
         session_id: str | None = session_context.session_id
         self._active_session_id = session_id
@@ -5446,7 +5470,44 @@ class OptimizationOrchestrator:
 
     @staticmethod
     def _promotion_precondition_from(session_context: Any) -> dict[str, Any] | None:
-        """The agent head generation captured at step start, or None."""
+        """The agent head generation captured at step start, or None.
+
+        A content-less session always yields a precondition (protected path): either the
+        captured ``agent_ref`` + generation, or the closed ``capture_refusal`` code that
+        makes a later publish refuse locally. It never degrades to "no precondition".
+        """
+        if getattr(session_context, "content_less", False) is True:
+            precondition: dict[str, Any] = {"protected": True}
+            agent_ref = getattr(session_context, "agent_ref", None)
+            generation = getattr(session_context, "head_generation", None)
+            environment = getattr(session_context, "head_environment", None)
+            # The Backend resolves the authoritative binding from this id
+            # (spec.provenance.source_session_id); it is a Backend-issued lookup key.
+            session_id = getattr(session_context, "session_id", None)
+            if (
+                isinstance(session_id, str)
+                and 0 < len(session_id) <= 128
+                and isinstance(agent_ref, str)
+                and agent_ref
+                and isinstance(generation, int)
+                and not isinstance(generation, bool)
+                and isinstance(environment, str)
+                and environment
+            ):
+                precondition.update(
+                    agent_ref=agent_ref,
+                    environment=environment,
+                    generation=generation,
+                    session_id=session_id,
+                )
+            else:
+                refusal = getattr(session_context, "head_capture_refusal", None)
+                precondition["capture_refusal"] = (
+                    refusal
+                    if isinstance(refusal, str) and refusal
+                    else "capture_missing"
+                )
+            return precondition
         agent_id = getattr(session_context, "agent_id", None)
         generation = getattr(session_context, "head_generation", None)
         environment = getattr(session_context, "head_environment", None)

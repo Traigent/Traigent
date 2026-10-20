@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, Any
 from traigent._version import get_version
 from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.config.backend_config import BackendConfig
+from traigent.labels.transport_gate import gate_session, preflight_requests
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -884,6 +885,9 @@ class WorkflowTracesClient:
             )
 
         try:
+            preflight_requests(
+                "POST", f"{self.backend_url}/api/v1/traces/ingest", json=request_payload
+            )
             response = requests.post(
                 f"{self.backend_url}/api/v1/traces/ingest",
                 json=request_payload,
@@ -953,7 +957,7 @@ class WorkflowTracesClient:
             url = f"{self.backend_url}/api/v1/traces/ingest"
             headers = self._get_headers()
 
-            async with aiohttp.ClientSession(trust_env=True) as session:
+            async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
                 async with session.post(
                     url,
                     json=request_payload,

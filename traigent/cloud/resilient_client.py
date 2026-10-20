@@ -16,6 +16,7 @@ from enum import Enum
 from hashlib import sha256
 from typing import Any, TypeVar, cast
 
+from traigent.labels.transport_gate import gate_session
 from traigent.utils.exceptions import NonRetryableError, RetryableError
 
 logger = logging.getLogger(__name__)
@@ -437,9 +438,12 @@ async def resilient_backend_request(
 
         request_timeout = aiohttp.ClientTimeout(total=timeout)
 
-        async with aiohttp.ClientSession(
-            timeout=request_timeout,
-            trust_env=True,
+        async with gate_session(
+            aiohttp.ClientSession(
+                timeout=request_timeout,
+                trust_env=True,
+            ),
+            origins=[url],
         ) as session:
             async with session.request(
                 method,

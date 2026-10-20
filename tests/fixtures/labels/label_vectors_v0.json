@@ -1,0 +1,359 @@
+{
+  "_comment": "TEST-ONLY conformance vectors for docs/labels-v0.md. Every key, seed and secret below is derived from a public constant and protects nothing. Regenerate with scripts/generate_label_vectors.py --update; do not hand-edit.",
+  "binding_chain": {
+    "admin_identity": {
+      "epoch": null,
+      "key_id": "1QcjzLg0PXP8odSh-hNusQ",
+      "not_before": "2026-10-16T00:00:00Z",
+      "project_ref": null,
+      "public_key": "ql9qyKzxPXM7O3T_4QJaKXnLyLGRRVZmT0En7d1gfqA",
+      "purpose": "admin_identity",
+      "signature": "oLrgd3wpI4n_GtuDos88k2Y8PfUH7-A1q0TxHnSYqcZl4f_HKmC4hovvV5ZvjaeWLnFASoURtGwP9Mm8wcZrDA",
+      "signer_key_id": "xU_6hhl7FcT7Cqbsp7yT-A",
+      "tenant_ref": "tenant_7c0b2f6e5d1a4f3e9a410c2d8e6b1f01",
+      "version": 1
+    },
+    "member_key": {
+      "epoch": 1,
+      "key_id": "vYPlYjoL5MLL5WHZO0EZMQ",
+      "not_before": "2026-10-16T00:00:00Z",
+      "project_ref": "project_3a9e4d108b274c65b1f25e7a90c4d202",
+      "public_key": "CiVxUd7qKfmH-gC4l1aMVtswoZJk5K_nnqt_el65tSM",
+      "purpose": "member_key",
+      "signature": "uiNbsKFo2Bp_GAZpAIJytBkbRDiu-E1CiKf4EUm1ELMLKNbMf6nWydmFazc6V1PggNzwzKnb4pEHThLjSBuUBg",
+      "signer_key_id": "1QcjzLg0PXP8odSh-hNusQ",
+      "tenant_ref": "tenant_7c0b2f6e5d1a4f3e9a410c2d8e6b1f01",
+      "version": 1
+    },
+    "project_key": {
+      "epoch": 1,
+      "key_id": "J-QJ97pxuMDcjxXEKaslfA",
+      "not_before": "2026-10-16T00:00:00Z",
+      "project_ref": "project_3a9e4d108b274c65b1f25e7a90c4d202",
+      "public_key": "W4Jde95iBliQF8szkytbDsSYiMioGi9zxwdkRYLX5SU",
+      "purpose": "project_key",
+      "signature": "Ty6rrpq7GxRoM1fcL8SZqDpXY0Jnht3FUbnB1HFweJtknBQxEH-Qem4xs2PbSBi0gnekq61JOP-YFB06ELlOBA",
+      "signer_key_id": "1QcjzLg0PXP8odSh-hNusQ",
+      "tenant_ref": "tenant_7c0b2f6e5d1a4f3e9a410c2d8e6b1f01",
+      "version": 1
+    }
+  },
+  "binding_list": {
+    "bindings": [
+      {
+        "epoch": null,
+        "key_id": "1QcjzLg0PXP8odSh-hNusQ",
+        "not_before": "2026-10-16T00:00:00Z",
+        "project_ref": null,
+        "public_key": "ql9qyKzxPXM7O3T_4QJaKXnLyLGRRVZmT0En7d1gfqA",
+        "purpose": "admin_identity",
+        "signature": "oLrgd3wpI4n_GtuDos88k2Y8PfUH7-A1q0TxHnSYqcZl4f_HKmC4hovvV5ZvjaeWLnFASoURtGwP9Mm8wcZrDA",
+        "signer_key_id": "xU_6hhl7FcT7Cqbsp7yT-A",
+        "tenant_ref": "tenant_7c0b2f6e5d1a4f3e9a410c2d8e6b1f01",
+        "version": 1
+      },
+      {
+        "epoch": 1,
+        "key_id": "J-QJ97pxuMDcjxXEKaslfA",
+        "not_before": "2026-10-16T00:00:00Z",
+        "project_ref": "project_3a9e4d108b274c65b1f25e7a90c4d202",
+        "public_key": "W4Jde95iBliQF8szkytbDsSYiMioGi9zxwdkRYLX5SU",
+        "purpose": "project_key",
+        "signature": "Ty6rrpq7GxRoM1fcL8SZqDpXY0Jnht3FUbnB1HFweJtknBQxEH-Qem4xs2PbSBi0gnekq61JOP-YFB06ELlOBA",
+        "signer_key_id": "1QcjzLg0PXP8odSh-hNusQ",
+        "tenant_ref": "tenant_7c0b2f6e5d1a4f3e9a410c2d8e6b1f01",
+        "version": 1
+      },
+      {
+        "epoch": 1,
+        "key_id": "vYPlYjoL5MLL5WHZO0EZMQ",
+        "not_before": "2026-10-16T00:00:00Z",
+        "project_ref": "project_3a9e4d108b274c65b1f25e7a90c4d202",
+        "public_key": "CiVxUd7qKfmH-gC4l1aMVtswoZJk5K_nnqt_el65tSM",
+        "purpose": "member_key",
+        "signature": "uiNbsKFo2Bp_GAZpAIJytBkbRDiu-E1CiKf4EUm1ELMLKNbMf6nWydmFazc6V1PggNzwzKnb4pEHThLjSBuUBg",
+        "signer_key_id": "1QcjzLg0PXP8odSh-hNusQ",
+        "tenant_ref": "tenant_7c0b2f6e5d1a4f3e9a410c2d8e6b1f01",
+        "version": 1
+      }
+    ],
+    "revoked_key_ids": [],
+    "sequence": 1,
+    "signature": "e2GEnou9spwPgnQ5KaCYfNbWD_swZ6_RLOBrSvqmy0BUmzi0LE25lTh7_4WkC-4FHwHBi9_sVsynnTQ0ceNzBA",
+    "signer_key_id": "xU_6hhl7FcT7Cqbsp7yT-A",
+    "tenant_ref": "tenant_7c0b2f6e5d1a4f3e9a410c2d8e6b1f01",
+    "version": 1
+  },
+  "keys": {
+    "admin_ed25519_seed_hex": "98ff2e5be63c40526c9484317e87cc6c9eb97f53fb5c8cacdcc2a37000ec694a",
+    "admin_public_hex": "aa5f6ac8acf13d733b3b74ffe1025a2979cbc8b1914556664f4127eddd607ea0",
+    "member_private_hex": "0964a7e22eead5ee94e173b3e93e5d378ae71cad05eeb3420fb73101c094048a",
+    "member_public_hex": "0a257151deea29f987fa00b897568c56db30a19264e4afe79eab7f7a5eb9b523",
+    "member_x25519_ikm_hex": "d518b6ebf4ba8bfda8114587930e5bc623bd2aee25925e77a3dd26959cb41aaa",
+    "project_epoch1_x25519_ikm_hex": "53af3446ac86295830ae9b51107e5272cf8165e017952f9feb360af59b3fea1f",
+    "project_private_hex": "8bf64567d6bd8ef5bbf6f65b2c573f4fdce9a93ae50991a1a0d764321a458c0f",
+    "project_public_hex": "5b825d7bde6206589017cb33932b5b0ec49888c8a81a2f73c707644582d7e525",
+    "recovery_secret_hex": "62424b58f970cda324bf5aa58c65441a624e414ecad63b02ce95d0665d5096d8",
+    "root_ed25519_seed_hex": "e376dc0b53446905bb6091b2cc2235ed04a9ed871fa5d2f86e884c1733f25874",
+    "root_fingerprint_sha256": "c54ffa86197b15c4fb0aa6eca7bc93f8c850ec91d54ee86cb2cd2f659b2f10db",
+    "root_public_hex": "eb1492ff0602b636226c7389a974e3f75fb8668b6e66cdca2aa5c363ff125656"
+  },
+  "label_envelopes": [
+    {
+      "aad_jcs": "{\"key_epoch\":1,\"object_ref\":\"agentref_1fd55a1c631df55176a0db51fd7a99d7\",\"project_ref\":\"project_3a9e4d108b274c65b1f25e7a90c4d202\",\"purpose\":\"label\",\"revision\":1,\"schema_version\":1,\"tenant_ref\":\"tenant_7c0b2f6e5d1a4f3e9a410c2d8e6b1f01\"}",
+      "envelope": {
+        "ciphertext": "FvLNy_0Awx-V-krE8hw9F6UITDl-27CHzDkDBOV93E6D12v_cMWMwm-PWQ3tdmeD",
+        "enc": "m9yZdYldxKDBD98w_lnFPaGRmpnOkSYFdK6f31ApyC4",
+        "key_epoch": 1,
+        "version": 1
+      },
+      "ephemeral_ikm_hex": "2af226acd6e96060b286be2e1ec90e87e32650b9ed183f36c19bb6918830bb8f",
+      "object_ref": "agentref_1fd55a1c631df55176a0db51fd7a99d7",
+      "packed_hex": "01000000019bdc9975895dc4a0c10fdf30fe59c53da1919a99ce91260574ae9fdf5029c82e16f2cdcbfd00c31f95fa4ac4f21c3d17a5084c397edbb087cc390304e57ddc4e83d76bff70c58cc26f8f590ded766783",
+      "plaintext": "Customer support triage agent",
+      "purpose": "label",
+      "revision": 1
+    },
+    {
+      "aad_jcs": "{\"key_epoch\":1,\"object_ref\":\"knobref_581c8a77dc9bc0c36ed4e84bef3bffd3\",\"project_ref\":\"project_3a9e4d108b274c65b1f25e7a90c4d202\",\"purpose\":\"knob\",\"revision\":2,\"schema_version\":1,\"tenant_ref\":\"tenant_7c0b2f6e5d1a4f3e9a410c2d8e6b1f01\"}",
+      "envelope": {
+        "ciphertext": "IotJcoG-Rmn3g-9Bw7WiKJHFe6_XoNmcnt6GvxIUv-cw7-czKWZjmq3sly7s7Psj",
+        "enc": "MtjcF6rGNwn7GQuMuT66c5tOTnkn0Bj5dljPCcMtWmw",
+        "key_epoch": 1,
+        "version": 1
+      },
+      "ephemeral_ikm_hex": "f4762c9df3e853e20a2bc6aca5ffea9459b7b9ac044a9b183a469c682c5b0afe",
+      "object_ref": "knobref_581c8a77dc9bc0c36ed4e84bef3bffd3",
+      "packed_hex": "010000000132d8dc17aac63709fb190b8cb93eba739b4e4e7927d018f97658cf09c32d5a6c228b497281be4669f783ef41c3b5a22891c57bafd7a0d99c9ede86bf1214bfe730efe7332966639aadec972eececfb23",
+      "plaintext": "temperature",
+      "purpose": "knob",
+      "revision": 2
+    },
+    {
+      "aad_jcs": "{\"key_epoch\":1,\"object_ref\":\"choiceref_7c21fe2afbc5345fa5d0bfaad6758dc0\",\"project_ref\":\"project_3a9e4d108b274c65b1f25e7a90c4d202\",\"purpose\":\"choice\",\"revision\":3,\"schema_version\":1,\"tenant_ref\":\"tenant_7c0b2f6e5d1a4f3e9a410c2d8e6b1f01\"}",
+      "envelope": {
+        "ciphertext": "GiJw3BkU0BGMA0qLO5WcFtSh_hE2l1FSc5_iupqhhYj_7NhtcZjrsQgizjSLojax",
+        "enc": "GfYC-Vl_KJ3ioRJ14T4sg8VXrNSf8DoEUgBAaDjPPSs",
+        "key_epoch": 1,
+        "version": 1
+      },
+      "ephemeral_ikm_hex": "aae24f5251b900b887f2a2d331e98b95431e3e94b6d965b161c71e59a22fc755",
+      "object_ref": "choiceref_7c21fe2afbc5345fa5d0bfaad6758dc0",
+      "packed_hex": "010000000119f602f9597f289de2a11275e13e2c83c557acd49ff03a045200406838cf3d2b1a2270dc1914d0118c034a8b3b959c16d4a1fe1136975152739fe2ba9aa18588ffecd86d7198ebb10822ce348ba236b1",
+      "plaintext": "gpt-5.2-mini",
+      "purpose": "choice",
+      "revision": 3
+    },
+    {
+      "aad_jcs": "{\"key_epoch\":1,\"object_ref\":\"metricref_c06dfd959494d1de3df051bc838507f1\",\"project_ref\":\"project_3a9e4d108b274c65b1f25e7a90c4d202\",\"purpose\":\"metric\",\"revision\":4,\"schema_version\":1,\"tenant_ref\":\"tenant_7c0b2f6e5d1a4f3e9a410c2d8e6b1f01\"}",
+      "envelope": {
+        "ciphertext": "8sfCXBnCtiAtTlLVfB4HyX2HbZqgH9QNJMFomaZgj8_IFAqPOn2Nml_7blVkE5O5",
+        "enc": "KUW6X5edVl3IEcLoOHHNG3OvV-2JAJSDh-Ydxx10FCM",
+        "key_epoch": 1,
+        "version": 1
+      },
+      "ephemeral_ikm_hex": "70f4d8d2cdae768ecab1dd5d827c84f0579396fc2954359d9f9d2f82aad9130c",
+      "object_ref": "metricref_c06dfd959494d1de3df051bc838507f1",
+      "packed_hex": "01000000012945ba5f979d565dc811c2e83871cd1b73af57ed8900948387e61dc71d741423f2c7c25c19c2b6202d4e52d57c1e07c97d876d9aa01fd40d24c16899a6608fcfc8140a8f3a7d8d9a5ffb6e55641393b9",
+      "plaintext": "answer_correctness",
+      "purpose": "metric",
+      "revision": 4
+    },
+    {
+      "aad_jcs": "{\"key_epoch\":1,\"object_ref\":\"templateref_8052540ab27f562f6b4cd90059bf123a\",\"project_ref\":\"project_3a9e4d108b274c65b1f25e7a90c4d202\",\"purpose\":\"template\",\"revision\":5,\"schema_version\":1,\"tenant_ref\":\"tenant_7c0b2f6e5d1a4f3e9a410c2d8e6b1f01\"}",
+      "envelope": {
+        "ciphertext": "2iQfV0_QZNQZeSfB4UxpnliZctVR1gOP-VjYlN4rZdapR5ETEZTBAPma-43WjsedNuB0v1rs95hl0sOeeiBpzqxfjGdsZi9hak-hvS83j6g",
+        "enc": "grt9o-4fM6YY62AU9vI8eDXctZLemrlW9TkkuS_O4jA",
+        "key_epoch": 1,
+        "version": 1
+      },
+      "ephemeral_ikm_hex": "9ab0099ccd665c78ab26d4980b0c4649db0f16f8625adb00f4267a34d73a9211",
+      "object_ref": "templateref_8052540ab27f562f6b4cd90059bf123a",
+      "packed_hex": "010000000182bb7da3ee1f33a618eb6014f6f23c7835dcb592de9ab956f53924b92fcee230da241f574fd064d4197927c1e14c699e589972d551d6038ff958d894de2b65d6a94791131194c100f99afb8dd68ec79d36e074bf5aecf79865d2c39e7a2069ceac5f8c676c662f616a4fa1bd2f378fa8",
+      "plaintext": "You are a careful assistant. Answer using only {context}.",
+      "purpose": "template",
+      "revision": 5
+    }
+  ],
+  "local_protection": {
+    "aad_jcs": "{\"member_key_id\":\"vYPlYjoL5MLL5WHZO0EZMQ\",\"purpose\":\"local_member_key\",\"tenant_ref\":\"tenant_7c0b2f6e5d1a4f3e9a410c2d8e6b1f01\",\"version\":1}",
+    "passkey_prf": {
+      "ciphertext": "FTHNUA7e8aBiaqnefLVZkl19h7QE61iYQt0IdWMDYM22q0EYdxMij8FA9XayZlPC",
+      "credential_id": "2wJXiO0VmkCRucMmdqvS2KN-8s379dsgu_w_3NqVV6U",
+      "member_key_id": "vYPlYjoL5MLL5WHZO0EZMQ",
+      "nonce": "mhwCLbtDksXV3Mq8",
+      "prf_input_salt": "UTrrEeYXwhLGSfVAzbl6a6IhUjpNHNZcRoKo2CLEnZI",
+      "protection": "passkey_prf",
+      "version": 1
+    },
+    "passphrase_argon2id": {
+      "argon2id": {
+        "iterations": 3,
+        "memory_kib": 65536,
+        "parallelism": 1,
+        "salt": "CFG2xeWpecsv7tppz8_2og"
+      },
+      "ciphertext": "FTHNUA7e8aBiaqnefLVZkl19h7QE61iYQt0IdWMDYM22q0EYdxMij8FA9XayZlPC",
+      "member_key_id": "vYPlYjoL5MLL5WHZO0EZMQ",
+      "nonce": "mhwCLbtDksXV3Mq8",
+      "protection": "passphrase_argon2id",
+      "version": 1
+    },
+    "test_only_wrapping_ikm_hex": "dc44df2345b0617cba9078fd2a127009c80cdbf2e2e3f9af25260f12c07a3390"
+  },
+  "member_wrap": {
+    "ephemeral_ikm_hex": "199e40cd1965c1d3a87f1e67d82fd81eaf602637d6b11b93fddc21de06424921",
+    "info_jcs": "{\"epoch\":1,\"project_ref\":\"project_3a9e4d108b274c65b1f25e7a90c4d202\",\"purpose\":\"member_wrap\",\"recipient_key_id\":\"vYPlYjoL5MLL5WHZO0EZMQ\",\"tenant_ref\":\"tenant_7c0b2f6e5d1a4f3e9a410c2d8e6b1f01\",\"version\":1}",
+    "wrap": {
+      "ciphertext": "Qx2UeWjiyqjLwChYSCDmT0Q1U6DgEoJde9c126ti6qNRbiQb0NvLlLg1iJijy9nP",
+      "enc": "Jh4koXj8o0-QBfe_ttcfnFWVTYNPnDpZnTAUDSqYiBk",
+      "epoch": 1,
+      "recipient_key_id": "vYPlYjoL5MLL5WHZO0EZMQ",
+      "version": 1
+    }
+  },
+  "padding": {
+    "malformed": [
+      {
+        "name": "too_long_256_bytes",
+        "operation": "pad",
+        "plaintext": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      {
+        "name": "all_zero_no_marker",
+        "operation": "unpad",
+        "padded_hex": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      {
+        "name": "no_0x80_marker",
+        "operation": "unpad",
+        "padded_hex": "6162630000000000000000000000000000000000000000000000000000000000"
+      },
+      {
+        "name": "nonzero_after_marker",
+        "operation": "unpad",
+        "padded_hex": "6162638001000000000000000000000000000000000000000000000000000000"
+      },
+      {
+        "name": "not_a_bucket_length",
+        "operation": "unpad",
+        "padded_hex": "616263800000000000000000000000000000000000000000000000000000000000"
+      },
+      {
+        "name": "non_minimal_bucket",
+        "operation": "unpad",
+        "padded_hex": "61626380000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+      },
+      {
+        "name": "invalid_utf8",
+        "operation": "unpad",
+        "padded_hex": "fffe800000000000000000000000000000000000000000000000000000000000"
+      }
+    ],
+    "ok": [
+      {
+        "bucket": 32,
+        "name": "empty",
+        "padded_hex": "8000000000000000000000000000000000000000000000000000000000000000",
+        "plaintext": "",
+        "utf8_bytes": 0
+      },
+      {
+        "bucket": 32,
+        "name": "one_byte",
+        "padded_hex": "6180000000000000000000000000000000000000000000000000000000000000",
+        "plaintext": "a",
+        "utf8_bytes": 1
+      },
+      {
+        "bucket": 32,
+        "name": "31_bytes_fills_bucket_32",
+        "padded_hex": "7878787878787878787878787878787878787878787878787878787878787880",
+        "plaintext": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "utf8_bytes": 31
+      },
+      {
+        "bucket": 64,
+        "name": "32_bytes_next_bucket_64",
+        "padded_hex": "78787878787878787878787878787878787878787878787878787878787878788000000000000000000000000000000000000000000000000000000000000000",
+        "plaintext": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "utf8_bytes": 32
+      },
+      {
+        "bucket": 64,
+        "name": "63_bytes",
+        "padded_hex": "78787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787880",
+        "plaintext": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "utf8_bytes": 63
+      },
+      {
+        "bucket": 128,
+        "name": "64_bytes_next_bucket_128",
+        "padded_hex": "7878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787880000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "plaintext": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "utf8_bytes": 64
+      },
+      {
+        "bucket": 128,
+        "name": "127_bytes",
+        "padded_hex": "7878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787880",
+        "plaintext": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "utf8_bytes": 127
+      },
+      {
+        "bucket": 256,
+        "name": "128_bytes_next_bucket_256",
+        "padded_hex": "78787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878788000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "plaintext": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "utf8_bytes": 128
+      },
+      {
+        "bucket": 256,
+        "name": "255_bytes_max",
+        "padded_hex": "78787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787880",
+        "plaintext": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "utf8_bytes": 255
+      },
+      {
+        "bucket": 32,
+        "name": "multibyte_utf8",
+        "padded_hex": "636166c3a920e2988320f09f9880800000000000000000000000000000000000",
+        "plaintext": "caf\u00e9 \u2603 \ud83d\ude00",
+        "utf8_bytes": 14
+      }
+    ]
+  },
+  "recovery_wraps": {
+    "project_key": {
+      "ciphertext": "6NajA0SYsLF_unkdIyG2IXuAaEgcsc5FM3wxzVlwuzI61K2Pyzv3hBCHyIqjxPv5",
+      "epoch": 1,
+      "nonce": "XksFCiGgelKIJHvt",
+      "subject": "project_key",
+      "version": 1
+    },
+    "project_key_aad_jcs": "{\"epoch\":1,\"project_ref\":\"project_3a9e4d108b274c65b1f25e7a90c4d202\",\"purpose\":\"recovery_wrap\",\"subject\":\"project_key\",\"tenant_ref\":\"tenant_7c0b2f6e5d1a4f3e9a410c2d8e6b1f01\",\"version\":1}",
+    "root_key": {
+      "ciphertext": "WttAsRfbydsjWJdS-wDDtHF0xJL7xa4vcOJbUXYcg9QfG3YqxUAZKLI1Hf0mHQKK",
+      "epoch": 0,
+      "nonce": "fdUQHNd2pIhVDpK_",
+      "subject": "root_key",
+      "version": 1
+    },
+    "root_key_aad_jcs": "{\"epoch\":0,\"project_ref\":\"project_3a9e4d108b274c65b1f25e7a90c4d202\",\"purpose\":\"recovery_wrap\",\"subject\":\"root_key\",\"tenant_ref\":\"tenant_7c0b2f6e5d1a4f3e9a410c2d8e6b1f01\",\"version\":1}"
+  },
+  "refs": {
+    "project_ref": "project_3a9e4d108b274c65b1f25e7a90c4d202",
+    "tenant_ref": "tenant_7c0b2f6e5d1a4f3e9a410c2d8e6b1f01"
+  },
+  "suite": {
+    "aead": "AES-256-GCM",
+    "hpke_ids": [
+      32,
+      1,
+      2
+    ],
+    "hpke_info": "traigent.label.v1",
+    "kdf": "HKDF-SHA256",
+    "kem": "DHKEM(X25519, HKDF-SHA256)"
+  }
+}
