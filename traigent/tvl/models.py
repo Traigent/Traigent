@@ -11,6 +11,7 @@ Sync: SYNC-OptimizationFlow
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, cast, runtime_checkable
 
@@ -820,21 +821,27 @@ def _tuple_component_values(name: str, idx: int, comp: Any) -> list[Any]:
         lo_raw, hi_raw = rng
         if any(isinstance(b, bool) or not isinstance(b, (int, float)) for b in rng):
             raise ValueError(f"{label} range bounds must be numbers")
+        if not all(math.isfinite(b) for b in rng):
+            raise ValueError(f"{label} range bounds must be finite")
         resolution = comp.get("resolution")
         if resolution is not None:
             if (
                 isinstance(resolution, bool)
                 or not isinstance(resolution, (int, float))
+                or not math.isfinite(resolution)
                 or resolution <= 0
             ):
                 raise ValueError(f"{label} resolution must be a positive number")
             if hi_raw < lo_raw:
                 raise ValueError(f"{label} range min must not exceed max")
             step = float(resolution)
-            n_steps = int(round((float(hi_raw) - float(lo_raw)) / step))
+            lo_f, hi_f = float(lo_raw), float(hi_raw)
+            # Floor with a tolerance for float error; the upper bound is emitted
+            # only when it lies on the grid and is never exceeded.
+            n_steps = int(math.floor((hi_f - lo_f) / step + 1e-9))
             if n_steps + 1 > _MAX_TUPLE_PRODUCT:
                 raise ValueError(f"{label} range enumerates too many grid points")
-            vals = [round(float(lo_raw) + i * step, 12) for i in range(n_steps + 1)]
+            vals = [min(round(lo_f + i * step, 12), hi_f) for i in range(n_steps + 1)]
             if (
                 isinstance(lo_raw, int)
                 and isinstance(hi_raw, int)

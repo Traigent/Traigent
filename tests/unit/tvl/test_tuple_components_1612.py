@@ -75,3 +75,67 @@ def test_default_outside_product_rejected(tmp_path):
 def test_components_on_non_tuple_type_still_rejected():
     with pytest.raises(ValueError):
         parse_domain_spec("t", "int", {"components": [[1, 2]]})
+
+
+def _spec_with(range_line: str, default: str) -> str:
+    return f"""
+tvl:
+  module: corp.validation.tuple_bounds
+environment:
+  snapshot_id: "2025-01-01T00:00:00Z"
+evaluation_set:
+  dataset: s3://datasets/validation/dev.parquet
+tvars:
+  - name: cfg
+    type: tuple[enum[str], float]
+    default: {default}
+    domain:
+      components:
+        - ["a"]
+        - {range_line}
+objectives:
+  - name: quality
+    direction: maximize
+"""
+
+
+def test_non_divisible_resolution_stays_within_bounds(tmp_path):
+    from traigent.tvl.models import _enumerate_tuple_components
+
+    vals = _enumerate_tuple_components(
+        "cfg", [["a"], {"range": [0.0, 1.0], "resolution": 0.6}]
+    )
+    assert [v[1] for v in vals] == [0.0, 0.6]
+
+
+def test_divisible_resolution_includes_upper_bound_despite_float_error():
+    from traigent.tvl.models import _enumerate_tuple_components
+
+    vals = _enumerate_tuple_components(
+        "cfg", [["a"], {"range": [0.0, 1.0], "resolution": 0.1}]
+    )
+    assert len(vals) == 11 and vals[-1][1] == 1.0
+
+
+@pytest.mark.parametrize(
+    "comp",
+    [
+        {"range": [0.0, float("inf")], "resolution": 0.5},
+        {"range": [0.0, 1.0], "resolution": float("nan")},
+        {"range": [0.0, 1.0], "resolution": float("inf")},
+        {"range": [0.0, 1.0], "resolution": 0},
+        {"range": [0.0, 1.0], "resolution": -0.5},
+    ],
+)
+def test_non_finite_or_non_positive_rejected(comp):
+    from traigent.tvl.models import _enumerate_tuple_components
+
+    with pytest.raises(ValueError):
+        _enumerate_tuple_components("cfg", [["a"], comp])
+
+
+def test_out_of_range_default_rejected(tmp_path):
+    path = tmp_path / "t.tvl.yml"
+    path.write_text(_spec_with("{ range: [0.0, 1.0], resolution: 0.6 }", '["a", 1.2]'))
+    with pytest.raises(TVLValidationError):
+        load_tvl_spec(spec_path=str(path))
