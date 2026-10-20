@@ -152,6 +152,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **TVL registry domains without a `registry_resolver` fail at load on purpose
   (#1616).** The docs now say so: it avoids starting an optimisation with a
   missing setting and differs from the official TVL lazy placeholders.
+- **A strict cost-objective run now stops after its first successful trial
+  that captured no usage, and keeps its result (#2421).** Previously the run
+  billed every trial before raising `UnknownModelError`, and the raise
+  discarded the result. The run now stops with `stop_reason="no_usage_captured"`
+  (scheduling of new trials stops; trials already in flight may finish), and
+  the `UnknownModelError` carries the finished trials as `err.result`. Mock
+  LLM mode and `TRAIGENT_STRICT_COST_ACCOUNTING=false` keep the warning
+  behaviour; failed trials never trigger the stop.
+
 - **`auto_override_frameworks=True` was a silent no-op for sync functions on
   0.27.0 and earlier (#2420).** The override gate is a `ContextVar`, and the
   sync evaluator lane ran the function in a worker thread without the caller's

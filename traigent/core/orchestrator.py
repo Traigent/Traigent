@@ -122,6 +122,7 @@ from traigent.core.sample_budget import SampleBudgetManager
 from traigent.core.selection_receipt import build_selection_receipt
 from traigent.core.stat_significance import compute_significance
 from traigent.core.stop_condition_manager import StopConditionManager
+from traigent.core.stop_conditions import StopCondition
 from traigent.core.trial_lifecycle import TrialLifecycle
 from traigent.core.utils import extract_examples_attempted
 from traigent.core.workflow_trace_manager import WorkflowTraceManager
@@ -5406,6 +5407,10 @@ class OptimizationOrchestrator:
         if cost_enforcer is not None:
             cost_enforcer.waive_unknown_cost_trial_cap()
 
+    def add_stop_condition(self, condition: StopCondition) -> None:
+        """Register an extra stop condition (e.g. the strict cost-usage guard)."""
+        self._stop_condition_manager.add_condition(condition)
+
     def _should_stop(self, trial_count: int) -> bool:
         """Check if optimization should stop.
 
@@ -5430,6 +5435,7 @@ class OptimizationOrchestrator:
                 "convergence": "convergence",
                 "semantic_saturation": "semantic_saturation",
                 "safety_constraint": "safety_constraint",
+                "no_usage_captured": "no_usage_captured",
             }
             mapped_reason = reason_mapping.get(reason, "condition")
             if (

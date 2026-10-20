@@ -39,6 +39,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Generic, ParamSpec, TypeVar, cast
 
 from traigent.api.types import OptimizationResult, OptimizationStatus
@@ -99,6 +100,7 @@ from traigent.core.optimization_pipeline import (
     resolve_execution_parameters,
 )
 from traigent.core.orchestrator import OptimizationOrchestrator, _safe_exception_text
+from traigent.core.stop_conditions import NoUsageCapturedStopCondition
 from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import (
     BaseEvaluator,
@@ -707,6 +709,33 @@ def _warn_cost_objective_partial_coverage(
     logger.warning("%s (%s)", message, COST_OBJECTIVE_PARTIAL_USAGE_WARNING_CODE)
 
 
+def _no_usage_is_fatal() -> bool:
+    """True when a cost run with no captured usage must fail, not warn.
+
+    Shared by the post-run guard and the early stop rule so both fire under
+    exactly the same conditions (strict accounting on, mock LLM mode off).
+    """
+    return is_strict_cost_accounting() and not is_mock_llm()
+
+
+def _make_no_usage_stop_condition(
+    objective_names: Sequence[str] | None,
+) -> NoUsageCapturedStopCondition | None:
+    """Early stop rule for a strict cost run whose first success has no usage.
+
+    Returns ``None`` when no cost objective is declared. Strictness and mock
+    mode are read at check time (they are scoped to the running optimization).
+    Uses ``_run_captured_usage``, the same predicate as the post-run guard.
+    """
+    if not _objectives_include_cost(objective_names):
+        return None
+
+    def _usage_captured(trials: Sequence[Any]) -> bool:
+        return _run_captured_usage(SimpleNamespace(trials=list(trials)))
+
+    return NoUsageCapturedStopCondition(_usage_captured, _no_usage_is_fatal)
+
+
 def _guard_cost_objective_without_usage(
     result: Any, objective_names: Sequence[str] | None
 ) -> None:
@@ -733,12 +762,21 @@ def _guard_cost_objective_without_usage(
     if _run_captured_usage(result):
         return
 
-    if is_strict_cost_accounting() and not is_mock_llm():
-        raise UnknownModelError(
+    if _no_usage_is_fatal():
+        message = (
             _NO_USAGE_CAPTURED_MESSAGE
             + " Set TRAIGENT_STRICT_COST_ACCOUNTING=false to accept an "
             "unmeasured $0 cost column."
         )
+        if getattr(result, "stop_reason", None) == "no_usage_captured":
+            message += (
+                " The run was stopped after the first successful trial "
+                "without usage, so the remaining trials were not billed."
+            )
+        error = UnknownModelError(message)
+        # Keep the trials that did run: the caller can still inspect them.
+        error.result = result  # type: ignore[attr-defined]
+        raise error
 
     warning_codes = getattr(result, "warning_codes", None)
     if isinstance(warning_codes, list):
@@ -2807,6 +2845,10 @@ class OptimizedFunction(Generic[_P, _R]):
             smart_pruning=getattr(self, "smart_pruning", None),
             **orchestrator_kwargs,
         )
+
+        no_usage_stop = _make_no_usage_stop_condition(self.objectives)
+        if no_usage_stop is not None:
+            orchestrator.add_stop_condition(no_usage_stop)
 
         orchestrator.samples_include_pruned = samples_include_pruned_value
         orchestrator.artifact_fingerprints = artifact_fingerprint_payload.get(
