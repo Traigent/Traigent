@@ -771,7 +771,9 @@ def _guard_cost_objective_without_usage(
         if getattr(result, "stop_reason", None) == "no_usage_captured":
             message += (
                 " The run was stopped after the first successful trial "
-                "without usage, so the remaining trials were not billed."
+                "without usage: no further trials were scheduled, but "
+                "already-dispatched trials may have completed and incurred "
+                "charges."
             )
         error = UnknownModelError(message)
         # Keep the trials that did run: the caller can still inspect them.

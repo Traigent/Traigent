@@ -111,6 +111,8 @@ def test_strict_cost_run_stops_after_first_no_usage_trial(monkeypatch, tmp_path)
     assert attached.stop_reason == "no_usage_captured"
     message = str(err)
     assert "stopped after the first successful trial" in message
+    assert "remaining trials were not billed" not in message
+    assert "already-dispatched trials" in message
     assert str(tmp_path) not in message
 
 
