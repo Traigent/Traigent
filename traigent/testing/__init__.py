@@ -82,6 +82,13 @@ def log_raw_client_scope_caveat() -> None:
     )
 
 
+_INSTALL_FAILED_MESSAGE = (
+    "traigent.testing could not install the LiteLLM/LangChain mock "
+    "interceptors; mock mode was NOT enabled. Fix the installation "
+    "problem and call enable_mock_mode_for_quickstart() again."
+)
+
+
 def _install_mock_interceptors() -> None:
     """Install the LiteLLM and LangChain interceptors now (#2416).
 
@@ -101,14 +108,16 @@ def _install_mock_interceptors() -> None:
             patch_litellm_for_metadata_capture,
         )
 
-        patch_litellm_for_metadata_capture()
-        patch_langchain_for_metadata_capture()
+        outcomes: dict[str, str] = {}
+        patch_litellm_for_metadata_capture(outcomes)
+        patch_langchain_for_metadata_capture(outcomes)
     except Exception as exc:  # noqa: BLE001 - re-raised as a closed error
-        raise RuntimeError(
-            "traigent.testing could not install the LiteLLM/LangChain mock "
-            "interceptors; mock mode was NOT enabled. Fix the installation "
-            "problem and call enable_mock_mode_for_quickstart() again."
-        ) from exc
+        raise RuntimeError(_INSTALL_FAILED_MESSAGE) from exc
+    # The patch functions log (not raise) per-provider failures: a provider
+    # that failed to install would still reach the real API, so refuse to
+    # activate. Absent optional packages ("not-applicable") are not failures.
+    if any(state == "failed" for state in outcomes.values()):
+        raise RuntimeError(_INSTALL_FAILED_MESSAGE)
 
 
 def enable_mock_mode_for_quickstart() -> None:

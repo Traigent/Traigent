@@ -115,11 +115,11 @@ def test_enable_fails_closed_when_interceptor_install_fails_then_retry_works(
     calls = {"litellm": 0, "langchain": 0}
     real_lc = lc.patch_langchain_for_metadata_capture
 
-    def litellm_ok() -> bool:
+    def litellm_ok(outcomes: dict | None = None) -> bool:
         calls["litellm"] += 1
         return True
 
-    def langchain_boom() -> bool:
+    def langchain_boom(outcomes: dict | None = None) -> bool:
         calls["langchain"] += 1
         raise ValueError("secret-marker-xyz")  # partial install: litellm done
 
@@ -139,3 +139,39 @@ def test_enable_fails_closed_when_interceptor_install_fails_then_retry_works(
     traigent_testing.enable_mock_mode_for_quickstart()
     assert traigent_testing.is_mock_mode_enabled() is True
     assert calls["litellm"] == 2
+
+
+def test_enable_fails_closed_on_reported_failed_outcome(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Sol r5 F5: patch functions that log-and-continue report ``failed``;
+    activation must not succeed, and absent packages are not failures."""
+    import traigent.utils.langchain_interceptor as lc
+    import traigent.utils.litellm_interceptor as ll
+
+    traigent_testing.disable_mock_mode()
+    state = {"openai": "failed"}
+
+    def litellm_absent(outcomes: dict | None = None) -> bool:
+        outcomes["litellm"] = "not-applicable"
+        return False
+
+    def langchain_partial(outcomes: dict | None = None) -> bool:
+        outcomes["anthropic"] = "not-applicable"
+        outcomes["openai"] = state["openai"]
+        return False
+
+    monkeypatch.setattr(ll, "patch_litellm_for_metadata_capture", litellm_absent)
+    monkeypatch.setattr(lc, "patch_langchain_for_metadata_capture", langchain_partial)
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(RuntimeError) as excinfo:
+            traigent_testing.enable_mock_mode_for_quickstart()
+    assert "openai" not in str(excinfo.value)
+    assert traigent_testing.is_mock_mode_enabled() is False
+    assert "now ACTIVE" not in caplog.text
+
+    state["openai"] = "already-installed"
+    traigent_testing.enable_mock_mode_for_quickstart()
+    assert traigent_testing.is_mock_mode_enabled() is True
+    traigent_testing.disable_mock_mode()

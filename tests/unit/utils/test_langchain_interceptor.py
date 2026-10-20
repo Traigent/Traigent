@@ -794,6 +794,53 @@ class TestPatchLangChainForMetadataCapture:
         mock_logger.debug.assert_any_call("ChatAnthropic not available, skipping")
         mock_logger.debug.assert_any_call("ChatOpenAI not available, skipping")
 
+    def test_outcomes_report_absent_failed_and_already_installed(self) -> None:
+        """Sol r5 F5: per-provider outcome distinguishes failed from absent."""
+        import types
+
+        class _Model:
+            pass
+
+        class _Exploding:
+            def __getattr__(self, name: str) -> Any:
+                raise RuntimeError("boom")
+
+        fake_openai = types.ModuleType("langchain_openai")
+        fake_openai.ChatOpenAI = _Exploding()  # attribute access raises -> failed
+        outcomes: dict[str, str] = {}
+        with patch.dict(
+            "sys.modules",
+            {
+                "langchain_anthropic": None,
+                "langchain_openai": fake_openai,
+                "langchain_aws": None,
+            },
+        ):
+            patch_langchain_for_metadata_capture(outcomes)
+        assert outcomes == {
+            "anthropic": "not-applicable",
+            "openai": "failed",
+            "bedrock": "not-applicable",
+        }
+
+        fake_anthropic = types.ModuleType("langchain_anthropic")
+        fake_anthropic.ChatAnthropic = _Model
+        _Model.invoke = lambda self, *a, **k: None
+        outcomes = {}
+        with patch.dict(
+            "sys.modules",
+            {
+                "langchain_anthropic": fake_anthropic,
+                "langchain_openai": None,
+                "langchain_aws": None,
+            },
+        ):
+            patch_langchain_for_metadata_capture(outcomes)
+            assert outcomes["anthropic"] == "installed"
+            outcomes = {}
+            patch_langchain_for_metadata_capture(outcomes)
+            assert outcomes["anthropic"] == "already-installed"
+
     def test_clear_removes_storage_correctly(self) -> None:
         """Test that clear operation removes all stored responses."""
         # Store some responses

@@ -145,7 +145,9 @@ def _rebind_imported_names(original: Any, wrapper: Any) -> int:
     return rebound
 
 
-def patch_litellm_for_metadata_capture() -> bool:
+def patch_litellm_for_metadata_capture(
+    outcomes: dict[str, str] | None = None,
+) -> bool:
     """Monkey-patch LiteLLM to automatically capture response metadata.
 
     Patches litellm.completion and litellm.acompletion to intercept
@@ -153,14 +155,23 @@ def patch_litellm_for_metadata_capture() -> bool:
     Captured responses flow through the existing OpenAIResponseHandler
     since LiteLLM uses OpenAI-compatible response format.
 
+    Args:
+        outcomes: Optional dict filled with ``outcomes["litellm"]`` set to
+            ``installed`` / ``already-installed`` / ``not-applicable`` (package
+            absent) / ``failed`` (the fail-closed mock guard could not be
+            installed). When given, a guard failure is reported there instead
+            of raised, so activation code can fail closed itself.
+
     Returns:
         True if at least one function was patched, False otherwise.
     """
     patched_any = False
+    out: dict[str, str] = outcomes if outcomes is not None else {}
 
     try:
         import litellm
     except ImportError:
+        out["litellm"] = "not-applicable"
         logger.debug("LiteLLM not available, skipping interceptor")
         return False
 
@@ -168,7 +179,15 @@ def patch_litellm_for_metadata_capture() -> bool:
 
     # Safety net for references the rebinding cannot reach (closures, default
     # arguments, stored callables): fail closed inside LiteLLM itself.
-    _install_mock_guard(litellm)
+    try:
+        _install_mock_guard(litellm)
+    except Exception:
+        out["litellm"] = "failed"
+        from traigent.integrations.utils.mock_adapter import MockAdapter
+
+        if outcomes is None and MockAdapter.is_mock_enabled("litellm"):
+            raise
+        logger.warning("LiteLLM mock guard could not be installed")
 
     # Patch litellm.completion (sync)
     if not getattr(litellm, "_traigent_patched_completion", False):
@@ -286,6 +305,7 @@ def patch_litellm_for_metadata_capture() -> bool:
         if original is not None and _rebind_imported_names(original, wrapper):
             logger.debug("Rebound imported litellm.%s names to the interceptor", attr)
 
+    out.setdefault("litellm", "installed" if patched_any else "already-installed")
     if not patched_any:
         logger.debug("LiteLLM functions already patched, skipping")
 

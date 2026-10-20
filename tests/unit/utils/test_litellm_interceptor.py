@@ -546,3 +546,41 @@ class TestMockModeBoundaryGuard:
         li.patch_litellm_for_metadata_capture()
         assert litellm.utils.function_setup is first
         assert first._traigent_original is not first
+
+
+class TestInstallOutcomes:
+    """Sol r5 F5: install reports a per-provider outcome."""
+
+    def test_guard_unavailable_reports_failed_when_outcomes_requested(
+        self, litellm_module
+    ):
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
+
+        litellm_module.utils = types.SimpleNamespace()  # no function_setup
+        outcomes: dict[str, str] = {}
+        patch_litellm_for_metadata_capture(outcomes)
+        assert outcomes["litellm"] == "failed"
+
+    def test_installed_then_already_installed(self, litellm_module):
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
+
+        first: dict[str, str] = {}
+        second: dict[str, str] = {}
+        patch_litellm_for_metadata_capture(first)
+        patch_litellm_for_metadata_capture(second)
+        assert first["litellm"] == "installed"
+        assert second["litellm"] == "already-installed"
+
+    def test_absent_package_is_not_applicable(self):
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
+
+        outcomes: dict[str, str] = {}
+        with patch.dict("sys.modules", {"litellm": None}):
+            assert patch_litellm_for_metadata_capture(outcomes) is False
+        assert outcomes["litellm"] == "not-applicable"

@@ -615,14 +615,30 @@ def _patch_langchain_bedrock_model(model_cls: Any, class_name: str) -> bool:
     return patched_any
 
 
-def patch_langchain_for_metadata_capture() -> bool:
+INSTALL_INSTALLED = "installed"
+INSTALL_ALREADY = "already-installed"
+INSTALL_NOT_APPLICABLE = "not-applicable"
+INSTALL_FAILED = "failed"
+
+
+def patch_langchain_for_metadata_capture(
+    outcomes: dict[str, str] | None = None,
+) -> bool:
     """Monkey-patch LangChain to automatically capture response metadata.
 
-    This patches both ChatAnthropic and ChatOpenAI invoke methods to capture responses.
+    This patches ChatAnthropic, ChatOpenAI and the langchain_aws Bedrock
+    models to capture responses. Patch failures are logged, not raised, so
+    callers that must know (mock-mode activation) pass ``outcomes``: it is
+    filled with one of ``installed`` / ``already-installed`` /
+    ``not-applicable`` (package absent) / ``failed`` per provider key
+    (``anthropic``, ``openai``, ``bedrock``).
     """
+    out: dict[str, str] = outcomes if outcomes is not None else {}
     patched_any = False
+    before = False
 
     # Patch ChatAnthropic
+    before, patched_any = patched_any, False
     try:
         from langchain_anthropic import ChatAnthropic
 
@@ -719,12 +735,17 @@ def patch_langchain_for_metadata_capture() -> bool:
                     f"✅ Patched ChatAnthropic.{meth_name} for metadata capture"
                 )
 
+        out["anthropic"] = INSTALL_INSTALLED if patched_any else INSTALL_ALREADY
     except ImportError:
+        out["anthropic"] = INSTALL_NOT_APPLICABLE
         logger.debug("ChatAnthropic not available, skipping")
     except Exception as e:
+        out["anthropic"] = INSTALL_FAILED
         logger.error(f"Failed to patch ChatAnthropic: {e}")
+    patched_any = patched_any or before
 
     # Patch ChatOpenAI
+    before, patched_any = patched_any, False
     try:
         from langchain_openai import ChatOpenAI
 
@@ -813,12 +834,17 @@ def patch_langchain_for_metadata_capture() -> bool:
                 setattr(ChatOpenAI, flag, True)
                 logger.info(f"✅ Patched ChatOpenAI.{meth_name} for metadata capture")
 
+        out["openai"] = INSTALL_INSTALLED if patched_any else INSTALL_ALREADY
     except ImportError:
+        out["openai"] = INSTALL_NOT_APPLICABLE
         logger.debug("ChatOpenAI not available, skipping")
     except Exception as e:
+        out["openai"] = INSTALL_FAILED
         logger.error(f"Failed to patch ChatOpenAI: {e}")
+    patched_any = patched_any or before
 
     # Patch langchain_aws Bedrock chat models
+    before, patched_any = patched_any, False
     try:
         import langchain_aws
 
@@ -830,10 +856,14 @@ def patch_langchain_for_metadata_capture() -> bool:
             if _patch_langchain_bedrock_model(model_cls, f"langchain_aws.{class_name}"):
                 patched_any = True
 
+        out["bedrock"] = INSTALL_INSTALLED if patched_any else INSTALL_ALREADY
     except ImportError:
+        out["bedrock"] = INSTALL_NOT_APPLICABLE
         logger.debug("langchain_aws not available, skipping Bedrock")
     except Exception as e:
+        out["bedrock"] = INSTALL_FAILED
         logger.error(f"Failed to patch langchain_aws Bedrock models: {e}")
+    patched_any = patched_any or before
 
     if not patched_any:
         logger.debug("No LangChain models could be patched for metadata capture")
