@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import litellm
@@ -29,10 +30,34 @@ PATTERN = re.compile(r"gpt-4o(?![\w.-]*(?:audio|search))")
 GPT35_PATTERN = re.compile(r"gpt-3\.5")
 
 
+def _guarded_files(root: str) -> list[Path]:
+    """Files under ``root`` that the guard should scan.
+
+    Uses git-tracked files only, so untracked runtime artifacts (for example
+    ``.traigent/sessions/**`` written by running an example) are not scanned.
+    Falls back to a filesystem walk that skips ``.traigent`` directories when
+    git is unavailable.
+    """
+    try:
+        listing = subprocess.run(
+            ["git", "ls-files", "-z", "--", root],
+            cwd=REPO,
+            capture_output=True,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return [
+            p
+            for p in (REPO / root).rglob("*")
+            if ".traigent" not in p.relative_to(REPO).parts
+        ]
+    return [REPO / rel for rel in listing.decode("utf-8").split("\0") if rel]
+
+
 def test_examples_and_manifest_do_not_use_gpt_4o_family() -> None:
     offenders: list[str] = []
     for root in SCAN_ROOTS:
-        for path in (REPO / root).rglob("*"):
+        for path in _guarded_files(root):
             if (
                 not path.is_file()
                 or path.suffix not in SUFFIXES
@@ -53,7 +78,7 @@ def test_examples_walkthroughs_and_docs_do_not_use_gpt_3_5() -> None:
         (r, DOCS_SUFFIXES) for r in DOCS_ROOTS
     ]
     for root, suffixes in roots:
-        for path in (REPO / root).rglob("*"):
+        for path in _guarded_files(root):
             if (
                 not path.is_file()
                 or path.suffix not in suffixes
@@ -90,7 +115,7 @@ def test_guarded_surfaces_mention_no_model_with_announced_shutdown() -> None:
     files = [REPO / "README.md"]
     for root, suffixes in roots:
         files += [
-            p for p in (REPO / root).rglob("*") if p.is_file() and p.suffix in suffixes
+            p for p in _guarded_files(root) if p.is_file() and p.suffix in suffixes
         ]
     offenders: dict[str, set[str]] = {}
     for path in files:
