@@ -234,3 +234,31 @@ def test_enable_installs_litellm_and_langchain_interceptors() -> None:
 
     litellm_patch.assert_called_once()
     langchain_patch.assert_called_once()
+
+
+def test_env_var_path_warns_raw_clients_not_intercepted_once(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#2418: TRAIGENT_MOCK_LLM=true gets the same once-only WARNING, and it
+    does not double-emit when the in-code path also runs."""
+    import logging
+
+    from traigent.utils import env_config
+
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    monkeypatch.setenv("_TRAIGENT_QUICKSTART_BOOTSTRAP", "1")
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    with caplog.at_level(logging.WARNING, logger="traigent.testing"):
+        env_config._check_mock_llm_prod_guard()
+        env_config._check_mock_llm_prod_guard()
+
+        def notes() -> list[logging.LogRecord]:
+            return [
+                r
+                for r in caplog.records
+                if "NOT intercepted" in r.getMessage() and r.levelno == logging.WARNING
+            ]
+
+        assert len(notes()) == 1  # emitted by the env-var path alone
+        traigent_testing.enable_mock_mode_for_quickstart()
+        assert len(notes()) == 1  # in-code path does not double-emit

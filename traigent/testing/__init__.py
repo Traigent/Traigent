@@ -62,6 +62,24 @@ _logger = logging.getLogger(__name__)
 _lock = threading.Lock()
 _enabled = False
 _activation_logged = False
+_scope_logged = False
+
+
+def log_raw_client_scope_caveat() -> None:
+    """Warn once per process that raw provider clients are not intercepted.
+
+    Shared by the in-code and ``TRAIGENT_MOCK_LLM`` activation paths (#2418).
+    """
+    global _scope_logged
+    if _scope_logged:
+        return
+    _scope_logged = True
+    _logger.warning(
+        "[traigent.testing] mock interception scope: LiteLLM and "
+        "LangChain calls are mocked. Raw openai.chat.completions.create(...) "
+        "and anthropic.messages.create(...) calls are NOT intercepted and "
+        "can hit the real provider API (billed if a key is set)."
+    )
 
 
 def _install_mock_interceptors() -> None:
@@ -140,12 +158,7 @@ def enable_mock_mode_for_quickstart() -> None:
                 "run in production. Enabled via "
                 "traigent.testing.enable_mock_mode_for_quickstart()."
             )
-            _logger.warning(
-                "[traigent.testing] mock interception scope: LiteLLM and "
-                "LangChain calls are mocked. Raw openai.chat.completions.create(...) "
-                "and anthropic.messages.create(...) calls are NOT intercepted and "
-                "can hit the real provider API (billed if a key is set)."
-            )
+        log_raw_client_scope_caveat()
 
 
 def disable_mock_mode() -> None:
@@ -173,12 +186,13 @@ def disable_mock_mode() -> None:
     (if set) is a separate mechanism — unset it yourself if your process
     also relies on that path.
     """
-    global _enabled, _activation_logged
+    global _enabled, _activation_logged, _scope_logged
     with _lock:
         if not _enabled:
             return
         _enabled = False
         _activation_logged = False
+        _scope_logged = False
         _logger.info(
             "[traigent.testing] mock mode is now INACTIVE — LLM calls will "
             "no longer be intercepted and will hit real providers again. "
@@ -199,7 +213,8 @@ def is_mock_mode_enabled() -> bool:
 
 def _reset_for_tests() -> None:
     """Reset the flag. Tests only — not part of the public API."""
-    global _enabled, _activation_logged
+    global _enabled, _activation_logged, _scope_logged
     with _lock:
         _enabled = False
         _activation_logged = False
+        _scope_logged = False

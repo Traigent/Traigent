@@ -79,6 +79,14 @@ def _check_mock_llm_prod_guard() -> None:
             "ENVIRONMENT!=production. For programmatic mock activation "
             "use traigent.testing.enable_mock_mode_for_quickstart()."
         )
+    # Raw openai/anthropic clients are not mocked on this path either (#2418);
+    # the helper is once-guarded and shared with the in-code activation path.
+    try:
+        from traigent.testing import log_raw_client_scope_caveat
+
+        log_raw_client_scope_caveat()
+    except Exception:  # noqa: BLE001 - a log line must never break import
+        pass
     # Suppress the user-facing deprecation warning when the env var was
     # written by the quickstart bootstrap in ``traigent/__init__.py``
     # (the user IS using the recommended in-code path; the env var is
