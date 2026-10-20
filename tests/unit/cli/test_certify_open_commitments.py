@@ -275,6 +275,89 @@ def test_verify_refuses_group_readable_bundle(
     assert "MATCH" not in result.output
 
 
+def test_verify_refuses_non_0600_owner_only_bundle(
+    tmp_path: Path, stub_record_verification: None
+) -> None:
+    record = _record()
+    bundle = _bundle_file(tmp_path, _sidecar(record), fp=FP_BOTH)
+    os.chmod(bundle, 0o400)
+    result = _verify(tmp_path, record, bundle)
+    assert result.exit_code == 1
+    assert "BUNDLE_PERMISSIONS" in result.output
+
+
+def test_verify_refuses_bundle_owned_by_another_uid(
+    tmp_path: Path, stub_record_verification: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    record = _record()
+    bundle = _bundle_file(tmp_path, _sidecar(record), fp=FP_BOTH)
+    monkeypatch.setattr(os, "geteuid", lambda: os.stat(bundle).st_uid + 1)
+    result = _verify(tmp_path, record, bundle)
+    assert result.exit_code == 1
+    assert "BUNDLE_PERMISSIONS" in result.output
+    assert "MATCH" not in result.output
+
+
+def test_invalid_record_result_without_raising_attempts_no_opening(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = cc._load_certification_schema()
+    patched = SimpleNamespace(**vars(real))
+    patched.verify_process_record_certificate = lambda *_a, **_k: SimpleNamespace(
+        valid=False, code="SIGNATURE_INVALID"
+    )
+    monkeypatch.setattr(cc, "_load_certification_schema", lambda: patched)
+    called: list[str] = []
+    monkeypatch.setattr(
+        cl, "verify_and_open_commitment", lambda *a, **k: called.append("open")
+    )
+    monkeypatch.setattr(
+        cl, "verify_commitment_linkage", lambda *a, **k: called.append("verify")
+    )
+    record = _record()
+    result = _verify(
+        tmp_path, record, _bundle_file(tmp_path, _sidecar(record), fp=FP_BOTH)
+    )
+    assert result.exit_code != 0
+    assert called == []
+    assert "COMMITMENT_OPENED" not in result.output
+
+
+def test_open_commitments_refused_off_posix_before_reading_anything(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from traigent.cloud import process_record_linkage as prl
+
+    monkeypatch.setattr(prl, "_is_posix", lambda: False)
+    monkeypatch.setattr(
+        cc, "_read_json", lambda *a, **k: pytest.fail("read before platform check")
+    )
+    record = _record()
+    result = _verify(
+        tmp_path, record, _bundle_file(tmp_path, _sidecar(record), fp=FP_BOTH)
+    )
+    assert result.exit_code == 1
+    assert "LINKAGE_UNSUPPORTED_PLATFORM" in result.output
+
+
+def test_finalize_link_commitments_refused_off_posix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from traigent.cloud import process_record_linkage as prl
+
+    monkeypatch.setattr(prl, "_is_posix", lambda: False)
+    backend = _FakeBackend({"success": True, "data": {}})
+    result = _finalize(
+        tmp_path,
+        monkeypatch,
+        backend,
+        "--link-commitments",
+    )
+    assert result.exit_code == 1
+    assert "LINKAGE_UNSUPPORTED_PLATFORM" in result.output
+    assert backend.sent == [] and not (tmp_path / "b.json").exists()
+
+
 def test_malformed_bundle_on_verify_echoes_no_content(
     tmp_path: Path, stub_record_verification: None
 ) -> None:

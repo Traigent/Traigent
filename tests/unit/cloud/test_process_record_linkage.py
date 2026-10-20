@@ -378,24 +378,40 @@ def _chain_text(exc: BaseException) -> str:
     return "".join(seen) + "".join(traceback.format_exception(exc)) + repr(exc)
 
 
+@pytest.mark.parametrize("loser_sends", [True, False])
 def test_concurrent_first_init_sends_one_set_of_openings(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, loser_sends: bool
 ) -> None:
+    """Schedule-independent: both outcomes (loser sends / loser returns cached) are forced."""
     import threading
 
     from traigent.cloud import process_record_linkage as prl
 
     path = tmp_path / "b.json"
-    barrier = threading.Barrier(2, timeout=10)
+    gen_barrier = threading.Barrier(2, timeout=10)
+    send_barrier = threading.Barrier(2, timeout=10)
+    winner_done = threading.Event()
     real = prl.generate_openings
 
     def racing() -> dict[str, bytes]:
         openings = real()
-        barrier.wait()  # both callers hold distinct openings before either publishes
+        gen_barrier.wait()  # both callers hold distinct openings before either publishes
+        if threading.current_thread().name == "t1" and not loser_sends:
+            # t1 loses on purpose: t0 publishes AND stores its result first.
+            assert winner_done.wait(timeout=10)
         return openings
 
     monkeypatch.setattr(prl, "generate_openings", racing)
-    clients = [FakeClient(_ok()), FakeClient(_ok())]
+
+    class SyncClient(FakeClient):
+        def finalize_process_record_sync(
+            self, sid: str, payload: dict[str, Any]
+        ) -> dict[str, Any]:
+            if loser_sends:
+                send_barrier.wait()  # both callers are inside the transport together
+            return super().finalize_process_record_sync(sid, payload)
+
+    clients = [SyncClient(_ok()), SyncClient(_ok())]
     errors: list[BaseException] = []
 
     def run(client: FakeClient) -> None:
@@ -403,20 +419,175 @@ def test_concurrent_first_init_sends_one_set_of_openings(
             finalize_process_record(
                 client, SESSION, PAYLOAD, link_commitments=True, bundle_path=path
             )
+            if threading.current_thread().name == "t0":
+                winner_done.set()
         except BaseException as exc:  # noqa: BLE001
             errors.append(exc)
 
-    threads = [threading.Thread(target=run, args=(c,)) for c in clients]
+    threads = [
+        threading.Thread(target=run, args=(c,), name=f"t{i}")
+        for i, c in enumerate(clients)
+    ]
     for t in threads:
         t.start()
     for t in threads:
         t.join(timeout=20)
     assert not errors
-    assert len(clients[0].sent) == 1 and len(clients[1].sent) == 1
-    assert clients[0].sent[0]["openings"] == clients[1].sent[0]["openings"]
-    stored = json.loads(path.read_text())["openings"]
-    assert stored == clients[0].sent[0]["openings"]
+    sent = [p for c in clients for p in c.sent]
+    assert len(sent) == (2 if loser_sends else 1)
+    distinct = {json.dumps(p["openings"], sort_keys=True) for p in sent}
+    assert len(distinct) == 1  # only ONE set of openings was ever sent
+    assert json.loads(path.read_text())["openings"] == sent[0]["openings"]
     assert not [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
+
+
+def test_loser_fsyncs_directory_before_its_send_while_winner_is_paused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    from traigent.cloud import process_record_linkage as prl
+
+    path = tmp_path / "b.json"
+    events: list[tuple[str, str]] = []
+    linked = threading.Event()
+    release_winner = threading.Event()
+    real_link, real_fsync = os.link, os.fsync
+
+    def pausing_link(src: Any, dst: Any) -> None:
+        real_link(src, dst)
+        if threading.current_thread().name == "winner":
+            linked.set()
+            assert release_winner.wait(timeout=10)  # paused right after os.link
+
+    def recording_fsync(fd: int) -> None:
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            events.append((threading.current_thread().name, "fsync_dir"))
+        real_fsync(fd)
+
+    monkeypatch.setattr(prl.os, "link", pausing_link)
+    monkeypatch.setattr(prl.os, "fsync", recording_fsync)
+
+    class RecClient(FakeClient):
+        def finalize_process_record_sync(
+            self, sid: str, payload: dict[str, Any]
+        ) -> dict[str, Any]:
+            events.append((threading.current_thread().name, "send"))
+            return super().finalize_process_record_sync(sid, payload)
+
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            finalize_process_record(
+                RecClient(_ok()),
+                SESSION,
+                PAYLOAD,
+                link_commitments=True,
+                bundle_path=path,
+            )
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    winner = threading.Thread(target=run, name="winner")
+    winner.start()
+    assert linked.wait(timeout=10)
+    loser = threading.Thread(target=run, name="loser")
+    loser.start()
+    loser.join(timeout=20)  # loser finishes while the winner is still paused
+    assert not loser.is_alive()
+    release_winner.set()
+    winner.join(timeout=20)
+    assert not errors
+    loser_events = [e for who, e in events if who == "loser"]
+    assert "fsync_dir" in loser_events and "send" in loser_events
+    assert loser_events.index("fsync_dir") < loser_events.index("send")
+    assert ("winner", "fsync_dir") not in events[: events.index(("loser", "send"))]
+
+
+def test_link_commitments_refused_off_posix_before_any_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from traigent.cloud import process_record_linkage as prl
+
+    monkeypatch.setattr(prl, "_is_posix", lambda: False)  # == os.name != "posix"
+    monkeypatch.setattr(
+        prl, "generate_openings", lambda: pytest.fail("secret generated")
+    )
+    client = FakeClient()
+    with pytest.raises(CommitmentLinkageClientError) as err:
+        finalize_process_record(
+            client,
+            SESSION,
+            PAYLOAD,
+            link_commitments=True,
+            bundle_path=tmp_path / "b.json",
+        )
+    assert err.value.code == "LINKAGE_UNSUPPORTED_PLATFORM"
+    assert client.sent == [] and not (tmp_path / "b.json").exists()
+
+
+def test_bundle_owned_by_another_uid_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "b.json"
+    CommitmentBundle.create(path, SESSION, with_openings=True)
+    monkeypatch.setattr(os, "geteuid", lambda: os.stat(path).st_uid + 1)
+    with pytest.raises(CommitmentLinkageClientError) as err:
+        CommitmentBundle.load(path)
+    assert err.value.code == "BUNDLE_PERMISSIONS"
+
+
+@pytest.mark.parametrize("mode", [0o400, 0o700, 0o640, 0o644])
+def test_bundle_mode_must_be_exactly_0600(tmp_path: Path, mode: int) -> None:
+    path = tmp_path / "b.json"
+    CommitmentBundle.create(path, SESSION, with_openings=True)
+    os.chmod(path, mode)
+    with pytest.raises(CommitmentLinkageClientError) as err:
+        CommitmentBundle.load(path)
+    assert err.value.code == "BUNDLE_PERMISSIONS"
+
+
+def test_temp_file_removed_when_link_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from traigent.cloud import process_record_linkage as prl
+
+    def boom(src: Any, dst: Any) -> None:
+        raise OSError("no hard links here")
+
+    monkeypatch.setattr(prl.os, "link", boom)
+    path = tmp_path / "b.json"
+    client = FakeClient()
+    with pytest.raises(CommitmentLinkageClientError) as err:
+        finalize_process_record(
+            client, SESSION, PAYLOAD, link_commitments=True, bundle_path=path
+        )
+    assert err.value.code == "BUNDLE_WRITE_FAILED"
+    assert client.sent == []  # fail closed: nothing sent
+    assert list(tmp_path.iterdir()) == []  # no bundle, no leftover temp
+
+
+def test_leftover_temp_file_is_never_picked_up_as_a_bundle(tmp_path: Path) -> None:
+    path = tmp_path / "b.json"
+    leftover = tmp_path / ".b.json.deadbeef0000.tmp"
+    leftover.write_text(
+        json.dumps(
+            {
+                "schema": BUNDLE_SCHEMA,
+                "build_session_row_id": SESSION,
+                "openings": {"dataset": "LEFTOVER", "config_space": "LEFTOVER"},
+            }
+        )
+    )
+    os.chmod(leftover, 0o600)
+    client = FakeClient(_ok())
+    finalize_process_record(
+        client, SESSION, PAYLOAD, link_commitments=True, bundle_path=path
+    )
+    assert "LEFTOVER" not in json.dumps(client.sent)
+    assert leftover.exists()  # untouched
+    assert json.loads(path.read_text())["openings"] == client.sent[0]["openings"]
 
 
 def test_exclusive_create_never_replaces_an_existing_bundle(tmp_path: Path) -> None:

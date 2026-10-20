@@ -69,6 +69,10 @@ ERROR_TEXT: dict[str, str] = {
     "BUNDLE_EXISTS": "the bundle file already exists",
     "BUNDLE_WRITE_FAILED": "the bundle file could not be written; nothing was sent",
     "BUNDLE_REQUIRED": "a bundle path is required",
+    "LINKAGE_UNSUPPORTED_PLATFORM": (
+        "commitment linking needs POSIX file permissions and is not supported "
+        "on this platform yet"
+    ),
     "REQUEST_HAS_OPENINGS": "the request payload must not carry openings",
     "BAD_SESSION_ID": "the build session id is not a well-formed row id",
     "LINKAGE_ABSENT": "the backend returned a record without a commitment linkage",
@@ -113,6 +117,28 @@ class ProcessRecordTransport(Protocol):
     ) -> dict[str, Any]: ...
 
     def get_process_record_sync(self, build_session_row_id: str) -> dict[str, Any]: ...
+
+
+def _is_posix() -> bool:
+    return os.name == "posix"
+
+
+def require_posix_platform() -> None:
+    """Refuse commitment linking off POSIX, before any secret is generated or read.
+
+    The bundle relies on POSIX owner/mode checks and directory fsync; there is
+    no equivalent guarantee on other platforms, so linking is restricted.
+    """
+    if not _is_posix():
+        raise CommitmentLinkageClientError("LINKAGE_UNSUPPORTED_PLATFORM")
+
+
+def _fsync_dir(directory: Path) -> None:
+    dir_fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
 
 
 def generate_openings() -> dict[str, bytes]:
@@ -193,6 +219,25 @@ class CommitmentBundle:
     def save(self) -> None:
         _atomic_write_private(self.path, self._data)
 
+    def ensure_durable(self) -> None:
+        """fsync the bundle file and its directory entry; call before any send.
+
+        A caller that lost the creation race may see the winner's link before
+        the winner has flushed the directory, so every sender does this itself.
+        """
+        failed = False
+        try:
+            fd = os.open(self.path, os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            _fsync_dir(self.path.parent)
+        except OSError:
+            failed = True
+        if failed:
+            raise CommitmentLinkageClientError("BUNDLE_WRITE_FAILED")
+
     @classmethod
     def create(
         cls, path: Path, build_session_row_id: str, *, with_openings: bool
@@ -227,7 +272,7 @@ class CommitmentBundle:
 
 
 def read_private_json(path: Path) -> dict[str, Any]:
-    """Read a bundle file that must be private (no group/other bits, owned by us).
+    """Read a bundle file that must be private (exactly mode 0600, owned by us).
 
     Every failure is a closed ``CommitmentLinkageClientError`` raised OUTSIDE
     any ``except`` block: no ``__cause__``/``__context__`` survives, so a
@@ -240,7 +285,7 @@ def read_private_json(path: Path) -> dict[str, Any]:
     except OSError:
         code = "BUNDLE_CORRUPT"
     else:
-        if stat.S_IMODE(st.st_mode) & 0o077 or st.st_uid != os.geteuid():
+        if stat.S_IMODE(st.st_mode) != 0o600 or st.st_uid != os.geteuid():
             code = "BUNDLE_PERMISSIONS"
         else:
             try:
@@ -281,11 +326,7 @@ def _atomic_write_private(
             tmp.unlink()
         else:
             os.replace(tmp, path)
-        dir_fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
+        _fsync_dir(path.parent)
     except FileExistsError:
         exists = True
     except OSError:
@@ -333,6 +374,8 @@ def finalize_process_record(
         raise CommitmentLinkageClientError("BAD_SESSION_ID")
     if "openings" in request_payload:
         raise CommitmentLinkageClientError("REQUEST_HAS_OPENINGS")
+    if link_commitments:
+        require_posix_platform()
     if bundle_path is None:
         if link_commitments:
             raise CommitmentLinkageClientError("BUNDLE_REQUIRED")
@@ -368,6 +411,8 @@ def finalize_process_record(
             "commitment_linkage": bundle.commitment_linkage,
         }
 
+    # Winner and loser alike: the bundle must be durable before anything is sent.
+    bundle.ensure_durable()
     return _send(
         client,
         build_session_row_id,

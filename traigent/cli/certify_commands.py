@@ -563,7 +563,8 @@ def certify() -> None:
         "the process record verifies, open the dataset and config_space "
         "commitments in its sidecar and print COMMITMENT_OPENED_MATCH, "
         "_MISMATCH or COMMITMENT_UNAVAILABLE per role (MISMATCH exits 1). "
-        "Only valid with --kind process-record."
+        "Only valid with --kind process-record. POSIX-only for now: on other "
+        "platforms it refuses with LINKAGE_UNSUPPORTED_PLATFORM."
     ),
 )
 @click.option(
@@ -585,6 +586,14 @@ def verify(
     as_json: bool,
 ) -> None:
     """Verify BUNDLE using independently supplied context and public anchor."""
+    if open_commitments is not None:
+        from traigent.cloud import process_record_linkage as _prl
+
+        try:
+            _prl.require_posix_platform()
+        except _prl.CommitmentLinkageClientError as err:
+            click.echo(err.code)
+            raise click.exceptions.Exit(1) from None
     schema = _load_certification_schema()
     bundle_payload = _read_json(bundle, "bundle")
     context_payload = _read_json(context_path, "context")
@@ -832,7 +841,8 @@ def _make_backend_client() -> Any:
     help=(
         "Opt in: also request the commitment-linkage sidecar for the dataset "
         "and config_space declarations. Fresh openings are written to --bundle "
-        "BEFORE the request is sent and reused on retry. Default off."
+        "BEFORE the request is sent and reused on retry. Default off. POSIX-only "
+        "for now: on other platforms it refuses with LINKAGE_UNSUPPORTED_PLATFORM."
     ),
 )
 @click.option(
@@ -855,6 +865,14 @@ def finalize(
         finalize_process_record,
     )
 
+    if link_commitments:
+        from traigent.cloud.process_record_linkage import require_posix_platform
+
+        try:
+            require_posix_platform()
+        except CommitmentLinkageClientError as err:
+            click.echo(f"FINALIZE_REFUSED {err.code}", err=True)
+            raise click.exceptions.Exit(1) from None
     digests: dict[str, str] = {}
     for item in fp_digest:
         role, sep, value = item.partition("=")
