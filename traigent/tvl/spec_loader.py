@@ -1055,6 +1055,10 @@ def load_tvl_spec(
     Supports both legacy format (configuration_space) and TVL 0.9 format (tvars).
     Auto-detects format based on presence of 'tvars' vs 'configuration_space'.
 
+    Float ranges: a TVAR range is continuous unless it declares ``resolution``,
+    in which case it becomes the discrete grid ``min, min+resolution, ...`` (never
+    above ``max``). This differs from the official TVL default step of 0.001.
+
     Args:
         spec_path: Path to the TVL spec file.
         environment: Optional environment overlay key to apply.

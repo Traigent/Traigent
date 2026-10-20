@@ -82,13 +82,26 @@ class DomainSpec:
         """Convert to Traigent configuration space format.
 
         Returns:
-            List of values for categorical types, or (min, max) tuple for numeric.
+            List of values for categorical types, or (min, max) tuple for
+            numeric. A float range that declares ``resolution`` returns the
+            discrete grid ``min, min+resolution, ...`` (never above ``max``);
+            without ``resolution`` it stays the continuous ``(min, max)``.
         """
         if self.kind in ("enum", "set"):
             return self.values or []
         if self.kind == "range":
             if self.range is None:
                 raise ValueError("Range domain has no range defined")
+            lo, hi = self.range
+            if (
+                self.resolution is not None
+                and isinstance(lo, float)
+                and isinstance(hi, float)
+            ):
+                step = float(self.resolution)
+                if not math.isfinite(step) or step <= 0 or hi < lo:
+                    raise ValueError("Range domain has invalid resolution or bounds")
+                return _float_grid(lo, hi, step, "Range domain")
             return self.range
         if self.kind == "registry":
             raise ValueError(
@@ -796,6 +809,19 @@ def _parse_range_domain(
 _MAX_TUPLE_PRODUCT = 10_000  # guard against combinatorial explosion
 
 
+def _float_grid(lo: float, hi: float, step: float, label: str) -> list[float]:
+    """Enumerate ``lo, lo+step, ...`` up to ``hi`` (never exceeding it).
+
+    The upper bound is emitted only when it lies on the grid (within float
+    tolerance). Values are rounded to suppress accumulated float error.
+    """
+    # Floor with a tolerance for float error.
+    n_steps = int(math.floor((hi - lo) / step + 1e-9))
+    if n_steps + 1 > _MAX_TUPLE_PRODUCT:
+        raise ValueError(f"{label} range enumerates too many grid points")
+    return [min(round(lo + i * step, 12), hi) for i in range(n_steps + 1)]
+
+
 def _tuple_component_values(name: str, idx: int, comp: Any) -> list[Any]:
     """Resolve one canonical tuple component into its finite domain values."""
     label = f"TVAR '{name}' tuple component {idx}"
@@ -834,14 +860,7 @@ def _tuple_component_values(name: str, idx: int, comp: Any) -> list[Any]:
                 raise ValueError(f"{label} resolution must be a positive number")
             if hi_raw < lo_raw:
                 raise ValueError(f"{label} range min must not exceed max")
-            step = float(resolution)
-            lo_f, hi_f = float(lo_raw), float(hi_raw)
-            # Floor with a tolerance for float error; the upper bound is emitted
-            # only when it lies on the grid and is never exceeded.
-            n_steps = int(math.floor((hi_f - lo_f) / step + 1e-9))
-            if n_steps + 1 > _MAX_TUPLE_PRODUCT:
-                raise ValueError(f"{label} range enumerates too many grid points")
-            vals = [min(round(lo_f + i * step, 12), hi_f) for i in range(n_steps + 1)]
+            vals = _float_grid(float(lo_raw), float(hi_raw), float(resolution), label)
             if (
                 isinstance(lo_raw, int)
                 and isinstance(hi_raw, int)

@@ -136,6 +136,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **TVL float ranges that declare `resolution` are now a grid (#1612).** A
+  float `range` with a positive `resolution` loads as the discrete values
+  `min, min+resolution, ...` (never above `max`); without `resolution` it stays
+  continuous (unlike the official TVL default step of 0.001). Grids over 10,000
+  points are rejected.
 - **`auto_override_frameworks=True` was a silent no-op for sync functions on
   0.27.0 and earlier (#2420).** The override gate is a `ContextVar`, and the
   sync evaluator lane ran the function in a worker thread without the caller's
