@@ -86,6 +86,31 @@ def inside_instrumented_provider_call() -> bool:
     return _instrumented_call.get()
 
 
+_capture_owned: ContextVar[bool] = ContextVar(
+    "traigent_langchain_capture_owned", default=False
+)
+
+
+@contextmanager
+def _capture_ownership() -> Iterator[bool]:
+    """Yield True when this wrapper is the outermost capturer of the call.
+
+    LangChain methods call each other (``astream`` falls back to ``ainvoke``
+    for ``disable_streaming`` models; ``stream`` to ``invoke``). Each of our
+    wrappers records the response it sees, so a nested pair would record one
+    provider call twice and double its tokens and cost. The outermost wrapper
+    owns the capture; wrappers entered while an owner is active skip theirs.
+    """
+    if _capture_owned.get():
+        yield False
+        return
+    token = _capture_owned.set(True)
+    try:
+        yield True
+    finally:
+        _capture_owned.reset(token)
+
+
 class capture_scope:
     """Give the enclosing trial its own capture buffer (Traigent#2387).
 
@@ -392,10 +417,21 @@ def _create_stream_wrapper(original_meth: Any, provider: str = "unknown") -> Any
             return
         start_time = time.perf_counter()
         last = None
-        for chunk in original_meth(self, *args, **kwargs):
+        owns = not _capture_owned.get()
+        iterator = iter(original_meth(self, *args, **kwargs))
+        while True:
+            # Own the capture only while the wrapped stream runs (not across
+            # our yields), so a stream->invoke fallback is captured once.
+            token = _capture_owned.set(True)
+            try:
+                chunk = next(iterator)
+            except StopIteration:
+                break
+            finally:
+                _capture_owned.reset(token)
             last = chunk
             yield chunk
-        if last is not None:
+        if last is not None and owns:
             response_time_ms = (time.perf_counter() - start_time) * 1000
             if not hasattr(last, "response_metadata"):
                 last.response_metadata = {}
@@ -418,10 +454,21 @@ def _create_astream_wrapper(original_meth: Any, provider: str = "unknown") -> An
             return
         start_time = time.perf_counter()
         last = None
-        async for chunk in original_meth(self, *args, **kwargs):
+        owns = not _capture_owned.get()
+        iterator = original_meth(self, *args, **kwargs).__aiter__()
+        while True:
+            # Own the capture only while the wrapped stream runs (not across
+            # our yields), so an astream->ainvoke fallback is captured once.
+            token = _capture_owned.set(True)
+            try:
+                chunk = await iterator.__anext__()
+            except StopAsyncIteration:
+                break
+            finally:
+                _capture_owned.reset(token)
             last = chunk
             yield chunk
-        if last is not None:
+        if last is not None and owns:
             response_time_ms = (time.perf_counter() - start_time) * 1000
             if not hasattr(last, "response_metadata"):
                 last.response_metadata = {}
@@ -446,15 +493,16 @@ def _create_ainvoke_wrapper(original_meth: Any, provider: str = "unknown") -> An
             capture_langchain_response(response)
             return response
         start_time = time.perf_counter()
-        with instrumented_provider_call():
+        with _capture_ownership() as owns, instrumented_provider_call():
             response = await original_meth(self, *args, **kwargs)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         if not hasattr(response, "response_metadata"):
             response.response_metadata = {}
         response.response_metadata["response_time_ms"] = response_time_ms
-        capture_observed_response(
-            response, provider=provider, requested_model=requested_model_of(self)
-        )
+        if owns:
+            capture_observed_response(
+                response, provider=provider, requested_model=requested_model_of(self)
+            )
         return response
 
     return ainvoke_wrapper
@@ -512,16 +560,20 @@ def _patch_langchain_bedrock_model(model_cls: Any, class_name: str) -> bool:
                 return response
 
             start_time = time.perf_counter()
-            response = original_invoke(self, *args, **kwargs)
+            with _capture_ownership() as owns:
+                response = original_invoke(self, *args, **kwargs)
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
             if not hasattr(response, "response_metadata"):
                 response.response_metadata = {}
             response.response_metadata["response_time_ms"] = response_time_ms
 
-            capture_observed_response(
-                response, provider="bedrock", requested_model=requested_model_of(self)
-            )
+            if owns:
+                capture_observed_response(
+                    response,
+                    provider="bedrock",
+                    requested_model=requested_model_of(self),
+                )
             logger.debug(
                 "Captured %s invoke usage: %s, response_time_ms: %.2f",
                 class_name,
@@ -611,7 +663,8 @@ def patch_langchain_for_metadata_capture() -> bool:
                     return response
 
                 start_time = time.perf_counter()
-                response = original_invoke(self, *args, **kwargs)
+                with _capture_ownership() as owns:
+                    response = original_invoke(self, *args, **kwargs)
                 response_time_ms = (time.perf_counter() - start_time) * 1000
 
                 # Inject timing into response metadata
@@ -619,11 +672,12 @@ def patch_langchain_for_metadata_capture() -> bool:
                     response.response_metadata = {}
                 response.response_metadata["response_time_ms"] = response_time_ms
 
-                capture_observed_response(
-                    response,
-                    provider="anthropic",
-                    requested_model=requested_model_of(self),
-                )
+                if owns:
+                    capture_observed_response(
+                        response,
+                        provider="anthropic",
+                        requested_model=requested_model_of(self),
+                    )
                 logger.debug(
                     f"Captured ChatAnthropic invoke usage: {getattr(response, 'usage_metadata', None)}, "
                     f"response_time_ms: {response_time_ms:.2f}"
@@ -709,7 +763,7 @@ def patch_langchain_for_metadata_capture() -> bool:
                     return response
 
                 start_time = time.perf_counter()
-                with instrumented_provider_call():
+                with _capture_ownership() as owns, instrumented_provider_call():
                     response = original_invoke_openai(self, *args, **kwargs)
                 response_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -718,11 +772,12 @@ def patch_langchain_for_metadata_capture() -> bool:
                     response.response_metadata = {}
                 response.response_metadata["response_time_ms"] = response_time_ms
 
-                capture_observed_response(
-                    response,
-                    provider="openai",
-                    requested_model=requested_model_of(self),
-                )
+                if owns:
+                    capture_observed_response(
+                        response,
+                        provider="openai",
+                        requested_model=requested_model_of(self),
+                    )
                 logger.debug(
                     f"Captured ChatOpenAI invoke usage: {getattr(response, 'usage_metadata', None)}, "
                     f"response_time_ms: {response_time_ms:.2f}"

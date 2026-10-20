@@ -106,3 +106,83 @@ def test_async_calls_are_cost_captured_when_not_mocked(
 def test_real_ainvoke_attribute_is_patched() -> None:
     patch_langchain_for_metadata_capture()
     assert "_traigent_patched_ainvoke" in vars(ChatOpenAI)
+
+
+@pytest.fixture()
+def mock_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "traigent.integrations.utils.mock_adapter.MockAdapter.is_mock_enabled",
+        classmethod(lambda cls, provider: False),
+    )
+
+
+def _fallback_llm() -> ChatOpenAI:
+    return ChatOpenAI(
+        api_key="sk-fake",
+        base_url="http://127.0.0.1:9/v1",
+        model="gpt-4o-mini",
+        max_retries=0,
+        disable_streaming=True,
+    )
+
+
+def _canned_result() -> Any:
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, ChatResult
+
+    message = AIMessage(
+        content="ok",
+        response_metadata={"model_name": "gpt-4o-mini"},
+        usage_metadata={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+    )
+    return ChatResult(generations=[ChatGeneration(message=message)])
+
+
+def test_async_stream_fallback_to_ainvoke_captured_once(
+    monkeypatch: pytest.MonkeyPatch, connects: list[Any], mock_off: None
+) -> None:
+    """Sol r4 finding 2: astream->ainvoke fallback must record one call."""
+
+    async def _agenerate(self: Any, *a: Any, **k: Any) -> Any:
+        return _canned_result()
+
+    monkeypatch.setattr(ChatOpenAI, "_agenerate", _agenerate)
+
+    async def run() -> list[Any]:
+        return [c async for c in _fallback_llm().astream("hi")]
+
+    chunks = asyncio.run(run())
+    assert chunks
+    assert len(get_all_captured_responses()) == 1
+
+
+def test_sync_stream_fallback_to_invoke_captured_once(
+    monkeypatch: pytest.MonkeyPatch, connects: list[Any], mock_off: None
+) -> None:
+    def _generate(self: Any, *a: Any, **k: Any) -> Any:
+        return _canned_result()
+
+    monkeypatch.setattr(ChatOpenAI, "_generate", _generate)
+
+    chunks = list(_fallback_llm().stream("hi"))
+    assert chunks
+    assert len(get_all_captured_responses()) == 1
+
+
+def test_plain_ainvoke_and_invoke_still_captured_once(
+    monkeypatch: pytest.MonkeyPatch, connects: list[Any], mock_off: None
+) -> None:
+    async def _agenerate(self: Any, *a: Any, **k: Any) -> Any:
+        return _canned_result()
+
+    def _generate(self: Any, *a: Any, **k: Any) -> Any:
+        return _canned_result()
+
+    monkeypatch.setattr(ChatOpenAI, "_agenerate", _agenerate)
+    monkeypatch.setattr(ChatOpenAI, "_generate", _generate)
+
+    asyncio.run(_fallback_llm().ainvoke("hi"))
+    assert len(get_all_captured_responses()) == 1
+    clear_captured_responses()
+    _fallback_llm().invoke("hi")
+    assert len(get_all_captured_responses()) == 1
