@@ -167,6 +167,27 @@ if _is_quickstart_invocation():
     os.environ["OPENAI_API_KEY"] = "mock-key-for-demos"  # pragma: allowlist secret
 
 
+# Env-only mock activation (TRAIGENT_MOCK_LLM=true set before ``import
+# traigent``, or the quickstart bootstrap above) must block raw provider HTTP
+# from the first line of user code, not only once LiteLLM metadata patching
+# runs lazily (#2418). Production is skipped here exactly as ``is_mock_llm()``
+# refuses mock mode there (the hard-block in ``env_config`` is unchanged). The
+# guard is installed only when the flag is on, so a normal import stays light
+# and untouched; a failed install fails closed by aborting the import.
+if _is_truthy_env(os.environ.get("TRAIGENT_MOCK_LLM")) and os.environ.get(
+    "ENVIRONMENT", "development"
+).strip().lower() not in {"prod", "production"}:
+    try:
+        from traigent.utils.mock_transport_guard import install_mock_transport_guard
+
+        install_mock_transport_guard()
+    except Exception as _guard_exc:
+        raise RuntimeError(
+            "TRAIGENT_MOCK_LLM is on but the mock-mode transport guard could "
+            "not be installed; refusing to continue without it (a raw LLM "
+            "provider call could otherwise go out)."
+        ) from _guard_exc
+
 # Suppress noisy FutureWarning from transitive deps (instructor → google.generativeai)
 warnings.filterwarnings(
     "ignore", category=FutureWarning, module=r"instructor\.providers\.gemini"

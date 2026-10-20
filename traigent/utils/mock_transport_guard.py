@@ -13,9 +13,17 @@ the HTTP send boundary instead:
   (``_base_client.py`` ``self._client.send``) and LiteLLM's ``HTTPHandler`` /
   ``AsyncHTTPHandler`` (``self.client.send``), including its aiohttp transport,
   which is an httpx transport reached through ``AsyncClient.send``.
-* ``aiohttp.ClientSession._request`` -- LiteLLM's ``BaseLLMAIOHTTPHandler``
-  calls ``ClientSession.post`` directly, bypassing httpx.
-* ``requests.Session.send``.
+* ``aiohttp.connector.BaseConnector.connect`` -- LiteLLM's
+  ``BaseLLMAIOHTTPHandler`` calls ``ClientSession.post`` directly, bypassing
+  httpx. ``connect`` receives the ``ClientRequest`` whose ``url`` is already
+  resolved (``base_url`` + relative path, yarl-canonicalized) and is entered
+  once per redirect hop and per pooled reuse. ``ClientSession._request`` is
+  also checked (early, unresolved) for a clearer failure point.
+* ``requests.Session.send`` -- ``resolve_redirects`` calls it for every hop.
+
+httpx/httpx2 are guarded at ``_send_single_request`` (called once per redirect
+hop by ``_send_handling_redirects``) as well as at ``send``, so a redirect from
+an allowed host to a provider host is blocked before the second hop is sent.
 
 The mock flag is read at call time, so the guard is inert when mock mode is
 off. Errors are closed: only the (fixed-list) host name is named, never the
@@ -66,11 +74,26 @@ class MockModeTransportBlockedError(RuntimeError):
     """A request to a known LLM provider host was blocked under mock mode."""
 
 
+def _canonical_host(host: str) -> str:
+    """Lowercase, strip a trailing dot, and IDNA-normalize ``host``.
+
+    Unicode label separators (e.g. U+3002) and non-ASCII look-alikes are folded
+    the way the URL libraries fold them before connecting, so the match sees the
+    same name the socket layer will resolve. A name IDNA rejects is matched
+    as-is (lowercased).
+    """
+    cleaned = host.strip().rstrip(".\u3002\uff0e\uff61").lower()
+    try:
+        return cleaned.encode("idna").decode("ascii").rstrip(".")
+    except UnicodeError:
+        return cleaned
+
+
 def is_known_llm_provider_host(host: str | None) -> bool:
     """True iff ``host`` (parsed, case-insensitive) is a known provider host."""
     if not host:
         return False
-    normalized = host.strip().rstrip(".").lower()
+    normalized = _canonical_host(host)
     if normalized in KNOWN_LLM_PROVIDER_HOSTS:
         return True
     return any(p.match(normalized) for p in _PROVIDER_HOST_PATTERNS)
@@ -155,20 +178,22 @@ def install_mock_transport_guard() -> None:
         if httpx2 is not None:
             http_modules.append(httpx2)
         for module in http_modules:
-            _patch(
-                module.Client,
-                "send",
-                _wrap_sync,
-                lambda self, request, *a, **k: request.url,
-            )
-            _patch(
-                module.AsyncClient,
-                "send",
-                _wrap_async,
-                lambda self, request, *a, **k: request.url,
-            )
+            for name in ("send", "_send_single_request"):
+                _patch(
+                    module.Client,
+                    name,
+                    _wrap_sync,
+                    lambda self, request, *a, **k: request.url,
+                )
+                _patch(
+                    module.AsyncClient,
+                    name,
+                    _wrap_async,
+                    lambda self, request, *a, **k: request.url,
+                )
         try:
             import aiohttp
+            import aiohttp.connector
         except ImportError:
             aiohttp = None  # type: ignore[assignment]
         if aiohttp is not None:
@@ -177,6 +202,12 @@ def install_mock_transport_guard() -> None:
                 "_request",
                 _wrap_async,
                 lambda self, method, str_or_url, *a, **k: str_or_url,
+            )
+            _patch(
+                aiohttp.connector.BaseConnector,
+                "connect",
+                _wrap_async,
+                lambda self, req, *a, **k: req.url,
             )
         try:
             import requests

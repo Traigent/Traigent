@@ -79,6 +79,12 @@ def _check_mock_llm_prod_guard() -> None:
             "ENVIRONMENT!=production. For programmatic mock activation "
             "use traigent.testing.enable_mock_mode_for_quickstart()."
         )
+    # The flag may only have landed now (a ``.env`` loaded after ``import
+    # traigent``): block raw provider HTTP from here on. Idempotent; a failed
+    # install raises so mock mode never runs unguarded (#2418).
+    from traigent.utils.mock_transport_guard import install_mock_transport_guard
+
+    install_mock_transport_guard()
     # Raw openai/anthropic clients are not mocked on this path either (#2418);
     # the helper is once-guarded and shared with the in-code activation path.
     try:
