@@ -37,7 +37,7 @@ traigent.initialize(offline=True, minimal_logging=True)
 # Define parameter ranges using factory methods
 temperature = Range.temperature(creative=True)  # [0.7, 1.5]
 max_tokens = IntRange.max_tokens(task="medium")  # [256, 1024]
-# Choices.model() defaults are library-owned (gpt-4o-mini/gpt-4o), so use an
+# Choices.model() defaults are owned by the library and may change, so use an
 # explicit list that contains the model the constraint below names.
 model = Choices(["gpt-4.1-mini", "gpt-4.1"], name="model")
 top_p = Range.top_p()  # [0.1, 1.0]
