@@ -57,6 +57,8 @@ def _find_function(file_path: Path, function: str) -> Any:
     _sys.path.insert(0, str(resolved.parent))
     try:
         module = _load_user_module(resolved)
+    except RuntimeRequirementError:
+        raise  # a closed error raised by a declaration keeps its own code
     except Exception:  # noqa: BLE001 - user module errors are not echoed
         raise RuntimeRequirementError("module_load_failed") from None
     finally:

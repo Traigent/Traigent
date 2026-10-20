@@ -91,7 +91,7 @@ def _emit(logger: logging.Logger, req: RuntimeRequirement, event: RuntimeEvent) 
         try:
             req.on_event(event)
         except Exception:  # noqa: BLE001 - a customer hook never breaks the watcher
-            logger.exception("on_event hook failed for %s", event.event)
+            logger.warning("on_event_hook_failed event=%s", event.event)
 
 
 def poll_once(

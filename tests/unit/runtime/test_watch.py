@@ -119,7 +119,7 @@ def test_hook_exception_is_logged_not_raised(
     with caplog.at_level(logging.INFO, logger="traigent.runtime"):
         result = _poll(_declare("alert", hook=boom))
     assert len(result.events) == 1
-    assert any("on_event hook failed" in r.getMessage() for r in caplog.records)
+    assert any("on_event_hook_failed" in r.getMessage() for r in caplog.records)
     assert any(
         r.levelno == logging.WARNING and "episode_opened" in r.getMessage()
         for r in caplog.records
@@ -137,3 +137,18 @@ def test_state_persists_across_processes(backend: FakeBackend, state_dir: Path) 
     assert len(_poll(_declare()).events) == 1
     assert (state_dir / "runtime").exists()
     assert _poll(_declare()).events == []  # a fresh requirement object, same state dir
+
+
+def test_hook_failure_log_never_carries_the_exception_text(
+    backend: FakeBackend, caplog: pytest.LogCaptureFixture
+) -> None:
+    sentinel = "SECRET_PROMPT_TEXT_9c1"
+
+    def boom(_e):
+        raise RuntimeError(sentinel)
+
+    backend.on(*LIST, 200, {"items": [breach("b1")], "has_more": False})
+    with caplog.at_level(logging.DEBUG, logger="traigent.runtime"):
+        _poll(_declare("alert", hook=boom))
+    assert sentinel not in caplog.text
+    assert all(r.exc_info is None for r in caplog.records)

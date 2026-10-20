@@ -1,7 +1,8 @@
 """``respond``: a human-approved fix for an open breach (design section 3.2).
 
 The response is a request to run the function's existing ``.optimize()`` under
-a declared cost ceiling.  Nothing is deployed.  Every start is preceded by a
+a declared cost ceiling.  Nothing is deployed.  If the optimize run raises, the occurrence is marked failed
+(spend is never undone) and a retry needs a new approval.  Every start is preceded by a
 fresh, locally recorded human approval bound to the full-policy digest, rule,
 breach, occurrence, cost ceiling and an expiry, and by a second round of
 checks immediately before the run.  Any failed check holds: nothing runs.
@@ -36,6 +37,7 @@ RESTORE_CODE = "RESTORE_PRODUCTION_REQUIREMENT"
 OCCURRENCE = 1  # PY-1: one human-approved start per (breach, rule)
 
 E_NO_RULE = "no_optimize_rule"
+E_OPTIMIZE_FAILED = "optimize_failed"
 E_NO_BREACH = "no_open_breach"
 E_NOT_RESTORE = "next_step_not_restore"
 E_RETIRED = "requirement_retired"
@@ -61,7 +63,8 @@ class RespondResult:
 
 def _optimize_rule(requirement: RuntimeRequirement) -> str:
     for rule in requirement.rules:
-        if rule.action == "optimize":
+        # Only a rule triggered by an OPENED episode may authorize a fix.
+        if rule.action == "optimize" and rule.event == "episode_opened":
             return rule.id
     raise RuntimeRequirementError(E_NO_RULE)
 
@@ -119,6 +122,16 @@ def _fresh_checks(
     return breach
 
 
+def _current_requirement(
+    fn: Any, original: RuntimeRequirement
+) -> RuntimeRequirement | None:
+    """The requirement now declared on ``fn`` under the same name, if any."""
+    for item in getattr(fn, "requirements", None) or ():
+        if getattr(item, "name", None) == original.name:
+            return item  # type: ignore[no-any-return]
+    return None
+
+
 def _text(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
@@ -144,6 +157,9 @@ async def respond(
     clock: Callable[[], datetime] = manifest.utcnow,
 ) -> RespondResult:
     """Ask a person, re-check, record the occurrence, then ``await fn.optimize(...)``."""
+    errors = [i for i in requirement.validate() if i.severity == "error"]
+    if errors:
+        raise RuntimeRequirementError(errors[0].code, errors[0].path)
     rule_id = _optimize_rule(requirement)
     ceiling = (
         max_fix_cost_usd
@@ -163,7 +179,7 @@ async def respond(
     breach_id = str(breach["breach_id"])
     key = manifest.occurrence_key(breach_id, rule_id, OCCURRENCE)
     earlier = manifest.read_occurrence(state, agent_id, key)
-    if earlier is not None:
+    if earlier is not None and earlier.get("status") != manifest.STATUS_FAILED:
         raise OccurrenceUsed(_text(earlier.get("run_id")))
 
     facts = {
@@ -196,8 +212,16 @@ async def respond(
         raise RuntimeRequirementError(E_HOLD, "approval")
     if manifest.approval_expired(approval, clock()):
         raise RuntimeRequirementError(E_APPROVAL_EXPIRED)
+    # Re-read the CURRENT declaration: it may have changed while the person decided.
+    current = _current_requirement(fn, requirement)
+    if (
+        current is None
+        or current.policy_digest() != policy_digest
+        or _optimize_rule(current) != rule_id
+    ):
+        raise RuntimeRequirementError(E_POLICY_CHANGED)
     again = _fresh_checks(
-        requirement, api, project_id=project_id, agent_id=agent_id, state=state
+        current, api, project_id=project_id, agent_id=agent_id, state=state
     )
     if again.get("breach_id") != breach_id:
         raise RuntimeRequirementError(E_HOLD, "breach")
@@ -206,7 +230,16 @@ async def respond(
     ):
         raise OccurrenceUsed()
 
-    result = await fn.optimize(cost_limit=float(ceiling))
+    try:
+        result = await fn.optimize(cost_limit=float(ceiling))
+    except Exception:  # noqa: BLE001 - user code; its text is never surfaced
+        # Spend may have occurred and is never undone.  The occurrence is marked
+        # failed (kept in the ledger with its attempt count) so that an explicit
+        # retry is possible, but only through a NEW human approval.
+        manifest.update_occurrence(
+            state, agent_id, key, {"status": manifest.STATUS_FAILED, "run_id": None}
+        )
+        raise RuntimeRequirementError(E_OPTIMIZE_FAILED) from None
     run_id = _run_id(result)
     manifest.update_occurrence(state, agent_id, key, {"run_id": run_id})
     return RespondResult(breach_id, rule_id, OCCURRENCE, run_id, float(ceiling))

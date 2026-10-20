@@ -182,3 +182,35 @@ def test_unreadable_or_oversized_file_is_closed_error(tmp_path: Path) -> None:
     bad.write_text("a: [unterminated")
     with pytest.raises(RuntimeRequirementError):
         load_fragment(bad)
+
+
+@pytest.mark.parametrize("event", ["episode_resolved", "episode_withdrawn"])
+@pytest.mark.parametrize("rule", [2, 1])  # the optimize rule, the open_next_step rule
+def test_fragment_fix_or_restore_on_a_closing_event_is_refused(
+    event: str, rule: int
+) -> None:
+    doc = _doc()
+    doc["responses"][0]["rules"][rule]["trigger"]["event"] = event
+    with pytest.raises(RuntimeRequirementError) as err:
+        parse_fragment(doc, max_fix_cost_usd=1.0)
+    assert err.value.code == "response_action_unsupported"
+
+
+def test_profile_fields_are_exactly_the_backend_evidence_profile() -> None:
+    # TraigentBackend src/shared_infrastructure/schemas/production_requirements.py:
+    # EvidenceProfileFields (extra="forbid") has these ten fields; the create body adds the
+    # key (kind, latency_threshold_ms, environment) and agent_id.
+    from traigent.runtime.model import PROFILE_FIELDS
+
+    assert set(PROFILE_FIELDS) == {
+        "max_violation_rate",
+        "confidence",
+        "window_hours",
+        "grace_minutes",
+        "min_samples",
+        "max_unresolved_fraction",
+        "closure_windows",
+        "closure_max_age_hours",
+        "false_alarm_budget",
+        "horizon_days",
+    }

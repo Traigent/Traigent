@@ -358,3 +358,114 @@ async def test_facts_shown_to_the_person_are_closed_numbers_and_ids(
         "cost_ceiling_usd",
     }
     fn.optimize.assert_awaited_once_with(cost_limit=2.0)
+
+
+async def test_optimize_failure_is_closed_and_a_retry_needs_a_new_approval(
+    live: FakeBackend, state_dir: Path
+) -> None:
+    fn, req = _fn_and_req()
+    apply_requirement(req, project_id=PROJECT, agent_id=AGENT, state_dir=state_dir)
+    sentinel = "SECRET_USER_ERROR_TEXT"
+    fn.optimize = AsyncMock(side_effect=RuntimeError(sentinel))
+    approvals: list[int] = []
+
+    def confirm(_f) -> bool:
+        approvals.append(1)
+        return True
+
+    kw = {
+        "project_id": PROJECT,
+        "agent_id": AGENT,
+        "confirm": confirm,
+        "interactive": True,
+        "state_dir": state_dir,
+    }
+    with pytest.raises(RuntimeRequirementError) as err:
+        await respond(fn, req, **kw)
+    assert err.value.code == "optimize_failed" and sentinel not in repr(err.value)
+    key = manifest.occurrence_key("b1", "fix", 1)
+    record = manifest.read_occurrence(state_dir, AGENT, key)
+    assert record["status"] == "failed" and record["run_id"] is None
+
+    fn.optimize = AsyncMock(return_value=SimpleNamespace(optimization_id="retry-run"))
+    result = await respond(fn, req, **kw)  # explicit retry, a person is asked again
+    assert result.run_id == "retry-run" and len(approvals) == 2
+    assert manifest.read_occurrence(state_dir, AGENT, key)["attempts"] == 2
+
+
+async def test_declaration_changed_while_the_person_decides_holds(
+    live: FakeBackend, state_dir: Path
+) -> None:
+    fn, req = _fn_and_req()
+    apply_requirement(req, project_id=PROJECT, agent_id=AGENT, state_dir=state_dir)
+
+    def confirm_then_remove_rule(_f) -> bool:
+        fn.requirements.clear()  # the optimize rule vanishes from the live declaration
+        return True
+
+    with pytest.raises(RuntimeRequirementError) as err:
+        await respond(
+            fn,
+            req,
+            project_id=PROJECT,
+            agent_id=AGENT,
+            confirm=confirm_then_remove_rule,
+            interactive=True,
+            state_dir=state_dir,
+        )
+    assert err.value.code == "policy_changed"
+    fn.optimize.assert_not_awaited()
+
+
+def _rule_on(event: str):
+    from dataclasses import replace
+
+    from traigent.runtime.model import ResponseRule
+
+    _fn, req = _fn_and_req()
+    rules = tuple(
+        ResponseRule(r.id, event, r.action, r.severity, r.approval)
+        if r.id == "fix"
+        else r
+        for r in req.rules
+    )
+    return replace(req, rules=rules)
+
+
+@pytest.mark.parametrize("event", ["episode_resolved", "episode_withdrawn"])
+def test_optimize_and_next_step_rules_only_on_opened_episodes(event: str) -> None:
+    issues = [i for i in _rule_on(event).validate() if i.severity == "error"]
+    assert issues and issues[0].code == "response_action_unsupported"
+    assert issues[0].path.endswith("trigger.event")
+
+
+@pytest.mark.parametrize("event", ["episode_resolved", "episode_withdrawn"])
+async def test_respond_refuses_a_fix_rule_on_a_closing_event(
+    live: FakeBackend, state_dir: Path, event: str
+) -> None:
+    fn, _ = _fn_and_req()
+    with pytest.raises(RuntimeRequirementError) as err:
+        await respond(
+            fn,
+            _rule_on(event),
+            project_id=PROJECT,
+            agent_id=AGENT,
+            confirm=lambda _f: True,
+            interactive=True,
+            state_dir=state_dir,
+        )
+    assert err.value.code == "response_action_unsupported"
+    fn.optimize.assert_not_awaited()
+
+
+def test_cli_prints_closed_optimize_failed(
+    live: FakeBackend, user_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        OptimizedFunction, "optimize", AsyncMock(side_effect=RuntimeError("SECRET_X"))
+    )
+    path = user_module(FIX_MODULE)
+    _applied(path)
+    result = _cli(path, "respond", input="y\n")
+    assert result.exit_code == 1 and "optimize_failed" in result.output
+    assert "SECRET_X" not in result.output

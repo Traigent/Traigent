@@ -22,6 +22,7 @@ from .conftest import (
     FRAGMENT_MODULE,
     PROJECT,
     FakeBackend,
+    backend_parse_import,
     head,
 )
 
@@ -167,11 +168,28 @@ def test_redirects_are_refused(backend: FakeBackend) -> None:
 @pytest.fixture
 def fragment_requirement(monkeypatch: pytest.MonkeyPatch):
     fixture = json.loads((FIXTURES / "hosted_contract.json").read_text())
-    monkeypatch.setattr(
-        apply_mod,
-        "compile_hosted_subset",
-        lambda *_a, **_k: (fixture["contract"], {}, []),
-    )
+
+    def honoring_stub(requirement, token_map, module):
+        """The checked-in compiled contract, re-tokenized with the refs apply minted."""
+        actual = {
+            (t["namespace"], t["local"]): t["hosted"] for t in token_map["tokens"]
+        }
+        wanted = {
+            "module": module,
+            "requirement": requirement.name,
+            "monitor": requirement.monitor_name,
+            "environment": requirement.environment.strip().lower(),
+        }
+        text = json.dumps(fixture["contract"])
+        for entry in fixture["token_map"]["tokens"]:
+            ns = entry["namespace"]
+            if ns in wanted:
+                text = text.replace(
+                    f'"{entry["hosted"]}"', f'"{actual[(ns, wanted[ns])]}"'
+                )
+        return json.loads(text), {}, []
+
+    monkeypatch.setattr(apply_mod, "compile_hosted_subset", honoring_stub)
 
     @traigent.requirement(tvl=str(FIXTURES / "latency.tvl.yml"), max_fix_cost_usd=5.0)
     def fn() -> None: ...
@@ -186,6 +204,7 @@ def test_tvl_route_imports_201_then_200(
     first = _apply(fragment_requirement)
     assert (first.outcome, first.route) == ("created", "tvl_import")
     body = backend.requests[0]["body"]
+    assert backend_parse_import(body) == "OK"  # the complete request, real importer
     assert set(body) == {"agent_id", "contract", "environment_binding"}
     assert body["contract"]["declarations"]["responses"] == []
     assert body["environment_binding"]["label"] == "production"
@@ -306,3 +325,15 @@ def test_explain_resolves_ref_locally(backend: FakeBackend, state_dir: Path) -> 
         CliRunner().invoke(cli, ["requirements", "explain", "unknownref"]).exit_code
         == 1
     )
+
+
+def test_cli_import_time_closed_error_keeps_its_code(
+    backend: FakeBackend, user_module
+) -> None:
+    source = FIX_MODULE.replace("max_fix_cost_usd=5.0, ", "")
+    result = CliRunner().invoke(
+        cli,
+        ["requirements", "validate", str(user_module(source)), "--function", "answer"],
+    )
+    assert result.exit_code == 1 and "fix_ceiling_required" in result.output
+    assert "module_load_failed" not in result.output

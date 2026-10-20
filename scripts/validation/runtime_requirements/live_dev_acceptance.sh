@@ -5,7 +5,7 @@
 # run and validity V1. Evidence = this transcript + the printed ids; copy the run dir under runs/.
 #
 #   TRAIGENT_BACKEND_URL=https://<dev backend> TRAIGENT_API_KEY=<key via your own secret store> \
-#   PROJECT_ID=<pid> AGENT_ID=<server Agent.id> PY312=<python3.12 with the runtime-tvl extra> \
+#   PROJECT_ID=<pid> AGENT_ID=<server Agent.id> AGENT_KEY=<trace agent key> PY312=<python3.12 with the runtime-tvl extra> \
 #   scripts/validation/runtime_requirements/live_dev_acceptance.sh
 #
 # Optional: WAIT_OPEN_S (default 6000), WAIT_RESOLVE_S (default 14400), POLL_S (default 60),
@@ -16,12 +16,13 @@ set -uo pipefail
 : "${TRAIGENT_BACKEND_URL:?set the dev backend origin}"
 : "${TRAIGENT_API_KEY:?set an API key (from your secret store; never paste it into a file)}"
 : "${PROJECT_ID:?set the project id}"
-: "${AGENT_ID:?set the server Agent.id (never the trace agent key)}"
+: "${AGENT_ID:?set the server Agent.id used for registration}"
+: "${AGENT_KEY:?set the TRACE agent key (what traces are attributed to; differs from Agent.id)}"
 : "${PY312:?set a Python 3.12+ with the runtime-tvl extra for step 2}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY="${PY:-python3}"
-RUN_DIR="${RUN_DIR:-runs/py1-live-dev-$(date -u +%Y%m%dT%H%M%SZ)}"
+RUN_DIR="$(realpath -m "${RUN_DIR:-runs/py1-live-dev-$(date -u +%Y%m%dT%H%M%SZ)}")"  # absolute before any cd
 WAIT_OPEN_S="${WAIT_OPEN_S:-6000}"
 WAIT_RESOLVE_S="${WAIT_RESOLVE_S:-14400}"
 POLL_S="${POLL_S:-60}"
@@ -57,7 +58,7 @@ step "2b apply again -> identical import" 180 'noop via tvl_import'    -- "${CLI
 
 # 3. slow traces -> episode_opened within one window + grace + ~15 min.
 step "3a emit slow traces (3500 ms > 2000 ms)" 600 'emitted' -- \
-  "$PY" emit_traces.py --agent-id "$AGENT_ID" --count "$N_TRACES" --latency-ms 3500
+  "$PY" emit_traces.py --agent-key "$AGENT_KEY" --count "$N_TRACES" --latency-ms 3500
 log "3b watch until episode_opened (<= ${WAIT_OPEN_S}s)"
 deadline=$(( $(date +%s) + WAIT_OPEN_S )); opened=0
 while (( $(date +%s) < deadline )); do
@@ -67,18 +68,28 @@ while (( $(date +%s) < deadline )); do
 done
 (( opened )) || { echo "FAIL: no episode_opened with coverage complete" | tee -a "$LOG"; FAILED=1; }
 
-# 4. respond: shows RESTORE, asks, runs optimize after y, prints the run id; second run reports the used occurrence.
-#    A pty is required (non-interactive respond is refused by design); `script` supplies one.
-log "4a respond (answer y)"
-printf 'y\n' | timeout 3600 script -qec "$(printf '%q ' "${CLI[@]}" respond live_agent.py -f answer "${COMMON[@]}")" /dev/null 2>&1 | tee -a "$LOG"
-grep -q 'run id:' "$LOG" || { echo "FAIL: no run id printed" | tee -a "$LOG"; FAILED=1; }
-log "4b respond again -> occurrence already used"
-printf 'y\n' | timeout 300 script -qec "$(printf '%q ' "${CLI[@]}" respond live_agent.py -f answer "${COMMON[@]}")" /dev/null 2>&1 | tee -a "$LOG"
-grep -q 'occurrence_already_used' "$LOG" || { echo "FAIL: second respond was not refused" | tee -a "$LOG"; FAILED=1; }
+# 4. respond is a HUMAN approval: run it yourself in a real terminal (this script never answers for you).
+log "4a respond -- run this in a real terminal, review the facts, answer y or n yourself"
+printf '  %s\n' "cd $HERE && TRAIGENT_RUNTIME_STATE_DIR=$TRAIGENT_RUNTIME_STATE_DIR $PY -m traigent.cli.main requirements respond live_agent.py -f answer --project-id $PROJECT_ID --agent-id $AGENT_ID" | tee -a "$LOG"
+if [[ -r /dev/tty ]]; then
+  read -r -p "Press Enter here after respond finished (prints a run id); paste its output into $LOG: " _ </dev/tty
+else
+  echo "no terminal: run step 4a by hand, then re-run only the later steps" | tee -a "$LOG"; FAILED=1
+fi
+log "4b respond again -> refused before any prompt (stdin is closed; nothing can be approved)"
+out="$(timeout 300 "${CLI[@]}" respond live_agent.py -f answer "${COMMON[@]}" </dev/null 2>&1)"; echo "$out" | tee -a "$LOG"
+grep -Eq 'occurrence_already_used|approval_required' <<<"$out" || { echo "FAIL: second respond was not refused" | tee -a "$LOG"; FAILED=1; }
 
-# 5. healthy traces -> after K windows watch prints episode_resolved.
-step "5a emit healthy traces (200 ms)" 600 'emitted' -- \
-  "$PY" emit_traces.py --agent-id "$AGENT_ID" --count "$N_TRACES" --latency-ms 200
+# 5. recovery needs >= min_samples healthy traces in EACH of K=2 distinct closing windows (1 h windows).
+#    Wait for each UTC hour boundary to pass, then emit healthy traces INTO the hour that just ended.
+K_WINDOWS=2
+for k in $(seq 1 "$K_WINDOWS"); do
+  now=$(date +%s); next=$(( (now / 3600 + 1) * 3600 + 120 ))
+  log "5.$k wait $(( next - now ))s for the hour boundary, then emit healthy traces into the finished hour"
+  sleep $(( next - now ))
+  step "5.$k emit healthy traces (200 ms) into the previous complete hour" 600 'emitted' -- \
+    "$PY" emit_traces.py --agent-key "$AGENT_KEY" --count "$N_TRACES" --latency-ms 200 --window-ago 1
+done
 log "5b watch until episode_resolved (<= ${WAIT_RESOLVE_S}s)"
 deadline=$(( $(date +%s) + WAIT_RESOLVE_S )); resolved=0
 while (( $(date +%s) < deadline )); do

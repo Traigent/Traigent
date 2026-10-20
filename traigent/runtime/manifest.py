@@ -13,13 +13,18 @@ import json
 import os
 import secrets
 import tempfile
-from collections.abc import Iterable, Mapping
-from contextlib import suppress
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta, UTC
 from pathlib import Path
 from typing import Any
 
 from traigent.runtime.model import E_STATE, RuntimeRequirementError
+
+try:  # POSIX only; elsewhere the lock degrades to a no-op
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
 
 STATE_DIRNAME = ".traigent"
 TOKEN_MAP_FORMAT = "tvl-token-map/1"
@@ -159,6 +164,22 @@ def record_apply(
     route: str,
     receipt: Mapping[str, Any],
 ) -> None:
+    with _ledger_lock(manifest_path(state_dir, agent_id)):
+        _record_apply_locked(
+            state_dir, agent_id, name, policy_digest, hosted_digest, key, route, receipt
+        )
+
+
+def _record_apply_locked(
+    state_dir: Path,
+    agent_id: str,
+    name: str,
+    policy_digest: str,
+    hosted_digest: str,
+    key: Mapping[str, Any],
+    route: str,
+    receipt: Mapping[str, Any],
+) -> None:
     doc = read_manifest(state_dir, agent_id)
     doc["requirements"][name] = {
         "full_policy_digest": policy_digest,
@@ -187,18 +208,46 @@ def read_occurrence(state_dir: Path, agent_id: str, key: str) -> dict[str, Any] 
     return record if isinstance(record, dict) else None
 
 
+@contextmanager
+def _ledger_lock(path: Path) -> Iterator[None]:
+    """Exclusive, process-safe lock around a read-modify-write of one ledger file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(str(path) + ".lock", "a", encoding="utf-8") as handle:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+STATUS_STARTED = "started"
+STATUS_FAILED = "failed"
+
+
 def reserve_occurrence(
     state_dir: Path, agent_id: str, key: str, run_info: Mapping[str, Any]
 ) -> bool:
-    """Record an occurrence durably; ``False`` when it was already recorded."""
+    """Atomically record an occurrence; ``False`` when it is already recorded.
+
+    A record whose status is ``failed`` (the optimize run raised) is released
+    for an explicit retry: it can be reserved again, with a new approval, and
+    the number of attempts is kept.
+    """
     path = _occ_path(state_dir, agent_id)
-    doc = _read_json(path, {})
-    if not isinstance(doc, dict):
-        raise RuntimeRequirementError(E_STATE, "occurrences.json")
-    if key in doc:
-        return False
-    doc[key] = dict(run_info)
-    _write_json(path, doc)
+    with _ledger_lock(path):
+        doc = _read_json(path, {})
+        if not isinstance(doc, dict):
+            raise RuntimeRequirementError(E_STATE, "occurrences.json")
+        earlier = doc.get(key)
+        attempts = 1
+        if isinstance(earlier, dict):
+            if earlier.get("status") != STATUS_FAILED:
+                return False
+            attempts = int(earlier.get("attempts", 1)) + 1
+        doc[key] = {**dict(run_info), "status": STATUS_STARTED, "attempts": attempts}
+        _write_json(path, doc)
     return True
 
 
@@ -206,10 +255,11 @@ def update_occurrence(
     state_dir: Path, agent_id: str, key: str, run_info: Mapping[str, Any]
 ) -> None:
     path = _occ_path(state_dir, agent_id)
-    doc = _read_json(path, {})
-    if isinstance(doc, dict) and key in doc:
-        doc[key].update(run_info)
-        _write_json(path, doc)
+    with _ledger_lock(path):
+        doc = _read_json(path, {})
+        if isinstance(doc, dict) and key in doc:
+            doc[key].update(run_info)
+            _write_json(path, doc)
 
 
 # --- approvals ------------------------------------------------------------------------
@@ -245,11 +295,12 @@ def write_approval(
         "expires_at": (issued + APPROVAL_TTL).isoformat(),
     }
     path = _approval_path(state_dir, agent_id)
-    doc = _read_json(path, {})
-    if not isinstance(doc, dict):
-        raise RuntimeRequirementError(E_STATE, "approvals.json")
-    doc[occurrence_key(breach_id, rule_id, occurrence)] = record
-    _write_json(path, doc)
+    with _ledger_lock(path):
+        doc = _read_json(path, {})
+        if not isinstance(doc, dict):
+            raise RuntimeRequirementError(E_STATE, "approvals.json")
+        doc[occurrence_key(breach_id, rule_id, occurrence)] = record
+        _write_json(path, doc)
     return record
 
 

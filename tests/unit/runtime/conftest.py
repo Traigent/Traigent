@@ -209,3 +209,48 @@ def user_module() -> Iterator[Callable[[str], Path]]:
             path.unlink(missing_ok=True)
         if MODULES_DIR.exists() and not any(MODULES_DIR.iterdir()):
             MODULES_DIR.rmdir()
+
+
+BACKEND_SRC_ENV = "TRAIGENT_BACKEND_SRC"  # a TraigentBackend checkout (contains src/)
+BACKEND_PYTHON_ENV = "TRAIGENT_BACKEND_PYTHON"  # a Python that can import that checkout
+
+_PARSE_SNIPPET = """
+import json, sys
+from src.services.analytics.production_requirements.requirements import ProductionRequirementError
+from src.services.analytics.production_requirements.tvl_import import parse_import
+body = json.load(sys.stdin)
+try:
+    parse_import(body["contract"], body["environment_binding"])
+    print("OK")
+except ProductionRequirementError as exc:
+    print(exc.code)
+"""
+
+
+def backend_parse_import(body: dict[str, Any]) -> str:
+    """Run the Backend's REAL ``parse_import`` on a request body; ``"OK"`` or its closed code.
+
+    Skips the calling test, with the reason, unless both environment variables
+    point at a Backend checkout and a Python able to import it.
+    """
+    import os
+    import subprocess
+
+    src, python = os.environ.get(BACKEND_SRC_ENV), os.environ.get(BACKEND_PYTHON_ENV)
+    if not src or not python:
+        pytest.skip(
+            f"set {BACKEND_SRC_ENV} and {BACKEND_PYTHON_ENV} to validate against the real "
+            "Backend parse_import (tvl_import.py)"
+        )
+    done = subprocess.run(  # noqa: S603 - fixed code, caller-provided interpreter
+        [python, "-c", _PARSE_SNIPPET],
+        input=json.dumps(body),
+        capture_output=True,
+        text=True,
+        cwd=src,
+        timeout=180,
+        check=False,
+    )
+    lines = [ln for ln in done.stdout.splitlines() if ln.strip()]
+    assert lines, done.stderr[-500:]
+    return lines[-1]

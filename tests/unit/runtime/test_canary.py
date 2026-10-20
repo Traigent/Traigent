@@ -12,7 +12,15 @@ from traigent.runtime import manifest
 from traigent.runtime.apply import apply_requirement
 from traigent.runtime.watch import poll_once
 
-from .conftest import AGENT, FIXTURES, PROJECT, FakeBackend, breach, head
+from .conftest import (
+    AGENT,
+    FIXTURES,
+    PROJECT,
+    FakeBackend,
+    backend_parse_import,
+    breach,
+    head,
+)
 
 ENV = "staging-eu-canary7"
 NAME = "SecretLatencyName"
@@ -105,6 +113,7 @@ def test_tvl_route_sends_only_refs_and_the_environment_label(
         path.unlink(missing_ok=True)
     sent = backend.requests[0]
     req = fn.requirements[0]
+    assert backend_parse_import(sent["body"]) == "OK"
     for local in (
         "latency_2s",
         "latency_2s_prod",

@@ -356,6 +356,13 @@ class RuntimeRequirement:
                 bad(f"{where}.event")
             if rule.action not in ACTIONS:
                 issues.append(Issue(E_ACTION_UNSUPPORTED, f"{where}.do", "error"))
+            if (
+                rule.action in ("optimize", "open_next_step")
+                and rule.event != "episode_opened"
+            ):
+                issues.append(
+                    Issue(E_ACTION_UNSUPPORTED, f"{where}.trigger.event", "error")
+                )
             if rule.action == "notify" and rule.severity not in SEVERITIES:
                 bad(f"{where}.severity")
             if rule.action == "optimize" and (rule.approval or "human") != "human":

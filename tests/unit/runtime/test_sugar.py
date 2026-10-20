@@ -140,3 +140,29 @@ def test_second_declaration_on_one_function_refused() -> None:
         def fn() -> None: ...
 
     assert err.value.code == "duplicate_requirement"
+
+
+def test_occurrence_reservation_is_atomic_across_threads(tmp_path) -> None:
+    import threading
+
+    from traigent.runtime import manifest
+
+    state = tmp_path / "s"
+    wins: list[bool] = []
+    others: list[bool] = []
+
+    def same() -> None:
+        wins.append(manifest.reserve_occurrence(state, "a", "k|fix|1", {}))
+
+    def distinct(i: int) -> None:
+        others.append(manifest.reserve_occurrence(state, "a", f"d{i}|fix|1", {}))
+
+    threads = [threading.Thread(target=same) for _ in range(12)]
+    threads += [threading.Thread(target=distinct, args=(i,)) for i in range(12)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert wins.count(True) == 1 and all(others)
+    for i in range(12):  # no concurrent update erased another reservation
+        assert manifest.read_occurrence(state, "a", f"d{i}|fix|1") is not None
