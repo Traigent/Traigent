@@ -64,6 +64,34 @@ _enabled = False
 _activation_logged = False
 
 
+def _install_mock_interceptors() -> None:
+    """Install the LiteLLM and LangChain interceptors now (#2416).
+
+    They are otherwise installed lazily when an evaluator is built inside an
+    optimization run, so calls made earlier (or from a standalone
+    ``ExampleSynthesizer``) would reach the real provider right after the
+    "mock mode is now ACTIVE" warning. Installation is idempotent and never
+    raises: a failure is logged at WARNING because the user was just told
+    calls are intercepted.
+    """
+    try:
+        from traigent.utils.langchain_interceptor import (
+            patch_langchain_for_metadata_capture,
+        )
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
+
+        patch_litellm_for_metadata_capture()
+        patch_langchain_for_metadata_capture()
+    except Exception:  # noqa: BLE001 - enabling mock mode must not crash
+        _logger.warning(
+            "[traigent.testing] could not install the LiteLLM/LangChain mock "
+            "interceptors; calls made before the first optimization run may "
+            "reach the real provider."
+        )
+
+
 def enable_mock_mode_for_quickstart() -> None:
     """Activate process-local mock mode for LLM calls.
 
@@ -103,6 +131,7 @@ def enable_mock_mode_for_quickstart() -> None:
                 "ENVIRONMENT!=production."
             )
         _enabled = True
+        _install_mock_interceptors()
         if not _activation_logged:
             _activation_logged = True
             _logger.warning(
@@ -111,11 +140,11 @@ def enable_mock_mode_for_quickstart() -> None:
                 "run in production. Enabled via "
                 "traigent.testing.enable_mock_mode_for_quickstart()."
             )
-            _logger.info(
+            _logger.warning(
                 "[traigent.testing] mock interception scope: LiteLLM and "
                 "LangChain calls are mocked. Raw openai.chat.completions.create(...) "
-                "and anthropic.messages.create(...) calls are not intercepted and "
-                "can hit the real provider API."
+                "and anthropic.messages.create(...) calls are NOT intercepted and "
+                "can hit the real provider API (billed if a key is set)."
             )
 
 
