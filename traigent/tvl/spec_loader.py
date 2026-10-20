@@ -1059,6 +1059,12 @@ def load_tvl_spec(
     in which case it becomes the discrete grid ``min, min+resolution, ...`` (never
     above ``max``). This differs from the official TVL default step of 0.001.
 
+    Registry domains: raising ``TVLValidationError`` at load time for a registry
+    domain with no resolver is deliberate. It fails fast so an optimisation never
+    starts with a missing setting; it differs from the official TVL reference
+    model, which keeps lazy placeholders. Pass ``registry_resolver`` to load
+    such specs.
+
     Args:
         spec_path: Path to the TVL spec file.
         environment: Optional environment overlay key to apply.
@@ -1069,7 +1075,8 @@ def load_tvl_spec(
             to catch errors early with clearer error messages.
         registry_resolver: Optional resolver used to materialize registry domains
             into concrete configuration values. If a spec contains a registry
-            domain and no resolver is provided, spec loading fails fast.
+            domain and no resolver is provided, spec loading fails fast
+            (deliberately, see above).
     """
     path = Path(spec_path).expanduser()
     raw_data = _load_and_parse_yaml(path)
@@ -1363,6 +1370,9 @@ def _resolve_registry_domain(
     registry_resolver: RegistryResolver | None,
 ) -> list[Any]:
     """Resolve a registry domain to concrete values."""
+    # Fail fast on purpose (#1616): never start an optimisation with a missing
+    # setting. Unlike the official TVL reference model's lazy placeholders,
+    # callers load such specs by passing ``registry_resolver``.
     if registry_resolver is None:
         raise TVLValidationError(
             f"TVAR '{name}' uses a registry domain ('{domain.registry}') "

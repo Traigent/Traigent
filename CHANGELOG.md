@@ -141,6 +141,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `min, min+resolution, ...` (never above `max`); without `resolution` it stays
   continuous (unlike the official TVL default step of 0.001). Grids over 10,000
   points are rejected.
+- **TVL registry domains without a `registry_resolver` fail at load on purpose
+  (#1616).** The docs now say so: it avoids starting an optimisation with a
+  missing setting and differs from the official TVL lazy placeholders.
 - **`auto_override_frameworks=True` was a silent no-op for sync functions on
   0.27.0 and earlier (#2420).** The override gate is a `ContextVar`, and the
   sync evaluator lane ran the function in a worker thread without the caller's
