@@ -45,7 +45,10 @@ from traigent.utils.exceptions import ConfigurationError, EvaluationError
 from traigent.utils.exceptions import TraigentError as CoreTraigentError
 from traigent.utils.exceptions import TrialPrunedError, ValidationError
 from traigent.utils.function_identity import is_coroutine_callable
-from traigent.utils.langchain_interceptor import get_captured_response_by_key
+from traigent.utils.langchain_interceptor import (
+    capture_owner,
+    get_captured_response_by_key,
+)
 from traigent.utils.logging import get_logger
 from traigent.utils.removed_params import reject_removed_mock_parameters
 from traigent.utils.trial_costs import (
@@ -2893,6 +2896,28 @@ class BaseEvaluator(ABC):
         sample_lease: SampleBudgetLease | None = None,
         execution_budget_lease: SampleBudgetLease | None = None,
     ) -> tuple[Any, str | None]:
+        """Run one example inside its own capture-ownership scope (#2444)."""
+        with capture_owner(index):
+            return await self._evaluate_single_non_detailed_owned(
+                func,
+                config,
+                example,
+                index,
+                progress_callback,
+                sample_lease,
+                execution_budget_lease,
+            )
+
+    async def _evaluate_single_non_detailed_owned(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        example: EvaluationExample,
+        index: int,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+        sample_lease: SampleBudgetLease | None = None,
+        execution_budget_lease: SampleBudgetLease | None = None,
+    ) -> tuple[Any, str | None]:
         """Evaluate a single example in non-detailed mode with tracing."""
         example_id = (
             example.metadata.get("example_id", f"example_{index}")
@@ -3437,15 +3462,16 @@ class BaseEvaluator(ABC):
                     sample_lease, execution_budget_lease
                 )
                 try:
-                    return await self._execute_function(
-                        func,
-                        config,
-                        example.input_data,
-                        executor=None,
-                        worker_started_callback=cleanup_boundary.worker_started,
-                        worker_done_callback=cleanup_boundary.worker_done,
-                        bound_lane_wait=True,
-                    )
+                    with capture_owner(idx):
+                        return await self._execute_function(
+                            func,
+                            config,
+                            example.input_data,
+                            executor=None,
+                            worker_started_callback=cleanup_boundary.worker_started,
+                            worker_done_callback=cleanup_boundary.worker_done,
+                            bound_lane_wait=True,
+                        )
                 except asyncio.CancelledError:
                     cleanup_boundary.cancel()
                     raise
@@ -4038,6 +4064,32 @@ class BaseEvaluator(ABC):
             return result
 
     async def _evaluate_single_detailed(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        example: EvaluationExample,
+        example_index: int,
+        dataset: Dataset,
+        executor: Any | None = None,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
+        sample_lease: SampleBudgetLease | None = None,
+        execution_budget_lease: SampleBudgetLease | None = None,
+    ) -> ExampleResult:
+        """Run one example inside its own capture-ownership scope (#2444)."""
+        with capture_owner(example_index):
+            return await self._evaluate_single_detailed_owned(
+                func,
+                config,
+                example,
+                example_index,
+                dataset,
+                executor=executor,
+                progress_callback=progress_callback,
+                sample_lease=sample_lease,
+                execution_budget_lease=execution_budget_lease,
+            )
+
+    async def _evaluate_single_detailed_owned(
         self,
         func: Callable[..., Any],
         config: dict[str, Any],

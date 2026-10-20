@@ -36,6 +36,11 @@ class _CaptureBucket:
     """
 
     responses: list[Any] = field(default_factory=list)
+    #: Owner (example index) of each entry in ``responses``, same order and
+    #: length; ``None`` when the response was captured outside any example
+    #: ownership scope (:func:`capture_owner`).  Ownership is recorded at
+    #: capture time from the capturing context, never inferred from counts.
+    owners: list[int | None] = field(default_factory=list)
     by_key: dict[str, Any] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
     #: Provider/model versions observed from REAL provider responses in this
@@ -167,6 +172,30 @@ class capture_scope:
         self.__exit__(*exc_info)
 
 
+#: The example (by index) whose evaluation is running in this context, or
+#: ``None``.  A ContextVar, so concurrent example tasks on one event loop and
+#: sync agent functions run via ``copy_context().run`` (worker threads) each
+#: see their own owner.
+_capture_owner: ContextVar[int | None] = ContextVar(
+    "traigent_capture_owner", default=None
+)
+
+
+@contextmanager
+def capture_owner(owner: int) -> Iterator[None]:
+    """Attribute every response captured in this context to ``owner`` (#2444).
+
+    Wrap one example's evaluation in this so its LLM calls are recorded as
+    owned by that example, whatever the number of calls and whatever order
+    concurrent examples complete in.
+    """
+    token = _capture_owner.set(owner)
+    try:
+        yield
+    finally:
+        _capture_owner.reset(token)
+
+
 # Cap on the per-thread "last response" stack (see set_last_response).
 _MAX_THREAD_LOCAL_RESPONSES = 64
 
@@ -207,6 +236,7 @@ class LangChainMetadataCapture:
         if bucket is not None:
             with bucket.lock:
                 bucket.responses.append(response)
+                bucket.owners.append(_capture_owner.get())
                 if key is not None:
                     bucket.by_key[key] = response
             return
@@ -240,6 +270,18 @@ class LangChainMetadataCapture:
         with self._response_lock:
             return self._all_responses.copy()
 
+    def get_response_owners(self) -> list[int | None] | None:
+        """Owner of each response ``get_all_responses`` returns, same order.
+
+        ``None`` outside a capture scope (the process-global list records no
+        ownership).
+        """
+        bucket = _capture_scope.get()
+        if bucket is None:
+            return None
+        with bucket.lock:
+            return bucket.owners.copy()
+
     def clear(self) -> None:
         """Clear stored responses for the active scope (or globally).
 
@@ -254,6 +296,7 @@ class LangChainMetadataCapture:
         if bucket is not None:
             with bucket.lock:
                 bucket.responses.clear()
+                bucket.owners.clear()
                 bucket.by_key.clear()
         else:
             with self._response_lock:
@@ -349,6 +392,11 @@ def get_all_captured_responses() -> list[Any]:
 def get_captured_response_by_key(key: Any) -> Any | None:
     """Get captured response by correlation key (e.g., example_id)."""
     return _metadata_capture.get_by_key(key)
+
+
+def get_captured_response_owners() -> list[int | None] | None:
+    """Owners (example indexes) of ``get_all_captured_responses()``, in order."""
+    return _metadata_capture.get_response_owners()
 
 
 def clear_captured_responses() -> None:

@@ -607,6 +607,11 @@ class MetricsTracker:
         self.example_metrics: list[ExampleMetrics] = []
         self.start_time: float | None = None
         self.end_time: float | None = None
+        # Captured LLM spend no example row could own (a call made outside any
+        # example's capture scope, #2444): the trial's cost is then unmeasured,
+        # and the exact priced part is kept only in the known-spend floor.
+        self.unattributed_spend: bool = False
+        self.unattributed_known_cost: float = 0.0
 
     def start_tracking(self) -> None:
         """Start tracking metrics."""
@@ -973,6 +978,7 @@ class MetricsTracker:
             if (
                 any(not m.cost_measured for m in measured_metrics)
                 or (self.example_metrics and not cost_measured_metrics)
+                or self.unattributed_spend
             )
             else 0.0
         )
@@ -989,6 +995,7 @@ class MetricsTracker:
         cost_lower_bound = sum(
             float(m.cost.total_cost) for m in cost_measured_metrics
         ) + sum(float(m.cost.known_cost) for m in self.example_metrics)
+        cost_lower_bound += self.unattributed_known_cost
         # The priced part of an example that also had unpriced usage is spend.
         cost_lower_bound += sum(
             float(m.cost.total_cost)
@@ -1320,8 +1327,10 @@ class MetricsTracker:
             for cost_key in _COST_DESCRIBE_KEYS:
                 if cost_key in summary_metrics:
                     summary_metrics[cost_key] = None
-        if any(not m.cost_measured for m in measured_metrics) or not (
-            cost_measured_metrics
+        if (
+            any(not m.cost_measured for m in measured_metrics)
+            or not cost_measured_metrics
+            or self.unattributed_spend
         ):
             # Scalars inside ``metrics``: the summary_stats schema allows a
             # number next to the describe() dicts, but no extra top-level keys.
@@ -1329,6 +1338,7 @@ class MetricsTracker:
             lower_bound = (
                 sum(float(m.cost.total_cost) for m in cost_measured_metrics)
                 + sum(float(m.cost.known_cost) for m in all_metrics)
+                + self.unattributed_known_cost
                 + sum(
                     float(m.cost.total_cost)
                     for m in measured_metrics

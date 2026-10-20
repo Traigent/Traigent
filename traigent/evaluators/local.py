@@ -42,6 +42,7 @@ from traigent.utils.langchain_interceptor import (
     clear_captured_responses,
     get_all_captured_responses,
     get_captured_response_by_key,
+    get_captured_response_owners,
     patch_langchain_for_metadata_capture,
 )
 from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
@@ -279,6 +280,46 @@ class PromptInfo:
     original_prompt: list[dict[str, str]] | None
     prompt_length: int | None
     response_length: int | None
+
+
+class _CaptureOwnership:
+    """Captured responses grouped by the example that made the calls (#2444).
+
+    Ownership is recorded when a response is captured (the capturing context
+    carries its example index), so attribution never depends on how many calls
+    each example made or on the order concurrent examples finished in.  Every
+    response lands in exactly one place: an example's owned list, or
+    ``unowned``.  ``consumed`` tracks which examples' spend a metrics row has
+    taken, so whatever no row took is added once to the trial's known-spend
+    floor instead of being dropped or counted twice.
+    """
+
+    def __init__(self, responses: list[Any], owners: list[int | None]) -> None:
+        self.by_example: dict[int, list[Any]] = {}
+        self.unowned: list[Any] = []
+        for response, owner in zip(responses, owners, strict=True):
+            if owner is None:
+                self.unowned.append(response)
+            else:
+                self.by_example.setdefault(owner, []).append(response)
+        self.consumed: set[int] = set()
+
+    @classmethod
+    def build(
+        cls, responses: list[Any], owners: list[int | None] | None
+    ) -> _CaptureOwnership | None:
+        """``None`` (use the legacy path) unless owners align one-to-one."""
+        if owners is None or len(owners) != len(responses):
+            return None
+        return cls(responses, owners)
+
+    def unattributed(self) -> list[Any]:
+        """Responses no example row consumed: unowned plus unconsumed owned."""
+        rest = list(self.unowned)
+        for index, owned in self.by_example.items():
+            if index not in self.consumed:
+                rest.extend(owned)
+        return rest
 
 
 class _AggregatedResponses:
@@ -612,6 +653,21 @@ class LocalEvaluator(BaseEvaluator):
 
         return None
 
+    @staticmethod
+    def _model_inference_pool(
+        index: int,
+        all_captured_responses: list[Any],
+        captures: _CaptureOwnership | None,
+    ) -> tuple[int, list[Any]]:
+        """(index, responses) ``_infer_model_name_from_output`` should read.
+
+        With capture ownership the example's own responses are used; the
+        positional guess only applies on the legacy path.
+        """
+        if captures is None:
+            return index, all_captured_responses
+        return 0, captures.by_example.get(index, [])
+
     def _extract_response_text(self, output: Any) -> str | None:
         """Extract text content from various output types.
 
@@ -649,6 +705,7 @@ class LocalEvaluator(BaseEvaluator):
         example_index: int,
         dataset: Dataset,
         all_captured_responses: list[Any],
+        captures: _CaptureOwnership | None = None,
     ) -> Any:
         """Determine the best source for extracting LLM metrics.
 
@@ -672,7 +729,19 @@ class LocalEvaluator(BaseEvaluator):
         """
         # Prefer raw_response from dict output
         if isinstance(output, dict) and output.get("raw_response") is not None:
+            if captures is not None:
+                # Its captured twin is this example's own: counted once, here.
+                captures.consumed.add(example_index)
             return output["raw_response"]
+
+        if captures is not None:
+            # Attribution by ownership: exactly the calls this example made.
+            owned = captures.by_example.get(example_index)
+            if owned:
+                captures.consumed.add(example_index)
+                if len(owned) > 1:
+                    return _AggregatedResponses(list(owned))
+                return owned[0]
 
         # Try correlation key (example_id)
         try:
@@ -684,6 +753,10 @@ class LocalEvaluator(BaseEvaluator):
         by_key = get_captured_response_by_key(ex_key)
         if by_key is not None:
             return by_key
+
+        if captures is not None:
+            # No owned response: never borrow another example's by position.
+            return output
 
         # Handle case where there are more captured responses than outputs
         # (multiple LLM calls per example, e.g., main response + judge scoring)
@@ -1192,6 +1265,7 @@ class LocalEvaluator(BaseEvaluator):
         config: dict[str, Any],
         dataset: Dataset,
         all_captured_responses: list[Any],
+        captures: _CaptureOwnership | None = None,
     ) -> ExampleMetrics:
         """Extract LLM metrics for a single output.
 
@@ -1228,7 +1302,8 @@ class LocalEvaluator(BaseEvaluator):
         # when the optimization config does not include "model" as a parameter.
         if not model_name:
             model_name = self._infer_model_name_from_output(
-                output, index, all_captured_responses
+                output,
+                *self._model_inference_pool(index, all_captured_responses, captures),
             )
 
         logger.debug(
@@ -1257,7 +1332,7 @@ class LocalEvaluator(BaseEvaluator):
 
         # Get best metrics source using helper
         metrics_source = self._get_metrics_source(
-            output, index, dataset, all_captured_responses
+            output, index, dataset, all_captured_responses, captures
         )
 
         # Pass lengths to extract_llm_metrics for privacy mode
@@ -1567,6 +1642,7 @@ class LocalEvaluator(BaseEvaluator):
         progress_callback: Callable[[int, dict[str, Any]], Any] | None,
         *,
         metric_errors: list[dict[str, Any]] | None = None,
+        captures: _CaptureOwnership | None = None,
     ) -> ExampleMetrics:
         """Process metrics for a single output.
 
@@ -1610,13 +1686,14 @@ class LocalEvaluator(BaseEvaluator):
 
         # Extract LLM metrics
         example_metric = self._extract_llm_metrics_for_output(
-            output, index, config, dataset, all_captured_responses
+            output, index, config, dataset, all_captured_responses, captures
         )
 
         model_name = config.get("model") or config.get("model_name")
         if not model_name:
             model_name = self._infer_model_name_from_output(
-                output, index, all_captured_responses
+                output,
+                *self._model_inference_pool(index, all_captured_responses, captures),
             )
 
         # META-EXTRACTION-POINT: Extract and inject __traigent_meta__ if present.
@@ -2377,6 +2454,9 @@ class LocalEvaluator(BaseEvaluator):
 
         # Get all captured LangChain responses before clearing
         all_captured_responses = get_all_captured_responses()
+        captures = _CaptureOwnership.build(
+            all_captured_responses, get_captured_response_owners()
+        )
         logger.debug(
             f"Got {len(all_captured_responses)} captured LangChain responses for {len(outputs)} outputs"
         )
@@ -2405,11 +2485,30 @@ class LocalEvaluator(BaseEvaluator):
                     all_captured_responses=all_captured_responses,
                     progress_callback=progress_callback,
                     metric_errors=metric_errors,
+                    captures=captures,
                 ),
                 sample_lease,
                 execution_budget_lease,
             )
             metrics_tracker.add_example_metrics(example_metric)
+
+        if captures is not None:
+            # Spend no example row consumed (a call with no owner, or an
+            # example that produced no row): its cost cannot be attributed, so
+            # the trial total becomes unmeasured and the exact priced part is
+            # kept as the known-spend floor -- never dropped, never guessed.
+            leftover = captures.unattributed()
+            if leftover:
+                fallback_model = config.get("model") or config.get("model_name")
+                metrics_tracker.unattributed_spend = True
+                metrics_tracker.unattributed_known_cost = sum(
+                    float(
+                        extract_llm_metrics(
+                            response=r, model_name=fallback_model
+                        ).cost.total_cost
+                    )
+                    for r in leftover
+                )
 
         # Compute aggregated metrics (include built-ins even with custom functions)
         if self.metric_functions:
