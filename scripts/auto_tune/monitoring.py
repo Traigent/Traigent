@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 from urllib.parse import urlparse
 
 import psutil
@@ -55,7 +55,7 @@ class HealthCheck:
     status: HealthStatus
     message: str
     timestamp: str
-    details: Dict[str, Any] = None
+    details: dict[str, Any] = None
 
 
 @dataclass
@@ -66,7 +66,7 @@ class Metric:
     value: float
     unit: str
     timestamp: str
-    tags: Dict[str, str] = None
+    tags: dict[str, str] = None
 
 
 @dataclass
@@ -77,7 +77,7 @@ class Alert:
     title: str
     message: str
     timestamp: str
-    details: Dict[str, Any] = None
+    details: dict[str, Any] = None
 
 
 class SystemMonitor:
@@ -90,7 +90,7 @@ class SystemMonitor:
         """Get CPU usage percentage."""
         return psutil.cpu_percent(interval=1)
 
-    def get_memory_usage(self) -> Dict[str, float]:
+    def get_memory_usage(self) -> dict[str, float]:
         """Get memory usage statistics."""
         mem = psutil.virtual_memory()
         return {
@@ -100,7 +100,7 @@ class SystemMonitor:
             "percent": mem.percent,
         }
 
-    def get_disk_usage(self, path: str = "/") -> Dict[str, float]:
+    def get_disk_usage(self, path: str = "/") -> dict[str, float]:
         """Get disk usage statistics."""
         disk = psutil.disk_usage(path)
         return {
@@ -233,7 +233,7 @@ class PipelineMonitor:
             timestamp=datetime.now().isoformat(),
         )
 
-    def collect_pipeline_metrics(self) -> List[Metric]:
+    def collect_pipeline_metrics(self) -> list[Metric]:
         """Collect pipeline execution metrics."""
         metrics = []
 
@@ -289,7 +289,7 @@ class AlertManager:
 
     def __init__(self):
         self.logger = setup_logging(self.__class__.__name__)
-        self.alerts: List[Alert] = []
+        self.alerts: list[Alert] = []
         self.alert_file = Path("alerts.jsonl")
 
     def create_alert(
@@ -297,7 +297,7 @@ class AlertManager:
         severity: AlertSeverity,
         title: str,
         message: str,
-        details: Optional[Dict[str, Any]] = None,
+        details: dict[str, Any] | None = None,
     ) -> Alert:
         """Create a new alert."""
         alert = Alert(
@@ -435,14 +435,14 @@ class AlertManager:
 
         return True
 
-    def _validated_webhook_url(self, url: str) -> Optional[str]:
+    def _validated_webhook_url(self, url: str) -> str | None:
         """Return validated webhook URL or None if the URL is not allowed."""
         if self._is_safe_webhook_url(url):
             return url
         return None
 
     @staticmethod
-    def _host_allowed(hostname: str, allowlist: List[str]) -> bool:
+    def _host_allowed(hostname: str, allowlist: list[str]) -> bool:
         """Check hostname against allowlist entries, including wildcard suffixes."""
         for entry in allowlist:
             if not entry:
@@ -476,7 +476,7 @@ class MonitoringService:
         self.alert_manager = AlertManager()
         self.status_file = Path("monitoring_status.json")
 
-    def run_health_checks(self) -> Dict[str, Any]:
+    def run_health_checks(self) -> dict[str, Any]:
         """Run all health checks."""
         checks = []
 
@@ -529,7 +529,7 @@ class MonitoringService:
 
         return result
 
-    def collect_metrics(self) -> List[Metric]:
+    def collect_metrics(self) -> list[Metric]:
         """Collect all metrics."""
         metrics = []
 
@@ -566,7 +566,7 @@ class MonitoringService:
 
         return metrics
 
-    def check_thresholds(self, metrics: List[Metric]):
+    def check_thresholds(self, metrics: list[Metric]):
         """Check metrics against thresholds."""
         thresholds = {
             "system.cpu": 80,

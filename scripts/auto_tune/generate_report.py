@@ -6,34 +6,34 @@ Creates detailed reports with metrics, plots, and recommendations.
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import yaml
 
 
-def load_params() -> Dict[str, Any]:
+def load_params() -> dict[str, Any]:
     """Load parameters from params.yaml."""
     with open("params.yaml") as f:
         return yaml.safe_load(f)
 
 
-def load_performance_report() -> Dict[str, Any]:
+def load_performance_report() -> dict[str, Any]:
     """Load performance evaluation report."""
     with open("performance_report.json") as f:
         return json.load(f)
 
 
-def load_optimization_results() -> Dict[str, Any]:
+def load_optimization_results() -> dict[str, Any]:
     """Load optimization results."""
     with open("optimization_results/latest.json") as f:
         return json.load(f)
 
 
 def generate_recommendations(
-    performance: Dict[str, Any], results: Dict[str, Any]
-) -> List[str]:
+    performance: dict[str, Any], results: dict[str, Any]
+) -> list[str]:
     """
     Generate actionable recommendations based on performance.
     """
@@ -87,16 +87,14 @@ def generate_recommendations(
 
 
 def generate_markdown_report(
-    performance: Dict[str, Any], results: Dict[str, Any], params: Dict[str, Any]
+    performance: dict[str, Any], results: dict[str, Any], params: dict[str, Any]
 ) -> str:
     """Generate markdown format report."""
 
     report = []
     report.append("# 🤖 Traigent Auto-Tuning Report")
     report.append("")
-    report.append(
-        f"**Generated:** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}"
-    )
+    report.append(f"**Generated:** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')}")
     report.append(f"**Environment:** {os.environ.get('CI_COMMIT_BRANCH', 'local')}")
     report.append(f"**Commit:** {os.environ.get('CI_COMMIT_SHA', 'local')[:8]}")
     report.append("")

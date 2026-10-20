@@ -8,14 +8,14 @@ import json
 import os
 import statistics
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import yaml
 
 from traigent.utils.secure_path import safe_read_text, safe_write_text, validate_path
 
 
-def load_params() -> Dict[str, Any]:
+def load_params() -> dict[str, Any]:
     """Load parameters from params.yaml."""
     base_dir = Path.cwd()
     params_path = validate_path("params.yaml", base_dir, must_exist=True)
@@ -24,7 +24,7 @@ def load_params() -> Dict[str, Any]:
 
 def load_optimization_results(
     path: str = "optimization_results/latest.json",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Load optimization results from Traigent."""
     if not Path(path).exists():
         print(f"⚠️  No optimization results found at {path}")
@@ -35,7 +35,7 @@ def load_optimization_results(
     return json.loads(safe_read_text(results_path, base_dir))
 
 
-def load_baseline(baseline_path: str) -> Optional[Dict[str, Any]]:
+def load_baseline(baseline_path: str) -> dict[str, Any] | None:
     """Load baseline metrics for comparison."""
     path = Path(baseline_path)
     if not path.exists():
@@ -46,7 +46,7 @@ def load_baseline(baseline_path: str) -> Optional[Dict[str, Any]]:
     return json.loads(safe_read_text(validated_path, path.parent))
 
 
-def measured_cost(trial: Dict[str, Any]) -> Optional[float]:
+def measured_cost(trial: dict[str, Any]) -> float | None:
     """A trial's cost only when it was measured; unknown cost is never 0."""
     status = trial.get("cost_status")
     cost = trial.get("cost")
@@ -57,7 +57,7 @@ def measured_cost(trial: Dict[str, Any]) -> Optional[float]:
     return float(cost)
 
 
-def calculate_metrics(results: Dict[str, Any]) -> Dict[str, float]:
+def calculate_metrics(results: dict[str, Any]) -> dict[str, float]:
     """
     Calculate performance metrics from optimization results.
     """
@@ -123,8 +123,8 @@ def calculate_metrics(results: Dict[str, Any]) -> Dict[str, float]:
 
 
 def compare_with_baseline(
-    current: Dict[str, float], baseline: Dict[str, float], threshold: float
-) -> Dict[str, Any]:
+    current: dict[str, float], baseline: dict[str, float], threshold: float
+) -> dict[str, Any]:
     """
     Compare current metrics with baseline.
 
@@ -198,7 +198,7 @@ def compare_with_baseline(
     return comparison
 
 
-def generate_plots_data(results: Dict[str, Any]) -> Dict[str, Any]:
+def generate_plots_data(results: dict[str, Any]) -> dict[str, Any]:
     """Generate data for performance plots."""
     plots_data = {"trials": [], "scores": [], "latencies": [], "costs": []}
 

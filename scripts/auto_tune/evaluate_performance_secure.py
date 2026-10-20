@@ -8,9 +8,9 @@ import json
 import os
 import statistics
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import yaml
 
@@ -35,7 +35,7 @@ audit_logger = AuditLogger("evaluate_performance_audit.jsonl")
 cost_controller = CostController()
 
 
-def load_params() -> Dict[str, Any]:
+def load_params() -> dict[str, Any]:
     """Load and validate parameters from params.yaml."""
     try:
         params_path = Path("params.yaml")
@@ -58,7 +58,7 @@ def load_params() -> Dict[str, Any]:
 @retry_with_backoff(max_attempts=3)
 def load_optimization_results(
     path: str = "optimization_results/latest.json",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Load optimization results with validation and retry."""
     results_path = Path(path)
 
@@ -97,7 +97,7 @@ def load_optimization_results(
         return {}
 
 
-def load_baseline(baseline_path: str) -> Optional[Dict[str, Any]]:
+def load_baseline(baseline_path: str) -> dict[str, Any] | None:
     """Load baseline metrics with validation."""
     path = Path(baseline_path)
 
@@ -133,7 +133,7 @@ def load_baseline(baseline_path: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def measured_cost(trial: Dict[str, Any]) -> Optional[float]:
+def measured_cost(trial: dict[str, Any]) -> float | None:
     """A trial's cost only when it was measured; unknown cost is never 0."""
     status = trial.get("cost_status")
     cost = trial.get("cost")
@@ -144,7 +144,7 @@ def measured_cost(trial: Dict[str, Any]) -> Optional[float]:
     return float(cost)
 
 
-def calculate_metrics(results: Dict[str, Any]) -> Dict[str, float]:
+def calculate_metrics(results: dict[str, Any]) -> dict[str, float]:
     """Calculate performance metrics with validation."""
     metrics = {
         "accuracy": 0.0,
@@ -232,8 +232,8 @@ def calculate_metrics(results: Dict[str, Any]) -> Dict[str, float]:
 
 
 def compare_with_baseline(
-    current: Dict[str, float], baseline: Dict[str, float], threshold: float
-) -> Dict[str, Any]:
+    current: dict[str, float], baseline: dict[str, float], threshold: float
+) -> dict[str, Any]:
     """Compare metrics with baseline including statistical significance."""
     comparison = {
         "metrics": {},
@@ -319,7 +319,7 @@ def compare_with_baseline(
     return comparison
 
 
-def generate_plots_data(results: Dict[str, Any]) -> Dict[str, Any]:
+def generate_plots_data(results: dict[str, Any]) -> dict[str, Any]:
     """Generate data for performance plots with validation."""
     plots_data = {
         "trials": [],
@@ -351,7 +351,7 @@ def generate_plots_data(results: Dict[str, Any]) -> Dict[str, Any]:
 
 def main():
     """Main evaluation pipeline with comprehensive error handling."""
-    start_time = datetime.now(timezone.utc)
+    start_time = datetime.now(UTC)
 
     try:
         print("📊 Securely evaluating optimization performance...")
@@ -416,7 +416,7 @@ def main():
             Path(baseline_path).parent.mkdir(parents=True, exist_ok=True)
 
             baseline_data = current_metrics.copy()
-            baseline_data["created_at"] = datetime.now(timezone.utc).isoformat()
+            baseline_data["created_at"] = datetime.now(UTC).isoformat()
 
             safe_file_write(
                 Path(baseline_path), json.dumps(baseline_data, indent=2), backup=True
@@ -436,10 +436,8 @@ def main():
             "baseline": baseline,
             "comparison": comparison if baseline else None,
             "metadata": {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "duration_seconds": (
-                    datetime.now(timezone.utc) - start_time
-                ).total_seconds(),
+                "timestamp": datetime.now(UTC).isoformat(),
+                "duration_seconds": (datetime.now(UTC) - start_time).total_seconds(),
                 "commit": os.environ.get("GITHUB_SHA", "local"),
                 "branch": os.environ.get("GITHUB_REF", "local"),
                 "environment": os.environ.get("CI_ENVIRONMENT_NAME", "development"),
@@ -473,9 +471,7 @@ def main():
             {
                 "metrics": current_metrics,
                 "has_regression": comparison.get("has_regression", False),
-                "duration_seconds": (
-                    datetime.now(timezone.utc) - start_time
-                ).total_seconds(),
+                "duration_seconds": (datetime.now(UTC) - start_time).total_seconds(),
             },
         )
 
@@ -498,9 +494,7 @@ def main():
             {
                 "error": str(e),
                 "type": type(e).__name__,
-                "duration_seconds": (
-                    datetime.now(timezone.utc) - start_time
-                ).total_seconds(),
+                "duration_seconds": (datetime.now(UTC) - start_time).total_seconds(),
             },
             success=False,
         )
