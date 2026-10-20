@@ -186,3 +186,83 @@ def test_plain_ainvoke_and_invoke_still_captured_once(
     clear_captured_responses()
     _fallback_llm().invoke("hi")
     assert len(get_all_captured_responses()) == 1
+
+
+def test_sync_stream_close_after_first_chunk_still_captures_once(
+    monkeypatch: pytest.MonkeyPatch, connects: list[Any], mock_off: None
+) -> None:
+    """Sol r5: close() after the fallback's only chunk must not lose usage."""
+
+    def _generate(self: Any, *a: Any, **k: Any) -> Any:
+        return _canned_result()
+
+    monkeypatch.setattr(ChatOpenAI, "_generate", _generate)
+
+    stream = _fallback_llm().stream("hi")
+    assert next(stream) is not None
+    stream.close()
+    captured = get_all_captured_responses()
+    assert len(captured) == 1
+    assert captured[0].usage_metadata["total_tokens"] == 15
+
+
+def test_async_stream_aclose_after_first_chunk_still_captures_once(
+    monkeypatch: pytest.MonkeyPatch, connects: list[Any], mock_off: None
+) -> None:
+    async def _agenerate(self: Any, *a: Any, **k: Any) -> Any:
+        return _canned_result()
+
+    monkeypatch.setattr(ChatOpenAI, "_agenerate", _agenerate)
+
+    async def run() -> None:
+        stream = _fallback_llm().astream("hi")
+        assert await stream.__anext__() is not None
+        await stream.aclose()
+
+    asyncio.run(run())
+    captured = get_all_captured_responses()
+    assert len(captured) == 1
+    assert captured[0].usage_metadata["total_tokens"] == 15
+
+
+def _named_llm(name: str) -> ChatOpenAI:
+    return ChatOpenAI(
+        api_key="sk-fake",
+        base_url="http://127.0.0.1:9/v1",
+        model=name,
+        max_retries=0,
+        disable_streaming=True,
+    )
+
+
+def test_nested_call_to_a_different_model_is_captured_separately(
+    monkeypatch: pytest.MonkeyPatch, connects: list[Any], mock_off: None
+) -> None:
+    """Sol r5: a callback invoking a second model is an independent call."""
+    inner = _named_llm("inner-model")
+
+    def _generate(self: Any, *a: Any, **k: Any) -> Any:
+        if self.model_name == "outer-model":
+            inner.invoke("nested")  # e.g. a callback calling another model
+        return _canned_result()
+
+    async def _agenerate(self: Any, *a: Any, **k: Any) -> Any:
+        if self.model_name == "outer-model":
+            await inner.ainvoke("nested")
+        return _canned_result()
+
+    monkeypatch.setattr(ChatOpenAI, "_generate", _generate)
+    monkeypatch.setattr(ChatOpenAI, "_agenerate", _agenerate)
+
+    _named_llm("outer-model").invoke("hi")
+    assert len(get_all_captured_responses()) == 2
+    clear_captured_responses()
+    asyncio.run(_named_llm("outer-model").ainvoke("hi"))
+    assert len(get_all_captured_responses()) == 2
+    clear_captured_responses()
+
+    # The outer stream's fallback still counts the outer call once, plus the
+    # independent nested call.
+    chunks = list(_named_llm("outer-model").stream("hi"))
+    assert chunks
+    assert len(get_all_captured_responses()) == 2
