@@ -1455,7 +1455,7 @@ def _local_session_duration(session: OptimizationSession) -> float | None:
         start = datetime.fromisoformat(str(session.created_at))
         end = datetime.fromisoformat(str(session.updated_at))
         seconds = (end - start).total_seconds()
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # silent-ok: unusable stamps, no duration
         return None
     return seconds if seconds >= 0 else None
 
@@ -1522,7 +1522,7 @@ def _load_cli_result(result_name: str, storage_dir: str | None) -> Any:
             return PersistenceManager(storage_dir or ".traigent").load_result(
                 result_name
             )
-        except FileNotFoundError:
+        except FileNotFoundError:  # silent-ok: falls through to session store
             pass
     session_id = result_name.removeprefix(_LOCAL_RESULT_PREFIX)
     local_storage = LocalStorageManager(storage_dir)
