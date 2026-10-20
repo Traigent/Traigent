@@ -64,11 +64,15 @@ EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY = "EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY
 # of the three evaluator registry digest files forces a human to revisit
 # this comment and `EVALUATOR_QUALITY_POLICY_DISPOSITION` in the same PR --
 # that dict IS the reviewed disposition record.
+# Re-recorded 2026-10-20 at Schema 31e0ddf: verifier_revision changed only because
+# Schema aacd5db (#563) moved `return Draft7Validator(...)` out of the try block in
+# the verifier module (behaviour-preserving). Owner card
+# feature-pick-2026-10-20-sdk-verifier-revision-rerecord, answered A.
 EVALUATOR_QUALITY_POLICY_DISPOSITION = {
-    "schema_pin": "91c9e5bb74479607677554b840e60ad78838c433",
-    "verifier_revision": "a2fd2e4e1222dc9e1589d26adcbb12b40dcbd5473e5c23cfb1e8e01ea39e333c",
+    "schema_pin": "31e0ddf818766d4570a58b3601b99b70dcc4c46e",
+    "verifier_revision": "887114f799459df27269463cb73e1bc1ff9c4a948d73dddb83db4b88cc3e831f",
     "reviewed_by": "maintainers",
-    "date": "2026-09-10",
+    "date": "2026-10-20",
 }
 
 
@@ -137,11 +141,15 @@ def evaluator_quality_verifier_revision(files: list[Path] | None = None) -> str:
 # agent-quality JSON schema, or any of the four registry documents (and their
 # digest sidecars) forces a human to revisit this comment and that dict in
 # the same PR.
+# Re-recorded 2026-10-20 at Schema 31e0ddf: verifier_revision changed only because
+# Schema aacd5db (#563) moved `return Draft7Validator(...)` out of the try block in
+# the verifier module (behaviour-preserving). Owner card
+# feature-pick-2026-10-20-sdk-verifier-revision-rerecord, answered A.
 AGENT_QUALITY_POLICY_DISPOSITION = {
-    "schema_pin": "91c9e5bb74479607677554b840e60ad78838c433",
-    "verifier_revision": "521fc89738136dad05a63bf5467e0a72077493aadfb90982e4da2b0e20694c57",
+    "schema_pin": "31e0ddf818766d4570a58b3601b99b70dcc4c46e",
+    "verifier_revision": "18ce9e7d7576b0eccc1dcbbcbf1e7d7643dae72ff2a5077c20fdd0f4b90d02de",
     "reviewed_by": "maintainers",
-    "date": "2026-09-10",
+    "date": "2026-10-20",
 }
 
 
