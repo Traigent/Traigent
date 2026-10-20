@@ -17,6 +17,7 @@ from importlib import import_module
 from typing import Any, NoReturn, cast
 from urllib.parse import urlparse
 
+from traigent.labels.transport_gate import client_origins, gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 
 # Capture the genuine, unpatched ClientSession class at module-load time — before
@@ -862,14 +863,17 @@ class TraigentCloudClient(BaseTraigentClient):
             logger.warning("aiohttp not available, will use fallback optimization")
             return self
 
-        self._aio_session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=self.timeout),
-            # Session-default headers are long-lived: never freeze a
-            # traceparent/tracestate into them (it would stamp every later
-            # request with a stale span context). Trace context travels only
-            # on per-request headers (see _get_headers / _inject_trace_context).
-            headers=_strip_trace_context_headers(await self.auth.get_headers()),
-            trust_env=True,
+        self._aio_session = gate_session(
+            aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=self.timeout),
+                # Session-default headers are long-lived: never freeze a
+                # traceparent/tracestate into them (it would stamp every later
+                # request with a stale span context). Trace context travels only
+                # on per-request headers (see _get_headers / _inject_trace_context).
+                headers=_strip_trace_context_headers(await self.auth.get_headers()),
+                trust_env=True,
+            ),
+            origins=client_origins(self),
         )
         self._register_session_finalizer(self._aio_session)
         return self
@@ -916,12 +920,15 @@ class TraigentCloudClient(BaseTraigentClient):
                     "Client session not initialized and aiohttp not available"
                 )
 
-            self._aio_session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=self.timeout),
-                # Same rule as __aenter__: no stale trace context in
-                # long-lived session-default headers.
-                headers=_strip_trace_context_headers(headers),
-                trust_env=True,
+            self._aio_session = gate_session(
+                aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=self.timeout),
+                    # Same rule as __aenter__: no stale trace context in
+                    # long-lived session-default headers.
+                    headers=_strip_trace_context_headers(headers),
+                    trust_env=True,
+                ),
+                origins=client_origins(self),
             )
             self._register_session_finalizer(self._aio_session)
             return self._aio_session
@@ -1750,14 +1757,42 @@ class TraigentCloudClient(BaseTraigentClient):
         if self._aio_session is None:
             raise CloudServiceError(_CLIENT_SESSION_NOT_INITIALIZED)
         try:
+            from traigent.cloud import content_less as _content_less
+
             url = f"{self.api_base_url}/sessions"
             request_data = self._serialize_session_request(request)
+            content_less_ctx = None
+            if _content_less.is_enabled(_content_less.options_of(request)):
+                # Same content-less builder as the optimize() route: no legacy identity,
+                # capability required in the 201, never a legacy-shape retry.
+                try:
+                    preview = self.auth.get_api_key_preview()
+                except Exception:  # noqa: BLE001 - scope only
+                    preview = None
+                content_less_ctx = _content_less.prepare_payload(
+                    request_data,
+                    request,
+                    _content_less.RefCache.principal(
+                        self.api_base_url, preview if isinstance(preview, str) else None
+                    ),
+                )
 
             async with self._aio_session.post(
                 url, json=request_data, headers=await self._get_headers()
             ) as response:
                 if response.status == 201:
                     data = await response.json()
+                    if content_less_ctx is not None:
+                        issued = _content_less.accept_response(data, content_less_ctx)
+                        if issued:
+                            from traigent.labels.transport import send_session_labels
+
+                            await send_session_labels(
+                                _content_less.label_texts(request),
+                                issued,
+                                self.api_base_url,
+                                self._get_headers,
+                            )
                     result = self._deserialize_session_response(data)
                     self._remember_session_owner(
                         result.session_id,
@@ -1769,6 +1804,8 @@ class TraigentCloudClient(BaseTraigentClient):
                     )
                     return result
                 else:
+                    if content_less_ctx is not None and response.status == 404:
+                        _content_less.forget_refused(content_less_ctx)
                     error_text = await response.text()
                     detail = SessionCreationFailureDetail.from_http_response(
                         response.status, error_text

@@ -37,7 +37,7 @@ keywords = [
 dependencies = [
     "click>=8.0.0",
     "rich>=12.0.0",
-    "aiohttp>=3.14.3,<4.0",  # AIKIDO-2026-168095 fixed in 3.14.3
+    "aiohttp>=3.14.4,<4.0",  # GHSA-2g87-pp6c-29x5, CVE-2026-111063/111064 fixed in 3.14.4
     "yarl>=1.24.5,<2",  # AIKIDO-2026-181733 — URL host parsing/normalisation; transitive via aiohttp, which does not floor it
     "multidict>=6.9.1,<7",  # patched multidict; transitive via aiohttp/yarl, which do not floor it
     "anyio>=4.14.2",  # AIKIDO-2026-889297 / anyio#1208 IDNA2008 TLS hostname cert-matching (fixed 4.14.2; transitive via httpx/anthropic/mcp)
@@ -316,6 +316,7 @@ traigent = [
     "playbook/schemas/*.json",
     "observability/otel/*.json",
     "connectors/schemas/*.json",
+    "labels/content_class_table.json",
 ]
 traigent_validation = ["py.typed"]
 

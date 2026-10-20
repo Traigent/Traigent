@@ -19,6 +19,7 @@ import pytest
 
 import traigent
 from traigent.api.types import ExampleResult, OptimizationResult, OptimizationStatus
+from traigent.core.best_config_runtime import function_ref_for
 from traigent.core.optimized_function import (
     OptimizationState,
     OptimizedFunction,
@@ -2341,7 +2342,13 @@ class TestConfigPersistence:
             log_dir.mkdir(parents=True)
 
             config_path = log_dir / "best_config.json"
-            config_data = {"temperature": 0.6, "model": "gpt-4"}
+            # Stamped with the identity the SDK's own logger writes: an
+            # identity-free dev log is no longer auto-loaded (F1e ruling d).
+            config_data = {
+                "function_ref": function_ref_for(mock_function),
+                "environment": "default",
+                "config": {"temperature": 0.6, "model": "gpt-4"},
+            }
             with open(config_path, "w") as f:
                 json.dump(config_data, f)
 

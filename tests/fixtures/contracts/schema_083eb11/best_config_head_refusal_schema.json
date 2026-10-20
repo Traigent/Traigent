@@ -1,0 +1,248 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/best_config_head_refusal_schema.json",
+  "title": "BestConfigHeadRefusal",
+  "description": "Closed error envelope of the content-less agent-head read (GET /api/v1/best-configs/agent-heads/by-ref/{agent_ref}: every 4xx/5xx it can return except 429) and the closed refusal envelope of the PROTECTED best-config publish (POST /api/v1/best-configs, see that route's decision table). Same members as the generic error envelope but closed: `error_code` is one of the codes below, `error` and `message` are the fixed text for that code, and nothing of the request (ref value, ids, environment, generation, headers) is echoed. `reference_not_found` is the Backend's existing identity-ref refusal (an unknown, foreign, no-longer-visible or unreadable ref are indistinguishable). A refused protected publish writes no publication row and moves no head. The legacy publish keeps its own bodies (including STALE_HEAD_GENERATION) unchanged, and legacy consumers of the generic error envelope are untouched. Precedence when several apply is fixed by the route that returns the envelope: authentication and permissions first (unauthenticated, forbidden), then malformed syntax (head_capture_invalid, 400), then a well-formed but unknown or foreign ref (reference_not_found, 404), then authorization (head_write_unauthorized), then session agreement (head_agent_mismatch, head_environment_mismatch), then the publish body (head_body_invalid, 400: any validation failure of the request body, with fixed text and no echo of keys or values), then the head compare (head_generation_stale), then the ordinary publish conflict (head_publish_conflict, 409: If-Match on a new configuration, a changed existing configuration without a matching If-Match, or a function_ref conflict). A protected request never receives the generic BEST_CONFIG_CONFLICT or free-text validation bodies.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "success",
+    "error",
+    "error_code",
+    "message"
+  ],
+  "properties": {
+    "success": {
+      "x-content-class": "closed_enum",
+      "type": "boolean",
+      "const": false
+    },
+    "error": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "reference_not_found",
+        "invalid_request",
+        "head_precondition_refused",
+        "unauthenticated",
+        "forbidden",
+        "internal_error"
+      ],
+      "description": "Fixed broad error name for the code."
+    },
+    "error_code": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "reference_not_found",
+        "head_capture_invalid",
+        "head_environment_mismatch",
+        "head_agent_mismatch",
+        "head_generation_stale",
+        "head_write_unauthorized",
+        "head_body_invalid",
+        "head_publish_conflict",
+        "unauthenticated",
+        "forbidden",
+        "internal_error"
+      ],
+      "description": "reference_not_found (404): agent_ref well-formed but unknown, foreign, not visible or not readable. head_capture_invalid (400): malformed syntax (a ref or generation that does not match its pattern or type, a ref sent without a generation, both X-Traigent-Agent-Ref and X-Traigent-Agent-Id), a protected publish whose session binding cannot be resolved, or an `environment` query value outside the closed enum. head_environment_mismatch (409): the publish environment differs from the session's recorded environment. head_agent_mismatch (409): the ref's agent is not the agent the session binding resolves. head_generation_stale (409): the head moved since the run captured its generation. NORMATIVE: a stale refusal means the run's RESULT is stale. The client MUST NOT refresh the generation and resubmit the same result, and the SDK MUST NEVER auto-retry a stale refusal; it starts a new run, or re-evaluates against the new head, and then publishes with that run's own captured generation. head_write_unauthorized (403): the caller lacks agent WRITE authorization. head_body_invalid (400): the protected publish body failed validation (fixed text; the response never contains a key or value of the request). head_publish_conflict (409): the ordinary publish precondition failed on a protected request (If-Match on a new configuration, a changed existing configuration without a matching If-Match, or a function_ref conflict); the generic BEST_CONFIG_CONFLICT body is for the legacy path only. A protected publish that fails server-side returns internal_error (500) with fixed text. unauthenticated (401), forbidden (403), internal_error (500): the read route's closed authentication, permission and server errors."
+    },
+    "message": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "Reference not found.",
+        "Head capture is missing or malformed.",
+        "Environment does not match the session.",
+        "Agent does not match the session.",
+        "Agent head moved since the capture.",
+        "Not authorized to promote this agent.",
+        "Publish body is invalid.",
+        "Publish conflicts with the current configuration.",
+        "Authentication required.",
+        "Forbidden.",
+        "Internal error."
+      ],
+      "description": "Fixed text per code, in the order of error_code."
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "error": {
+          "x-content-class": "closed_enum",
+          "const": "reference_not_found"
+        },
+        "error_code": {
+          "x-content-class": "closed_enum",
+          "const": "reference_not_found"
+        },
+        "message": {
+          "x-content-class": "closed_enum",
+          "const": "Reference not found."
+        }
+      }
+    },
+    {
+      "properties": {
+        "error": {
+          "x-content-class": "closed_enum",
+          "const": "invalid_request"
+        },
+        "error_code": {
+          "x-content-class": "closed_enum",
+          "const": "head_capture_invalid"
+        },
+        "message": {
+          "x-content-class": "closed_enum",
+          "const": "Head capture is missing or malformed."
+        }
+      }
+    },
+    {
+      "properties": {
+        "error": {
+          "x-content-class": "closed_enum",
+          "const": "head_precondition_refused"
+        },
+        "error_code": {
+          "x-content-class": "closed_enum",
+          "const": "head_environment_mismatch"
+        },
+        "message": {
+          "x-content-class": "closed_enum",
+          "const": "Environment does not match the session."
+        }
+      }
+    },
+    {
+      "properties": {
+        "error": {
+          "x-content-class": "closed_enum",
+          "const": "head_precondition_refused"
+        },
+        "error_code": {
+          "x-content-class": "closed_enum",
+          "const": "head_agent_mismatch"
+        },
+        "message": {
+          "x-content-class": "closed_enum",
+          "const": "Agent does not match the session."
+        }
+      }
+    },
+    {
+      "properties": {
+        "error": {
+          "x-content-class": "closed_enum",
+          "const": "head_precondition_refused"
+        },
+        "error_code": {
+          "x-content-class": "closed_enum",
+          "const": "head_generation_stale"
+        },
+        "message": {
+          "x-content-class": "closed_enum",
+          "const": "Agent head moved since the capture."
+        }
+      }
+    },
+    {
+      "properties": {
+        "error": {
+          "x-content-class": "closed_enum",
+          "const": "head_precondition_refused"
+        },
+        "error_code": {
+          "x-content-class": "closed_enum",
+          "const": "head_write_unauthorized"
+        },
+        "message": {
+          "x-content-class": "closed_enum",
+          "const": "Not authorized to promote this agent."
+        }
+      }
+    },
+    {
+      "properties": {
+        "error": {
+          "x-content-class": "closed_enum",
+          "const": "invalid_request"
+        },
+        "error_code": {
+          "x-content-class": "closed_enum",
+          "const": "head_body_invalid"
+        },
+        "message": {
+          "x-content-class": "closed_enum",
+          "const": "Publish body is invalid."
+        }
+      }
+    },
+    {
+      "properties": {
+        "error": {
+          "x-content-class": "closed_enum",
+          "const": "head_precondition_refused"
+        },
+        "error_code": {
+          "x-content-class": "closed_enum",
+          "const": "head_publish_conflict"
+        },
+        "message": {
+          "x-content-class": "closed_enum",
+          "const": "Publish conflicts with the current configuration."
+        }
+      }
+    },
+    {
+      "properties": {
+        "error": {
+          "x-content-class": "closed_enum",
+          "const": "unauthenticated"
+        },
+        "error_code": {
+          "x-content-class": "closed_enum",
+          "const": "unauthenticated"
+        },
+        "message": {
+          "x-content-class": "closed_enum",
+          "const": "Authentication required."
+        }
+      }
+    },
+    {
+      "properties": {
+        "error": {
+          "x-content-class": "closed_enum",
+          "const": "forbidden"
+        },
+        "error_code": {
+          "x-content-class": "closed_enum",
+          "const": "forbidden"
+        },
+        "message": {
+          "x-content-class": "closed_enum",
+          "const": "Forbidden."
+        }
+      }
+    },
+    {
+      "properties": {
+        "error": {
+          "x-content-class": "closed_enum",
+          "const": "internal_error"
+        },
+        "error_code": {
+          "x-content-class": "closed_enum",
+          "const": "internal_error"
+        },
+        "message": {
+          "x-content-class": "closed_enum",
+          "const": "Internal error."
+        }
+      }
+    }
+  ]
+}

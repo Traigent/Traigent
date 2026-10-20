@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 
+from traigent.labels.transport_gate import gate_session
 from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.hybrid.protocol import (
     BenchmarksResponse,
@@ -119,12 +120,15 @@ class HTTPTransport:
                     use_http2 = False
                     logger.debug("h2 package not installed, using HTTP/1.1")
 
-                self._client = httpx.AsyncClient(
-                    base_url=self.base_url,
-                    headers=headers,
-                    timeout=httpx.Timeout(self.timeout),
-                    limits=limits,
-                    http2=use_http2,
+                self._client = gate_session(
+                    httpx.AsyncClient(
+                        base_url=self.base_url,
+                        headers=headers,
+                        timeout=httpx.Timeout(self.timeout),
+                        limits=limits,
+                        http2=use_http2,
+                    ),
+                    origins=[self.base_url],
                 )
                 self._closed = False
 

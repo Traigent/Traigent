@@ -241,6 +241,12 @@ class SessionCreationResult:
     # The agent the backend bound this session to (API-key callers only; None
     # for other principals and for backends that do not disclose it).
     agent_id: str | None = None
+    # Content-less (``content_less_v1``) sessions: the opaque ``agent_ref`` the
+    # session-create 201 advertised. ``content_less`` is True when the backend
+    # negotiated the capability; such a session never carries ``agent_id`` and its
+    # promotions are protected by the ref-addressed head precondition.
+    agent_ref: str | None = None
+    content_less: bool = False
     # Execution-path transparency (so a caller never mistakes a local run for a
     # managed/cloud one). ``execution_path`` is "connected" for a real backend
     # session and "local_fallback" for any local result. ``backend_fallback`` is
@@ -275,6 +281,8 @@ class SessionCreationResult:
         project_id: str | None = None,
         tenant_id: str | None = None,
         agent_id: str | None = None,
+        agent_ref: str | None = None,
+        content_less: bool = False,
     ) -> SessionCreationResult:
         """Factory for a successful backend session."""
         return cls(
@@ -283,6 +291,8 @@ class SessionCreationResult:
             project_id=project_id,
             tenant_id=tenant_id,
             agent_id=agent_id,
+            agent_ref=agent_ref,
+            content_less=content_less,
             execution_path="connected",
             backend_fallback=False,
             degraded=False,

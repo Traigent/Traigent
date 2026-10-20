@@ -1558,6 +1558,8 @@ class BackendSessionManager:
         dataset_id: str | None = None,
         content_identity: dict[str, Any] | None = None,
         head_environment: str | None = None,
+        head_environment_explicit: bool | None = None,
+        content_less: Any = None,
     ) -> SessionContext:
         """Create backend session and return context.
 
@@ -1576,6 +1578,11 @@ class BackendSessionManager:
             head_environment: Best-config environment whose agent-head
                 generation is captured (once, here, at the start of the step)
                 for a later promoting publish.
+            head_environment_explicit: Whether ``head_environment`` was set by the
+                user (argument, config or TRAIGENT_BEST_CONFIG_ENVIRONMENT) rather
+                than defaulted. An explicit value, ``"default"`` included, outranks
+                TRAIGENT_ENVIRONMENT; ``None`` keeps the older inference (any value
+                other than ``"default"`` counts as explicit).
 
         Returns:
             SessionContext with session_id (or None if backend disabled)
@@ -1604,6 +1611,13 @@ class BackendSessionManager:
             # them later. Best-effort — a storage failure yields session_id
             # None exactly like the legacy behavior.
             self._warn_if_dataset_unlinked(dataset, dataset_id)
+            from traigent.cloud import content_less as content_less_session
+
+            offline_content_less_kwargs: dict[str, Any] = (
+                {"content_less_active": True}
+                if content_less_session.is_enabled(content_less)
+                else {}
+            )
             local_session_id = self._create_offline_local_session(
                 function_identifier=function_identifier,
                 function_display_name=function_display_name,
@@ -1613,6 +1627,7 @@ class BackendSessionManager:
                 experiment_display_name=experiment_display_name,
                 function_slug=function_slug,
                 agent_key=agent_key,
+                **offline_content_less_kwargs,
             )
             return SessionContext(
                 session_id=local_session_id,
@@ -1624,6 +1639,9 @@ class BackendSessionManager:
 
         bound_agent_id: str | None = None
         head_generation: int | None = None
+        bound_agent_ref: str | None = None
+        session_content_less = False
+        head_capture_refusal: str | None = None
         if self._backend_client:
             evaluation_set_name = getattr(dataset, "name", None) or "default_evaluation"
             self._warn_if_dataset_unlinked(dataset, dataset_id)
@@ -1691,13 +1709,58 @@ class BackendSessionManager:
                 session_metadata["warm_start_from"] = warm_start_from
 
             # Build the portal display name (see compute_portal_name).
+            from traigent.cloud import content_less as content_less_session
+
+            content_less_active = content_less_session.is_enabled(content_less)
+            if content_less_active:
+                # One environment for the whole run: the session is created with the
+                # run's best-config environment (canonicalized once, here, before
+                # anything is sent; out-of-set refuses locally), and the head capture
+                # and the publish use that same session-bound value.
+                options = (
+                    content_less
+                    if isinstance(content_less, content_less_session.ContentLessOptions)
+                    else content_less_session.ContentLessOptions()
+                )
+                requested_environment = options.environment
+                # Order: explicit content-less option > explicitly set best-config
+                # environment > TRAIGENT_ENVIRONMENT and the other sources > "default".
+                best_config_explicit = (
+                    head_environment not in (None, "default")
+                    if head_environment_explicit is None
+                    else head_environment_explicit
+                )
+                if (
+                    requested_environment is None
+                    and head_environment is not None
+                    and best_config_explicit
+                ):
+                    requested_environment = head_environment
+                head_environment = content_less_session.resolve_environment(
+                    requested_environment
+                )
+                content_less = content_less_session.ContentLessOptions(
+                    enabled=options.enabled,
+                    agent_ref=options.agent_ref,
+                    environment=head_environment,
+                )
             portal_name = compute_portal_name(
-                experiment_display_name=experiment_display_name,
+                # Content-less: the agent is named by its code identifier, never by the
+                # customer-chosen display name, objectives or knobs (group 1).
+                experiment_display_name=(
+                    function_descriptor.display_name or function_identifier
+                    if content_less_active
+                    else experiment_display_name
+                ),
                 objectives=self._objectives,
                 knob_names=list(
                     (getattr(self._optimizer, "config_space", {}) or {}).keys()
                 ),
-                function_display_name=function_display_name,
+                function_display_name=(
+                    function_descriptor.display_name
+                    if content_less_active
+                    else function_display_name
+                ),
                 function_identifier=function_identifier,
                 function_slug=function_slug,
             )
@@ -1728,6 +1791,8 @@ class BackendSessionManager:
             # privacy-mode run has not agreed to. Only passed when present, so
             # clients (and fakes) predating the field keep their exact call shape.
             identity_kwargs = self._content_identity_kwargs(content_identity)
+            if content_less is not None:
+                identity_kwargs["content_less"] = content_less
             raw_result = self._backend_client.create_session(
                 function_name=portal_name,
                 agent_key=declared_agent_key,
@@ -1783,10 +1848,21 @@ class BackendSessionManager:
                 }
                 if owning_context:
                     self._session_owning_context[session_id] = owning_context
-                bound_agent_id = result.agent_id
-                head_generation = self._capture_agent_head_generation(
-                    bound_agent_id, head_environment
-                )
+                if getattr(result, "content_less", False) is True:
+                    # content_less_v1: the session is addressed by the opaque
+                    # agent_ref of the create 201; metadata.agent_id is never read.
+                    session_content_less = True
+                    bound_agent_ref = getattr(result, "agent_ref", None)
+                    head_generation, head_capture_refusal = (
+                        self._capture_agent_head_generation_by_ref(
+                            bound_agent_ref, head_environment
+                        )
+                    )
+                else:
+                    bound_agent_id = result.agent_id
+                    head_generation = self._capture_agent_head_generation(
+                        bound_agent_id, head_environment
+                    )
 
             # On success, upload dataset features via the session mapping
             if result.backend_connected:
@@ -1833,7 +1909,57 @@ class BackendSessionManager:
             agent_id=bound_agent_id,
             head_generation=head_generation,
             head_environment=head_environment if head_generation is not None else None,
+            agent_ref=bound_agent_ref,
+            content_less=session_content_less,
+            head_capture_refusal=head_capture_refusal,
         )
+
+    def _capture_agent_head_generation_by_ref(
+        self, agent_ref: str | None, environment: str | None
+    ) -> tuple[int | None, str | None]:
+        """Read a content-less agent's head generation once, at the start of the step.
+
+        Returns ``(generation, None)`` on success, else ``(None, closed_code)``. Unlike
+        the legacy capture there is NO silent fallback: the run continues, but a later
+        publish of its result is refused locally with this closed code instead of going
+        out unprotected. The code is a ``HeadRefusalCode`` value; no response text is
+        kept or logged.
+        """
+        from traigent.core.best_config_runtime import (
+            CloudBestConfigHeadRefusedError,
+            HeadRefusalCode,
+        )
+
+        if not agent_ref or not environment:
+            logger.warning(
+                "Content-less session has no agent_ref or environment; "
+                "promotion of this run's result will be refused"
+            )
+            return None, HeadRefusalCode.CAPTURE_MISSING.value
+        fetch = getattr(
+            self._backend_client, "fetch_agent_head_generation_by_ref_sync", None
+        )
+        if not callable(fetch):
+            return None, HeadRefusalCode.CAPTURE_MISSING.value
+        try:
+            generation = fetch(agent_ref, environment=environment)
+        except CloudBestConfigHeadRefusedError as exc:
+            logger.warning(
+                "Content-less agent head read refused (%s); promotion of this "
+                "run's result will be refused",
+                exc.code.value,
+            )
+            return None, exc.code.value
+        except Exception as exc:  # noqa: BLE001 - closed code only, never the text
+            logger.warning(
+                "Content-less agent head read failed (%s); promotion of this "
+                "run's result will be refused",
+                type(exc).__name__,
+            )
+            return None, HeadRefusalCode.CAPTURE_MISSING.value
+        if isinstance(generation, bool) or not isinstance(generation, int):
+            return None, HeadRefusalCode.CAPTURE_MISSING.value
+        return cast(int, generation), None
 
     def _capture_agent_head_generation(
         self, agent_id: str | None, environment: str | None
@@ -1872,6 +1998,7 @@ class BackendSessionManager:
         experiment_display_name: str | None = None,
         function_slug: str | None = None,
         agent_key: str | None = None,
+        content_less_active: bool = False,
     ) -> str | None:
         """Create the syncable LOCAL session for a no-egress run (#1939).
 
@@ -1928,6 +2055,10 @@ class BackendSessionManager:
             }
             if isinstance(agent_key, str) and agent_key.strip():
                 metadata["agent_key"] = agent_key.strip()
+            if content_less_active:
+                from traigent.cloud import content_less as content_less_session
+
+                metadata[content_less_session.RECORD_KEY] = True
             # Persist the identity the live create would have declared (explicit
             # id, else a real label, else none) so `traigent sync` sends it.
             from traigent.cloud.models import (  # local: traigent.cloud is optional

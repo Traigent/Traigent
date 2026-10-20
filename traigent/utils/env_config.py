@@ -559,6 +559,28 @@ def is_mock_llm() -> bool:
     return is_truthy(os.environ.get("TRAIGENT_MOCK_LLM"))
 
 
+COST_PREFLIGHT_MOCK_EXEMPT_ENV = "TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT"
+
+
+def cost_preflight_mock_exempt() -> bool:
+    """Return True only when the pre-run cost preflights may be skipped.
+
+    Plain mock mode no longer skips the cost approval / model-price coverage
+    preflights (a mixed real/mock agent would otherwise run unchecked). The
+    skip requires ALL of: mock LLM mode is on, the explicit test/walkthrough
+    opt-in ``TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT`` is truthy, and the
+    environment is explicitly non-production (``ENVIRONMENT``/``TRAIGENT_ENV``/
+    ``TRAIGENT_ENVIRONMENT`` set to a known non-production name). Unset or
+    unknown environments count as production. Test and keyless-walkthrough
+    use only.
+    """
+    if treat_as_production_policy():
+        return False
+    if not is_truthy(os.environ.get(COST_PREFLIGHT_MOCK_EXEMPT_ENV)):
+        return False
+    return is_mock_llm()
+
+
 _STRICT_COST_ENV = "TRAIGENT_STRICT_COST_ACCOUNTING"
 
 # Run-scoped default for strict cost accounting. ``OptimizedFunction.optimize``

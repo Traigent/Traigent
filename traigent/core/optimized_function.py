@@ -54,6 +54,7 @@ from traigent.config.types import (
     resolve_execution_policy,
     validate_execution_mode,
 )
+from traigent.core.best_config_runtime import function_ref_for
 from traigent.core.ci_approval import check_ci_approval
 from traigent.core.config_state_manager import (
     ConfigStateManager,  # Per-function configuration manager.
@@ -125,6 +126,7 @@ from traigent.utils.cost_calculator import (
     get_pricing_provenance,
 )
 from traigent.utils.env_config import (
+    cost_preflight_mock_exempt,
     is_mock_llm,
     is_strict_cost_accounting,
     strict_cost_accounting_origin,
@@ -1291,6 +1293,8 @@ class OptimizedFunction(Generic[_P, _R]):
         # identity is exactly what fragments an agent's history into one-run cohorts.
         self._run_title: str | None = kwargs.pop("run_title", None)
         self._run_description: str | None = kwargs.pop("run_description", None)
+        # Content-less session options (``ContentLessOptions`` or None = legacy/env).
+        self._content_less: Any = kwargs.pop("content_less", None)
 
         self.timeout = kwargs.pop("timeout", None)
         kwargs["timeout"] = self.timeout
@@ -2809,6 +2813,7 @@ class OptimizedFunction(Generic[_P, _R]):
             warm_start_from=getattr(self, "warm_start_from", None),
             run_title=self._run_title,
             run_description=self._run_description,
+            content_less=self._content_less,
         )
         orchestrator_kwargs["agent_key"] = self.declared_agent_name
         orchestrator_kwargs["requested_algorithm"] = requested_algorithm
@@ -2863,6 +2868,13 @@ class OptimizedFunction(Generic[_P, _R]):
         orchestrator.task_type = self.task_type
         orchestrator.dataset_id = self.dataset_id
         orchestrator.head_environment = self._csm.best_config_environment
+        # The identity the SDK's own development log is stamped with, so that
+        # auto-discovery can later load only an artifact that is ours.
+        orchestrator.head_function_ref = function_ref_for(self._csm.func)
+        orchestrator.head_config_id = self._csm.config_id
+        orchestrator.head_environment_explicit = bool(
+            getattr(self._csm, "best_config_environment_explicit", False)
+        )
         # RFC 0001 §3.4: forward the user-attached knob resolver so the
         # public optimize() path resolves Fixed/CVAR bindings in-trial.
         # Attribute seam (like promotion_gate): set
@@ -3385,7 +3397,10 @@ class OptimizedFunction(Generic[_P, _R]):
         *,
         cost_approved: bool = False,
     ) -> None:
-        """Warn or fail before trials when a real run includes unpriced models."""
+        """Warn or fail before trials when a run includes unpriced models."""
+        if cost_preflight_mock_exempt():
+            return
+
         model_ids = _extract_config_space_model_ids(effective_config_space)
         if not model_ids:
             model_ids = _dedupe_model_ids(
@@ -4434,7 +4449,11 @@ Remediation:
         self._csm.save_optimization_results(path)
 
     def load_optimization_results(self, path: str) -> None:
-        """Load optimization results from file."""
+        """Load optimization results from file.
+
+        An explicit user call with a saved result in hand: it does not verify the
+        stored identity (``config_id`` / ``function_ref`` / environment) of the file.
+        """
         self._csm.load_optimization_results(path)
 
     @property
@@ -4457,7 +4476,11 @@ Remediation:
         self._csm.maybe_auto_load_config()
 
     def set_config(self, config: dict[str, Any]) -> None:
-        """Set current configuration manually."""
+        """Set current configuration manually.
+
+        An explicit user call with the values in hand: it does not verify stored
+        identity (``config_id`` / ``function_ref`` / environment) of anything.
+        """
         self._csm.set_config(config)
 
     def clear_override(self) -> bool:
@@ -4471,6 +4494,9 @@ Remediation:
 
     def apply_best_config(self, results: OptimizationResult | None = None) -> bool:
         """Apply best configuration from optimization results.
+
+        An explicit user call with the result in hand: it does not verify the stored
+        identity (``config_id`` / ``function_ref`` / environment) of ``results``.
 
         Promotion takes the same exclusive per-wrapper slot as an
         ``optimize(apply=True)`` run and holds it across the commit, so it is

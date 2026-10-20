@@ -26,6 +26,8 @@ import logging
 
 import pytest
 
+from traigent.utils.exceptions import ConfigurationError
+
 from traigent.api.types import OptimizationResult, OptimizationStatus
 from traigent.core.config_state_manager import ConfigStateManager, OptimizationState
 from traigent.utils.optimization_result_persistence import (
@@ -177,8 +179,10 @@ def test_versioned_artifact_missing_a_field_raises_rather_than_defaulting(
     del payload["total_cost"]
     path.write_text(json.dumps(payload), encoding="utf-8")
 
-    with pytest.raises(Exception, match="total_cost"):
+    with pytest.raises(ConfigurationError) as info:
         _load(tmp_path, path)
+    # The message is fixed text; the decoder's reason lives on ``details`` only.
+    assert "total_cost" in info.value.details["reason"]
 
 
 def test_an_explicit_null_schema_version_is_rejected_not_read_as_legacy(
@@ -199,8 +203,9 @@ def test_an_explicit_null_schema_version_is_rejected_not_read_as_legacy(
     del payload["stop_reason"]
     path.write_text(json.dumps(payload), encoding="utf-8")
 
-    with pytest.raises(Exception, match=SCHEMA_VERSION_KEY):
+    with pytest.raises(ConfigurationError) as info:
         _load(tmp_path, path)
+    assert SCHEMA_VERSION_KEY in info.value.details["reason"]
 
 
 def test_legacy_artifact_loads_with_defaults_and_logs_what_was_lost(
@@ -281,8 +286,10 @@ def test_the_writer_refuses_a_status_its_loader_would_have_degraded(tmp_path) ->
     saver = _manager(tmp_path)
     saver._optimization_results = result
 
-    with pytest.raises(ValueError, match="bogus"):
+    # the refusal names the field, never the rejected value (that lives on no rendering)
+    with pytest.raises(ValueError, match="status") as excinfo:
         saver.save_optimization_results(str(path))
+    assert "bogus" not in str(excinfo.value)
 
     assert not path.exists()
 

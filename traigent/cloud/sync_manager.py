@@ -18,6 +18,7 @@ from urllib.parse import quote, urlencode
 
 import requests  # Always needed for synchronous operations
 
+from traigent.labels.transport_gate import gate_session
 from traigent.cloud.api_operations import _typed_configuration_space
 from traigent.cloud.client import raise_if_cloud_egress_disabled
 from traigent.cloud.models import (
@@ -136,7 +137,7 @@ class SyncManager:
         # X-API-Key only — Authorization: Bearer is reserved for JWTs.
         self.headers = {"X-API-Key": api_key} if api_key else {}
         # Always create requests session for synchronous operations
-        self._session = requests.Session()
+        self._session = gate_session(requests.Session(), origins=[self.base_url])
         if api_key:
             self._session.headers.update(self.headers)
         self._request_timeout = self._resolve_request_timeout()
@@ -849,6 +850,23 @@ class SyncManager:
                     "you want to upload, or `traigent local list` to see the "
                     "ids on this machine."
                 ) from None
+
+            from traigent.cloud import content_less as _content_less
+
+            if _content_less.replay_refused(getattr(session, "metadata", None)):
+                # Nothing is converted or sent: the replay body is a legacy identity body.
+                return {
+                    "session_id": session_id,
+                    "function_name": session.function_name,
+                    "status": "error",
+                    "error_code": _content_less.REPLAY_UNSUPPORTED,
+                    "dry_run": dry_run,
+                    "data_converted": False,
+                    "errors": [
+                        "Content-less sessions cannot be replayed yet "
+                        f"({_content_less.REPLAY_UNSUPPORTED})."
+                    ],
+                }
 
             # Convert to Traigent format
             traigent_data = self.convert_session_to_traigent_format(session)

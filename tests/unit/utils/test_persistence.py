@@ -984,8 +984,9 @@ def test_a_type_violating_real_result_fails_the_save_instead_of_downgrading(
     result.status = "definitely_not_a_status"  # type: ignore[assignment]
 
     persistence = PersistenceManager(base_dir=tmp_path)
-    with pytest.raises(ValueError, match="definitely_not_a_status"):
+    with pytest.raises(ValueError, match="'status'") as raised:
         persistence.save_result(result, "bogus-status")
+    assert "definitely_not_a_status" not in str(raised.value)
 
 
 class _UnserializableMetadataValue:
@@ -1032,7 +1033,10 @@ def test_unserializable_metadata_degrades_the_artifact_but_does_not_destroy_it(
     # Degraded: no full record, and the log says why rather than swallowing it.
     assert "result_fields" not in metadata
     assert SCHEMA_VERSION_KEY not in metadata
-    assert "boom" in caplog.text
+    # F1n: only the exception TYPE is logged; its text may carry customer content
+    # (this test used to assert the text "boom" appeared in the log)
+    assert "boom" not in caplog.text
+    assert "ValueError" in caplog.text
     assert "metadata" in caplog.text
 
     # But the run is persisted, and the curated summary is intact and readable.
@@ -1057,8 +1061,9 @@ def test_the_strict_re_raise_still_covers_a_declared_field_type_violation(
     result.metadata = {"plugin_payload": _UnserializableMetadataValue()}
 
     persistence = PersistenceManager(base_dir=tmp_path)
-    with pytest.raises(ValueError, match="not-a-date"):
+    with pytest.raises(ValueError, match="'timestamp'") as raised:
         persistence.save_result(result, "violating-timestamp")
+    assert "not-a-date" not in str(raised.value)
 
 
 def test_a_duck_typed_result_with_unserializable_metadata_also_degrades(

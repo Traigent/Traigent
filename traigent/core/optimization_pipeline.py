@@ -970,6 +970,7 @@ def collect_orchestrator_kwargs(
     warm_start_from: str | None = None,
     run_title: str | None = None,
     run_description: str | None = None,
+    content_less: Any = None,
 ) -> dict[str, Any]:
     """Collect optional kwargs for orchestrator from algorithm_kwargs and attrs.
 
@@ -987,6 +988,7 @@ def collect_orchestrator_kwargs(
         invocations_per_example: Number of invocations per example (default: 1)
         run_title: Optional author-supplied title for this run (label only)
         run_description: Optional author-supplied run description (label only)
+        content_less: Optional ``ContentLessOptions`` (content-less session create)
 
     Returns:
         Dict of orchestrator keyword arguments.
@@ -1037,6 +1039,7 @@ def collect_orchestrator_kwargs(
         ("warm_start_from", warm_start_from, None),
         ("run_title", run_title, None),
         ("run_description", run_description, None),
+        ("content_less", content_less, None),
     ]
     for attr_name, value, transform in optional_attrs:
         if value is not None:

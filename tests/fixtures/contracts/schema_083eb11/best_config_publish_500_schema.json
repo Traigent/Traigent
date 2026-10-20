@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/best_config_publish_500_schema.json",
+  "title": "BestConfigProtectedPublish500",
+  "description": "The 500 body of a PROTECTED POST /api/v1/best-configs: the closed refusal envelope (best_config_head_refusal_schema.json) restricted to internal_error (fixed text). A malformed protected body (right code, wrong text, extra member) matches nothing. The execution endpoint combines this with the unchanged legacy 500 body in two DISJOINT branches (the legacy branch must not carry internal_error).",
+  "allOf": [
+    {
+      "$ref": "./best_config_head_refusal_schema.json"
+    },
+    {
+      "properties": {
+        "error_code": {
+          "x-content-class": "closed_enum",
+          "enum": [
+            "internal_error"
+          ]
+        }
+      }
+    }
+  ]
+}

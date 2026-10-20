@@ -56,6 +56,17 @@ export TRAIGENT_APPROVED_BY="your_name"
 
 `TRAIGENT_MOCK_LLM` does not bypass this CI approval gate.
 
+## Mock Mode and the Cost Preflight
+
+Mock mode alone does not skip the pre-run cost approval or the model-price
+coverage preflight, so an agent that mixes real and mock calls is still checked.
+Keyless walkthroughs and tests that are genuinely fully mocked opt out with
+`TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT=true`. The exemption applies only when mock
+LLM mode is on and the environment (`ENVIRONMENT`, `TRAIGENT_ENV` or
+`TRAIGENT_ENVIRONMENT`) is explicitly non-production, e.g. `ENVIRONMENT=development`.
+An unset or unknown environment counts as production and never gets the
+exemption. It is test/walkthrough-only and must not be set for real-LLM runs. Runtime cost accounting stays active.
+
 ## Dataset Path Containment
 
 Evaluation datasets must resolve under the trusted dataset root. Set the root

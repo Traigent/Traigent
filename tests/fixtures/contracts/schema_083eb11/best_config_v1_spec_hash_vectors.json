@@ -1,0 +1,951 @@
+{
+  "schema_version": "traigent.best_config.v1.spec_hash_vectors.3",
+  "description": "Language-neutral vectors for the frozen legacy traigent.best_config.v1 spec_hash rule (best_config_schema.json x-traigent-spec-hash). Expected values were produced by TraigentBackend src/services/best_config_service.py (commit 311855d82) via parse_publish_request. For each case, apply the rule to request.spec (+ request.environment as the envelope environment) and compare hashed_payload, canonical_json and spec_hash. refusal_cases lists inputs the rule refuses (not hashed) - a consumer must raise/refuse, never return a digest. Finiteness is checked over the ORIGINAL spec, before NFC and before the validation exclusions. historical_cases hold hash-rule vectors that a NEW publish no longer accepts (object keys equal after NFC: the hash keeps last-wins so stored specs still verify) and are verified by the hash function / the stored-spec revalidation path, not by the publish ingress; ingress_refusal_cases lists NEW publishes that must be refused before anything is persisted or sent.",
+  "digest_format": "sha256:<64 lowercase hex>",
+  "cases": [
+    {
+      "name": "provenance_present",
+      "note": "provenance is carried in the spec but never hashed",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          },
+          "provenance": {
+            "algorithm": "tpe",
+            "optimization_id": "opt_cloud_123",
+            "published_at": "2026-10-17T10:00:00Z",
+            "source": "sdk"
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:6558b30bfa1ca48baac9d04e17573f6e935a111829fc07ac567a5e6c210a2a3e"
+    },
+    {
+      "name": "provenance_absent_same_hash",
+      "note": "identical to provenance_present minus provenance: same hash",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:6558b30bfa1ca48baac9d04e17573f6e935a111829fc07ac567a5e6c210a2a3e"
+    },
+    {
+      "name": "validation_nested_exclusions",
+      "note": "guaranteed_selection / certified_selection containers and the result keys are removed at any depth, inside lists too; other validation content is hashed",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          },
+          "validation": {
+            "guaranteed_selection": {
+              "status": "deployable",
+              "certificate": {
+                "a": 1
+              }
+            },
+            "certified_selection": {
+              "deployable": true
+            },
+            "holdout": {
+              "accuracy": 0.9,
+              "selected_config": {
+                "model": "m"
+              },
+              "fallback_config": {
+                "model": "n"
+              },
+              "rows": [
+                {
+                  "deployable": true,
+                  "id": 1
+                },
+                {
+                  "certificate": "c",
+                  "id": 2
+                }
+              ]
+            }
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        },
+        "validation": {
+          "holdout": {
+            "accuracy": 0.9,
+            "rows": [
+              {
+                "id": 1
+              },
+              {
+                "id": 2
+              }
+            ]
+          }
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\",\"validation\":{\"holdout\":{\"accuracy\":0.9,\"rows\":[{\"id\":1},{\"id\":2}]}}}",
+      "spec_hash": "sha256:c2bb5d0fcf6a31c0f0e4fafbb0307c261b4783303a33a58b3171bbebd3638f78"
+    },
+    {
+      "name": "validation_ordinary_nested_status_is_dropped",
+      "note": "an ordinary nested key named status is removed too: the exclusion is by key name, not by meaning",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          },
+          "validation": {
+            "run": {
+              "status": "ok",
+              "accuracy": 0.91
+            },
+            "status": "done",
+            "notes": [
+              "a"
+            ]
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        },
+        "validation": {
+          "run": {
+            "accuracy": 0.91
+          },
+          "notes": [
+            "a"
+          ]
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\",\"validation\":{\"notes\":[\"a\"],\"run\":{\"accuracy\":0.91}}}",
+      "spec_hash": "sha256:f5bc34e04196db4a46618e0a11eb558373825b817dc5e219bc6f865b48e73fc8"
+    },
+    {
+      "name": "validation_empty_object_omitted",
+      "note": "validation {} is omitted from the hashed payload (the hash equals the no-validation hash)",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          },
+          "validation": {}
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:6558b30bfa1ca48baac9d04e17573f6e935a111829fc07ac567a5e6c210a2a3e"
+    },
+    {
+      "name": "validation_only_excluded_keys_omitted",
+      "note": "validation that is empty after exclusion is omitted",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          },
+          "validation": {
+            "status": "x",
+            "guaranteed_selection": {
+              "status": "y"
+            }
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:6558b30bfa1ca48baac9d04e17573f6e935a111829fc07ac567a5e6c210a2a3e"
+    },
+    {
+      "name": "non_nfc_strings",
+      "note": "strings and object keys are NFC-normalized before hashing (decomposed e + combining acute in a config value, a config key and a validation value)",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "modeé": "café",
+            "temperature": 0.2
+          },
+          "validation": {
+            "note": "résumé"
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "modeé": "café",
+          "temperature": 0.2
+        },
+        "validation": {
+          "note": "résumé"
+        }
+      },
+      "canonical_json": "{\"config\":{\"modeé\":\"café\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\",\"validation\":{\"note\":\"résumé\"}}",
+      "spec_hash": "sha256:f8c33da681a88cc5fbb6d5e321e87cb51513c821662395c954448f1d26526549"
+    },
+    {
+      "name": "config_id_is_trimmed_not_nfc",
+      "note": "config_id is trimmed but, exactly as the Backend does today, NOT NFC-normalized",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "  café-agent  ",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "café-agent",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"café-agent\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:439c733e96880baf5908af0fa8f94eeaa09c2624298b70ee6b19411271b87de5"
+    },
+    {
+      "name": "identifier_and_environment_normalized",
+      "note": "config_id is trimmed (surrounding whitespace, here spaces and a tab); function_ref and environment trim/lower-case are no-ops on contract-valid input because the publish contract only admits canonical values for both",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "  support-answerer\t",
+          "function_ref": "app.agents:answer",
+          "environment": "prod",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "prod",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"prod\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:142c63f02f13fce6acb9e734189adb70c0bf2b609cdc94954afe55ca49b1fac8"
+    },
+    {
+      "name": "environment_from_request_envelope",
+      "note": "spec has no environment: the request envelope environment supplies it",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          }
+        },
+        "environment": "staging"
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "staging",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"staging\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:f99d361f6eacbd5daf93db384070f3a8ba794a74f30333affd07edf8606e871c"
+    },
+    {
+      "name": "environment_defaults",
+      "note": "spec and envelope both omit environment: it is \"default\"",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:6558b30bfa1ca48baac9d04e17573f6e935a111829fc07ac567a5e6c210a2a3e"
+    },
+    {
+      "name": "forward_compat_and_function_ref_absent",
+      "note": "forward_compat is not hashed; an absent function_ref is simply absent from the payload",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "environment": "default",
+          "config": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 512
+          },
+          "forward_compat": true
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "environment": "default",
+        "config": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 512
+        }
+      },
+      "canonical_json": "{\"config\":{\"max_tokens\":512,\"model\":\"gpt-4o-mini\",\"temperature\":0.2},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:a57677fe3d102b8edb46b033072d6aa74bfb8e74e7ef3137ca96cc3ea60d792b"
+    },
+    {
+      "name": "number_forms",
+      "note": "Python json number rendering: integers exact, floats shortest round-trip repr (1.0, 1e-07, 0.1), booleans and null",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "i": 3,
+            "big": 12345678901234567890,
+            "f1": 1.0,
+            "f2": 1e-07,
+            "f3": 0.1,
+            "b": true,
+            "n": null,
+            "neg": -0.5,
+            "l": [
+              1,
+              2.5,
+              "x"
+            ],
+            "z": {
+              "b": 1,
+              "a": 2
+            }
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "i": 3,
+          "big": 12345678901234567890,
+          "f1": 1.0,
+          "f2": 1e-07,
+          "f3": 0.1,
+          "b": true,
+          "n": null,
+          "neg": -0.5,
+          "l": [
+            1,
+            2.5,
+            "x"
+          ],
+          "z": {
+            "b": 1,
+            "a": 2
+          }
+        }
+      },
+      "canonical_json": "{\"config\":{\"b\":true,\"big\":12345678901234567890,\"f1\":1.0,\"f2\":1e-07,\"f3\":0.1,\"i\":3,\"l\":[1,2.5,\"x\"],\"n\":null,\"neg\":-0.5,\"z\":{\"a\":2,\"b\":1}},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:9326a79f80518eab94e87c6c03032d1f1f0c092a0bff2805c95c628a9f92bb5e"
+    },
+    {
+      "name": "depth_boundary_accepted",
+      "note": "config.a holds an array nested 14 deep: the deepest value sits at JSON depth 16 (spec = depth 0), the last depth accepted",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "a": [
+              [
+                [
+                  [
+                    [
+                      [
+                        [
+                          [
+                            [
+                              [
+                                [
+                                  [
+                                    [
+                                      [
+                                        1
+                                      ]
+                                    ]
+                                  ]
+                                ]
+                              ]
+                            ]
+                          ]
+                        ]
+                      ]
+                    ]
+                  ]
+                ]
+              ]
+            ]
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "a": [
+            [
+              [
+                [
+                  [
+                    [
+                      [
+                        [
+                          [
+                            [
+                              [
+                                [
+                                  [
+                                    [
+                                      1
+                                    ]
+                                  ]
+                                ]
+                              ]
+                            ]
+                          ]
+                        ]
+                      ]
+                    ]
+                  ]
+                ]
+              ]
+            ]
+          ]
+        }
+      },
+      "canonical_json": "{\"config\":{\"a\":[[[[[[[[[[[[[[1]]]]]]]]]]]]]]},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:383db03645b6f6a14c267b9d1061ea10268d1e4658aa92d3e63c8049e6c89734"
+    },
+    {
+      "name": "negative_zero",
+      "note": "-0.0 is hashed as the float -0.0 and renders \"-0.0\"",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "x": -0.0
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "x": -0.0
+        }
+      },
+      "canonical_json": "{\"config\":{\"x\":-0.0},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:622e84a42808d46a1a4247e6e728d1733708c8e8b604e970dcb8a269cc1767be"
+    },
+    {
+      "name": "positive_zero_distinct_from_negative_zero",
+      "note": "0.0 renders \"0.0\": a different hash from negative_zero",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "x": 0.0
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "x": 0.0
+        }
+      },
+      "canonical_json": "{\"config\":{\"x\":0.0},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:a8e7a2f04cee6dfabec2710ab5281fd0db2d1e52540bf591115a9f65c83005d9"
+    },
+    {
+      "name": "array_integer_one",
+      "note": "the integer 1 inside an array renders \"1\"",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "x": [
+              1
+            ]
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "x": [
+            1
+          ]
+        }
+      },
+      "canonical_json": "{\"config\":{\"x\":[1]},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:a54cace07938bf41039e77efa63c14fe34a3e09acff64adb689d18875b0c8767"
+    },
+    {
+      "name": "array_float_one_distinct_from_integer",
+      "note": "the float 1.0 at the same position renders \"1.0\": a different hash from array_integer_one (1 and 1.0 are NOT equal under this rule)",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "x": [
+              1.0
+            ]
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "x": [
+            1.0
+          ]
+        }
+      },
+      "canonical_json": "{\"config\":{\"x\":[1.0]},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:47d3a065e0d6c7064d79f17ed18a6a81226fdf8394e75d24cee0ff8fe18b7b32"
+    }
+  ],
+  "historical_cases": [
+    {
+      "name": "nfc_colliding_keys_last_wins",
+      "note": "two config keys that are equal after NFC (precomposed e-acute, then e + combining acute) collapse to one key; the LATER one in document order wins when VERIFYING a spec that is already stored (frozen hash rule); a NEW publish with such keys is refused at ingress, see ingress_refusal_cases",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "é": 1,
+            "é": 2
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "é": 2
+        }
+      },
+      "canonical_json": "{\"config\":{\"é\":2},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:59da0051c37f0f9ab0fe5aeff80d64bb9df37e21d59a521a0f0072e39b4c4f2a"
+    },
+    {
+      "name": "nfc_colliding_keys_last_wins_reversed",
+      "note": "same two keys in the opposite document order: the value that wins changes, so the order is part of the rule",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "é": 2,
+            "é": 1
+          }
+        }
+      },
+      "hashed_payload": {
+        "schema_version": "traigent.best_config.v1",
+        "config_id": "support-answerer",
+        "function_ref": "app.agents:answer",
+        "environment": "default",
+        "config": {
+          "é": 1
+        }
+      },
+      "canonical_json": "{\"config\":{\"é\":1},\"config_id\":\"support-answerer\",\"environment\":\"default\",\"function_ref\":\"app.agents:answer\",\"schema_version\":\"traigent.best_config.v1\"}",
+      "spec_hash": "sha256:24ef7eb5c6405876bdde8fc22e994bd9aa25fe178aedd3acc9605c8bfaf04902"
+    }
+  ],
+  "ingress_refusal_cases": [
+    {
+      "name": "nfc_colliding_keys_refused_on_publish",
+      "note": "a NEW publish whose config holds two keys equal after NFC is refused by every publisher/ingress (the Backend, and the SDK before it sends); the hash rule itself keeps last-wins for already-stored specs (historical_cases)",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "é": 1,
+            "é": 2
+          }
+        }
+      }
+    },
+    {
+      "name": "nfc_colliding_keys_reversed_refused_on_publish",
+      "note": "same, with the colliding keys in the other order",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "é": 2,
+            "é": 1
+          }
+        }
+      }
+    }
+  ],
+  "refusal_cases": [
+    {
+      "name": "nan_refused",
+      "note": "NaN is refused, never hashed. JSON cannot carry it: the consumer replaces spec.config.x (a null placeholder here) with float(\"nan\") before applying the rule",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "x": null
+          }
+        }
+      },
+      "non_finite_substitution": {
+        "path": [
+          "spec",
+          "config",
+          "x"
+        ],
+        "value": "nan"
+      }
+    },
+    {
+      "name": "positive_infinity_refused",
+      "note": "+Infinity is refused, never hashed; replace spec.config.x with float(\"inf\")",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "x": null
+          }
+        }
+      },
+      "non_finite_substitution": {
+        "path": [
+          "spec",
+          "config",
+          "x"
+        ],
+        "value": "inf"
+      }
+    },
+    {
+      "name": "negative_infinity_refused",
+      "note": "-Infinity is refused, never hashed; replace spec.config.x with float(\"-inf\")",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "x": null
+          }
+        }
+      },
+      "non_finite_substitution": {
+        "path": [
+          "spec",
+          "config",
+          "x"
+        ],
+        "value": "-inf"
+      }
+    },
+    {
+      "name": "depth_boundary_refused",
+      "note": "config.a holds an array nested 15 deep: one level past depth_boundary_accepted; the maximum JSON depth is 16 (spec = depth 0)",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "a": [
+              [
+                [
+                  [
+                    [
+                      [
+                        [
+                          [
+                            [
+                              [
+                                [
+                                  [
+                                    [
+                                      [
+                                        [
+                                          1
+                                        ]
+                                      ]
+                                    ]
+                                  ]
+                                ]
+                              ]
+                            ]
+                          ]
+                        ]
+                      ]
+                    ]
+                  ]
+                ]
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "nan_in_excluded_validation_member_refused",
+      "note": "NaN inside a validation member that the hash excludes (validation.status) is still refused: finiteness is checked over the ORIGINAL spec before NFC and before exclusions; replace spec.validation.status (a null placeholder here) with float(\"nan\")",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "x": 1
+          },
+          "validation": {
+            "status": null
+          }
+        }
+      },
+      "non_finite_substitution": {
+        "path": [
+          "spec",
+          "validation",
+          "status"
+        ],
+        "value": "nan"
+      }
+    },
+    {
+      "name": "non_finite_lost_to_nfc_collision_refused",
+      "note": "config holds two keys equal after NFC (precomposed e-acute, then e + combining acute); the first carries +Infinity, the second 2. NFC last-wins would discard the infinity, but finiteness is checked over the ORIGINAL spec before NFC, so it is refused. Replace spec.config[precomposed key] (a null placeholder here) with float(\"inf\")",
+      "request": {
+        "spec": {
+          "schema_version": "traigent.best_config.v1",
+          "config_id": "support-answerer",
+          "function_ref": "app.agents:answer",
+          "environment": "default",
+          "config": {
+            "é": null,
+            "é": 2
+          }
+        }
+      },
+      "non_finite_substitution": {
+        "path": [
+          "spec",
+          "config",
+          "é"
+        ],
+        "value": "inf"
+      }
+    }
+  ]
+}

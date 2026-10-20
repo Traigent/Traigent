@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from unittest.mock import MagicMock, patch
 
@@ -367,7 +368,14 @@ class TestCheckCostApproval:
         enforcer.check_and_approve.return_value = True
         estimator = CostEstimator(enforcer, max_trials=5, max_total_examples=None)
         with (
-            patch("traigent.core.cost_estimator.is_mock_llm", return_value=True),
+            patch.dict(
+                os.environ,
+                {
+                    "TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT": "true",
+                    "ENVIRONMENT": "development",
+                },
+            ),
+            patch("traigent.utils.env_config.is_mock_llm", return_value=True),
             patch.object(
                 estimator,
                 "estimate_optimization_cost",
@@ -378,11 +386,124 @@ class TestCheckCostApproval:
         estimate_cost.assert_called_once()
         enforcer.check_and_approve.assert_called_once()
 
+    def test_plain_mock_without_exemption_still_runs_preflight(self) -> None:
+        """Mock on but no explicit exemption: the approval preflight must run."""
+        enforcer = MagicMock()
+        enforcer.check_and_approve.return_value = False
+        enforcer.config.limit = 1.0
+        estimator = CostEstimator(enforcer, max_trials=5, max_total_examples=None)
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k != "TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT"
+        }
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("traigent.utils.env_config.is_mock_llm", return_value=True),
+            patch.object(
+                estimator, "estimate_optimization_cost", return_value=999.0
+            ) as estimate_cost,
+            pytest.raises(CostLimitExceeded),
+        ):
+            estimator.check_cost_approval(_FakeDataset())
+        estimate_cost.assert_called_once()
+        enforcer.check_and_approve.assert_called_once()
+
+    def test_exemption_rejected_in_production(self) -> None:
+        from traigent.utils.env_config import cost_preflight_mock_exempt
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT": "true",
+                    "ENVIRONMENT": "production",
+                },
+            ),
+            patch("traigent.utils.env_config.is_mock_llm", return_value=True),
+        ):
+            assert cost_preflight_mock_exempt() is False
+
+    @pytest.mark.parametrize(
+        "env",
+        [
+            {"TRAIGENT_ENV": "production"},
+            {"TRAIGENT_ENVIRONMENT": "production"},
+            {"ENVIRONMENT": "production"},
+            {},
+            {"ENVIRONMENT": "banana"},
+            {"TRAIGENT_ENV": "banana"},
+        ],
+        ids=[
+            "traigent_env_production",
+            "traigent_environment_production",
+            "environment_production",
+            "unset",
+            "unknown_environment",
+            "unknown_traigent_env",
+        ],
+    )
+    def test_exemption_denied_unless_explicit_non_production(
+        self, env: dict[str, str]
+    ) -> None:
+        from traigent.utils.env_config import cost_preflight_mock_exempt
+
+        base = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("ENVIRONMENT", "TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT")
+        }
+        base["TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT"] = "true"
+        with (
+            patch.dict(os.environ, {**base, **env}, clear=True),
+            patch("traigent.utils.env_config.is_mock_llm", return_value=True),
+        ):
+            assert cost_preflight_mock_exempt() is False
+
+    @pytest.mark.parametrize("flag", ["false", "0", ""])
+    def test_exemption_denied_for_falsey_flag(self, flag: str) -> None:
+        from traigent.utils.env_config import cost_preflight_mock_exempt
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT": flag,
+                    "ENVIRONMENT": "development",
+                },
+            ),
+            patch("traigent.utils.env_config.is_mock_llm", return_value=True),
+        ):
+            assert cost_preflight_mock_exempt() is False
+
+    @pytest.mark.parametrize(
+        "key", ["ENVIRONMENT", "TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT"]
+    )
+    def test_exemption_allowed_for_explicit_non_production_with_mock(
+        self, key: str
+    ) -> None:
+        from traigent.utils.env_config import cost_preflight_mock_exempt
+
+        base = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("ENVIRONMENT", "TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT")
+        }
+        base.update({"TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT": "true", key: "development"})
+        with patch.dict(os.environ, base, clear=True):
+            with patch("traigent.utils.env_config.is_mock_llm", return_value=True):
+                assert cost_preflight_mock_exempt() is True
+            with patch("traigent.utils.env_config.is_mock_llm", return_value=False):
+                assert cost_preflight_mock_exempt() is False
+
     def test_passes_when_approved(self) -> None:
         enforcer = MagicMock(is_mock_mode=False)
         enforcer.check_and_approve.return_value = True
         estimator = CostEstimator(enforcer, max_trials=5, max_total_examples=None)
-        with patch("traigent.core.cost_estimator.is_mock_llm", return_value=False):
+        with patch(
+            "traigent.core.cost_estimator.cost_preflight_mock_exempt",
+            return_value=False,
+        ):
             estimator.check_cost_approval(_FakeDataset())
         enforcer.check_and_approve.assert_called_once()
 
@@ -393,7 +514,10 @@ class TestCheckCostApproval:
         estimator = CostEstimator(enforcer, max_trials=5, max_total_examples=None)
 
         with (
-            patch("traigent.core.cost_estimator.is_mock_llm", return_value=False),
+            patch(
+                "traigent.core.cost_estimator.cost_preflight_mock_exempt",
+                return_value=False,
+            ),
             pytest.raises(CostLimitExceeded) as exc_info,
         ):
             estimator.check_cost_approval(_FakeDataset())
@@ -424,7 +548,10 @@ class TestCheckCostApproval:
         )
 
         with (
-            patch("traigent.core.cost_estimator.is_mock_llm", return_value=False),
+            patch(
+                "traigent.core.cost_estimator.cost_preflight_mock_exempt",
+                return_value=False,
+            ),
             pytest.raises(CostLimitExceeded) as exc_info,
         ):
             estimator.check_cost_approval(_FakeDataset())
@@ -440,7 +567,10 @@ class TestCheckCostApproval:
         estimator = CostEstimator(enforcer, max_trials=5, max_total_examples=None)
 
         with (
-            patch("traigent.core.cost_estimator.is_mock_llm", return_value=False),
+            patch(
+                "traigent.core.cost_estimator.cost_preflight_mock_exempt",
+                return_value=False,
+            ),
             pytest.raises(OptimizationError) as exc_info,
         ):
             estimator.check_cost_approval(_FakeDataset())

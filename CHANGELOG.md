@@ -75,6 +75,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Mock mode no longer skips the cost preflights (#2681).** The pre-run cost
+  approval and the model-price coverage preflight now run under plain
+  `TRAIGENT_MOCK_LLM`, unless `TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT=true` is set
+  (honored only in mock mode outside production). Fully mocked tests and keyless
+  walkthroughs that relied on the skip must set the exemption.
 - **BREAKING: non-string hybrid example ids are refused (#2575).** When the
   id a row resolves to (`example_id`, else `input_id`) is not a string (an
   int, float, bool, list or dict), the trial now fails with a
@@ -186,6 +191,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   |---|---|
   | 0.27.0 and earlier (checked: no context hand-off in the 0.23.0 to 0.27.0 sources) | no-op, silent |
   | next release containing 02413c33 (the v0.28.0 tag does) | applied |
+
+- **A real `publish_best_config()` no longer raises `CloudBestConfigIntegrityError` after the
+  Backend has already committed the publish.** The SDK hashed `provenance` and the unfiltered
+  `validation` into a best-config `spec_hash`, the Backend (since #819) hashes neither, so every
+  publish looked failed while the server had moved the head. `compute_spec_hash` now applies the
+  one frozen `traigent.best_config.v1` rule (TraigentSchema `best_config_schema.json`
+  `x-traigent-spec-hash`): provenance not covered, claim/result keys removed from `validation`
+  recursively, trimmed `config_id`, effective environment always hashed. Publish verification
+  hashes the spec the Backend returned, not the request. A repo or cloud-cache manifest written
+  with the old rule now fails closed with "written with an older spec_hash rule" (regenerate it
+  or refetch); no data is migrated silently.
 
 - **Observability ingest requests now fit the backend's per-request limits
   (#2600).** The transport used to cut requests only by `batch_size` (up to
