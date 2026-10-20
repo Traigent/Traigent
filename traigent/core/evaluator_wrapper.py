@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import ExampleResult
 from traigent.core.utils import safe_get_nested_attr
+from traigent.evaluators.metrics_tracker import RESERVED_METRIC_KEYS
 from traigent.evaluators.base import (
     MEASURED_ONLY_METRICS,
     BaseEvaluator,
@@ -28,6 +29,7 @@ from traigent.evaluators.base import (
     failed_row_metrics,
 )
 from traigent.identity.examples import result_identity_fields
+from traigent.utils.exceptions import EvaluationError
 from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.logging import get_logger
 from traigent.utils.trial_costs import (
@@ -104,6 +106,14 @@ def _redact_config_for_log(config: dict[str, Any]) -> dict[str, Any]:
 if TYPE_CHECKING:
     from traigent.core.execution_budget import ExecutionBudget
     from traigent.core.sample_budget import SampleBudgetLease
+
+
+# Objectives the SDK measures itself (cost family, latency, rates): an evaluator
+# need not emit them. "accuracy" and "score" are reserved names too, but only
+# the user's evaluator can produce them, so they are NOT exempt (#2422).
+_SDK_MEASURED_OBJECTIVES = (MEASURED_ONLY_METRICS | RESERVED_METRIC_KEYS) - frozenset(
+    {"accuracy", "score"}
+)
 
 
 class CustomEvaluatorWrapper(BaseEvaluator):
@@ -456,6 +466,40 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             error_message=str(error),
             metadata=example.metadata.copy() if example.metadata else {},
         )
+
+    def _require_objective_keys(
+        self, example_results: list[ExampleResult], config: dict[str, Any]
+    ) -> None:
+        """Fail the trial when a successful row omits an objective key.
+
+        Aggregation reads an absent key as 0.0, so an evaluator that emits a
+        differently named key scored every trial 0.0 with no signal (#2422).
+        This matches the ``metric_functions`` path, which refuses to substitute
+        a fabricated 0.0 for an objective. Keys the SDK measures itself (cost
+        family, reserved tracker metrics) are exempt. Failed rows already carry
+        their documented 0.0 and are not checked.
+        """
+        for metric in self.metrics:
+            if metric in _SDK_MEASURED_OBJECTIVES:
+                continue
+            missing = [
+                index
+                for index, row in enumerate(example_results)
+                if row.success and metric not in (row.metrics or {})
+            ]
+            if missing:
+                raise EvaluationError(
+                    f"Objective metric '{metric}' is missing from the metrics "
+                    f"returned by the custom_evaluator for {len(missing)} of "
+                    f"{len(example_results)} examples. Refusing to substitute a "
+                    "fabricated 0.0 score for an optimization objective.",
+                    config=config,
+                    details={
+                        "metric_name": metric,
+                        "missing_example_count": len(missing),
+                        "is_objective": True,
+                    },
+                )
 
     def _aggregate_custom_metrics(
         self, all_metrics: list[dict[str, Any]]
@@ -835,6 +879,8 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         # End metrics tracking if it was started
         if self.capture_llm_metrics and self._metrics_available:
             self._metrics_tracker.end_tracking()
+
+        self._require_objective_keys(example_results, config)
 
         # Aggregate metrics across all examples
         aggregated_metrics = self._aggregate_custom_metrics(all_metrics)
