@@ -178,6 +178,17 @@ def patch_litellm_for_metadata_capture(
     patched_any = False
     out: dict[str, str] = outcomes if outcomes is not None else {}
 
+    # Env-var mock mode (TRAIGENT_MOCK_LLM) never goes through
+    # enable_mock_mode_for_quickstart(); install the provider-host transport
+    # guard here so raw openai/anthropic clients are blocked too (#2418).
+    # Failure is not swallowed: mock mode must fail closed.
+    from traigent.integrations.utils.mock_adapter import MockAdapter
+
+    if MockAdapter.is_mock_enabled("litellm"):
+        from traigent.utils.mock_transport_guard import install_mock_transport_guard
+
+        install_mock_transport_guard()
+
     try:
         import litellm
     except ImportError:

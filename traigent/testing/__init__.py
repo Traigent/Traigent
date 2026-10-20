@@ -66,7 +66,7 @@ _scope_logged = False
 
 
 def log_raw_client_scope_caveat() -> None:
-    """Warn once per process that raw provider clients are not intercepted.
+    """Warn once per process that raw provider clients are blocked, not mocked.
 
     Shared by the in-code and ``TRAIGENT_MOCK_LLM`` activation paths (#2418).
     """
@@ -76,15 +76,17 @@ def log_raw_client_scope_caveat() -> None:
     _scope_logged = True
     _logger.warning(
         "[traigent.testing] mock interception scope: LiteLLM and "
-        "LangChain calls are mocked. Raw openai.chat.completions.create(...) "
-        "and anthropic.messages.create(...) calls are NOT intercepted and "
-        "can hit the real provider API (billed if a key is set)."
+        "LangChain calls are mocked. Raw "
+        "openai.chat.completions.create(...) and anthropic.messages.create(...) "
+        "calls are NOT intercepted (no canned response), but any HTTP request "
+        "to a known LLM provider host is blocked with an error while mock "
+        "mode is on, so no real provider call is made."
     )
 
 
 _INSTALL_FAILED_MESSAGE = (
     "traigent.testing could not install the LiteLLM/LangChain mock "
-    "interceptors; mock mode was NOT enabled. Fix the installation "
+    "interceptors or the provider-host transport guard; mock mode was NOT enabled. Fix the installation "
     "problem and call enable_mock_mode_for_quickstart() again."
 )
 
@@ -108,7 +110,12 @@ def _install_mock_interceptors() -> None:
             patch_litellm_for_metadata_capture,
         )
 
+        from traigent.utils.mock_transport_guard import (
+            install_mock_transport_guard,
+        )
+
         outcomes: dict[str, str] = {}
+        install_mock_transport_guard()
         patch_litellm_for_metadata_capture(outcomes)
         patch_langchain_for_metadata_capture(outcomes)
     except Exception as exc:  # noqa: BLE001 - re-raised as a closed error

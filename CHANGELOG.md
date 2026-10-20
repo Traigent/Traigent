@@ -160,6 +160,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the `UnknownModelError` carries the finished trials as `err.result`. Mock
   LLM mode and `TRAIGENT_STRICT_COST_ACCOUNTING=false` keep the warning
   behaviour; failed trials never trigger the stop.
+- **Mock mode now blocks real requests to known LLM provider hosts (#2418).**
+  Raw `openai` / `anthropic` clients inside an optimised function, and LiteLLM
+  calls that supply their own `litellm_logging_obj`, used to reach the real
+  provider (billed if a key was set) while `TRAIGENT_MOCK_LLM=true` or
+  `enable_mock_mode_for_quickstart()` was on. While mock mode is on, any
+  httpx (including `httpx2`), aiohttp or `requests` request to a fixed list of
+  provider hosts now raises `MockModeTransportBlockedError` before connecting.
+  The error names only the host, never the path, query, headers or body. The
+  guard is inert when mock mode is off, and enabling mock mode fails closed if
+  it cannot be installed.
 
 - **`auto_override_frameworks=True` was a silent no-op for sync functions on
   0.27.0 and earlier (#2420).** The override gate is a `ContextVar`, and the
