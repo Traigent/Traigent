@@ -17,6 +17,7 @@ from utils.helpers import build_results_table_callback, print_optimization_confi
 from utils.mock_answers import (
     ANSWERS,
     DEFAULT_MOCK_MODEL,
+    MOCK_TASK_TOKENS,
     configure_mock_notice,
     get_mock_accuracy,
     get_mock_cost,
@@ -66,7 +67,7 @@ def results_match_score(
     injection_mode="seamless",
     offline=True,
 )
-def answer_question(question: str) -> str:
+def answer_question(question: str) -> str | dict:
     """Your existing code - unchanged! Traigent intercepts the LLM call.
 
     In real mode, this would have:
@@ -74,10 +75,20 @@ def answer_question(question: str) -> str:
         return llm.invoke(question).content
     Traigent intercepts and overrides those hardcoded values.
     """
-    config = traigent.get_config()
-    set_mock_model(config.get("model", DEFAULT_MOCK_MODEL))
-    # Mock just returns pre-defined answers
-    return ANSWERS.get(normalize_text(question), "I don't know")
+    # Hardcoded values: seamless mode rewrites these local assignments with
+    # the trial's configuration (names must match the config keys).
+    model = "gpt-4.1-mini"
+    temperature = 0.7  # noqa: F841 - overridden by seamless injection
+    set_mock_model(model)
+    answer = ANSWERS.get(normalize_text(question), "I don't know")
+    # Report simulated per-call usage so the `cost` objective is real data
+    # (an unpriced call is refused by honest cost accounting).
+    return traigent.with_usage(
+        answer,
+        total_cost=get_mock_cost(model, "simple_qa", dataset_size=1),
+        input_tokens=MOCK_TASK_TOKENS["simple_qa"]["input"],
+        output_tokens=MOCK_TASK_TOKENS["simple_qa"]["output"],
+    )
 
 
 async def main() -> None:
