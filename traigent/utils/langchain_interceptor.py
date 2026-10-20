@@ -9,6 +9,7 @@ that would otherwise be lost when functions return only strings.
 import importlib.util
 import threading
 import time
+from collections import deque
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -166,6 +167,10 @@ class capture_scope:
         self.__exit__(*exc_info)
 
 
+# Cap on the per-thread "last response" stack (see set_last_response).
+_MAX_THREAD_LOCAL_RESPONSES = 64
+
+
 class LangChainMetadataCapture:
     """Thread-safe storage for LangChain response metadata."""
 
@@ -185,7 +190,11 @@ class LangChainMetadataCapture:
         """Store the last LangChain response."""
         with self._lock:
             if not hasattr(self._storage, "responses"):
-                self._storage.responses = []
+                # Bounded: this per-thread stack only serves get_last_response()
+                # (newest first). Cost accounting reads the capture-scope bucket
+                # / global list below, never this one, so evicting its oldest
+                # entries cannot drop a response still needed for spend. (#2444)
+                self._storage.responses = deque(maxlen=_MAX_THREAD_LOCAL_RESPONSES)
             self._storage.responses.append(response)
             logger.debug("Captured LangChain response with metadata")
 
