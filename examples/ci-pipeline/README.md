@@ -9,7 +9,7 @@ CI-driven LLM tuning.
 | Stage | Script | Purpose |
 |---|---|---|
 | `prepare_dataset` | `scripts/auto_tune/prepare_dataset.py` | Split raw data into train/test |
-| `optimize` | `traigent.cli optimize` | Run Traigent optimization loop |
+| `optimize` | `python -m traigent optimize optimize_target.py` | Run Traigent optimization loop on your `@traigent.optimize` file |
 | `evaluate` | `scripts/auto_tune/evaluate_performance.py` | Compare against baseline |
 | `report` | `scripts/auto_tune/generate_report.py` | Generate performance report |
 
@@ -29,6 +29,10 @@ dvc repro
 ```
 
 ## Configuration
+
+The `optimize` stage runs `python -m traigent optimize` on `optimize_target.py`,
+a Python file in your project root containing your `@traigent.optimize`
+function. Create it before running `dvc repro`.
 
 Edit `params.yaml` to control:
 
