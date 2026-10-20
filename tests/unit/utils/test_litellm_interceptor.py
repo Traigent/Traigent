@@ -36,6 +36,7 @@ def _make_mock_litellm_module():
         return _make_mock_response(kwargs.get("model", "gpt-4o"))
 
     mock_module.acompletion = _async_completion
+    mock_module.pre_call_rules = []
     mock_module._traigent_patched_completion = False
     mock_module._traigent_patched_acompletion = False
     return mock_module
@@ -387,3 +388,109 @@ class TestFromImportForm:
             user_mod.completion(model="gpt-4o", messages=[])
 
         provider.assert_not_called()
+
+
+class TestMockModeBoundaryGuard:
+    """Sol r4 finding 1 (#2515): stale references must not reach the provider."""
+
+    @pytest.fixture()
+    def real_litellm(self):
+        litellm = pytest.importorskip("litellm")
+        from traigent.utils import litellm_interceptor as li
+
+        saved = (
+            litellm.completion,
+            litellm.acompletion,
+            list(litellm.pre_call_rules),
+            getattr(litellm, "_traigent_patched_completion", False),
+            getattr(litellm, "_traigent_patched_acompletion", False),
+        )
+        # Capture the unwrapped references BEFORE patching, as an agent
+        # factory that imported them earlier would.
+        orig_completion = getattr(litellm.completion, "_traigent_original", None) or (
+            litellm.completion
+        )
+        orig_acompletion = getattr(litellm.acompletion, "_traigent_original", None) or (
+            litellm.acompletion
+        )
+        litellm.completion, litellm.acompletion = orig_completion, orig_acompletion
+        litellm._traigent_patched_completion = False
+        litellm._traigent_patched_acompletion = False
+        litellm.pre_call_rules[:] = []
+        try:
+            yield litellm, li, orig_completion, orig_acompletion
+        finally:
+            litellm.completion, litellm.acompletion = saved[0], saved[1]
+            litellm.pre_call_rules[:] = saved[2]
+            litellm._traigent_patched_completion = saved[3]
+            litellm._traigent_patched_acompletion = saved[4]
+
+    @pytest.fixture()
+    def mock_enabled(self):
+        with patch(
+            "traigent.integrations.utils.mock_adapter.MockAdapter.is_mock_enabled",
+            return_value=True,
+        ):
+            yield
+
+    @pytest.fixture()
+    def transport_spy(self, monkeypatch):
+        import socket
+
+        attempts: list[object] = []
+
+        def _spy(self, address, *a, **kw):
+            attempts.append(address)
+            raise OSError("transport spy")
+
+        monkeypatch.setattr(socket.socket, "connect", _spy)
+        return attempts
+
+    def test_closure_and_default_arg_captured_completion_blocked(
+        self, real_litellm, transport_spy, mock_enabled
+    ):
+        litellm, li, orig_completion, orig_acompletion = real_litellm
+        captured = orig_completion  # imported earlier, closed over below
+
+        def make_agent():
+            def agent(prompt):
+                return captured(
+                    model="gpt-4o-mini",
+                    api_key="sk-test",
+                    messages=[{"role": "user", "content": prompt}],
+                )
+
+            return agent
+
+        def agent_default(prompt, fn=orig_completion):
+            return fn(
+                model="gpt-4o-mini",
+                api_key="sk-test",
+                messages=[{"role": "user", "content": prompt}],
+            )
+
+        async def async_agent(prompt):
+            return await orig_acompletion(
+                model="gpt-4o-mini",
+                api_key="sk-test",
+                messages=[{"role": "user", "content": prompt}],
+            )
+
+        li.patch_litellm_for_metadata_capture()
+
+        with pytest.raises(li.MockModeBypassError):
+            make_agent()("hello")
+        with pytest.raises(li.MockModeBypassError):
+            agent_default("hello")
+        with pytest.raises(li.MockModeBypassError):
+            asyncio.run(async_agent("hello"))
+        assert transport_spy == []
+
+    def test_guard_is_inert_when_mock_disabled_and_idempotent(
+        self, real_litellm, monkeypatch
+    ):
+        litellm, li, *_ = real_litellm
+        li.patch_litellm_for_metadata_capture()
+        li.patch_litellm_for_metadata_capture()
+        assert litellm.pre_call_rules.count(li._mock_mode_pre_call_guard) == 1
+        assert li._mock_mode_pre_call_guard("text") is True

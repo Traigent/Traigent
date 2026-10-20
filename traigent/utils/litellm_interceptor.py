@@ -34,6 +34,49 @@ def _litellm_provider(response: Any) -> str:
     return "litellm"
 
 
+class MockModeBypassError(RuntimeError):
+    """A LiteLLM call reached the provider path under mock mode without mock."""
+
+
+def _mock_mode_pre_call_guard(_input: Any = None) -> bool:
+    """LiteLLM ``pre_call_rules`` entry that fails closed under mock mode.
+
+    LiteLLM runs every registered pre-call rule inside ``completion`` /
+    ``acompletion`` before any provider transport, for every reference to the
+    function (closures, default arguments, stored callables) -- unlike the
+    module-global rebinding, which only reaches names still in a namespace
+    (#2515). Calls made through the Traigent wrapper return their mock earlier
+    and never get here, so a call that does arrive while mock mode is on is a
+    bypass and must not reach the provider. The message is content-free.
+    """
+    from traigent.integrations.utils.mock_adapter import MockAdapter
+
+    if MockAdapter.is_mock_enabled("litellm"):
+        raise MockModeBypassError(
+            "A LiteLLM call bypassed Traigent mock mode and was blocked before "
+            "reaching the provider. Call litellm.completion/acompletion after "
+            "mock mode is enabled, or re-fetch the function reference."
+        )
+    return True
+
+
+def _install_mock_guard(litellm: Any) -> None:
+    """Register the fail-closed mock guard once (idempotent)."""
+    rules = getattr(litellm, "pre_call_rules", None)
+    if not isinstance(rules, list):
+        from traigent.integrations.utils.mock_adapter import MockAdapter
+
+        if MockAdapter.is_mock_enabled("litellm"):
+            raise RuntimeError(
+                "litellm.pre_call_rules is unavailable; cannot guarantee that "
+                "mock mode blocks provider calls."
+            )
+        logger.debug("litellm.pre_call_rules unavailable; mock guard not installed")
+        return
+    if _mock_mode_pre_call_guard not in rules:
+        rules.append(_mock_mode_pre_call_guard)
+
+
 def _rebind_imported_names(original: Any, wrapper: Any) -> int:
     """Point module-level names that still hold ``original`` at ``wrapper``.
 
@@ -84,6 +127,10 @@ def patch_litellm_for_metadata_capture() -> bool:
         return False
 
     configure_litellm_logging(litellm_module=litellm)
+
+    # Safety net for references the rebinding cannot reach (closures, default
+    # arguments, stored callables): fail closed inside LiteLLM itself.
+    _install_mock_guard(litellm)
 
     # Patch litellm.completion (sync)
     if not getattr(litellm, "_traigent_patched_completion", False):
