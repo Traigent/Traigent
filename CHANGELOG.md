@@ -537,7 +537,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Remove the argument at the call site; there is no replacement, because it never had an
   effect.
 
-- **A model with no price is no longer scored as free when you optimize for cost.**
+- **Breaking: a model with no price is no longer scored as free when you optimize for cost.**
   Previously a call whose model had no price table entry and no provider-reported cost
   was recorded as `$0.00`, and because the optimizer minimizes cost it ranked that
   configuration cheapest: an unpriced model won `best_config` over a priced one of
@@ -559,6 +559,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `cost_per_1k` now counts as a cost objective. The LangChain and Pydantic AI callback
   handlers read the setting when constructed, so set
   `TRAIGENT_STRICT_COST_ACCOUNTING=true` explicitly when optimizing through them.
+  Upgrade note (#2421): 0.27.x only warned for both this case and an objective
+  orientation defaulted to `maximize`; from 0.28.0 both are errors.
 
 ### Fixed
 
