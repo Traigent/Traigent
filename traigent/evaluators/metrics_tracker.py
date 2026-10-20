@@ -512,9 +512,11 @@ class CostMetrics:
         self.total_cost = self.input_cost + self.output_cost
 
 
-def is_cost_value_key(key: Any) -> bool:
-    """True for any numeric cost field name (``cost``, ``*_cost``)."""
-    return isinstance(key, str) and (key == "cost" or key.endswith("_cost"))
+def is_cost_value_key(key: Any, *, sdk_evaluation_cost: bool = False) -> bool:
+    """Only SDK cost fields; arbitrary user metrics retain their ownership."""
+    return key in ("cost", "input_cost", "output_cost", "total_cost") or (
+        sdk_evaluation_cost and key == "evaluation_cost"
+    )
 
 
 def enforce_unknown_cost_invariant(
@@ -523,12 +525,13 @@ def enforce_unknown_cost_invariant(
     unknown: bool | None = None,
     floor: float | None = None,
     nullify: bool = False,
+    sdk_evaluation_cost: bool = False,
 ) -> bool:
     """The one emit-boundary rule for unknown cost (#2444).
 
     A row or aggregate whose cost is unknown (unmeasured OR unpriced) carries NO
     numeric value in any cost field -- ``cost``, ``total_cost``, ``input_cost``,
-    ``output_cost``, ``evaluation_cost`` or any other ``*_cost`` key -- only the
+    ``output_cost`` and SDK-produced ``evaluation_cost`` -- only the
     ``cost_unmeasured`` flag plus the exact known floor in ``cost_lower_bound``.
     Unknown is not $0 and a partial sum is not the cost.
 
@@ -541,7 +544,11 @@ def enforce_unknown_cost_invariant(
         unknown = bool(mapping.get("cost_unmeasured"))
     if not unknown:
         return False
-    for key in [k for k in mapping if is_cost_value_key(k)]:
+    for key in [
+        k
+        for k in mapping
+        if is_cost_value_key(k, sdk_evaluation_cost=sdk_evaluation_cost)
+    ]:
         if nullify:
             mapping[key] = None
         else:
@@ -570,6 +577,9 @@ class ExampleMetrics:
     success: bool = True
     error: str | None = None
     custom_metrics: dict[str, Any] = field(default_factory=dict)
+    # True only when the SDK inserted this row's evaluation_cost. User values
+    # win collisions and are never withdrawn by the unknown LLM-cost rule.
+    sdk_evaluation_cost: bool = field(default=False, kw_only=True)
     # ``LocalEvaluator`` sets this from the dataset's expected-output contract.
     # A false value means the built-in exact-match accuracy is not meaningful
     # for this row (for example, the expected output is blank), so formatter
@@ -1015,13 +1025,13 @@ class MetricsTracker:
         # ``traigent.cloud.dtos.MeasuresDict._validate_dict``) -- so this is
         # 1.0/0.0, never a Python ``bool``.
         cost_unpriced = 1.0 if any(m.cost.unpriced for m in measured_metrics) else 0.0
-        # 1.0 when some measured example has NO cost measurement; the trial's
-        # cost total then covers only the examples that did (or is absent when
-        # none did). Numeric, never bool, like ``cost_unpriced`` (#2517).
+        # Explicit unknown-cost state counts even on an unmeasured row (e.g.
+        # a live timed-out worker). A no-response failure with no such evidence
+        # retains the existing measured-only statistics contract (#2160).
         cost_unmeasured = (
             1.0
             if (
-                any(not m.cost_measured for m in measured_metrics)
+                any(m.cost.unmeasured or m.cost.unpriced for m in self.example_metrics)
                 or (self.example_metrics and not cost_measured_metrics)
                 or self.unattributed_spend
             )
@@ -1200,10 +1210,35 @@ class MetricsTracker:
             return
         aggregate_user_custom_metrics(
             formatted,
-            [m.custom_metrics for m in self.example_metrics if m.success],
+            [
+                row
+                for m, row in zip(
+                    self.example_metrics, self._custom_metric_rows(), strict=True
+                )
+                if m.success
+            ],
             context="format_for_backend user metrics",
             extra_reserved=extra_reserved,
         )
+
+    @property
+    def sdk_evaluation_cost_only(self) -> bool:
+        """Whether evaluation_cost, if present, has no user producer."""
+        return not any(
+            "evaluation_cost" in m.custom_metrics and not m.sdk_evaluation_cost
+            for m in self.example_metrics
+        )
+
+    def _custom_metric_rows(self) -> list[dict[str, Any]]:
+        """Never average SDK judge costs into a user metric of the same name."""
+        if self.sdk_evaluation_cost_only:
+            return [m.custom_metrics for m in self.example_metrics]
+        return [
+            {k: v for k, v in m.custom_metrics.items() if k != "evaluation_cost"}
+            if m.sdk_evaluation_cost
+            else m.custom_metrics
+            for m in self.example_metrics
+        ]
 
     def _empty_backend_format(self) -> dict[str, Any]:
         """Return empty backend format structure when error occurs."""
@@ -1315,8 +1350,10 @@ class MetricsTracker:
         if self.example_metrics:
             # Find common custom metrics across all examples
             all_custom_keys: set[str] = set()
-            for m in self.example_metrics:
-                all_custom_keys.update(m.custom_metrics.keys())
+            custom_rows = self._custom_metric_rows()
+            user_evaluation_cost = not self.sdk_evaluation_cost_only
+            for row in custom_rows:
+                all_custom_keys.update(row.keys())
 
             # Add custom metrics that we haven't already handled
             for key in all_custom_keys:
@@ -1324,9 +1361,13 @@ class MetricsTracker:
                     key not in metrics_data and key != "accuracy"
                 ):  # Skip accuracy as we've already handled it
                     custom_values = []
-                    for m in self.example_metrics:
-                        if key in m.custom_metrics:
-                            custom_values.append(m.custom_metrics[key])
+                    for row in custom_rows:
+                        if key in row:
+                            custom_values.append(row[key])
+                        elif key == "evaluation_cost" and user_evaluation_cost:
+                            # An excluded SDK entry is not a user measurement
+                            # of zero. Use the same samples as the scalar mean.
+                            continue
                         else:
                             custom_values.append(
                                 0.0
@@ -1373,7 +1414,7 @@ class MetricsTracker:
                 if cost_key in summary_metrics:
                     summary_metrics[cost_key] = None
         if (
-            any(not m.cost_measured for m in measured_metrics)
+            any(m.cost.unmeasured or m.cost.unpriced for m in all_metrics)
             or not cost_measured_metrics
             or self.unattributed_spend
         ):

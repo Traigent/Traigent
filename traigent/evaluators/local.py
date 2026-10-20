@@ -44,6 +44,8 @@ from traigent.utils.langchain_interceptor import (
     capture_scope,
     get_captured_response_by_key,
     drain_captured_responses,
+    seal_captured_responses,
+    snapshot_captured_responses,
     patch_langchain_for_metadata_capture,
 )
 from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
@@ -1106,6 +1108,10 @@ class LocalEvaluator(BaseEvaluator):
             "input_cost": example_metric.cost.input_cost if cost_known else None,
             "output_cost": example_metric.cost.output_cost if cost_known else None,
             "response_time_ms": example_metric.response.response_time_ms,
+            "cost_unmeasured": 0.0 if cost_known else 1.0,
+            "cost_lower_bound": self._example_cost_floor(example_metric)
+            if not cost_known
+            else example_metric.cost.total_cost,
         }
 
         example_id = (
@@ -1355,6 +1361,30 @@ class LocalEvaluator(BaseEvaluator):
             "metrics": payload_metrics,
             "output": output,
         }
+
+    def _extract_progress_call_metrics(
+        self,
+        example_id: str,
+        example: Any,
+        result: Any,
+        config: dict[str, Any],
+        dataset: Dataset | None,
+        example_index: int,
+    ) -> ExampleMetrics | None:
+        """Preview the same per-call accounting the final pass will consume.
+
+        Snapshot under the capture lock, retain every sibling and its owner,
+        and consume only this temporary ownership view, never the live bucket.
+        """
+        responses, owners, requested = snapshot_captured_responses()
+        captures = _CaptureOwnership.build(responses, owners, requested)
+        if captures is None or dataset is None:
+            return super()._extract_progress_call_metrics(
+                example_id, example, result, config, dataset, example_index
+            )
+        return self._extract_llm_metrics_for_output(
+            result.actual_output, example_index, config, dataset, responses, captures
+        )
 
     def _extract_llm_metrics_for_output(
         self,
@@ -2253,20 +2283,13 @@ class LocalEvaluator(BaseEvaluator):
         a new public field -- so a judge's share is reported alongside the
         agent's cost rather than silently merged into it.
 
-        CAVEAT on that visibility: `evaluation_cost` is NOT in
-        `metrics_tracker.RESERVED_METRIC_KEYS`, so it travels on the USER
-        metric channel. `enforce_user_metric_ceiling`
-        (`metrics_tracker.py:307`) drops only NON-reserved keys, in sorted
-        order, to fit the backend `MeasuresDict` ceiling of
-        `TOTAL_MEASURES_CEILING` total keys (`metrics_tracker.py:18`). So on a
-        run whose metric keys exceed that ceiling, `evaluation_cost` CAN be
-        dropped from the submitted measures -- the folded spend still lands in
-        `cost`/`tokens` (those keys ARE reserved), only the judge's separate
-        breakdown line is lost. Reserving the key would make it unconditional,
-        but that also changes user-key collision semantics on the measures
-        channel (a user metric of the same name would then be skipped with a
-        warning) and is deliberately left to a follow-up rather than widened
-        into this cost-attribution fix.
+        ``evaluation_cost`` shares the user channel: an existing user value
+        wins the name collision. SDK insertions carry ``sdk_evaluation_cost``
+        provenance on the row, so unknown-cost sanitization withdraws only SDK
+        values. If a trial contains both producers, tracker aggregation uses
+        only the user values for that name. Like other non-reserved metrics,
+        this optional breakdown may be dropped by the user-metric key ceiling;
+        folded spend remains in the standard cost accounting.
 
         Does not touch the pre-run cost estimator (`check_and_approve`);
         that estimator has no view of metric-function calls at all and is
@@ -2396,7 +2419,11 @@ class LocalEvaluator(BaseEvaluator):
         # Keep the standard cost/token custom_metrics (written earlier in
         # `_process_single_output`, before metric functions ran) consistent
         # with the now-updated totals, and surface the judge's own share.
-        example_metric.custom_metrics["evaluation_cost"] = eval_total_cost
+        # This name remains on the user channel. A pre-existing user value
+        # wins; otherwise record SDK provenance for row/aggregate withdrawal.
+        if "evaluation_cost" not in example_metric.custom_metrics:
+            example_metric.custom_metrics["evaluation_cost"] = eval_total_cost
+            example_metric.sdk_evaluation_cost = True
         example_metric.custom_metrics["input_tokens"] = (
             example_metric.tokens.input_tokens
         )
@@ -2412,7 +2439,8 @@ class LocalEvaluator(BaseEvaluator):
                 example_metric.tokens.output_tokens
             )
             example_result.metrics["total_tokens"] = example_metric.tokens.total_tokens
-            example_result.metrics["evaluation_cost"] = eval_total_cost
+            if example_metric.sdk_evaluation_cost:
+                example_result.metrics["evaluation_cost"] = eval_total_cost
 
         # One notion of "known cost" on every channel: a measured row shows its
         # refreshed numeric cost; an unknown row (unmeasured OR unpriced) has
@@ -2437,11 +2465,17 @@ class LocalEvaluator(BaseEvaluator):
         """Remove numeric costs from an unknown-cost row; emit flag + floor."""
         floor = cls._example_cost_floor(example_metric)
         enforce_unknown_cost_invariant(
-            example_metric.custom_metrics, unknown=True, floor=floor
+            example_metric.custom_metrics,
+            unknown=True,
+            floor=floor,
+            sdk_evaluation_cost=example_metric.sdk_evaluation_cost,
         )
         if example_result is not None:
             enforce_unknown_cost_invariant(
-                example_result.metrics, unknown=True, floor=floor
+                example_result.metrics,
+                unknown=True,
+                floor=floor,
+                sdk_evaluation_cost=example_metric.sdk_evaluation_cost,
             )
 
     @classmethod
@@ -3001,11 +3035,15 @@ class LocalEvaluator(BaseEvaluator):
             if accuracy_is_custom_objective and "accuracy" in aggregated_metrics:
                 aggregated_metrics["score"] = aggregated_metrics["accuracy"]
 
+        # Seal BEFORE draining: no worker can append between this drain and
+        # return. Live workers that timed out leave eventual spend unknown,
+        # even when they have not produced a response yet (#2444).
+        if seal_captured_responses():
+            metrics_tracker.unattributed_spend = True
+            for metric in metrics_tracker.example_metrics:
+                if not metric.measured:
+                    metric.cost.unmeasured = True
         if captures is not None:
-            # LAST atomic drain before the authoritative tracker read: a call
-            # that landed after the main/judge drains (a timed-out worker that
-            # outlived its timeout, a late progress-callback call) is unknown
-            # spend with its floor, never left in the live bucket (#2444).
             captures.absorb_late(drain_captured_responses())
             # Spend no example row consumed (a call with no owner, or an
             # example that produced no row): its cost cannot be attributed, so
@@ -3049,7 +3087,10 @@ class LocalEvaluator(BaseEvaluator):
         # the cost unknown, WITHDRAW every earlier numeric cost value (e.g. a
         # base-evaluator ``cost`` computed from a placeholder zero) and keep only
         # the flag plus the exact known floor (#2444).
-        enforce_unknown_cost_invariant(aggregated_metrics)
+        enforce_unknown_cost_invariant(
+            aggregated_metrics,
+            sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
+        )
 
         # Empty/whitespace-output guard (issue #1851): compute the fraction of
         # this config's outputs that are empty on EVERY trial and expose it as a
@@ -3095,7 +3136,11 @@ class LocalEvaluator(BaseEvaluator):
                 user_supplied_accuracy=accuracy_is_user_metric
             )
             if isinstance(summary_stats.get("metrics"), dict):
-                enforce_unknown_cost_invariant(summary_stats["metrics"], nullify=True)
+                enforce_unknown_cost_invariant(
+                    summary_stats["metrics"],
+                    nullify=True,
+                    sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
+                )
             logger.debug(f"Generated summary_stats for {self.execution_mode} mode")
 
         # Calculate success statistics

@@ -47,6 +47,9 @@ class _CaptureBucket:
     requested: list[str | None] = field(default_factory=list)
     by_key: dict[str, Any] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
+    sealed: bool = False
+    # Sticky: a timed-out running worker may still incur uncaptured spend.
+    incomplete: bool = False
     #: Provider/model versions observed from REAL provider responses in this
     #: trial (content identity v1, ``ObservedProviderVersionV1``), keyed by
     #: ``(provider, requested_model, response_model, system_fingerprint)``.
@@ -167,6 +170,7 @@ class capture_scope:
         return bucket
 
     def __exit__(self, *exc_info: Any) -> None:
+        seal_captured_responses()
         _capture_scope.reset(self._token)
 
     async def __aenter__(self) -> _CaptureBucket:
@@ -243,6 +247,10 @@ class LangChainMetadataCapture:
         bucket = _capture_scope.get()
         if bucket is not None:
             with bucket.lock:
+                if bucket.sealed:
+                    # Finalization already classified live timed-out workers as
+                    # unknown spend. Never reopen or leak into a later trial.
+                    return
                 bucket.responses.append(response)
                 bucket.owners.append(_capture_owner.get())
                 bucket.requested.append(
@@ -325,6 +333,21 @@ class LangChainMetadataCapture:
             responses = self._all_responses.copy()
             self._all_responses.clear()
         return responses, None, None
+
+    def snapshot(
+        self,
+    ) -> tuple[list[Any], list[int | None] | None, list[str | None] | None]:
+        """Atomic non-consuming view for ownership-aware early progress."""
+        bucket = _capture_scope.get()
+        if bucket is not None:
+            with bucket.lock:
+                return (
+                    bucket.responses.copy(),
+                    bucket.owners.copy(),
+                    bucket.requested.copy(),
+                )
+        with self._response_lock:
+            return self._all_responses.copy(), None, None
 
     def clear(self) -> None:
         """Clear stored responses for the active scope (or globally).
@@ -450,6 +473,31 @@ def drain_captured_responses() -> tuple[
 ]:
     """Atomically take ``(responses, owners, requested_models)`` and clear them."""
     return _metadata_capture.drain()
+
+
+def snapshot_captured_responses() -> tuple[
+    list[Any], list[int | None] | None, list[str | None] | None
+]:
+    """Read calls and provenance together without consuming final accounting."""
+    return _metadata_capture.snapshot()
+
+
+def mark_capture_incomplete() -> None:
+    """A timed-out live worker leaves this trial's eventual spend unknown."""
+    bucket = _capture_scope.get()
+    if bucket is not None:
+        with bucket.lock:
+            bucket.incomplete = True
+
+
+def seal_captured_responses() -> bool:
+    """Close appends before the final drain; return unresolved-spend state."""
+    bucket = _capture_scope.get()
+    if bucket is None:
+        return False
+    with bucket.lock:
+        bucket.sealed = True
+        return bucket.incomplete
 
 
 def clear_captured_responses() -> None:

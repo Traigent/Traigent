@@ -48,6 +48,7 @@ from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.langchain_interceptor import (
     capture_owner,
     get_captured_response_by_key,
+    mark_capture_incomplete,
 )
 from traigent.utils.logging import get_logger
 from traigent.utils.removed_params import reject_removed_mock_parameters
@@ -2775,7 +2776,8 @@ class BaseEvaluator(ABC):
                             asyncio.shield(async_future), timeout=self.timeout
                         )
                     except TimeoutError:
-                        future.cancel()
+                        if not future.cancel() and not future.done():
+                            mark_capture_incomplete()
                         # A running thread cannot be interrupted.  The worker
                         # completion callback retains the lane and any sample
                         # admission until it settles, while this caller gets
@@ -3550,43 +3552,49 @@ class BaseEvaluator(ABC):
                 return [{"role": "user", "content": str(input_data)}]
         return [{"role": "user", "content": str(input_data)}]
 
+    def _extract_progress_call_metrics(
+        self,
+        example_id: str,
+        example: EvaluationExample,
+        result: ExampleResult,
+        config: dict[str, Any],
+        dataset: Dataset | None,
+        example_index: int,
+    ) -> Any:
+        """Extract a progress measurement; local evaluation overrides ownership."""
+        captured = get_captured_response_by_key(example_id)
+        if captured is None:
+            return None
+        prompt_repr = (
+            str(example.input_data)
+            if not isinstance(example.input_data, dict)
+            else str(example.input_data.get("text") or example.input_data)
+        )
+        return extract_llm_metrics(
+            captured,
+            model_name=config.get("model"),
+            original_prompt=None,
+            response_text=None,
+            prompt_length=len(prompt_repr),
+            response_length=len(str(result.actual_output))
+            if result.actual_output is not None
+            else 0,
+        )
+
     def _extract_response_metrics(
         self,
         example_id: str,
         example: EvaluationExample,
         result: ExampleResult,
         config: dict[str, Any],
+        *,
+        dataset: Dataset | None = None,
+        example_index: int = 0,
     ) -> tuple[dict[str, float], Any]:
         """Extract response metrics and return (metrics_payload_update, response_metrics)."""
-        model_name = config.get("model") if isinstance(config, dict) else None
-        response_metrics = None
-
         try:
-            captured = get_captured_response_by_key(example_id)
-            if captured is None:
-                return {}, None
-
-            original_prompt: Any | None = None
-            response_text: str | None = None
-            prompt_repr = (
-                str(example.input_data)
-                if not isinstance(example.input_data, dict)
-                else str(example.input_data.get("text") or example.input_data)
-            )
-            prompt_length: int | None = len(prompt_repr)
-            response_length: int | None = (
-                len(str(result.actual_output))
-                if result.actual_output is not None
-                else 0
-            )
-
-            response_metrics = extract_llm_metrics(
-                captured,
-                model_name=model_name,
-                original_prompt=original_prompt,
-                response_text=response_text,
-                prompt_length=prompt_length,
-                response_length=response_length,
+            response_metrics = self._extract_progress_call_metrics(
+                example_id, example, result, config, dataset, example_index
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -3697,7 +3705,12 @@ class BaseEvaluator(ABC):
     ) -> dict[str, Any]:
         """Build progress callback payload with metrics."""
         metrics_update, _ = self._extract_response_metrics(
-            example_id, example, result, config
+            example_id,
+            example,
+            result,
+            config,
+            dataset=dataset,
+            example_index=example_index,
         )
         llm_metrics = dict(result.metrics or metrics_update)
 

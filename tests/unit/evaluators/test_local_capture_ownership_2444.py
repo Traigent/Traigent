@@ -596,7 +596,7 @@ def test_sibling_inferred_model_never_prices_a_model_less_primary() -> None:
 # --------------------------------------------------------------------------- #
 # Round 5 (sol r15): one invariant, enforced at every emit boundary
 # --------------------------------------------------------------------------- #
-def _walk(node: Any, where: str) -> list[str]:
+def _walk(node: Any, where: str, *, require_unknown: bool = False) -> list[str]:
     """Violations of the unknown-cost rule anywhere in an emitted structure.
 
     Every dict that declares ``cost_unmeasured`` must carry no numeric value in
@@ -604,20 +604,31 @@ def _walk(node: Any, where: str) -> list[str]:
     """
     bad: list[str] = []
     if isinstance(node, dict):
+        # The expected uncertainty comes from each scenario's calls, not from
+        # the output's own flag: an unflagged fabricated $0 must fail too.
+        if (
+            require_unknown
+            and any(
+                key in node
+                for key in ("total_tokens", "input_tokens", "total_cost", "cost")
+            )
+            and not node.get("cost_unmeasured")
+        ):
+            bad.append(f"{where}: unknown usage lacks cost_unmeasured")
         if node.get("cost_unmeasured"):
             for key, value in node.items():
                 if (key == "cost" or str(key).endswith("_cost")) and value is not None:
                     bad.append(f"{where}.{key}={value!r}")
         for key, value in node.items():
-            bad.extend(_walk(value, f"{where}.{key}"))
+            bad.extend(_walk(value, f"{where}.{key}", require_unknown=require_unknown))
     elif isinstance(node, (list, tuple)):
         for i, value in enumerate(node):
-            bad.extend(_walk(value, f"{where}[{i}]"))
+            bad.extend(_walk(value, f"{where}[{i}]", require_unknown=require_unknown))
     elif hasattr(node, "__dict__") and not isinstance(node, type):
         for key, value in vars(node).items():
             if key in {"config", "outputs", "errors"}:
                 continue
-            bad.extend(_walk(value, f"{where}.{key}"))
+            bad.extend(_walk(value, f"{where}.{key}", require_unknown=require_unknown))
     return bad
 
 
@@ -632,7 +643,11 @@ def _scenario_unpriced_model(payloads: list[Any]) -> Any:
         return "ok"
 
     ev = LocalEvaluator(
-        metrics=["accuracy"], timeout=10.0, max_workers=1, detailed=True
+        metrics=["accuracy"],
+        timeout=10.0,
+        max_workers=1,
+        detailed=True,
+        execution_mode="local",
     )
     return asyncio.run(
         ev.evaluate(
@@ -650,12 +665,32 @@ def _scenario_usageless_async_detailed_progress(payloads: list[Any]) -> Any:
         return "ok"
 
     ev = LocalEvaluator(
-        metrics=["accuracy"], timeout=10.0, max_workers=1, detailed=True
+        metrics=["accuracy"],
+        timeout=10.0,
+        max_workers=1,
+        detailed=True,
+        execution_mode="local",
     )
     return asyncio.run(
         ev.evaluate(
             fn,
             config={"model": MODEL},
+            dataset=_dataset(2),
+            progress_callback=lambda i, p: payloads.append(p),
+        )
+    )
+
+
+def _scenario_modelless_async_progress(payloads: list[Any]) -> Any:
+    async def fn(text: str, **_cfg: Any) -> str:
+        capture_langchain_response(_Resp(1000, 500, model=None))
+        return "ok"
+
+    ev = LocalEvaluator(metrics=["accuracy"], detailed=True, execution_mode="local")
+    return asyncio.run(
+        ev.evaluate(
+            fn,
+            config={},
             dataset=_dataset(2),
             progress_callback=lambda i, p: payloads.append(p),
         )
@@ -673,7 +708,7 @@ def _judge_scenario(judge_calls: list[Any]) -> Any:
                 capture_langchain_response(r)
             return 0.5
 
-        ev = _judge_evaluator(judge)
+        ev = _judge_evaluator(judge, execution_mode="local")
         return asyncio.run(
             ev.evaluate(
                 fn,
@@ -691,7 +726,13 @@ def _scenario_cost_metric_unpriced_non_strict(payloads: list[Any]) -> Any:
         capture_langchain_response(_Resp(1000, 500, model="zz-unpriceable-model"))
         return "ok"
 
-    ev = LocalEvaluator(metrics=["cost"], timeout=10.0, max_workers=1, detailed=True)
+    ev = LocalEvaluator(
+        metrics=["cost"],
+        timeout=10.0,
+        max_workers=1,
+        detailed=True,
+        execution_mode="local",
+    )
     return asyncio.run(
         ev.evaluate(
             fn,
@@ -706,6 +747,7 @@ def _scenario_cost_metric_unpriced_non_strict(payloads: list[Any]) -> Any:
     "scenario",
     [
         pytest.param(_scenario_unpriced_model, id="unpriced-model"),
+        pytest.param(_scenario_modelless_async_progress, id="modelless-async-progress"),
         pytest.param(
             _scenario_usageless_async_detailed_progress, id="usageless-async-progress"
         ),
@@ -726,13 +768,29 @@ def test_unknown_cost_invariant_holds_on_every_emitted_structure(
 ) -> None:
     payloads: list[Any] = []
     res = scenario(payloads)
+    assert res.summary_stats is not None
+    assert _walk({"total_tokens": 10, "total_cost": 0.0}, "probe", require_unknown=True)
     assert res.aggregated_metrics.get("cost_unmeasured") == 1.0
     violations = (
-        _walk(res.aggregated_metrics, "aggregated")
-        + _walk(res.metrics, "metrics")
-        + [v for er in res.example_results for v in _walk(er.metrics, "row")]
-        + _walk(getattr(res, "summary_stats", None), "summary_stats")
-        + _walk(payloads, "progress")
+        _walk(res.aggregated_metrics, "aggregated", require_unknown=True)
+        + _walk(res.metrics, "metrics", require_unknown=True)
+        + [
+            v
+            for er in res.example_results
+            for v in _walk(er.metrics, "row", require_unknown=True)
+        ]
+        + _walk(res.summary_stats, "summary_stats", require_unknown=True)
+        + _walk(
+            payloads,
+            "progress",
+            require_unknown=scenario
+            in {
+                _scenario_unpriced_model,
+                _scenario_modelless_async_progress,
+                _scenario_usageless_async_detailed_progress,
+                _scenario_cost_metric_unpriced_non_strict,
+            },
+        )
     )
     # Flag-bearing rows must be the ones that actually lost their numbers.
     assert violations == []
