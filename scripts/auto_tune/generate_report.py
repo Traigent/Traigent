@@ -4,6 +4,7 @@ Generate performance reports in markdown and HTML formats.
 Creates detailed reports with metrics, plots, and recommendations.
 """
 
+import html
 import json
 import os
 from datetime import datetime, UTC
@@ -295,8 +296,10 @@ def generate_html_report(markdown_content: str) -> str:
 </html>
 """
 
-    # Simple markdown to HTML conversion (basic implementation)
-    html_content = markdown_content
+    # Simple markdown to HTML conversion (basic implementation). Escape the
+    # text first so result-derived values cannot inject markup; the tag
+    # conversions below are applied to the escaped text.
+    html_content = html.escape(markdown_content, quote=False)
 
     # Convert headers
     html_content = html_content.replace("# ", "<h1>").replace("\n## ", "</h1>\n<h2>")
@@ -332,7 +335,9 @@ def generate_html_report(markdown_content: str) -> str:
     html_content = html_content.replace("❌", '<span class="metric-bad">❌</span>')
     html_content = html_content.replace("➡️", '<span class="metric-neutral">➡️</span>')
 
-    return html_template.format(content=html_content)
+    # str.format would parse the CSS braces in the template; substitute the
+    # single placeholder instead.
+    return html_template.replace("{content}", html_content)
 
 
 def main():
