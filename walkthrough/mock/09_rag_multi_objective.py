@@ -68,21 +68,45 @@ CONFIG_SPACE = {
 # (algorithm=random, seed=42, 18 trials). Keyed by (model, prompt, temperature,
 # instructions, max_tokens). Trials 17-18 were not captured, so they fall back
 # to the formula below.
+# Mock calibration data, re-keyed from the retired models of the original run
+# (mini tier and legacy cheap tier -> gpt-4.1-mini, flagship -> gpt-4.1;
+# originals: `git show origin/develop:walkthrough/mock/09_rag_multi_objective.py`).
+# Every original row maps to exactly one distinct key and no value is dropped (16 rows in, 16 keys out). These values are NOT measurements
+# of the new models.
 _REAL_ACCURACY: dict[tuple, float] = {
     ("gpt-5.1", "minimal", 0.0, "direct", 50): 0.180,
-    ("gpt-4.1-mini", "minimal", 0.1, "CoT", 200): 0.771,
+    ("gpt-4.1-mini", "minimal", 0.1, "CoT", 200): 0.771,  # orig row: mini tier
     ("gpt-5.2", "minimal", 0.0, "CoT", 50): 0.128,
-    ("gpt-4.1-mini", "minimal", 0.8, "CoT", 200): 0.745,
+    ("gpt-4.1-mini", "minimal", 0.8, "CoT", 200): 0.745,  # orig row: mini tier
     ("gpt-5.1", "role_based", 0.3, "direct", 200): 0.811,
-    ("gpt-4.1", "minimal", 0.2, "direct", 100): 0.741,
-    ("gpt-4.1", "role_based", 0.1, "direct", 100): 0.874,
+    ("gpt-4.1", "minimal", 0.2, "direct", 100): 0.741,  # orig row: flagship
+    ("gpt-4.1", "minimal", 0.3, "direct", 50): 0.710,  # orig row: flagship
+    (
+        "gpt-4.1-mini",
+        "role_based",
+        0.1,
+        "direct",
+        100,
+    ): 0.874,  # orig row: legacy cheap tier
     ("gpt-5-nano", "role_based", 0.0, "direct", 200): 0.050,
-    ("gpt-4.1", "role_based", 0.1, "direct", 200): 0.868,
+    (
+        "gpt-4.1-mini",
+        "role_based",
+        0.1,
+        "direct",
+        200,
+    ): 0.868,  # orig row: legacy cheap tier
     ("gpt-5-nano", "role_based", 0.9, "CoT", 200): 0.000,
-    ("gpt-4.1", "minimal", 0.3, "direct", 50): 0.776,
-    ("gpt-4.1-mini", "minimal", 0.6, "direct", 100): 0.738,
+    (
+        "gpt-4.1-mini",
+        "minimal",
+        0.3,
+        "direct",
+        50,
+    ): 0.776,  # orig row: legacy cheap tier
+    ("gpt-4.1-mini", "minimal", 0.6, "direct", 100): 0.738,  # orig row: mini tier
     ("gpt-5.1", "role_based", 0.2, "direct", 100): 0.711,
-    ("gpt-4.1-mini", "role_based", 0.1, "CoT", 200): 0.864,
+    ("gpt-4.1-mini", "role_based", 0.1, "CoT", 200): 0.864,  # orig row: mini tier
     ("gpt-5.1", "minimal", 0.2, "direct", 100): 0.335,
 }
 
