@@ -4999,6 +4999,21 @@ class SimpleScoringEvaluator(BaseEvaluator):
             budget, result, execution_budget_lease
         )
 
+    @staticmethod
+    def _model_of_captured_response(response: Any) -> str | None:
+        """The model a captured response reports for itself, if any."""
+        metadata = getattr(response, "response_metadata", None)
+        if isinstance(metadata, dict):
+            for key in ("model", "model_name"):
+                value = metadata.get(key)
+                if isinstance(value, str) and value:
+                    return value
+        for attr in ("model", "model_name"):
+            value = getattr(response, attr, None)
+            if isinstance(value, str) and value:
+                return value
+        return None
+
     def _capture_llm_metrics_for_example(
         self, output: Any, config: dict[str, Any], example_index: int
     ) -> dict[str, Any] | None:
@@ -5015,23 +5030,66 @@ class SimpleScoringEvaluator(BaseEvaluator):
         if not (self.capture_llm_metrics and self._metrics_available):
             return None
 
-        captured_responses = self._get_all_captured_responses()
+        captured_responses = [r for r in self._get_all_captured_responses() if r]
         if not captured_responses:
             return None
 
-        response = captured_responses[0]
-        if not response:
-            return None
-
-        model_name = config.get("model")
+        # Every call made while this example ran is charged, each at its own
+        # model, not only the first (Traigent#2411). A call with no usage stays
+        # unmeasured: it makes the example total a floor, never a $0.
+        config_model = config.get("model")
         response_text = self._extract_response_text_from_output(output)
+        metrics_obj = None
+        model_name = config_model
+        measured_cost = 0.0
+        unmeasured_known = 0.0
+        any_unmeasured = False
+        first_metrics = None
+        for position, response in enumerate(captured_responses):
+            call_model = self._model_of_captured_response(response) or config_model
+            call_metrics = self._extract_llm_metrics(
+                response=response,
+                model_name=call_model,
+                original_prompt=None,
+                response_text=response_text if position == 0 else None,
+            )
+            if call_metrics is None:
+                any_unmeasured = True
+                continue
+            if first_metrics is None:
+                first_metrics = call_metrics
+            if getattr(call_metrics, "measured", True) is False or getattr(
+                call_metrics.cost, "unmeasured", False
+            ):
+                any_unmeasured = True
+                unmeasured_known += getattr(call_metrics.cost, "known_cost", 0.0)
+                continue
+            if metrics_obj is None:
+                metrics_obj = call_metrics
+                model_name = call_model
+            else:
+                metrics_obj.tokens.input_tokens += call_metrics.tokens.input_tokens
+                metrics_obj.tokens.output_tokens += call_metrics.tokens.output_tokens
+                metrics_obj.tokens.total_tokens += call_metrics.tokens.total_tokens
+                metrics_obj.cost.input_cost += call_metrics.cost.input_cost
+                metrics_obj.cost.output_cost += call_metrics.cost.output_cost
+                metrics_obj.cost.total_cost += call_metrics.cost.total_cost
+                metrics_obj.cost.unpriced = (
+                    metrics_obj.cost.unpriced or call_metrics.cost.unpriced
+                )
+                metrics_obj.response.response_time_ms += (
+                    call_metrics.response.response_time_ms
+                )
+            measured_cost = metrics_obj.cost.total_cost
 
-        metrics_obj = self._extract_llm_metrics(
-            response=response,
-            model_name=model_name,
-            original_prompt=None,
-            response_text=response_text,
-        )
+        if metrics_obj is None:
+            # Nothing was measured: report the first call's own (unmeasured) shape.
+            metrics_obj = first_metrics
+            if metrics_obj is None:
+                return None
+        elif any_unmeasured:
+            metrics_obj.cost.unmeasured = True
+            metrics_obj.cost.known_cost = measured_cost + unmeasured_known
 
         llm_metrics = self._build_llm_metrics_dict(metrics_obj, model_name)
 
