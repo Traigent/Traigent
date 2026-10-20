@@ -61,3 +61,19 @@ outputs, so only stages with changed dependencies re-run.
   env:
     TRAIGENT_API_KEY: ${{ secrets.TRAIGENT_API_KEY }}
 ```
+
+## Result export and cost honesty
+
+`export_results.py` reads the complete per-trial record (`trials.json.gz`,
+failed trials included, with their `status`), not `trials_summary.json`, which
+is only a sample of the first 50 successful trials. If that record is missing,
+unreadable or does not match the run's trial count, the export exits non-zero
+with a content-free message instead of writing empty results.
+
+Each exported trial carries `cost` (the measured value, or `null`) and
+`cost_status` (`measured`, `unmeasured` or `unpriced`), plus
+`cost_lower_bound` when a known spend floor exists. Unknown cost is never
+exported as `0`. The `evaluate` and `report` stages exclude non-measured trials
+from cost totals and comparisons and show them as "unmeasured".
+
+Self-check: `pytest tests/examples/test_ci_pipeline_export.py` (in the Traigent repo).

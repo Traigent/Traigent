@@ -133,12 +133,25 @@ def load_baseline(baseline_path: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def measured_cost(trial: Dict[str, Any]) -> Optional[float]:
+    """A trial's cost only when it was measured; unknown cost is never 0."""
+    status = trial.get("cost_status")
+    cost = trial.get("cost")
+    if status not in (None, "measured"):
+        return None
+    if isinstance(cost, bool) or not isinstance(cost, (int, float)):
+        return None
+    return float(cost)
+
+
 def calculate_metrics(results: Dict[str, Any]) -> Dict[str, float]:
     """Calculate performance metrics with validation."""
     metrics = {
         "accuracy": 0.0,
         "avg_latency": 0.0,
-        "total_cost": 0.0,
+        "total_cost": None,  # None = unmeasured, never 0
+        "cost_trials_measured": 0,
+        "cost_trials_unmeasured": 0,
         "tokens_used": 0,
         "trials_completed": 0,
         "best_score": 0.0,
@@ -171,8 +184,9 @@ def calculate_metrics(results: Dict[str, Any]) -> Dict[str, float]:
             if "latency" in trial and isinstance(trial["latency"], (int, float)):
                 latencies.append(float(trial["latency"]))
 
-            if "cost" in trial and isinstance(trial["cost"], (int, float)):
-                costs.append(float(trial["cost"]))
+            cost = measured_cost(trial)
+            if cost is not None:
+                costs.append(cost)
 
             if "tokens" in trial and isinstance(trial["tokens"], int):
                 tokens.append(trial["tokens"])
@@ -192,6 +206,8 @@ def calculate_metrics(results: Dict[str, Any]) -> Dict[str, float]:
     if latencies:
         metrics["avg_latency"] = statistics.mean(latencies)
 
+    metrics["cost_trials_measured"] = len(costs)
+    metrics["cost_trials_unmeasured"] = len(trials) - len(costs)
     if costs:
         metrics["total_cost"] = sum(costs)
         # Track spending
@@ -236,6 +252,18 @@ def compare_with_baseline(
         if metric not in current or metric not in baseline:
             continue
 
+        if current[metric] is None or baseline[metric] is None:
+            comparison["summary"].append(f"❔ {metric}: unmeasured, not compared")
+            continue
+        if metric == "total_cost" and (
+            current.get("cost_trials_unmeasured")
+            or baseline.get("cost_trials_unmeasured")
+        ):
+            # A partial sum is a floor, not a total: do not compare it.
+            comparison["summary"].append(
+                f"❔ {metric}: some trials unmeasured, not compared"
+            )
+            continue
         current_val = float(current[metric])
         baseline_val = float(baseline[metric])
 
@@ -311,9 +339,11 @@ def generate_plots_data(results: Dict[str, Any]) -> Dict[str, Any]:
         plots_data["trials"].append(i + 1)
         plots_data["scores"].append(trial.get("score", 0))
         plots_data["latencies"].append(trial.get("latency", 0))
-        plots_data["costs"].append(trial.get("cost", 0))
+        cost = measured_cost(trial)
+        plots_data["costs"].append(cost)
 
-        cumulative_cost += trial.get("cost", 0)
+        # Known-cost floor only: unmeasured trials add nothing and are not 0.
+        cumulative_cost += cost or 0.0
         plots_data["cumulative_cost"].append(cumulative_cost)
 
     return plots_data
@@ -356,7 +386,10 @@ def main():
         current_metrics = calculate_metrics(results)
 
         # Check budget
-        if current_metrics["total_cost"] > cost_controller.max_budget:
+        if (
+            current_metrics["total_cost"] is not None
+            and current_metrics["total_cost"] > cost_controller.max_budget
+        ):
             logger.critical(f"Budget exceeded: ${current_metrics['total_cost']:.2f}")
             audit_logger.log_event(
                 "budget_exceeded",

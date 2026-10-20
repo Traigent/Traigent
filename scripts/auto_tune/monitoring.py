@@ -261,12 +261,6 @@ class PipelineMonitor:
                                 timestamp=datetime.now().isoformat(),
                             ),
                             Metric(
-                                name="cost",
-                                value=current.get("total_cost", 0),
-                                unit="usd",
-                                timestamp=datetime.now().isoformat(),
-                            ),
-                            Metric(
                                 name="trials",
                                 value=current.get("trials_completed", 0),
                                 unit="count",
@@ -274,6 +268,16 @@ class PipelineMonitor:
                             ),
                         ]
                     )
+                    # An unmeasured cost is omitted, never reported as 0.
+                    if isinstance(current.get("total_cost"), (int, float)):
+                        metrics.append(
+                            Metric(
+                                name="cost",
+                                value=current["total_cost"],
+                                unit="usd",
+                                timestamp=datetime.now().isoformat(),
+                            )
+                        )
             except Exception as e:
                 logger.error(f"Error collecting metrics: {e}")
 

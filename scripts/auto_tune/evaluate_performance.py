@@ -46,6 +46,17 @@ def load_baseline(baseline_path: str) -> Optional[Dict[str, Any]]:
     return json.loads(safe_read_text(validated_path, path.parent))
 
 
+def measured_cost(trial: Dict[str, Any]) -> Optional[float]:
+    """A trial's cost only when it was measured; unknown cost is never 0."""
+    status = trial.get("cost_status")
+    cost = trial.get("cost")
+    if status not in (None, "measured"):
+        return None
+    if isinstance(cost, bool) or not isinstance(cost, (int, float)):
+        return None
+    return float(cost)
+
+
 def calculate_metrics(results: Dict[str, Any]) -> Dict[str, float]:
     """
     Calculate performance metrics from optimization results.
@@ -53,7 +64,9 @@ def calculate_metrics(results: Dict[str, Any]) -> Dict[str, float]:
     metrics = {
         "accuracy": 0.0,
         "avg_latency": 0.0,
-        "total_cost": 0.0,
+        "total_cost": None,  # None = unmeasured, never 0
+        "cost_trials_measured": 0,
+        "cost_trials_unmeasured": 0,
         "tokens_used": 0,
         "trials_completed": 0,
         "best_score": 0.0,
@@ -74,12 +87,13 @@ def calculate_metrics(results: Dict[str, Any]) -> Dict[str, float]:
     tokens = []
 
     for trial in trials:
-        if "score" in trial:
+        if isinstance(trial.get("score"), (int, float)):
             scores.append(trial["score"])
-        if "latency" in trial:
+        if isinstance(trial.get("latency"), (int, float)):
             latencies.append(trial["latency"])
-        if "cost" in trial:
-            costs.append(trial["cost"])
+        cost = measured_cost(trial)
+        if cost is not None:
+            costs.append(cost)
         if "tokens" in trial:
             tokens.append(trial["tokens"])
 
@@ -90,6 +104,8 @@ def calculate_metrics(results: Dict[str, Any]) -> Dict[str, float]:
     if latencies:
         metrics["avg_latency"] = statistics.mean(latencies)
 
+    metrics["cost_trials_measured"] = len(costs)
+    metrics["cost_trials_unmeasured"] = len(trials) - len(costs)
     if costs:
         metrics["total_cost"] = sum(costs)
 
@@ -128,6 +144,19 @@ def compare_with_baseline(
 
         current_val = current[metric]
         baseline_val = baseline[metric]
+
+        if current_val is None or baseline_val is None:
+            comparison["summary"].append(f"❔ {metric}: unmeasured, not compared")
+            continue
+        if metric == "total_cost" and (
+            current.get("cost_trials_unmeasured")
+            or baseline.get("cost_trials_unmeasured")
+        ):
+            # A partial sum is a floor, not a total: do not compare it.
+            comparison["summary"].append(
+                f"❔ {metric}: some trials unmeasured, not compared"
+            )
+            continue
 
         if baseline_val == 0:
             change_pct = 0
@@ -178,7 +207,7 @@ def generate_plots_data(results: Dict[str, Any]) -> Dict[str, Any]:
         plots_data["trials"].append(i + 1)
         plots_data["scores"].append(trial.get("score", 0))
         plots_data["latencies"].append(trial.get("latency", 0))
-        plots_data["costs"].append(trial.get("cost", 0))
+        plots_data["costs"].append(measured_cost(trial))
 
     return plots_data
 

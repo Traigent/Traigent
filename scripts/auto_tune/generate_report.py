@@ -40,21 +40,21 @@ def generate_recommendations(
     recommendations = []
 
     # Check for regressions
-    if performance.get("comparison", {}).get("has_regression"):
+    if (performance.get("comparison") or {}).get("has_regression"):
         recommendations.append(
             "⚠️ **Performance Regression Detected**: Review changes and consider reverting "
             "or investigating the cause of degradation."
         )
 
     # Check for improvements
-    if performance.get("comparison", {}).get("has_improvement"):
+    if (performance.get("comparison") or {}).get("has_improvement"):
         recommendations.append(
             "✅ **Performance Improved**: Consider updating the baseline to lock in improvements."
         )
 
     # Cost optimization
-    current_cost = performance.get("current_metrics", {}).get("total_cost", 0)
-    if current_cost > 10:
+    current_cost = performance.get("current_metrics", {}).get("total_cost")
+    if isinstance(current_cost, (int, float)) and current_cost > 10:
         recommendations.append(
             "💰 **High Cost Alert**: Consider using more cost-effective models or reducing trial count."
         )
@@ -108,7 +108,17 @@ def generate_markdown_report(
     current = performance.get("current_metrics", {})
     report.append(f"- **Trials Completed:** {current.get('trials_completed', 0)}")
     report.append(f"- **Best Score:** {current.get('best_score', 0):.3f}")
-    report.append(f"- **Total Cost:** ${current.get('total_cost', 0):.2f}")
+    total_cost = current.get("total_cost")
+    unmeasured = current.get("cost_trials_unmeasured") or 0
+    if total_cost is None:
+        report.append("- **Total Cost:** unmeasured")
+    elif unmeasured:
+        report.append(
+            f"- **Total Cost:** at least ${total_cost:.2f} "
+            f"({unmeasured} trial(s) unmeasured)"
+        )
+    else:
+        report.append(f"- **Total Cost:** ${total_cost:.2f}")
     report.append(f"- **Average Latency:** {current.get('avg_latency', 0):.2f}s")
     report.append("")
 
@@ -162,9 +172,15 @@ def generate_markdown_report(
             model = trial.get("config", {}).get("model", "unknown")
             score = trial.get("score", 0)
             latency = trial.get("latency", 0)
-            cost = trial.get("cost", 0)
+            cost = trial.get("cost")
+            if trial.get("cost_status", "measured") != "measured" or not isinstance(
+                cost, (int, float)
+            ):
+                cost_text = "unmeasured"
+            else:
+                cost_text = f"${cost:.3f}"
             report.append(
-                f"| {i} | {model} | {score:.3f} | {latency:.2f}s | ${cost:.3f} |"
+                f"| {i} | {model} | {score:.3f} | {latency:.2f}s | {cost_text} |"
             )
         report.append("")
 
@@ -183,7 +199,7 @@ def generate_markdown_report(
     report.append(f"- **Strategy:** {params['optimize']['strategy']}")
     report.append(f"- **Max Trials:** {params['optimize']['max_trials']}")
     report.append(f"- **Budget:** ${params['optimize']['budget']}")
-    report.append(f"- **Threshold:** {params['evaluate']['threshold']*100}%")
+    report.append(f"- **Threshold:** {params['evaluate']['threshold'] * 100}%")
     report.append("")
 
     # Footer
