@@ -2102,39 +2102,9 @@ def _infer_model_name_from_response(response: Any) -> str | None:
     calculation entirely, instead of the intended "skip cost, log a
     warning" degradation.
     """
-    try:
-        # 1. Direct attributes (e.g. OpenAI ChatCompletion, Anthropic Message)
-        for attr in ("model", "model_name"):
-            val = getattr(response, attr, None)
-            if isinstance(val, str) and val:
-                return val
+    from traigent.utils.response_model import infer_response_model
 
-        # 2. Dict-shaped response
-        if isinstance(response, dict):
-            for key in ("model", "model_name"):
-                val = response.get(key)
-                if isinstance(val, str) and val:
-                    return val
-
-        # 3. LangChain response_metadata
-        response_metadata = getattr(response, "response_metadata", None)
-        if isinstance(response_metadata, dict):
-            for key in ("model", "model_name"):
-                val = response_metadata.get(key)
-                if isinstance(val, str) and val:
-                    return val
-
-        # 4. LangChain llm_output
-        llm_output = getattr(response, "llm_output", None)
-        if isinstance(llm_output, dict):
-            for key in ("model", "model_name"):
-                val = llm_output.get(key)
-                if isinstance(val, str) and val:
-                    return val
-
-        return None
-    except Exception:
-        return None
+    return infer_response_model(response)
 
 
 def _calculate_cost_for_metrics(

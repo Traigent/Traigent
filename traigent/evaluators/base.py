@@ -5047,17 +5047,9 @@ class SimpleScoringEvaluator(BaseEvaluator):
     @staticmethod
     def _model_of_captured_response(response: Any) -> str | None:
         """The model a captured response reports for itself, if any."""
-        metadata = getattr(response, "response_metadata", None)
-        if isinstance(metadata, dict):
-            for key in ("model", "model_name"):
-                value = metadata.get(key)
-                if isinstance(value, str) and value:
-                    return value
-        for attr in ("model", "model_name"):
-            value = getattr(response, attr, None)
-            if isinstance(value, str) and value:
-                return value
-        return None
+        from traigent.utils.response_model import infer_response_model
+
+        return infer_response_model(response)
 
     def _capture_llm_metrics_for_example(
         self, output: Any, config: dict[str, Any], example_index: int

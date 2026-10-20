@@ -194,27 +194,9 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         config_model: str | None = config.get("model")
         if not response:
             return config_model
-        model_name: str | None = None
+        from traigent.utils.response_model import infer_response_model
 
-        # Check for model in response metadata (LangChain pattern)
-        if hasattr(response, "response_metadata") and isinstance(
-            response.response_metadata, dict
-        ):
-            model_name = response.response_metadata.get("model")
-            if not model_name:
-                model_name = response.response_metadata.get("model_name")
-
-        # Check for model attribute directly
-        if not model_name and hasattr(response, "model"):
-            model_name = cast(str | None, response.model)
-
-        # Check for model_name attribute
-        if not model_name and hasattr(response, "model_name"):
-            model_name = cast(str | None, response.model_name)
-
-        if not isinstance(model_name, str) or not model_name:
-            return config_model
-        return model_name
+        return infer_response_model(response) or config_model
 
     def _reconstruct_original_prompt(self, example: Any) -> list[dict[str, str]]:
         """Reconstruct original prompt from example input.
