@@ -178,12 +178,13 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         Returns:
             Model name or None
         """
-        model_name: str | None = config.get("model")
-        if model_name:
-            return model_name
-
+        # The response's own model identity wins: a judge or router call can
+        # run on a different model than the trial's configured one (#2443).
+        # The configured model is only a fallback for identity-less responses.
+        config_model: str | None = config.get("model")
         if not response:
-            return None
+            return config_model
+        model_name: str | None = None
 
         # Check for model in response metadata (LangChain pattern)
         if hasattr(response, "response_metadata") and isinstance(
@@ -201,6 +202,8 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         if not model_name and hasattr(response, "model_name"):
             model_name = cast(str | None, response.model_name)
 
+        if not isinstance(model_name, str) or not model_name:
+            return config_model
         return model_name
 
     def _reconstruct_original_prompt(self, example: Any) -> list[dict[str, str]]:
