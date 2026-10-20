@@ -15,12 +15,12 @@ import stat
 import threading
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 from collections.abc import Mapping
 from collections.abc import Mapping as CollectionsMapping
 from collections.abc import Sequence
 from contextlib import contextmanager
-from contextvars import copy_context
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
@@ -289,17 +289,59 @@ def _typed_accuracy_equality(actual: Any, expected: Any) -> bool:
     return cast(bool, actual == expected)
 
 
+# Per-trial tally of exact-match string coercions (Traigent#2513, #2499).
+# Inside a scope, coercions are counted and summarised once at WARNING with
+# no content; outside a scope each coercion is reported on its own. Per-example
+# detail is DEBUG and never includes output or expected content.
+_COERCION_TALLY: ContextVar[dict[str, int] | None] = ContextVar(
+    "traigent_accuracy_coercion_tally", default=None
+)
+
+
+def _report_coercion(kind: str, source_len: int) -> None:
+    logger.debug(
+        "Coercing string output (length %d) to %s for exact-match accuracy comparison",
+        source_len,
+        kind,
+    )
+    tally = _COERCION_TALLY.get()
+    if tally is None:
+        logger.warning(
+            "Coercing string output to %s for exact-match accuracy comparison",
+            kind,
+        )
+        return
+    tally[kind] = tally.get(kind, 0) + 1
+
+
+@contextmanager
+def coercion_log_scope() -> Iterator[None]:
+    """Summarise string coercions once for the enclosed trial (no content)."""
+    if _COERCION_TALLY.get() is not None:
+        yield
+        return
+    tally: dict[str, int] = {}
+    token = _COERCION_TALLY.set(tally)
+    try:
+        yield
+    finally:
+        _COERCION_TALLY.reset(token)
+        for kind, count in sorted(tally.items()):
+            logger.warning(
+                "Coercing string output to %s for exact-match accuracy "
+                "comparison (%d examples this trial)",
+                kind,
+                count,
+            )
+
+
 def _accuracy_values_match(actual: Any, expected: Any) -> bool:
     """Return whether two accuracy values match under SDK exact-match semantics."""
     original_actual = actual
     if isinstance(actual, str) and not isinstance(expected, str):
         actual, coerced = _coerce_string_to_expected_type(actual, expected)
         if coerced:
-            logger.warning(
-                "Coercing string output %r to %s for exact-match accuracy comparison",
-                original_actual,
-                type(expected).__name__,
-            )
+            _report_coercion(type(expected).__name__, len(original_actual))
 
     # Container elements get zero normalization otherwise: recurse the same
     # scalar rules element-wise (list/tuple) or value-wise (dict), keyed on
@@ -343,12 +385,7 @@ def _accuracy_values_match(actual: Any, expected: Any) -> bool:
             expected_num = float(expected.strip())
         except ValueError:
             return False
-        logger.warning(
-            "Coercing string output %r and expected %r to numeric for "
-            "exact-match accuracy comparison",
-            actual,
-            expected,
-        )
+        _report_coercion("numeric", len(actual))
         return math.isclose(
             actual_num,
             expected_num,
@@ -2007,14 +2044,15 @@ class BaseEvaluator(ABC):
         correct = 0
         total = 0
 
-        for output, exp, error in zip(outputs, expected, errors, strict=False):
-            # Skip only when the expected output itself is missing/empty --
-            # an error is not a reason to drop the example from the count.
-            if _is_empty_expected_output(exp):
-                continue
-            total += 1
-            if error is None and _accuracy_matches_after_unwrap(output, exp):
-                correct += 1
+        with coercion_log_scope():
+            for output, exp, error in zip(outputs, expected, errors, strict=False):
+                # Skip only when the expected output itself is missing/empty --
+                # an error is not a reason to drop the example from the count.
+                if _is_empty_expected_output(exp):
+                    continue
+                total += 1
+                if error is None and _accuracy_matches_after_unwrap(output, exp):
+                    correct += 1
 
         return correct / total if total > 0 else 0.0
 

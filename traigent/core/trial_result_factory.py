@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -686,6 +687,25 @@ def build_success_result(
     return trial_result
 
 
+_CONSTRAINT_REJECTION_PREFIX = "trial_rejected_by_constraint"
+_PRUNED_WITHOUT_RESULTS_COUNT = 0
+
+
+def _warn_pruned_without_example_results(trial_id: str, step: Any) -> None:
+    """WARNING for the first unexpected result-less prune, DEBUG after that."""
+    global _PRUNED_WITHOUT_RESULTS_COUNT
+    _PRUNED_WITHOUT_RESULTS_COUNT += 1
+    level = logging.WARNING if _PRUNED_WITHOUT_RESULTS_COUNT == 1 else logging.DEBUG
+    logger.log(
+        level,
+        "⚠️ No example_results in TrialPrunedError for pruned trial %s "
+        "(step=%s, occurrence %d; later occurrences are logged at DEBUG)",
+        trial_id,
+        step,
+        _PRUNED_WITHOUT_RESULTS_COUNT,
+    )
+
+
 def build_pruned_result(
     *,
     trial_id: str,
@@ -738,12 +758,12 @@ def build_pruned_result(
             len(prune_error.example_results),
             trial_id,
         )
+    elif str(prune_error).startswith(_CONSTRAINT_REJECTION_PREFIX):
+        # The user's own constraints= excluded this config: an intended
+        # exclusion that never carries example results, not a failure.
+        logger.info("Trial %s skipped by constraint", trial_id)
     else:
-        logger.warning(
-            "⚠️ No example_results in TrialPrunedError for pruned trial %s (step=%s)",
-            trial_id,
-            prune_error.step,
-        )
+        _warn_pruned_without_example_results(trial_id, prune_error.step)
 
     metrics: dict[str, float] = {}
     if progress_state:

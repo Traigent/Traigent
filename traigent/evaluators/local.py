@@ -22,6 +22,7 @@ from traigent.evaluators.base import (
     EvaluationResult,
     _accuracy_matches_after_unwrap,
     _accuracy_value_for_example,
+    coercion_log_scope,
     _example_correlation_key,
     _is_empty_expected_output,
 )
@@ -2262,15 +2263,16 @@ class LocalEvaluator(BaseEvaluator):
         lifecycle opens an outer scope per trial; this inner one keeps a DIRECT
         concurrent caller of ``evaluate()`` correct too, and nesting is safe.
         """
-        async with capture_scope():
-            return await self._evaluate_within_capture_scope(
-                func,
-                config,
-                dataset,
-                sample_lease=sample_lease,
-                progress_callback=progress_callback,
-                budget=budget,
-            )
+        with coercion_log_scope():
+            async with capture_scope():
+                return await self._evaluate_within_capture_scope(
+                    func,
+                    config,
+                    dataset,
+                    sample_lease=sample_lease,
+                    progress_callback=progress_callback,
+                    budget=budget,
+                )
 
     async def _evaluate_within_capture_scope(
         self,
