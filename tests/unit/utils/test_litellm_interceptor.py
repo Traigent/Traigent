@@ -331,3 +331,59 @@ class TestLiteLLMPlugin:
         assert "litellm" in methods
         assert "completion" in methods["litellm"]
         assert "acompletion" in methods["litellm"]
+
+
+class TestFromImportForm:
+    """`from litellm import completion` bound before the patch (#2515)."""
+
+    def test_name_imported_before_patch_is_intercepted(self, litellm_module):
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
+
+        user_mod = types.ModuleType("user_agent_2515")
+        user_mod.completion = (
+            litellm_module.completion
+        )  # from litellm import completion
+        user_mod.acompletion = litellm_module.acompletion
+        with patch.dict("sys.modules", {"user_agent_2515": user_mod}):
+            patch_litellm_for_metadata_capture()
+            assert user_mod.completion is litellm_module.completion
+            assert user_mod.acompletion is litellm_module.acompletion
+            user_mod.completion(model="gpt-4o", messages=[])
+            asyncio.run(user_mod.acompletion(model="gpt-4o", messages=[]))
+
+        assert len(get_all_captured_responses()) == 2
+
+    def test_late_bound_name_is_rebound_on_repeat_patch_call(self, litellm_module):
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
+
+        original = litellm_module.completion
+        patch_litellm_for_metadata_capture()
+        late_mod = types.ModuleType("late_agent_2515")
+        late_mod.completion = original
+        with patch.dict("sys.modules", {"late_agent_2515": late_mod}):
+            patch_litellm_for_metadata_capture()
+            assert late_mod.completion is litellm_module.completion
+
+    def test_from_import_form_is_mocked_without_provider_call(self, litellm_module):
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
+
+        provider = litellm_module.completion
+        user_mod = types.ModuleType("user_agent_2515_mock")
+        user_mod.completion = provider
+        with (
+            patch.dict("sys.modules", {"user_agent_2515_mock": user_mod}),
+            patch(
+                "traigent.integrations.utils.mock_adapter.MockAdapter.is_mock_enabled",
+                return_value=True,
+            ),
+        ):
+            patch_litellm_for_metadata_capture()
+            user_mod.completion(model="gpt-4o", messages=[])
+
+        provider.assert_not_called()

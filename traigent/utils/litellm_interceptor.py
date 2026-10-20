@@ -10,6 +10,7 @@ len(text) // 4 — producing inaccurate cost data.
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Observability FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
 
+import sys
 import time
 from typing import Any
 
@@ -31,6 +32,36 @@ def _litellm_provider(response: Any) -> str:
         if isinstance(provider, str) and provider:
             return provider
     return "litellm"
+
+
+def _rebind_imported_names(original: Any, wrapper: Any) -> int:
+    """Point module-level names that still hold ``original`` at ``wrapper``.
+
+    ``from litellm import completion`` copies the function object into the
+    importing module at import time, so replacing ``litellm.completion``
+    afterwards does not reach it (#2515). The scan is bounded: it looks only
+    at the top-level namespace of already-imported modules, matches by object
+    identity (never by name), and skips litellm's own submodules so its
+    internals keep their original call graph. Names bound after the patch
+    already receive the wrapper.
+
+    Returns the number of names rebound.
+    """
+    rebound = 0
+    for mod_name, mod in list(sys.modules.items()):
+        if mod is None or mod_name.startswith("litellm."):
+            continue
+        namespace = getattr(mod, "__dict__", None)
+        if not isinstance(namespace, dict):
+            continue
+        for attr, value in list(namespace.items()):
+            if value is original:
+                try:
+                    namespace[attr] = wrapper
+                    rebound += 1
+                except Exception:  # noqa: BLE001 - read-only namespaces are skipped
+                    logger.debug("Could not rebind an imported litellm name")
+    return rebound
 
 
 def patch_litellm_for_metadata_capture() -> bool:
@@ -101,6 +132,7 @@ def patch_litellm_for_metadata_capture() -> bool:
                 )
                 return response
 
+            completion_with_capture._traigent_original = original_completion  # type: ignore[attr-defined]
             litellm.completion = completion_with_capture
             litellm._traigent_patched_completion = True
             logger.info("Patched litellm.completion for metadata capture")
@@ -155,10 +187,19 @@ def patch_litellm_for_metadata_capture() -> bool:
                 )
                 return response
 
+            acompletion_with_capture._traigent_original = original_acompletion  # type: ignore[attr-defined]
             litellm.acompletion = acompletion_with_capture
             litellm._traigent_patched_acompletion = True
             logger.info("Patched litellm.acompletion for metadata capture")
             patched_any = True
+
+    # Names bound by ``from litellm import completion`` before (or between)
+    # patch calls keep the original function; rebind them on every call.
+    for attr in ("completion", "acompletion"):
+        wrapper = getattr(litellm, attr, None)
+        original = getattr(wrapper, "_traigent_original", None)
+        if original is not None and _rebind_imported_names(original, wrapper):
+            logger.debug("Rebound imported litellm.%s names to the interceptor", attr)
 
     if not patched_any:
         logger.debug("LiteLLM functions already patched, skipping")
