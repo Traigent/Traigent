@@ -163,7 +163,7 @@ def test_direct_response_object_output_is_counted_exactly_once() -> None:
     assert m["cost"] == pytest.approx(total)
 
 
-def test_usage_without_response_model_priced_with_configured_model() -> None:
+def test_sole_modelless_call_priced_with_configured_model_siblings_unknown() -> None:
     calls = [1, 3]
     seen: list[list[_Resp]] = [[] for _ in calls]
 
@@ -176,9 +176,107 @@ def test_usage_without_response_model_priced_with_configured_model() -> None:
         return "ok"
 
     res = _evaluate(fn, 2)
-    for i, er in enumerate(res.example_results):
-        assert er.metrics["total_cost"] == pytest.approx(sum(_cost(r) for r in seen[i]))
-        assert er.metrics["total_cost"] > 0
+    # The example's only call is established as the agent call: configured model.
+    assert res.example_results[0].metrics["total_cost"] == pytest.approx(
+        _cost(seen[0][0])
+    )
+    # Three model-less calls: none is established as the agent's, so the agent
+    # model is not assumed for them; the row's cost is unknown, never a $0.
+    m = res.aggregated_metrics
+    assert m["cost_unpriced"] == 1.0
+    assert m["cost_unmeasured"] == 1.0
+    assert m.get("cost") is None
+
+
+def test_raw_response_consumes_only_the_matching_call_siblings_still_count() -> None:
+    seen: list[_Resp] = []
+
+    def fn(text: str, **_cfg: Any) -> Any:
+        agent, judge = _Resp(1000, 500), _Resp(4000, 800, model="gpt-4o")
+        seen.extend([agent, judge])
+        capture_langchain_response(agent)
+        capture_langchain_response(judge)
+        return {"text": "ok", "raw_response": agent}
+
+    res = _evaluate(fn, 1, detailed=False)
+    total = _cost(seen[0]) + _cost(seen[1], "gpt-4o")
+    assert res.aggregated_metrics["cost"] == pytest.approx(total)
+
+
+def test_agent_and_judge_calls_with_different_models_priced_separately() -> None:
+    agent, judge = _Resp(1000, 500), _Resp(4000, 800, model="gpt-4o")
+
+    def fn(text: str, **_cfg: Any) -> str:
+        capture_langchain_response(agent)
+        capture_langchain_response(judge)
+        return "ok"
+
+    res = _evaluate(fn, 1)
+    expected = _cost(agent) + _cost(judge, "gpt-4o")
+    assert _cost(judge, "gpt-4o") != pytest.approx(_cost(judge))
+    assert res.example_results[0].metrics["total_cost"] == pytest.approx(expected)
+
+
+def test_call_without_usage_stays_unknown_not_merged_into_measured_total() -> None:
+    class _NoUsage:
+        content = "ok"
+        response_metadata = {"model_name": MODEL}
+
+    measured = _Resp(1000, 500)
+
+    def fn(text: str, **_cfg: Any) -> str:
+        capture_langchain_response(measured)
+        capture_langchain_response(_NoUsage())
+        return "ok"
+
+    res = _evaluate(fn, 1)
+    m = res.aggregated_metrics
+    assert m["cost_unmeasured"] == 1.0
+    assert m.get("cost") is None
+    assert m["cost_lower_bound"] == pytest.approx(_cost(measured))
+
+
+def test_unowned_judge_priced_by_its_own_model_not_the_agent_model() -> None:
+    from traigent.utils import langchain_interceptor as li
+
+    agent = _Resp(1000, 500)
+    judge = _Resp(4000, 800, model="gpt-4o")
+
+    def fn(text: str, **_cfg: Any) -> str:
+        capture_langchain_response(agent)
+        token = li._capture_owner.set(None)
+        try:
+            capture_langchain_response(judge)
+        finally:
+            li._capture_owner.reset(token)
+        return "ok"
+
+    res = _evaluate(fn, 1)
+    m = res.aggregated_metrics
+    assert m["cost_unmeasured"] == 1.0
+    expected = _cost(agent) + _cost(judge, "gpt-4o")
+    assert _cost(judge, "gpt-4o") != pytest.approx(_cost(judge))
+    assert m["cost_lower_bound"] == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("via_raw_response", [False, True])
+def test_unowned_capture_also_returned_is_counted_once(via_raw_response: bool) -> None:
+    from traigent.utils import langchain_interceptor as li
+
+    resp = _Resp(1000, 500)
+
+    def fn(text: str, **_cfg: Any) -> Any:
+        token = li._capture_owner.set(None)
+        try:
+            capture_langchain_response(resp)
+        finally:
+            li._capture_owner.reset(token)
+        return {"text": "ok", "raw_response": resp} if via_raw_response else resp
+
+    res = _evaluate(fn, 1, detailed=False)
+    m = res.aggregated_metrics
+    assert not m.get("cost_unmeasured")
+    assert m["cost"] == pytest.approx(_cost(resp))
 
 
 def test_unowned_response_is_unmeasured_with_exact_floor() -> None:

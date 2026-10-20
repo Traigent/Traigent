@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import copy
 import inspect
 import math
 import time
@@ -47,6 +48,7 @@ from traigent.utils.langchain_interceptor import (
 )
 from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
 from traigent.utils.logging import get_logger
+from traigent.utils.response_model import infer_response_model
 
 logger = get_logger(__name__)
 _METADATA_PATCHES_ATTEMPTED = False
@@ -287,22 +289,25 @@ class _CaptureOwnership:
 
     Ownership is recorded when a response is captured (the capturing context
     carries its example index), so attribution never depends on how many calls
-    each example made or on the order concurrent examples finished in.  Every
-    response lands in exactly one place: an example's owned list, or
-    ``unowned``.  ``consumed`` tracks which examples' spend a metrics row has
-    taken, so whatever no row took is added once to the trial's known-spend
-    floor instead of being dropped or counted twice.
+    each example made or on the order concurrent examples finished in.
+
+    Consumption is tracked per individual captured call (by position in the
+    capture list), never per example: ``taken`` holds the calls whose spend a
+    metrics row already includes, and everything else -- unowned calls, calls of
+    an example that produced no row, siblings of a returned response -- is
+    reported exactly once through :meth:`leftover`.
     """
 
     def __init__(self, responses: list[Any], owners: list[int | None]) -> None:
-        self.by_example: dict[int, list[Any]] = {}
-        self.unowned: list[Any] = []
-        for response, owner in zip(responses, owners, strict=True):
+        self.responses = responses
+        self.by_example: dict[int, list[int]] = {}
+        self.unowned: list[int] = []
+        for position, owner in enumerate(owners):
             if owner is None:
-                self.unowned.append(response)
+                self.unowned.append(position)
             else:
-                self.by_example.setdefault(owner, []).append(response)
-        self.consumed: set[int] = set()
+                self.by_example.setdefault(owner, []).append(position)
+        self.taken: set[int] = set()
 
     @classmethod
     def build(
@@ -313,13 +318,31 @@ class _CaptureOwnership:
             return None
         return cls(responses, owners)
 
-    def unattributed(self) -> list[Any]:
-        """Responses no example row consumed: unowned plus unconsumed owned."""
-        rest = list(self.unowned)
-        for index, owned in self.by_example.items():
-            if index not in self.consumed:
-                rest.extend(owned)
-        return rest
+    def owned_untaken(self, example_index: int) -> list[int]:
+        return [
+            p for p in self.by_example.get(example_index, []) if p not in self.taken
+        ]
+
+    def find(self, obj: Any, example_index: int) -> int | None:
+        """Position of the untaken capture that IS ``obj`` (identity).
+
+        Looks at the example's own calls first, then at unowned ones.
+        """
+        if obj is None:
+            return None
+        for position in self.owned_untaken(example_index) + [
+            p for p in self.unowned if p not in self.taken
+        ]:
+            if self.responses[position] is obj:
+                return position
+        return None
+
+    def example_responses(self, example_index: int) -> list[Any]:
+        return [self.responses[p] for p in self.by_example.get(example_index, [])]
+
+    def leftover(self) -> list[Any]:
+        """Captured calls no row has included."""
+        return [r for p, r in enumerate(self.responses) if p not in self.taken]
 
 
 class _AggregatedResponses:
@@ -666,7 +689,7 @@ class LocalEvaluator(BaseEvaluator):
         """
         if captures is None:
             return index, all_captured_responses
-        return 0, captures.by_example.get(index, [])
+        return 0, captures.example_responses(index)
 
     def _extract_response_text(self, output: Any) -> str | None:
         """Extract text content from various output types.
@@ -705,7 +728,6 @@ class LocalEvaluator(BaseEvaluator):
         example_index: int,
         dataset: Dataset,
         all_captured_responses: list[Any],
-        captures: _CaptureOwnership | None = None,
     ) -> Any:
         """Determine the best source for extracting LLM metrics.
 
@@ -729,19 +751,7 @@ class LocalEvaluator(BaseEvaluator):
         """
         # Prefer raw_response from dict output
         if isinstance(output, dict) and output.get("raw_response") is not None:
-            if captures is not None:
-                # Its captured twin is this example's own: counted once, here.
-                captures.consumed.add(example_index)
             return output["raw_response"]
-
-        if captures is not None:
-            # Attribution by ownership: exactly the calls this example made.
-            owned = captures.by_example.get(example_index)
-            if owned:
-                captures.consumed.add(example_index)
-                if len(owned) > 1:
-                    return _AggregatedResponses(list(owned))
-                return owned[0]
 
         # Try correlation key (example_id)
         try:
@@ -753,10 +763,6 @@ class LocalEvaluator(BaseEvaluator):
         by_key = get_captured_response_by_key(ex_key)
         if by_key is not None:
             return by_key
-
-        if captures is not None:
-            # No owned response: never borrow another example's by position.
-            return output
 
         # Handle case where there are more captured responses than outputs
         # (multiple LLM calls per example, e.g., main response + judge scoring)
@@ -1330,20 +1336,32 @@ class LocalEvaluator(BaseEvaluator):
         if response_text is not None and response_length is None:
             response_length = len(response_text)
 
-        # Get best metrics source using helper
-        metrics_source = self._get_metrics_source(
-            output, index, dataset, all_captured_responses, captures
-        )
+        if captures is not None:
+            extracted_metrics = self._extract_owned_call_metrics(
+                output,
+                index,
+                dataset,
+                captures,
+                model_name=model_name,
+                original_prompt=original_prompt,
+                prompt_length=prompt_length,
+                response_length=response_length,
+            )
+        else:
+            # Get best metrics source using helper
+            metrics_source = self._get_metrics_source(
+                output, index, dataset, all_captured_responses
+            )
 
-        # Pass lengths to extract_llm_metrics for privacy mode
-        extracted_metrics = extract_llm_metrics(
-            response=metrics_source,
-            model_name=model_name,
-            original_prompt=original_prompt,
-            response_text=None,
-            prompt_length=prompt_length,
-            response_length=response_length,
-        )
+            # Pass lengths to extract_llm_metrics for privacy mode
+            extracted_metrics = extract_llm_metrics(
+                response=metrics_source,
+                model_name=model_name,
+                original_prompt=original_prompt,
+                response_text=None,
+                prompt_length=prompt_length,
+                response_length=response_length,
+            )
 
         logger.debug(
             f"Extracted metrics for model {model_name}: "
@@ -1365,6 +1383,143 @@ class LocalEvaluator(BaseEvaluator):
             )
 
         return example_metric
+
+    @staticmethod
+    def _price_one_call(
+        response: Any,
+        *,
+        agent_model: str | None,
+        is_agent_call: bool,
+        **prompt_kwargs: Any,
+    ) -> ExampleMetrics:
+        """Extract ONE captured call on its own (own model, charge, usage).
+
+        The configured/agent model is applied only to the call established as
+        the agent's own; every other call is priced by the model its response
+        reports, and when it reports none its cost is unknown, never $0 and
+        never the agent's price (#2444).
+        """
+        metrics = extract_llm_metrics(
+            response=response,
+            model_name=agent_model if is_agent_call else None,
+            response_text=None,
+            **(prompt_kwargs if is_agent_call else {}),
+        )
+        if (
+            not is_agent_call
+            and infer_response_model(response) is None
+            and metrics.tokens.total_tokens > 0
+            and not metrics.cost.cost_explicit
+            and not metrics.cost.unmeasured
+            and not metrics.cost.total_cost
+        ):
+            metrics.cost.unpriced = True
+        return metrics
+
+    @staticmethod
+    def _combine_call_metrics(calls: list[ExampleMetrics]) -> ExampleMetrics:
+        """Sum separately-extracted calls (first is the primary) into one row.
+
+        Costs and tokens add; unknown-cost state is preserved rather than
+        merged away: any call without usage makes the row unmeasured and any
+        unpriceable call makes it unpriced, with the priced part kept as the
+        known-spend floor.
+        """
+        if len(calls) == 1:
+            return calls[0]
+        out = copy.deepcopy(calls[0])
+        out.tokens.input_tokens = sum(c.tokens.input_tokens for c in calls)
+        out.tokens.output_tokens = sum(c.tokens.output_tokens for c in calls)
+        out.tokens.total_tokens = sum(c.tokens.total_tokens for c in calls)
+        out.tokens.estimated = any(c.tokens.estimated for c in calls)
+        out.cost.input_cost = sum(c.cost.input_cost for c in calls)
+        out.cost.output_cost = sum(c.cost.output_cost for c in calls)
+        out.cost.total_cost = sum(c.cost.total_cost for c in calls)
+        out.cost.unpriced = any(c.cost.unpriced for c in calls)
+        out.cost.unmeasured = any(c.cost.unmeasured for c in calls)
+        out.cost.cost_estimated = any(c.cost.cost_estimated for c in calls)
+        out.cost.cost_explicit = all(c.cost.cost_explicit for c in calls)
+        out.cost.known_cost = sum(c.cost.known_cost for c in calls)
+        if out.cost.unmeasured:
+            out.cost.known_cost += sum(
+                c.cost.total_cost for c in calls if not c.cost.unmeasured
+            )
+        out.measured = any(c.measured for c in calls)
+        out.call_breakdown = [b for c in calls for b in c.call_breakdown]
+        return out
+
+    def _extract_owned_call_metrics(
+        self,
+        output: Any,
+        index: int,
+        dataset: Dataset,
+        captures: _CaptureOwnership,
+        *,
+        model_name: str | None,
+        original_prompt: Any,
+        prompt_length: int | None,
+        response_length: int | None,
+    ) -> ExampleMetrics:
+        """Price exactly the calls this example made, each on its own (#2444).
+
+        A returned ``raw_response`` / response object consumes only the
+        captured call that IS that object (identity); the example's other
+        calls still count, each at its own model.  Consumption is recorded per
+        call so nothing is dropped or counted twice.
+        """
+        returned = (
+            output["raw_response"]
+            if isinstance(output, dict) and output.get("raw_response") is not None
+            else None
+        )
+        prompt_kwargs = {
+            "original_prompt": original_prompt,
+            "prompt_length": prompt_length,
+            "response_length": response_length,
+        }
+        calls: list[ExampleMetrics] = []
+        returned_pos = captures.find(
+            returned if returned is not None else output, index
+        )
+        owned = [p for p in captures.owned_untaken(index) if p != returned_pos]
+        primary: Any = None
+        if returned_pos is not None:
+            captures.taken.add(returned_pos)
+            primary = captures.responses[returned_pos]
+        elif returned is not None:
+            primary = returned  # not captured: this IS the agent's response
+        sole_call = primary is None and len(owned) == 1
+        if primary is not None:
+            calls.append(
+                self._price_one_call(
+                    primary,
+                    agent_model=model_name,
+                    is_agent_call=True,
+                    **prompt_kwargs,
+                )
+            )
+        for position in owned:
+            captures.taken.add(position)
+            calls.append(
+                self._price_one_call(
+                    captures.responses[position],
+                    agent_model=model_name,
+                    is_agent_call=sole_call,
+                    **prompt_kwargs,
+                )
+            )
+        if not calls:
+            # No call of this example was captured: the output itself is the
+            # only source (never another example's call).
+            return extract_llm_metrics(
+                response=output,
+                model_name=model_name,
+                original_prompt=original_prompt,
+                response_text=None,
+                prompt_length=prompt_length,
+                response_length=response_length,
+            )
+        return self._combine_call_metrics(calls)
 
     def _update_example_metric_from_result(
         self,
@@ -2497,18 +2652,21 @@ class LocalEvaluator(BaseEvaluator):
             # example that produced no row): its cost cannot be attributed, so
             # the trial total becomes unmeasured and the exact priced part is
             # kept as the known-spend floor -- never dropped, never guessed.
-            leftover = captures.unattributed()
+            leftover = captures.leftover()
             if leftover:
-                fallback_model = config.get("model") or config.get("model_name")
-                metrics_tracker.unattributed_spend = True
-                metrics_tracker.unattributed_known_cost = sum(
-                    float(
-                        extract_llm_metrics(
-                            response=r, model_name=fallback_model
-                        ).cost.total_cost
+                # Each leftover is priced by its OWN response model; the agent
+                # model is never assumed for a call not established as the
+                # agent's.  A call that cannot be priced adds nothing to the
+                # floor (its cost is unknown, and the trial is unmeasured).
+                floor = 0.0
+                for r in leftover:
+                    priced = self._price_one_call(
+                        r, agent_model=None, is_agent_call=False
                     )
-                    for r in leftover
-                )
+                    if not priced.cost.unmeasured:
+                        floor += float(priced.cost.total_cost)
+                metrics_tracker.unattributed_spend = True
+                metrics_tracker.unattributed_known_cost = floor
 
         # Compute aggregated metrics (include built-ins even with custom functions)
         if self.metric_functions:
