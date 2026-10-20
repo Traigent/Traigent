@@ -41,6 +41,10 @@ class _CaptureBucket:
     #: ownership scope (:func:`capture_owner`).  Ownership is recorded at
     #: capture time from the capturing context, never inferred from counts.
     owners: list[int | None] = field(default_factory=list)
+    #: Model the capturing call REQUESTED (client configuration at the call
+    #: site), same order/length as ``responses``; ``None`` when unknown.
+    #: Provenance for pricing a response that reports no model of its own.
+    requested: list[str | None] = field(default_factory=list)
     by_key: dict[str, Any] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
     #: Provider/model versions observed from REAL provider responses in this
@@ -215,8 +219,12 @@ class LangChainMetadataCapture:
         # Current correlation key in thread local
         self._key_local = threading.local()
 
-    def set_last_response(self, response: Any) -> None:
-        """Store the last LangChain response."""
+    def set_last_response(self, response: Any, *, requested_model: Any = None) -> None:
+        """Store the last LangChain response.
+
+        ``requested_model`` is the model THIS call asked for, when the call
+        site knows it; it is recorded next to the response in the active scope.
+        """
         with self._lock:
             if not hasattr(self._storage, "responses"):
                 # Bounded: this per-thread stack only serves get_last_response()
@@ -237,6 +245,11 @@ class LangChainMetadataCapture:
             with bucket.lock:
                 bucket.responses.append(response)
                 bucket.owners.append(_capture_owner.get())
+                bucket.requested.append(
+                    requested_model
+                    if isinstance(requested_model, str) and requested_model
+                    else None
+                )
                 if key is not None:
                     bucket.by_key[key] = response
             return
@@ -282,6 +295,37 @@ class LangChainMetadataCapture:
         with bucket.lock:
             return bucket.owners.copy()
 
+    def drain(
+        self,
+    ) -> tuple[list[Any], list[int | None] | None, list[str | None] | None]:
+        """Take every response with its owner and requested model, atomically.
+
+        Snapshot and clear happen under ONE lock, so a call that lands while
+        the evaluator folds spend is either in this drain or left for the next,
+        never cleared unaccounted and never misaligned with its owner.  Owners
+        and requested models are ``None`` outside a capture scope.
+        """
+        with self._lock:
+            if hasattr(self._storage, "responses"):
+                self._storage.responses.clear()
+        bucket = _capture_scope.get()
+        if bucket is not None:
+            with bucket.lock:
+                taken = (
+                    bucket.responses.copy(),
+                    bucket.owners.copy(),
+                    bucket.requested.copy(),
+                )
+                bucket.responses.clear()
+                bucket.owners.clear()
+                bucket.requested.clear()
+                bucket.by_key.clear()
+            return taken
+        with self._response_lock:
+            responses = self._all_responses.copy()
+            self._all_responses.clear()
+        return responses, None, None
+
     def clear(self) -> None:
         """Clear stored responses for the active scope (or globally).
 
@@ -297,6 +341,7 @@ class LangChainMetadataCapture:
             with bucket.lock:
                 bucket.responses.clear()
                 bucket.owners.clear()
+                bucket.requested.clear()
                 bucket.by_key.clear()
         else:
             with self._response_lock:
@@ -364,7 +409,8 @@ def capture_observed_response(
                         bucket.observed[key] = bucket.observed.get(key, 0) + 1
         except Exception:  # noqa: BLE001 - observation is best-effort metadata
             logger.debug("Could not record an observed provider version")
-    return capture_langchain_response(response)
+    _metadata_capture.set_last_response(response, requested_model=requested_model)
+    return response
 
 
 def requested_model_of(client: Any) -> Any:
@@ -397,6 +443,13 @@ def get_captured_response_by_key(key: Any) -> Any | None:
 def get_captured_response_owners() -> list[int | None] | None:
     """Owners (example indexes) of ``get_all_captured_responses()``, in order."""
     return _metadata_capture.get_response_owners()
+
+
+def drain_captured_responses() -> tuple[
+    list[Any], list[int | None] | None, list[str | None] | None
+]:
+    """Atomically take ``(responses, owners, requested_models)`` and clear them."""
+    return _metadata_capture.drain()
 
 
 def clear_captured_responses() -> None:

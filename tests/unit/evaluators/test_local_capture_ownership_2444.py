@@ -182,6 +182,9 @@ def test_sole_modelless_call_priced_with_configured_model_siblings_unknown() -> 
     )
     # Three model-less calls: none is established as the agent's, so the agent
     # model is not assumed for them; the row's cost is unknown, never a $0.
+    row = res.example_results[1].metrics
+    assert "total_cost" not in row and "input_cost" not in row
+    assert row["cost_unmeasured"] == 1.0
     m = res.aggregated_metrics
     assert m["cost_unpriced"] == 1.0
     assert m["cost_unmeasured"] == 1.0
@@ -308,3 +311,121 @@ def test_unowned_response_is_unmeasured_with_exact_floor() -> None:
     assert m["cost_lower_bound"] == pytest.approx(total)
     for i, er in enumerate(res.example_results):
         assert er.metrics["total_cost"] == pytest.approx(_cost(owned[i]))
+
+
+def test_primary_call_priced_by_the_model_the_response_reports() -> None:
+    expensive = _Resp(1000, 500, model="gpt-4o")  # config says gpt-4o-mini
+
+    def fn(text: str, **_cfg: Any) -> Any:
+        capture_langchain_response(expensive)
+        return {"text": "ok", "raw_response": expensive}
+
+    res = _evaluate(fn, 1)
+    assert res.example_results[0].metrics["total_cost"] == pytest.approx(
+        _cost(expensive, "gpt-4o")
+    )
+    assert _cost(expensive, "gpt-4o") != pytest.approx(_cost(expensive))
+
+
+def test_unpriced_row_exposes_no_numeric_cost_on_any_channel() -> None:
+    payloads: list[dict[str, Any]] = []
+
+    def fn(text: str, **_cfg: Any) -> str:
+        capture_langchain_response(_Resp(1000, 500, model=None))
+        capture_langchain_response(_Resp(2000, 700, model=None))
+        return "ok"
+
+    ev = LocalEvaluator(
+        metrics=["accuracy"], timeout=10.0, max_workers=1, detailed=True
+    )
+    res = asyncio.run(
+        ev.evaluate(
+            fn,
+            config={"model": MODEL},
+            dataset=_dataset(1),
+            progress_callback=lambda i, p: payloads.append(p),
+        )
+    )
+    row = res.example_results[0].metrics
+    assert "total_cost" not in row and row["cost_unmeasured"] == 1.0
+    for payload in payloads:
+        flat = {**payload, **(payload.get("metrics") or {})}
+        assert "total_cost" not in flat and "cost" not in flat
+
+
+def test_returned_usage_response_not_in_captures_is_never_ignored() -> None:
+    captured = _Resp(1000, 500)
+    returned = _Resp(9000, 3000)  # not captured: relationship unknown
+
+    def fn(text: str, **_cfg: Any) -> Any:
+        capture_langchain_response(captured)
+        return returned
+
+    res = _evaluate(fn, 1, detailed=False)
+    m = res.aggregated_metrics
+    assert m["cost_unmeasured"] == 1.0 and m.get("cost") is None
+    assert m["cost_lower_bound"] == pytest.approx(max(_cost(captured), _cost(returned)))
+
+
+def test_meta_total_cost_override_does_not_double_count_the_covered_floor() -> None:
+    def fn(text: str, **_cfg: Any) -> Any:
+        if text == "0":
+            capture_langchain_response(_Resp(1000, 500))
+            capture_langchain_response(
+                type("NoUsage", (), {"content": "ok", "model": MODEL})()
+            )
+            return {"text": "ok", "__traigent_meta__": {"total_cost": 0.5}}
+        capture_langchain_response(type("NoUsage", (), {"content": "ok"})())
+        return "ok"
+
+    res = _evaluate(fn, 2, detailed=False)
+    m = res.aggregated_metrics
+    assert m["cost_unmeasured"] == 1.0
+    assert m["cost_lower_bound"] == pytest.approx(0.5)
+
+
+def test_drain_takes_responses_and_owners_atomically_and_clears() -> None:
+    from traigent.utils import langchain_interceptor as li
+
+    with li.capture_scope():
+        with li.capture_owner(3):
+            li.capture_observed_response(
+                _Resp(1, 1), provider="openai", requested_model="m"
+            )
+        li.capture_langchain_response(_Resp(2, 2))
+        responses, owners, requested = li.drain_captured_responses()
+        assert owners == [3, None] and requested == ["m", None]
+        assert len(responses) == 2
+        assert li.get_all_captured_responses() == []
+        assert li.get_captured_response_owners() == []
+
+
+def test_misaligned_owners_in_scoped_mode_fail_closed() -> None:
+    from traigent.evaluators.local import _CaptureOwnership
+
+    caps = _CaptureOwnership.build([_Resp(1, 1), _Resp(2, 2)], [0], None)
+    assert caps is not None
+    assert caps.owned_untaken(0) == []
+    assert len(caps.leftover()) == 2
+
+
+def test_model_less_agent_retries_priced_by_each_calls_requested_model() -> None:
+    from traigent.utils.langchain_interceptor import capture_observed_response
+
+    calls = [1, 2]
+    seen: list[list[_Resp]] = [[] for _ in calls]
+
+    def fn(text: str, **_cfg: Any) -> str:
+        i = int(text)
+        for c in range(calls[i]):
+            r = _Resp(*_sizes(i, c), model=None)
+            seen[i].append(r)
+            capture_observed_response(r, provider="openai", requested_model="gpt-4o")
+        return "ok"
+
+    res = _evaluate(fn, 2)  # configured model is gpt-4o-mini; calls asked gpt-4o
+    for i, er in enumerate(res.example_results):
+        assert er.metrics["total_cost"] == pytest.approx(
+            sum(_cost(r, "gpt-4o") for r in seen[i])
+        )
+    assert not res.aggregated_metrics.get("cost_unmeasured")
