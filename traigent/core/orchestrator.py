@@ -4172,6 +4172,18 @@ class OptimizationOrchestrator:
             return
         if reps <= 0:
             return
+        # #2421: ``no_usage_captured`` is terminal. The run is about to fail
+        # closed with UnknownModelError; reruns would add spend and any usage
+        # they capture could suppress that error. Keep the partial result.
+        if self._stop_reason == "no_usage_captured" or (
+            getattr(result, "stop_reason", None) == "no_usage_captured"
+        ):
+            logger.info(
+                "winner_stability_reps=%d skipped: the run stopped with "
+                "no_usage_captured.",
+                reps,
+            )
+            return
         if not result.best_config:
             logger.info(
                 "winner_stability_reps=%d requested but the run selected no "

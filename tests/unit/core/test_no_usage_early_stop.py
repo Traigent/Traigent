@@ -39,6 +39,7 @@ def _run(
     objectives=("accuracy", "cost"),
     capture_usage: bool = False,
     fail_first: bool = False,
+    winner_reps: int = 0,
 ):
     from traigent.config.context import get_config
 
@@ -87,11 +88,14 @@ def _run(
         eval_dataset=_dataset(),
         custom_evaluator=custom_evaluator,
         max_trials=N_CONFIGS,
+        **({"winner_stability_reps": winner_reps} if winner_reps else {}),
     )
     with patch("traigent.core.optimized_function.is_mock_llm", return_value=mock):
         try:
             result = opt.optimize_sync(
-                algorithm="grid", max_trials=N_CONFIGS, progress_bar=False
+                algorithm="grid",
+                max_trials=N_CONFIGS,
+                progress_bar=False,
             )
             return result, calls, None
         except UnknownModelError as err:
@@ -141,3 +145,12 @@ def test_no_cost_objective_never_stops(monkeypatch, tmp_path):
     assert err is None
     assert len(calls) == N_CONFIGS
     assert result.stop_reason != "no_usage_captured"
+
+
+def test_winner_stability_does_not_rerun_after_no_usage_stop(monkeypatch, tmp_path):
+    """#2421: no_usage_captured is terminal; reruns must not spend or mask it."""
+    result, calls, err = _run(monkeypatch, tmp_path, winner_reps=3)
+    assert err is not None, "strict cost run with no usage must raise"
+    assert len(calls) == 1, f"winner reruns dispatched extra calls: {len(calls)}"
+    assert err.result.stop_reason == "no_usage_captured"
+    assert len(err.result.trials) == 1
