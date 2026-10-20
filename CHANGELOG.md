@@ -136,6 +136,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`auto_override_frameworks=True` was a silent no-op for sync functions on
+  0.27.0 and earlier (#2420).** The override gate is a `ContextVar`, and the
+  sync evaluator lane ran the function in a worker thread without the caller's
+  context, so the patched framework constructor built the hard-coded model for
+  every trial while the results table showed distinct configs. The sync lane now
+  runs the function inside `copy_context()` of the caller (commit 02413c33,
+  first in the v0.28.0 tag). Async functions were never affected. A regression
+  test runs `optimize_sync()` on a sync function and asserts each trial's
+  constructor values
+  (`tests/unit/evaluators/test_sync_auto_override_context_2420.py`).
+
+  | traigent | auto-override (sync fn) |
+  |---|---|
+  | 0.27.0 and earlier (checked: no context hand-off in the 0.23.0 to 0.27.0 sources) | no-op, silent |
+  | next release containing 02413c33 (the v0.28.0 tag does) | applied |
+
 - **Observability ingest requests now fit the backend's per-request limits
   (#2600).** The transport used to cut requests only by `batch_size` (up to
   10,000) and bytes. The backend accepts at most 100 traces (422 above it) and
