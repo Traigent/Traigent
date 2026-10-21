@@ -785,6 +785,11 @@ class TestCheckAchievements:
             minimal_logging=False,
         )
 
+    @pytest.fixture(autouse=True)
+    def _real_run(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The suite runs with mock LLM on; these tests cover real-run banners."""
+        monkeypatch.delenv("TRAIGENT_MOCK_LLM", raising=False)
+
     @pytest.fixture
     def manager(self, edge_analytics_config: TraigentConfig) -> IncentiveManager:
         """Create IncentiveManager instance."""
@@ -1705,6 +1710,18 @@ class TestAchievementBannerSuppression:
         manager._check_achievements(self._sessions())
 
         assert capsys.readouterr().out == ""
+
+    def test_mock_run_prints_no_achievement_and_unlocks_nothing(
+        self, tmp_path, capsys, monkeypatch
+    ) -> None:
+        """#2516: a mock run is not a real first optimization."""
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+        manager = self._manager(tmp_path, minimal_logging=False)
+
+        manager._check_achievements(self._sessions())
+
+        assert capsys.readouterr().out == ""
+        assert manager._state["achievement_unlocked"] == []
 
 
 class TestHintEligibilityEnvOptOut:

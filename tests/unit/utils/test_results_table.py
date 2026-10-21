@@ -241,6 +241,39 @@ class TestPrintResultsTableBanner:
         assert "All trials failed" not in out
         assert "Overall Best" in out
 
+    def test_mock_run_is_labelled_next_to_the_results(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#2516: mock results say they are simulated, costs included."""
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+        trials = [
+            _trial({"model": "m1"}, {"accuracy": 0.0, "cost": 0.00007}),
+            _trial({"model": "m2"}, {"accuracy": 0.0, "cost": 0.00005}),
+        ]
+        print_results_table(
+            self._build_results(trials),
+            config_space={"model": ["m1", "m2"]},
+            objectives=["accuracy", "cost"],
+        )
+
+        out = capsys.readouterr().out
+        assert "MOCK RUN" in out
+        assert "not real spend" in out
+        assert "not meaningful" in out
+
+    def test_real_run_has_no_mock_label(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("TRAIGENT_MOCK_LLM", raising=False)
+        trials = [_trial({"model": "m1"}, {"accuracy": 0.5})]
+        print_results_table(
+            self._build_results(trials),
+            config_space={"model": ["m1"]},
+            objectives=["accuracy"],
+        )
+
+        assert "MOCK RUN" not in capsys.readouterr().out
+
     def test_legacy_zero_score_run_still_emits_legend(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:

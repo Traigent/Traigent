@@ -488,6 +488,16 @@ def _find_best_trial_index(
     return None
 
 
+def _mock_run_active() -> bool:
+    """Whether LLM calls are being mocked (never raises; production is False)."""
+    try:
+        from traigent.utils.env_config import is_mock_llm
+
+        return bool(is_mock_llm())
+    except Exception:  # pragma: no cover - display must never break a run
+        return False
+
+
 def _local_fallback_notice(results: OptimizationResult) -> str | None:
     """Return the user-facing local-fallback notice for this result, if any.
 
@@ -737,6 +747,16 @@ def print_results_table(
     stop_detail = (getattr(results, "metadata", None) or {}).get("stop_detail")
     if isinstance(stop_detail, str) and stop_detail:
         _safe_table_print(f"{C.YELLOW}⚠ {stop_detail}{C.RESET}")
+
+    # A mock run says so next to the numbers it produced (issue #2516): the
+    # calls never reached a provider, so scores are canned and any cost is a
+    # synthetic estimate, not spend.
+    if _mock_run_active():
+        _safe_table_print(
+            f"{C.YELLOW}⚠ MOCK RUN — LLM calls were simulated. Output-based scores "
+            f"are not meaningful and any cost shown is a synthetic estimate, "
+            f"not real spend.{C.RESET}"
+        )
 
     # Provenance caveat (issue #2024): a local-fallback run must say so next to
     # the number it produced, not only in a startup log line.
