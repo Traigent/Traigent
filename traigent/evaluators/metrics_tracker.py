@@ -2774,6 +2774,9 @@ def extract_llm_metrics(
         # Fail closed (#2505): only an SDK-captured response from a provider
         # known to bill inside the response keeps the floor exemption.
         metrics.cost.cost_source = COST_SOURCE_SELF_REPORTED
+        # An explicit $0 skips pricing only for a trusted provider-billed
+        # response; an untrusted zero is priced/floored like any under-report.
+        metrics.cost.cost_explicit = False
 
     if metrics is None:
         # No handler extracted anything real for this response -- mark it

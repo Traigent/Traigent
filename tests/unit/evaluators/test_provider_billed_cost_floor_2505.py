@@ -187,3 +187,29 @@ def test_local_evaluator_caller_raw_response_floored_captured_kept():
     )
     assert floored.cost.total_cost == pytest.approx(_table_total())
     del ev
+
+
+def test_caller_raw_response_explicit_zero_is_priced_not_free():
+    m = extract_llm_metrics(_billed_response(0.0), model_name=MODEL)  # not captured
+    assert m.cost.cost_source != COST_SOURCE_PROVIDER_BILLED
+    assert m.cost.total_cost == pytest.approx(_table_total())
+
+
+def test_captured_openrouter_explicit_zero_is_kept():
+    m = extract_llm_metrics(
+        _billed_response(0.0), model_name=MODEL, response_captured=True
+    )
+    assert m.cost.cost_source == COST_SOURCE_PROVIDER_BILLED
+    assert m.cost.total_cost == 0.0
+
+
+def test_with_usage_explicit_zero_no_tokens_stays_measured_zero():
+    m = ExampleMetrics()
+    m.cost.total_cost = 0.0
+    m.cost.cost_explicit = True
+    m.cost.cost_source = COST_SOURCE_SELF_REPORTED
+    from traigent.evaluators.metrics_tracker import _calculate_cost_for_metrics
+
+    _calculate_cost_for_metrics(m, MODEL, None, None)
+    assert m.cost.total_cost == 0.0
+    assert m.cost.unmeasured is False
