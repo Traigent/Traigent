@@ -364,6 +364,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`optimize(resume_from=...)` resumes a local run (#1697).** Pass a prior
+  `OptimizationResult`, or a result saved with `PersistenceManager.save_result`
+  (integrity manifest verified; tampering raises `ValueError`). Trials whose
+  dataset, scorer, agent and configuration-space `fp1` fingerprints all match
+  and that completed with a measured or unknown cost are reused, count toward
+  `max_trials`, and are not charged to the new run's cost limit; in-flight
+  trials are never reused or retried. Cloud and hybrid runs raise `ValueError`.
+  See `docs/features/resume-from.md`.
 - **`example_timeout` option, decoupled from the run timeout (#2509).** New
   `@optimize(example_timeout=...)` / `ExecutionOptions(example_timeout=...)`
   (positive number of seconds; default 60) sets the per-example limit for the
