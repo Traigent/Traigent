@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Anthropic key probe uses a current Claude id (#2651).** `validate_providers` probes with `claude-haiku-5-5` (was `claude-haiku-4-5-20251001`); the known-models list carries the Claude 5.5 ids and no retired `claude-3*` ids.
 - **Dev tooling now agrees with CI (#2469).** `release-review.yml` formats with
   `ruff format --check` (as the required PR gate does) instead of black; the `dev`
   extra exact-pins `isort==9.0.1` and `mypy==2.3.1` (the versions in
