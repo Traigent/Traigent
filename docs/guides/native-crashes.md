@@ -50,6 +50,15 @@ which confirms you are looking at the right place. Verify the trial count
 against what you expected before trusting any "best" value: a run that never
 finished has not compared every configuration.
 
+`traigent results show <result_name> --trials` is a summary. It truncates each
+configuration at 40 characters and shows at most 50 trials. For complete
+configurations, open the saved trials file in the same storage directory:
+`<storage directory>/<result_name>/trials.json.gz`. It is gzip-compressed JSON
+with one object per trial, each holding its full `config` (read it with
+`gunzip -c`). The `metadata.json` file beside it holds the best configuration
+and summary fields. The storage directory is `TRAIGENT_RESULTS_FOLDER` when set,
+otherwise `~/.traigent`.
+
 ## Recover and re-run
 
 There is no resume command: `resume_from` does not exist in the SDK yet, and a
