@@ -338,3 +338,38 @@ def test_malformed_tombstone_fails_closed_to_metadata():
     client.end_trace("bad", output_data="SECRET-OUT")
     assert client.flush().success
     assert "SECRET" not in repr(requests)
+
+
+@pytest.mark.parametrize("kind", ["output", "input", "error"])
+def test_revived_observation_keeps_delivered_history_across_status_only_update(kind):
+    clock = FakeClock()
+    requests: list[list[dict]] = []
+    client = _client_record(requests.append, clock)
+    client.start_trace("t", trace_id="rev")
+    delivered = {
+        "output": {"output_data": "DELIVERED"},
+        "input": {"input_data": "DELIVERED"},
+        "error": {"error": ValueError("DELIVERED")},
+    }[kind]
+    client.record_observation("rev", name="o", observation_id="obs_1", **delivered)
+    client.end_trace("rev")
+    _evict(client, clock, "rev")
+
+    # Revive with a status-only update, then tighten with content withheld.
+    client.record_observation("rev", name="o", observation_id="obs_1", status="running")
+    tighten = {
+        "output": {"output_data": "NEW"},
+        "input": {"input_data": "NEW"},
+        "error": {"error": ValueError("NEW")},
+    }[kind]
+    client.record_observation(
+        "rev", name="o", observation_id="obs_1", content_mode="metadata", **tighten
+    )
+    assert client.flush().success
+    last = [t for r in requests for t in r if t["id"] == "rev"][-1]
+    obs = last["observations"][0]
+    if kind == "error":
+        assert obs["metadata"]["error_message"] == "[REDACTED]"
+    else:
+        assert obs[f"{kind}_data"] == {"redacted": True}
+    assert "NEW" not in repr(last)

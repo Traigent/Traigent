@@ -2458,7 +2458,10 @@ class ObservabilityClient:
                 if (
                     error_supplied
                     and gated_error_message is None
-                    and "error_message" in existing.metadata
+                    and (
+                        "error_message" in existing.metadata
+                        or state.had_prior_content(observation_id, "error_message")
+                    )
                 ):
                     merged_metadata["error_message"] = "[REDACTED]"
                 observation = ObservationDTO(
@@ -2509,7 +2512,14 @@ class ObservabilityClient:
                         wire_value_for_tightened_update(
                             gated_input_data,
                             effective_content_mode=effective_content_mode,
-                            existing_value=existing.input_data,
+                            existing_value=(
+                                existing.input_data
+                                if existing.input_data is not None
+                                or not state.had_prior_content(
+                                    observation_id, "input_data"
+                                )
+                                else redacted_content_marker()
+                            ),
                         )
                         if input_supplied
                         else existing.input_data
@@ -2518,7 +2528,14 @@ class ObservabilityClient:
                         wire_value_for_tightened_update(
                             gated_output_data,
                             effective_content_mode=effective_content_mode,
-                            existing_value=existing.output_data,
+                            existing_value=(
+                                existing.output_data
+                                if existing.output_data is not None
+                                or not state.had_prior_content(
+                                    observation_id, "output_data"
+                                )
+                                else redacted_content_marker()
+                            ),
                         )
                         if output_supplied
                         else existing.output_data
