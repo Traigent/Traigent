@@ -22,6 +22,7 @@ from traigent.cloud.client import (
     CloudEgressBlockedError,
     CloudServiceError,
     SessionContractError,
+    SessionBackendRefusedError,
     SessionQuotaRefusedError,
     raise_if_cloud_egress_disabled,
 )
@@ -434,6 +435,28 @@ class SessionOperations:
         )
         raise safe from None
 
+    @staticmethod
+    def _raise_if_closed_refusal(exc: Exception) -> None:
+        """Stop the run on a closed backend refusal (SDK-52).
+
+        The backend was reachable and refused with a closed code, so this is not
+        a connectivity failure and must not create a LOCAL fallback session.
+        Re-raised as a typed error carrying only the status and the closed code.
+        """
+        if isinstance(exc, SessionBackendRefusedError):
+            raise exc
+        failure_response = _get_session_creation_failure_detail(exc)
+        if failure_response is None or not failure_response.is_closed_refusal:
+            return
+        safe = SessionBackendRefusedError(
+            failure_response.status_code, failure_response.safe_error_code
+        )
+        safe.session_creation_failure = SessionCreationFailureDetail(
+            status_code=failure_response.status_code,
+            error_code=failure_response.safe_error_code,
+        )
+        raise safe from None
+
     def _auth_fallback_result(
         self,
         exc: Exception,
@@ -587,6 +610,7 @@ class SessionOperations:
                     CloudEgressBlockedError,
                     SessionContractError,
                     SessionQuotaRefusedError,
+                    SessionBackendRefusedError,
                 ),
             )
 
@@ -887,6 +911,7 @@ class SessionOperations:
             except (TimeoutError, CloudServiceError, OSError) as e:
                 await self._reset_client_session("create_session fallback")
                 self._raise_if_quota_refusal(e)
+                self._raise_if_closed_refusal(e)
                 if _must_fail_loud(e):
                     raise
                 # A configured key intended a managed/cloud run, but the backend
@@ -983,6 +1008,7 @@ class SessionOperations:
 
         except (TimeoutError, CloudServiceError, OSError) as exc:
             self._raise_if_quota_refusal(exc)
+            self._raise_if_closed_refusal(exc)
             if _must_fail_loud(exc):
                 raise
             # Backend unreachable on the outer path — same downgrade semantics as
@@ -1104,6 +1130,15 @@ class SessionOperations:
                             error_code=detail.safe_quota_error_code,
                         )
                         raise safe
+                    if detail.is_closed_refusal:
+                        refused = SessionBackendRefusedError(
+                            response.status, detail.safe_error_code
+                        )
+                        refused.session_creation_failure = SessionCreationFailureDetail(
+                            status_code=response.status,
+                            error_code=detail.safe_error_code,
+                        )
+                        raise refused from None
                     # Status only: never embed the backend body (customer text).
                     raise CloudServiceError(
                         f"Failed to create hybrid session: HTTP {response.status}"

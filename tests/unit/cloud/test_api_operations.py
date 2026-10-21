@@ -622,7 +622,7 @@ class TestClosedRefusalSessionCreate:
             "typed_storage_mapping_unavailable",
             "director_tokens_required",
             "director_opaque_ids_required",
-            "no_key_wrapper_configured",
+            "content_identity_keys_unavailable",
         ],
     )
     async def test_closed_refusal_skips_legacy_retry_and_keeps_detail(

@@ -34,7 +34,7 @@ CLOSED_REFUSAL_CODES = frozenset(
         "typed_storage_mapping_unavailable",
         "director_tokens_required",
         "director_opaque_ids_required",
-        "no_key_wrapper_configured",
+        "content_identity_keys_unavailable",
     }
 )
 
@@ -164,6 +164,12 @@ class SessionCreationFailureDetail:
             missing_permissions = ()
 
         error_code = payload.get("error_code") or payload.get("code")
+        if not error_code:
+            # Director/content-identity refusals nest the closed code as
+            # ``{"error": {"code": ...}}`` (structured field only, never prose).
+            nested = payload.get("error")
+            if isinstance(nested, dict):
+                error_code = nested.get("code")
         message = payload.get("message") or payload.get("error")
 
         return cls(

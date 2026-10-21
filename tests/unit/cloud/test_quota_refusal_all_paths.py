@@ -8,7 +8,12 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from traigent.cloud.api_operations import ApiOperations
-from traigent.cloud.client import CloudServiceError, SessionQuotaRefusedError
+from traigent.cloud.client import (
+    CloudServiceError,
+    SessionBackendRefusedError,
+    SessionQuotaRefusedError,
+    TraigentCloudClient,
+)
 from traigent.cloud.session_operations import SessionOperations
 from traigent.cloud.session_types import SessionCreationFailureDetail
 from tests.unit.cloud.test_session_operations_validation import FakeClient
@@ -305,7 +310,7 @@ CLOSED_CODES = [
     "typed_storage_mapping_unavailable",
     "director_tokens_required",
     "director_opaque_ids_required",
-    "no_key_wrapper_configured",
+    "content_identity_keys_unavailable",
 ]
 
 
@@ -376,3 +381,122 @@ class TestClosedRefusalClassification:
             ),
         )
         assert session_failure_is_connectivity(result)
+
+
+def _nested_body(code: str) -> str:
+    """Director/content-identity envelope: the closed code is under error.code."""
+    return f'{{"error": {{"code": "{code}", "message": "customer text here"}}}}'
+
+
+class TestClosedRefusalEnvelopes:
+    """SDK-52: both real backend envelopes carry the closed code structurally."""
+
+    @pytest.mark.parametrize(
+        "code",
+        ["director_tokens_required", "director_opaque_ids_required"],
+    )
+    def test_nested_error_code_is_parsed(self, code):
+        detail = SessionCreationFailureDetail.from_http_response(
+            503, _nested_body(code)
+        )
+        assert detail.is_closed_refusal
+        assert detail.safe_error_code == code
+        _assert_clean(detail.one_line_summary())
+
+    def test_nested_code_in_prose_only_is_not_parsed(self):
+        detail = SessionCreationFailureDetail.from_http_response(
+            503, '{"error": {"message": "director_tokens_required"}}'
+        )
+        assert not detail.is_closed_refusal
+
+    def test_503_detail_survives_handle_session_error(self):
+        ops = ApiOperations(Mock())
+        with pytest.raises(CloudServiceError) as info:
+            ops._handle_session_error(503, _body("typed_storage_mapping_unavailable"))
+        detail = info.value.session_creation_failure
+        assert detail.error_code == "typed_storage_mapping_unavailable"
+        _assert_clean(str(info.value))
+
+
+@pytest.mark.backend_online
+class TestClosedRefusalNormalPath:
+    """SDK-52: a closed refusal stops the run and never creates a local session."""
+
+    @pytest.mark.parametrize("code", CLOSED_CODES)
+    def test_no_local_session_and_code_named(self, code):
+        exc = CloudServiceError("boom customer text here")
+        exc.session_creation_failure = SessionCreationFailureDetail.from_http_response(
+            503, _body(code)
+        )
+        ops = TestGovernedSession._ops(exc)
+        with (
+            patch(
+                "traigent.cloud.session_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch.object(ops, "_create_local_fallback_session", autospec=True) as local,
+        ):
+            with pytest.raises(SessionBackendRefusedError) as info:
+                ops.create_session("fn", {"a": [1, 2]})
+        local.assert_not_called()
+        assert info.value.error_code == code
+        assert code in str(info.value)
+        _assert_clean(str(info.value))
+        assert info.value.session_creation_failure.raw_body is None
+        assert info.value.session_creation_failure.message is None
+
+
+@pytest.mark.backend_online
+class TestClosedRefusalHybrid:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "body",
+        [
+            _body("typed_storage_mapping_unavailable"),
+            _nested_body("director_tokens_required"),
+        ],
+    )
+    async def test_code_preserved_and_sanitized(self, body):
+        ops = _hybrid_ops(503, body)
+        with patch("traigent.cloud.session_operations.AIOHTTP_AVAILABLE", True):
+            with pytest.raises(SessionBackendRefusedError) as info:
+                await ops.create_hybrid_session("p", {"a": [1]}, {"max_trials": 1})
+        assert not isinstance(info.value, SessionQuotaRefusedError)
+        assert info.value.error_code in CLOSED_CODES
+        assert info.value.session_creation_failure.error_code == info.value.error_code
+        _assert_clean(str(info.value))
+
+
+@pytest.mark.backend_online
+class TestClosedRefusalInteractive:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "body",
+        [
+            _body("content_identity_keys_unavailable"),
+            _nested_body("director_opaque_ids_required"),
+        ],
+    )
+    async def test_code_preserved_and_sanitized(self, body):
+        from traigent.cloud.client import SessionBackendRefusedError as Refused
+        from traigent.cloud.models import SessionCreationRequest
+
+        with patch("traigent.cloud.client.AuthManager") as auth_cls:
+            auth = AsyncMock()
+            auth.get_headers = AsyncMock(
+                return_value={"Authorization": "Bearer test-token"}
+            )
+            auth_cls.return_value = auth
+            client = TraigentCloudClient(api_key="test-key")
+        client._session = Mock(closed=False)
+        client._session.post = Mock(return_value=_FakeResponse(503, body))
+        request = SessionCreationRequest(
+            problem_type="optimization",
+            objectives=["accuracy"],
+            configuration_space={"a": [1, 2]},
+        )
+        with pytest.raises(Refused) as info:
+            await client.create_optimization_session(request)
+        assert info.value.error_code in CLOSED_CODES
+        assert info.value.session_creation_failure.error_code == info.value.error_code
+        _assert_clean(str(info.value))
