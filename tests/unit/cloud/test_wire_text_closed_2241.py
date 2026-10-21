@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -319,3 +319,216 @@ def test_error_code_double_conversion_keeps_classification() -> None:
     assert error_code_for_wire(once) == "no_examples_succeeded"
     cancelled = error_code_for_wire("Trial cancelled by user")
     assert error_code_for_wire(cancelled) == "trial_cancelled"
+
+
+# ---------------------------------------------------------------------------
+# Review r79 (#2241): remaining wire paths that forwarded named metadata maps.
+# Each canary must be absent from the captured outbound payload.
+# ---------------------------------------------------------------------------
+
+_TENANT_FIXTURE = {
+    "id": "tenant_1",
+    "name": "Acme Corp",
+    "slug": "acme",
+    "status": "active",
+    "tier": "professional",
+    "quotas": {},
+    "metadata": {},
+    "membership_count": 1,
+    "has_sso_config": False,
+    "created_at": "2026-03-10T12:00:00+00:00",
+    "updated_at": "2026-03-10T12:00:00+00:00",
+}
+
+
+def test_admin_update_tenant_filters_metadata_and_keeps_omission() -> None:
+    from traigent.admin.client import EnterpriseAdminClient
+
+    sent: list[dict | None] = []
+
+    def request_sender(method: str, path: str, payload: dict | None):
+        sent.append(payload)
+        return {"data": dict(_TENANT_FIXTURE)}
+
+    client = EnterpriseAdminClient(request_sender=request_sender)
+    client.update_tenant(
+        "tenant_1",
+        metadata={"summary_stats": {"metadata": {"note": CANARY}}, "region": "us"},
+    )
+    assert CANARY not in json.dumps(sent[-1])
+    assert sent[-1]["metadata"]["summary_stats"]["metadata"] == {}
+
+    client.update_tenant("tenant_1", status="suspended")
+    assert "metadata" not in sent[-1]
+
+
+@pytest.mark.asyncio
+async def test_mcp_create_experiment_drops_scalar_surrogate_descriptor(
+    monkeypatch,
+) -> None:
+    from traigent.cloud.models import OptimizationRequest
+    from traigent.cloud.production_mcp_client import (
+        MCPResponse,
+        MCPServerConfig,
+        ProductionMCPClient,
+    )
+    from traigent.evaluators.base import Dataset, EvaluationExample
+
+    request = OptimizationRequest(
+        function_name="fn",
+        dataset=Dataset(
+            name="d",
+            examples=[EvaluationExample(input_data={"x": 1}, expected_output="y")],
+        ),
+        configuration_space={"p": [1]},
+        objectives=["maximize"],
+        metadata={"surrogate_evaluator": CANARY},
+    )
+    client = ProductionMCPClient(MCPServerConfig(server_path="python"))
+    captured: list[dict] = []
+
+    async def fake_call_tool(tool_name, arguments, operation_id=None):
+        captured.append({"tool": tool_name, "arguments": arguments})
+        return MCPResponse(success=True, data={"experiment_id": "exp_1"})
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+    await client.create_experiment(request, agent_id="agent_1", example_set_id="es_1")
+    assert captured and captured[0]["tool"] == "create_experiment"
+    assert CANARY not in json.dumps(captured[0]["arguments"], default=str)
+    assert "surrogate_evaluator" not in captured[0]["arguments"]["metadata"]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_session_payload_filters_metadata(monkeypatch) -> None:
+    import threading
+
+    from traigent.cloud.session_operations import SessionOperations
+
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    captured: dict = {}
+
+    class _Response:
+        status = 201
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def json(self):
+            return {"session_id": "hs_1", "token": "tok", "optimizer_endpoint": ""}
+
+        async def text(self):
+            return ""
+
+    class _Session:
+        def post(self, url, json=None, headers=None):
+            captured["url"] = url
+            captured["json"] = json
+            return _Response()
+
+    client = MagicMock()
+    client._url_invalid = False
+    client.no_egress = False
+    client._ensure_session = AsyncMock(return_value=_Session())
+    client.backend_config.api_base_url = "https://api.example.com"
+    client.auth_manager.auth.get_headers = AsyncMock(return_value={})
+    client._active_sessions = {}
+    client._active_sessions_lock = threading.Lock()
+
+    ops = SessionOperations(client)
+    await ops.create_hybrid_session(
+        "problem",
+        {"p": [1]},
+        {"objectives": ["maximize"]},
+        metadata={
+            "surrogate_evaluator": {"prompt": CANARY},
+            "summary_stats": {"metadata": {"note": CANARY}},
+        },
+    )
+    assert captured["url"].endswith("/hybrid/sessions")
+    assert CANARY not in json.dumps(captured["json"], default=str)
+    assert captured["json"]["metadata"]["surrogate_evaluator"] == {}
+
+
+@pytest.fixture
+def _optimizer_dns(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setattr(
+        "traigent.cloud.url_security.socket.getaddrinfo",
+        lambda *_a, **_k: [(0, 0, 0, "", ("93.184.216.34", 0))],
+    )
+
+
+class _OkResponse:
+    status = 200
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def raise_for_status(self):
+        return None
+
+    async def json(self):
+        return {}
+
+
+class _RecordingSession:
+    def __init__(self) -> None:
+        self.bodies: list = []
+
+    def post(self, url, json=None, **_kwargs):
+        self.bodies.append(json)
+        return _OkResponse()
+
+
+@pytest.mark.asyncio
+@pytest.mark.backend_online
+async def test_optimizer_http_payloads_filter_metadata(_optimizer_dns) -> None:
+    from traigent.cloud.optimizer_client import OptimizerDirectClient
+
+    client = OptimizerDirectClient("https://api.example.com", "secret-token")
+    client.session = _RecordingSession()
+    dirty = {
+        "trial_id": "t1",
+        "metrics": {"score": 0.5},
+        "execution_time": 1.0,
+        "metadata": {"surrogate_evaluator": {"prompt": CANARY}},
+    }
+    await client._submit_single("s1", dict(dirty))
+    await client._submit_batch("s1", [dict(dirty)])
+    assert len(client.session.bodies) == 2
+    for body in client.session.bodies:
+        assert CANARY not in json.dumps(body, default=str)
+    # The caller's own dict is not mutated (detached copy).
+    assert dirty["metadata"]["surrogate_evaluator"]["prompt"] == CANARY
+
+
+@pytest.mark.asyncio
+@pytest.mark.backend_online
+async def test_optimizer_buffered_submission_filters_metadata(_optimizer_dns) -> None:
+    from traigent.cloud.optimizer_client import OptimizerDirectClient
+
+    client = OptimizerDirectClient("https://api.example.com", "secret-token")
+    client._batch_size = 1
+    flushed: list = []
+
+    async def fake_flush_buffer():
+        flushed.extend(list(client._metric_buffer))
+        client._metric_buffer.clear()
+        return {"status": "flushed"}
+
+    client._flush_buffer = fake_flush_buffer
+    await client.submit_metrics(
+        "s1",
+        "t1",
+        {"score": 0.5},
+        1.0,
+        metadata={"agent_configuration": {f"unlisted_{CANARY}": CANARY}},
+    )
+    assert flushed
+    assert CANARY not in json.dumps(flushed, default=str)

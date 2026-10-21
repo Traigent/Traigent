@@ -103,6 +103,8 @@ class EnterpriseAdminClient:
             payload["status"] = payload["status"].value
         if "tier" in payload and isinstance(payload["tier"], TenantTier):
             payload["tier"] = payload["tier"].value
+        if "metadata" in payload:
+            payload["metadata"] = filter_wire_metadata(payload["metadata"])
         response = self._request_json("PATCH", f"/tenants/{tenant_id}", payload)
         return TenantDTO.from_dict(self._unwrap_data(response, "tenant update"))
 

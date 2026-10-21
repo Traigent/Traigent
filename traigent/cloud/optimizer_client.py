@@ -13,6 +13,7 @@ from traigent.labels.transport_gate import gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.client import raise_if_cloud_egress_disabled
 from traigent.cloud.url_security import validate_cloud_base_url
+from traigent.cloud.wire_text import filter_wire_metadata
 from traigent.core.session_types import safe_http_error_summary
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,13 @@ def _is_transient_submission_error(exc: BaseException) -> bool:
 
 # Error message for uninitialized session
 _SESSION_NOT_INITIALIZED = "Session not initialized"
+
+
+def _wire_submission(submission: dict[str, Any]) -> dict[str, Any]:
+    """Return a detached copy of a metric submission with metadata allowlisted (#2241)."""
+    if "metadata" not in submission:
+        return dict(submission)
+    return {**submission, "metadata": filter_wire_metadata(submission["metadata"])}
 
 
 class OptimizerDirectClient:
@@ -162,7 +170,7 @@ class OptimizerDirectClient:
             "trial_id": trial_id,
             "metrics": metrics,
             "execution_time": execution_time,
-            "metadata": metadata or {},
+            "metadata": filter_wire_metadata(metadata),
         }
 
         if not isinstance(session_id, str) or not session_id.strip():
@@ -408,7 +416,7 @@ class OptimizerDirectClient:
             raise RuntimeError(_SESSION_NOT_INITIALIZED)
         try:
             async with self.session.post(
-                f"{self.endpoint}/{session_id}", json=submission
+                f"{self.endpoint}/{session_id}", json=_wire_submission(submission)
             ) as response:
                 if response.status == 403:
                     error_text = await response.text()
@@ -448,7 +456,8 @@ class OptimizerDirectClient:
             raise RuntimeError(_SESSION_NOT_INITIALIZED)
         try:
             async with self.session.post(
-                f"{self.endpoint}/{session_id}/batch", json={"submissions": submissions}
+                f"{self.endpoint}/{session_id}/batch",
+                json={"submissions": [_wire_submission(s) for s in submissions]},
             ) as response:
                 if response.status == 403:
                     error_text = await response.text()
