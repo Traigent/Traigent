@@ -256,3 +256,62 @@ def test_cancelled_trial_with_measured_cost_counts_in_total() -> None:
     )
     assert agg.total_cost == pytest.approx(0.12)
     assert agg.cost_unmeasured_trials == 0
+
+
+class _RaisingEnforcer:
+    """Cost enforcer whose tracking raises, like strict/explicit-limit mode."""
+
+    async def track_cost_async(self, **_kwargs: Any) -> None:
+        from traigent.core.cost_enforcement import CostTrackingRequiredError
+
+        raise CostTrackingRequiredError("strict cost tracking aborted the rerun")
+
+
+@pytest.mark.asyncio
+async def test_enforcement_abort_still_records_unmeasured_rerun_floor() -> None:
+    """Enforcement raising mid-rerun must not lose the rerun's floor/unknownness."""
+    import asyncio
+
+    from traigent.core.cost_enforcement import CostTrackingRequiredError
+    from traigent.core.orchestrator import OptimizationOrchestrator
+
+    orch = OptimizationOrchestrator.__new__(OptimizationOrchestrator)
+    orch._state_lock = asyncio.Lock()
+    orch.cost_enforcer = _RaisingEnforcer()
+    orch.execution_budget = None
+    orch._winner_stability_accounted_cost = 0.0
+    orch._winner_stability_unmeasured_reruns = 0
+    orch._winner_stability_recorded_ids = {}
+
+    rerun = _trial(
+        "winner_stability_o_1",
+        {"cost_unmeasured": 1.0, "cost_lower_bound": 0.04},
+    )
+
+    # Fail closed: enforcement still aborts the accounting call...
+    with pytest.raises(CostTrackingRequiredError):
+        await orch._account_winner_stability_rerun_attempt(
+            rerun_trial=rerun,
+            rerun_dispatched=True,
+            permit=None,
+            trial_id=rerun.trial_id,
+        )
+    # ...a retried accounting (the orchestrator's fallback) never double counts.
+    with pytest.raises(CostTrackingRequiredError):
+        await orch._account_winner_stability_rerun_attempt(
+            rerun_trial=rerun,
+            rerun_dispatched=True,
+            permit=None,
+            trial_id=rerun.trial_id,
+        )
+
+    result = _result_with_total(0.10, {"total_cost": 0.10})
+    OptimizationOrchestrator._add_winner_stability_cost_to_result(
+        result,
+        orch._winner_stability_accounted_cost,
+        orch._winner_stability_unmeasured_reruns,
+    )
+    assert result.total_cost is None
+    assert "total_cost" not in result.metrics
+    assert result.metrics[COST_FLOOR_WIRE_KEY] == pytest.approx(0.14)
+    assert result.metrics["cost_unmeasured_trials"] == 1.0

@@ -1226,6 +1226,7 @@ class OptimizationOrchestrator:
         # into both normal and cancellation result construction explicitly.
         self._winner_stability_accounted_cost = 0.0
         self._winner_stability_unmeasured_reruns = 0
+        self._winner_stability_recorded_ids: dict[Any, Any] = {}
         # The backend session id for the active run. Read by the
         # certified-selection report guard to verify the incumbent's trial id
         # was backend-acknowledged before attesting a winner.
@@ -2361,6 +2362,11 @@ class OptimizationOrchestrator:
         """
         async with self._state_lock:
             if rerun_trial is not None:
+                # Record the rerun's spend, unknownness and floor BEFORE cost
+                # enforcement runs: strict/explicit-limit enforcement can raise
+                # from ``_account_trial_spend`` (fail closed), and that must
+                # never lose the unmeasured status or the floor (#2688).
+                recorded = self._record_winner_stability_spend(rerun_trial)
                 trial_cost = await self._account_trial_spend(
                     rerun_trial,
                     permit=permit,
@@ -2368,26 +2374,53 @@ class OptimizationOrchestrator:
                 # Stability reruns are excluded from optimizer history, but
                 # their sample accounting is still serialized.
                 self._register_examples_attempted(rerun_trial)
-                known = float(trial_cost or 0.0)
-                if MandatoryMetricsCollector._is_cost_unmeasured(rerun_trial, known):
-                    # Unknown rerun spend: keep unknownness and the exact floor.
-                    self._winner_stability_unmeasured_reruns += 1
-                    floor = max(
-                        known,
-                        known_spend_lower_bound(
-                            rerun_trial.metrics, rerun_trial.metadata
-                        ),
-                    )
-                    return floor if floor > 0 else trial_cost
-                return trial_cost
+                return recorded if recorded is not None else trial_cost
             if rerun_dispatched:
+                # Dispatched with no result: spend unknown, floor unknown (0).
+                if self._winner_stability_mark_recorded(trial_id):
+                    self._winner_stability_unmeasured_reruns += 1
                 await self._account_untracked_trial_attempt(
                     trial_id=trial_id,
                     permit=permit,
                 )
-                # Dispatched with no result: spend unknown, floor unknown (0).
-                self._winner_stability_unmeasured_reruns += 1
             return None
+
+    def _winner_stability_mark_recorded(self, key: Any, keepalive: Any = None) -> bool:
+        """True the first time a rerun is recorded (idempotent across retries).
+
+        The key is the rerun's attempt id, or the identity of its result
+        object (the result is kept alive here so the identity is never reused).
+        """
+        recorded = getattr(self, "_winner_stability_recorded_ids", None)
+        if recorded is None:
+            recorded = {}
+            self._winner_stability_recorded_ids = recorded
+        if key in recorded:
+            return False
+        recorded[key] = keepalive
+        return True
+
+    def _record_winner_stability_spend(self, rerun_trial: TrialResult) -> float | None:
+        """Add a rerun's known spend/floor and unmeasured status to the run ledger.
+
+        Returns the amount recorded (``None`` when the rerun reported no cost).
+        Idempotent per trial id, so a retried accounting never double counts.
+        """
+        if not self._winner_stability_mark_recorded(id(rerun_trial), rerun_trial):
+            return None
+        trial_cost = self._extract_trial_cost(rerun_trial)
+        known = float(trial_cost or 0.0)
+        amount = trial_cost
+        if MandatoryMetricsCollector._is_cost_unmeasured(rerun_trial, known):
+            self._winner_stability_unmeasured_reruns += 1
+            floor = max(
+                known,
+                known_spend_lower_bound(rerun_trial.metrics, rerun_trial.metadata),
+            )
+            amount = floor if floor > 0 else trial_cost
+        if amount is not None:
+            self._winner_stability_accounted_cost += amount
+        return amount
 
     @staticmethod
     def _add_winner_stability_cost_to_result(
@@ -3277,6 +3310,7 @@ class OptimizationOrchestrator:
         self._certified_promotions = 0
         self._winner_stability_accounted_cost = 0.0
         self._winner_stability_unmeasured_reruns = 0
+        self._winner_stability_recorded_ids: dict[Any, Any] = {}
 
         # Reset stop conditions for fresh optimization run
         self._stop_condition_manager.reset()
@@ -4474,10 +4508,8 @@ class OptimizationOrchestrator:
                             trial_id=rerun_trial_id,
                         )
                     )
-                    trial_cost = await asyncio.shield(accounting_task)
+                    await asyncio.shield(accounting_task)
                     rerun_accounted = True
-                    if trial_cost is not None:
-                        self._winner_stability_accounted_cost += trial_cost
                 except asyncio.CancelledError:
                     # Cancellation is a control-flow signal and must reach the
                     # outer optimize() handler. Once the lifecycle reached the
@@ -4504,7 +4536,6 @@ class OptimizationOrchestrator:
                             )
                             rerun_accounted = True
                             if trial_cost is not None:
-                                self._winner_stability_accounted_cost += trial_cost
                                 # The outer cancellation handler constructs a
                                 # fresh result, but keep this in-flight result
                                 # consistent too before propagating control flow.
