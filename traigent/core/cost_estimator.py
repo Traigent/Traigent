@@ -23,9 +23,11 @@ _ESTIMATED_INPUT_TOKENS_PER_EXAMPLE = 2000
 _ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE = 500
 _CONSERVATIVE_INPUT_COST_PER_TOKEN = 15.0e-6
 _CONSERVATIVE_OUTPUT_COST_PER_TOKEN = 75.0e-6
-# Input estimate is max(sampled estimate, floor); the floor is the long-standing
-# default so sampling can only raise the estimate, never lower it (#2498).
-_INPUT_TOKENS_FLOOR = _ESTIMATED_INPUT_TOKENS_PER_EXAMPLE
+# Sampled input estimate = sample mean + a prompt-template allowance, never below
+# a small minimum. Sampling can therefore LOWER the estimate below the unsampled
+# 2000-token default for short inputs (#2498).
+_PROMPT_TEMPLATE_ALLOWANCE_TOKENS = 200
+_INPUT_TOKENS_MIN = 256
 _DATASET_SAMPLE_SIZE = 20
 _BUFFER_FACTOR = 1.2
 
@@ -167,8 +169,8 @@ class CostEstimator:
     def _resolve_tokens(self, dataset: object | None) -> tuple[int, int, str, int]:
         """Return (input, output, input_source, sample_count).
 
-        Precedence: service metadata override > dataset sample (never below
-        the floor) > default. Output: override > configured max_tokens > default.
+        Precedence: service metadata override > dataset sample (mean plus a
+        prompt-template allowance, minimum 256) > default. Output: override > configured max_tokens > default.
         """
         sample_count = 0
         if self._estimated_input_tokens_per_example is not None:
@@ -182,11 +184,12 @@ class CostEstimator:
             )
             if sampled is not None:
                 sample_count = sampled[1]
-                input_tokens = max(sampled[0], _INPUT_TOKENS_FLOOR)
+                with_template = sampled[0] + _PROMPT_TEMPLATE_ALLOWANCE_TOKENS
+                input_tokens = max(with_template, _INPUT_TOKENS_MIN)
                 source = (
                     "dataset_sample"
-                    if sampled[0] > _INPUT_TOKENS_FLOOR
-                    else "floor_default"
+                    if with_template >= _INPUT_TOKENS_MIN
+                    else "dataset_sample_min"
                 )
             else:
                 input_tokens = _ESTIMATED_INPUT_TOKENS_PER_EXAMPLE
@@ -217,7 +220,9 @@ class CostEstimator:
             f"Assumptions: model(s)={', '.join(models)}; "
             f"examples in dataset={examples_text}; "
             f"input tokens/example={input_tokens} (estimate, source={source}, "
-            f"{sampled} example(s) sampled, floor={_INPUT_TOKENS_FLOOR}); "
+            f"{sampled} example(s) sampled, "
+            f"prompt-template allowance={_PROMPT_TEMPLATE_ALLOWANCE_TOKENS}, "
+            f"minimum={_INPUT_TOKENS_MIN}); "
             f"output tokens/example={output_tokens} (estimate); "
             f"safety buffer={_BUFFER_FACTOR}x. "
             "Real billing may differ; the runtime cost limit still applies."

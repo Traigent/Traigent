@@ -32,8 +32,33 @@ def _tokens(est: CostEstimator, ds: Dataset) -> tuple[int, int]:
     return est._get_estimated_tokens_per_example()
 
 
-def test_tiny_inputs_use_floor() -> None:
-    assert _tokens(_estimator(), _dataset(["hi"] * 5))[0] == 2000
+def test_short_classifier_inputs_go_below_old_2000_default() -> None:
+    """The motivating #2498 case: 30-char examples are not inflated to 2000."""
+    ds = _dataset(["x" * 30] * 5)
+    est = _estimator()
+    inp, _ = _tokens(est, ds)
+    assert 208 <= inp <= 256
+    assert inp < 2000
+    # A budget covering the small estimate is not refused.
+    assert est.estimate_optimization_cost(ds) < 0.05
+
+
+def test_refusal_not_triggered_for_budget_covering_short_inputs() -> None:
+    ds = _dataset(["x" * 30] * 5)
+    est = CostEstimator(
+        MagicMock(is_mock_mode=False),
+        max_trials=1,
+        max_total_examples=None,
+        model_name="gpt-4o",
+    )
+    cost = est.estimate_optimization_cost(ds)
+    old_cost = 5 * (2000 * 2.5e-6 + 500 * 10e-6) * 1.2
+    budget = 0.04  # covers the sampled estimate, below the old 2000-token one
+    assert cost < budget < old_cost
+
+
+def test_tiny_inputs_use_minimum() -> None:
+    assert _tokens(_estimator(), _dataset(["hi"] * 5))[0] == 256
 
 
 def test_long_inputs_raise_estimate_above_floor() -> None:
@@ -49,7 +74,7 @@ def test_non_english_counts_more_than_ascii_of_same_length() -> None:
 
 def test_sample_is_bounded_to_first_20() -> None:
     texts = ["x"] * 20 + ["word " * 100000] * 50
-    assert _tokens(_estimator(), _dataset(texts))[0] == 2000
+    assert _tokens(_estimator(), _dataset(texts))[0] == 256
 
 
 def test_backend_override_wins() -> None:
