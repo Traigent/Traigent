@@ -1460,7 +1460,7 @@ def _listing_client(provider: str, exc: Exception) -> tuple[dict, str, str, str]
 class TestListingProbePermissionDenied:
     """A 403 on the model-listing probe must not block; a 401 must."""
 
-    @pytest.mark.parametrize("provider", ["openai", "google", "mistral", "cohere"])
+    @pytest.mark.parametrize("provider", ["openai", "mistral", "cohere"])
     def test_403_does_not_block(self, monkeypatch, caplog, provider):
         class PermissionDeniedError(Exception):
             status_code = 403
@@ -1479,7 +1479,7 @@ class TestListingProbePermissionDenied:
         # unverified result must not be cached as a verified success
         assert not validator._is_cached(provider, key)
 
-    @pytest.mark.parametrize("provider", ["openai", "google", "mistral", "cohere"])
+    @pytest.mark.parametrize("provider", ["openai", "mistral", "cohere"])
     def test_bare_403_status_code_does_not_block(self, monkeypatch, provider):
         class ApiError(Exception):
             code = 403
@@ -1503,3 +1503,17 @@ class TestListingProbePermissionDenied:
             status = getattr(ProviderValidator(), method)()
         assert status.valid is False
         assert status.error_type == "AuthenticationError"
+
+    def test_google_403_still_blocks(self, monkeypatch):
+        """Google returns 403 for blocked/leaked keys, so it must not be bypassed."""
+
+        class ClientError(Exception):
+            code = 403
+
+        mods, method, env, key = _listing_client(
+            "google", ClientError("403 PERMISSION_DENIED: key blocked")
+        )
+        monkeypatch.setenv(env, key)
+        with patch.dict(sys.modules, mods):
+            status = getattr(ProviderValidator(), method)()
+        assert status.valid is False

@@ -922,8 +922,6 @@ class ProviderValidator:
             )
         except Exception as exc:
             error_type = type(exc).__name__
-            if _is_permission_denied_error(exc):
-                return _permission_denied_status("google", "Google", exc)
             if _is_auth_error(exc):
                 return ProviderStatus(
                     provider="google",
