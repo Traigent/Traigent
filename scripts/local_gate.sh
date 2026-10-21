@@ -164,23 +164,23 @@ if ! skip schema-types; then
       echo "  ❌ cannot read the TraigentSchema pin from scripts/ci/schema-pin.txt"
       FAIL=1
       schema_repo=""
-    elif [[ "$(git -C "$schema_repo" rev-parse HEAD 2>/dev/null)" != "$pin_sha" ]]; then
-      if git -C "$schema_repo" cat-file -e "${pin_sha}^{commit}" 2>/dev/null; then
-        schema_pin_dir="$(mktemp -d)"
-        trap 'rm -rf "$schema_pin_dir"' EXIT
-        if git -C "$schema_repo" archive "$pin_sha" | tar -x -C "$schema_pin_dir"; then
-          echo "  • checkout is not at the pin; using TraigentSchema@${pin_sha:0:12} exported to a temp dir"
-          schema_repo="$schema_pin_dir"
-        else
-          echo "  ❌ could not export TraigentSchema@${pin_sha:0:12} from the checkout"
-          FAIL=1
-          schema_repo=""
-        fi
+    elif git -C "$schema_repo" cat-file -e "${pin_sha}^{commit}" 2>/dev/null; then
+      # Always export: the generator reads working-tree files, so a dirty or
+      # untracked checkout must never influence the verdict.
+      schema_pin_dir="$(mktemp -d)"
+      trap 'rm -rf "$schema_pin_dir"' EXIT
+      if git -C "$schema_repo" archive "$pin_sha" | tar -x -C "$schema_pin_dir"; then
+        echo "  • using TraigentSchema@${pin_sha:0:12} exported to a temp dir (checkout working tree is ignored)"
+        schema_repo="$schema_pin_dir"
       else
-        echo "  ❌ TraigentSchema checkout lacks pinned commit ${pin_sha:0:12} (run 'git fetch' there)"
+        echo "  ❌ could not export TraigentSchema@${pin_sha:0:12} from the checkout"
         FAIL=1
         schema_repo=""
       fi
+    else
+      echo "  ❌ TraigentSchema checkout lacks pinned commit ${pin_sha:0:12} (run 'git fetch' there)"
+      FAIL=1
+      schema_repo=""
     fi
   fi
   if [[ -n "$schema_repo" ]]; then

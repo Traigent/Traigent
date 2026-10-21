@@ -238,12 +238,17 @@ def test_local_gate_uses_schema_pin_when_checkout_is_elsewhere(
     assert "\nSCHEMA_REPO=" in out
 
 
-def test_local_gate_uses_checkout_when_at_the_pin(tmp_path: Path) -> None:
+def test_local_gate_exports_pin_even_when_checkout_is_at_pin_and_dirty(
+    tmp_path: Path,
+) -> None:
     schema, _first, head = _schema_checkout(tmp_path)
+    (schema / "f").write_text("dirty", encoding="utf-8")
+    (schema / "untracked").write_text("x", encoding="utf-8")
     repo = _schema_gate_script(tmp_path, head)
-    out = (r := _run_schema_gate(repo, schema)).stdout + r.stderr
-    assert "exported to a temp dir" not in out
-    assert f"\nSCHEMA_REPO={schema}\n" in out
+    result = _run_schema_gate(repo, schema)
+    out = result.stdout + result.stderr
+    assert "exported to a temp dir" in out
+    assert f"\nSCHEMA_REPO={schema}\n" not in out
 
 
 def test_local_gate_fails_closed_without_a_readable_pin(tmp_path: Path) -> None:
