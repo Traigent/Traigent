@@ -534,8 +534,10 @@ try:  # pragma: no cover - import guard for optional dependency
         RAGAS_AVAILABLE,
         RagasConfig,
         RagasConfigurationError,
+        RagasCoverageError,
         compute_ragas_metrics,
         layer_over_global_defaults,
+        ragas_coverage_keys,
     )
 except ImportError:  # pragma: no cover - executed only when module missing
     POPULAR_RAGAS_METRICS = ()
@@ -546,13 +548,18 @@ except ImportError:  # pragma: no cover - executed only when module missing
         column_map: Mapping[str, str] | None = None
         llm: Any | None = None
         embeddings: Any | None = None
+        min_scored_share: float | None = None
 
     RagasConfig = _FallbackRagasConfig  # type: ignore[misc, assignment]
     RagasConfigurationError = RuntimeError  # type: ignore[misc, assignment]
+    RagasCoverageError = RuntimeError  # type: ignore[misc, assignment]
     compute_ragas_metrics = None  # type: ignore[assignment]
 
     def layer_over_global_defaults(config: Any) -> Any:  # type: ignore[misc]
         return config
+
+    def ragas_coverage_keys(metric_name: str) -> tuple[str, str]:  # type: ignore[misc]
+        return f"ragas_{metric_name}_rows_scored", f"ragas_{metric_name}_rows_total"
 
 
 DATASET_ROOT_ENV = "TRAIGENT_DATASET_ROOT"
@@ -1812,6 +1819,7 @@ class BaseEvaluator(ABC):
                     column_map=column_map,
                     llm=self.config.get("ragas_llm"),
                     embeddings=self.config.get("ragas_embeddings"),
+                    min_scored_share=self.config.get("ragas_min_scored_share"),
                 )
             ),
         )
@@ -1852,7 +1860,9 @@ class BaseEvaluator(ABC):
         (which would drift).
         """
         names: set[str] = set(self._metric_registry)
-        names.update(getattr(self, "_ragas_metric_names", set()))
+        for ragas_name in getattr(self, "_ragas_metric_names", set()):
+            names.add(ragas_name)
+            names.update(ragas_coverage_keys(ragas_name))
         names.update(getattr(self, "metric_functions", None) or {})
         return frozenset(names)
 
@@ -1972,6 +1982,13 @@ class BaseEvaluator(ABC):
                     outputs=outputs,
                     config=self._get_ragas_config(),
                 )
+            except RagasCoverageError as exc:
+                # Too few rows scored: the mean would hide the gap, so the
+                # trial fails closed even for a non-objective metric (#2677).
+                raise EvaluationError(
+                    f"RAGAS coverage below the minimum scored share: {exc}",
+                    original_error=exc,
+                ) from exc
             except RagasConfigurationError as exc:
                 ragas_results = self._fail_or_record_metric_batch_error(
                     exc,
@@ -1990,6 +2007,10 @@ class BaseEvaluator(ABC):
         for metric_name in metric_names:
             if metric_name in ragas_results:
                 metrics[metric_name] = ragas_results[metric_name]
+                # Coverage counts (ints) travel with the score (#2677).
+                for coverage_key in ragas_coverage_keys(metric_name):
+                    if coverage_key in ragas_results:
+                        metrics[coverage_key] = ragas_results[coverage_key]  # type: ignore[assignment]
                 continue
 
             if metric_name in self._metric_registry:

@@ -15,6 +15,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **RAGAS reports row coverage and fails below a minimum scored share (#2677).**
+  For each RAGAS metric the trial metrics now carry integer
+  `ragas_<name>_rows_scored` and `ragas_<name>_rows_total`. Rows RAGAS leaves
+  undefined are no longer dropped silently: if the scored share is below
+  `ragas_min_scored_share` (evaluator config key, or
+  `configure_ragas_defaults(min_scored_share=...)`; default 0.5, `0.0`
+  disables) the trial fails with a counts-only error. Agent-failed rows still
+  count as 0.0 and as scored. Existing runs where fewer than half the rows
+  were scored will now fail instead of reporting a partial mean.
 - **New stop reason `safety_constraint_insufficient_evidence` (#2481).** A run
   halts with it when a safety constraint is neither proven nor violated for
   lack of enough evidence. `OptimizationResult.stop_reason` can now carry this
