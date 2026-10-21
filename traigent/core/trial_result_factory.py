@@ -28,6 +28,23 @@ from traigent.utils.outcome_signals import build_example_signals
 logger = get_logger(__name__)
 
 
+def _stamp_trial_rows(trial_result: Any, raw_results: Any) -> Any:
+    """Keep each raw result's true dataset row on the TrialResult (local only).
+
+    Read from the raw ``ExampleResult`` objects (stamped by the built-in
+    evaluators) BEFORE they become wire payloads, and stored as a private
+    attribute of the TrialResult -- not in ``metadata``, which feeds the backend
+    payload and is pinned by the no-grant golden. Absent when any result carries
+    no provenance.
+    """
+    from traigent.utils.example_id import TRIAL_ROW_INDICES_ATTR, row_indices_of
+
+    row_indices = row_indices_of(raw_results)
+    if row_indices is not None:
+        setattr(trial_result, TRIAL_ROW_INDICES_ATTR, row_indices)
+    return trial_result
+
+
 def _redact_example_results_with_signals(raw_example_results: list[Any]) -> list[Any]:
     """Redact example results for wire metadata, with signals attached pre-redaction.
 
@@ -691,6 +708,7 @@ def build_success_result(
         duration,
     )
 
+    _stamp_trial_rows(trial_result, getattr(eval_result, "example_results", None))
     return trial_result
 
 
@@ -818,14 +836,17 @@ def build_pruned_result(
             metrics, progress_state, "total_tokens", trial_id
         )
 
-    return TrialResult(
-        trial_id=trial_id,
-        config=copy.deepcopy(evaluation_config),
-        metrics=metrics,
-        status=TrialStatus.PRUNED,
-        duration=duration,
-        timestamp=datetime.now(UTC),
-        metadata=redact_sensitive_data(metadata),
+    return _stamp_trial_rows(
+        TrialResult(
+            trial_id=trial_id,
+            config=copy.deepcopy(evaluation_config),
+            metrics=metrics,
+            status=TrialStatus.PRUNED,
+            duration=duration,
+            timestamp=datetime.now(UTC),
+            metadata=redact_sensitive_data(metadata),
+        ),
+        list(prune_error.example_results or []),
     )
 
 

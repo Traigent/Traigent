@@ -957,6 +957,33 @@ def validate(
         raise click.ClickException("Dataset validation failed")
 
 
+def _load_run_session(
+    session_id: str | None, run_artifact: str | None
+) -> dict[str, Any] | None:
+    """Load the run's local session for ``report-example-map`` (or ``None``)."""
+    if session_id and run_artifact:
+        raise click.ClickException("Pass only one of --session-id and --run-artifact")
+    if run_artifact:
+        data = json.loads(Path(run_artifact).read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise click.ClickException("Run artifact must be a JSON object")
+        return data
+    if session_id:
+        from dataclasses import asdict
+
+        from traigent.config.types import TraigentConfig
+        from traigent.storage.local_storage import LocalStorageManager
+
+        storage = LocalStorageManager(
+            TraigentConfig.from_environment().get_local_storage_path()
+        )
+        session = storage.load_session(session_id)
+        if session is None:
+            raise click.ClickException("Session not found in local storage")
+        return asdict(session)
+    return None
+
+
 @cli.command(name="report-example-map")
 @click.option(
     "--dataset",
@@ -973,12 +1000,49 @@ def validate(
     help="Output file path for example-content map JSON",
 )
 @click.option(
-    "--dataset-identifier",
+    "--session-id",
     default=None,
     help=(
-        "Identifier used for stable example_id generation. "
-        "Defaults to the resolved absolute dataset path."
+        "Local session (from the local sessions list) of the run whose sent "
+        "example ids should key the map. Exact; recommended."
     ),
+)
+@click.option(
+    "--run-artifact",
+    "run_artifact",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Exported session JSON (`traigent local export`) of the run to key by.",
+)
+@click.option(
+    "--target",
+    type=click.Choice(["connected", "synced"]),
+    default=None,
+    help=(
+        "Which portal session the map is for. 'connected' keys by the ids the "
+        "live run sent; 'synced' keys by the ids `traigent sync` uploads. A "
+        "connected run later recovered through sync appears in the portal as a "
+        "second session: pick it with --target synced. Default: connected for "
+        "a connected run's session, else synced. A connected map is refused for "
+        "runs recorded in privacy mode (they post no per-example ids); runs "
+        "recorded before that marker existed keep the old behaviour."
+    ),
+)
+@click.option(
+    "--assume-full-dataset",
+    is_flag=True,
+    default=False,
+    help=(
+        "For runs recorded before row provenance existed: treat result positions "
+        "as dataset rows. Use only if the run did not use dataset subsets. "
+        "Artifacts written by direct `submit_result` callers (bypassing the "
+        "session manager) also lack row provenance."
+    ),
+)
+@click.option(
+    "--dataset-identifier",
+    default=None,
+    help="Deprecated and ignored; ids now come from the run artifact.",
 )
 @click.option(
     "--validate-schema/--no-validate-schema",
@@ -989,6 +1053,10 @@ def validate(
 def report_example_map(
     dataset_path: str,
     output_path: str,
+    session_id: str | None,
+    run_artifact: str | None,
+    target: str | None,
+    assume_full_dataset: bool,
     dataset_identifier: str | None,
     validate_schema: bool,
 ) -> None:
@@ -1014,10 +1082,28 @@ def report_example_map(
         )
         resolved_output.parent.mkdir(parents=True, exist_ok=True)
 
-        effective_identifier = dataset_identifier or str(resolved_dataset)
+        run_session = _load_run_session(session_id, run_artifact)
+        if run_session is None:
+            console.print(
+                "[yellow]Note: no --session-id/--run-artifact given; keys are "
+                "example_<index>. Runs with content-identity keys or custom "
+                "evaluators send other ids and will not match.[/yellow]"
+            )
+        if run_session is not None:
+            from traigent.reporting.example_map import resolve_map_target
+
+            used = resolve_map_target(run_session, target)
+            other = "synced" if used == "connected" else "connected"
+            console.print(
+                f"Target: {used} portal session (use --target {other} for the "
+                f"{other} one)."
+            )
         payload = build_example_content_map(
             resolved_dataset,
-            dataset_identifier=effective_identifier,
+            dataset_identifier=dataset_identifier,
+            run_session=run_session,
+            target=target,
+            assume_full_dataset=assume_full_dataset,
         )
         if validate_schema:
             errors = validate_example_content_map(payload)
