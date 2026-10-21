@@ -956,16 +956,25 @@ _APPLY_FALSE_WITHDRAWN_MESSAGE = (
 def _finite_grid_size(config_space: Any) -> int | None:
     """Number of grid combinations, or None when the space is not a finite grid.
 
-    Lists are categorical axes, scalars are fixed values; any other shape (for
-    example a continuous range) means the size is unknown and is never guessed.
+    Lists are categorical axes, scalars are fixed values, and dict domains are
+    counted exactly as the grid optimizer enumerates them (stepped ranges,
+    categorical, fixed). Any other shape (for example a continuous range)
+    means the size is unknown and is never guessed.
     """
+    from traigent.utils.discrete_domains import discrete_values_for_config_param
+
     if not isinstance(config_space, dict) or not config_space:
         return None
     size = 1
     for definition in config_space.values():
         if isinstance(definition, list):
             size *= max(len(definition), 1)
-        elif isinstance(definition, (tuple, dict, set, frozenset)):
+        elif isinstance(definition, dict):
+            values = discrete_values_for_config_param(definition)
+            if values is None:
+                return None
+            size *= max(len(values), 1)
+        elif isinstance(definition, (tuple, set, frozenset)):
             return None
     return size
 

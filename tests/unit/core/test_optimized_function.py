@@ -750,6 +750,21 @@ class TestOptimizedFunction:
                 "max_trials was not set" in r.getMessage() for r in caplog.records
             )
 
+    def test_finite_grid_size_counts_dict_domains_2058(self):
+        """Stepped-range and categorical dict axes are counted like grid.py."""
+        from traigent.api.parameter_ranges import IntRange
+        from traigent.core.optimized_function import _finite_grid_size
+
+        stepped = IntRange(1, 24, step=1).to_config_value()
+        assert isinstance(stepped, dict)
+        assert _finite_grid_size({"n": stepped}) == 24
+        categorical = {"type": "categorical", "choices": ["a", "b", "c"]}
+        assert _finite_grid_size({"n": stepped, "m": categorical}) == 72
+        # Continuous dict ranges stay unknown.
+        assert (
+            _finite_grid_size({"x": {"type": "float", "low": 0.0, "high": 1.0}}) is None
+        )
+
     @pytest.mark.asyncio
     async def test_optimize_skips_default_notice_for_explicit_max_trials(
         self,
