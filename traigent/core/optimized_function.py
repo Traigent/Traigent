@@ -2304,6 +2304,7 @@ class OptimizedFunction(Generic[_P, _R]):
         progress_bar: bool | None = None,
         budget: ExecutionBudget | None = None,
         apply: bool = True,
+        resume_from: OptimizationResult | str | os.PathLike[str] | None = None,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization on the function.
@@ -2353,6 +2354,17 @@ class OptimizedFunction(Generic[_P, _R]):
                 :class:`~traigent.utils.exceptions.OverlappingOptimizationError`.
                 ``False`` (*candidate* runs, which return a result without
                 applying it) is temporarily unavailable; see ``Raises`` below.
+            resume_from: Resume a **local** run from a prior result (#1697): an
+                ``OptimizationResult``, or the name/path of a result saved with
+                ``PersistenceManager.save_result`` (the sha256 integrity manifest
+                is verified; a corrupted or tampered result raises
+                ``ValueError``). Prior trials are reused only if the dataset,
+                scorer, agent and configuration-space fingerprints all match and
+                the trial completed with a measured or properly-unknown cost;
+                unfinished trials are never reused or retried. Reused trials
+                count toward ``max_trials`` and the result; their cost is
+                reported but not charged to this run's cost limit. Cloud and
+                hybrid runs raise ``ValueError``.
             **algorithm_kwargs: Additional algorithm-specific parameters.
                 For grid search (algorithm="grid"):
                     - parameter_order: dict[str, int | float] controlling iteration order.
@@ -2392,6 +2404,7 @@ class OptimizedFunction(Generic[_P, _R]):
             "strategy_params": strategy_params,
             "progress_bar": progress_bar,
             "budget": budget,
+            "resume_from": resume_from,
             "algorithm_kwargs": algorithm_kwargs,
         }
         from traigent.utils.cost_calculator import cost_run_scope
@@ -2423,6 +2436,7 @@ class OptimizedFunction(Generic[_P, _R]):
         strategy_params: Mapping[str, Any] | None,
         progress_bar: bool | None,
         budget: ExecutionBudget | None,
+        resume_from: OptimizationResult | str | os.PathLike[str] | None = None,
         algorithm_kwargs: dict[str, Any],
     ) -> OptimizationResult:
         """Body of :meth:`optimize` for one advancing run."""
@@ -2527,6 +2541,7 @@ class OptimizedFunction(Generic[_P, _R]):
                     configuration_space=configuration_space,
                     algorithm_kwargs=algorithm_kwargs,
                     execution_budget=budget,
+                    resume_from=resume_from,
                 )
                 # Inside the run scope: a cost objective that measured no
                 # usage at all recorded $0 everywhere, which is an absent
@@ -2563,6 +2578,7 @@ class OptimizedFunction(Generic[_P, _R]):
         progress_bar: bool | None = None,
         budget: ExecutionBudget | None = None,
         apply: bool = True,
+        resume_from: OptimizationResult | str | os.PathLike[str] | None = None,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization synchronously (convenience wrapper).
@@ -2592,6 +2608,8 @@ class OptimizedFunction(Generic[_P, _R]):
                 (default) auto-enables in interactive terminals.
             apply: ``True`` (default, the only supported value right now)
                 applies the winner to this wrapper. See :meth:`optimize`.
+            resume_from: Resume a local run from a prior result; see
+                :meth:`optimize`.
             **algorithm_kwargs: Additional algorithm parameters
 
         Returns:
@@ -2637,6 +2655,7 @@ class OptimizedFunction(Generic[_P, _R]):
             progress_bar=progress_bar,
             budget=budget,
             apply=apply,
+            resume_from=resume_from,
             **algorithm_kwargs,
         )
 
@@ -3623,6 +3642,36 @@ Remediation:
             # ValueError leaking from here (error semantics unchanged, #1421).
             return stored_policy
 
+    def _load_resume_source_for_local_run(
+        self,
+        resume_from: OptimizationResult | str | os.PathLike[str] | None,
+        algorithm: str | None,
+    ) -> OptimizationResult | None:
+        """Validate ``resume_from`` (#1697): local runs only, integrity-checked.
+
+        Raises ``ValueError`` when the run would be cloud/hybrid or the saved
+        result is corrupted or tampered; ``TypeError`` for a wrong argument type.
+        """
+        if resume_from is None:
+            return None
+        from traigent.core.resume import LOCAL_ONLY_MESSAGE, load_resume_source
+
+        stored_policy = getattr(self, "execution_policy", None)
+        if not isinstance(stored_policy, ResolvedExecutionPolicy):
+            stored_policy = None
+        policy = self._policy_for_runtime_algorithm(stored_policy, algorithm)
+        external_evaluator = (
+            getattr(self, "external_service_evaluator", None) is not None
+            or self.execution_mode == ExecutionMode.HYBRID_API.value
+        )
+        source = initial_result_source(policy, external_evaluator=external_evaluator)
+        if external_evaluator or source not in {
+            SOURCE_OFFLINE,
+            SOURCE_EXPLICIT_LOCAL,
+        }:
+            raise ValueError(LOCAL_ONLY_MESSAGE)
+        return load_resume_source(resume_from)
+
     def _resolve_runtime_execution_mode(self, algorithm: str | None) -> ExecutionMode:
         """Re-derive the effective ``ExecutionMode`` for THIS call (Traigent#2352).
 
@@ -3676,12 +3725,14 @@ Remediation:
         configuration_space: dict[str, Any] | None,
         algorithm_kwargs: dict[str, Any],
         execution_budget: ExecutionBudget | None = None,
+        resume_from: OptimizationResult | str | os.PathLike[str] | None = None,
     ) -> OptimizationResult:
         """Execute optimization assuming objective schema is already resolved.
 
         This method orchestrates the optimization process by delegating to
         specialized helper methods for each phase of execution.
         """
+        resume_source = self._load_resume_source_for_local_run(resume_from, algorithm)
         hybrid_auto_discovery_enabled = self._allows_empty_configuration_space()
         effective_privacy_enabled = bool(getattr(self, "privacy_enabled", False))
         hybrid_discovery_state: dict[str, Any] | None = None
@@ -3939,6 +3990,9 @@ Remediation:
             requested_algorithm=algorithm,
             execution_budget=execution_budget,
         )
+
+        if resume_source is not None:
+            orchestrator.set_resume_source(resume_source)
 
         # An explicitly sized run (max_trials or max_total_examples set by the
         # user, not the SDK default) is consent to run that many trials even
