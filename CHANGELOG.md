@@ -6,6 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`generate-config -o tvl` structural constraints now load (#2647).** The
+  generator's known constraint shapes (`require(...)`, `implies(...)`,
+  `lambda config: ...`) are translated to the `expr` / `when`-`then` forms the
+  SDK's own `load_tvl_spec` accepts. A shape outside that grammar is skipped
+  with a value-free warning naming only the constraint id, instead of being
+  written as an unloadable `code` entry.
+
 ### Changed
 
 - **Finalize propagates ownership/auth errors (#2510).** HTTP 401/403 from the
