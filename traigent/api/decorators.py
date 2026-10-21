@@ -2737,6 +2737,10 @@ def optimize(  # NOSONAR(S107)
                 ``COST_UNMEASURED_TRIALS_RAN``; ``max_total_examples`` also
                 counts as consent but does not raise ``max_trials``.
                 ``max_trials=None`` does not count.
+                The limit is enforced between trials, not inside one: a
+                single expensive trial can overshoot it by roughly that
+                trial's cost (plus in-flight parallel trials) before the next
+                admission check stops new work.
             cost_approved: Skip cost approval prompt. Use with caution in production.
             estimated_calls_per_example: Expected LLM calls per evaluated
                 example (self-consistency voting, repair passes, model
