@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 
 from traigent.api.types import TrialResult
@@ -17,10 +18,53 @@ from traigent.utils.trial_costs import is_cost_unmeasured, known_spend_lower_bou
 
 logger = get_logger(__name__)
 
+
 _ESTIMATED_INPUT_TOKENS_PER_EXAMPLE = 2000
 _ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE = 500
 _CONSERVATIVE_INPUT_COST_PER_TOKEN = 15.0e-6
 _CONSERVATIVE_OUTPUT_COST_PER_TOKEN = 75.0e-6
+# Input estimate is max(sampled estimate, floor); the floor is the long-standing
+# default so sampling can only raise the estimate, never lower it (#2498).
+_INPUT_TOKENS_FLOOR = _ESTIMATED_INPUT_TOKENS_PER_EXAMPLE
+_DATASET_SAMPLE_SIZE = 20
+_BUFFER_FACTOR = 1.2
+
+
+def _estimate_text_tokens(text: str) -> int:
+    """Rough token estimate: ~4 ASCII chars/token (as used elsewhere in the
+    SDK), but every non-ASCII char counts as one token so CJK and other
+    non-English text is not under-counted."""
+    non_ascii = sum(1 for ch in text if ord(ch) > 127)
+    return (len(text) - non_ascii + 3) // 4 + non_ascii
+
+
+def _example_text(example: object) -> str:
+    """Serialize an example's inputs for length measurement only."""
+    data = getattr(example, "input_data", None)
+    if data is None:
+        return ""
+    try:
+        return json.dumps(data, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return str(data)
+
+
+def sample_input_tokens_per_example(
+    dataset: object, sample_size: int = _DATASET_SAMPLE_SIZE
+) -> tuple[int, int] | None:
+    """Estimate mean input tokens/example from the first ``sample_size`` examples.
+
+    Deterministic and bounded: never reads beyond the sample. Returns
+    ``(estimate, sample_count)`` or None when no example inputs are readable.
+    """
+    examples = getattr(dataset, "examples", None)
+    if not isinstance(examples, Sequence) or not examples:
+        return None
+    sample = examples[:sample_size]
+    counts = [_estimate_text_tokens(_example_text(ex)) for ex in sample]
+    if not any(counts):
+        return None
+    return -(-sum(counts) // len(counts)), len(counts)
 
 
 class CostEstimator:
@@ -38,6 +82,10 @@ class CostEstimator:
     # it must resolve to a sane default even when ``__init__`` never ran
     # (issue #1750 follow-up).
     _estimated_calls_per_example: int = 1
+    _configured_max_output_tokens: int | None = None
+    # (input, output, input_source, sample_count, example_count) from the last
+    # estimate_optimization_cost call; None until then.
+    _resolved_assumptions: tuple[int, int, str, int, int] | None = None
 
     def __init__(
         self,
@@ -49,6 +97,7 @@ class CostEstimator:
         estimated_input_tokens_per_example: int | None = None,
         estimated_output_tokens_per_example: int | None = None,
         estimated_calls_per_example: int | None = None,
+        configured_max_output_tokens: int | None = None,
     ) -> None:
         """Initialize cost estimator.
 
@@ -69,6 +118,13 @@ class CostEstimator:
                 Multiplies the per-example base cost. Defaults to 1 when
                 unset or invalid (issue #1750).
         """
+        self._configured_max_output_tokens = (
+            configured_max_output_tokens
+            if isinstance(configured_max_output_tokens, int)
+            and not isinstance(configured_max_output_tokens, bool)
+            and configured_max_output_tokens > 0
+            else None
+        )
         self._cost_enforcer = cost_enforcer
         self._max_trials = max_trials
         self._max_total_examples = max_total_examples
@@ -104,17 +160,67 @@ class CostEstimator:
 
     def _get_estimated_tokens_per_example(self) -> tuple[int, int]:
         """Resolve per-example token estimate, preferring service metadata."""
+        if self._resolved_assumptions is not None:
+            return self._resolved_assumptions[0], self._resolved_assumptions[1]
+        return self._resolve_tokens(None)[:2]  # type: ignore[return-value]
+
+    def _resolve_tokens(self, dataset: object | None) -> tuple[int, int, str, int]:
+        """Return (input, output, input_source, sample_count).
+
+        Precedence: service metadata override > dataset sample (never below
+        the floor) > default. Output: override > configured max_tokens > default.
+        """
+        sample_count = 0
+        if self._estimated_input_tokens_per_example is not None:
+            input_tokens = self._estimated_input_tokens_per_example
+            source = "backend_override"
+        else:
+            sampled = (
+                sample_input_tokens_per_example(dataset)
+                if dataset is not None
+                else None
+            )
+            if sampled is not None:
+                sample_count = sampled[1]
+                input_tokens = max(sampled[0], _INPUT_TOKENS_FLOOR)
+                source = (
+                    "dataset_sample"
+                    if sampled[0] > _INPUT_TOKENS_FLOOR
+                    else "floor_default"
+                )
+            else:
+                input_tokens = _ESTIMATED_INPUT_TOKENS_PER_EXAMPLE
+                source = "floor_default"
+        if self._estimated_output_tokens_per_example is not None:
+            output_tokens = self._estimated_output_tokens_per_example
+        elif self._configured_max_output_tokens is not None:
+            output_tokens = self._configured_max_output_tokens
+        else:
+            output_tokens = _ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE
+        return input_tokens, output_tokens, source, sample_count
+
+    def _assumptions_summary(self) -> str:
+        """Value-free description of the estimate's assumptions."""
+        models = (
+            [self._model_name]
+            if self._model_name
+            else list(self._candidate_models) or ["unknown (conservative pricing)"]
+        )
+        resolved = self._resolved_assumptions
+        if resolved is None:
+            input_tokens, output_tokens = self._get_estimated_tokens_per_example()
+            source, sampled, examples = "floor_default", 0, None
+        else:
+            input_tokens, output_tokens, source, sampled, examples = resolved
+        examples_text = "unknown" if examples is None else str(examples)
         return (
-            (
-                self._estimated_input_tokens_per_example
-                if self._estimated_input_tokens_per_example is not None
-                else _ESTIMATED_INPUT_TOKENS_PER_EXAMPLE
-            ),
-            (
-                self._estimated_output_tokens_per_example
-                if self._estimated_output_tokens_per_example is not None
-                else _ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE
-            ),
+            f"Assumptions: model(s)={', '.join(models)}; "
+            f"examples in dataset={examples_text}; "
+            f"input tokens/example={input_tokens} (estimate, source={source}, "
+            f"{sampled} example(s) sampled, floor={_INPUT_TOKENS_FLOOR}); "
+            f"output tokens/example={output_tokens} (estimate); "
+            f"safety buffer={_BUFFER_FACTOR}x. "
+            "Real billing may differ; the runtime cost limit still applies."
         )
 
     def _base_cost_for_rates(self, input_rate: float, output_rate: float) -> float:
@@ -249,7 +355,8 @@ class CostEstimator:
                     "Cost approval declined. Rough conservative upper-bound "
                     f"estimate: ${estimated_cost:.2f}, limit: "
                     f"${limit:.2f}. "
-                    "Pre-run estimates use fixed token assumptions and conservative "
+                    f"{self._assumptions_summary()} "
+                    "Pre-run estimates use conservative "
                     "fallback pricing when model pricing is unavailable, and assume "
                     f"{self._estimated_calls_per_example} LLM call(s) per example "
                     "(set estimated_calls_per_example on @traigent.optimize for "
@@ -283,6 +390,17 @@ class CostEstimator:
         Returns:
             Estimated cost in USD.
         """
+        dataset_size = len(dataset) if hasattr(dataset, "__len__") else 100
+        input_tokens, output_tokens, source, sample_count = self._resolve_tokens(
+            dataset
+        )
+        self._resolved_assumptions = (
+            input_tokens,
+            output_tokens,
+            source,
+            sample_count,
+            dataset_size,
+        )
         base_cost_per_example, pricing_source = self._estimate_base_cost_per_example()
 
         # Scale by the declared calls-per-example multiplier (issue #1750).
@@ -296,9 +414,6 @@ class CostEstimator:
                 f"{pricing_source}:calls_per_example="
                 f"{self._estimated_calls_per_example}"
             )
-
-        # Get dataset size
-        dataset_size = len(dataset) if hasattr(dataset, "__len__") else 100
 
         # Get max trials (default to 10 if not set)
         max_trials = self._max_trials or 10
@@ -322,7 +437,7 @@ class CostEstimator:
         # Apply a flat conservative buffer. The optimizer eval path invokes
         # invoker.invoke() directly today, so this does not model automatic
         # per-example retries in the default evaluation loop.
-        retry_factor = 1.2
+        retry_factor = _BUFFER_FACTOR
         estimated_total = total_samples * base_cost_per_example * retry_factor
 
         logger.debug(

@@ -644,6 +644,11 @@ class OptimizationOrchestrator:
             estimated_input_tokens_per_example=estimated_input_tokens,
             estimated_output_tokens_per_example=estimated_output_tokens,
             estimated_calls_per_example=self._estimated_calls_per_example,
+            configured_max_output_tokens=(
+                self._extract_max_output_tokens_from_config_space(
+                    getattr(self.optimizer, "config_space", None)
+                )
+            ),
         )
 
         self._trial_lifecycle = TrialLifecycle(self)
@@ -705,6 +710,27 @@ class OptimizationOrchestrator:
                 return normalized_candidates
 
         return ()
+
+    @staticmethod
+    def _extract_max_output_tokens_from_config_space(
+        config_space: dict[str, Any] | None,
+    ) -> int | None:
+        """Largest ``max_tokens`` value in the config space, used as output cap."""
+        if not isinstance(config_space, dict):
+            return None
+        definition = config_space.get("max_tokens")
+        if isinstance(definition, dict):
+            definition = definition.get("values", definition.get("high"))
+        raw = (
+            definition
+            if isinstance(definition, Sequence)
+            and not isinstance(definition, (str, bytes, bytearray))
+            else (definition,)
+        )
+        values = [
+            v for v in raw if isinstance(v, int) and not isinstance(v, bool) and v > 0
+        ]
+        return max(values) if values else None
 
     @staticmethod
     def _extract_estimated_tokens_per_example(

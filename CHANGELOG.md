@@ -14,6 +14,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   total_cost=0)` to record a measured $0; unknown stays the default. Documented in
   `docs/guides/execution-budget.md`, with a test that a wrapped no-call example
   counts as measured $0 and an unwrapped one stays unknown.
+### Fixed
+
+- **Pre-run cost estimate samples the dataset and shows its assumptions
+  (#2498).** Input tokens per example are now estimated from the first 20
+  dataset examples (~4 ASCII chars/token, 1 token per non-ASCII char), never
+  below the 2000-token floor; a configured `max_tokens` in the config space is
+  the output cap; backend overrides still win and the 1.2x buffer is kept. The
+  cost-approval refusal lists model(s), example count, token estimates, source
+  and buffer, and states that real billing may differ and the runtime cost
+  limit still applies. No example text appears in the message.
 
 ### Added
 
