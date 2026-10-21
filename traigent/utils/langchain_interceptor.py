@@ -319,10 +319,11 @@ class capture_scope:
     shares its nearest owner's ledger. A top-level scope is always an owner.
     """
 
-    __slots__ = ("_token", "_ledger_owner")
+    __slots__ = ("_token", "_ledger_owner", "_slot_token")
 
     def __init__(self, ledger_owner: bool = False) -> None:
         self._ledger_owner = ledger_owner
+        self._slot_token: Any = None
 
     def __enter__(self) -> _CaptureBucket:
         parent = _capture_scope.get()
@@ -332,11 +333,19 @@ class capture_scope:
         else:
             bucket.root = parent.root or parent
         self._token = _capture_scope.set(bucket)
+        if self._ledger_owner:
+            # A new ledger starts a new numbering of example slots: do not
+            # inherit the enclosing example's slot (its ids belong to another
+            # ledger and would wrongly attribute this trial's attempts).
+            self._slot_token = _example_slot.set(None)
         return bucket
 
     def __exit__(self, *exc_info: Any) -> None:
         seal_captured_responses()
         finish_captured_responses(discard=True)
+        if self._slot_token is not None:
+            _example_slot.reset(self._slot_token)
+            self._slot_token = None
         _capture_scope.reset(self._token)
 
     async def __aenter__(self) -> _CaptureBucket:

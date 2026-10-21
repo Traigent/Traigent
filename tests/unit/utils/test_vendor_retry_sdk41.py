@@ -1317,3 +1317,78 @@ def test_e2e_retried_failure_without_reported_cost_still_strict_raises(
 
     with pytest.raises(OptimizationError):
         _run_real_optimize(tmp_path, monkeypatch, strict=True)
+
+
+# ------------------------------------------------------------ review round 7
+
+
+class _NoUsageStream(_SyncStream):
+    def __next__(self):
+        self.n += 1
+        if self.n > 2:
+            raise StopIteration
+        return _Chunk(None)
+
+
+def test_tuple_return_with_reported_cost_covers_the_example(mock_off):
+    from traigent.evaluators.local import LocalEvaluator
+
+    mod, p = _patched([_NoUsageStream()])
+    try:
+        evaluator = LocalEvaluator.__new__(LocalEvaluator)
+
+        async def fake_unattributed(*a, **k):
+            list(mod.completion(model="gpt-4o", stream=True))
+            meta = {"text": "x", "__traigent_meta__": {"total_cost": 0.1}}
+            return (meta, {"quality": 1.0}), None
+
+        evaluator._execute_function_unattributed = fake_unattributed
+        import asyncio
+
+        async def run():
+            with capture_scope(ledger_owner=True) as bucket:
+                await evaluator._execute_function(lambda: None, {}, {})
+            return bucket
+
+        bucket = asyncio.run(run())
+        s = summarize_bucket(bucket)
+        assert s["vendor_call_unknown_usage_attempts"] == 1
+        assert s["vendor_call_unmeasured_attempts"] == 0
+        assert not _flagged(bucket)[0]
+    finally:
+        p.stop()
+
+
+def test_unpack_user_metrics_warn_flag_is_silent(caplog):
+    from traigent.evaluators.base import BaseEvaluator
+
+    raw = ("YES", {"bad-key": 1.0})
+    with caplog.at_level("WARNING"):
+        assert BaseEvaluator._unpack_user_metrics(raw, warn=False) == (raw, None)
+    assert not caplog.records
+    with caplog.at_level("WARNING"):
+        BaseEvaluator._unpack_user_metrics(raw)
+    assert caplog.records
+
+
+def test_owner_scope_resets_example_slot(mock_off):
+    from traigent.utils.langchain_interceptor import (
+        example_slot,
+        mark_example_cost_reported,
+    )
+
+    mod, p = _patched([_NoUsageStream(), _NoUsageStream()])
+    try:
+        with capture_scope(ledger_owner=True):
+            with example_slot():  # an outer example (slot 1 of the OUTER ledger)
+                with capture_scope(ledger_owner=True) as trial:
+                    # nested trial setup attempt: unknown usage, no example yet
+                    list(mod.completion(model="gpt-4o", stream=True))
+                    with example_slot() as slot:  # the trial's first example
+                        mark_example_cost_reported(slot)
+        s = summarize_bucket(trial)
+        assert s["vendor_call_unknown_usage_attempts"] == 1
+        assert s["vendor_call_unmeasured_attempts"] == 1
+        assert _flagged(trial)[0]
+    finally:
+        p.stop()
