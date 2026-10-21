@@ -193,12 +193,16 @@ def install_mock_transport_guard() -> None:
                 )
         try:
             import aiohttp
+            import aiohttp.client
             import aiohttp.connector
         except ImportError:
             aiohttp = None  # type: ignore[assignment]
         if aiohttp is not None:
+            # Patch the real class from ``aiohttp.client``: the public
+            # ``aiohttp.ClientSession`` name may be replaced by a stand-in
+            # (tests) that has no transport of its own.
             _patch(
-                aiohttp.ClientSession,
+                aiohttp.client.ClientSession,
                 "_request",
                 _wrap_async,
                 lambda self, method, str_or_url, *a, **k: str_or_url,
