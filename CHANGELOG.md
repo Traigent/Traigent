@@ -8,6 +8,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Dev tooling now agrees with CI (#2469).** `release-review.yml` formats with
+  `ruff format --check` (as the required PR gate does) instead of black; the `dev`
+  extra exact-pins `isort==9.0.1` and `mypy==2.3.1` (the versions in
+  `.pre-commit-config.yaml` and `uv.lock`); `scripts/local_gate.sh` tests generated
+  schema types against the commit in `scripts/ci/schema-pin.txt` (exporting it from
+  the sibling checkout when that is at another commit, failing closed when the pin
+  is unreadable or absent).
 - **BREAKING (packaging): the SDK no longer bundles `traigent/skills` (#1609).**
   The folder and its package-data entry are removed; the skills live only in
   `Traigent/traigent-skills` (`npx skills add Traigent/traigent-skills`, which

@@ -52,11 +52,11 @@ jobs:
       - name: Install lint and type tooling
         run: |
           bash scripts/ci/install_sdk_requirements.sh -e ".[dev]"
-      - name: Black + isort + Ruff + MyPy + dep-floor-drift
+      - name: Ruff format + isort + Ruff + MyPy + dep-floor-drift
         id: lint_type_run
         continue-on-error: true
         run: |
-          black --check --diff traigent/ traigent_validation/
+          ruff format --check --diff traigent/ traigent_validation/
           isort --check-only --diff traigent/ traigent_validation/
           ruff check traigent/ traigent_validation/ --output-format=github
           mypy traigent/ traigent_validation/ --install-types --non-interactive

@@ -223,9 +223,9 @@ dev = [
     "pytest-mock>=3.10.0",
     "pytest-xdist>=3.0.0",  # Required by addopts: -n auto --dist loadgroup
     "black>=26.3.1",  # CVE-2026-32274 fix
-    "isort>=5.10.0",
+    "isort==9.0.1",  # Exact pin (#2469): matches .pre-commit-config.yaml + uv.lock
     "flake8>=5.0.0",
-    "mypy>=1.0.0",
+    "mypy==2.3.1",  # Exact pin (#2469): matches .pre-commit-config.yaml + uv.lock
     "types-PyYAML>=6.0.0",
     "types-requests>=2.31.0",
     "types-bleach>=6.0.0",
