@@ -21,8 +21,12 @@ class AggregatedMetrics:
     """Aggregated metrics extracted from a collection of trials."""
 
     processed_metrics: dict[str, Any]
-    total_cost: float
+    #: ``None`` when any trial's cost is unmeasured: the known spend is then a
+    #: floor (``cost_floor_usd``), never the total (#2688).
+    total_cost: float | None
     total_tokens: int
+    cost_floor_usd: float = 0.0
+    cost_unmeasured_trials: int = 0
 
 
 def aggregate_metrics(
@@ -80,12 +84,17 @@ def aggregate_metrics(
             processed_metrics[key] = sum(values) / len(values)
 
     totals = collector.totals()
+    if totals.cost_unmeasured_trials:
+        # A per-trial aggregate of the measured trials is not the run's cost.
+        processed_metrics.pop("total_cost", None)
     processed_metrics.update(totals.as_metrics_dict())
 
     return AggregatedMetrics(
         processed_metrics=processed_metrics,
-        total_cost=totals.total_cost,
+        total_cost=None if totals.cost_unmeasured_trials else totals.total_cost,
         total_tokens=totals.total_tokens,
+        cost_floor_usd=totals.cost_floor_usd,
+        cost_unmeasured_trials=totals.cost_unmeasured_trials,
     )
 
 

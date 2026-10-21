@@ -30,6 +30,7 @@ from traigent.cloud.session_budgets import (
     ensure_cost_metric_for_budgeted_completed_submission,
 )
 from traigent.cloud.trial_operations import TrialOperations
+from traigent.utils.trial_costs import COST_FLOOR_WIRE_KEY
 from traigent.core.backend_session_manager import BackendSessionManager
 from traigent.core.cost_enforcement import (
     CostEnforcer,
@@ -108,7 +109,8 @@ async def test_public_submit_without_cost_or_flag_does_not_send_zero() -> None:
     posted = await _submit_through_public_path({"accuracy": 1.0})
 
     # lower bound (nothing reported) travels WITH the flag; the flag is the signal
-    assert posted["cost"] == 0.0, posted
+    assert "cost" not in posted, posted
+    assert posted[COST_FLOOR_WIRE_KEY] == 0.0, posted
     assert posted["cost_unmeasured"] == 1.0
 
 
@@ -145,6 +147,7 @@ def test_budget_guard_uses_telemetry_cost_before_declaring_unmeasured() -> None:
 
     assert mutated is True
     assert metrics["cost"] == pytest.approx(0.4)
+    assert COST_FLOOR_WIRE_KEY not in metrics
     assert "cost_unmeasured" not in metrics
 
 
@@ -166,9 +169,8 @@ def test_backend_session_manager_flags_instead_of_backfilling_zero() -> None:
         session_id="s1", trial_result=trial, metrics_payload=payload, metadata={}
     )
 
-    assert (
-        payload["cost"] == 0.0 and payload["cost_unmeasured"] == 1.0
-    )  # lower bound + flag
+    assert "cost" not in payload
+    assert payload[COST_FLOOR_WIRE_KEY] == 0.0 and payload["cost_unmeasured"] == 1.0
     assert payload["cost_unmeasured"] == 1.0
 
 

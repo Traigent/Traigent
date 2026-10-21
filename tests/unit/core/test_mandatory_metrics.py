@@ -633,5 +633,9 @@ class TestMandatoryMetricsCollectorIntegration:
         assert totals.total_duration == 3.5
         assert totals.total_examples_attempted == 15  # 10 + 5
 
-        assert "total_cost" in metrics
+        # trial3 ran with no cost data: its spend is unknown, so the run total
+        # is withheld and the exact floor + unmeasured count are reported (#2688).
+        assert "total_cost" not in metrics
+        assert metrics["cost_floor_usd"] == pytest.approx(0.30)
+        assert metrics["cost_unmeasured_trials"] == 1.0
         assert "examples_attempted_total" in metrics

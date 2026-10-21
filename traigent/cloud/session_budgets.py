@@ -10,8 +10,7 @@ from traigent.utils.trial_costs import (
     extract_trial_cost_metric,
     is_cost_unmeasured,
     is_finite_numeric_cost,
-    known_spend_lower_bound,
-    lift_flagged_cost_to_floor,
+    move_flagged_cost_to_floor_field,
 )
 
 
@@ -66,11 +65,10 @@ def ensure_cost_metric_for_budgeted_completed_submission(
 
     A cost found in telemetry is copied into ``metrics["cost"]``. When no cost
     is available and none is flagged, the trial's spend is unknown, so the
-    mapping gets ``cost_unmeasured = 1.0``. The backend refuses a completed
-    trial on a budget-armed session without a numeric ``metrics.cost``, so a
-    flagged trial carries ``cost`` = the spend actually reported (a lower
-    bound; ``0.0`` when nothing was reported) together with the flag. The flag,
-    never the number, is the signal (owner decision A, honest-cost).
+    mapping gets ``cost_unmeasured = 1.0``. A flagged trial never carries a
+    ``metrics["cost"]``: the spend actually reported (a lower bound; ``0.0``
+    when nothing was reported) travels in its own field,
+    ``COST_FLOOR_WIRE_KEY``, together with the flag (#2688, owner decision A).
 
     Returns True when the metrics mapping was mutated.
     """
@@ -80,10 +78,9 @@ def ensure_cost_metric_for_budgeted_completed_submission(
     if not is_cost_budget_armed_session(client, session_id):
         return False
     if is_cost_unmeasured(metrics):
-        # Unknown spend: send the reported lower bound WITH the flag; the
-        # flag survives, the number is never presented alone (#2517). A
-        # flagged ``cost`` of 0 must not override reported spend.
-        return lift_flagged_cost_to_floor(metrics, *telemetry_sources)
+        # Unknown spend: send the reported floor in its own field WITH the
+        # flag; ``cost`` stays absent so an unknown is never a measured number.
+        return move_flagged_cost_to_floor_field(metrics, *telemetry_sources)
 
     if is_finite_numeric_cost(metrics.get("cost")):
         return False
@@ -94,10 +91,10 @@ def ensure_cost_metric_for_budgeted_completed_submission(
         return True
 
     # No cost and no flag: nothing measured this trial's spend, so it is
-    # unknown. Say so with the flag; ``cost`` (required by the backend on a
-    # budget-armed session) is the reported lower bound, 0.0 here.
+    # unknown. Say so with the flag; the reported floor (0.0 here) goes in
+    # its own field, never in ``cost``.
     metrics["cost_unmeasured"] = 1.0
-    metrics["cost"] = known_spend_lower_bound(metrics, *telemetry_sources)
+    move_flagged_cost_to_floor_field(metrics, *telemetry_sources)
     if logger is not None:
         logger.debug(
             "no cost telemetry; submitting budgeted trial as cost_unmeasured (not $0)"

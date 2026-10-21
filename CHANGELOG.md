@@ -38,6 +38,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Honest run cost totals; unmeasured-cost floor in its own field (#2688).** When
+  any trial's cost is unmeasured, `OptimizationResult.total_cost` and
+  `metrics["total_cost"]` are now unknown (`None` / absent) instead of a partial
+  sum; `metrics["cost_floor_usd"]` (known costs plus the floors of unmeasured
+  trials) and `metrics["cost_unmeasured_trials"]` report the exact lower bound
+  and count. On budget-armed sessions an unmeasured trial is submitted with
+  `cost_unmeasured = 1.0` and its floor under `cost_floor_usd`;
+  `metrics["cost"]` is no longer set to the floor. `SimpleScoringEvaluator`
+  no longer hands placeholder `$0` costs (unmeasured or unpriced usage) to the
+  scoring function, progress callback or trial metrics.
+
 - **Finalize propagates ownership/auth errors (#2510).** HTTP 401/403 from the
   session finalize call now raise `CloudServiceError` instead of being swallowed
   as "endpoint unavailable"; only an unavailable endpoint or transport failure

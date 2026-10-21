@@ -159,7 +159,11 @@ from traigent.utils.objectives import (
     is_minimization_objective,
 )
 from traigent.utils.optimization_logger import OptimizationLogger
-from traigent.utils.trial_costs import is_cost_unmeasured, unmeasured_example_ids
+from traigent.utils.trial_costs import (
+    COST_FLOOR_WIRE_KEY,
+    is_cost_unmeasured,
+    unmeasured_example_ids,
+)
 
 from .tracing import optimization_session_span, record_optimization_complete
 
@@ -2376,6 +2380,17 @@ class OptimizationOrchestrator:
     ) -> None:
         """Reconcile known stability-rerun spend into an outward result."""
         if stability_cost <= 0:
+            return
+        floor_key = COST_FLOOR_WIRE_KEY
+        if result.total_cost is None and floor_key in result.metrics:
+            # Unmeasured-cost run: the total stays unknown; the known stability
+            # spend raises the floor (#2688).
+            try:
+                result.metrics[floor_key] = float(result.metrics[floor_key]) + (
+                    stability_cost
+                )
+            except (TypeError, ValueError):
+                result.metrics[floor_key] = stability_cost
             return
         prior_total_cost = result.total_cost or 0.0
         result.total_cost = prior_total_cost + stability_cost
@@ -6243,7 +6258,9 @@ class OptimizationOrchestrator:
             objectives=self.optimizer.objectives,
             algorithm=self.optimizer.__class__.__name__,
             timestamp=now,
-            total_cost=total_cost if total_cost > 0 else None,
+            total_cost=(
+                total_cost if total_cost is not None and total_cost > 0 else None
+            ),
             total_tokens=total_tokens if total_tokens > 0 else None,
             metrics=processed_metrics,
             metadata=result_metadata,

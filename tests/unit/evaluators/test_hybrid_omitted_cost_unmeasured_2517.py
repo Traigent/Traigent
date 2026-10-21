@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from traigent.api.types import TrialResult, TrialStatus
+from traigent.utils.trial_costs import COST_FLOOR_WIRE_KEY
 from traigent.cloud.session_budgets import (
     ensure_cost_metric_for_budgeted_completed_submission,
 )
@@ -256,9 +257,8 @@ async def test_omitted_cost_is_not_backfilled_at_budget_submission() -> None:
     )
 
     assert mutated is True
-    assert (
-        metrics["cost"] == 0.0 and metrics["cost_unmeasured"] == 1.0
-    )  # lower bound + flag
+    assert "cost" not in metrics
+    assert metrics[COST_FLOOR_WIRE_KEY] == 0.0 and metrics["cost_unmeasured"] == 1.0
 
 
 @pytest.mark.asyncio

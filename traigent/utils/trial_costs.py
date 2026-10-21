@@ -9,6 +9,7 @@ from typing import Any, TypeGuard
 from traigent.storage.local_storage import TRIAL_COST_FIELDS, extract_trial_cost_fields
 
 __all__ = [
+    "COST_FLOOR_WIRE_KEY",
     "COST_ROW_KEYS",
     "TRIAL_COST_FIELDS",
     "coerce_finite_cost",
@@ -16,12 +17,19 @@ __all__ = [
     "is_cost_unmeasured",
     "is_finite_numeric_cost",
     "known_spend_lower_bound",
-    "lift_flagged_cost_to_floor",
+    "move_flagged_cost_to_floor_field",
     "row_has_measured_cost",
     "row_reports_zero_provider_attempts",
     "trial_cost_unknown",
     "unmeasured_example_ids",
 ]
+
+#: Wire/metric key carrying the exact known spend floor of an unmeasured-cost
+#: trial or run. It is NOT a cost: ``metrics["cost"]`` stays absent for such a
+#: trial. TODO(TraigentSchema): the final field name and contract are pending a
+#: TraigentSchema change (owner card product-2026-10-21-sdk-2688-unknown-cost,
+#: answer A); rename here only, logic reads this constant.
+COST_FLOOR_WIRE_KEY = "cost_floor_usd"
 
 # Keys under which a per-example result row may carry a measured cost.
 COST_ROW_KEYS = ("input_cost", "output_cost", "total_cost", "cost")
@@ -277,29 +285,22 @@ def known_spend_lower_bound(*sources: Any) -> float:
     return max(candidates) if candidates else 0.0
 
 
-def lift_flagged_cost_to_floor(metrics: dict[str, Any], *sources: Any) -> bool:
-    """Make a flagged-unmeasured ``metrics["cost"]`` carry the reported floor.
+def move_flagged_cost_to_floor_field(metrics: dict[str, Any], *sources: Any) -> bool:
+    """Report a flagged-unmeasured trial's floor in its own field, never as cost.
 
-    A budget-armed submission needs a numeric ``cost``; for a trial flagged
-    ``cost_unmeasured`` that number is only the reported lower bound (``0.0``
-    when nothing was reported), sent together with the flag. An existing
-    ``cost`` (a flagged ``0`` included) never lowers the reported spend: the
-    value becomes ``known_spend_lower_bound(metrics, *sources)``, which already
-    counts ``metrics["cost"]``. A non-numeric original (e.g. the string
-    ``"0.4"``) is replaced by the floor. Returns True when ``metrics["cost"]``
-    changed.
+    A trial flagged ``cost_unmeasured`` has no measured cost, so
+    ``metrics["cost"]`` is removed (a flagged placeholder ``0`` or a reported
+    floor must not read as a measured number) and the exact known floor, the
+    largest of ``metrics["cost"]`` and every reported bound
+    (:func:`known_spend_lower_bound`), is written under
+    :data:`COST_FLOOR_WIRE_KEY`. The floor never lowers reported spend. Returns
+    True when ``metrics`` changed.
     """
 
     floor = known_spend_lower_bound(metrics, *sources)
-    original = metrics.get("cost")
-    # Only a finite *numeric* original may be returned unchanged: a numeric
-    # string ("0.4") would otherwise survive as a string cost.
-    current = (
-        coerce_finite_cost(original)
-        if isinstance(original, (int, float)) and not isinstance(original, bool)
-        else None
-    )
-    if current is not None and current >= floor:
-        return False
-    metrics["cost"] = floor
+    changed = metrics.pop("cost", None) is not None
+    existing = coerce_finite_cost(metrics.get(COST_FLOOR_WIRE_KEY))
+    if existing is not None and existing >= floor:
+        return changed
+    metrics[COST_FLOOR_WIRE_KEY] = floor
     return True
