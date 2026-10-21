@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent._version import get_version
+from traigent.utils.wire_text import filter_agent_configuration
 from traigent.api.types import (
     AgentConfiguration,
     OptimizationResult,
@@ -1734,7 +1735,9 @@ class BackendSessionManager:
                 if _local_policy is not None:
                     session_metadata["client_algorithm"] = _local_policy.algorithm
             if agent_configuration is not None:
-                session_metadata["agent_configuration"] = agent_configuration.to_dict()
+                session_metadata["agent_configuration"] = filter_agent_configuration(
+                    agent_configuration.to_dict()
+                )
             if warm_start_from:
                 session_metadata["warm_start_from"] = warm_start_from
 

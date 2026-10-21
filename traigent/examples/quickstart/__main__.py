@@ -1,4 +1,7 @@
-"""Find the best model and temperature for your task - in one decorator.
+"""Keyless plumbing check for Traigent - one decorator, mock LLM, simulated scores.
+
+This demo verifies the install and the optimize loop end to end. Its scores
+come from a hardcoded table, so it does not compare models or pick a winner.
 
 No API keys, no LLM provider calls, no spend. The bundled quickstart
 is the load-bearing demo on the website funnel; everything below is
@@ -52,6 +55,8 @@ except ModuleNotFoundError as exc:
 
 import traigent  # noqa: E402
 from traigent.api.decorators import EvaluationOptions  # noqa: E402
+from traigent.examples.quickstart._messages import completion_message  # noqa: E402
+from traigent.utils.callbacks import ProgressBarCallback  # noqa: E402
 
 DATASET = [
     {"input": {"question": "What is the capital of France?"}, "output": "Paris"},
@@ -75,7 +80,8 @@ _SYSTEM_PROMPT = (
 # a real ``contains``-style metric on that output would always score 0,
 # making every trial look identical and hiding the optimization signal.
 # This scorer is independent of the LLM output: it produces non-zero,
-# model-correlated values so users see a meaningful "best config" hit.
+# model-correlated values so the results table has distinct rows. The scores are simulated and
+# are never presented as a winner.
 # A custom scoring function is the right escape hatch for mock-mode
 # demos; users who switch to real LLMs replace it with their own
 # accuracy metric (see walkthrough/real/01_tuning_qa.py).
@@ -155,7 +161,14 @@ def answer(question: str) -> str:
 
 def main() -> None:
     """Synchronous entry point used by the CLI subcommand and ``python -m``."""
-    result = asyncio.run(answer.optimize(max_trials=6))
+    # show_best=False: the keyless demo is a plumbing check with no winner, so
+    # the results table must not star a trial or print "Overall Best" (#1690).
+    result = asyncio.run(
+        answer.optimize(
+            max_trials=6,
+            callbacks=[ProgressBarCallback(show_best=False)],
+        )
+    )
 
     # Fail closed on an all-failed run. If every trial errors (or the run is
     # otherwise misconfigured), optimize() returns NORMALLY with best_score=None
@@ -172,10 +185,8 @@ def main() -> None:
         )
         raise SystemExit(1)
 
-    print(
-        f"[traigent] Quickstart complete — best config {result.best_config} "
-        f"scored {result.best_score:.3f}."
-    )
+    # Keyless demo scores are simulated: report completion, never a winner.
+    print(completion_message(len(getattr(result, "trials", None) or [])))
 
 
 if __name__ == "__main__":

@@ -538,16 +538,29 @@ def _state_path() -> Path:
 SEQUENCE_NOT_PERSISTED = "sequence_not_persisted"
 
 
+def _state_dir() -> Path:
+    """The resolved state directory: the parent of ``_state_path()``."""
+    return _state_path().parent.resolve()
+
+
 def _require_local_file(path: Path) -> None:
-    """Refuse a state/lock/temp file that is a symlink or resolves outside its own directory.
+    """Refuse a state/lock/temp file unless it lies inside the resolved state directory.
 
     The path is SDK-built (``TRAIGENT_RESULTS_FOLDER`` or ``~/.traigent`` plus a fixed file
-    name), never taken from a server response; this keeps a planted link in that directory
-    from redirecting the replay-protection journal elsewhere. Fails closed.
+    name), never taken from a server response. Fails closed unless the file is not a
+    symlink, its resolved location sits directly in its own parent, and that resolved
+    location is inside the resolved state directory. A planted link, a ``..`` component
+    or an override pointing elsewhere therefore cannot redirect the replay-protection
+    journal, its lock, or its temp file.
     """
     try:
+        resolved = path.resolve()
         parent = path.parent.resolve()
-        if path.is_symlink() or path.resolve().parent != parent:
+        if (
+            path.is_symlink()
+            or resolved.parent != parent
+            or not resolved.is_relative_to(_state_dir())
+        ):
             raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
     except (OSError, RuntimeError):
         raise LabelTransportError(SEQUENCE_NOT_PERSISTED) from None
@@ -591,11 +604,11 @@ def _retain_sequence(path: Path, scope: str, sequence: int) -> None:
     except ImportError:  # no advisory locks on this platform: fail closed
         raise LabelTransportError(SEQUENCE_NOT_PERSISTED) from None
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = path.with_suffix(".lock")
         tmp = path.with_suffix(f".tmp{os.getpid()}")
         for candidate in (path, lock_path, tmp):
             _require_local_file(candidate)
+        path.parent.mkdir(parents=True, exist_ok=True)
         with open(lock_path, "a+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             data = _read_state(path)

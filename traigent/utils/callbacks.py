@@ -274,6 +274,7 @@ class ProgressBarCallback(OptimizationCallback):
             Callable[[Any], dict[str, list[float]] | None] | None
         ) = None,
         footer_note: str | None = None,
+        show_best: bool = True,
     ) -> None:
         """Initialize progress bar callback.
 
@@ -284,6 +285,7 @@ class ProgressBarCallback(OptimizationCallback):
             metric_overrides: Optional fixed display metric overrides.
             metric_override_factory: Optional per-result display override factory.
             footer_note: Optional note printed after the trailing results table.
+            show_best: False to omit the "Overall Best" star and legend (#1690).
         """
         self.width = width
         self.update_interval = update_interval
@@ -291,6 +293,7 @@ class ProgressBarCallback(OptimizationCallback):
         self._table_metric_overrides = metric_overrides
         self._table_metric_override_factory = metric_override_factory
         self._table_footer_note = footer_note
+        self._table_show_best = show_best
         self.last_update = 0.0
         self.start_time = 0.0
         # Track last progress for final update
@@ -376,8 +379,8 @@ class ProgressBarCallback(OptimizationCallback):
             f"✅ {progress.successful_trials} "
             f"❌ {progress.failed_trials} "
             f"{self._timeout_segment()}"
-            f"⏱️  {elapsed} "
-            f"🏆 {best_score_str}",
+            f"⏱️  {elapsed}"
+            + (f" 🏆 {best_score_str}" if self._table_show_best else ""),
             end="",
             flush=True,
         )
@@ -403,8 +406,8 @@ class ProgressBarCallback(OptimizationCallback):
                 f"✅ {self._last_progress.successful_trials} "
                 f"❌ {self._last_progress.failed_trials} "
                 f"{self._timeout_segment()}"
-                f"⏱️  {elapsed} "
-                f"🏆 {best_score_str}",
+                f"⏱️  {elapsed}"
+                + (f" 🏆 {best_score_str}" if self._table_show_best else ""),
                 flush=True,
             )
 
@@ -422,7 +425,8 @@ class ProgressBarCallback(OptimizationCallback):
         best_score_str = (
             f"{result.best_score:.3f}" if result.best_score is not None else "N/A"
         )
-        _safe_print(f"🏆 Best score: {best_score_str}")
+        if self._table_show_best:
+            _safe_print(f"🏆 Best score: {best_score_str}")
         _safe_print(f"⏱️  Total time: {result.duration:.1f}s")
         _safe_print(f"📈 Success rate: {result.success_rate:.1%}")
 
@@ -464,6 +468,7 @@ class ProgressBarCallback(OptimizationCallback):
                 table_objectives,
                 mode_label=self._table_mode_label,
                 metric_overrides=metric_overrides,
+                show_best=self._table_show_best,
             )
             if self._table_footer_note:
                 _safe_print(self._table_footer_note)
@@ -490,6 +495,7 @@ class ResultsTableCallback(OptimizationCallback):
             Callable[[Any], dict[str, list[float]] | None] | None
         ) = None,
         footer_note: str | None = None,
+        show_best: bool = True,
     ) -> None:
         self._config_space: dict[str, Any] = {}
         self._objectives: list[str] = []
@@ -497,6 +503,7 @@ class ResultsTableCallback(OptimizationCallback):
         self._table_metric_overrides = metric_overrides
         self._table_metric_override_factory = metric_override_factory
         self._table_footer_note = footer_note
+        self._table_show_best = show_best
 
     def on_optimization_start(
         self, config_space: dict[str, Any], objectives: list[str], algorithm: str
@@ -530,6 +537,7 @@ class ResultsTableCallback(OptimizationCallback):
                 table_objectives,
                 mode_label=self._table_mode_label,
                 metric_overrides=metric_overrides,
+                show_best=self._table_show_best,
             )
             if self._table_footer_note:
                 _safe_print(self._table_footer_note)

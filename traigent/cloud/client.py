@@ -83,6 +83,7 @@ from .models import (
     session_task_type_to_wire,
 )
 from traigent.utils.trial_costs import lift_cost_floor_to_body
+from traigent.utils.wire_text import error_code_for_wire, filter_wire_metadata
 
 from .session_budgets import (
     ensure_cost_metric_for_budgeted_completed_submission,
@@ -2038,7 +2039,7 @@ class TraigentCloudClient(BaseTraigentClient):
             "optimization_strategy": request.optimization_strategy,
             "user_id": request.user_id,
             "billing_tier": request.billing_tier,
-            "metadata": metadata,
+            "metadata": filter_wire_metadata(metadata),
         }
         # The Schema declares these optional fields as object/string when
         # present; null is not a valid value. Preserve omission for unset
@@ -2192,8 +2193,9 @@ class TraigentCloudClient(BaseTraigentClient):
             "metrics": result.metrics,
             "duration": result.duration,
             "status": result.status.value,
-            "error_message": result.error_message,
-            "metadata": result.metadata,
+            # Closed code only (#2241): the local result keeps the full text.
+            "error_message": error_code_for_wire(result.error_message),
+            "metadata": filter_wire_metadata(result.metadata),
         }
 
     def _serialize_finalization_request(

@@ -6,9 +6,6 @@ including session creation, status updates, and configuration run management.
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID FUNC-AGENTS REQ-CLOUD-009 REQ-AGNT-013
 
-import base64
-import binascii
-import re
 import time
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 from urllib.parse import urlparse
@@ -23,6 +20,7 @@ from traigent.cloud.client import (
     raise_if_cloud_egress_disabled,
 )
 from traigent.cloud import content_less as content_less_session
+from traigent.utils.wire_text import filter_wire_metadata
 from traigent.cloud.governance import promotion_policy_to_wire, tvl_governance_to_wire
 from traigent.cloud.models import (
     AgentExecutionRequest,
@@ -53,7 +51,6 @@ from traigent.core.session_types import (
     SessionCreationHTTPError,
     safe_http_error_summary,
 )
-from traigent.security.redaction import redact_embedded_credentials
 from traigent.utils.artifact_fingerprints import (
     artifact_fingerprints_to_wire,
     fingerprint_meta_to_wire,
@@ -309,119 +306,6 @@ def _typed_configuration_space(space: Any) -> Any:
     return normalized
 
 
-# Upper bound on the text the scrubbers ever see. Error text is truncated to
-# 1000 chars on output anyway; bounding the input keeps every pattern below
-# cheap on hostile or runaway messages.
-_MAX_SCRUB_INPUT_CHARS = 4096
-
-_SECRET_WORDS = (
-    r"(?:password|passwd|passphrase|pwd|pw|secret|token|credentials?|"
-    r"api[_-]?key|access[_-]?key|private[_-]?key)"
-)
-# ``api_key_value=...`` is still a secret; ``max_tokens=100`` is not.
-_KEY_SUFFIX = r"(?:[_-](?:value|val|str|string|hash|key|text|data|id))?"
-# Quoted values may contain escaped quotes and may be unterminated (the text
-# can be cut mid-value); both forms are consumed to the end.
-_QUOTED_VALUE = r"\"(?:\\[\s\S]?|[^\"\\])*(?:\"|$)|'(?:\\[\s\S]?|[^'\\])*(?:'|$)"
-# Key (optionally prefixed, e.g. ``db_password``) followed by ``=`` or ``:``.
-# The lookbehind makes a match start only at the beginning of a name, so the
-# greedy prefix is not retried from every offset (no quadratic backtracking).
-_SECRET_KV_RE = re.compile(
-    rf"(?P<key>(?<![\w.-])[\w.-]*{_SECRET_WORDS}{_KEY_SUFFIX}[\"']?\s*[=:]\s*)"
-    rf"(?:{_QUOTED_VALUE}|\S+)",
-    re.IGNORECASE,
-)
-# A quoted value (JSON/dict style) is consumed to its closing quote; an unquoted
-# header consumes the rest of the line so multi-part schemes (``Digest a="b",
-# c="d"``, ``Negotiate <token>``) never leave a parameter behind.
-_AUTH_HEADER_RE = re.compile(
-    r"(?P<key>\bAuthorization[\"']?\s*[=:]\s*)"
-    r"(?:\"(?:\\[\s\S]?|[^\"\\])*(?:\"|$)|'(?:\\[\s\S]?|[^'\\])*(?:'|$)|[^\r\n]+)",
-    re.IGNORECASE,
-)
-_COOKIE_HEADER_RE = re.compile(
-    r"(?P<key>\b(?:Set-)?Cookie[\"']?\s*:\s*[\"']?)[^\r\n]+", re.IGNORECASE
-)
-_BEARER_RE = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{4,}", re.IGNORECASE)
-# Whole userinfo (``user:pass@`` or ``token@``): the user name can be a secret too.
-# Standalone ``Basic <base64>`` (needs a capital/digit/symbol so lowercase prose
-# such as "Basic authentication" is untouched).
-_BASIC_RE = re.compile(
-    r"\bBasic\s+(?=[A-Za-z0-9+/]*(?-i:[A-Z0-9+/=]))[A-Za-z0-9+/]{8,}={0,2}",
-    re.IGNORECASE,
-)
-# Case-insensitive companion: a lowercase-only credential (``basic ajppajppajpp``)
-# has no capital/digit/symbol, so it is redacted only when the token is valid
-# base64 that decodes to ``user:pass`` (contains ``:``). Prose such as
-# "basic usage of the API" does not decode to a colon-bearing string and stays.
-_BASIC_B64_RE = re.compile(r"\bBasic\s+(?P<tok>[A-Za-z0-9+/]{8,}={0,2})", re.IGNORECASE)
-
-
-def _basic_b64_replace(match: "re.Match[str]") -> str:
-    token = match.group("tok")
-    stripped = token.rstrip("=")
-    # Try the token as written (padded), then trimmed to a whole number of
-    # 4-char groups: a token cut by the input cap has an invalid length.
-    for candidate in (
-        stripped + "=" * (-len(stripped) % 4),
-        stripped[: len(stripped) // 4 * 4],
-    ):
-        try:
-            decoded = base64.b64decode(candidate, validate=True)
-        except (binascii.Error, ValueError):  # silent-ok: not base64, try next
-            continue
-        if b":" in decoded:
-            return "Basic [REDACTED]"
-    return match.group(0)
-
-
-# A ``Basic <token>`` that runs to the very end of input cut by the cap is a
-# truncated credential whatever it decodes to or how few characters survive
-# (a bare trailing ``Basic `` is redacted too).
-_BASIC_CUT_TAIL_RE = re.compile(r"\bBasic\s+[A-Za-z0-9+/]*={0,2}\Z", re.IGNORECASE)
-_URL_USERINFO_RE = re.compile(r"(?<=://)[^/\s@?#]+(?=@)")
-_URL_CUT_AUTHORITY_RE = re.compile(r"(?<=://)[^/\s@?#]+\Z")
-# Windows forbids these characters in a file name; a user name may hold up to
-# two spaces ("John Smith") when a path separator follows.
-_WIN_NAME = r"[^\s\\/\"':*?<>|]+"
-_WINDOWS_USER_PATH_RE = re.compile(
-    r"\b[A-Za-z]:[\\/]+Users[\\/]+"
-    rf"(?:{_WIN_NAME}(?: {_WIN_NAME})*(?=[\\/])|{_WIN_NAME})"
-    r"(?:[\\/]+[^\s\"']*)?",
-    re.IGNORECASE,
-)
-
-
-def _scrub_error_text(text: str) -> str:
-    """Mask credentials and user-identifying paths in error text.
-
-    Default-deny for credential-shaped key/value pairs, ``Authorization`` /
-    ``Bearer`` / ``Cookie`` values and URL userinfo; credential shapes from the
-    shared redaction helper (AWS, GitHub, JWT, PEM, ...) are masked too. PII
-    heuristics (SSN/card/email) are deliberately not applied: they would eat
-    numeric error codes and ids.
-    """
-    truncated = len(text) > _MAX_SCRUB_INPUT_CHARS
-    text = text[:_MAX_SCRUB_INPUT_CHARS]
-    text = _URL_USERINFO_RE.sub("[REDACTED]", text)
-    if truncated:
-        # The cap may have cut through ``scheme://user:pass@host``; the ``@``
-        # is gone, so redact an unterminated authority at the very end.
-        text = _URL_CUT_AUTHORITY_RE.sub("[REDACTED]", text)
-    text = _AUTH_HEADER_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
-    text = _COOKIE_HEADER_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
-    text = _BASIC_RE.sub("Basic [REDACTED]", text)
-    text = _BASIC_B64_RE.sub(_basic_b64_replace, text)
-    if truncated:
-        text = _BASIC_CUT_TAIL_RE.sub("Basic [REDACTED]", text)
-    text = _BEARER_RE.sub("Bearer [REDACTED]", text)
-    text = _SECRET_KV_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
-    text = redact_embedded_credentials(text)
-    text = _WINDOWS_USER_PATH_RE.sub("[PATH]", text)
-    text = re.sub(r"/home/[\w/.@+-]+", "[PATH]", text)
-    return re.sub(r"/Users/[\w/.@+-]+", "[PATH]", text)
-
-
 class ApiOperations:
     """Handles backend API operations."""
 
@@ -538,25 +422,22 @@ class ApiOperations:
         return map_status_to_wire(status, endpoint=endpoint)
 
     def sanitize_error_message(self, error_message: str | None) -> str | None:
-        """Sanitize error message for transmission.
+        """Reduce an error message to a closed code for transmission.
 
         Args:
-            error_message: Raw error message
+            error_message: Raw error message (never transmitted)
 
         Returns:
-            Sanitized error message or None
+            A member of ``WIRE_ERROR_CODES`` or None
         """
         if not error_message:
             return None
 
-        sanitized = _scrub_error_text(error_message)
+        # Closed code only (#2241): the text may quote a prompt or a model
+        # reply, and scrubbing is best effort, so none of it is sent.
+        from traigent.utils.wire_text import error_code_for_wire
 
-        # Truncate if too long
-        max_length = 1000
-        if len(sanitized) > max_length:
-            sanitized = sanitized[:max_length] + "... [truncated]"
-
-        return sanitized
+        return error_code_for_wire(error_message)
 
     async def create_traigent_session_via_api(
         self, session_request: SessionCreationRequest
@@ -913,6 +794,7 @@ class ApiOperations:
         if "evaluator_id" in identity_v2:
             payload.pop("evaluator_definition_id", None)
         payload.update(identity_v2)
+        payload["metadata"] = filter_wire_metadata(payload["metadata"])
         return payload
 
     def _build_legacy_session_payload(
@@ -963,6 +845,7 @@ class ApiOperations:
             payload["smart_pruning"] = wire_smart_pruning
         self._attach_evaluator_identity(payload, session_request)
         self._attach_artifact_fingerprint_payload(payload, session_request)
+        payload["metadata"] = filter_wire_metadata(payload["metadata"])
         return payload
 
     @staticmethod

@@ -20,6 +20,7 @@ from traigent.cloud.dataset_converter import (
     metadata_to_backend_tags,
     sanitize_backend_metadata,
 )
+from traigent.utils.wire_text import filter_wire_metadata
 from traigent.evaluators.base import Dataset
 from traigent.utils.hashing import generate_benchmark_hash, generate_experiment_hash
 from traigent.utils.logging import get_logger
@@ -344,7 +345,7 @@ class SDKBackendBridge:
             "guidelines": agent_spec.guidelines,
             "response_validation": agent_spec.response_validation,
             "custom_tools": agent_spec.custom_tools,
-            "metadata": metadata,
+            "metadata": filter_wire_metadata(metadata),
         }
 
     def create_session_mapping(

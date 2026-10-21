@@ -388,9 +388,12 @@ def test_sequence_is_persisted_and_an_older_list_is_refused_after_restart(
     assert json.loads(state.read_text("utf-8"))[_scope(vectors)] == 2  # never lowered
 
 
-def test_retention_is_monotonic(tmp_path: Path) -> None:
+def test_retention_is_monotonic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from traigent.labels.transport import _retain_sequence
 
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path))
     path = tmp_path / "s.json"
     _retain_sequence(path, "scope", 3)
     _retain_sequence(path, "scope", 3)
@@ -993,12 +996,15 @@ def test_symlinked_state_file_is_refused(tmp_path: Path, target: str) -> None:
     assert outside.read_text(encoding="utf-8") == '{"s": 5}'
 
 
-def test_symlinked_state_directory_component_stays_contained(tmp_path: Path) -> None:
+def test_symlinked_state_directory_component_stays_contained(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from traigent.labels import transport as t
 
     real = tmp_path / "real"
     real.mkdir()
     (tmp_path / "link").symlink_to(real)
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path / "link"))
     # A symlinked directory is operator-chosen config; the file inside is still plain.
     state = tmp_path / "link" / "labels_state.json"
     t._retain_sequence(state, "s", 3)
@@ -1015,3 +1021,51 @@ def test_symlinked_lock_file_is_refused(tmp_path: Path) -> None:
     with pytest.raises(t.LabelTransportError):
         t._retain_sequence(state, "s", 1)
     assert outside.read_text(encoding="utf-8") == "keep"
+
+
+def test_state_file_outside_state_dir_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A journal path outside TRAIGENT_RESULTS_FOLDER fails closed on read and write."""
+    from traigent.labels import transport as t
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(state_dir))
+    outside = tmp_path / "outside" / "labels_state.json"
+    outside.parent.mkdir()
+    with pytest.raises(t.LabelTransportError) as exc:
+        t._retain_sequence(outside, "s", 1)
+    assert t.SEQUENCE_NOT_PERSISTED in str(exc.value)
+    assert not outside.exists()
+    with pytest.raises(t.LabelTransportError):
+        t._retained_sequence(outside, "s")
+
+
+def test_dotdot_state_path_escaping_state_dir_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from traigent.labels import transport as t
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(state_dir))
+    escaped = state_dir / ".." / "escaped.json"
+    with pytest.raises(t.LabelTransportError):
+        t._retain_sequence(escaped, "s", 1)
+    assert not (tmp_path / "escaped.json").exists()
+    assert not (tmp_path / "escaped.lock").exists()
+
+
+def test_normal_state_path_inside_state_dir_still_works(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from traigent.labels import transport as t
+
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(state_dir))
+    state = t._state_path()
+    assert state == state_dir / "labels_state.json"
+    t._retain_sequence(state, "s", 4)
+    assert t._retained_sequence(state, "s") == 4
+    assert json.loads(state.read_text("utf-8")) == {"s": 4}

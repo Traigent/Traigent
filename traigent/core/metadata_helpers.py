@@ -9,6 +9,10 @@ from typing import Any, cast
 
 from traigent._version import get_version
 from traigent.api.types import OptimizationResult, TrialResult
+from traigent.utils.wire_text import (
+    filter_summary_stats_metadata,
+    filter_surrogate_evaluator,
+)
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.utils.example_id import (
     SDK_MINTED_EXAMPLE_ID,
@@ -220,8 +224,10 @@ def _add_summary_stats(
         return
 
     enhanced_summary_stats = copy.deepcopy(trial_result.summary_stats)  # type: ignore[attr-defined]
-    if "metadata" not in enhanced_summary_stats:
-        enhanced_summary_stats["metadata"] = {}
+    # Closed key allowlist (#2241): free-form metadata never reaches the wire.
+    enhanced_summary_stats["metadata"] = filter_summary_stats_metadata(
+        enhanced_summary_stats.get("metadata") or {}
+    )
     enhanced_summary_stats["metadata"]["aggregation_level"] = "trial"
     enhanced_summary_stats["metadata"]["sdk_version"] = get_version()
     trial_metadata["summary_stats"] = enhanced_summary_stats
@@ -429,7 +435,9 @@ def build_backend_metadata(
     # surrogate is configured, so the no-surrogate payload stays byte-identical.
     surrogate_descriptor = trial_result.metadata.get("surrogate_evaluator")
     if isinstance(surrogate_descriptor, dict):
-        trial_metadata["surrogate_evaluator"] = copy.deepcopy(surrogate_descriptor)
+        trial_metadata["surrogate_evaluator"] = filter_surrogate_evaluator(
+            surrogate_descriptor
+        )
 
     privacy_on = getattr(traigent_config, "privacy_enabled", False)
     example_results = trial_result.metadata.get("example_results")

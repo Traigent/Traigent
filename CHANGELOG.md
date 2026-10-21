@@ -8,6 +8,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Trial error text and three metadata maps now cross to the backend as closed codes and allowlisted keys (#2241).** `error_message` on trial submission and config-run status is reduced to one fixed code (for example `trial_failed` or `no_examples_succeeded`); the full text stays on the local result. `metadata.agent_configuration`, `metadata.surrogate_evaluator` and `summary_stats.metadata` are rebuilt from a key allowlist, so unlisted keys and judge prompts no longer leave the SDK.
+- **TVL derived constraints are documented as per-trial only; the loader warns when a spec relies on `environment.context` (#1618).** `load_tvl_spec` emits one value-free warning naming the derived constraint ids; `docs/tvl/CONSTRAINT_EXPRESSIONS.md` states the rule.
+- **Keyless quickstart is labelled a plumbing check, with no fake winner (#1690).** `traigent quickstart` now ends with a message saying the run used a mock LLM and simulated scores, is not a model comparison, and found no best configuration; the `best config ... scored 0.850` line is gone. Achievements stay blocked in mock runs.
+- **Run-group table across runs (#1711, slice 1).** `client.experiment_groups.table(group_id, project_id)`
+  returns one `RunGroupTable` of every configuration-run in a run group: run id, run name,
+  config, metrics, cost, status and `created_at`. An unmeasured cost is `None` (with
+  `cost_unmeasured`), never `0`. `to_dataframe()` needs the
+  optional pandas extra. Also fixes the group list/configuration-runs reads to send
+  `per_page` and read nested `pagination` (they were ignored before). See `docs/user-guide/run_group_table.md`.
+
 - **Anthropic key probe uses a current Claude id (#2651).** `validate_providers` probes with `claude-haiku-5-5` (was `claude-haiku-4-5-20251001`); the known-models list carries the Claude 5.5 ids and no retired `claude-3*` ids.
 - **Dev tooling now agrees with CI (#2469).** `release-review.yml` formats with
   `ruff format --check` (as the required PR gate does) instead of black; the `dev`
@@ -363,6 +373,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   example, so their results for such hybrid runs can change.
 
 ### Added
+
+- **`compare()` evaluates fixed configs as one experiment (#1952).** `OptimizedFunction.compare(configs, eval_dataset=None, repeats=1)` (and `compare_async`) calls the evaluator `optimize()` builds directly (no orchestrator, backend session, trial submission or `save_to` persistence) for each fully specified config on the same examples, and returns one `ComparisonResult` with per-config mean/spread, per-config cost (unmeasured cost is `None` plus a `cost_lower_bound`, never `0.0`), and a holdout check against the tuning dataset. Configs outside the declared space raise a value-free `ValueError`; cost estimate/approval, cumulative cost limit, strict cost tracking, CI approval, timeout, `max_total_examples` and a shared `ExecutionBudget` apply as in `optimize()` (a reached limit returns a partial result with `stop_reason`); the winner follows the objective's declared orientation; the wrapper's applied config and history are unchanged. See `docs/user-guide/compare_configs.md`.
 
 - **`optimize(resume_from=...)` resumes a local run (#1697).** Pass a prior
   `OptimizationResult`, or a result saved with `PersistenceManager.save_result`

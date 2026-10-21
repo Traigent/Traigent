@@ -34,6 +34,7 @@ from traigent.cloud.models import (
     SessionCreationRequest,
     declared_dataset_identity,
 )
+from traigent.utils.wire_text import filter_wire_metadata
 from traigent.cloud.session_types import (
     SessionCreationFailureDetail,
     SessionCreationFailureReason,
@@ -1083,7 +1084,9 @@ class SessionOperations:
                     "problem_statement": problem_statement,
                     "search_space": search_space,
                     "optimization_config": optimization_config,
-                    "metadata": metadata,
+                    "metadata": (
+                        filter_wire_metadata(metadata) if metadata is not None else None
+                    ),
                 },
                 headers=await self.client.auth_manager.auth.get_headers(),
             ) as response:

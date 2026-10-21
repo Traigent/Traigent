@@ -14,7 +14,7 @@ import importlib.util
 import json
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any, cast
 
 # Optional dependencies
@@ -82,6 +82,7 @@ from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
 from traigent.utils.retry import NetworkError, RetryConfig, RetryHandler, RetryStrategy
 from traigent.utils.validation import CoreValidators, validate_or_raise
+from traigent.utils.wire_text import error_code_for_wire, filter_wire_metadata
 
 from .backend_bridges import bridge
 from .models import AgentSpecification, OptimizationRequest
@@ -675,6 +676,14 @@ class ProductionMCPClient:
         if example_set_id is not None:
             self._validate_identifier(example_set_id, "example_set_id")
 
+        # Allowlist the named metadata maps before the bridge sanitizes the rest
+        # (#2241): a scalar under surrogate_evaluator must not survive as a string.
+        if optimization_request.metadata is not None:
+            optimization_request = replace(
+                optimization_request,
+                metadata=filter_wire_metadata(optimization_request.metadata),
+            )
+
         # Convert to backend format
         backend_request = bridge.optimization_request_to_backend(optimization_request)
 
@@ -795,7 +804,8 @@ class ProductionMCPClient:
             "config_run_id": config_run_id,
             "status": status,
             "results": metrics,
-            "error_message": error_message,
+            # Closed code only (#2241): the raw text may quote a prompt or a reply.
+            "error_message": error_code_for_wire(error_message),
             "completed_at": time.time(),
         }
 

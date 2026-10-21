@@ -27,6 +27,11 @@ from traigent.cloud.client import (
     raise_if_cloud_egress_disabled,
 )
 from traigent.cloud.dtos import MeasuresDict
+from traigent.utils.wire_text import (
+    filter_summary_stats,
+    filter_summary_stats_metadata,
+    filter_wire_metadata,
+)
 from traigent.cloud.session_budgets import (
     ensure_cost_metric_for_budgeted_completed_submission,
 )
@@ -718,6 +723,9 @@ class TrialOperations:
         result_metadata.pop("execution_mode", None)
         result_metadata.pop("mode", None)
         result_metadata["sdk_version"] = get_version()
+        # Closed key allowlists (#2241) for the free-form maps, applied whenever
+        # the key exists (a non-mapping becomes {}), including summary_stats.metadata.
+        result_metadata = filter_wire_metadata(result_metadata)
         result_data: dict[str, Any] = {
             "trial_id": trial_id,
             "config": copy.deepcopy(config),
@@ -1069,7 +1077,7 @@ class TrialOperations:
             self._log_measures_debug(trial_id, measures)
 
             if summary_stats is not None:
-                result_data["summary_stats"] = copy.deepcopy(summary_stats)
+                result_data["summary_stats"] = filter_summary_stats(summary_stats)
             self._log_summary_stats_debug(trial_id, summary_stats)
 
             # Validate the submission data. Schema validation is authoritative;
@@ -1257,7 +1265,7 @@ class TrialOperations:
 
             # Prepare metadata - REQUIRED by backend to avoid NoneType errors
             submission_metadata = {
-                **summary_stats.get("metadata", {}),
+                **filter_summary_stats_metadata(summary_stats.get("metadata") or {}),
                 "mode": "privacy",  # Explicitly set mode for summary stats
                 "sdk_version": get_version(),
                 "aggregation_method": "pandas.describe",
@@ -1273,7 +1281,12 @@ class TrialOperations:
                 "metadata": submission_metadata,  # REQUIRED - backend expects this
                 "status": backend_status,
                 # Also include summary_stats for backend to detect privacy mode
-                "summary_stats": summary_stats,
+                "summary_stats": {
+                    **summary_stats,
+                    "metadata": filter_summary_stats_metadata(
+                        summary_stats.get("metadata") or {}
+                    ),
+                },
             }
             submission_metrics = submission_data["metrics"]
             if isinstance(submission_metrics, dict):

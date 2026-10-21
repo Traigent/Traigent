@@ -37,6 +37,17 @@ def stepped_int_values(low: int, high: int, step: int) -> tuple[int, ...]:
     return values
 
 
+def stepped_int_contains(low: int, high: int, step: int, value: int) -> bool:
+    """True when ``value`` is on the integer grid, including the high endpoint.
+
+    Same membership as :func:`stepped_int_values` without materializing it.
+    """
+
+    if step <= 0 or low > high or not low <= value <= high:
+        return False
+    return value == high or (value - low) % step == 0
+
+
 def stepped_int_cardinality(low: int, high: int, step: int) -> int:
     """Count integer grid points without materializing them."""
 

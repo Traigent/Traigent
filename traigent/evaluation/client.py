@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from urllib import error, request
 from urllib.parse import quote, urlencode
 
+from traigent.utils.wire_text import filter_wire_metadata
 from traigent.evaluation.config import EvaluationConfig
 from traigent.evaluation.dtos import (
     AnnotationQueueDTO,
@@ -404,7 +405,7 @@ class EvaluationClient:
             "boolean_value": boolean_value,
             "comment": comment,
             "correction_output": correction_output,
-            "metadata": dict(metadata or {}),
+            "metadata": filter_wire_metadata(metadata),
         }
         response = self._request_json("POST", "/scores", payload)
         return ScoreRecordDTO.from_dict(self._unwrap_data(response, "score create"))
