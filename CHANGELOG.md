@@ -79,6 +79,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **`traigent hooks validate --exit-code` fails on an empty explicit target
+  (#2639).** When a target path is given explicitly and contains no
+  `@traigent.optimize` functions, the command now exits non-zero; pass
+  `--allow-empty` to keep exit 0. With no path (default `.`, as the installed
+  pre-push hook runs it) behaviour is unchanged. Without `--exit-code`
+  nothing changes.
 - **Partially acknowledged runs now report `local_fallback` (#2027).** When the
   backend acknowledges only some of a run's trials, `result_source` /
   `source` is `local_fallback` instead of `cloud_brain`, because the run was
