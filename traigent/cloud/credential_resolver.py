@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -140,7 +141,16 @@ class CredentialResolver:
                     )
             return provided
 
-        # Try to load from cache first
+        # Precedence (SDK #2227): an explicitly set environment credential
+        # always beats the cached login, matching CredentialManager. The cache
+        # is only consulted when the environment does not supply the credential.
+        if self._env_supplies_credential(target_mode):
+            await self._log_if_cache_disagrees(target_mode)
+            env_creds = await self.load_from_env(target_mode)
+            if env_creds is not None:
+                return env_creds
+
+        # Try to load from cache next
         if self.config.cache_credentials and self.config.credentials_file:
             cached = await self.load_cached()
             if cached and cached.mode == target_mode:
@@ -148,8 +158,50 @@ class CredentialResolver:
                     self._increment_cache_hits_fn()
                 return cached
 
-        # Try to load from environment
+        # Try to load from environment / stored CLI credentials
         return await self.load_from_env(target_mode)
+
+    @staticmethod
+    def _env_supplies_credential(mode: AuthMode) -> bool:
+        """Return True when the environment itself carries this mode's credential."""
+        from traigent.cloud.auth import AuthMode
+
+        def _set(name: str) -> bool:
+            return bool(os.environ.get(name, "").strip())
+
+        if mode == AuthMode.API_KEY:
+            return _set("TRAIGENT_API_KEY")
+        if mode == AuthMode.JWT_TOKEN:
+            return _set("TRAIGENT_JWT_TOKEN")
+        if mode == AuthMode.OAUTH2:
+            return _set("TRAIGENT_CLIENT_ID") and _set("TRAIGENT_CLIENT_SECRET")
+        if mode == AuthMode.SERVICE_TO_SERVICE:
+            return _set("TRAIGENT_SERVICE_KEY")
+        return False
+
+    async def _log_if_cache_disagrees(self, mode: AuthMode) -> None:
+        """Log (without values) when a cached login differs from the environment."""
+        if not (self.config.cache_credentials and self.config.credentials_file):
+            return
+        cached = await self.load_cached()
+        if cached is None or cached.mode != mode:
+            return
+        env_values = {
+            "api_key": os.environ.get("TRAIGENT_API_KEY", "").strip(),
+            "jwt_token": os.environ.get("TRAIGENT_JWT_TOKEN", "").strip(),
+            "client_id": os.environ.get("TRAIGENT_CLIENT_ID", "").strip(),
+            "service_key": os.environ.get("TRAIGENT_SERVICE_KEY", "").strip(),
+        }
+        for field_name, env_value in env_values.items():
+            cached_value = getattr(cached, field_name, None)
+            if env_value and cached_value and cached_value != env_value:
+                logger.warning(
+                    "Environment credential differs from the cached login; "
+                    "using the environment credential (mode=%s). Unset the "
+                    "environment variable to use the cached login.",
+                    mode.value,
+                )
+                return
 
     async def load_cached(self) -> AuthCredentials | None:
         """Load credentials from cache file with security checks.
@@ -174,7 +226,14 @@ class CredentialResolver:
             # Decrypt credentials
             decrypted_data = self.decrypt(data)
 
-            return AuthCredentials(**decrypted_data)
+            cached = AuthCredentials(**decrypted_data)
+            if cached.expires_at is not None and time.time() >= cached.expires_at:
+                logger.warning(
+                    "Ignoring expired cached credentials; run 'traigent auth "
+                    "login' to refresh them."
+                )
+                return None
+            return cached
 
         except FileNotFoundError:
             # File not found is expected for first run
@@ -248,7 +307,12 @@ class CredentialResolver:
                 refresh_token = None
                 metadata = {}  # Reset for this branch
                 backend_url = None
-                if manager_creds and manager_creds.get("jwt_token"):
+                env_jwt = os.getenv("TRAIGENT_JWT_TOKEN", "").strip()
+                if env_jwt:
+                    # Environment first (SDK #2227): beats stored CLI JWT.
+                    jwt_token = env_jwt
+                    metadata["source"] = "environment"
+                elif manager_creds and manager_creds.get("jwt_token"):
                     jwt_token = manager_creds.get("jwt_token")
                     refresh_token = manager_creds.get("refresh_token")
                     metadata["source"] = manager_creds.get("source", "cli")

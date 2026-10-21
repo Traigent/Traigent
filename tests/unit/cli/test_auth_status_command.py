@@ -113,3 +113,25 @@ def test_status_env_api_key_shows_no_key_characters(cli, monkeypatch, length):
     }
     assert not leaked, f"key fragments in status output: {sorted(leaked)}"
     assert "configured (environment variable)" in output
+
+
+def test_status_env_key_beats_stored_login(cli, monkeypatch):
+    """SDK #2227: with both set, status reports the environment key as active."""
+    monkeypatch.setenv("TRAIGENT_API_KEY", "tg_" + "e" * 61)
+    stored = {
+        "user": {"email": "u@example.com", "id": 1},
+        "api_key": "stored-key",  # pragma: allowlist secret
+        "backend_url": "http://localhost",
+    }
+    buffer = io.StringIO()
+    console = Console(file=buffer, width=200, color_system=None, force_terminal=False)
+    with (
+        patch.object(cli, "_load_stored_credentials", return_value=stored),
+        patch("traigent.cli.auth_commands.console", console),
+    ):
+        result = cli.status()
+    output = buffer.getvalue()
+    assert result is True
+    assert "environment variable" in output
+    assert "not used" in output
+    assert "u@example.com" not in output

@@ -808,7 +808,8 @@ async def auth_status_tool() -> dict[str, Any]:
         jwt_token = None
 
     credential_source = credentials.get("source") or "none"
-    if not api_key and not jwt_token:
+    if not api_key:
+        # Environment first (SDK #2227): an env JWT beats a stored JWT.
         env_jwt_token = os.getenv("TRAIGENT_JWT_TOKEN")
         if env_jwt_token:
             jwt_token = env_jwt_token

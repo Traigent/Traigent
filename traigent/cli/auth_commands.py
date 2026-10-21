@@ -1486,22 +1486,28 @@ class TraigentAuthCLI:
         # Check for stored credentials
         creds = self._load_stored_credentials()
 
+        # Environment first (SDK #2227): TRAIGENT_API_KEY beats stored login,
+        # the same order CredentialManager uses for every request.
+        env_api_key = os.environ.get("TRAIGENT_API_KEY")
+        if env_api_key:
+            env_table = Table(show_header=False, box=None)
+            env_table.add_column("Field", style="cyan")
+            env_table.add_column("Value")
+            env_table.add_row(
+                "Status", "[green]✅ Authenticated (environment variable)[/green]"
+            )
+            env_table.add_row("TRAIGENT_API_KEY", "configured (environment variable)")
+            env_table.add_row("Backend", self.backend_url)
+            if creds and creds.get("api_key"):
+                env_table.add_row(
+                    "Stored login",
+                    "present but not used (environment variable takes precedence)",
+                )
+            console.print(env_table)
+            console.print()
+            return True
+
         if not creds:
-            env_api_key = os.environ.get("TRAIGENT_API_KEY")
-            if env_api_key:
-                env_table = Table(show_header=False, box=None)
-                env_table.add_column("Field", style="cyan")
-                env_table.add_column("Value")
-                env_table.add_row(
-                    "Status", "[green]✅ Authenticated (environment variable)[/green]"
-                )
-                env_table.add_row(
-                    "TRAIGENT_API_KEY", "configured (environment variable)"
-                )
-                env_table.add_row("Backend", self.backend_url)
-                console.print(env_table)
-                console.print()
-                return True
             console.print("[yellow]❌ Not authenticated[/yellow]")
             console.print("\nRun [cyan]traigent auth login[/cyan] to authenticate.\n")
             return False
