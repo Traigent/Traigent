@@ -247,6 +247,44 @@ def _is_auth_error(exc: Exception) -> bool:
     return any(kw in msg for kw in auth_keywords)
 
 
+_PERMISSION_DENIED_TYPES = frozenset({"PermissionDeniedError", "ForbiddenError"})
+
+
+def _is_permission_denied_error(exc: Exception) -> bool:
+    """True for an HTTP 403 (authenticated, but not permitted this call).
+
+    Distinct from a 401/invalid key. A key scoped to inference only is denied
+    the model-listing probe with 403 yet can still run trials, so a 403 on a
+    listing probe must not block the run.
+    """
+    for parent in type(exc).__mro__:
+        if parent.__name__ in _PERMISSION_DENIED_TYPES:
+            return True
+    for attr in ("status_code", "code"):
+        if getattr(exc, attr, None) == 403:
+            return True
+    return False
+
+
+def _permission_denied_status(
+    provider: str, label: str, exc: Exception
+) -> ProviderStatus:
+    """Non-blocking status for a listing probe denied with 403."""
+    error_type = type(exc).__name__
+    logger.warning(
+        "%s model-listing probe was permission-denied (%s); the key may still "
+        "be able to run inference, proceeding without verification.",
+        label,
+        error_type,
+    )
+    return ProviderStatus(
+        provider=provider,
+        valid=True,
+        message=_MSG_AVAILABLE_UNVERIFIED.format(error_type=error_type),
+        error_type=error_type,
+    )
+
+
 def _is_transient_error(exc: Exception) -> bool:
     """Check if exception indicates a transient error (network, rate limit, timeout).
 
@@ -728,6 +766,8 @@ class ProviderValidator:
             )
         except Exception as exc:
             error_type = type(exc).__name__
+            if _is_permission_denied_error(exc):
+                return _permission_denied_status("openai", "OpenAI", exc)
             if _is_auth_error(exc):
                 return ProviderStatus(
                     provider="openai",
@@ -882,6 +922,8 @@ class ProviderValidator:
             )
         except Exception as exc:
             error_type = type(exc).__name__
+            if _is_permission_denied_error(exc):
+                return _permission_denied_status("google", "Google", exc)
             if _is_auth_error(exc):
                 return ProviderStatus(
                     provider="google",
@@ -954,6 +996,8 @@ class ProviderValidator:
             )
         except Exception as exc:
             error_type = type(exc).__name__
+            if _is_permission_denied_error(exc):
+                return _permission_denied_status("mistral", "Mistral", exc)
             if _is_auth_error(exc):
                 return ProviderStatus(
                     provider="mistral",
@@ -1026,6 +1070,8 @@ class ProviderValidator:
             )
         except Exception as exc:
             error_type = type(exc).__name__
+            if _is_permission_denied_error(exc):
+                return _permission_denied_status("cohere", "Cohere", exc)
             if _is_auth_error(exc):
                 return ProviderStatus(
                     provider="cohere",

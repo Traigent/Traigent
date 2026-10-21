@@ -1435,3 +1435,71 @@ class TestKnownModelsFollowBundledPriceTable:
         assert unknown == [], unknown
         valid, unknown = validate_model_names(["gpt-5.4-nano", "gpt-5.4"], "openai")
         assert unknown == [], unknown
+
+
+def _listing_client(provider: str, exc: Exception) -> tuple[dict, str, str, str]:
+    """Return (sys.modules patch, validator method, env var, SDK-free key)."""
+    client = Mock()
+    client.models.list.side_effect = exc
+    if provider == "openai":
+        mods = {"openai": SimpleNamespace(OpenAI=Mock(return_value=client))}
+        return mods, "_validate_openai", "OPENAI_API_KEY", "sk-test"
+    if provider == "mistral":
+        mods = {"mistralai": SimpleNamespace(Mistral=Mock(return_value=client))}
+        return mods, "_validate_mistral", "MISTRAL_API_KEY", "mk-test"
+    if provider == "cohere":
+        mods = {"cohere": SimpleNamespace(Client=Mock(return_value=client))}
+        return mods, "_validate_cohere", "COHERE_API_KEY", "ck-test"
+    genai = SimpleNamespace(Client=Mock(return_value=client))
+    google = SimpleNamespace(genai=genai)
+    mods = {"google": google, "google.genai": genai}
+    return mods, "_validate_google", "GOOGLE_API_KEY", "gk-test"
+
+
+@pytest.mark.unit
+class TestListingProbePermissionDenied:
+    """A 403 on the model-listing probe must not block; a 401 must."""
+
+    @pytest.mark.parametrize("provider", ["openai", "google", "mistral", "cohere"])
+    def test_403_does_not_block(self, monkeypatch, caplog, provider):
+        class PermissionDeniedError(Exception):
+            status_code = 403
+
+        mods, method, env, key = _listing_client(
+            provider, PermissionDeniedError("Missing scope api.model.read")
+        )
+        monkeypatch.setenv(env, key)
+        validator = ProviderValidator()
+        with patch.dict(sys.modules, mods), caplog.at_level("WARNING"):
+            status = getattr(validator, method)()
+        assert status.valid is True
+        assert "Available (unverified" in status.message
+        assert status.error_type == "PermissionDeniedError"
+        assert any("permission-denied" in r.getMessage() for r in caplog.records)
+        # unverified result must not be cached as a verified success
+        assert not validator._is_cached(provider, key)
+
+    @pytest.mark.parametrize("provider", ["openai", "google", "mistral", "cohere"])
+    def test_bare_403_status_code_does_not_block(self, monkeypatch, provider):
+        class ApiError(Exception):
+            code = 403
+
+        mods, method, env, key = _listing_client(provider, ApiError("forbidden"))
+        monkeypatch.setenv(env, key)
+        with patch.dict(sys.modules, mods):
+            status = getattr(ProviderValidator(), method)()
+        assert status.valid is True
+
+    @pytest.mark.parametrize("provider", ["openai", "google", "mistral", "cohere"])
+    def test_401_still_blocks(self, monkeypatch, provider):
+        class AuthenticationError(Exception):
+            status_code = 401
+
+        mods, method, env, key = _listing_client(
+            provider, AuthenticationError("Invalid API key")
+        )
+        monkeypatch.setenv(env, key)
+        with patch.dict(sys.modules, mods):
+            status = getattr(ProviderValidator(), method)()
+        assert status.valid is False
+        assert status.error_type == "AuthenticationError"
