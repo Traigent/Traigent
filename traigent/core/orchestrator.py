@@ -3789,18 +3789,28 @@ class OptimizationOrchestrator:
             # per-trial sample ceilings), so a batch cannot overshoot
             # ``max_examples`` the way an unbounded-per-trial cost can.
             est_per_trial = 0.0
+            first_batch = False
             if self.cost_enforcer is not None:
-                est_per_trial = float(
-                    self.cost_enforcer.get_status().estimated_cost_per_trial
-                )
+                status = self.cost_enforcer.get_status()
+                est_per_trial = float(status.estimated_cost_per_trial)
+                # Issue #2203: before ANY trial has completed there is no measured
+                # cost, so the estimate is only the configured default guess. A
+                # small cap (e.g. $0.01) must not refuse the whole run on that
+                # guess: admit the first batch, then enforce on what it really
+                # spent (the exhausted-dimension check above) and on the observed
+                # mean. The first batch may overshoot a tiny cap; its spend is
+                # still debited and nothing is guessed as $0.
+                first_batch = status.trial_count == 0 and snapshot.consumed_cost <= 0
             est_next_batch = est_per_trial * self._effective_batch_size(
                 remaining_trials
             )
             # Tolerate float rounding so a budget that exactly funds the next
             # batch (e.g. 0.30 - 0.20 = 0.0999... vs a 0.10 mean cost) is not
             # blocked by representation error.
-            if not math.isinf(snapshot.remaining_cost) and (
-                snapshot.remaining_cost < est_next_batch - 1e-9
+            if (
+                not first_batch
+                and not math.isinf(snapshot.remaining_cost)
+                and snapshot.remaining_cost < est_next_batch - 1e-9
             ):
                 blocked_dimension = "cost"
 

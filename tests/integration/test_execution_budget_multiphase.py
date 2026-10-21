@@ -714,9 +714,9 @@ async def test_enforce_untracked_cost_does_not_fail_closed_on_priced_zero_dollar
 
 @pytest.mark.asyncio
 async def test_parallel_batch_does_not_overshoot_cost_cap() -> None:
-    """A tiny cap the next batch cannot fund blocks the batch outright (0 trials),
-    so cost never overshoots. On the pre-fix one-trial gate this ran a full 10-wide
-    batch and debited $0.50 (5x the $0.10 cap)."""
+    """Owner ruling on #2203: a tiny cap the default estimate cannot fund still
+    admits the FIRST batch (no measured cost yet), then blocks. Overshoot is bounded
+    by that one batch (0.50), never by a second batch; the spend is fully accounted."""
     cap = 0.10
     parallel = 10
     cost_per = 0.05
@@ -736,14 +736,11 @@ async def test_parallel_batch_does_not_overshoot_cost_cap() -> None:
     await orchestrator.optimize(func=_func, dataset=_dataset())
 
     snap = budget.snapshot()
-    # Bounded: consumed never exceeds the cap by more than one batch's estimate ...
+    # Exactly one batch ran; its spend is debited and the cap is enforced after it.
+    assert orchestrator.trial_count == parallel
+    assert snap.consumed_cost == pytest.approx(est_batch, abs=1e-6)
     assert snap.consumed_cost <= cap + est_batch + FLOAT_TOLERANCE
-    # ... and with an accurate estimate the batch-aware gate keeps it AT/UNDER the
-    # cap (the pre-fix one-trial gate let a 10-wide batch overshoot to $0.50).
-    assert snap.consumed_cost <= cap + FLOAT_TOLERANCE
-    # It stopped on the cumulative reason and did NOT run all configured trials.
     assert orchestrator._stop_reason == "execution_budget"
-    assert orchestrator.trial_count < 50
 
 
 @pytest.mark.asyncio
@@ -838,3 +835,18 @@ def test_effective_batch_size_is_bounded_by_remaining_trials() -> None:
     )
     assert seq._effective_batch_size(float("inf")) == 1
     assert seq._effective_batch_size(100) == 1
+
+
+def test_first_batch_admitted_under_tiny_cost_cap_2203() -> None:
+    """Issue #2203: a cap below the default per-trial estimate must not refuse the
+    whole run before any trial; the first batch is admitted, later ones are gated."""
+    budget = ExecutionBudget(max_cost_usd=0.01)
+    orch = _build_orchestrator(
+        budget, parallel_trials=1, max_trials=100, cost_limit=5.0, cost_approved=True
+    )
+    orch._apply_execution_budget()
+    assert orch._execution_budget_prebatch_reason(float("inf")) is None
+
+    # Once spend is debited the cap is enforced again (accounting preserved).
+    budget.debit_trial(cost=0.02)
+    assert orch._execution_budget_prebatch_reason(float("inf")) == "execution_budget"
