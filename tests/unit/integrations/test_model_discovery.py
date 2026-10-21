@@ -308,6 +308,14 @@ class TestAnthropicDiscovery:
             message = f"Retired model {retired} must not validate"
             assert not discovery.is_valid_model(retired), message
 
+    def test_current_claude_5_5_models_validate(self) -> None:
+        """Sourced Claude 5.5 IDs must be accepted by the snapshot (#2689)."""
+        discovery = AnthropicDiscovery(cache=ModelCache(enable_file_cache=False))
+
+        for model in ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"]:
+            assert discovery.is_valid_model(model), f"Model {model} should pass"
+            assert model in discovery.list_models()
+
     def test_pattern_validation_invalid_models(self) -> None:
         """Invalid Anthropic-like model names should fail pattern validation."""
         discovery = AnthropicDiscovery()

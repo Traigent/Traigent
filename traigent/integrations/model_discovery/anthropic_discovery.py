@@ -22,9 +22,13 @@ ANTHROPIC_MODEL_PATTERN = (
     r"(?:opus|sonnet|haiku)-4(?:-[a-z0-9]+)+)$"
 )
 
-# Known Anthropic models (shipped snapshot: 2026-07-05).
+# Known Anthropic models (shipped snapshot: 2026-10-21).
 # Keep this in sync with traigent/config/models.yaml.
 KNOWN_ANTHROPIC_MODELS = [
+    # Claude 5.5 family (priced in the litellm table; Anthropic lists as Active, #2689)
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
+    "claude-haiku-5-5",
     # Claude 4 family
     "claude-opus-4-8",
     "claude-opus-4-7",
