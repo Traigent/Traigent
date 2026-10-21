@@ -2302,13 +2302,18 @@ class OptimizationOrchestrator:
         trials.
         """
         effective_permit = permit or Permit(id=0, amount=0.0, active=True)
-        self._note_resumed_examples(trial_result)
+        # Called through the class: the helper is a no-op unless a resume
+        # prefill is bound, and callers that pass a bare stand-in (no resume
+        # state) must keep working.
+        OptimizationOrchestrator._note_resumed_examples(self, trial_result)
         trial_cost = self._extract_trial_cost(trial_result)
-        if trial_cost is not None:
-            # Example rows reused by resume_from (#2541) were paid for by the
-            # prior run: they stay in the trial's totals but are not charged to
-            # this run's cost limit or shared budget.
-            trial_cost = max(0.0, trial_cost - self._resumed_reused_cost(trial_result))
+        reused_cost = OptimizationOrchestrator._resumed_reused_cost(trial_result)
+        # Example rows reused by resume_from (#2541) were paid for by the prior
+        # run: they stay in the trial's totals but are not charged to this run's
+        # cost limit or shared budget. A negative raw cost is left untouched so
+        # the cost enforcer still rejects it (it must not be clamped to zero).
+        if trial_cost is not None and reused_cost > 0 and trial_cost >= 0:
+            trial_cost = max(0.0, trial_cost - reused_cost)
         flagged = is_cost_unmeasured(trial_result.metrics)
         missing_examples = (
             unmeasured_example_ids((trial_result.metadata or {}).get("example_results"))
@@ -6111,8 +6116,9 @@ class OptimizationOrchestrator:
 
         # Value-free run identity, so a later run can resume from this result
         # (#1697). Hashes only; absent when fingerprints were not computed.
-        if self.artifact_fingerprints:
-            metadata["artifact_fingerprints"] = dict(self.artifact_fingerprints)
+        artifact_fingerprints = getattr(self, "artifact_fingerprints", None)
+        if artifact_fingerprints:
+            metadata["artifact_fingerprints"] = dict(artifact_fingerprints)
         if getattr(self, "_resume_summary", None) is not None:
             metadata["resume"] = dict(self._resume_summary or {})
 
