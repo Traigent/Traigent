@@ -480,6 +480,7 @@ class InteractiveOptimizer(BaseOptimizer):
         metrics: dict[str, float],
         duration: float,
         status: TrialStatusLike = SDKTrialStatus.COMPLETED,
+        *,
         error_message: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:

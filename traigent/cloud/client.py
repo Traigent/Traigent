@@ -557,6 +557,7 @@ class BaseTraigentClient(ABC):
         metrics: dict[str, float],
         duration: float,
         status: str = "completed",
+        *,
         error_message: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
@@ -1887,6 +1888,7 @@ class TraigentCloudClient(BaseTraigentClient):
         metrics: dict[str, float],
         duration: float,
         status: str = "completed",
+        *,
         error_message: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:

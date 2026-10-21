@@ -353,6 +353,22 @@ class TestInteractiveOptimizer:
             )
         mock_remote_service.submit_result.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_report_results_legacy_positional_outputs_sample_raises(
+        self, optimizer, mock_remote_service
+    ):
+        """A legacy 5-positional call must not rebind outputs to error_message (#2239)."""
+        optimizer.session_id = "session-123"
+        with pytest.raises(TypeError):
+            await optimizer.report_results(
+                "trial-001",
+                {"accuracy": 0.85},
+                1.0,
+                TrialStatus.COMPLETED,
+                ["customer answer"],
+            )
+        mock_remote_service.submit_result.assert_not_called()
+
     def test_trial_result_wire_payload_has_no_outputs_sample(self):
         """Canary: the real serializer never emits outputs_sample anywhere (#2239)."""
         import json

@@ -629,6 +629,22 @@ class TestFinalization:
 class TestSerialization:
     """Test serialization and deserialization methods."""
 
+    @pytest.mark.asyncio
+    async def test_submit_trial_result_legacy_positional_outputs_raises(
+        self, cloud_client, mock_session
+    ):
+        """Legacy positional outputs_sample must raise, not become error_message (#2239)."""
+        with pytest.raises(TypeError):
+            await cloud_client.submit_trial_result(
+                "session-123",
+                "trial-001",
+                {"accuracy": 0.9},
+                1.0,
+                "completed",
+                ["customer answer"],
+            )
+        mock_session.post.assert_not_called()
+
     def test_serialize_trial_result(self, cloud_client):
         """Test serializing trial result submission."""
         result = TrialResultSubmission(
