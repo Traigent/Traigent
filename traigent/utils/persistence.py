@@ -20,6 +20,10 @@ from ..api.types import (
     OptimizationResult,
     TrialResult,
 )
+from ..utils.file_versioning import (
+    verify_integrity_manifest,
+    write_integrity_manifest,
+)
 from ..utils.function_identity import sanitize_identifier
 
 # Imported by full dotted path, never via `traigent.utils` — that barrel is
@@ -39,6 +43,7 @@ from ..utils.secure_path import safe_open, validate_path
 logger = logging.getLogger(__name__)
 
 # File name constants
+_INTEGRITY_FILES = ("metadata.json", "trials.json.gz")
 METADATA_FILE = "metadata.json"
 TRIALS_JSON_FILE = "trials.json.gz"
 TRIALS_PKL_FILE = "trials.pkl.gz"
@@ -274,6 +279,50 @@ def _rehydrate_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         return metadata
 
     return {key: _rehydrate_value(key, value) for key, value in metadata.items()}
+
+
+def _value_in_domain(value: Any, domain: Any) -> bool | None:
+    """True/False when ``domain`` is a recognised shape, None when it is not."""
+    if isinstance(domain, dict):
+        if "low" in domain and "high" in domain:
+            lo, hi = domain["low"], domain["high"]
+            if all(
+                isinstance(x, (int, float)) and not isinstance(x, bool)
+                for x in (value, lo, hi)
+            ):
+                return bool(lo <= value <= hi)
+            return False if isinstance(value, (int, float)) else None
+        for key in ("choices", "values"):
+            if isinstance(domain.get(key), list):
+                return value in domain[key]
+        return None
+    if isinstance(domain, (list, tuple)):
+        if value in domain:
+            return True
+        # A two-number list can also be a (low, high) range.
+        if len(domain) == 2 and all(
+            isinstance(x, (int, float)) and not isinstance(x, bool)
+            for x in (*domain, value)
+        ):
+            return bool(min(domain) <= value <= max(domain))
+        return False
+    return None
+
+
+def _check_best_config_in_space(name: str, best_config: Any, space: Any) -> None:
+    """Raise a value-free ValueError when best_config leaves the saved space.
+
+    Only keys present in both are compared and only recognised domain shapes
+    are judged; anything else is skipped rather than guessed (#1961).
+    """
+    if not isinstance(best_config, dict) or not isinstance(space, dict) or not space:
+        return
+    for key, value in best_config.items():
+        if key in space and _value_in_domain(value, space[key]) is False:
+            raise ValueError(
+                f"Corrupted metadata for result '{name}': best_config is "
+                "outside the saved configuration space"
+            )
 
 
 class PersistenceManager:
@@ -543,6 +592,9 @@ class PersistenceManager:
 
         self._atomic_write_gzip_json(result_dir / TRIALS_JSON_FILE, trials_data)
 
+        # #1961: record sha256 digests of the two files load_result trusts.
+        write_integrity_manifest(result_dir, list(_INTEGRITY_FILES))
+
         # Also save as pickle for backward compatibility (will be deprecated)
         # The pickle carries whole trial objects, so redact copies rather than
         # the caller's in-memory result.
@@ -580,13 +632,30 @@ class PersistenceManager:
 
         Raises:
             FileNotFoundError: If result doesn't exist
-            ValueError: If result data is corrupted
+            ValueError: If result data is corrupted, fails its sha256
+                integrity check, or its best_config lies outside the saved
+                configuration space
+
+        Integrity (#1961): ``save_result`` writes ``integrity.sha256.json``
+        with digests of ``metadata.json`` and ``trials.json.gz``; they are
+        verified here. Results saved before that change have no manifest and
+        load with one warning. This detects corruption and casual edits only;
+        it is not tamper-proof, because someone who can rewrite the files can
+        rewrite the manifest as well.
         """
         result_dir = self._resolve_path(self.base_dir / name)
 
         if not result_dir.exists():
             raise FileNotFoundError(
                 f"Optimization result '{name}' not found in {self.base_dir}"
+            )
+
+        if not verify_integrity_manifest(result_dir, list(_INTEGRITY_FILES)):
+            logger.warning(
+                "Result '%s' has no integrity manifest (saved by an older "
+                "version); loading without integrity verification. Re-save it "
+                "to add one.",
+                name,
             )
 
         # Load metadata
@@ -673,6 +742,10 @@ class PersistenceManager:
                 raise ValueError(
                     f"Corrupted metadata for result '{name}': missing '{key}'"
                 )
+
+        _check_best_config_in_space(
+            name, metadata.get("best_config"), metadata.get("configuration_space")
+        )
 
         # Reconstruct optimization result through the #2031 manifest. The old
         # hand-written constructor named 11 of the dataclass's 27 fields and

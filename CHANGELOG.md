@@ -17,6 +17,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Security
 
+- **Saved optimization results are integrity-checked at load (#1961).**
+  `PersistenceManager.save_result` now writes `integrity.sha256.json` with
+  sha256 digests of `metadata.json` and `trials.json.gz`; `load_result`
+  verifies them and raises a value-free `ValueError` on a mismatch, a missing
+  listed file or an unreadable manifest. Results saved before this change have
+  no manifest and load with one warning. `load_result` also raises
+  `ValueError` when `best_config` lies outside the saved configuration space.
+  This detects corruption and casual edits only; it is not tamper-proof,
+  since anyone who can rewrite the files can rewrite the manifest too.
 - **Old `traigent-tracing` add-ons are ignored (#1894).** An installed
   `traigent-tracing` older than 0.1.1 (or with an unreadable version) lacks the
   span-attribute scrubbers, so the SDK now logs one warning and uses the

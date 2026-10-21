@@ -75,6 +75,76 @@ LEGACY_PATTERNS = {
 }
 
 
+INTEGRITY_MANIFEST_FILE = "integrity.sha256.json"
+
+
+def sha256_file(path: Path) -> str:
+    """Hex sha256 of a file's bytes (same digest the run manifests use)."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_integrity_manifest(directory: Path, filenames: list[str]) -> None:
+    """Write a sha256 list for ``filenames`` (relative to ``directory``).
+
+    This detects corruption and casual edits. It is NOT tamper-proof: anyone
+    who can rewrite the files can rewrite the manifest too.
+    """
+    payload = {
+        "version": 1,
+        "sha256": {name: sha256_file(directory / name) for name in filenames},
+    }
+    tmp = directory / (INTEGRITY_MANIFEST_FILE + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, sort_keys=True)
+    os.replace(tmp, directory / INTEGRITY_MANIFEST_FILE)
+
+
+def verify_integrity_manifest(directory: Path, required: list[str]) -> bool:
+    """Verify the files listed in the integrity manifest.
+
+    Returns ``False`` when there is no manifest (legacy artifact). Raises
+    ``ValueError`` with a value-free message when the manifest is unreadable,
+    does not list a ``required`` file, lists a file that is missing, or any
+    digest differs. Messages name no paths and no content.
+    """
+    manifest_path = directory / INTEGRITY_MANIFEST_FILE
+    if not manifest_path.exists():
+        return False
+    try:
+        with open(manifest_path, encoding="utf-8") as f:
+            payload = json.load(f)
+        listed = payload["sha256"]
+        if not isinstance(listed, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in listed.items()
+        ):
+            raise TypeError
+    except (OSError, ValueError, KeyError, TypeError):
+        raise ValueError("Integrity manifest is unreadable") from None
+    if any(name not in listed for name in required):
+        raise ValueError("Integrity manifest does not cover all result files")
+    for name, expected in listed.items():
+        if name not in required:
+            continue
+        target = directory / name
+        if not target.is_file():
+            raise ValueError(
+                "A result file listed in the integrity manifest is missing"
+            )
+        try:
+            actual = sha256_file(target)
+        except OSError:
+            raise ValueError(
+                "A result file could not be read for verification"
+            ) from None
+        if actual != expected:
+            raise ValueError("Result file failed integrity verification")
+    return True
+
+
 class FileVersionManager:
     """Manages file versioning and naming conventions for optimization logs."""
 

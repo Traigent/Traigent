@@ -477,6 +477,11 @@ def test_1962_load_result_missing_key_raises_value_error(tmp_path) -> None:
     data = json.loads(meta_path.read_text())
     del data["algorithm"]
     meta_path.write_text(json.dumps(data))
+    # Re-seal the manifest so this stays a test of the missing-key check, not
+    # of the #1961 integrity check.
+    from traigent.utils.file_versioning import write_integrity_manifest
+
+    write_integrity_manifest(meta_path.parent, ["metadata.json", "trials.json.gz"])
 
     with pytest.raises(ValueError, match="missing 'algorithm'"):
         pm.load_result("corruptme")
