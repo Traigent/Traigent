@@ -70,5 +70,5 @@ When using Traigent:
 
 - Never commit API keys or credentials
 - Use environment variables for sensitive configuration
-- Use `offline=True` when nothing may leave the machine (the legacy `privacy_enabled` setting is deprecated and does not protect data)
+- Use `offline=True` to stop submission to the Traigent backend (the legacy `privacy_enabled` setting is deprecated and does not protect data). `offline=True` is not a guarantee that nothing leaves the machine: model-provider calls use your own provider credentials and are not gated by it, and OpenTelemetry export is controlled separately by `OTEL_EXPORTER_OTLP_ENDPOINT` with `TRAIGENT_TRACE_ENABLED` (`traigent/core/tracing.py:58`, `:240`) and by the observability module, which honors the `TRAIGENT_OFFLINE`/`TRAIGENT_OFFLINE_MODE`/`TRAIGENT_DISABLE_TELEMETRY` environment variables (`traigent/observability/otel/api.py:225`) but not the in-code `offline=True` setting. Traigent observability is not privacy-preserving. Whether `offline=True` should also gate telemetry export is an open owner decision (issue #2240).
 - Keep dependencies updated
