@@ -178,3 +178,48 @@ def test_translated_forms() -> None:
     assert translate_constraint_code(
         "require(~(temperature.gte(1.5) & top_p.lte(0.2)))"
     ) == {"expr": "not ((temperature >= 1.5) and (top_p <= 0.2))"}
+
+
+def test_tuple_literal_is_emitted_as_tuple_not_list() -> None:
+    assert translate_constraint_code(
+        "lambda config: config['model'] == ('a', 'b')"
+    ) == {"expr": "model == ('a', 'b')"}
+    assert translate_constraint_code("lambda config: config['model'] == ('a',)") == {
+        "expr": "model == ('a',)"
+    }
+    assert translate_constraint_code(
+        "lambda config: config['model'] == ['a', 'b']"
+    ) == {"expr": "model == ['a', 'b']"}
+
+
+def test_tuple_constraint_never_accepts_list_where_tuple_required(
+    tmp_path: Path,
+) -> None:
+    tuple_constraint = StructuralConstraintSpec(
+        description="pair",
+        constraint_code="lambda config: config['model'] == ('gpt-4o', 'gpt-4o-mini')",
+    )
+    artifact = _load(_result(tuple_constraint), tmp_path)
+    assert len(artifact.constraints) == 1
+    assert _accepts(artifact, {**_BASE, "model": ("gpt-4o", "gpt-4o-mini")})
+    assert not _accepts(artifact, {**_BASE, "model": ["gpt-4o", "gpt-4o-mini"]})
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "lambda config: config['temperature'] < 1e309",
+        "require(temperature.lte(1e309))",
+        "require(temperature.is_in([0.5, 1e309]))",
+        "lambda config: config['temperature'] != -1e309",
+    ],
+)
+def test_non_finite_literal_is_skipped_with_value_free_warning(
+    code: str, tmp_path: Path
+) -> None:
+    assert translate_constraint_code(code) is None
+    bad = StructuralConstraintSpec(description="inf", constraint_code=code)
+    with pytest.warns(UserWarning, match="structural_0") as record:
+        spec = _result(bad).to_tvl_spec()
+    assert "1e309" not in str(record[0].message)
+    assert "structural" not in spec.get("constraints", {})

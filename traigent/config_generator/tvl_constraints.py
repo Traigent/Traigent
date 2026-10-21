@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 import keyword
+import math
 import textwrap
 import warnings
 from typing import Any
@@ -58,21 +59,33 @@ def _is_tvar_name(name: str) -> bool:
     )
 
 
+def _scalar(value: object) -> str:
+    """Render one scalar, refusing values the grammar cannot express."""
+    if isinstance(value, float) and not math.isfinite(value):
+        # ``repr`` gives ``inf``/``nan``, an undefined name at evaluation.
+        raise _UnknownShape
+    return repr(value)
+
+
 def _literal(node: ast.expr) -> str:
-    """Render a scalar or list-of-scalars literal."""
-    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float, str)):
-        return repr(node.value)
-    if isinstance(node, ast.Constant) and isinstance(node.value, bool):
-        return "True" if node.value else "False"
+    """Render a scalar, list or tuple literal without changing its type."""
+    if isinstance(node, ast.Constant) and isinstance(
+        node.value, (bool, int, float, str)
+    ):
+        return _scalar(node.value)
     if isinstance(node, (ast.List, ast.Tuple)) and node.elts:
         parts = []
         for elt in node.elts:
             if not (
                 isinstance(elt, ast.Constant)
-                and isinstance(elt.value, (int, float, str, bool))
+                and isinstance(elt.value, (bool, int, float, str))
             ):
                 raise _UnknownShape
-            parts.append(repr(elt.value))
+            parts.append(_scalar(elt.value))
+        if isinstance(node, ast.Tuple):
+            # The loader grammar accepts tuples; a one-element tuple needs
+            # its trailing comma to stay a tuple.
+            return "(" + ", ".join(parts) + ("," if len(parts) == 1 else "") + ")"
         return "[" + ", ".join(parts) + "]"
     raise _UnknownShape
 
@@ -103,7 +116,7 @@ def _atom(node: ast.Call) -> str:
         and not node.keywords
     ):
         value = _literal(node.args[0])
-        if func.attr in ("is_in", "not_in") and not value.startswith("["):
+        if func.attr in ("is_in", "not_in") and not value.startswith(("[", "(")):
             raise _UnknownShape
         return f"{func.value.id} {_ATOM_METHODS[func.attr]} {value}"
     raise _UnknownShape
