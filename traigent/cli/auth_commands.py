@@ -1475,6 +1475,54 @@ class TraigentAuthCLI:
             console.print("[red]❌ Failed to clear some credentials[/red]")
             return False
 
+    def _api_key_expiry_row(self, creds: dict[str, Any]) -> str | None:
+        """Describe the stored API key's expiry/rotation state (SDK #1635).
+
+        Only a recorded ``expires_at`` is reported; an unknown expiry is never
+        presented as a measured one. Returns None when nothing is known.
+        """
+        from datetime import UTC, datetime
+
+        raw = creds.get("expires_at")
+        expires_at: datetime | None = None
+        if isinstance(raw, str):
+            try:
+                expires_at = datetime.fromisoformat(raw)
+            except ValueError:
+                expires_at = None
+        elif isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            try:
+                expires_at = datetime.fromtimestamp(raw, tz=UTC)
+            except (OverflowError, OSError, ValueError):
+                expires_at = None
+        if expires_at is None:
+            return None
+
+        manager = getattr(self, "auth_manager", None) or AuthManager()
+        manager.set_api_key(
+            creds["api_key"], expires_at=expires_at, source="stored credentials"
+        )
+        status = manager.get_api_key_status()
+        state = status.get("state")
+        days = status.get("days_remaining")
+        if state == "expired":
+            return "[red]expired - run traigent auth login to rotate[/red]"
+        if not isinstance(days, (int, float)):
+            return None
+        if state == "critical":
+            return (
+                f"[red]expires in {days:.1f} days - rotate now "
+                "(traigent auth login)[/red]"
+            )
+        if state == "warning":
+            return (
+                f"[yellow]expires in {days:.0f} days - plan a rotation "
+                "(traigent auth login)[/yellow]"
+            )
+        if state == "ok":
+            return f"expires in {days:.0f} days"
+        return None
+
     def status(self) -> bool:
         """Show current authentication status.
 
@@ -1525,6 +1573,9 @@ class TraigentAuthCLI:
 
         if creds.get("api_key"):
             table.add_row("API Key", "configured")
+            expiry_row = self._api_key_expiry_row(creds)
+            if expiry_row:
+                table.add_row("API Key expiry", expiry_row)
         else:
             table.add_row("Auth Type", "JWT Token")
 
