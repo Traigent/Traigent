@@ -55,14 +55,12 @@ class TestForceInstallBackupOwnership:
         installer.install(force=True)
         installer.uninstall()
 
-        pre_push = installer.hooks_dir / "pre-push"
-        assert pre_push.read_bytes() == self.CUSTOMER_PRE_PUSH
-        assert not (installer.hooks_dir / "pre-push.backup").exists()
-        # pre-commit uninstall skips it (no HOOK_MARKER), so the customer's
-        # original must still be intact in the backup, never overwritten.
+        assert (installer.hooks_dir / "pre-push").read_bytes() == self.CUSTOMER_PRE_PUSH
         assert (
-            installer.hooks_dir / "pre-commit.backup"
+            installer.hooks_dir / "pre-commit"
         ).read_bytes() == self.CUSTOMER_PRE_COMMIT
+        assert not (installer.hooks_dir / "pre-push.backup").exists()
+        assert not (installer.hooks_dir / "pre-commit.backup").exists()
 
     def test_existing_foreign_backup_is_never_overwritten(
         self, installer: HooksInstaller
@@ -91,6 +89,21 @@ class TestForceInstallBackupOwnership:
         assert results["pre-push"] is True
         assert not (installer.hooks_dir / "pre-push").exists()
         assert not (installer.hooks_dir / "pre-push.backup").exists()
+
+    def test_force_install_then_uninstall_restores_customer_pre_commit_bytes(
+        self, installer: HooksInstaller
+    ) -> None:
+        """Uninstall removes Traigent's pre-commit hook and restores the customer's exact bytes."""
+        self._write_customer_hooks(installer)
+
+        installer.install(force=True)
+        assert (installer.hooks_dir / "pre-commit.backup").exists()
+        installer.uninstall()
+
+        assert (
+            installer.hooks_dir / "pre-commit"
+        ).read_bytes() == self.CUSTOMER_PRE_COMMIT
+        assert not (installer.hooks_dir / "pre-commit.backup").exists()
 
     def test_single_force_install_uninstall_round_trip_unchanged(
         self, installer: HooksInstaller
@@ -322,17 +335,13 @@ class TestHooksInstaller:
 
     # uninstall tests
     def test_uninstall_removes_traigent_hooks(self, installer: HooksInstaller) -> None:
-        """Test uninstall removes Traigent hooks with HOOK_MARKER."""
+        """Uninstall removes both Traigent hooks, each recognised by its own marker."""
         installer.install()
         results = installer.uninstall()
 
-        # pre-push has HOOK_MARKER so it gets removed
-        assert results["pre-push"] is True
-        # pre-commit doesn't have HOOK_MARKER so it's not removed
-        assert results["pre-commit"] is False
+        assert results == {"pre-push": True, "pre-commit": True}
         assert not (installer.hooks_dir / "pre-push").exists()
-        # pre-commit is NOT removed due to missing HOOK_MARKER
-        assert (installer.hooks_dir / "pre-commit").exists()
+        assert not (installer.hooks_dir / "pre-commit").exists()
 
     def test_uninstall_preserves_non_traigent_hooks(
         self, installer: HooksInstaller
@@ -643,10 +652,9 @@ class TestUninstallHooks:
         """Test uninstall_hooks with explicit path."""
         result = uninstall_hooks(temp_git_repo_with_hooks)
 
-        # Returns False because pre-commit lacks HOOK_MARKER
-        assert result is False
-        # pre-push is removed (has HOOK_MARKER)
+        assert result is True
         assert not (temp_git_repo_with_hooks / ".git" / "hooks" / "pre-push").exists()
+        assert not (temp_git_repo_with_hooks / ".git" / "hooks" / "pre-commit").exists()
 
     def test_uninstall_hooks_with_string_path(
         self, temp_git_repo_with_hooks: Path
@@ -654,8 +662,7 @@ class TestUninstallHooks:
         """Test uninstall_hooks accepts string path."""
         result = uninstall_hooks(str(temp_git_repo_with_hooks))
 
-        # Returns False because pre-commit lacks HOOK_MARKER
-        assert result is False
+        assert result is True
 
     @patch("traigent.hooks.installer.find_git_root")
     def test_uninstall_hooks_auto_detects_repo(
@@ -666,8 +673,7 @@ class TestUninstallHooks:
 
         result = uninstall_hooks(None)
 
-        # Returns False because pre-commit lacks HOOK_MARKER
-        assert result is False
+        assert result is True
         mock_find.assert_called_once()
 
     @patch("traigent.hooks.installer.find_git_root")

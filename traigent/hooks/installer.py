@@ -243,8 +243,8 @@ class HooksInstaller:
             return True
 
         # Only remove if it's a Traigent hook
-        content = safe_read_text(hook_path, self.hooks_dir)
-        if HOOK_MARKER not in content:
+        content = _read_hook_text(hook_path, self.hooks_dir)
+        if not _is_traigent_hook(content):
             logger.warning(
                 f"Hook at {hook_path} was not installed by Traigent - skipping"
             )
