@@ -38,6 +38,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Provider-billed cost is no longer replaced by the plausibility floor (#2505).**
+  A cost read from the provider's own response (`usage.cost`, e.g. OpenRouter's
+  billed charge) is tagged `provider_billed` and skips the 50%-of-table-price
+  floor, so a cheaper upstream route is recorded as billed instead of at a stale
+  table price. Self-reported costs (`with_usage()`, injected `__traigent_meta__`,
+  raw paths) and any untagged cost keep the floor and its warning. Each cost now
+  carries a source (`provider_billed`, `self_reported`, `table`); the trial's
+  `summary_stats["metadata"]["cost_source"]` holds it (or `mixed`) and the
+  numeric measure `cost_provider_billed_fraction` gives the billed share.
+
 - **Model defaults no longer point at retiring models (#2650).** The `model`
   range preset drops `gpt-4.1-mini`/`gpt-4.1-nano` for `gpt-5.4-mini`/
   `gpt-5.4-nano`; the OpenAI executor's model allow-list is now derived from the

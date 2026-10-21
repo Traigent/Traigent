@@ -29,6 +29,8 @@ from traigent.evaluators.base import (
     _is_empty_expected_output,
 )
 from traigent.evaluators.metrics_tracker import (
+    COST_SOURCE_MIXED,
+    COST_SOURCE_SELF_REPORTED,
     EMPTY_OUTPUT_RATE_WARNING_THRESHOLD,
     ExampleMetrics,
     MetricsCalculator,
@@ -1685,6 +1687,10 @@ class LocalEvaluator(BaseEvaluator):
         out.cost.unmeasured = any(c.cost.unmeasured for c in calls)
         out.cost.cost_estimated = any(c.cost.cost_estimated for c in calls)
         out.cost.cost_explicit = all(c.cost.cost_explicit for c in calls)
+        sources = {c.cost.cost_source for c in calls}
+        out.cost.cost_source = (
+            next(iter(sources)) if len(sources) == 1 else COST_SOURCE_MIXED
+        )
         out.cost.known_cost = sum(c.cost.known_cost for c in calls)
         if out.cost.unmeasured:
             out.cost.known_cost += sum(
@@ -2145,6 +2151,9 @@ class LocalEvaluator(BaseEvaluator):
             if total_cost < 0:
                 logger.warning(f"Negative total_cost clamped: {total_cost} → 0.0")
             metrics.cost.total_cost = max(0.0, float(total_cost))
+            # Injected by the agent itself: a self-report, so the plausibility
+            # floor applies (#2505).
+            metrics.cost.cost_source = COST_SOURCE_SELF_REPORTED
             # The agent reported its own spend: a measurement, even if $0 (#2517).
             metrics.cost.unmeasured = False
             # The authoritative total covers every call of this row, so any
@@ -3336,6 +3345,10 @@ class LocalEvaluator(BaseEvaluator):
             summary_stats.setdefault("metadata", {})
             summary_stats["metadata"]["sample_budget_exhausted"] = budget_exhausted
             summary_stats["metadata"]["examples_consumed"] = total_count
+            # Per-trial cost provenance (#2505): a named source, or "mixed".
+            summary_stats["metadata"]["cost_source"] = (
+                metrics_tracker.cost_source_label()
+            )
             result.summary_stats = summary_stats
 
         result.sample_budget_exhausted = budget_exhausted

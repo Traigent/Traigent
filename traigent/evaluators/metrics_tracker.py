@@ -58,6 +58,12 @@ TOKENCOST_AVAILABLE = _TOKENCOST_AVAILABLE
 
 REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO = 0.5
 
+# Provenance tags for ``CostMetrics.cost_source`` (#2505).
+COST_SOURCE_PROVIDER_BILLED = "provider_billed"
+COST_SOURCE_SELF_REPORTED = "self_reported"
+COST_SOURCE_TABLE = "table"
+COST_SOURCE_MIXED = "mixed"
+
 #: Evaluator/tracker-computed metric keys that user-supplied per-example metrics
 #: (e.g. the ``(output, metrics_dict)`` tuple channel) MUST NEVER overwrite,
 #: at ANY merge or aggregation site, regardless of merge ordering or
@@ -102,6 +108,8 @@ RESERVED_METRIC_KEYS: frozenset[str] = frozenset(
         "cost_unmeasured",
         # Known-spend floor reported when ``cost_unmeasured`` (#2517).
         "cost_lower_bound",
+        # Fraction of cost-measured examples billed by the provider (#2505).
+        "cost_provider_billed_fraction",
         # True iff any measured example's token counts were fabricated from
         # character length rather than captured usage (#2263). Reserved so a
         # user tuple key can never overwrite it and it is never dropped under
@@ -492,6 +500,13 @@ class CostMetrics:
     # module documents (#2274). Carry this flag, not the magnitude, wherever
     # that question is asked.
     cost_explicit: bool = False
+    # Where ``total_cost`` came from (#2505): ``"provider_billed"`` (the
+    # provider's own ``usage.cost`` charge, exempt from the plausibility
+    # floor), ``"self_reported"`` (caller/response-injected cost: keeps the
+    # floor), ``"table"`` (price-table figure) or ``"mixed"`` (a row combined
+    # from calls with different sources). ``None`` means unknown and is treated
+    # like ``"self_reported"``: only ``"provider_billed"`` skips the floor.
+    cost_source: str | None = None
     # True when NO usage was captured for this example, so ``total_cost`` is the
     # absence of a measurement, not a measured $0 (Traigent#2517). A zero here is
     # a placeholder and must never be summed, averaged, ranked, displayed or
@@ -1088,6 +1103,17 @@ class MetricsTracker:
             if m.cost.unpriced and not m.cost.unmeasured
         )
 
+        provider_billed_fraction = (
+            sum(
+                1
+                for m in cost_measured_metrics
+                if m.cost.cost_source == COST_SOURCE_PROVIDER_BILLED
+            )
+            / len(cost_measured_metrics)
+            if cost_measured_metrics
+            else None
+        )
+
         # True when ANY measured example's token counts were fabricated from
         # character length (``LocalEvaluator._estimate_string_tokens``, #2263)
         # rather than captured from real usage. ``input_tokens``/
@@ -1154,6 +1180,11 @@ class MetricsTracker:
             "cost_lower_bound": (
                 cost_lower_bound if cost_unmeasured and cost_lower_bound > 0 else None
             ),
+            # Fraction (0.0-1.0) of cost-measured examples whose cost is the
+            # provider's own billed charge (#2505). Numeric because measures
+            # are numeric on the wire; the named per-trial source string is
+            # ``cost_source_label``.
+            "cost_provider_billed_fraction": provider_billed_fraction,
             # True iff any measured example's token counts are a length-derived
             # estimate, not captured usage (#2263). See comment above.
             "tokens_estimated": tokens_estimated,
@@ -1177,6 +1208,20 @@ class MetricsTracker:
         self._aggregate_user_custom_metrics(formatted, extra_reserved)
 
         return formatted
+
+    def cost_source_label(self) -> str | None:
+        """Per-trial cost source (#2505): one tag, ``"mixed"`` or ``None``.
+
+        ``None`` when no example carries a cost measurement; ``"mixed"`` when
+        measured examples disagree (an untagged example counts as unknown, so
+        it also yields ``"mixed"`` beside a tagged one).
+        """
+        sources = {m.cost.cost_source for m in self.example_metrics if m.cost_measured}
+        if not sources:
+            return None
+        if len(sources) == 1:
+            return next(iter(sources))
+        return COST_SOURCE_MIXED
 
     def _accuracy_values_for_formatters(
         self, *, user_supplied_accuracy: bool
@@ -1627,6 +1672,7 @@ class ResponseHandler(ABC):
                 logger.debug(f"Failed to parse cost from response: {e}")
 
         if cost_metrics.total_cost > 0.0:
+            cost_metrics.cost_source = COST_SOURCE_SELF_REPORTED
             return cost_metrics
 
         # 2. LiteLLM Usage.cost field — an explicit provider-reported charge.
@@ -1666,6 +1712,7 @@ class ResponseHandler(ABC):
                     # survive to the ledger instead of being overwritten by a
                     # price-table guess (#2274).
                     cost_metrics.cost_explicit = True
+                    cost_metrics.cost_source = COST_SOURCE_PROVIDER_BILLED
                     logger.debug(
                         "Extracted cost $%.6f from usage.cost "
                         "(explicit provider-reported cost).",
@@ -1700,6 +1747,7 @@ class ResponseHandler(ABC):
                 if isinstance(response_cost, (int, float)) and response_cost > 0:
                     cost_metrics.total_cost = float(response_cost)
                     cost_metrics.cost_estimated = True
+                    cost_metrics.cost_source = COST_SOURCE_TABLE
                     logger.debug(
                         "Extracted cost $%.6f from _hidden_params.response_cost "
                         "(LiteLLM fallback estimate, no explicit provider charge found).",
@@ -1743,6 +1791,7 @@ class ResponseHandler(ABC):
                     metrics.cost.total_cost = float(cost)
                 except (TypeError, ValueError):
                     pass
+            metrics.cost.cost_source = COST_SOURCE_SELF_REPORTED
 
         # Extract response time
         if "response_time_ms" in metadata:
@@ -2427,7 +2476,15 @@ def _reconcile_reported_cost_with_tokens(
 
     input_cost, output_cost, derived_total = derived
     authoritative_total = metrics.cost.total_cost
-    if authoritative_total < (derived_total * REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO):
+    # The provider's own billed charge is not a self-report: it may sit well
+    # below a stale table price (OpenRouter routing to a cheaper upstream), and
+    # the floor would replace the real bill with the table figure (#2505). Only
+    # the exact ``provider_billed`` tag skips the floor; anything else,
+    # including an unknown source, keeps it.
+    provider_billed = metrics.cost.cost_source == COST_SOURCE_PROVIDER_BILLED
+    if not provider_billed and authoritative_total < (
+        derived_total * REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO
+    ):
         logger.warning(
             "Reported LLM cost $%.8f for model %r is implausibly below token-derived "
             "estimate $%.8f (tokens: in=%d, out=%d); using token-derived cost "
@@ -2441,6 +2498,7 @@ def _reconcile_reported_cost_with_tokens(
         metrics.cost.input_cost = input_cost
         metrics.cost.output_cost = output_cost
         metrics.cost.total_cost = derived_total
+        metrics.cost.cost_source = COST_SOURCE_TABLE
         return
 
     _backfill_cost_breakdown(metrics, input_cost, output_cost, derived_total)
@@ -2518,6 +2576,7 @@ def _compute_cost(
         metrics.cost.input_cost = input_cost
         metrics.cost.output_cost = output_cost
         metrics.cost.total_cost = input_cost + output_cost
+        metrics.cost.cost_source = COST_SOURCE_TABLE
         if metrics.cost.total_cost > 0:
             logger.debug(
                 "Cost calculated for %s: $%.6f via cost_from_tokens",
