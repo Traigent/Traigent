@@ -195,6 +195,28 @@ def stored_example_rows(trial: TrialResult) -> list[dict[str, Any]] | None:
     return [r for r in rows if r is not None] or None
 
 
+def redacted_rows_cover(trial: TrialResult, current_ids: set[str]) -> bool | None:
+    """Coverage of the current dataset by a content-redacted trial, or None.
+
+    Ids and per-row status survive redaction, so they still prove whether the
+    trial ran every current example. None when the trial has no redacted rows.
+    """
+    top = (trial.metadata or {}).get("example_results")
+    rows = (
+        [r for r in (_row_dict(x) for x in top) if r is not None]
+        if isinstance(top, list)
+        else []
+    )
+    if not rows or not _is_content_redacted(rows):
+        return None
+    done = {
+        r.get("example_id")
+        for r in rows
+        if r.get("success") is True and not r.get("error_message")
+    }
+    return current_ids <= done
+
+
 def _row_completed(row: Mapping[str, Any]) -> bool:
     return (
         row.get("success") is True
@@ -367,6 +389,15 @@ def plan_resume(
                 for example_id, row in done.items():
                     slot.setdefault(example_id, row)
                 continue
+        if (
+            rows is None
+            and current_ids is not None
+            and redacted_rows_cover(trial, current_ids) is False
+        ):
+            # Content was opted out, but ids/status show it missed examples:
+            # never reuse it wholesale; it runs again in full.
+            other += 1
+            continue
         if trial.status == TrialStatus.COMPLETED and _trial_cost_ok(trial):
             eligible.append(trial)
         else:

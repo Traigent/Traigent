@@ -818,3 +818,34 @@ def test_redacted_top_level_rows_block_reuse_from_nested_rows() -> None:
 
     trial.metadata["example_results"] = [full]  # not opted out: nested is used
     assert stored_example_rows(trial) == [full]
+
+
+def _redacted_trial(ids: list[str]) -> TrialResult:
+    trial = _trial("t1")
+    trial.metadata = {
+        "example_results": [
+            {
+                "example_id": i,
+                "success": True,
+                "input_data": None,
+                "expected_output": None,
+                "actual_output": None,
+                "metrics": {"accuracy": 1.0},
+            }
+            for i in ids
+        ]
+    }
+    return trial
+
+
+def test_redacted_truncated_completed_trial_is_not_reused_wholesale() -> None:
+    prior = _prior([_redacted_trial(["a", "b"])])
+    plan = plan_resume(prior, _FPS, dataset_example_ids=["a", "b", "c", "d"])
+    assert plan.reusable == ()
+    assert plan.not_reusable_other == 1
+
+
+def test_redacted_full_coverage_trial_is_still_reused_wholesale() -> None:
+    prior = _prior([_redacted_trial(["a", "b", "c", "d"])])
+    plan = plan_resume(prior, _FPS, dataset_example_ids=["a", "b", "c", "d"])
+    assert len(plan.reusable) == 1
