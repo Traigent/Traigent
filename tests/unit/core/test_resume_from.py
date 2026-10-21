@@ -323,20 +323,35 @@ def test_reused_baseline_does_not_spend_another_trial(_local: Path) -> None:
 def test_reused_measured_cost_is_in_study_total_and_not_charged(
     _local: Path,
 ) -> None:
-    seen: list[str] = []
-    agent = _agent(["a", "b", "c", "d"], seen)
+    @traigent.optimize(
+        configuration_space={"v": ["a", "b", "c", "d"]},
+        objectives=["accuracy"],
+        offline=True,
+        max_trials=4,
+        algorithm="grid",
+        evaluation=EvaluationOptions(eval_dataset="d.jsonl"),
+    )
+    def agent(q: str) -> str:
+        # Measured usage: under #2688 a run total is only reported when every
+        # trial (reused and new) is measured.
+        return traigent.with_usage(traigent.get_config()["v"], total_cost=0.01)
+
     first = agent.optimize_sync(max_trials=2)
     for t in first.trials:  # measured cost under a non-canonical alias
         t.metrics.pop("cost_unmeasured", None)
         t.metrics.pop("total_cost", None)
         t.metrics["cost"] = 0.25
     resumed = agent.optimize_sync(max_trials=4, resume_from=first)
-    assert resumed.total_cost == pytest.approx(0.5)
+    reused = [t for t in resumed.trials if t.metadata.get(REUSED_TRIAL_KEY)]
+    new = [t for t in resumed.trials if not t.metadata.get(REUSED_TRIAL_KEY)]
+    assert len(reused) == 2 and len(new) == 2
+    new_cost = sum(t.metrics["total_cost"] for t in new)
+    assert new_cost > 0
+    # Reused measured cost is in the study total on top of the new spend.
+    assert resumed.total_cost == pytest.approx(0.5 + new_cost)
     summary = resumed.metadata["resume"]
     assert summary["reused_known_cost"] == pytest.approx(0.5)
     assert summary["cost_charged_to_this_run_limit"] is False
-    # New (unmeasured) trials stay unknown; reused measured cost is canonical.
-    reused = [t for t in resumed.trials if t.metadata.get(REUSED_TRIAL_KEY)]
     assert all(t.metrics["total_cost"] == pytest.approx(0.25) for t in reused)
 
 
