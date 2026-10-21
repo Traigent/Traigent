@@ -83,6 +83,7 @@ from .models import (
     session_task_type_to_wire,
 )
 from traigent.utils.trial_costs import lift_cost_floor_to_body
+from traigent.cloud.wire_text import error_code_for_wire
 
 from .session_budgets import (
     ensure_cost_metric_for_budgeted_completed_submission,
@@ -2192,7 +2193,8 @@ class TraigentCloudClient(BaseTraigentClient):
             "metrics": result.metrics,
             "duration": result.duration,
             "status": result.status.value,
-            "error_message": result.error_message,
+            # Closed code only (#2241): the local result keeps the full text.
+            "error_message": error_code_for_wire(result.error_message),
             "metadata": result.metadata,
         }
 

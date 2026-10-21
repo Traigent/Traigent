@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from traigent.cloud.wire_text import WIRE_ERROR_CODES
 from traigent.cloud.api_operations import (
     _JSON_CONTENT_TYPE,
     AIOHTTP_AVAILABLE,
@@ -267,71 +268,46 @@ class TestSanitizeErrorMessage:
         """Test empty string returns None."""
         assert self.ops.sanitize_error_message("") is None
 
-    def test_api_key_redacted(self):
-        """Test API keys are redacted."""
-        msg = "Error with api_key=example-key-1234"
-        result = self.ops.sanitize_error_message(msg)
-        assert "example-key-1234" not in result
-        assert "[REDACTED]" in result
-
-    def test_token_redacted(self):
-        """Test tokens are redacted."""
-        msg = "Invalid token: eyJhbGciOiJIUzI1NiJ9"  # noqa: S105 - test JWT fragment
-        result = self.ops.sanitize_error_message(msg)
-        assert "[REDACTED]" in result
-
-    def test_password_redacted(self):
-        """Test passwords are redacted."""
-        msg = "password=secret123"
-        result = self.ops.sanitize_error_message(msg)
-        assert "[REDACTED]" in result
-
-    def test_home_path_redacted(self):
-        """Test home paths are redacted."""
-        msg = "Error in /home/username/secret/file.py"
-        result = self.ops.sanitize_error_message(msg)
-        assert "/home/username" not in result
-        assert "[PATH]" in result
-
-    def test_users_path_redacted(self):
-        """Test Users paths are redacted (macOS)."""
-        msg = "Error in /Users/username/secret/file.py"
-        result = self.ops.sanitize_error_message(msg)
-        assert "/Users/username" not in result
-        assert "[PATH]" in result
-
     @pytest.mark.parametrize(
         ("msg", "leaked"),
         [
+            ("Error with api_key=example-key-1234", "example-key-1234"),
+            ("Invalid token: eyJhbGciOiJIUzI1NiJ9", "eyJhbGciOiJIUzI1NiJ9"),
+            ("password=secret123", "secret123"),
+            ("Error in /home/username/secret/file.py", "username"),
+            ("Error in /Users/username/secret/file.py", "username"),
             ("auth failed: Authorization: Bearer abc123tokenvalue", "abc123tokenvalue"),
             ("header Authorization: Basic dXNlcjpwYXNz sent", "dXNlcjpwYXNz"),
-            ("got Bearer abc123tokenvalue here", "abc123tokenvalue"),
-            ("bearer short-tok", "short-tok"),
             ("connect password='hunter2' failed", "hunter2"),
-            ('connect password="hunter2" failed', "hunter2"),
-            ("connect pwd=hunter2 failed", "hunter2"),
-            ("connect passwd: hunter2 failed", "hunter2"),
-            ("PASSWORD='Hunter 2 x' failed", "Hunter 2"),
-            ("secret='s3cr3t' x", "s3cr3t"),
             ("client_secret=abcdef123", "abcdef123"),
-            ("access_key=AKIDEXAMPLE1", "AKIDEXAMPLE1"),
-            ("apikey: 'k-12345'", "k-12345"),
-            ('{"api_key": "k-12345"}', "k-12345"),
-            ("db_password=hunter2", "hunter2"),
             (r"Error in C:\Users\alice\proj\file.py", "alice"),
-            (r"Error in c:\users\Bob\x.py", "Bob"),
-            ("Error in C:/Users/alice/proj/file.py", "alice"),
+            (r"open C:\Users\alice\a\b.py failed", "alice"),
         ],
     )
-    def test_additional_secret_shapes_redacted(self, msg, leaked):
-        """Bearer/Authorization, quoted key-value secrets, Windows user paths."""
+    def test_error_text_never_sent_only_closed_code(self, msg, leaked):
+        """#2241: the wire carries a member of the closed list, never the text."""
         result = self.ops.sanitize_error_message(msg)
+        assert result in WIRE_ERROR_CODES
         assert leaked not in result
-        assert "REDACTED" in result or "[PATH]" in result
 
-    def test_windows_user_path_becomes_path_marker(self):
-        result = self.ops.sanitize_error_message(r"open C:\Users\alice\a\b.py failed")
-        assert result == "open [PATH] failed"
+    def test_canary_in_exception_text_never_reaches_wire_value(self):
+        canary = "CANARY_PROMPT_TEXT_zz91 and the model replied CANARY_REPLY_zz92"
+        result = self.ops.sanitize_error_message(f"ValueError: {canary}")
+        assert result == "trial_failed"
+        assert "CANARY" not in result
+
+    @pytest.mark.parametrize(
+        ("msg", "code"),
+        [
+            ("No examples succeeded (3 failed)", "no_examples_succeeded"),
+            ("Trial cancelled: cost limit reached", "trial_cancelled"),
+            ("trial_pruned", "trial_pruned"),
+            ("Rate limit hit for model x", "vendor_rate_limit"),
+            ("insufficient_quota", "vendor_quota_exhausted"),
+        ],
+    )
+    def test_known_failures_map_to_specific_codes(self, msg, code):
+        assert self.ops.sanitize_error_message(msg) == code
 
     def test_windows_user_path_with_space_in_name(self):
         result = self.ops.sanitize_error_message(
@@ -339,11 +315,11 @@ class TestSanitizeErrorMessage:
         )
         assert "John" not in result
         assert "Smith" not in result
-        assert "[PATH]" in result
+        assert result in WIRE_ERROR_CODES
 
     def test_sentence_without_path_untouched(self):
         msg = "The Users table is missing a column named John"
-        assert self.ops.sanitize_error_message(msg) == msg
+        assert self.ops.sanitize_error_message(msg) in WIRE_ERROR_CODES
 
     @pytest.mark.parametrize(
         "msg",
@@ -358,7 +334,8 @@ class TestSanitizeErrorMessage:
         ],
     )
     def test_ordinary_text_not_over_redacted(self, msg):
-        assert self.ops.sanitize_error_message(msg) == msg
+        result = self.ops.sanitize_error_message(msg)
+        assert result in WIRE_ERROR_CODES
 
     @pytest.mark.parametrize(
         ("msg", "leaked"),
@@ -398,7 +375,9 @@ class TestSanitizeErrorMessage:
         ],
     )
     def test_more_secret_shapes_redacted(self, msg, leaked):
-        assert leaked not in self.ops.sanitize_error_message(msg)
+        result = self.ops.sanitize_error_message(msg)
+        assert leaked not in result
+        assert result in WIRE_ERROR_CODES
 
     def test_basic_token_cut_by_input_cap_is_redacted(self):
         msg = " basic " + "ajpp" * 1025
@@ -408,11 +387,11 @@ class TestSanitizeErrorMessage:
         msg = "Authorization: " + "x" * 4067 + "\nBasic " + "ajpp" * 100
         out = self.ops.sanitize_error_message(msg)
         assert "ajp" not in out
-        assert out.endswith("Basic [REDACTED]")
+        assert out in WIRE_ERROR_CODES
 
     def test_basic_prose_before_long_text_is_unchanged(self):
         msg = "basic usage of the API " + "x" * 5000
-        assert self.ops.sanitize_error_message(msg).startswith("basic usage of the API")
+        assert self.ops.sanitize_error_message(msg) in WIRE_ERROR_CODES
 
     @pytest.mark.parametrize(
         "msg",
@@ -427,15 +406,15 @@ class TestSanitizeErrorMessage:
         ],
     )
     def test_error_codes_and_ids_survive(self, msg):
-        """Credential scrubbing must not eat numeric codes, ids or emails."""
-        assert self.ops.sanitize_error_message(msg) == msg
+        """#2241: numeric codes, ids and emails are not sent either; only the closed code is."""
+        assert self.ops.sanitize_error_message(msg) in WIRE_ERROR_CODES
 
     def test_windows_path_keeps_text_after_username(self):
         result = self.ops.sanitize_error_message(
             r"C:\Users\alice: not found code E1234"
         )
         assert "alice" not in result
-        assert result == "[PATH]: not found code E1234"
+        assert result in WIRE_ERROR_CODES
 
     @pytest.mark.parametrize(
         ("msg", "leaked"),
@@ -453,17 +432,20 @@ class TestSanitizeErrorMessage:
         ],
     )
     def test_full_authorization_value_redacted(self, msg, leaked):
-        assert leaked not in self.ops.sanitize_error_message(msg)
+        result = self.ops.sanitize_error_message(msg)
+        assert leaked not in result
+        assert result in WIRE_ERROR_CODES
 
     def test_credentials_cut_by_input_cap_are_redacted(self):
         msg = "https://alice:hunter2" + "x" * 5000 + "@host/path"
         result = self.ops.sanitize_error_message(msg)
         assert "hunter2" not in result
         assert "alice" not in result
+        assert result in WIRE_ERROR_CODES
 
     def test_short_url_without_userinfo_survives(self):
         msg = "GET https://example.com"
-        assert self.ops.sanitize_error_message(msg) == msg
+        assert self.ops.sanitize_error_message(msg) in WIRE_ERROR_CODES
 
     @pytest.mark.parametrize(
         "text",
@@ -478,17 +460,16 @@ class TestSanitizeErrorMessage:
         assert time.perf_counter() - start < 1.0
 
     def test_long_message_truncated(self):
-        """Test long messages are truncated."""
+        """Long text is never sent; the wire value is one closed code."""
         msg = "x" * 2000
         result = self.ops.sanitize_error_message(msg)
-        assert len(result) <= 1020  # 1000 + "[truncated]" suffix
-        assert "[truncated]" in result
+        assert result in WIRE_ERROR_CODES
 
     def test_normal_message_preserved(self):
         """Test normal message is preserved."""
         msg = "Normal error message"
         result = self.ops.sanitize_error_message(msg)
-        assert result == msg
+        assert result in WIRE_ERROR_CODES
 
 
 class TestCreateTraigentSessionViaApi:
@@ -1636,7 +1617,7 @@ class TestUpdateConfigRunStatusSuccess:
             assert result is True
 
         _, kwargs = mock_session.put.call_args
-        assert kwargs["json"]["error_message"] == "evaluator raised ValueError"
+        assert kwargs["json"]["error_message"] == "trial_failed"  # closed code (#2241)
         assert "error" not in kwargs["json"]
 
     @pytest.mark.asyncio

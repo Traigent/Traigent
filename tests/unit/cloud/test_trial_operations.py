@@ -254,11 +254,9 @@ class TestMeasuresDictValidationInSubmission:
             ]
             == 1
         )
+        # ``thresholds`` is free-form config, not allowlisted, so it does not cross (#2241).
         assert (
-            result_data["metadata"]["surrogate_evaluator"]["config"]["thresholds"][
-                "minimum"
-            ]
-            == 0.2
+            "thresholds" not in result_data["metadata"]["surrogate_evaluator"]["config"]
         )
 
     @pytest.mark.asyncio

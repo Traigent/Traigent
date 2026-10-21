@@ -527,7 +527,8 @@ class TestTrialOperations:
         # Check submission
         submitted_data = mock_session.post.call_args[1]["json"]
         assert submitted_data["status"] == "failed"
-        assert submitted_data["error_message"] == "Connection timeout"
+        # Closed code only on the wire; the text stays local (#2241).
+        assert submitted_data["error_message"] == "trial_failed"
 
 
 class TestFinalization:

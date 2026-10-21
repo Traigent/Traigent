@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Trial error text and three metadata maps now cross to the backend as closed codes and allowlisted keys (#2241).** `error_message` on trial submission and config-run status is reduced to one fixed code (for example `trial_failed` or `no_examples_succeeded`); the full text stays on the local result. `metadata.agent_configuration`, `metadata.surrogate_evaluator` and `summary_stats.metadata` are rebuilt from a key allowlist, so unlisted keys and judge prompts no longer leave the SDK.
 - **TVL derived constraints are documented as per-trial only; the loader warns when a spec relies on `environment.context` (#1618).** `load_tvl_spec` emits one value-free warning naming the derived constraint ids; `docs/tvl/CONSTRAINT_EXPRESSIONS.md` states the rule.
 - **Keyless quickstart is labelled a plumbing check, with no fake winner (#1690).** `traigent quickstart` now ends with a message saying the run used a mock LLM and simulated scores, is not a model comparison, and found no best configuration; the `best config ... scored 0.850` line is gone. Achievements stay blocked in mock runs.
 - **Run-group table across runs (#1711, slice 1).** `client.experiment_groups.table(group_id, project_id)`

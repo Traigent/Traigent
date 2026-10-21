@@ -235,7 +235,8 @@ class TestBuildBackendMetadataBasic:
             "accuracy": 0.85,
             "surrogate_score": 0.5,
         }
-        assert metadata["summary_stats"]["metadata"]["source"]["batch"] == 1
+        # Nested free-form dict: not allowlisted, so it no longer crosses (#2241).
+        assert "source" not in metadata["summary_stats"]["metadata"]
         assert metadata["summary_stats"]["metadata"]["aggregation_summary"][
             "metrics"
         ] == {
@@ -246,7 +247,8 @@ class TestBuildBackendMetadataBasic:
             metadata["comparability"]["per_metric_coverage"]["accuracy"]["present"] == 1
         )
         assert metadata["comparability"]["warning_codes"] == []
-        assert metadata["surrogate_evaluator"]["config"]["thresholds"]["minimum"] == 0.2
+        # ``thresholds`` is free-form config, not allowlisted, so it does not cross (#2241).
+        assert "thresholds" not in metadata["surrogate_evaluator"]["config"]
         assert "nested_metric" not in metadata
         assert metadata["surrogate_score"] == 0.5
         assert "new_metric" not in metadata["all_metrics"]
@@ -333,7 +335,8 @@ class TestBuildBackendMetadataSummaryStats:
         metadata = build_backend_metadata(mock_trial_result, "accuracy", mock_config)
 
         summary_meta = metadata["summary_stats"]["metadata"]
-        assert "existing" in summary_meta
+        # Unlisted keys no longer pass through (#2241).
+        assert "existing" not in summary_meta
         assert summary_meta["aggregation_level"] == "trial"
 
 
@@ -454,7 +457,11 @@ class TestBuildBackendMetadataSurrogateDescriptor:
 
         metadata = build_backend_metadata(mock_trial_result, "accuracy", mock_config)
 
-        assert metadata["surrogate_evaluator"] == self._DESCRIPTOR
+        # ``prompt`` is judge text (customer content): dropped by the allowlist (#2241).
+        assert metadata["surrogate_evaluator"] == {
+            k: v for k, v in self._DESCRIPTOR.items() if k != "prompt"
+        }
+        assert "prompt" not in metadata["surrogate_evaluator"]
 
     def test_descriptor_absent_when_unconfigured(self, mock_trial_result, mock_config):
         """No surrogate configured -> key absent (protects byte-identical payload)."""
