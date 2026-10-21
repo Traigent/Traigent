@@ -202,3 +202,28 @@ def test_choice_list_still_rejects_between_values_across_rounds(mgr):
     mgr.save_result(_result(best_config={"t": 0.5}, space={"t": [0, 1]}), name="a")
     with pytest.raises(ValueError, match="outside"):
         mgr.load_result("a")
+
+
+@pytest.mark.parametrize(
+    "bad", ["../x", "/etc/passwd", "sub/x", "..\\x", "unexpected.json"]
+)
+def test_manifest_entry_outside_allowlist_rejected_without_echo(mgr, tmp_path, bad):
+    mgr.save_result(_result(), name="r")
+    mpath = tmp_path / "r" / MANIFEST
+    payload = json.loads(mpath.read_text())
+    payload["sha256"][bad] = "0" * 64
+    mpath.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="not allowed") as exc:
+        mgr.load_result("r")
+    assert bad not in str(exc.value)
+    assert str(tmp_path) not in str(exc.value)
+
+
+def test_write_manifest_rejects_non_allowlisted_name(tmp_path):
+    from traigent.utils.file_versioning import write_integrity_manifest
+
+    (tmp_path / "other.txt").write_text("x")
+    with pytest.raises(ValueError, match="not allowed"):
+        write_integrity_manifest(tmp_path, ["other.txt"])
+    with pytest.raises(ValueError, match="not allowed"):
+        write_integrity_manifest(tmp_path, ["../other.txt"])

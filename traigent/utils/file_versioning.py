@@ -78,10 +78,39 @@ LEGACY_PATTERNS = {
 INTEGRITY_MANIFEST_FILE = "integrity.sha256.json"
 
 
-def sha256_file(path: Path) -> str:
-    """Hex sha256 of a file's bytes (same digest the run manifests use)."""
+INTEGRITY_ALLOWED_FILES = frozenset({"metadata.json", "trials.json.gz"})
+
+
+def _integrity_child(directory: Path, name: object) -> Path:
+    """Resolve ``name`` to a direct child of ``directory`` or raise.
+
+    Only allowlisted plain basenames are accepted, so a manifest edited on
+    disk cannot make a load read files outside the result directory. Error
+    messages never echo the offending name.
+    """
+    invalid = ValueError("Integrity manifest names a file that is not allowed")
+    if (
+        not isinstance(name, str)
+        or name not in INTEGRITY_ALLOWED_FILES
+        or name != os.path.basename(name)
+        or "/" in name
+        or "\\" in name
+        or ".." in name
+        or Path(name).is_absolute()
+    ):
+        raise invalid
+    root = directory.resolve()
+    target = (root / name).resolve()
+    if target.parent != root:
+        raise invalid
+    return target
+
+
+def sha256_file(directory: Path, name: str) -> str:
+    """Hex sha256 of an allowlisted result file inside ``directory``."""
+    target = _integrity_child(directory, name)
     digest = hashlib.sha256()
-    with open(path, "rb") as f:
+    with open(target, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
@@ -95,7 +124,7 @@ def write_integrity_manifest(directory: Path, filenames: list[str]) -> None:
     """
     payload = {
         "version": 1,
-        "sha256": {name: sha256_file(directory / name) for name in filenames},
+        "sha256": {name: sha256_file(directory, name) for name in filenames},
     }
     tmp = directory / (INTEGRITY_MANIFEST_FILE + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
@@ -124,18 +153,20 @@ def verify_integrity_manifest(directory: Path, required: list[str]) -> bool:
             raise TypeError
     except (OSError, ValueError, KeyError, TypeError):
         raise ValueError("Integrity manifest is unreadable") from None
+    for name in listed:
+        _integrity_child(directory, name)
     if any(name not in listed for name in required):
         raise ValueError("Integrity manifest does not cover all result files")
     for name, expected in listed.items():
         if name not in required:
             continue
-        target = directory / name
+        target = _integrity_child(directory, name)
         if not target.is_file():
             raise ValueError(
                 "A result file listed in the integrity manifest is missing"
             )
         try:
-            actual = sha256_file(target)
+            actual = sha256_file(directory, name)
         except OSError:
             raise ValueError(
                 "A result file could not be read for verification"
