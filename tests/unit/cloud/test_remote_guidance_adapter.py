@@ -219,7 +219,6 @@ class TestAdapterDelegation:
             metrics={"accuracy": 0.93, "latency": 0.21},
             duration=2.5,
             status=TrialStatus.COMPLETED,
-            outputs_sample=["ok"],
             error_message=None,
             metadata={"note": "n=3"},
         )
@@ -235,7 +234,6 @@ class TestAdapterDelegation:
             metrics={"accuracy": 0.93, "latency": 0.21},
             duration=2.5,
             status="completed",
-            outputs_sample=["ok"],
             error_message=None,
             metadata={"note": "n=3"},
         )

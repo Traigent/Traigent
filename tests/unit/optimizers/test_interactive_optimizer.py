@@ -339,6 +339,50 @@ class TestInteractiveOptimizer:
         assert "trial-001" not in optimizer._pending_trials
 
     @pytest.mark.asyncio
+    async def test_report_results_rejects_outputs_sample(
+        self, optimizer, mock_remote_service
+    ):
+        """Model outputs are customer content; the parameter no longer exists (#2239)."""
+        optimizer.session_id = "session-123"
+        with pytest.raises(TypeError):
+            await optimizer.report_results(
+                trial_id="trial-001",
+                metrics={"accuracy": 0.85},
+                duration=1.0,
+                outputs_sample=["model output"],
+            )
+        mock_remote_service.submit_result.assert_not_called()
+
+    def test_trial_result_wire_payload_has_no_outputs_sample(self):
+        """Canary: the real serializer never emits outputs_sample anywhere (#2239)."""
+        import json
+
+        from traigent.cloud.client import TraigentCloudClient
+        from traigent.cloud.models import TrialResultSubmission
+
+        cloud = TraigentCloudClient.__new__(TraigentCloudClient)
+        payload = cloud._serialize_trial_result(
+            TrialResultSubmission(
+                session_id="s",
+                trial_id="t",
+                metrics={"accuracy": 0.5},
+                duration=0.1,
+                status=TrialStatus.COMPLETED,
+                metadata={"k": "v"},
+            )
+        )
+        assert "outputs_sample" not in json.dumps(payload)
+        with pytest.raises(TypeError):
+            TrialResultSubmission(
+                session_id="s",
+                trial_id="t",
+                metrics={},
+                duration=0.1,
+                status=TrialStatus.COMPLETED,
+                outputs_sample=["x"],
+            )
+
+    @pytest.mark.asyncio
     async def test_report_results_no_session(self, optimizer):
         """Test reporting results without session raises error."""
         with pytest.raises(OptimizationError, match="No active session"):

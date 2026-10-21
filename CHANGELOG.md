@@ -158,6 +158,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- **BREAKING: `outputs_sample` removed from `InteractiveOptimizer.report_results`
+  and the trial-result payload (#2239).** Model outputs are customer content and
+  are never sent to the backend. Passing `outputs_sample=` now raises
+  `TypeError`; drop the argument. The SDK no longer puts `outputs_sample` on
+  the wire.
+
 - **Candidate runs (`optimize(apply=False)`) are temporarily withdrawn.** Their
   config isolation was not provably consistent under concurrent config
   changes. `apply=False` now raises `ConfigurationError` immediately in every

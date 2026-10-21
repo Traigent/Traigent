@@ -637,7 +637,6 @@ class TestSerialization:
             metrics={"accuracy": 0.85},
             duration=45.2,
             status=TrialStatus.COMPLETED,
-            outputs_sample=["output1", "output2"],
             error_message=None,
             metadata={"key": "value"},
         )
@@ -649,7 +648,7 @@ class TestSerialization:
         assert serialized["metrics"]["accuracy"] == 0.85
         assert serialized["duration"] == 45.2
         assert serialized["status"] == "completed"
-        assert serialized["outputs_sample"] == ["output1", "output2"]
+        assert "outputs_sample" not in serialized
         assert serialized["metadata"]["key"] == "value"
 
     def test_deserialize_next_trial_response(self, cloud_client):

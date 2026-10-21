@@ -24,6 +24,14 @@
    "kind": "evaluator_id",
    "reason": "Phase 3 group 1 (identity): an opt-in content-less session create (capability content_less_v1) evaluator_id/evaluator_definition_id are stripped from the content-less create; the evaluator is named by evaluator_ref (CHECKLIST S1 req.evaluator_id).",
    "reference": "traigent/cloud/content_less.py:83"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.outputs_sample[0]",
+   "kind": "model_output",
+   "reason": "outputs_sample removed from the SDK (issue #2239, owner card security-policy-2026-10-21-sdk-2239-outputs-sample answered A): model outputs are customer content and the trial-result serializer no longer has the field.",
+   "reference": "traigent/cloud/client.py:2181"
   }
  ]
 }

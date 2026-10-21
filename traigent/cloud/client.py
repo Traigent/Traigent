@@ -557,7 +557,6 @@ class BaseTraigentClient(ABC):
         metrics: dict[str, float],
         duration: float,
         status: str = "completed",
-        outputs_sample: list[Any] | None = None,
         error_message: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
@@ -569,7 +568,6 @@ class BaseTraigentClient(ABC):
             metrics: Evaluation metrics
             duration: Execution duration
             status: Trial status (completed, failed, skipped)
-            outputs_sample: Optional sample of outputs
             error_message: Error message if failed
             metadata: Additional metadata
 
@@ -1889,7 +1887,6 @@ class TraigentCloudClient(BaseTraigentClient):
         metrics: dict[str, float],
         duration: float,
         status: str = "completed",
-        outputs_sample: list[Any] | None = None,
         error_message: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
@@ -1901,7 +1898,6 @@ class TraigentCloudClient(BaseTraigentClient):
             metrics: Computed metrics
             duration: Execution duration in seconds
             status: Trial status (completed, failed, skipped)
-            outputs_sample: Optional sample of outputs
             error_message: Error message if failed
             metadata: Additional metadata
 
@@ -1924,7 +1920,6 @@ class TraigentCloudClient(BaseTraigentClient):
             metrics=metrics,
             duration=duration,
             status=trial_status,
-            outputs_sample=outputs_sample,
             error_message=error_message,
             metadata=metadata or {},
         )
@@ -2181,14 +2176,17 @@ class TraigentCloudClient(BaseTraigentClient):
         )
 
     def _serialize_trial_result(self, result: TrialResultSubmission) -> dict[str, Any]:
-        """Serialize trial result submission."""
+        """Serialize trial result submission.
+
+        Model outputs are customer content: the legacy ``outputs_sample`` field is
+        never serialized (#2239).
+        """
         return {
             "session_id": result.session_id,
             "trial_id": result.trial_id,
             "metrics": result.metrics,
             "duration": result.duration,
             "status": result.status.value,
-            "outputs_sample": result.outputs_sample,
             "error_message": result.error_message,
             "metadata": result.metadata,
         }
@@ -2241,7 +2239,6 @@ class TraigentCloudClient(BaseTraigentClient):
             status=_coerce_enum(
                 TrialStatus, data["status"], fallback=TrialStatus.UNKNOWN
             ),
-            outputs_sample=data.get("outputs_sample"),
             error_message=data.get("error_message"),
             metadata=data.get("metadata", {}),
         )
