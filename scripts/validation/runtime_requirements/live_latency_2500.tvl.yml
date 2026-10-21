@@ -1,0 +1,14 @@
+tvl_version: "1.3"
+requirements:
+  - { name: latency_2500, kind: rate_bound, unit: trace,
+      violation: { metric: wall_clock_latency_ms, exceeds: 2500 }, max_rate: 0.05 }
+monitors:
+  - { name: latency_2500_prod, requirement: latency_2500, phase: runtime, profile: backend_v1,
+      evidence: { source: backend_trace_metadata, deployment_environment: production },
+      window: { tumbling_hours: 1 },
+      decision: { method: clopper_pearson_exact_v1, min_samples: 100 } }
+responses:
+  - name: latency_ladder
+    rules:
+      - { id: alert, trigger: { monitor: latency_2500_prod, event: episode_opened }, do: notify, severity: warning }
+      - { id: ok, trigger: { monitor: latency_2500_prod, event: episode_resolved }, do: notify, severity: info }

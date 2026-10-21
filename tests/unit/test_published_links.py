@@ -24,7 +24,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Repositories under github.com/Traigent that return 200 to an anonymous request.
 # Lowercase; GitHub owner/repo names are case-insensitive.
-PUBLIC_GITHUB_REPOS = frozenset({"traigent", "traigent-skills", "traigentschema"})
+PUBLIC_GITHUB_REPOS = frozenset(
+    {"traigent", "traigent-skills", "traigentschema", "tvl"}
+)
 
 DEAD_HOST_PATTERNS = (
     re.compile(r"docs\.traigent\.(?:ai|com|io)", re.IGNORECASE),

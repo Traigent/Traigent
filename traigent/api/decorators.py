@@ -3578,6 +3578,11 @@ def optimize(  # NOSONAR(S107)
         optimized_func.external_service_evaluator = external_service_evaluator
         optimized_func.hybrid_api_options = hybrid_api_options
         optimized_func.offline = execution_policy.offline
+        # ``@traigent.requirement`` applied below ``@optimize`` stores its
+        # declarations on the raw function; carry them to the wrapper.
+        _declared_requirements = getattr(func, "requirements", None)
+        if _declared_requirements is not None:
+            optimized_func.requirements = _declared_requirements
         # Surrogate (pre-screen) scorer: read via getattr by the evaluator
         # factory (_create_effective_evaluator). Absent when unconfigured, so the
         # no-surrogate path stays byte-identical.

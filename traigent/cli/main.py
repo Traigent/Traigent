@@ -2903,6 +2903,10 @@ from traigent.cli.onboard_commands import first_prompt, onboard  # noqa: E402
 cli.add_command(onboard)
 cli.add_command(first_prompt)
 
+from traigent.cli.requirements_commands import requirements  # noqa: E402
+
+cli.add_command(requirements)
+
 from traigent.cli.doctor_command import doctor  # noqa: E402
 
 cli.add_command(doctor)
