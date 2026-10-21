@@ -456,3 +456,40 @@ async def test_optional_cloud_finalize_failure_still_returns_result(
         orchestrator, result, "session-finalize", None
     )
     assert result.metadata["persistence_status"] == "failed"
+
+
+def test_finalize_retry_warning_carries_status_never_message_text(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A 429 retry warning logs class and HTTP status, never the message text."""
+    sentinel = "SECRET_SERVER_TEXT_429"
+    calls = 0
+
+    def finalize(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise _HTTPError(429, sentinel)
+        return {"status": "completed", "metadata": {"finalized_via_api": True}}
+
+    monkeypatch.setattr(
+        "traigent.core.backend_session_manager.time.sleep", lambda _delay: None
+    )
+    config = _config(monkeypatch)
+    client = _backend_client(finalize)
+    manager = _manager(config, client)
+
+    caplog.set_level(logging.DEBUG)
+    manager.finalize_session("session-finalize", OptimizationStatus.COMPLETED)
+
+    assert calls == 2
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING and "retrying" in record.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert "429" in warnings[0]
+    assert "_HTTPError" in warnings[0]
+    assert sentinel not in caplog.text

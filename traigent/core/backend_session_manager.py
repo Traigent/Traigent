@@ -163,6 +163,22 @@ def _status_from_exception(exc: BaseException) -> int | None:
     return None
 
 
+def _log_safe_http_status(exc: BaseException) -> int | None:
+    """Numeric HTTP status from exception attributes only, never message text."""
+    response = getattr(exc, "response", None)
+    candidates = (
+        getattr(exc, "status", None),
+        getattr(exc, "status_code", None),
+        getattr(response, "status_code", None),
+        getattr(response, "status", None),
+    )
+    for value in candidates:
+        if isinstance(value, int) and not isinstance(value, bool):
+            if 100 <= value <= 599:
+                return value
+    return None
+
+
 def _is_transient_finalize_error(exc: BaseException) -> bool:
     if isinstance(exc, _BackendFinalizeNotAcknowledgedError):
         return True
@@ -3401,14 +3417,17 @@ class BackendSessionManager:
                 delay = _FINALIZE_BACKOFF_SECONDS[
                     min(attempt - 1, len(_FINALIZE_BACKOFF_SECONDS) - 1)
                 ]
+                http_status = _log_safe_http_status(exc)
+                status_part = "" if http_status is None else f" (HTTP {http_status})"
                 logger.warning(
                     "Backend session finalize failed transiently for session %s "
-                    "(attempt %s/%s); retrying in %.1fs: %s",
+                    "(attempt %s/%s); retrying in %.1fs: %s%s",
                     session_id,
                     attempt,
                     _FINALIZE_MAX_ATTEMPTS,
                     delay,
-                    type(exc).__name__,  # class only: server text can echo content
+                    type(exc).__name__,  # class + status only: never message text
+                    status_part,
                 )
                 time.sleep(delay)
 

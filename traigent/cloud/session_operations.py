@@ -1676,7 +1676,8 @@ class SessionOperations:
                         )
                         return None
         except Exception as e:
-            logger.debug(f"Error calling backend finalization API: {e}")
+            # Class name only: the exception text can echo server/client content.
+            logger.debug("Error calling backend finalization API: %s", type(e).__name__)
             return None
 
     async def delete_session(self, session_id: str, cascade: bool = True) -> bool:
