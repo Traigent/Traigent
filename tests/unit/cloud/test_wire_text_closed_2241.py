@@ -9,7 +9,7 @@ import pytest
 
 from traigent.api.types import AgentConfiguration, AgentDefinition, AgentMeta
 from traigent.cloud.trial_operations import TrialOperations
-from traigent.cloud.wire_text import (
+from traigent.utils.wire_text import (
     WIRE_ERROR_CODES,
     error_code_for_wire,
     filter_agent_configuration,

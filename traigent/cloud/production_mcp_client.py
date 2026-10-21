@@ -82,7 +82,7 @@ from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
 from traigent.utils.retry import NetworkError, RetryConfig, RetryHandler, RetryStrategy
 from traigent.utils.validation import CoreValidators, validate_or_raise
-from traigent.cloud.wire_text import error_code_for_wire, filter_wire_metadata
+from traigent.utils.wire_text import error_code_for_wire, filter_wire_metadata
 
 from .backend_bridges import bridge
 from .models import AgentSpecification, OptimizationRequest

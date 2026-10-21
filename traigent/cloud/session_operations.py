@@ -34,7 +34,7 @@ from traigent.cloud.models import (
     SessionCreationRequest,
     declared_dataset_identity,
 )
-from traigent.cloud.wire_text import filter_wire_metadata
+from traigent.utils.wire_text import filter_wire_metadata
 from traigent.cloud.session_types import (
     SessionCreationFailureDetail,
     SessionCreationFailureReason,

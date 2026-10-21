@@ -490,7 +490,15 @@ class AnalyticsClientError(RuntimeError):
     Transport errors (connection failures, non-2xx status) are surfaced as the
     underlying :class:`httpx.HTTPError` so callers can distinguish "the backend
     said no" from "the backend lied about the shape".
+
+    ``status_code`` carries the HTTP status when one is known. It is a closed
+    integer field, so the message text can stay a constant (no response body
+    or request detail is echoed).
     """
+
+    def __init__(self, message: str = "", *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def _require_object(payload: Any, *, what: str) -> dict[str, Any]:

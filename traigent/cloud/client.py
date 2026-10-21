@@ -83,7 +83,7 @@ from .models import (
     session_task_type_to_wire,
 )
 from traigent.utils.trial_costs import lift_cost_floor_to_body
-from traigent.cloud.wire_text import error_code_for_wire, filter_wire_metadata
+from traigent.utils.wire_text import error_code_for_wire, filter_wire_metadata
 
 from .session_budgets import (
     ensure_cost_metric_for_budgeted_completed_submission,

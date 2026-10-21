@@ -13,7 +13,7 @@ from traigent.labels.transport_gate import gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.client import raise_if_cloud_egress_disabled
 from traigent.cloud.url_security import validate_cloud_base_url
-from traigent.cloud.wire_text import filter_wire_metadata
+from traigent.utils.wire_text import filter_wire_metadata
 from traigent.core.session_types import safe_http_error_summary
 
 logger = logging.getLogger(__name__)

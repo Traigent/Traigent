@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from traigent.cloud.wire_text import WIRE_ERROR_CODES
+from traigent.utils.wire_text import WIRE_ERROR_CODES
 from traigent.cloud.api_operations import (
     _JSON_CONTENT_TYPE,
     AIOHTTP_AVAILABLE,

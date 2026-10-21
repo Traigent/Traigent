@@ -27,7 +27,7 @@ from traigent.cloud.client import (
     raise_if_cloud_egress_disabled,
 )
 from traigent.cloud.dtos import MeasuresDict
-from traigent.cloud.wire_text import (
+from traigent.utils.wire_text import (
     filter_summary_stats,
     filter_summary_stats_metadata,
     filter_wire_metadata,

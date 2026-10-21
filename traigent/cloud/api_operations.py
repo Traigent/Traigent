@@ -20,7 +20,7 @@ from traigent.cloud.client import (
     raise_if_cloud_egress_disabled,
 )
 from traigent.cloud import content_less as content_less_session
-from traigent.cloud.wire_text import filter_wire_metadata
+from traigent.utils.wire_text import filter_wire_metadata
 from traigent.cloud.governance import promotion_policy_to_wire, tvl_governance_to_wire
 from traigent.cloud.models import (
     AgentExecutionRequest,
@@ -435,7 +435,7 @@ class ApiOperations:
 
         # Closed code only (#2241): the text may quote a prompt or a model
         # reply, and scrubbing is best effort, so none of it is sent.
-        from traigent.cloud.wire_text import error_code_for_wire
+        from traigent.utils.wire_text import error_code_for_wire
 
         return error_code_for_wire(error_message)
 

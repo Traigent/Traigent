@@ -222,7 +222,8 @@ async def test_auth_error_is_value_free() -> None:
     ns, _ = _namespace([err])
     with pytest.raises(AnalyticsClientError) as info:
         await ns.table("grp_1", "proj_abc")
-    assert "401" in str(info.value)
+    assert info.value.status_code == 401
+    assert "401" not in str(info.value)
     assert "secret-path" not in str(info.value)
     assert "abc" not in str(info.value)
 

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent._version import get_version
-from traigent.cloud.wire_text import filter_agent_configuration
+from traigent.utils.wire_text import filter_agent_configuration
 from traigent.api.types import (
     AgentConfiguration,
     OptimizationResult,

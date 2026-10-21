@@ -9,7 +9,7 @@ from collections.abc import Iterator
 from urllib import error, request
 from urllib.parse import quote, urlencode
 
-from traigent.cloud.wire_text import filter_wire_metadata
+from traigent.utils.wire_text import filter_wire_metadata
 from traigent.evaluation.config import EvaluationConfig
 from traigent.evaluation.dtos import (
     AnnotationQueueDTO,

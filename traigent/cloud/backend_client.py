@@ -924,9 +924,9 @@ class ExperimentGroupsNamespace:
             raise
         except Exception as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
-            detail = f"HTTP {status}" if isinstance(status, int) else "transport error"
             raise AnalyticsClientError(
-                f"run group table request failed ({detail})"
+                "run group table request failed",
+                status_code=status if isinstance(status, int) else None,
             ) from None
         return RunGroupTable(group_id=group_id, rows=rows, truncated=truncated)
 

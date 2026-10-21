@@ -9,7 +9,7 @@ from typing import Any, cast
 
 from traigent._version import get_version
 from traigent.api.types import OptimizationResult, TrialResult
-from traigent.cloud.wire_text import (
+from traigent.utils.wire_text import (
     filter_summary_stats_metadata,
     filter_surrogate_evaluator,
 )
