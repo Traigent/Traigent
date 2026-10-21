@@ -50,7 +50,7 @@ DATASETS = Path(__file__).parent.parent / "datasets"
 OBJECTIVES = ["accuracy", "cost"]
 # Valid model names: https://models.litellm.ai/
 CONFIG_SPACE = {
-    "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+    "model": ["gpt-4.1-mini", "gpt-4.1"],
     "temperature": [0.0, 0.2, 0.5],
     "style": ["verbose", "concise", "documented"],
 }
@@ -64,7 +64,7 @@ def get_judge_llm() -> ChatOpenAI:
     """Get or create the judge LLM (singleton for efficiency)."""
     global _judge_llm
     if _judge_llm is None:
-        _judge_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+        _judge_llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0)
     return _judge_llm
 
 
@@ -179,7 +179,7 @@ def generate_code(task: str) -> str:
     }
 
     llm = ChatOpenAI(
-        model=config.get("model", "gpt-3.5-turbo"),
+        model=config.get("model", "gpt-4.1-mini"),
         temperature=config.get("temperature", 0.2),
     )
 

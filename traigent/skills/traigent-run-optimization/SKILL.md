@@ -173,8 +173,9 @@ gate. It proceeds with a warning for unpriced models; it does not add pricing
 coverage. Without pre-approval, unpriced models block before trial 1: interactive
 shells show a `y/N` prompt, and non-interactive shells fail closed.
 
-Mock LLM mode skips the optimized-function pricing preflight because no provider
-spend occurs, but it is not a global `CostEnforcer` bypass.
+Mock LLM mode still runs the cost-approval and pricing preflights, because raw
+provider calls can reach real providers under the mock flag. Pre-approve a keyless
+demo with `cost_approved=True` or `TRAIGENT_COST_APPROVED=true`.
 
 ### Strict Cost Accounting
 

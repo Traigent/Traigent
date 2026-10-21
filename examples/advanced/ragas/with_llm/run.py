@@ -51,7 +51,7 @@ _METRIC_FUNCTIONS: dict[str, Callable[..., float]] | None = None
 if _RAGAS_READY and not _MOCK_MODE:
     if not os.getenv("OPENAI_API_KEY"):
         raise SystemExit("Set OPENAI_API_KEY to run this example.")
-    ragas_llm = LangchainLLM(ChatOpenAI(model="gpt-4o-mini", temperature=0.0))
+    ragas_llm = LangchainLLM(ChatOpenAI(model="gpt-4.1-mini", temperature=0.0))
 elif _MOCK_MODE:
     # Force fallback to deterministic metrics in mock mode
     _RAGAS_READY = False

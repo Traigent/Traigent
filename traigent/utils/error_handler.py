@@ -46,15 +46,84 @@ class DependencyError(TraigentError):
         )
 
 
-class APIKeyError(TraigentError):
-    """Error for missing or invalid API keys."""
+_SAFE_CLASS_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 
-    def __init__(self, key_name: str) -> None:
+
+def _classify_credential_error(error: BaseException) -> str:
+    """Map a credential failure to a closed category without echoing its text."""
+    text = str(error).lower()
+    if any(t in text for t in ("permission", "forbidden", "not authorized", "403")):
+        return "permission"
+    if any(
+        t in text
+        for t in ("missing", "not set", "no api key", "must be set", "required")
+    ):
+        return "missing-key"
+    if any(
+        t in text
+        for t in ("invalid", "incorrect", "authentication", "unauthorized", "401")
+    ):
+        return "auth"
+    return "unknown"
+
+
+class APIKeyError(TraigentError):
+    """Error for missing or invalid API keys.
+
+    Pass ``key_name`` for the classic "add KEY to your .env" form, or pass
+    ``message`` (and optionally ``fix``) for a fully formed explanation. A
+    message is never treated as a key name (Traigent#2417).
+    """
+
+    def __init__(
+        self,
+        key_name: str | None = None,
+        *,
+        message: str | None = None,
+        fix: str | None = None,
+    ) -> None:
+        if message is None:
+            name = key_name or "API key"
+            message = f"Missing or invalid API key: {name}"
+            if fix is None:
+                fix = f"Add {name} to your .env file or set as environment variable"
         super().__init__(
-            message=f"Missing or invalid API key: {key_name}",
-            fix=f"Add {key_name} to your .env file or set as environment variable",
-            docs_link="https://github.com/Traigent/Traigent#configuration",
+            message=message,
+            fix=fix,
+            docs_link="https://github.com/Traigent/Traigent#troubleshooting",
         )
+
+    @classmethod
+    def from_provider_error(cls, error: BaseException) -> "APIKeyError":
+        """Build the error for a credential failure raised by user code."""
+        from traigent.utils.env_config import is_mock_llm
+
+        # Never interpolate the exception text: it can carry a rejected key,
+        # prompt text or a file path. Only the exception class name and a
+        # closed category derived from the text are reported; the original
+        # exception stays chained (``raise ... from error``) for local debugging.
+        category = _classify_credential_error(error)
+        class_name = type(error).__name__
+        if not _SAFE_CLASS_NAME.fullmatch(class_name):
+            class_name = "Exception"
+        message = (
+            "API key error detected "
+            f"(category: {category}, error type: {class_name}). "
+            "Details are withheld; see the chained exception for the original error."
+        )
+        if is_mock_llm():
+            fix = (
+                "Mock mode (TRAIGENT_MOCK_LLM) is already on, but this client checks "
+                "for a key when it is constructed, before mock interception can "
+                "run. Set a placeholder key (for example OPENAI_API_KEY=mock-key), "
+                "route the call through LiteLLM, or stub the client."
+            )
+        else:
+            fix = (
+                "Set the required API key environment variable, or use "
+                "TRAIGENT_MOCK_LLM=true for testing."
+            )
+        return cls(message=message, fix=fix)
 
 
 class ConfigurationError(TraigentError):
@@ -64,7 +133,7 @@ class ConfigurationError(TraigentError):
         super().__init__(
             message=f"Invalid configuration for '{param}': {issue}",
             fix="Check the configuration_space parameter in @traigent.optimize()",
-            docs_link="https://github.com/Traigent/Traigent#configuration-space",
+            docs_link="https://github.com/Traigent/Traigent#using-it-in-your-own-code",
         )
 
 
@@ -94,7 +163,7 @@ class OfflineModeError(TraigentError):
                 "— no data is sent to the Traigent backend."
             ),
             fix="Unset TRAIGENT_OFFLINE_MODE (or set it to 'false') to allow backend communication.",
-            docs_link="https://github.com/Traigent/Traigent#offline-mode",
+            docs_link="https://github.com/Traigent/Traigent#optimization-routing",
         )
 
 
@@ -175,7 +244,7 @@ class ErrorHandler:
                     raise TraigentError(
                         message=f"Cannot import {module_name}",
                         fix=f"Try: pip install {module_name}",
-                        docs_link="https://github.com/Traigent/Traigent#dependencies",
+                        docs_link="https://github.com/Traigent/Traigent#installation",
                     ) from error
 
     @classmethod
@@ -194,7 +263,7 @@ class ErrorHandler:
             raise TraigentError(
                 message="API authentication failed",
                 fix="Check your API keys in .env file",
-                docs_link="https://github.com/Traigent/Traigent#api-keys",
+                docs_link="https://github.com/Traigent/Traigent#troubleshooting",
             ) from error
 
     @classmethod
@@ -208,9 +277,9 @@ class ErrorHandler:
         ):
             raise TraigentError(
                 message="Cannot connect to Traigent backend",
-                fix="1. Start backend: cd backend && python app.py\n"
+                fix="1. Start your Traigent backend service\n"
                 "   2. Or use offline mode: TRAIGENT_OFFLINE_MODE=true",
-                docs_link="https://github.com/Traigent/Traigent#backend-setup",
+                docs_link="https://github.com/Traigent/Traigent#troubleshooting",
             ) from error
         else:
             raise TraigentError(
@@ -227,7 +296,7 @@ class ErrorHandler:
             fix="1. Check file permissions\n"
             "   2. Run in virtual environment\n"
             "   3. Use --user flag: pip install --user",
-            docs_link="https://github.com/Traigent/Traigent#permissions",
+            docs_link="https://github.com/Traigent/Traigent#troubleshooting",
         ) from error
 
     @classmethod

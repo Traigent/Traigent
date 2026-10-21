@@ -81,7 +81,7 @@ def _calc_accuracy(
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.0, 0.2],
     },
     eval_dataset=DATASET,
@@ -91,7 +91,7 @@ def _calc_accuracy(
     max_trials=10,
 )
 def calculate(expression: str) -> str:
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.0)
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
     prompt = f"""
 You are a calculator. Compute the exact numeric result of the expression.
 Return a JSON object with keys: formula (string), result (number), explanation (string).

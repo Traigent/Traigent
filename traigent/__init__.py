@@ -69,6 +69,13 @@ def _is_truthy_env(value: str | None) -> bool:
 # bundled tables by default; TRAIGENT_LITELLM_LIVE_PRICES=1 opts back into
 # the live fetch (e.g. to pick up new-model prices before Traigent's next
 # release). ``setdefault`` so an explicit user value always wins.
+# litellm calls a bare load_dotenv() on import while LITELLM_MODE is "DEV" (its
+# default), ignoring TRAIGENT_SKIP_DOTENV (#2470). Honor the documented opt-out
+# here: LITELLM_MODE=PRODUCTION gates only that dotenv load in litellm, and an
+# explicit user value still wins. Only applied when the user opted out of .env.
+if _is_truthy_env(os.environ.get("TRAIGENT_SKIP_DOTENV")):
+    os.environ.setdefault("LITELLM_MODE", "PRODUCTION")
+
 if not _is_truthy_env(os.environ.get("TRAIGENT_LITELLM_LIVE_PRICES")):
     os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
     os.environ.setdefault("LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS", "True")
@@ -159,6 +166,27 @@ if _is_quickstart_invocation():
     # endpoint, which is the whole point.
     os.environ["OPENAI_API_KEY"] = "mock-key-for-demos"  # pragma: allowlist secret
 
+
+# Env-only mock activation (TRAIGENT_MOCK_LLM=true set before ``import
+# traigent``, or the quickstart bootstrap above) must block raw provider HTTP
+# from the first line of user code, not only once LiteLLM metadata patching
+# runs lazily (#2418). Production is skipped here exactly as ``is_mock_llm()``
+# refuses mock mode there (the hard-block in ``env_config`` is unchanged). The
+# guard is installed only when the flag is on, so a normal import stays light
+# and untouched; a failed install fails closed by aborting the import.
+if _is_truthy_env(os.environ.get("TRAIGENT_MOCK_LLM")) and os.environ.get(
+    "ENVIRONMENT", "development"
+).strip().lower() not in {"prod", "production"}:
+    try:
+        from traigent.utils.mock_transport_guard import install_mock_transport_guard
+
+        install_mock_transport_guard()
+    except Exception as _guard_exc:
+        raise RuntimeError(
+            "TRAIGENT_MOCK_LLM is on but the mock-mode transport guard could "
+            "not be installed; refusing to continue without it (a raw LLM "
+            "provider call could otherwise go out)."
+        ) from _guard_exc
 
 # Suppress noisy FutureWarning from transitive deps (instructor → google.generativeai)
 warnings.filterwarnings(

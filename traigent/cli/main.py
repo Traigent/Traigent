@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import json
+import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -150,7 +152,6 @@ def _build_optimize_kwargs(
         "algorithm": algorithm,
         "max_trials": max_trials,
         "timeout": timeout,
-        "verbose": verbose,
         "samples_include_pruned": samples_include_pruned,
     }
     if max_total_examples is not None:
@@ -569,6 +570,43 @@ def _is_known_model_id(
     return bool(discovery and discovery.is_valid_model(model_id))
 
 
+_LIVE_NOTE = (
+    "Snapshot/shape check only: this does not confirm the model ID is live "
+    "with the provider (no provider key, or no live catalog available)."
+)
+
+
+def _model_verdict(provider: str, model_id: str, valid: bool, live_ids) -> str:
+    """Classify a --check result: live / not-live / snapshot-only / unknown-shape.
+
+    The live catalog, when available, is authoritative: an id it lists is live
+    even if the bundled snapshot/shape rules have not heard of it yet (#1813).
+    Snapshot/shape rules decide only when no live list is available.
+    """
+    if provider == "bedrock":
+        return "live" if valid else "unknown-shape"
+    if live_ids:
+        if model_id in live_ids or f"models/{model_id}" in live_ids:
+            return "live"
+        if not valid:
+            return "unknown-shape"
+        # Aliases and per-account fine-tunes are not listed by catalog endpoints.
+        if model_id.endswith("-latest") or model_id.startswith("ft:"):
+            return "snapshot-only"
+        return "not-live"
+    return "snapshot-only" if valid else "unknown-shape"
+
+
+def _live_ids_for(provider: str):
+    if provider == "bedrock":
+        return None
+    from traigent.integrations.model_discovery import get_model_discovery
+
+    discovery = get_model_discovery(provider)
+    live = getattr(discovery, "live_model_ids", None)
+    return live() if callable(live) else None
+
+
 def _print_model_ids(provider: str, region: str | None, model_ids: list[str]) -> None:
     """Print discovered model IDs in a compact table."""
     title = f"Known {provider} models"
@@ -638,26 +676,48 @@ def models(
         else None
     )
 
+    verdict = None
+    if model_id:
+        verdict = _model_verdict(
+            normalized_provider,
+            model_id,
+            bool(is_valid),
+            _live_ids_for(normalized_provider),
+        )
+        is_valid = verdict in {"live", "snapshot-only"}
+
     if output_json:
         payload = {
             "provider": normalized_provider,
             "region": region if normalized_provider == "bedrock" else None,
             "model": model_id,
             "valid": is_valid,
+            "verdict": verdict,
             "models": model_ids,
             "note": (
                 "Bedrock validation lists regional foundation models only; it does "
                 "not invoke a model or prove account entitlement."
                 if normalized_provider == "bedrock"
-                else None
+                else (_LIVE_NOTE if verdict == "snapshot-only" else None)
             ),
         }
         click.echo(json.dumps(payload, indent=2))
     else:
         _print_model_ids(normalized_provider, region, model_ids)
         if model_id:
-            if is_valid:
-                console.print(f"\n[green]Model preflight passed:[/green] {model_id}")
+            if verdict == "not-live":
+                console.print(
+                    f"\n[red]Model preflight failed:[/red] {model_id} is not in the "
+                    f"live {normalized_provider} catalog (retired or unavailable "
+                    "for this key)."
+                )
+            elif is_valid:
+                label = "live" if verdict == "live" else "snapshot-only"
+                console.print(
+                    f"\n[green]Model preflight passed ({label}):[/green] {model_id}"
+                )
+                if verdict == "snapshot-only":
+                    console.print(f"[yellow]{_LIVE_NOTE}[/yellow]")
             else:
                 console.print(
                     f"\n[red]Model preflight failed:[/red] {model_id} is not in "
@@ -1247,10 +1307,42 @@ def _parse_weights(weights_str: str) -> dict[str, float] | None:
         return None
 
 
-def _calculate_trial_score(trial: Any, weight_dict: dict[str, float]) -> float | None:
-    """Calculate weighted score for a trial. Returns None if no valid metrics."""
+def _declared_result_orientations(result: Any) -> dict[str, str]:
+    """Per-objective orientations the run recorded in its objective schema."""
+    metadata = getattr(result, "metadata", None)
+    schema = metadata.get("objective_schema") if isinstance(metadata, dict) else None
+    definitions = (
+        schema.get("objectives")
+        if isinstance(schema, dict)
+        else getattr(schema, "objectives", None)
+    )
+    declared: dict[str, str] = {}
+    for definition in definitions or []:
+        if isinstance(definition, dict):
+            name, orientation = definition.get("name"), definition.get("orientation")
+        else:
+            name = getattr(definition, "name", None)
+            orientation = getattr(definition, "orientation", None)
+        if isinstance(name, str) and orientation in ("maximize", "minimize"):
+            declared[name] = orientation
+    return declared
+
+
+def _calculate_trial_score(
+    trial: Any,
+    weight_dict: dict[str, float],
+    orientations: dict[str, str] | None = None,
+) -> float | None:
+    """Calculate weighted score for a trial. Returns None if no valid metrics.
+
+    Minimize-oriented metrics (cost, latency, ...) subtract from the score so a
+    higher score is always better. A metric with no declared orientation and no
+    SDK-owned default raises ``ValueError`` rather than being guessed.
+    """
     if not trial.metrics:
         return None
+
+    from traigent.core.objective_directions import resolve_objective_orientation
 
     score = 0.0
     has_metrics = False
@@ -1259,7 +1351,11 @@ def _calculate_trial_score(trial: Any, weight_dict: dict[str, float]) -> float |
         if isinstance(metric_value, (int, float)) and not isinstance(
             metric_value, bool
         ):
-            score += weight * float(metric_value)
+            orientation = resolve_objective_orientation(
+                metric, (orientations or {}).get(metric)
+            )
+            sign = -1.0 if orientation == "minimize" else 1.0
+            score += sign * weight * float(metric_value)
             has_metrics = True
 
     return score if has_metrics else None
@@ -1350,6 +1446,102 @@ def _merge_result_infos(
     return merged
 
 
+_LOCAL_RESULT_PREFIX = "local:"
+
+
+def _local_session_duration(session: OptimizationSession) -> float | None:
+    """Seconds between the stored created/updated stamps, or None if unusable."""
+    try:
+        start = datetime.fromisoformat(str(session.created_at))
+        end = datetime.fromisoformat(str(session.updated_at))
+        seconds = (end - start).total_seconds()
+    except (TypeError, ValueError):  # silent-ok: unusable stamps, no duration
+        return None
+    return seconds if seconds >= 0 else None
+
+
+def _session_to_result_view(
+    session: OptimizationSession, storage: LocalStorageManager | None = None
+) -> Any:
+    """Adapt a v2 local session to the result shape the results commands read.
+
+    Objectives, orientation and duration come from the stored session; nothing
+    is invented (an undeclared orientation stays absent).
+    """
+    from types import SimpleNamespace
+
+    storage = storage or LocalStorageManager(None)
+    config = session.optimization_config
+    objective = storage._resolve_primary_objective_name(config)
+    orientation = storage._resolve_primary_objective_orientation(config, objective)
+    metadata = dict(session.metadata or {})
+    if orientation is not None:
+        orientations = dict(metadata.get("objective_orientations") or {})
+        orientations.setdefault(objective, orientation)
+        metadata["objective_orientations"] = orientations
+
+    trials = [
+        SimpleNamespace(
+            trial_id=trial.trial_id,
+            config=dict(trial.config or {}),
+            metrics={objective: trial.score} if trial.score is not None else {},
+            status="failed" if trial.error is not None else "completed",
+            error=trial.error,
+        )
+        for trial in (session.trials or [])
+    ]
+    best_metrics = (
+        {objective: session.best_score} if session.best_score is not None else {}
+    )
+    return SimpleNamespace(
+        function_name=session.function_name,
+        algorithm=_local_session_algorithm(session),
+        trials=trials,
+        successful_trials=[t for t in trials if t.status == "completed"],
+        success_rate=_local_session_success_rate(session),
+        best_config=session.best_config,
+        best_score=session.best_score,
+        best_metrics=best_metrics,
+        stop_reason=session.status,
+        objectives=[objective],
+        metadata=metadata,
+        duration=_local_session_duration(session),
+    )
+
+
+def _load_cli_result(result_name: str, storage_dir: str | None) -> Any:
+    """Load a result by any name ``traigent results list`` prints.
+
+    Saved results resolve through ``PersistenceManager``; ``local:<session_id>``
+    rows (and a bare session id) resolve through the local session store.
+    Raises ``FileNotFoundError`` when neither store has the name.
+    """
+    is_local_name = result_name.startswith(_LOCAL_RESULT_PREFIX)
+    if not is_local_name:
+        try:
+            return PersistenceManager(storage_dir or ".traigent").load_result(
+                result_name
+            )
+        except FileNotFoundError:  # silent-ok: falls through to session store
+            pass
+    session_id = result_name.removeprefix(_LOCAL_RESULT_PREFIX)
+    local_storage = LocalStorageManager(storage_dir)
+    try:
+        session = local_storage.load_session(session_id)
+    except Exception:  # noqa: BLE001 - an unreadable id is simply not found
+        session = None
+    if session is None:
+        raise FileNotFoundError(result_name)
+    return _session_to_result_view(session, local_storage)
+
+
+def _result_not_found_error(result_name: str) -> click.ClickException:
+    """The shared not-found failure: stderr message, exit 1, no path echoed."""
+    return click.ClickException(
+        f"Result '{result_name}' not found. {_MSG_RESULTS_LIST_HINT}"
+    )
+
+
 @cli.group()
 def results() -> None:
     """Browse, compare, and manage optimization results.
@@ -1414,10 +1606,13 @@ def results_list(storage_dir: str | None) -> None:
 @results.command("show")
 @click.argument("result_name")
 @click.option(
-    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
+    "--storage-dir",
+    "-d",
+    default=None,
+    help="Traigent storage directory (default: same as 'results list')",
 )
 @click.option("--trials", "-t", is_flag=True, help="Show all trial details")
-def results_show(result_name: str, storage_dir: str, trials: bool) -> None:
+def results_show(result_name: str, storage_dir: str | None, trials: bool) -> None:
     """Show detailed view of a specific optimization run.
 
     Examples:
@@ -1427,8 +1622,7 @@ def results_show(result_name: str, storage_dir: str, trials: bool) -> None:
     console.print(f"\n[bold blue]Optimization Result: {result_name}[/bold blue]\n")
 
     try:
-        persistence = PersistenceManager(storage_dir)
-        result = persistence.load_result(result_name)
+        result = _load_cli_result(result_name, storage_dir)
 
         _print_result_summary(result)
         _print_config_json(result.best_config)
@@ -1438,20 +1632,22 @@ def results_show(result_name: str, storage_dir: str, trials: bool) -> None:
         if trials:
             _print_trials_table(result.trials)
 
-    except FileNotFoundError:
-        console.print(f"[red]Result '{result_name}' not found[/red]")
-        console.print(_MSG_RESULTS_LIST_HINT)
+    except FileNotFoundError as e:
+        raise _result_not_found_error(result_name) from e
     except Exception as e:
-        console.print(f"[red]Error loading result: {e}[/red]")
+        raise click.ClickException(f"Error loading result ({type(e).__name__})") from e
 
 
 @results.command("compare")
 @click.argument("result1")
 @click.argument("result2")
 @click.option(
-    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
+    "--storage-dir",
+    "-d",
+    default=None,
+    help="Traigent storage directory (default: same as 'results list')",
 )
-def results_compare(result1: str, result2: str, storage_dir: str) -> None:
+def results_compare(result1: str, result2: str, storage_dir: str | None) -> None:
     """Compare two optimization runs side-by-side.
 
     Examples:
@@ -1460,9 +1656,8 @@ def results_compare(result1: str, result2: str, storage_dir: str) -> None:
     console.print(f"\n[bold blue]Comparing: {result1} vs {result2}[/bold blue]\n")
 
     try:
-        persistence = PersistenceManager(storage_dir)
-        r1 = persistence.load_result(result1)
-        r2 = persistence.load_result(result2)
+        r1 = _load_cli_result(result1, storage_dir)
+        r2 = _load_cli_result(result2, storage_dir)
 
         # Summary comparison table
         summary_table = _build_comparison_summary_table(r1, r2, result1, result2)
@@ -1484,10 +1679,11 @@ def results_compare(result1: str, result2: str, storage_dir: str) -> None:
             console.print(metrics_table)
 
     except FileNotFoundError as e:
-        console.print(f"[red]Result not found: {e}[/red]")
-        console.print(_MSG_RESULTS_LIST_HINT)
+        raise click.ClickException(f"Result not found. {_MSG_RESULTS_LIST_HINT}") from e
     except Exception as e:
-        console.print(f"[red]Error comparing results: {e}[/red]")
+        raise click.ClickException(
+            f"Error comparing results ({type(e).__name__})"
+        ) from e
 
 
 @results.command("rerank")
@@ -1499,12 +1695,15 @@ def results_compare(result1: str, result2: str, storage_dir: str) -> None:
     help="Objective weights as key=value pairs (e.g., accuracy=0.7,cost=0.3)",
 )
 @click.option(
-    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
+    "--storage-dir",
+    "-d",
+    default=None,
+    help="Traigent storage directory (default: same as 'results list')",
 )
 def results_rerank(
     result_name: str,
     weights: str,
-    storage_dir: str,
+    storage_dir: str | None,
 ) -> None:
     """Recalculate best config with different objective weights.
 
@@ -1529,19 +1728,63 @@ def results_rerank(
         console.print(f"  {k}: {v:.2%}")
 
     try:
-        persistence = PersistenceManager(storage_dir)
-        result = persistence.load_result(result_name)
+        result = _load_cli_result(result_name, storage_dir)
 
         if not result.trials:
             console.print("[yellow]No trials found in this result[/yellow]")
             return
 
-        # Re-score trials using helper
-        scored_trials = [
-            (score, trial)
-            for trial in result.trials
-            if (score := _calculate_trial_score(trial, weight_dict)) is not None
-        ]
+        # Re-score trials using helper, applying the same ranking eligibility
+        # as the terminal selector (partially covered trials are excluded;
+        # trials without comparability data, e.g. old results, are kept).
+        from traigent.core.result_selection import _is_ranking_eligible
+
+        result_objectives = getattr(result, "objectives", None) or []
+        primary = (
+            str(result_objectives[0])
+            if result_objectives
+            else max(weight_dict, key=lambda k: weight_dict[k])
+        )
+
+        # Use the eligibility mode the run recorded; a run without one is
+        # not filtered (the pre-existing behaviour).
+        metadata = getattr(result, "metadata", None) or {}
+        summary = (
+            metadata.get("session_summary") if isinstance(metadata, dict) else None
+        )
+        ranking = summary.get("ranking") if isinstance(summary, dict) else None
+        recorded_mode = (
+            ranking.get("comparability_mode") if isinstance(ranking, dict) else None
+        )
+
+        def _rerank_eligible(trial: Any) -> bool:
+            if recorded_mode not in ("legacy", "warn", "strict"):
+                return True
+            eligible, unknown, _codes = _is_ranking_eligible(
+                trial, primary, recorded_mode
+            )
+            return eligible or unknown
+
+        declared_orientations = _declared_result_orientations(result)
+        try:
+            scored_trials = [
+                (score, trial)
+                for trial in result.trials
+                if _rerank_eligible(trial)
+                and (
+                    score := _calculate_trial_score(
+                        trial, weight_dict, declared_orientations
+                    )
+                )
+                is not None
+            ]
+        except ValueError as exc:
+            # Direction is never guessed for a custom metric: say how to fix it.
+            raise click.ClickException(
+                "Cannot re-rank: a weighted metric has no declared orientation "
+                "(maximize/minimize) in this run and no built-in default. "
+                "Re-run with explicit objective orientations."
+            ) from exc
 
         if not scored_trials:
             console.print(
@@ -1573,11 +1816,12 @@ def results_rerank(
             console.print("[dim]Original best config:[/dim]")
             console.print(json.dumps(result.best_config, indent=2))
 
-    except FileNotFoundError:
-        console.print(f"[red]Result '{result_name}' not found[/red]")
-        console.print(_MSG_RESULTS_LIST_HINT)
+    except click.ClickException:
+        raise
+    except FileNotFoundError as e:
+        raise _result_not_found_error(result_name) from e
     except Exception as e:
-        console.print(f"[red]Error re-ranking: {e}[/red]")
+        raise click.ClickException(f"Error re-ranking ({type(e).__name__})") from e
 
 
 def _select_run_failures(
@@ -1766,10 +2010,13 @@ def results_export_failures(
     help="Export format: slim (~1KB, git-friendly) or full (includes trials)",
 )
 @click.option(
-    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
+    "--storage-dir",
+    "-d",
+    default=None,
+    help="Traigent storage directory (default: same as 'results list')",
 )
 def export(
-    result_name: str, output: str | None, export_format: str, storage_dir: str
+    result_name: str, output: str | None, export_format: str, storage_dir: str | None
 ) -> None:
     """Export an optimization result to a portable config file.
 
@@ -1796,12 +2043,10 @@ def export(
     )
 
     try:
-        persistence = PersistenceManager(storage_dir)
-        result = persistence.load_result(result_name)
+        result = _load_cli_result(result_name, storage_dir)
 
         if not result.best_config:
-            console.print("[red]No best configuration found in this result[/red]")
-            return
+            raise click.ClickException("No best configuration found in this result")
 
         # Determine output path
         if output is None:
@@ -1810,6 +2055,10 @@ def export(
             output_path = Path(output)
 
         output_path = _resolve_user_cli_path(output_path, "Output file", for_write=True)
+        if output_path.is_dir():
+            raise click.ClickException(
+                f"Output file is a directory, not a file path: {output_path}"
+            )
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Build export data based on format
@@ -1873,17 +2122,24 @@ def export(
             f'[cyan]@traigent.optimize(load_from="{output_path}", ...)[/cyan]'
         )
 
-    except FileNotFoundError:
-        console.print(f"[red]Result '{result_name}' not found[/red]")
-        console.print("Use 'traigent results' to see available results")
+    except click.ClickException:
+        raise
+    except FileNotFoundError as e:
+        raise _result_not_found_error(result_name) from e
     except Exception as e:
-        console.print(f"[red]Error exporting result: {e}[/red]")
+        raise click.ClickException(
+            f"Error exporting result ({type(e).__name__}); re-run with the "
+            "result name and storage dir checked."
+        ) from e
 
 
 @cli.command()
 @click.argument("result_name")
 @click.option(
-    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
+    "--storage-dir",
+    "-d",
+    default=None,
+    help="Traigent storage directory (default: same as 'results list')",
 )
 @click.option(
     "--plot-type",
@@ -1892,25 +2148,23 @@ def export(
     default="progress",
     help="Type of plot to generate",
 )
-def plot(result_name: str, storage_dir: str, plot_type: str) -> None:
+def plot(result_name: str, storage_dir: str | None, plot_type: str) -> None:
     """Generate plots for optimization results."""
     console.print(
         f"\n[bold blue]Generating {plot_type} plot for: {result_name}[/bold blue]\n"
     )
 
     try:
-        persistence = PersistenceManager(storage_dir)
-        result = persistence.load_result(result_name)
+        result = _load_cli_result(result_name, storage_dir)
 
         # Generate plot
         plot_output = create_quick_plot(result, plot_type)
         console.print(plot_output)
 
-    except FileNotFoundError:
-        console.print(f"[red]Result '{result_name}' not found[/red]")
-        console.print("Use 'traigent results' to see available results")
+    except FileNotFoundError as e:
+        raise _result_not_found_error(result_name) from e
     except Exception as e:
-        console.print(f"[red]Error generating plot: {e}[/red]")
+        raise click.ClickException(f"Error generating plot ({type(e).__name__})") from e
 
 
 @cli.command()
@@ -1936,7 +2190,7 @@ def validate_config(config_file: str) -> None:
             console.print("❌ [red]Configuration validation failed[/red]")
             for name in removed:
                 console.print(f"[red]{removed_mock_parameter_message(name)}[/red]")
-            return
+            sys.exit(1)
 
         # Extract configuration components
         config_space = config.get("configuration_space", {})
@@ -1955,11 +2209,13 @@ def validate_config(config_file: str) -> None:
             console.print("❌ [red]Configuration validation failed[/red]")
 
         console.print(result.get_feedback())
+        if not result.is_valid:
+            sys.exit(1)
 
     except json.JSONDecodeError as e:
-        console.print(f"[red]Invalid JSON in config file: {e}[/red]")
-    except Exception as e:
-        console.print(f"[red]Error reading config file: {e}[/red]")
+        raise click.ClickException(f"Invalid JSON in config file: {e}") from e
+    except (OSError, ValueError, AttributeError, TypeError) as e:
+        raise click.ClickException(f"Error reading config file: {e}") from e
 
 
 @cli.command()

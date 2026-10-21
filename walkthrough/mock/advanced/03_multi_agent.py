@@ -71,8 +71,8 @@ def mock_generate(
         answer = "I can help with that."
 
     # Model affects response style (mock effect)
-    if model == "gpt-4o":
-        answer = f"{answer} [gpt-4o]"
+    if model == "gpt-4.1":
+        answer = f"{answer} [gpt-4.1]"
 
     # Temperature affects verbosity (mock effect)
     if temperature > 0.8:
@@ -112,7 +112,7 @@ async def method_1_per_parameter_agent() -> None:
         ),
         # Generator agent parameters
         temperature=Range(0.0, 1.0, default=0.7, name="temperature", agent="generator"),
-        model=Choices(["gpt-4o-mini", "gpt-4o"], name="model", agent="generator"),
+        model=Choices(["gpt-4.1-mini", "gpt-4.1"], name="model", agent="generator"),
         objectives=["accuracy", "cost"],
         eval_dataset=DATASET_PATH,
         offline=True,
@@ -159,7 +159,7 @@ async def method_2_prefix_grouping() -> None:
         retriever_k=IntRange(1, 10, default=3, name="retriever_k"),
         retriever_method=Choices(["dense", "sparse"], name="retriever_method"),
         generator_temp=Range(0.0, 1.0, default=0.7, name="generator_temp"),
-        generator_model=Choices(["gpt-4o-mini", "gpt-4o"], name="generator_model"),
+        generator_model=Choices(["gpt-4.1-mini", "gpt-4.1"], name="generator_model"),
         # Enable prefix-based grouping
         agent_prefixes=["retriever_", "generator_"],
         objectives=["accuracy"],
@@ -222,7 +222,7 @@ async def method_3_explicit_agents() -> None:
             ["similarity", "mmr", "hybrid"], name="retrieval_strategy"
         ),
         temperature=Range(0.0, 1.0, default=0.7, name="temperature"),
-        model=Choices(["gpt-4o-mini", "gpt-4o"], name="model"),
+        model=Choices(["gpt-4.1-mini", "gpt-4.1"], name="model"),
         # Pass explicit agent definitions
         agents={
             "retriever": retriever_agent,

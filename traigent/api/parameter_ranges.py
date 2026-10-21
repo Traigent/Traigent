@@ -796,6 +796,12 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
             if models:
                 return Choices(models, name="model")
 
+        # Provider names are case-insensitive; "google" is the canonical name
+        # for the registry key "gemini" (#2650).
+        provider_key = provider.lower() if provider else None
+        if provider_key == "google":
+            provider_key = "gemini"
+
         # Fallback defaults
         fallbacks: dict[tuple[str | None, str], list[str]] = {
             ("openai", "fast"): ["gpt-4o-mini"],
@@ -806,12 +812,16 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
             ("anthropic", "fast"): ["claude-haiku-4-5-20251001"],
             ("anthropic", "balanced"): ["claude-sonnet-4-6"],
             ("anthropic", "quality"): ["claude-opus-4-8"],
+            # gemini-2.0-flash was shut down 2026-06-01 (#2650).
+            ("gemini", "fast"): ["gemini-3.5-flash-lite"],
+            ("gemini", "balanced"): ["gemini-3.8-flash"],
+            ("gemini", "quality"): ["gemini-3.8-flash"],
             (None, "fast"): ["gpt-4o-mini", "claude-haiku-4-5-20251001"],
             (None, "balanced"): ["gpt-4o-mini", "gpt-4o", "claude-sonnet-4-6"],
             (None, "quality"): ["gpt-4o", "claude-opus-4-8"],
         }
 
-        models_found = fallbacks.get((provider, tier))
+        models_found = fallbacks.get((provider_key, tier))
         if not models_found:
             logger.warning(
                 f"No model list found for provider={provider}, tier={tier}. "

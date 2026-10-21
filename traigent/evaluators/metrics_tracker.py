@@ -532,6 +532,11 @@ class ExampleMetrics:
     # defaults to true for tracker callers that do not have dataset context;
     # that preserves their established success/error fallback semantics.
     accuracy_eligible: bool = True
+    # ``LocalEvaluator`` sets this when the row had a gold value but built-in
+    # accuracy could not be computed (e.g. no output to compare). The row is
+    # then UNMEASURED for accuracy: it is left out of the accuracy denominator
+    # and never gets the tracker-only "success means 1.0" fallback (#2495).
+    accuracy_unavailable: bool = False
     # True (the default) when ``tokens``/``cost``/``response`` were actually
     # extracted or estimated from a real provider response. False marks an
     # example whose zeros are the ABSENCE of a measurement, not a measured
@@ -888,7 +893,11 @@ class MetricsTracker:
             # Fallback to success rate if no example metrics
             accuracy_value = safe_get(aggregated, "success_rate")
 
-        if accuracy_value is None and not strict_nulls:
+        accuracy_unmeasured = any(
+            m.accuracy_unavailable and m.custom_metrics.get("accuracy") is None
+            for m in self.example_metrics
+        )
+        if accuracy_value is None and not strict_nulls and not accuracy_unmeasured:
             accuracy_value = 0.0
 
         duration_value = safe_get(aggregated, "duration")
@@ -990,7 +999,7 @@ class MetricsTracker:
         # True when ANY measured example's token counts were fabricated from
         # character length (``LocalEvaluator._estimate_string_tokens``, #2263)
         # rather than captured from real usage. ``input_tokens``/
-        # ``output_tokens``/``total_tokens`` above are means over the SAME
+        # ``output_tokens``/``total_tokens`` below are totals over the SAME
         # measured rows, so this flag is the only signal that some of that
         # mean is a length-derived guess rather than measured usage --
         # without it a cost/token objective or the trial summary table
@@ -1003,6 +1012,26 @@ class MetricsTracker:
             1.0 if any(m.tokens.estimated for m in measured_metrics) else 0.0
         )
 
+        token_totals: dict[str, float | None]
+        if measured_metrics:
+            token_totals = {
+                "input_tokens": float(
+                    sum(m.tokens.input_tokens for m in measured_metrics)
+                ),
+                "output_tokens": float(
+                    sum(m.tokens.output_tokens for m in measured_metrics)
+                ),
+                "total_tokens": float(
+                    sum(m.tokens.total_tokens for m in measured_metrics)
+                ),
+            }
+        else:
+            # Nothing measured: mirror the mean's null/zero default.
+            token_totals = {
+                key: safe_get(aggregated, key, "mean")
+                for key in ("input_tokens", "output_tokens", "total_tokens")
+            }
+
         formatted = {
             # Core metrics (single values)
             "score": accuracy_value,  # Use actual accuracy for score
@@ -1013,10 +1042,12 @@ class MetricsTracker:
                 if isinstance(duration_value, (int, float))
                 else duration_value
             ),
-            # Use mean values as the primary metrics (without suffix)
-            "input_tokens": safe_get(aggregated, "input_tokens", "mean"),
-            "output_tokens": safe_get(aggregated, "output_tokens", "mean"),
-            "total_tokens": safe_get(aggregated, "total_tokens", "mean"),
+            # Per-trial TOTAL tokens over the same measured rows as ``cost``
+            # (#1906): totals beside a cost total, never per-example means.
+            # Per-example means remain in ``summary_stats``.
+            "input_tokens": token_totals["input_tokens"],
+            "output_tokens": token_totals["output_tokens"],
+            "total_tokens": token_totals["total_tokens"],
             "response_time_ms": safe_get(aggregated, "response_time_ms", "mean"),
             # Per-trial TOTAL cost (consistent scale across all three lanes).
             "cost": cost_total,
@@ -1079,6 +1110,10 @@ class MetricsTracker:
                 continue
 
             if not metric.accuracy_eligible:
+                continue
+
+            if raw_accuracy is None and metric.accuracy_unavailable:
+                # Unmeasured, not a miss and not a hit (#2495).
                 continue
 
             if metric.success:
@@ -2067,39 +2102,9 @@ def _infer_model_name_from_response(response: Any) -> str | None:
     calculation entirely, instead of the intended "skip cost, log a
     warning" degradation.
     """
-    try:
-        # 1. Direct attributes (e.g. OpenAI ChatCompletion, Anthropic Message)
-        for attr in ("model", "model_name"):
-            val = getattr(response, attr, None)
-            if isinstance(val, str) and val:
-                return val
+    from traigent.utils.response_model import infer_response_model
 
-        # 2. Dict-shaped response
-        if isinstance(response, dict):
-            for key in ("model", "model_name"):
-                val = response.get(key)
-                if isinstance(val, str) and val:
-                    return val
-
-        # 3. LangChain response_metadata
-        response_metadata = getattr(response, "response_metadata", None)
-        if isinstance(response_metadata, dict):
-            for key in ("model", "model_name"):
-                val = response_metadata.get(key)
-                if isinstance(val, str) and val:
-                    return val
-
-        # 4. LangChain llm_output
-        llm_output = getattr(response, "llm_output", None)
-        if isinstance(llm_output, dict):
-            for key in ("model", "model_name"):
-                val = llm_output.get(key)
-                if isinstance(val, str) and val:
-                    return val
-
-        return None
-    except Exception:
-        return None
+    return infer_response_model(response)
 
 
 def _calculate_cost_for_metrics(

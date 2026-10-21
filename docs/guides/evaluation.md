@@ -186,6 +186,16 @@ def strict_agent(query: str) -> str:
     ...
 ```
 
+#### Failure semantics: `custom_evaluator` vs `metric_functions`
+
+| Situation | `custom_evaluator` | `metric_functions` |
+|-----------|--------------------|--------------------|
+| Your code raises on one row | That row scores 0.0 on quality metrics (cost-family metrics stay unmeasured). The trial stays completed unless every row fails. When some but not all rows failed, the trial metadata records `custom_evaluator_failed_rows` and `custom_evaluator_total_rows`, and `result.warning_codes` contains `CUSTOM_EVALUATOR_ROWS_FAILED`. | A metric function that raises on an objective metric fails the trial; on a non-objective metric the error is recorded in `metric_errors` and the metric is left out for that row. |
+| All rows raise | The trial fails (no warning code; the failure itself is the signal). | Same for an objective metric. |
+| A row omits an objective key | The trial fails with an `EvaluationError` naming the metric and the row count. No 0.0 is substituted. | The trial fails; no 0.0 is substituted for an objective. |
+
+The warning code carries counts only, never row inputs, outputs or exception text.
+
 ### 5) Mock mode
 
 Call `traigent.testing.enable_mock_mode_for_quickstart()` near the top of local tutorial or test code to intercept external LLM/API calls and replace them with canned/deterministic responses. Your evaluator (custom or the built-in `LocalEvaluator`) still scores those canned responses with its real scoring logic - the SDK no longer synthesizes metrics. Ideal for CI, demos, and budget-safe smoke tests.

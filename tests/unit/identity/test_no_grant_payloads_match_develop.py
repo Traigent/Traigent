@@ -27,6 +27,11 @@ limited to the cost keys removed (``cost``, ``total_cost``, ``input_cost``,
 ``per_metric_coverage``, and ``total_example_cost`` in ``metadata_keys``) plus
 ``cost_unmeasured`` added. After #2615 merges, regenerate only from a develop
 commit again.
+
+Exception, 2026-10-20: SDK #1906 — ``backend_metadata`` input/output/total_tokens
+are now per-trial totals (sum over examples), not per-example means, matching the
+per-trial cost total the backend reads. Owner-approved via decision card
+product-2026-10-20-sdk-1906-token-totals-golden-v2.
 """
 
 from __future__ import annotations

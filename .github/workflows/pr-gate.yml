@@ -363,6 +363,9 @@ jobs:
             ${{ runner.os }}-pip-sdk-pr-gate-
             ${{ runner.os }}-pip-
       - name: Install test deps
+        env:
+          # Test against uv.lock, not the newest release each range allows (#2475).
+          TRAIGENT_INSTALL_LOCKED: "1"
         run: |
           bash scripts/ci/install_sdk_requirements.sh -e ".[all,dev]"
           pip install "redis>=8,<9"

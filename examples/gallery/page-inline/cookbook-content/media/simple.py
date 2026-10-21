@@ -66,7 +66,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "media_eval.jsonl")
     max_trials=10,
 )
 def shotlist(topic: str) -> str:
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.6)
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.6)
     p = f"Create a 3-step shot list for a short video about: {topic}"
     return llm.invoke([HumanMessage(content=p)]).content.strip()
 

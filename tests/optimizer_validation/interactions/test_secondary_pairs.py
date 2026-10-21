@@ -22,6 +22,7 @@ from tests.optimizer_validation.specs import (
     ObjectiveSpec,
     TestScenario,
 )
+from traigent.config.types import ExecutionMode
 
 # =============================================================================
 # ParallelMode × StopCondition
@@ -343,7 +344,7 @@ class TestAlgorithmFailureModePairs:
 # =============================================================================
 
 
-EXECUTION_MODES = ["edge_analytics", "privacy", "hybrid", "cloud", "standard"]
+EXECUTION_MODES = [mode.value for mode in ExecutionMode]
 PARALLEL_MODES = ["sequential", "parallel"]
 
 

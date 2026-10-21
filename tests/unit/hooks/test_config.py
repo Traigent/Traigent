@@ -668,8 +668,6 @@ class TestCreateDefaultConfig:
             with open(config_path) as f:
                 data = yaml.safe_load(f)
             assert data["validation"]["enabled"] is True
-            assert isinstance(data["validation"]["hooks"], dict)
-            assert "pre-push" in data["validation"]["hooks"]
             assert isinstance(data["constraints"], dict)
             assert "max_cost_per_query" in data["constraints"]
 
@@ -697,6 +695,6 @@ class TestCreateDefaultConfig:
             assert isinstance(config, HooksConfig)
             assert config.enabled is True
             assert config.constraints.cost.max_cost_per_query == 0.05
-            assert config.constraints.cost.max_monthly_budget == 1000
-            assert config.constraints.performance.min_accuracy == 0.85
-            assert config.constraints.performance.max_latency_ms == 500
+            assert config.constraints.cost.max_monthly_budget is None
+            assert config.constraints.performance.min_accuracy is None
+            assert config.constraints.performance.max_latency_ms is None

@@ -22,7 +22,7 @@ Example usage:
 
 Environment variables:
     TRAIGENT_MODELS_{PROVIDER}_{TIER}: Comma-separated list of models
-    Example: TRAIGENT_MODELS_OPENAI_FAST="gpt-4o-mini,gpt-3.5-turbo"
+    Example: TRAIGENT_MODELS_OPENAI_FAST="gpt-4o-mini,gpt-4o"
 
 Traceability: CONC-TunedVariable FUNC-TVLSPEC
 """
@@ -78,9 +78,9 @@ _FALLBACK_MODELS: dict[tuple[str | None, str], list[str]] = {
     ("anthropic", "balanced"): ["claude-sonnet-4-6"],
     ("anthropic", "quality"): ["claude-opus-4-8"],
     # Gemini tiers — Gemini 1.5 is deprecated; use current 2.x (#1936).
-    ("gemini", "fast"): ["gemini-2.0-flash"],
-    ("gemini", "balanced"): ["gemini-2.0-flash"],
-    ("gemini", "quality"): ["gemini-2.0-flash"],
+    ("gemini", "fast"): ["gemini-3.5-flash-lite"],
+    ("gemini", "balanced"): ["gemini-3.8-flash"],
+    ("gemini", "quality"): ["gemini-3.8-flash"],
     # Mistral tiers
     ("mistral", "fast"): ["mistral-small-latest"],
     ("mistral", "balanced"): ["mistral-medium-latest"],
@@ -119,7 +119,8 @@ _FALLBACK_MODELS: dict[tuple[str | None, str], list[str]] = {
 # "gemini", matching the discovery registry and models.yaml).
 _MODEL_TIERS: dict[str, dict[str, list[str]]] = {
     "openai": {
-        "fast": ["gpt-4o-mini", "gpt-3.5-turbo"],
+        # gpt-3.5-turbo shuts down 2026-10-23 (#2650).
+        "fast": ["gpt-4o-mini"],
         "balanced": ["gpt-4o-mini", "gpt-4o"],
         # o1-preview/o1-mini are retired (#1932, #1936);
         # gpt-5.2 is the current OpenAI flagship in _KNOWN_MODELS.
@@ -136,9 +137,9 @@ _MODEL_TIERS: dict[str, dict[str, list[str]]] = {
     },
     "gemini": {
         # Gemini 1.5 deprecated / gemini-2.0-flash-exp preview retired (#1936).
-        "fast": ["gemini-2.0-flash"],
-        "balanced": ["gemini-2.0-flash"],
-        "quality": ["gemini-2.0-flash"],
+        "fast": ["gemini-3.5-flash-lite"],
+        "balanced": ["gemini-3.8-flash"],
+        "quality": ["gemini-3.8-flash"],
     },
     "mistral": {
         "fast": ["mistral-small-latest", "open-mistral-7b"],
@@ -211,9 +212,9 @@ def get_models_for_tier(
     Example:
         ```python
         # Check env var first
-        os.environ["TRAIGENT_MODELS_OPENAI_FAST"] = "gpt-4o-mini,gpt-3.5-turbo"
+        os.environ["TRAIGENT_MODELS_OPENAI_FAST"] = "gpt-4o-mini,gpt-4o"
         models = get_models_for_tier(provider="openai", tier="fast")
-        # Returns: ["gpt-4o-mini", "gpt-3.5-turbo"]
+        # Returns: ["gpt-4o-mini", "gpt-4o"]
         ```
     """
     # 1. Check environment variable

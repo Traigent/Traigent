@@ -20,6 +20,7 @@ Usage examples::
 
 from __future__ import annotations
 
+import ast
 import json
 import sys
 from pathlib import Path
@@ -39,24 +40,45 @@ console = Console()
 stderr = Console(stderr=True)
 
 
+def _defines_function(tree: ast.AST, function_name: str) -> bool:
+    return any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == function_name
+        for node in ast.walk(tree)
+    )
+
+
 def _detect_from_file(
     detector: TunedVariableDetector,
     path: Path,
     function_name: str | None,
     *,
     strict: bool,
-) -> list[DetectionResult]:
+) -> tuple[list[DetectionResult], bool, bool]:
+    """Run detection on one file.
+
+    Returns ``(results, parsed, function_found)``. ``parsed`` is False when the
+    file could not be read or parsed; ``function_found`` says whether
+    ``function_name`` is defined in the file (True when no name was given).
+    """
     try:
-        return detector.detect_from_file(path, function_name)
+        tree = ast.parse(path.read_text(encoding="utf-8"))
     except UnicodeDecodeError:
         message = f"Could not read {path} as UTF-8 text"
     except OSError as exc:
         message = f"Could not read {path}: {exc}"
+    except SyntaxError as exc:
+        message = f"Could not parse {path.name}: syntax error at line {exc.lineno}"
+    else:
+        found = function_name is None or _defines_function(tree, function_name)
+        if not found:
+            return [], True, False
+        return detector.detect_from_file(path, function_name), True, True
 
     if strict:
         raise click.ClickException(message) from None
     stderr.print(f"[yellow]Skipping {path}: {message}[/yellow]")
-    return []
+    return [], False, False
 
 
 _CONFIDENCE_COLORS = {
@@ -114,7 +136,14 @@ def detect_tvars(
     if path.is_file():
         if path.suffix != ".py":
             raise click.ClickException(f"Expected a .py file, got: {path}")
-        results = _detect_from_file(detector, path, function_name, strict=True)
+        results, _, function_found = _detect_from_file(
+            detector, path, function_name, strict=True
+        )
+        if not function_found:
+            raise click.ClickException(
+                f"Function '{function_name}' not found in source. "
+                "Check the function name and try again."
+            )
     else:
         # Directory: scan all .py files recursively
         py_files = sorted(path.rglob("*.py"))
@@ -122,15 +151,32 @@ def detect_tvars(
             stderr.print(f"[yellow]No Python files found in {path}[/yellow]")
             sys.exit(0)
 
+        scanned = parsed_any = found_any = 0
         for py_file in py_files:
-            # Skip common non-source directories
+            # Skip common non-source directories. The rule applies only to the
+            # components below the target: the user chose the target itself
+            # (``..`` and ``/home/me/.work/agent`` are legitimate).
             if any(
                 part.startswith((".", "_", "__pycache__", "venv", "node_modules"))
-                for part in py_file.parts
+                for part in py_file.relative_to(path).parts
             ):
                 continue
-            results.extend(
-                _detect_from_file(detector, py_file, function_name, strict=False)
+            scanned += 1
+            file_results, parsed, found = _detect_from_file(
+                detector, py_file, function_name, strict=False
+            )
+            results.extend(file_results)
+            parsed_any += parsed
+            found_any += found
+
+        if scanned and not parsed_any:
+            raise click.ClickException(
+                "Could not parse any Python file in the target directory"
+            )
+        if function_name and scanned and not found_any:
+            raise click.ClickException(
+                f"Function '{function_name}' not found in source. "
+                "Check the function name and try again."
             )
 
     # Filter by confidence

@@ -19,7 +19,6 @@ _ROOT = Path(__file__).resolve().parents[3]
 _TOOLS = {
     "pycqa/isort": "isort",
     "pre-commit/mirrors-mypy": "mypy",
-    "psf/black": "black",
 }
 
 

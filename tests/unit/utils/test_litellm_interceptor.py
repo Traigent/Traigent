@@ -36,6 +36,10 @@ def _make_mock_litellm_module():
         return _make_mock_response(kwargs.get("model", "gpt-4o"))
 
     mock_module.acompletion = _async_completion
+    mock_module.pre_call_rules = []
+    mock_module.utils = types.SimpleNamespace(
+        function_setup=lambda original_function, *a, **kw: (None, kw)
+    )
     mock_module._traigent_patched_completion = False
     mock_module._traigent_patched_acompletion = False
     return mock_module
@@ -331,3 +335,310 @@ class TestLiteLLMPlugin:
         assert "litellm" in methods
         assert "completion" in methods["litellm"]
         assert "acompletion" in methods["litellm"]
+
+
+class TestFromImportForm:
+    """`from litellm import completion` bound before the patch (#2515)."""
+
+    def test_name_imported_before_patch_is_intercepted(self, litellm_module):
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
+
+        user_mod = types.ModuleType("user_agent_2515")
+        user_mod.completion = (
+            litellm_module.completion
+        )  # from litellm import completion
+        user_mod.acompletion = litellm_module.acompletion
+        with patch.dict("sys.modules", {"user_agent_2515": user_mod}):
+            patch_litellm_for_metadata_capture()
+            assert user_mod.completion is litellm_module.completion
+            assert user_mod.acompletion is litellm_module.acompletion
+            user_mod.completion(model="gpt-4o", messages=[])
+            asyncio.run(user_mod.acompletion(model="gpt-4o", messages=[]))
+
+        assert len(get_all_captured_responses()) == 2
+
+    def test_late_bound_name_is_rebound_on_repeat_patch_call(self, litellm_module):
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
+
+        original = litellm_module.completion
+        patch_litellm_for_metadata_capture()
+        late_mod = types.ModuleType("late_agent_2515")
+        late_mod.completion = original
+        with patch.dict("sys.modules", {"late_agent_2515": late_mod}):
+            patch_litellm_for_metadata_capture()
+            assert late_mod.completion is litellm_module.completion
+
+    def test_from_import_form_is_mocked_without_provider_call(self, litellm_module):
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
+
+        provider = litellm_module.completion
+        user_mod = types.ModuleType("user_agent_2515_mock")
+        user_mod.completion = provider
+        with (
+            patch.dict("sys.modules", {"user_agent_2515_mock": user_mod}),
+            patch(
+                "traigent.integrations.utils.mock_adapter.MockAdapter.is_mock_enabled",
+                return_value=True,
+            ),
+        ):
+            patch_litellm_for_metadata_capture()
+            user_mod.completion(model="gpt-4o", messages=[])
+
+        provider.assert_not_called()
+
+
+class TestMockModeBoundaryGuard:
+    """Sol r4 finding 1 (#2515): stale references must not reach the provider."""
+
+    @pytest.fixture()
+    def real_litellm(self):
+        litellm = pytest.importorskip("litellm")
+        from traigent.utils import litellm_interceptor as li
+
+        saved = (
+            litellm.completion,
+            litellm.acompletion,
+            list(litellm.pre_call_rules),
+            getattr(litellm, "_traigent_patched_completion", False),
+            getattr(litellm, "_traigent_patched_acompletion", False),
+            litellm.utils.function_setup,
+        )
+        # Capture the unwrapped references BEFORE patching, as an agent
+        # factory that imported them earlier would.
+        orig_completion = getattr(litellm.completion, "_traigent_original", None) or (
+            litellm.completion
+        )
+        orig_acompletion = getattr(litellm.acompletion, "_traigent_original", None) or (
+            litellm.acompletion
+        )
+        litellm.completion, litellm.acompletion = orig_completion, orig_acompletion
+        litellm._traigent_patched_completion = False
+        litellm._traigent_patched_acompletion = False
+        litellm.pre_call_rules[:] = []
+        try:
+            yield litellm, li, orig_completion, orig_acompletion
+        finally:
+            litellm.completion, litellm.acompletion = saved[0], saved[1]
+            litellm.pre_call_rules[:] = saved[2]
+            litellm._traigent_patched_completion = saved[3]
+            litellm._traigent_patched_acompletion = saved[4]
+            litellm.utils.function_setup = saved[5]
+
+    @pytest.fixture()
+    def mock_enabled(self):
+        with patch(
+            "traigent.integrations.utils.mock_adapter.MockAdapter.is_mock_enabled",
+            return_value=True,
+        ):
+            yield
+
+    @pytest.fixture()
+    def transport_spy(self, monkeypatch):
+        import socket
+
+        attempts: list[object] = []
+
+        def _spy(self, address, *a, **kw):
+            attempts.append(address)
+            raise OSError("transport spy")
+
+        monkeypatch.setattr(socket.socket, "connect", _spy)
+        return attempts
+
+    def test_closure_and_default_arg_captured_completion_blocked(
+        self, real_litellm, transport_spy, mock_enabled
+    ):
+        litellm, li, orig_completion, orig_acompletion = real_litellm
+        captured = orig_completion  # imported earlier, closed over below
+
+        def make_agent():
+            def agent(prompt):
+                return captured(
+                    model="gpt-4o-mini",
+                    api_key="sk-test",
+                    messages=[{"role": "user", "content": prompt}],
+                )
+
+            return agent
+
+        def agent_default(prompt, fn=orig_completion):
+            return fn(
+                model="gpt-4o-mini",
+                api_key="sk-test",
+                messages=[{"role": "user", "content": prompt}],
+            )
+
+        async def async_agent(prompt):
+            return await orig_acompletion(
+                model="gpt-4o-mini",
+                api_key="sk-test",
+                messages=[{"role": "user", "content": prompt}],
+            )
+
+        li.patch_litellm_for_metadata_capture()
+
+        with pytest.raises(li.MockModeBypassError):
+            make_agent()("hello")
+        with pytest.raises(li.MockModeBypassError):
+            agent_default("hello")
+        with pytest.raises(li.MockModeBypassError):
+            asyncio.run(async_agent("hello"))
+        assert transport_spy == []
+
+    def test_guard_is_inert_when_mock_disabled_and_idempotent(
+        self, real_litellm, monkeypatch
+    ):
+        litellm, li, *_ = real_litellm
+        li.patch_litellm_for_metadata_capture()
+        li.patch_litellm_for_metadata_capture()
+        assert litellm.pre_call_rules.count(li._mock_mode_pre_call_guard) == 1
+        assert li._mock_mode_pre_call_guard("text") is True
+
+    def test_contentless_first_message_and_replaced_rules_still_blocked(
+        self, real_litellm, transport_spy, mock_enabled
+    ):
+        """Sol r5 F1: LiteLLM skips pre_call_rules for a first message without
+        ``content`` and a user can replace the rules list; the
+        ``function_setup`` boundary must still fail closed."""
+        litellm, li, orig_completion, orig_acompletion = real_litellm
+        li.patch_litellm_for_metadata_capture()
+        litellm.pre_call_rules = []  # user replaces the list wholesale
+        messages = [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "f", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "c1", "content": "x"},
+        ]
+        try:
+            with pytest.raises(li.MockModeBypassError):
+                orig_completion(
+                    model="gpt-4o-mini", api_key="sk-test", messages=messages
+                )
+            with pytest.raises(li.MockModeBypassError):
+                asyncio.run(
+                    orig_acompletion(
+                        model="gpt-4o-mini", api_key="sk-test", messages=messages
+                    )
+                )
+        finally:
+            litellm.pre_call_rules = []
+        assert transport_spy == []
+
+    def test_function_setup_guard_idempotent_and_inert_when_mock_off(
+        self, real_litellm
+    ):
+        litellm, li, *_ = real_litellm
+        li.patch_litellm_for_metadata_capture()
+        first = litellm.utils.function_setup
+        li.patch_litellm_for_metadata_capture()
+        assert litellm.utils.function_setup is first
+        assert first._traigent_original is not first
+
+
+class TestInstallOutcomes:
+    """Sol r5 F5: install reports a per-provider outcome."""
+
+    def test_guard_unavailable_reports_failed_when_outcomes_requested(
+        self, litellm_module
+    ):
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
+
+        litellm_module.utils = types.SimpleNamespace()  # no function_setup
+        outcomes: dict[str, str] = {}
+        patch_litellm_for_metadata_capture(outcomes)
+        assert outcomes["litellm"] == "failed"
+
+    def test_installed_then_already_installed(self, litellm_module):
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
+
+        first: dict[str, str] = {}
+        second: dict[str, str] = {}
+        patch_litellm_for_metadata_capture(first)
+        patch_litellm_for_metadata_capture(second)
+        assert first["litellm"] == "installed"
+        assert second["litellm"] == "already-installed"
+
+    def test_absent_package_is_not_applicable(self):
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
+
+        outcomes: dict[str, str] = {}
+        with patch.dict("sys.modules", {"litellm": None}):
+            assert patch_litellm_for_metadata_capture(outcomes) is False
+        assert outcomes["litellm"] == "not-applicable"
+
+
+class TestGuardHardening:
+    """Sol r6: signature preserved, retry outcome, concurrent install."""
+
+    def test_function_setup_guard_preserves_signature(self, litellm_module):
+        import inspect
+
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
+
+        def function_setup(original_function, rules_obj, start_time, *args, **kwargs):
+            """Doc."""
+            return None, kwargs
+
+        litellm_module.utils = types.SimpleNamespace(function_setup=function_setup)
+        patch_litellm_for_metadata_capture({})
+        guarded = litellm_module.utils.function_setup
+        assert guarded is not function_setup
+        assert inspect.signature(guarded) == inspect.signature(function_setup)
+        assert guarded.__name__ == "function_setup"
+        assert guarded.__doc__ == "Doc."
+
+    def test_successful_retry_with_same_dict_replaces_failed(self, litellm_module):
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
+
+        good_utils = litellm_module.utils
+        litellm_module.utils = types.SimpleNamespace()  # guard unavailable
+        outcomes: dict[str, str] = {}
+        patch_litellm_for_metadata_capture(outcomes)
+        assert outcomes["litellm"] == "failed"
+        litellm_module.utils = good_utils  # cause fixed; retry, same dict
+        patch_litellm_for_metadata_capture(outcomes)
+        assert outcomes["litellm"] in {"installed", "already-installed"}
+
+    def test_concurrent_installation_wraps_once(self, litellm_module):
+        import threading as th
+
+        from traigent.utils import litellm_interceptor as li
+
+        original = litellm_module.utils.function_setup
+        barrier = th.Barrier(8)
+
+        def worker() -> None:
+            barrier.wait()
+            li._install_mock_guard(litellm_module)
+
+        threads = [th.Thread(target=worker) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        guarded = litellm_module.utils.function_setup
+        assert guarded._traigent_original is original
+        assert litellm_module.pre_call_rules.count(li._mock_mode_pre_call_guard) == 1

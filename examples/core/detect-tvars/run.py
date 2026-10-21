@@ -78,7 +78,7 @@ def main() -> None:
     @traigent.optimize(auto_detect_tvars_mode="apply", objectives=["accuracy"])
     def auto_configured_agent(query: str) -> str:
         temperature = 0.6  # noqa: F841
-        model = "gpt-4o-mini"  # noqa: F841
+        model = "gpt-4.1-mini"  # noqa: F841
         return f"answer to {query}"
 
     print("Auto-generated configuration_space:")

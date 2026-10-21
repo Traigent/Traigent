@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import ExampleResult
 from traigent.core.utils import safe_get_nested_attr
+from traigent.evaluators.metrics_tracker import RESERVED_METRIC_KEYS
 from traigent.evaluators.base import (
     MEASURED_ONLY_METRICS,
     BaseEvaluator,
@@ -28,6 +29,7 @@ from traigent.evaluators.base import (
     failed_row_metrics,
 )
 from traigent.identity.examples import result_identity_fields
+from traigent.utils.exceptions import EvaluationError
 from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.logging import get_logger
 from traigent.utils.trial_costs import (
@@ -106,6 +108,14 @@ if TYPE_CHECKING:
     from traigent.core.sample_budget import SampleBudgetLease
 
 
+# Objectives the SDK measures itself (cost family, latency, rates): an evaluator
+# need not emit them. "accuracy" and "score" are reserved names too, but only
+# the user's evaluator can produce them, so they are NOT exempt (#2422).
+_SDK_MEASURED_OBJECTIVES = (MEASURED_ONLY_METRICS | RESERVED_METRIC_KEYS) - frozenset(
+    {"accuracy", "score"}
+)
+
+
 class CustomEvaluatorWrapper(BaseEvaluator):
     """Wrapper for custom evaluation functions.
 
@@ -178,30 +188,15 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         Returns:
             Model name or None
         """
-        model_name: str | None = config.get("model")
-        if model_name:
-            return model_name
-
+        # The response's own model identity wins: a judge or router call can
+        # run on a different model than the trial's configured one (#2443).
+        # The configured model is only a fallback for identity-less responses.
+        config_model: str | None = config.get("model")
         if not response:
-            return None
+            return config_model
+        from traigent.utils.response_model import infer_response_model
 
-        # Check for model in response metadata (LangChain pattern)
-        if hasattr(response, "response_metadata") and isinstance(
-            response.response_metadata, dict
-        ):
-            model_name = response.response_metadata.get("model")
-            if not model_name:
-                model_name = response.response_metadata.get("model_name")
-
-        # Check for model attribute directly
-        if not model_name and hasattr(response, "model"):
-            model_name = cast(str | None, response.model)
-
-        # Check for model_name attribute
-        if not model_name and hasattr(response, "model_name"):
-            model_name = cast(str | None, response.model_name)
-
-        return model_name
+        return infer_response_model(response) or config_model
 
     def _reconstruct_original_prompt(self, example: Any) -> list[dict[str, str]]:
         """Reconstruct original prompt from example input.
@@ -454,6 +449,40 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             metadata=example.metadata.copy() if example.metadata else {},
         )
 
+    def _require_objective_keys(
+        self, example_results: list[ExampleResult], config: dict[str, Any]
+    ) -> None:
+        """Fail the trial when a successful row omits an objective key.
+
+        Aggregation reads an absent key as 0.0, so an evaluator that emits a
+        differently named key scored every trial 0.0 with no signal (#2422).
+        This matches the ``metric_functions`` path, which refuses to substitute
+        a fabricated 0.0 for an objective. Keys the SDK measures itself (cost
+        family, reserved tracker metrics) are exempt. Failed rows already carry
+        their documented 0.0 and are not checked.
+        """
+        for metric in self.metrics:
+            if metric in _SDK_MEASURED_OBJECTIVES:
+                continue
+            missing = [
+                index
+                for index, row in enumerate(example_results)
+                if row.success and metric not in (row.metrics or {})
+            ]
+            if missing:
+                raise EvaluationError(
+                    f"Objective metric '{metric}' is missing from the metrics "
+                    f"returned by the custom_evaluator for {len(missing)} of "
+                    f"{len(example_results)} examples. Refusing to substitute a "
+                    "fabricated 0.0 score for an optimization objective.",
+                    config=config,
+                    details={
+                        "metric_name": metric,
+                        "missing_example_count": len(missing),
+                        "is_objective": True,
+                    },
+                )
+
     def _aggregate_custom_metrics(
         self, all_metrics: list[dict[str, Any]]
     ) -> dict[str, float]:
@@ -696,6 +725,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         outputs = []
         errors: list[str | None] = []
         consumed_examples = 0
+        raised_rows = 0
         budget_exhausted = False
 
         for i, example in enumerate(dataset.examples):
@@ -811,6 +841,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 failed_result = self._create_failed_example_result(example, i, e)
                 example_results.append(failed_result)
                 consumed_examples += 1
+                raised_rows += 1
                 if sample_lease:
                     sample_lease.mark_completed()
                 if progress_callback:
@@ -833,6 +864,8 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         if self.capture_llm_metrics and self._metrics_available:
             self._metrics_tracker.end_tracking()
 
+        self._require_objective_keys(example_results, config)
+
         # Aggregate metrics across all examples
         aggregated_metrics = self._aggregate_custom_metrics(all_metrics)
 
@@ -851,6 +884,19 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             f"duration: {duration:.2f}s, metrics: {aggregated_metrics}"
         )
 
+        # Visibility only (#2422): rows whose custom_evaluator raised keep their
+        # documented 0.0 score; partially failed trials are counted so the
+        # orchestrator can surface CUSTOM_EVALUATOR_ROWS_FAILED. Counts only.
+        # Only rows that entered the exception handler count; a returned
+        # ExampleResult(success=False) is the evaluator's own verdict.
+        failed_rows = raised_rows
+        summary_stats: dict[str, Any] | None = None
+        if 0 < failed_rows < len(example_results):
+            summary_stats = {
+                "custom_evaluator_failed_rows": failed_rows,
+                "custom_evaluator_total_rows": len(example_results),
+            }
+
         result = EvaluationResult(
             config=config,
             example_results=example_results,
@@ -858,6 +904,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             total_examples=len(example_results),
             successful_examples=success_count,
             duration=duration,
+            summary_stats=summary_stats,
             sample_budget_exhausted=budget_exhausted,
             examples_consumed=consumed_examples,
             metrics=aggregated_metrics,

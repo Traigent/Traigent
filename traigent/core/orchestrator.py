@@ -68,6 +68,7 @@ from traigent.core.cost_enforcement import (
     validate_cost_limit,
 )
 from traigent.core.cost_estimator import CostEstimator
+from traigent.core.sigterm_cancellation import sigterm_as_cancellation
 from traigent.core.exception_handler import (
     VendorErrorCategory,
     classify_systematic_provider_failure,
@@ -121,6 +122,7 @@ from traigent.core.sample_budget import SampleBudgetManager
 from traigent.core.selection_receipt import build_selection_receipt
 from traigent.core.stat_significance import compute_significance
 from traigent.core.stop_condition_manager import StopConditionManager
+from traigent.core.stop_conditions import StopCondition
 from traigent.core.trial_lifecycle import TrialLifecycle
 from traigent.core.utils import extract_examples_attempted
 from traigent.core.workflow_trace_manager import WorkflowTraceManager
@@ -183,6 +185,73 @@ _OBJECTIVE_UNMATCHED_WARNING_CODE = "OBJECTIVE_UNMATCHED"
 # free/unpriceable model run). Sibling of _OBJECTIVE_UNMATCHED_WARNING_CODE
 # (#1691): same register/append/consume mechanism, warning-only (never fatal).
 _OBJECTIVE_INERT_CONSTANT_WARNING_CODE = "OBJECTIVE_INERT_CONSTANT"
+# (#2664): trials were excluded from ranking because the primary objective was
+# present on only some of their examples; named so the run never silently ends
+# with no winner.
+_METRIC_PARTIAL_COVERAGE_WARNING_CODE = "METRIC_PARTIAL_COVERAGE"
+# (#2422): a custom_evaluator raised on some (not all) rows of a trial; those
+# rows scored 0.0 on quality metrics. Visibility only, scoring is unchanged.
+_CUSTOM_EVALUATOR_ROWS_FAILED_WARNING_CODE = "CUSTOM_EVALUATOR_ROWS_FAILED"
+
+
+def _format_partial_coverage_warning(
+    partial: Sequence[tuple[str, int, int]],
+    primary_objective: str,
+    reason_code: str | None,
+    best_config: Any,
+    eligible_ids: Sequence[str] | None,
+) -> str:
+    """Describe partial coverage in terms of what selection actually did."""
+    tid, present, total = partial[0]
+    eligible = set(eligible_ids or [])
+    excluded = [p for p in partial if p[0] not in eligible]
+    head = (
+        f"objective '{primary_objective}' was reported on only {present}/{total} "
+        f"examples (e.g. trial {tid}). "
+    )
+    if not excluded:
+        # Legacy comparability mode ranks partially covered trials.
+        return (
+            f"{len(partial)} trial(s) had partial coverage but were still "
+            f"eligible for ranking: " + head
+        )
+    prefix = f"{len(excluded)} trial(s) excluded from ranking: "
+    if reason_code == NO_RANKING_ELIGIBLE_TRIALS:
+        return prefix + head + "No winner is declared."
+    if not best_config:
+        return (
+            prefix + head + f"No winner was selected (reason: {reason_code or 'none'})."
+        )
+    return prefix + head + "The winner was chosen among the remaining eligible trials."
+
+
+def _partial_coverage_trials(
+    trials: Sequence[Any], primary_objective: str
+) -> list[tuple[str, int, int]]:
+    """Return (trial_id, present, total) for trials with partial primary coverage."""
+    found: list[tuple[str, int, int]] = []
+    key = primary_objective.strip().lower()
+    for trial in trials:
+        comparability = (getattr(trial, "metadata", None) or {}).get("comparability")
+        if hasattr(comparability, "to_dict"):
+            comparability = comparability.to_dict()
+        if not isinstance(comparability, dict):
+            continue
+        if str(comparability.get("primary_objective", "")).strip().lower() != key:
+            continue
+        codes = comparability.get("warning_codes") or []
+        if "MCI-002" not in codes:
+            continue
+        found.append(
+            (
+                str(getattr(trial, "trial_id", "")),
+                int(comparability.get("examples_with_primary_metric") or 0),
+                int(comparability.get("total_examples") or 0),
+            )
+        )
+    return found
+
+
 # Zero-span tolerance mirroring normalize_value()'s normative epsilon in
 # objectives.py (``abs(max - min) < 1e-9``): an objective whose observed span is
 # below this normalizes to a constant 0.5 on every trial, so its weight becomes a
@@ -3486,6 +3555,8 @@ class OptimizationOrchestrator:
 
         fetched_identity_keys = await self._fetch_run_content_identity_keys()
         identity_keys_token = bind_run_content_identity_keys(fetched_identity_keys)
+        sigterm_scope = sigterm_as_cancellation()  # #2667
+        sigterm_scope.__enter__()
         try:
             # Content identity v1: one snapshot per run, taken from the rows' and
             # the agent's CURRENT state before the session is created. None without
@@ -3518,6 +3589,7 @@ class OptimizationOrchestrator:
                     session_span=session_span,
                 )
         finally:
+            sigterm_scope.__exit__(None, None, None)
             reset_run_content_identity_keys(identity_keys_token)
 
     def _check_cost_approval(self, dataset: Dataset) -> None:
@@ -4124,6 +4196,18 @@ class OptimizationOrchestrator:
             return
         if reps <= 0:
             return
+        # #2421: ``no_usage_captured`` is terminal. The run is about to fail
+        # closed with UnknownModelError; reruns would add spend and any usage
+        # they capture could suppress that error. Keep the partial result.
+        if self._stop_reason == "no_usage_captured" or (
+            getattr(result, "stop_reason", None) == "no_usage_captured"
+        ):
+            logger.info(
+                "winner_stability_reps=%d skipped: the run stopped with "
+                "no_usage_captured.",
+                reps,
+            )
+            return
         if not result.best_config:
             logger.info(
                 "winner_stability_reps=%d requested but the run selected no "
@@ -4439,7 +4523,13 @@ class OptimizationOrchestrator:
         # runs have no backend finalize path, and sync eligibility requires a
         # terminal local status ("completed"). No-op for connected
         # tracking-enabled runs (their backend finalize owns the local mirror).
-        self.backend_session_manager.finalize_local_session(session_id, self._status)
+        self.backend_session_manager.finalize_local_session(
+            session_id,
+            self._status,
+            best_config=result.best_config,
+            best_score=result.best_score,
+            apply_best=True,
+        )
         # #2020: surface the syncable LOCAL session id on the result so the
         # caller can upload THIS run (`traigent sync r.sync_session_id`)
         # without --all or private-storage archaeology. Covers the runs the
@@ -5337,6 +5427,9 @@ class OptimizationOrchestrator:
                         "(TRAIGENT_FALLBACK_TRIAL_LIMIT). Pass max_trials=... to "
                         "run more."
                     )
+            zero_trial = getattr(enforcer, "zero_trial_stop_detail", None)
+            if callable(zero_trial) and (detail := zero_trial(trials)):
+                return str(detail)
             return f"Stopped at {trials} trials: the cost limit was reached."
         if reason == "max_samples_reached":
             return f"Stopped at {trials} trials: max_total_examples reached."
@@ -5349,6 +5442,10 @@ class OptimizationOrchestrator:
         cost_enforcer = getattr(self, "cost_enforcer", None)
         if cost_enforcer is not None:
             cost_enforcer.waive_unknown_cost_trial_cap()
+
+    def add_stop_condition(self, condition: StopCondition) -> None:
+        """Register an extra stop condition (e.g. the strict cost-usage guard)."""
+        self._stop_condition_manager.add_condition(condition)
 
     def _should_stop(self, trial_count: int) -> bool:
         """Check if optimization should stop.
@@ -5374,6 +5471,7 @@ class OptimizationOrchestrator:
                 "convergence": "convergence",
                 "semantic_saturation": "semantic_saturation",
                 "safety_constraint": "safety_constraint",
+                "no_usage_captured": "no_usage_captured",
             }
             mapped_reason = reason_mapping.get(reason, "condition")
             if (
@@ -5699,6 +5797,45 @@ class OptimizationOrchestrator:
             if result_status == OptimizationStatus.COMPLETED:
                 result_status = OptimizationStatus.FAILED
                 self._status = result_status
+
+        if primary_objective:
+            partial = _partial_coverage_trials(self._trials, primary_objective)
+            if partial:
+                result_warnings.append(
+                    _format_partial_coverage_warning(
+                        partial,
+                        primary_objective,
+                        selection.reason_code,
+                        selection.best_config,
+                        selection.ranking_eligible_trial_ids,
+                    )
+                )
+                result_warning_codes.append(_METRIC_PARTIAL_COVERAGE_WARNING_CODE)
+
+        failed_row_counts = {
+            str(trial.trial_id): int(count)
+            for trial in self._trials
+            if isinstance(
+                count := (getattr(trial, "metadata", None) or {}).get(
+                    "custom_evaluator_failed_rows"
+                ),
+                int,
+            )
+            and not isinstance(count, bool)
+            and count > 0
+        }
+        if failed_row_counts:
+            result_warnings.append(
+                f"{len(failed_row_counts)} trial(s) had rows where the "
+                "custom_evaluator raised; those rows scored 0.0 on quality "
+                "metrics. See trial metadata 'custom_evaluator_failed_rows'."
+            )
+            result_warning_codes.append(_CUSTOM_EVALUATOR_ROWS_FAILED_WARNING_CODE)
+            if session_summary is None:
+                session_summary = {}
+            else:
+                session_summary = dict(session_summary)
+            session_summary["custom_evaluator_failed_rows_by_trial"] = failed_row_counts
 
         # Issue #1832 (sibling of #1691): warn when a declared, weighted,
         # matched objective is uniformly constant across the ranking-eligible

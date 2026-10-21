@@ -385,7 +385,7 @@ def sentiment_score(output, expected, llm_metrics=None):
 @traigent.optimize(
     configuration_space={
         "temperature": [0.0, 0.3, 0.7],
-        "model": ["gpt-3.5-turbo", "gpt-4"]
+        "model": ["gpt-4.1-mini", "gpt-4.1"]
     },
     eval_dataset="sentiment_eval.jsonl",
     scoring_function=sentiment_score,

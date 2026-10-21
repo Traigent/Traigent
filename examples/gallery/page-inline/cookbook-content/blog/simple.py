@@ -66,7 +66,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "blog_eval.jsonl")
     max_trials=10,
 )
 def write_intro(topic: str) -> str:
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.6)
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.6)
     prompt = f"Write a 2-3 sentence blog introduction about: {topic}"
     return llm.invoke([HumanMessage(content=prompt)]).content.strip()
 

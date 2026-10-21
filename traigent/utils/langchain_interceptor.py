@@ -6,8 +6,10 @@ that would otherwise be lost when functions return only strings.
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Observability CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
 
+import importlib.util
 import threading
 import time
+from collections import deque
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -86,6 +88,54 @@ def inside_instrumented_provider_call() -> bool:
     return _instrumented_call.get()
 
 
+_capture_owned: ContextVar[frozenset[int]] = ContextVar(
+    "traigent_langchain_capture_owned", default=frozenset()
+)
+
+
+def _owned_by(model: Any) -> Any:
+    """Mark ``model`` as owning the current capture; returns the reset token."""
+    return _capture_owned.set(_capture_owned.get() | {id(model)})
+
+
+@contextmanager
+def _capture_ownership(model: Any) -> Iterator[bool]:
+    """Yield True when this invoke wrapper should record its own response.
+
+    Normally always True: ``invoke``/``ainvoke`` wrappers record exactly once
+    per call, and nested independent calls (even a callback re-invoking the
+    SAME model instance) are separate provider calls that must each be
+    recorded. The stream wrappers avoid double counting instead by asking
+    LangChain up front whether a stream call falls back to invoke/ainvoke
+    (:func:`_stream_falls_back`) and not recording in that case.
+
+    Only when ``_should_stream`` is unavailable (``_stream_falls_back``
+    returns None) do the stream wrappers mark the instance as owning the
+    capture while the wrapped stream runs; this wrapper then yields False so
+    the fallback invoke is recorded once, by the stream wrapper. That legacy
+    path is instance-scoped and may drop a same-instance re-entrant call.
+    """
+    yield id(model) not in _capture_owned.get()
+
+
+def _stream_falls_back(model: Any, *, async_api: bool, kwargs: dict[str, Any]) -> Any:
+    """Ask LangChain whether ``stream``/``astream`` will fall back to invoke.
+
+    Mirrors the decision in ``BaseChatModel.stream``/``astream``:
+    ``not self._should_stream(async_api=..., **{**kwargs, "stream": True})``.
+    Returns True (falls back; the inner invoke wrapper records), False (really
+    streams) or None when the check is unavailable or fails (legacy
+    instance-scoped ownership applies).
+    """
+    should_stream = getattr(model, "_should_stream", None)
+    if not callable(should_stream):
+        return None
+    try:
+        return not should_stream(async_api=async_api, **{**kwargs, "stream": True})
+    except Exception:  # noqa: BLE001 - private LangChain API; degrade, don't fail
+        return None
+
+
 class capture_scope:
     """Give the enclosing trial its own capture buffer (Traigent#2387).
 
@@ -117,6 +167,10 @@ class capture_scope:
         self.__exit__(*exc_info)
 
 
+# Cap on the per-thread "last response" stack (see set_last_response).
+_MAX_THREAD_LOCAL_RESPONSES = 64
+
+
 class LangChainMetadataCapture:
     """Thread-safe storage for LangChain response metadata."""
 
@@ -136,7 +190,11 @@ class LangChainMetadataCapture:
         """Store the last LangChain response."""
         with self._lock:
             if not hasattr(self._storage, "responses"):
-                self._storage.responses = []
+                # Bounded: this per-thread stack only serves get_last_response()
+                # (newest first). Cost accounting reads the capture-scope bucket
+                # / global list below, never this one, so evicting its oldest
+                # entries cannot drop a response still needed for spend. (#2444)
+                self._storage.responses = deque(maxlen=_MAX_THREAD_LOCAL_RESPONSES)
             self._storage.responses.append(response)
             logger.debug("Captured LangChain response with metadata")
 
@@ -318,42 +376,201 @@ def capture_key(key: Any):
         _metadata_capture.clear_current_key()
 
 
+def _mock_chat_message(client: Any, provider: str, *, chunk: bool = False) -> Any:
+    """Build the canned LangChain message mock mode returns for ``provider``."""
+    from langchain_core.messages import AIMessage, AIMessageChunk
+
+    from traigent.integrations.utils.mock_adapter import MockAdapter
+
+    message_cls = AIMessageChunk if chunk else AIMessage
+    if provider == "openai":
+        model_name = getattr(client, "model_name", None) or getattr(
+            client, "model", "mock-model"
+        )
+        data = MockAdapter.get_mock_response("openai", model=model_name)
+        usage = data["usage"]
+        return message_cls(
+            content=data["choices"][0]["message"]["content"],
+            response_metadata={
+                "model_name": data["model"],
+                "finish_reason": data["choices"][0]["finish_reason"],
+                "response_time_ms": 0.0,
+            },
+            usage_metadata={
+                "input_tokens": usage["prompt_tokens"],
+                "output_tokens": usage["completion_tokens"],
+                "total_tokens": usage["total_tokens"],
+            },
+        )
+    if provider == "bedrock":
+        model_name = (
+            getattr(client, "model_id", None)
+            or getattr(client, "model", None)
+            or "mock-model"
+        )
+        data = MockAdapter.get_mock_response("bedrock", model=str(model_name))
+    else:
+        data = MockAdapter.get_mock_response(
+            "anthropic", model=getattr(client, "model", "mock-model")
+        )
+    usage = data["usage"]
+    return message_cls(
+        content=data["content"][0]["text"],
+        response_metadata={
+            "model_name": data["model"],
+            "stop_reason": data["stop_reason"],
+            "response_time_ms": 0.0,
+        },
+        usage_metadata={
+            "input_tokens": usage["input_tokens"],
+            "output_tokens": usage["output_tokens"],
+            "total_tokens": usage["input_tokens"] + usage["output_tokens"],
+        },
+    )
+
+
+_MOCKABLE_PROVIDERS = frozenset({"openai", "anthropic", "bedrock"})
+
+
+def _mock_enabled(provider: str) -> bool:
+    if provider not in _MOCKABLE_PROVIDERS:
+        return False
+    from traigent.integrations.utils.mock_adapter import MockAdapter
+
+    return MockAdapter.is_mock_enabled(provider)
+
+
+def _record_stream_capture(
+    model: Any, provider: str, last: Any, start_time: float
+) -> None:
+    """Record the final stream chunk once, if any chunk was produced."""
+    if last is None:
+        return
+    response_time_ms = (time.perf_counter() - start_time) * 1000
+    if not hasattr(last, "response_metadata"):
+        last.response_metadata = {}
+    last.response_metadata["response_time_ms"] = response_time_ms
+    # A stream chunk without usage_metadata is captured as-is: the downstream
+    # metrics treat missing usage as unmeasured, not $0.
+    capture_observed_response(
+        last, provider=provider, requested_model=requested_model_of(model)
+    )
+
+
 def _create_stream_wrapper(original_meth: Any, provider: str = "unknown") -> Any:
     def stream_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        if _mock_enabled(provider):
+            # Mock mode: never reach the provider (#2424).
+            response = _mock_chat_message(self, provider, chunk=True)
+            capture_langchain_response(response)
+            yield response
+            return
         start_time = time.perf_counter()
         last = None
-        for chunk in original_meth(self, *args, **kwargs):
-            last = chunk
-            yield chunk
-        if last is not None:
-            response_time_ms = (time.perf_counter() - start_time) * 1000
-            if not hasattr(last, "response_metadata"):
-                last.response_metadata = {}
-            last.response_metadata["response_time_ms"] = response_time_ms
-            capture_observed_response(
-                last, provider=provider, requested_model=requested_model_of(self)
-            )
+        fallback = _stream_falls_back(self, async_api=False, kwargs=kwargs)
+        owns = fallback is not True and id(self) not in _capture_owned.get()
+        iterator = iter(original_meth(self, *args, **kwargs))
+        try:
+            while True:
+                # Legacy only (``_should_stream`` unavailable): own the
+                # capture while the wrapped stream runs, so a stream->invoke
+                # fallback is captured once.
+                token = _owned_by(self) if fallback is None else None
+                try:
+                    chunk = next(iterator)
+                except StopIteration:
+                    break
+                finally:
+                    if token is not None:
+                        _capture_owned.reset(token)
+                last = chunk
+                yield chunk
+        except GeneratorExit:
+            # close() after the first chunk: the provider call completed
+            # (e.g. a stream->invoke fallback), so its usage still counts.
+            if owns:
+                _record_stream_capture(self, provider, last, start_time)
+            raise
+        if owns:
+            _record_stream_capture(self, provider, last, start_time)
 
     return stream_wrapper
 
 
 def _create_astream_wrapper(original_meth: Any, provider: str = "unknown") -> Any:
     async def astream_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        if _mock_enabled(provider):
+            response = _mock_chat_message(self, provider, chunk=True)
+            capture_langchain_response(response)
+            yield response
+            return
         start_time = time.perf_counter()
         last = None
-        async for chunk in original_meth(self, *args, **kwargs):
-            last = chunk
-            yield chunk
-        if last is not None:
-            response_time_ms = (time.perf_counter() - start_time) * 1000
-            if not hasattr(last, "response_metadata"):
-                last.response_metadata = {}
-            last.response_metadata["response_time_ms"] = response_time_ms
-            capture_observed_response(
-                last, provider=provider, requested_model=requested_model_of(self)
-            )
+        fallback = _stream_falls_back(self, async_api=True, kwargs=kwargs)
+        owns = fallback is not True and id(self) not in _capture_owned.get()
+        iterator = original_meth(self, *args, **kwargs).__aiter__()
+        try:
+            while True:
+                # Legacy only: see stream_wrapper.
+                token = _owned_by(self) if fallback is None else None
+                try:
+                    chunk = await iterator.__anext__()
+                except StopAsyncIteration:
+                    break
+                finally:
+                    if token is not None:
+                        _capture_owned.reset(token)
+                last = chunk
+                yield chunk
+        except GeneratorExit:
+            # aclose() after the first chunk: see stream_wrapper.
+            if owns:
+                _record_stream_capture(self, provider, last, start_time)
+            raise
+        if owns:
+            _record_stream_capture(self, provider, last, start_time)
 
     return astream_wrapper
+
+
+def _create_ainvoke_wrapper(original_meth: Any, provider: str = "unknown") -> Any:
+    """Wrap ``ainvoke`` so mock mode covers it and its cost is captured (#2424, #2445).
+
+    ``abatch`` is covered through this wrapper: LangChain's default
+    ``abatch`` dispatches every item to ``self.ainvoke``.
+    """
+
+    async def ainvoke_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        if _mock_enabled(provider):
+            response = _mock_chat_message(self, provider)
+            capture_langchain_response(response)
+            return response
+        start_time = time.perf_counter()
+        with _capture_ownership(self) as owns, instrumented_provider_call():
+            response = await original_meth(self, *args, **kwargs)
+        response_time_ms = (time.perf_counter() - start_time) * 1000
+        if not hasattr(response, "response_metadata"):
+            response.response_metadata = {}
+        response.response_metadata["response_time_ms"] = response_time_ms
+        if owns:
+            capture_observed_response(
+                response, provider=provider, requested_model=requested_model_of(self)
+            )
+        return response
+
+    return ainvoke_wrapper
+
+
+def _patch_ainvoke(model_cls: Any, class_name: str, provider: str) -> bool:
+    """Patch ``model_cls.ainvoke`` once; returns True if newly patched."""
+    flag = "_traigent_patched_ainvoke"
+    # Check the class's own namespace: a subclass must not inherit "patched".
+    if flag in vars(model_cls) or not hasattr(model_cls, "ainvoke"):
+        return False
+    model_cls.ainvoke = _create_ainvoke_wrapper(model_cls.ainvoke, provider)
+    setattr(model_cls, flag, True)
+    logger.info("Patched %s.ainvoke for metadata capture", class_name)
+    return True
 
 
 def _patch_langchain_bedrock_model(model_cls: Any, class_name: str) -> bool:
@@ -396,16 +613,20 @@ def _patch_langchain_bedrock_model(model_cls: Any, class_name: str) -> bool:
                 return response
 
             start_time = time.perf_counter()
-            response = original_invoke(self, *args, **kwargs)
+            with _capture_ownership(self) as owns:
+                response = original_invoke(self, *args, **kwargs)
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
             if not hasattr(response, "response_metadata"):
                 response.response_metadata = {}
             response.response_metadata["response_time_ms"] = response_time_ms
 
-            capture_observed_response(
-                response, provider="bedrock", requested_model=requested_model_of(self)
-            )
+            if owns:
+                capture_observed_response(
+                    response,
+                    provider="bedrock",
+                    requested_model=requested_model_of(self),
+                )
             logger.debug(
                 "Captured %s invoke usage: %s, response_time_ms: %.2f",
                 class_name,
@@ -417,6 +638,9 @@ def _patch_langchain_bedrock_model(model_cls: Any, class_name: str) -> bool:
         model_cls.invoke = invoke_with_capture_bedrock
         model_cls._traigent_patched_invoke = True
         logger.info("✅ Patched %s.invoke for metadata capture", class_name)
+        patched_any = True
+
+    if _patch_ainvoke(model_cls, class_name, "bedrock"):
         patched_any = True
 
     for meth_name, flag in [
@@ -444,14 +668,45 @@ def _patch_langchain_bedrock_model(model_cls: Any, class_name: str) -> bool:
     return patched_any
 
 
-def patch_langchain_for_metadata_capture() -> bool:
+INSTALL_INSTALLED = "installed"
+INSTALL_ALREADY = "already-installed"
+INSTALL_NOT_APPLICABLE = "not-applicable"
+INSTALL_FAILED = "failed"
+
+
+def classify_import_failure(top_level_package: str) -> str:
+    """Outcome for an ``ImportError`` raised while installing one provider.
+
+    ``not-applicable`` only when the optional top-level package is provably
+    absent (``find_spec`` returns None). A package that is present but fails
+    to import (a broken transitive dependency, an incompatible version) is a
+    ``failed`` install: the provider would otherwise reach the real API.
+    """
+    try:
+        absent = importlib.util.find_spec(top_level_package) is None
+    except (ImportError, ValueError):
+        absent = False
+    return INSTALL_NOT_APPLICABLE if absent else INSTALL_FAILED
+
+
+def patch_langchain_for_metadata_capture(
+    outcomes: dict[str, str] | None = None,
+) -> bool:
     """Monkey-patch LangChain to automatically capture response metadata.
 
-    This patches both ChatAnthropic and ChatOpenAI invoke methods to capture responses.
+    This patches ChatAnthropic, ChatOpenAI and the langchain_aws Bedrock
+    models to capture responses. Patch failures are logged, not raised, so
+    callers that must know (mock-mode activation) pass ``outcomes``: it is
+    filled with one of ``installed`` / ``already-installed`` /
+    ``not-applicable`` (package absent) / ``failed`` per provider key
+    (``anthropic``, ``openai``, ``bedrock``).
     """
+    out: dict[str, str] = outcomes if outcomes is not None else {}
     patched_any = False
+    before = False
 
     # Patch ChatAnthropic
+    before, patched_any = patched_any, False
     try:
         from langchain_anthropic import ChatAnthropic
 
@@ -492,7 +747,8 @@ def patch_langchain_for_metadata_capture() -> bool:
                     return response
 
                 start_time = time.perf_counter()
-                response = original_invoke(self, *args, **kwargs)
+                with _capture_ownership(self) as owns:
+                    response = original_invoke(self, *args, **kwargs)
                 response_time_ms = (time.perf_counter() - start_time) * 1000
 
                 # Inject timing into response metadata
@@ -500,11 +756,12 @@ def patch_langchain_for_metadata_capture() -> bool:
                     response.response_metadata = {}
                 response.response_metadata["response_time_ms"] = response_time_ms
 
-                capture_observed_response(
-                    response,
-                    provider="anthropic",
-                    requested_model=requested_model_of(self),
-                )
+                if owns:
+                    capture_observed_response(
+                        response,
+                        provider="anthropic",
+                        requested_model=requested_model_of(self),
+                    )
                 logger.debug(
                     f"Captured ChatAnthropic invoke usage: {getattr(response, 'usage_metadata', None)}, "
                     f"response_time_ms: {response_time_ms:.2f}"
@@ -514,6 +771,9 @@ def patch_langchain_for_metadata_capture() -> bool:
             ChatAnthropic.invoke = invoke_with_capture_anthropic
             ChatAnthropic._traigent_patched_invoke = True
             logger.info("✅ Patched ChatAnthropic.invoke for metadata capture")
+            patched_any = True
+
+        if _patch_ainvoke(ChatAnthropic, "ChatAnthropic", "anthropic"):
             patched_any = True
 
         # Patch stream methods if available
@@ -543,12 +803,22 @@ def patch_langchain_for_metadata_capture() -> bool:
                     f"✅ Patched ChatAnthropic.{meth_name} for metadata capture"
                 )
 
+        out["anthropic"] = INSTALL_INSTALLED if patched_any else INSTALL_ALREADY
     except ImportError:
-        logger.debug("ChatAnthropic not available, skipping")
+        out["anthropic"] = classify_import_failure("langchain_anthropic")
+        if out["anthropic"] == INSTALL_FAILED:
+            logger.error(
+                "Failed to patch langchain_anthropic: import error in an installed package"
+            )
+        else:
+            logger.debug("ChatAnthropic not available, skipping")
     except Exception as e:
+        out["anthropic"] = INSTALL_FAILED
         logger.error(f"Failed to patch ChatAnthropic: {e}")
+    patched_any = patched_any or before
 
     # Patch ChatOpenAI
+    before, patched_any = patched_any, False
     try:
         from langchain_openai import ChatOpenAI
 
@@ -587,7 +857,7 @@ def patch_langchain_for_metadata_capture() -> bool:
                     return response
 
                 start_time = time.perf_counter()
-                with instrumented_provider_call():
+                with _capture_ownership(self) as owns, instrumented_provider_call():
                     response = original_invoke_openai(self, *args, **kwargs)
                 response_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -596,11 +866,12 @@ def patch_langchain_for_metadata_capture() -> bool:
                     response.response_metadata = {}
                 response.response_metadata["response_time_ms"] = response_time_ms
 
-                capture_observed_response(
-                    response,
-                    provider="openai",
-                    requested_model=requested_model_of(self),
-                )
+                if owns:
+                    capture_observed_response(
+                        response,
+                        provider="openai",
+                        requested_model=requested_model_of(self),
+                    )
                 logger.debug(
                     f"Captured ChatOpenAI invoke usage: {getattr(response, 'usage_metadata', None)}, "
                     f"response_time_ms: {response_time_ms:.2f}"
@@ -610,6 +881,9 @@ def patch_langchain_for_metadata_capture() -> bool:
             ChatOpenAI.invoke = invoke_with_capture_openai
             ChatOpenAI._traigent_patched_invoke = True
             logger.info("✅ Patched ChatOpenAI.invoke for metadata capture")
+            patched_any = True
+
+        if _patch_ainvoke(ChatOpenAI, "ChatOpenAI", "openai"):
             patched_any = True
 
         for meth_name, flag in [
@@ -633,12 +907,22 @@ def patch_langchain_for_metadata_capture() -> bool:
                 setattr(ChatOpenAI, flag, True)
                 logger.info(f"✅ Patched ChatOpenAI.{meth_name} for metadata capture")
 
+        out["openai"] = INSTALL_INSTALLED if patched_any else INSTALL_ALREADY
     except ImportError:
-        logger.debug("ChatOpenAI not available, skipping")
+        out["openai"] = classify_import_failure("langchain_openai")
+        if out["openai"] == INSTALL_FAILED:
+            logger.error(
+                "Failed to patch langchain_openai: import error in an installed package"
+            )
+        else:
+            logger.debug("ChatOpenAI not available, skipping")
     except Exception as e:
+        out["openai"] = INSTALL_FAILED
         logger.error(f"Failed to patch ChatOpenAI: {e}")
+    patched_any = patched_any or before
 
     # Patch langchain_aws Bedrock chat models
+    before, patched_any = patched_any, False
     try:
         import langchain_aws
 
@@ -650,10 +934,19 @@ def patch_langchain_for_metadata_capture() -> bool:
             if _patch_langchain_bedrock_model(model_cls, f"langchain_aws.{class_name}"):
                 patched_any = True
 
+        out["bedrock"] = INSTALL_INSTALLED if patched_any else INSTALL_ALREADY
     except ImportError:
-        logger.debug("langchain_aws not available, skipping Bedrock")
+        out["bedrock"] = classify_import_failure("langchain_aws")
+        if out["bedrock"] == INSTALL_FAILED:
+            logger.error(
+                "Failed to patch langchain_aws: import error in an installed package"
+            )
+        else:
+            logger.debug("langchain_aws not available, skipping Bedrock")
     except Exception as e:
+        out["bedrock"] = INSTALL_FAILED
         logger.error(f"Failed to patch langchain_aws Bedrock models: {e}")
+    patched_any = patched_any or before
 
     if not patched_any:
         logger.debug("No LangChain models could be patched for metadata capture")

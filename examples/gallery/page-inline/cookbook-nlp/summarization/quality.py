@@ -84,7 +84,7 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
     max_trials=10,
 )
 def summarize(document: str) -> str:
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.0)
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
     p = f"Summarize in 1-2 sentences:\n\n{document}"
     return llm.invoke([HumanMessage(content=p)]).content.strip()
 

@@ -100,7 +100,7 @@ remote_service = TraigentCloudRemoteGuidanceAdapter(client)
 optimizer = InteractiveOptimizer(
     config_space={
         "temperature": (0.0, 1.0),
-        "model": ["o4-mini", "GPT-4o"],
+        "model": ["gpt-4.1-mini", "GPT-4o"],
         "max_tokens": (50, 500)
     },
     objectives=["accuracy", "latency", "cost"],
@@ -324,7 +324,7 @@ config_space = {
     "top_p": (0.1, 1.0),
     "frequency_penalty": (-2.0, 2.0),
     "presence_penalty": (-2.0, 2.0),
-    "model": ["o4-mini", "GPT-4o", "claude-2"]
+    "model": ["gpt-4.1-mini", "GPT-4o", "claude-2"]
 }
 
 from traigent.core.objectives import create_default_objectives

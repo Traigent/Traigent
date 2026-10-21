@@ -107,7 +107,7 @@ def _calc_accuracy(
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"],
+        "model": ["gpt-4.1", "gpt-4.1-mini"],
         "temperature": [0.0, 0.2],
     },
     eval_dataset=DATASET,
@@ -117,7 +117,7 @@ def _calc_accuracy(
     max_trials=10,
 )
 def calculate(expression: str) -> str:
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.0)
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
     # The expression is untrusted: isolate it in a tagged block so embedded
     # directives ("ignore previous instructions...") cannot override the task.
     prompt = f"""

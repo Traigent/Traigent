@@ -51,8 +51,9 @@ export TRAIGENT_LOG_LEVEL=DEBUG
 python my_optimization.py
 ```
 
-Mock mode skips the optimized-function pricing preflight because supported
-provider calls are intercepted and return canned responses. It is not a global
+Mock mode still runs the optimized-function cost-approval and pricing preflights
+(raw provider calls can be real); supported provider calls are intercepted and
+return canned responses. It is not a global
 network sandbox: direct provider calls made before Traigent installs its
 interceptors, or calls through unsupported clients, should be stubbed explicitly
 or protected with provider-side spend controls.
@@ -85,8 +86,8 @@ python optimize_production.py
 
 Unpriced models block before trial 1 unless cost-sensitive execution is
 pre-approved: an interactive terminal prompts `y/N`, and non-interactive runs
-fail closed. Mock LLM mode skips the optimized-function pricing preflight, but
-it does not disable cost permits or accounting globally. Budget overruns are
+fail closed. Mock LLM mode does not skip the optimized-function preflights and
+does not disable cost permits or accounting. Budget overruns are
 controlled by `TRAIGENT_RUN_COST_LIMIT` / `CostLimitExceeded`, not strict cost
 accounting.
 

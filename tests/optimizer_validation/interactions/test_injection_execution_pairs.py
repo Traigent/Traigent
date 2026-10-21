@@ -10,17 +10,17 @@ Purpose:
 
 Dimensions Covered:
     - InjectionMode: context, parameter, seamless
-    - ExecutionMode: edge_analytics, hybrid, standard (public supported surface)
+    - ExecutionMode: local, hybrid, hybrid_api (derived from the ExecutionMode enum)
 
 Note:
-    execution_mode='privacy' and execution_mode='cloud' are legacy selectors that
+    execution_mode='edge_analytics', 'privacy' and 'cloud' are removed selectors that
     now fail closed at the public API boundary (raise ConfigurationError) because
     compatibility normalization can silently route to cloud egress. They are NOT
     included in the success matrix. See test_legacy_egress_modes_fail_closed below.
 
 Coverage Goal:
-    Full pairwise coverage = 3 injection modes × 3 execution modes = 9 combinations
-    + 2 dedicated fail-closed assertions for the removed legacy selectors.
+    Full pairwise coverage = 3 injection modes × len(ExecutionMode) execution modes
+    + dedicated fail-closed assertions for the removed legacy selectors.
 
 Validation Approach:
     Tests verify that optimization completes successfully with correct results
@@ -32,16 +32,17 @@ from __future__ import annotations
 import pytest
 
 from tests.optimizer_validation.specs import TestScenario, basic_scenario
+from traigent.config.types import ExecutionMode
 from traigent.utils.exceptions import ConfigurationError
 
 # All injection modes (attribute was removed in v2.x)
 INJECTION_MODES = ["context", "parameter", "seamless"]
 
-# Supported public execution modes (privacy/cloud removed — they fail closed)
-EXECUTION_MODES = ["edge_analytics", "hybrid", "standard"]
+# Real execution modes, derived from the SDK enum
+EXECUTION_MODES = [mode.value for mode in ExecutionMode]
 
-# Legacy selectors that now fail closed — kept for explicit regression coverage
-_FAIL_CLOSED_LEGACY_MODES = ["privacy", "cloud"]
+# Removed selectors that now fail closed — kept for explicit regression coverage
+_FAIL_CLOSED_LEGACY_MODES = ["edge_analytics", "privacy", "cloud"]
 
 
 class TestInjectionExecutionPairwise:
@@ -128,7 +129,7 @@ class TestInjectionExecutionWithConstraints:
     """
 
     @pytest.mark.parametrize("injection_mode", INJECTION_MODES)
-    @pytest.mark.parametrize("execution_mode", ["edge_analytics", "hybrid"])
+    @pytest.mark.parametrize("execution_mode", ["local", "hybrid"])
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_constraint_with_mode_combination(
@@ -203,7 +204,7 @@ class TestInjectionExecutionWithMultiObjective:
     """
 
     @pytest.mark.parametrize("injection_mode", ["context", "parameter"])
-    @pytest.mark.parametrize("execution_mode", ["edge_analytics", "hybrid"])
+    @pytest.mark.parametrize("execution_mode", ["local", "hybrid"])
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_multi_objective_with_mode_combination(
@@ -274,7 +275,7 @@ class TestInjectionExecutionWithContinuousSpace:
     """
 
     @pytest.mark.parametrize("injection_mode", INJECTION_MODES)
-    @pytest.mark.parametrize("execution_mode", ["edge_analytics", "hybrid"])
+    @pytest.mark.parametrize("execution_mode", ["local", "hybrid"])
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_continuous_space_with_mode_combination(
@@ -369,10 +370,10 @@ class TestLegacyEgressModeFailClosed:
     @pytest.mark.parametrize("legacy_mode", _FAIL_CLOSED_LEGACY_MODES)
     @pytest.mark.unit
     def test_legacy_egress_modes_fail_closed(self, legacy_mode: str) -> None:
-        """Verify legacy egress selectors raise ConfigurationError, not silently normalize.
+        """Verify removed selectors raise ConfigurationError, not silently normalize.
 
         Purpose:
-            Assert that passing execution_mode='privacy' or execution_mode='cloud'
+            Assert that passing execution_mode='edge_analytics', 'privacy' or 'cloud'
             raises ConfigurationError so no silent egress normalization occurs.
 
         Expectations:
@@ -387,5 +388,5 @@ class TestLegacyEgressModeFailClosed:
         """
         from traigent.config.types import TraigentConfig
 
-        with pytest.raises(ConfigurationError, match="fails closed"):
+        with pytest.raises(ConfigurationError, match="fails"):
             TraigentConfig(execution_mode=legacy_mode)

@@ -122,7 +122,7 @@ def _fallback_usage(text: str, prompt: str) -> str | dict:
         return text
     from traigent.utils.cost_calculator import cost_from_tokens
 
-    model = str((traigent.get_config() or {}).get("model", "gpt-3.5-turbo"))
+    model = str((traigent.get_config() or {}).get("model", "gpt-4.1-mini"))
     input_tokens = max(1, len(prompt) // 4)
     output_tokens = max(1, len(text) // 4)
     input_cost, output_cost = cost_from_tokens(input_tokens, output_tokens, model)
@@ -172,7 +172,7 @@ def _greeting_accuracy(
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.1, 0.5, 0.9],
     },
     eval_dataset=DATASET_FILE,
@@ -181,7 +181,7 @@ def _greeting_accuracy(
 )
 def my_llm_function(prompt: str) -> str | dict:
     """Simple LLM call for a mock-friendly local search example."""
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.7)
     resp = llm.invoke([HumanMessage(content=prompt)])
     return _fallback_usage(getattr(resp, "content", str(resp)), prompt)
 

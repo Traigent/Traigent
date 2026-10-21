@@ -4,57 +4,61 @@ Generate performance reports in markdown and HTML formats.
 Creates detailed reports with metrics, plots, and recommendations.
 """
 
+import html
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import yaml
 
 
-def load_params() -> Dict[str, Any]:
+def load_params() -> dict[str, Any]:
     """Load parameters from params.yaml."""
     with open("params.yaml") as f:
         return yaml.safe_load(f)
 
 
-def load_performance_report() -> Dict[str, Any]:
+def load_performance_report() -> dict[str, Any]:
     """Load performance evaluation report."""
     with open("performance_report.json") as f:
         return json.load(f)
 
 
-def load_optimization_results() -> Dict[str, Any]:
+def load_optimization_results() -> dict[str, Any]:
     """Load optimization results."""
     with open("optimization_results/latest.json") as f:
         return json.load(f)
 
 
 def generate_recommendations(
-    performance: Dict[str, Any], results: Dict[str, Any]
-) -> List[str]:
+    performance: dict[str, Any], results: dict[str, Any]
+) -> list[str]:
     """
     Generate actionable recommendations based on performance.
     """
     recommendations = []
 
     # Check for regressions
-    if performance.get("comparison", {}).get("has_regression"):
+    if (performance.get("comparison") or {}).get("has_regression"):
         recommendations.append(
             "⚠️ **Performance Regression Detected**: Review changes and consider reverting "
             "or investigating the cause of degradation."
         )
 
     # Check for improvements
-    if performance.get("comparison", {}).get("has_improvement"):
+    if (performance.get("comparison") or {}).get("has_improvement"):
         recommendations.append(
             "✅ **Performance Improved**: Consider updating the baseline to lock in improvements."
         )
 
     # Cost optimization
-    current_cost = performance.get("current_metrics", {}).get("total_cost", 0)
-    if current_cost > 10:
+    _cost_metrics = performance.get("current_metrics", {})
+    current_cost = _cost_metrics.get("total_cost")
+    if current_cost is None:
+        current_cost = _cost_metrics.get("cost_lower_bound_total")
+    if isinstance(current_cost, (int, float)) and current_cost > 10:
         recommendations.append(
             "💰 **High Cost Alert**: Consider using more cost-effective models or reducing trial count."
         )
@@ -87,16 +91,14 @@ def generate_recommendations(
 
 
 def generate_markdown_report(
-    performance: Dict[str, Any], results: Dict[str, Any], params: Dict[str, Any]
+    performance: dict[str, Any], results: dict[str, Any], params: dict[str, Any]
 ) -> str:
     """Generate markdown format report."""
 
     report = []
     report.append("# 🤖 Traigent Auto-Tuning Report")
     report.append("")
-    report.append(
-        f"**Generated:** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}"
-    )
+    report.append(f"**Generated:** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')}")
     report.append(f"**Environment:** {os.environ.get('CI_COMMIT_BRANCH', 'local')}")
     report.append(f"**Commit:** {os.environ.get('CI_COMMIT_SHA', 'local')[:8]}")
     report.append("")
@@ -108,7 +110,18 @@ def generate_markdown_report(
     current = performance.get("current_metrics", {})
     report.append(f"- **Trials Completed:** {current.get('trials_completed', 0)}")
     report.append(f"- **Best Score:** {current.get('best_score', 0):.3f}")
-    report.append(f"- **Total Cost:** ${current.get('total_cost', 0):.2f}")
+    total_cost = current.get("total_cost")
+    floor = current.get("cost_lower_bound_total")
+    unmeasured = current.get("cost_trials_unmeasured") or 0
+    if total_cost is not None and not unmeasured:
+        report.append(f"- **Total Cost:** ${total_cost:.2f}")
+    elif isinstance(floor, (int, float)):
+        report.append(
+            f"- **Total Cost:** at least ${floor:.2f} "
+            f"({unmeasured} trial(s) unmeasured)"
+        )
+    else:
+        report.append("- **Total Cost:** unmeasured")
     report.append(f"- **Average Latency:** {current.get('avg_latency', 0):.2f}s")
     report.append("")
 
@@ -162,9 +175,15 @@ def generate_markdown_report(
             model = trial.get("config", {}).get("model", "unknown")
             score = trial.get("score", 0)
             latency = trial.get("latency", 0)
-            cost = trial.get("cost", 0)
+            cost = trial.get("cost")
+            if trial.get("cost_status", "measured") != "measured" or not isinstance(
+                cost, (int, float)
+            ):
+                cost_text = "unmeasured"
+            else:
+                cost_text = f"${cost:.3f}"
             report.append(
-                f"| {i} | {model} | {score:.3f} | {latency:.2f}s | ${cost:.3f} |"
+                f"| {i} | {model} | {score:.3f} | {latency:.2f}s | {cost_text} |"
             )
         report.append("")
 
@@ -183,7 +202,7 @@ def generate_markdown_report(
     report.append(f"- **Strategy:** {params['optimize']['strategy']}")
     report.append(f"- **Max Trials:** {params['optimize']['max_trials']}")
     report.append(f"- **Budget:** ${params['optimize']['budget']}")
-    report.append(f"- **Threshold:** {params['evaluate']['threshold']*100}%")
+    report.append(f"- **Threshold:** {params['evaluate']['threshold'] * 100}%")
     report.append("")
 
     # Footer
@@ -277,8 +296,10 @@ def generate_html_report(markdown_content: str) -> str:
 </html>
 """
 
-    # Simple markdown to HTML conversion (basic implementation)
-    html_content = markdown_content
+    # Simple markdown to HTML conversion (basic implementation). Escape the
+    # text first so result-derived values cannot inject markup; the tag
+    # conversions below are applied to the escaped text.
+    html_content = html.escape(markdown_content, quote=False)
 
     # Convert headers
     html_content = html_content.replace("# ", "<h1>").replace("\n## ", "</h1>\n<h2>")
@@ -314,7 +335,9 @@ def generate_html_report(markdown_content: str) -> str:
     html_content = html_content.replace("❌", '<span class="metric-bad">❌</span>')
     html_content = html_content.replace("➡️", '<span class="metric-neutral">➡️</span>')
 
-    return html_template.format(content=html_content)
+    # str.format would parse the CSS braces in the template; substitute the
+    # single placeholder instead.
+    return html_template.replace("{content}", html_content)
 
 
 def main():

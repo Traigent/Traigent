@@ -82,3 +82,35 @@ def test_allow_empty_restores_exit_zero(workspace, monkeypatch):
 def test_valid_and_invalid_controls_unchanged(workspace, monkeypatch):
     assert _run(monkeypatch, "good/", "--strict") == 0
     assert _run(monkeypatch, "bad/", "--strict") == 1
+
+
+_MISSPELT = """\
+tvars:
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.0]
+objectives:
+  - name: accuracy
+    direction: maximize
+contraints:
+  - rule: "temperature < 0.5"
+"""
+
+_INVERTED_RANGE = _MISSPELT.replace("contraints", "constraints").replace(
+    "[0.0, 1.0]", "[1.0, 0.0]"
+)
+
+
+@pytest.mark.parametrize("body", [_MISSPELT, _INVERTED_RANGE], ids=["typo", "range"])
+@pytest.mark.parametrize("strict", [False, True], ids=["default", "strict"])
+def test_loader_rejected_spec_fails_in_every_mode(
+    workspace, monkeypatch, capsys, body, strict
+):
+    """A spec load_tvl_spec rejects must not exit 0 without --strict (#2678)."""
+    (workspace / "bad_schema.tvl.yml").write_text(body)
+    args = ("bad_schema.tvl.yml", *(("--strict",) if strict else ()))
+    assert _run(monkeypatch, *args) == 1
+    err = capsys.readouterr().err
+    assert "FAILED: bad_schema.tvl.yml" in err
+    assert "Unexpected error" not in err

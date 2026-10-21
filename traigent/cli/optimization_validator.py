@@ -208,9 +208,22 @@ class OptimizationValidator:
     ) -> LocalEvaluator:
         """Create a LocalEvaluator with appropriate settings for mock or real mode."""
         execution_mode = self._local_evaluator_mode(func_info, is_mock_mode)
+        objectives = func_info.objectives or ["accuracy"]
+        # The baseline must be scored by the same scorers the optimized side
+        # uses (#2654); otherwise custom objectives are missing from it.
+        from traigent.core.optimization_pipeline import build_metric_functions
+
+        raw_metric_fns = getattr(func_info.func, "metric_functions", None)
+        raw_scoring_fn = getattr(func_info.func, "scoring_function", None)
+        metric_fns = build_metric_functions(
+            raw_metric_fns if isinstance(raw_metric_fns, dict) else None,
+            raw_scoring_fn if callable(raw_scoring_fn) else None,
+            objectives,
+        )
         return LocalEvaluator(
-            metrics=func_info.objectives or ["accuracy"],
+            metrics=objectives,
             execution_mode=execution_mode,
+            metric_functions=metric_fns or None,
         )
 
     def _local_evaluator_mode(

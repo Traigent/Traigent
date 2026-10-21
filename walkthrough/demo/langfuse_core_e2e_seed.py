@@ -39,9 +39,7 @@ def _resolve_allowed_path(path_value: str | Path) -> Path:
         for root in ALLOWED_OUTPUT_ROOTS
     ):
         return resolved_path
-    raise RuntimeError(
-        f"Path {resolved_path} must stay inside {REPO_ROOT} or /tmp"
-    )
+    raise RuntimeError(f"Path {resolved_path} must stay inside {REPO_ROOT} or /tmp")
 
 
 def _validate_backend_url(base_url: str) -> str:
@@ -242,7 +240,9 @@ def ensure_bearer_token(base_url: str) -> str | None:
     return None
 
 
-def run_phase(args: argparse.Namespace, phase: str, artifacts_dir: Path) -> dict[str, Any]:
+def run_phase(
+    args: argparse.Namespace, phase: str, artifacts_dir: Path
+) -> dict[str, Any]:
     cmd = [
         sys.executable,
         str(GUIDED_RUNNER),
@@ -322,7 +322,9 @@ def extract_items(payload: Any) -> list[Any]:
     return []
 
 
-def api_request_json(base_url: str, api_key: str, method: str, path: str, payload: Any | None = None) -> Any:
+def api_request_json(
+    base_url: str, api_key: str, method: str, path: str, payload: Any | None = None
+) -> Any:
     url = f"{_validate_backend_url(base_url)}{path}"
     jwt_token = ensure_bearer_token(base_url)
     headers = {
@@ -370,7 +372,11 @@ def collect_configuration_run_ids(results_payload: Any) -> list[str]:
             for key, nested in value.items():
                 if key in {"configuration_run_id", "config_run_id"} and nested:
                     ids.add(str(nested))
-                elif key == "id" and parent_key in {"configuration_runs", "configurations"} and nested:
+                elif (
+                    key == "id"
+                    and parent_key in {"configuration_runs", "configurations"}
+                    and nested
+                ):
                     ids.add(str(nested))
                 walk(nested, key)
         elif isinstance(value, list):
@@ -378,7 +384,10 @@ def collect_configuration_run_ids(results_payload: Any) -> list[str]:
                 if isinstance(item, dict):
                     if item.get("configuration_run_id"):
                         ids.add(str(item["configuration_run_id"]))
-                    elif item.get("id") and parent_key in {"configuration_runs", "configurations"}:
+                    elif item.get("id") and parent_key in {
+                        "configuration_runs",
+                        "configurations",
+                    }:
                         ids.add(str(item["id"]))
                 walk(item, parent_key)
 
@@ -414,7 +423,9 @@ def build_frontend_urls(
         )
     if dataset_id:
         urls["dataset"] = f"{frontend_url.rstrip('/')}/datasets/view/{dataset_id}"
-        urls["legacy_dataset"] = f"{frontend_url.rstrip('/')}/benchmarks/view/{dataset_id}"
+        urls["legacy_dataset"] = (
+            f"{frontend_url.rstrip('/')}/benchmarks/view/{dataset_id}"
+        )
     return urls
 
 
@@ -428,7 +439,9 @@ def build_backend_urls(
         "base": backend_url,
     }
     if experiment_id:
-        urls["experiment"] = f"{backend_url.rstrip('/')}/api/v1/experiments/{experiment_id}"
+        urls["experiment"] = (
+            f"{backend_url.rstrip('/')}/api/v1/experiments/{experiment_id}"
+        )
         urls["experiment_runs"] = (
             f"{backend_url.rstrip('/')}/api/v1/experiment-runs/{experiment_id}/runs?per_page=25"
         )
@@ -438,7 +451,9 @@ def build_backend_urls(
         )
     if dataset_id:
         urls["dataset"] = f"{backend_url.rstrip('/')}/api/v1/datasets/{dataset_id}"
-        urls["dataset_examples"] = f"{backend_url.rstrip('/')}/api/v1/datasets/{dataset_id}/examples"
+        urls["dataset_examples"] = (
+            f"{backend_url.rstrip('/')}/api/v1/datasets/{dataset_id}/examples"
+        )
     return urls
 
 
@@ -695,8 +710,12 @@ def seed_observability_fixture(
                                     "output_tokens": 18,
                                     "cost_usd": 0.0012,
                                     "model_name": "mock-model",
-                                    "input_data": {"question": f"How did {run_id} perform?"},
-                                    "output_data": {"answer": f"{run_id} completed successfully."},
+                                    "input_data": {
+                                        "question": f"How did {run_id} perform?"
+                                    },
+                                    "output_data": {
+                                        "answer": f"{run_id} completed successfully."
+                                    },
                                     "metadata": {"scenario": args.scenario},
                                     "prompt_reference": prompt_reference,
                                 }
@@ -707,9 +726,21 @@ def seed_observability_fixture(
             ]
         },
     )
-    trace_payload = api_get_json(args.backend_url, api_key, f"/api/v1beta/observability/traces/{quote(trace_id, safe='')}")
-    session_payload = api_get_json(args.backend_url, api_key, f"/api/v1beta/observability/sessions/{quote(session_id, safe='')}")
-    user_payload = api_get_json(args.backend_url, api_key, f"/api/v1beta/observability/users/{quote(user_id, safe='')}")
+    trace_payload = api_get_json(
+        args.backend_url,
+        api_key,
+        f"/api/v1beta/observability/traces/{quote(trace_id, safe='')}",
+    )
+    session_payload = api_get_json(
+        args.backend_url,
+        api_key,
+        f"/api/v1beta/observability/sessions/{quote(session_id, safe='')}",
+    )
+    user_payload = api_get_json(
+        args.backend_url,
+        api_key,
+        f"/api/v1beta/observability/users/{quote(user_id, safe='')}",
+    )
 
     write_json(output_dir / "observability-fixture-ingest.json", ingest_payload)
     write_json(output_dir / "observability-fixture-trace.json", trace_payload)
@@ -770,7 +801,7 @@ def seed_tool_calling_multistep_trace_fixture(
                         "tool_decision_count": 2,
                         "tool_strategy": "sequential",
                         "traigent_active_config": {
-                            "model": "gpt-4o-mini",
+                            "model": "gpt-4.1-mini",
                             "tool_choice": "auto",
                             "tools": tool_names,
                         },
@@ -806,7 +837,7 @@ def seed_tool_calling_multistep_trace_fixture(
                                     "latency_ms": 91,
                                     "input_tokens": 22,
                                     "output_tokens": 18,
-                                    "model_name": "gpt-4o-mini",
+                                    "model_name": "gpt-4.1-mini",
                                     "input_data": {
                                         "question": "Where is the enterprise shipment and can we expedite it?"
                                     },
@@ -887,7 +918,7 @@ def seed_tool_calling_multistep_trace_fixture(
                                     "latency_ms": 84,
                                     "input_tokens": 16,
                                     "output_tokens": 28,
-                                    "model_name": "gpt-4o-mini",
+                                    "model_name": "gpt-4.1-mini",
                                     "output_data": {
                                         "answer": "The shipment is still on schedule for tomorrow morning and has already been escalated for enterprise handling."
                                     },
@@ -923,7 +954,9 @@ def seed_tool_calling_multistep_trace_fixture(
 
     write_json(output_dir / "tool-calling-multistep-ingest.json", ingest_payload)
     write_json(output_dir / "tool-calling-multistep-trace.json", trace_payload)
-    write_json(output_dir / "tool-calling-multistep-observations.json", observations_payload)
+    write_json(
+        output_dir / "tool-calling-multistep-observations.json", observations_payload
+    )
     write_json(output_dir / "tool-calling-multistep-session.json", session_payload)
     write_json(output_dir / "tool-calling-multistep-user.json", user_payload)
 
@@ -947,7 +980,9 @@ def seed_prompt_fixture(
     output_dir: Path,
     run_compare: bool = False,
 ) -> dict[str, Any]:
-    prompt_name = f"langfuse.e2e.{run_id.replace(':', '-').replace('_', '-').replace('/', '-')}"
+    prompt_name = (
+        f"langfuse.e2e.{run_id.replace(':', '-').replace('_', '-').replace('/', '-')}"
+    )
     encoded_prompt_name = quote(prompt_name, safe="")
 
     create_payload = api_post_json(
@@ -982,7 +1017,9 @@ def seed_prompt_fixture(
         f"/api/v1beta/prompts/{encoded_prompt_name}/labels",
         {"labels": {"latest": 2, "production": 2}},
     )
-    prompt_detail = api_get_json(args.backend_url, api_key, f"/api/v1beta/prompts/{encoded_prompt_name}")
+    prompt_detail = api_get_json(
+        args.backend_url, api_key, f"/api/v1beta/prompts/{encoded_prompt_name}"
+    )
 
     analytics_payload = api_get_json(
         args.backend_url,
@@ -1053,7 +1090,9 @@ def seed_access_control_fixture(
     api_key: str,
     output_dir: Path,
 ) -> dict[str, Any]:
-    agent_types_payload = api_get_json(args.backend_url, api_key, "/api/v1/agents/agent-types")
+    agent_types_payload = api_get_json(
+        args.backend_url, api_key, "/api/v1/agents/agent-types"
+    )
     write_json(output_dir / "access-control-agent-types.json", agent_types_payload)
 
     agent_types = extract_items(agent_types_payload)
@@ -1065,7 +1104,9 @@ def seed_access_control_fixture(
                 agent_type_id = str(candidate)
                 break
     if not agent_type_id:
-        raise RuntimeError("Unable to resolve an agent type for access-control-isolation")
+        raise RuntimeError(
+            "Unable to resolve an agent type for access-control-isolation"
+        )
 
     agent_name = f"Access Control Agent {args.run_id}"
     agent_payload = api_post_json(
@@ -1081,7 +1122,9 @@ def seed_access_control_fixture(
     write_json(output_dir / "access-control-agent.json", agent_payload)
     agent_id = _first_value(agent_payload, "agent_id", "id")
     if not agent_id:
-        raise RuntimeError("Unable to resolve created agent_id for access-control-isolation")
+        raise RuntimeError(
+            "Unable to resolve created agent_id for access-control-isolation"
+        )
 
     dataset_name = f"Access Control Dataset {args.run_id}"
     dataset_payload = api_post_json(
@@ -1100,7 +1143,9 @@ def seed_access_control_fixture(
     write_json(output_dir / "access-control-dataset.json", dataset_payload)
     dataset_id = _first_value(dataset_payload, "dataset_id", "benchmark_id", "id")
     if not dataset_id:
-        raise RuntimeError("Unable to resolve created dataset_id for access-control-isolation")
+        raise RuntimeError(
+            "Unable to resolve created dataset_id for access-control-isolation"
+        )
 
     dataset_example_payload = api_post_json(
         args.backend_url,
@@ -1112,7 +1157,9 @@ def seed_access_control_fixture(
             "metadata": {"scenario": args.scenario, "run_id": args.run_id},
         },
     )
-    write_json(output_dir / "access-control-dataset-example.json", dataset_example_payload)
+    write_json(
+        output_dir / "access-control-dataset-example.json", dataset_example_payload
+    )
 
     experiment_name = f"Access Control Experiment {args.run_id}"
     experiment_payload = api_post_json(
@@ -1126,13 +1173,15 @@ def seed_access_control_fixture(
             "dataset_id": dataset_id,
             "agent_id": agent_id,
             "measures": [{"measure_id": "faithfulness"}],
-            "configurations": {"model": "gpt-4o"},
+            "configurations": {"model": "gpt-4.1"},
         },
     )
     write_json(output_dir / "access-control-experiment.json", experiment_payload)
     experiment_id = _first_value(experiment_payload, "experiment_id", "id")
     if not experiment_id:
-        raise RuntimeError("Unable to resolve created experiment_id for access-control-isolation")
+        raise RuntimeError(
+            "Unable to resolve created experiment_id for access-control-isolation"
+        )
 
     return {
         "agent_id": agent_id,
@@ -1171,8 +1220,12 @@ def main() -> int:
         agent_name = access_fixture["agent_name"]
         scenario_id = f"T-E2E-{args.scenario}"
 
-        frontend_urls = build_frontend_urls(args.frontend_url, experiment_id, None, dataset_id)
-        backend_urls = build_backend_urls(args.backend_url, experiment_id, None, dataset_id)
+        frontend_urls = build_frontend_urls(
+            args.frontend_url, experiment_id, None, dataset_id
+        )
+        backend_urls = build_backend_urls(
+            args.backend_url, experiment_id, None, dataset_id
+        )
 
         manifest = {
             "scenario_id": scenario_id,
@@ -1236,7 +1289,9 @@ def main() -> int:
     requires_experiment_linkage = args.scenario not in experiment_optional_scenarios
 
     if requires_experiment_linkage and (not experiment_id or not experiment_run_id):
-        raise RuntimeError("Unable to resolve experiment_id / experiment_run_id from guided summaries")
+        raise RuntimeError(
+            "Unable to resolve experiment_id / experiment_run_id from guided summaries"
+        )
 
     experiment_payload: dict[str, Any] | None = None
     run_results_payload: dict[str, Any] | None = None
@@ -1262,8 +1317,9 @@ def main() -> int:
         write_json(output_path.parent / "backend-run-results.json", run_results_payload)
         write_json(output_path.parent / "backend-runs.json", runs_payload)
 
-    experiment = extract_payload(experiment_payload) if experiment_payload is not None else {}
-    run_results = extract_payload(run_results_payload) if run_results_payload is not None else {}
+    experiment = (
+        extract_payload(experiment_payload) if experiment_payload is not None else {}
+    )
     configuration_run_ids = (
         collect_configuration_run_ids(run_results_payload)
         if run_results_payload is not None
@@ -1282,7 +1338,9 @@ def main() -> int:
             or experiment.get("benchmark_id")
         )
         agent_id = experiment.get("agent_id")
-        agent_name = experiment.get("agent_name") or experiment.get("agent", {}).get("name")
+        agent_name = experiment.get("agent_name") or experiment.get("agent", {}).get(
+            "name"
+        )
         dataset_name = (
             experiment.get("dataset_name")
             or experiment.get("dataset", {}).get("name")
@@ -1352,7 +1410,9 @@ def main() -> int:
     elif args.scenario == "variant-compare":
         assertions = {
             "configuration_run_count": len(configuration_run_ids),
-            "best_config_present": bool(post_summary.get("best_config") or optimize_summary.get("best_config")),
+            "best_config_present": bool(
+                post_summary.get("best_config") or optimize_summary.get("best_config")
+            ),
         }
     elif args.scenario == "trace-session-user-browse":
         observability_fixture = seed_observability_fixture(
@@ -1402,7 +1462,9 @@ def main() -> int:
             output_dir=output_path.parent,
             run_compare=False,
         )
-        prompt_version_ids = [value for value in prompt_fixture.get("prompt_version_ids", []) if value]
+        prompt_version_ids = [
+            value for value in prompt_fixture.get("prompt_version_ids", []) if value
+        ]
         assertions = {
             "prompt_name": prompt_fixture["prompt_name"],
             "prompt_labels": prompt_fixture["prompt_labels"],
@@ -1415,7 +1477,9 @@ def main() -> int:
             output_dir=output_path.parent,
             run_compare=True,
         )
-        prompt_version_ids = [value for value in prompt_fixture.get("prompt_version_ids", []) if value]
+        prompt_version_ids = [
+            value for value in prompt_fixture.get("prompt_version_ids", []) if value
+        ]
         assertions = {
             "prompt_name": prompt_fixture["prompt_name"],
             "compare_trace_ids": prompt_fixture["compare_trace_ids"],
@@ -1428,8 +1492,12 @@ def main() -> int:
             output_dir=output_path.parent,
             run_compare=True,
         )
-        prompt_version_ids = [value for value in prompt_fixture.get("prompt_version_ids", []) if value]
-        compare_trace_ids = [value for value in prompt_fixture.get("compare_trace_ids", []) if value]
+        prompt_version_ids = [
+            value for value in prompt_fixture.get("prompt_version_ids", []) if value
+        ]
+        compare_trace_ids = [
+            value for value in prompt_fixture.get("compare_trace_ids", []) if value
+        ]
         trace_for_prompt = compare_trace_ids[-1] if compare_trace_ids else None
         if trace_for_prompt:
             observations_payload = api_get_json(
@@ -1437,7 +1505,10 @@ def main() -> int:
                 api_key,
                 f"/api/v1beta/observability/traces/{quote(trace_for_prompt, safe='')}/observations",
             )
-            write_json(output_path.parent / "trace-to-prompt-observations.json", observations_payload)
+            write_json(
+                output_path.parent / "trace-to-prompt-observations.json",
+                observations_payload,
+            )
         assertions = {
             "prompt_name": prompt_fixture["prompt_name"],
             "prompt_trace_id": trace_for_prompt,
@@ -1450,8 +1521,12 @@ def main() -> int:
     else:
         assertions = {"guided_flow": True}
 
-    frontend_urls = build_frontend_urls(args.frontend_url, experiment_id, experiment_run_id, dataset_id)
-    backend_urls = build_backend_urls(args.backend_url, experiment_id, experiment_run_id, dataset_id)
+    frontend_urls = build_frontend_urls(
+        args.frontend_url, experiment_id, experiment_run_id, dataset_id
+    )
+    backend_urls = build_backend_urls(
+        args.backend_url, experiment_id, experiment_run_id, dataset_id
+    )
 
     if observability_fixture:
         trace_id = observability_fixture["trace_id"]
@@ -1474,14 +1549,20 @@ def main() -> int:
                 "user": f"{args.backend_url.rstrip('/')}/api/v1beta/observability/users/{quote(user_id, safe='')}",
             }
         )
-        tag_values = sorted(set(tag_values + list(observability_fixture.get("tags", []))))
+        tag_values = sorted(
+            set(tag_values + list(observability_fixture.get("tags", [])))
+        )
 
     if prompt_fixture:
         prompt_name = prompt_fixture["prompt_name"]
         encoded_prompt_name = quote(prompt_name, safe="")
-        compare_trace_ids = [value for value in prompt_fixture.get("compare_trace_ids", []) if value]
+        compare_trace_ids = [
+            value for value in prompt_fixture.get("compare_trace_ids", []) if value
+        ]
         trace_ids.extend(compare_trace_ids)
-        prompt_version_ids = [value for value in prompt_fixture.get("prompt_version_ids", []) if value]
+        prompt_version_ids = [
+            value for value in prompt_fixture.get("prompt_version_ids", []) if value
+        ]
         frontend_urls.update(
             {
                 "prompts": f"{args.frontend_url.rstrip('/')}/prompts",
@@ -1532,8 +1613,10 @@ def main() -> int:
         "user_ids": sorted(user_ids),
         "tag_values": tag_values,
         "prompt_version_ids": prompt_version_ids,
-        "best_config": post_summary.get("best_config") or optimize_summary.get("best_config"),
-        "best_metrics": post_summary.get("best_metrics") or optimize_summary.get("best_metrics"),
+        "best_config": post_summary.get("best_config")
+        or optimize_summary.get("best_config"),
+        "best_metrics": post_summary.get("best_metrics")
+        or optimize_summary.get("best_metrics"),
         "frontend_urls": frontend_urls,
         "backend_urls": backend_urls,
         "assertions": assertions,
@@ -1543,8 +1626,12 @@ def main() -> int:
             "post": post_summary,
         },
         "backend_snapshots": {
-            "experiment": str((output_path.parent / "backend-experiment.json").resolve()),
-            "run_results": str((output_path.parent / "backend-run-results.json").resolve()),
+            "experiment": str(
+                (output_path.parent / "backend-experiment.json").resolve()
+            ),
+            "run_results": str(
+                (output_path.parent / "backend-run-results.json").resolve()
+            ),
             "runs": str((output_path.parent / "backend-runs.json").resolve()),
         },
     }

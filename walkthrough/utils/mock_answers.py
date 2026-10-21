@@ -45,6 +45,8 @@ MOCK_MODEL_ACCURACY = {
     # OpenAI Models (as of Jan 2026)
     "gpt-4o": 0.90,
     "gpt-4o-mini": 0.82,
+    "gpt-4.1": 0.91,
+    "gpt-4.1-mini": 0.84,
     "gpt-3.5-turbo": 0.75,
     "gpt-4": 0.88,
     "gpt-4-turbo": 0.87,
@@ -69,6 +71,8 @@ MOCK_MODEL_COSTS = {
     "gpt-3.5-turbo": {"input": 0.0005, "output": 0.0015},
     "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
     "gpt-4o": {"input": 0.0025, "output": 0.01},
+    "gpt-4.1": {"input": 0.002, "output": 0.008},
+    "gpt-4.1-mini": {"input": 0.0004, "output": 0.0016},
     "gpt-4.1-nano": {"input": 0.0001, "output": 0.0004},  # Released Apr 2025
     "gpt-5-nano": {"input": 0.00008, "output": 0.0003},  # Released Aug 2025
     "gpt-5.1": {"input": 0.002, "output": 0.008},  # Released Nov 2025
@@ -105,6 +109,8 @@ MOCK_MODEL_LATENCY = {
     # OpenAI Models (as of Jan 2026)
     "gpt-4o": 0.45,  # Fast, newer architecture (~0.4-0.5s avg)
     "gpt-4o-mini": 0.25,  # Extremely fast, comparable to Haiku
+    "gpt-4.1": 0.45,
+    "gpt-4.1-mini": 0.25,
     "gpt-3.5-turbo": 0.35,  # Fast, but 4o-mini is often faster now
     "gpt-4-turbo": 0.8,  # Slower than 4o ("Turbo" is older tech now)
     "gpt-4": 1.5,  # Legacy GPT-4 is notoriously slow

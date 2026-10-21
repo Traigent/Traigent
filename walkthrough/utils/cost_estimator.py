@@ -9,7 +9,9 @@ MODEL_COSTS = {
     # --- OpenAI models ---
     "gpt-3.5-turbo": {"input": 0.0005, "output": 0.0015},
     "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
+    "gpt-4.1-mini": {"input": 0.0004, "output": 0.0016},
     "gpt-4o": {"input": 0.0025, "output": 0.01},
+    "gpt-4.1": {"input": 0.002, "output": 0.008},
     "gpt-4": {"input": 0.03, "output": 0.06},  # Legacy (8k context)
     "gpt-4-turbo": {"input": 0.01, "output": 0.03},
     # Future/Hypothetical Models (2026 Context)
@@ -164,7 +166,7 @@ def main():
     # Example 1: Simple Q&A optimization
     print("Example 1: Simple Q&A Optimization")
     estimate = estimate_cost(
-        models=["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+        models=["gpt-3.5-turbo", "gpt-4.1-mini", "gpt-4.1"],
         dataset_size=20,
         task_type="simple_qa",
         num_trials=9,  # 3 models x 3 temperatures
@@ -175,7 +177,7 @@ def main():
     # Example 2: RAG optimization
     print("\nExample 2: RAG Optimization")
     estimate = estimate_cost(
-        models=["gpt-3.5-turbo", "gpt-4o-mini"],
+        models=["gpt-3.5-turbo", "gpt-4.1-mini"],
         dataset_size=15,
         task_type="rag_qa",
         num_trials=12,  # 2 models x 3 temps x 2 retrieval settings
@@ -188,4 +190,4 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

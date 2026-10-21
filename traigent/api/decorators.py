@@ -289,8 +289,8 @@ class ExecutionOptions(BaseModel):
 
     Note:
         ``runtime`` and ``js_*`` execution fields were removed with the
-        temporary Python-orchestrated JS bridge. Use the ``traigent-js`` npm
-        package for JavaScript optimization.
+        temporary Python-orchestrated JS bridge. The JavaScript SDK is not
+        published to npm yet; see docs/guides/js-bridge.md.
 
     Attributes:
         algorithm: Optimizer selector. ``auto`` (default) resolves to the
@@ -1059,7 +1059,8 @@ _DIRECT_OPTION_KEYS = (
     frozenset(_OPTIMIZE_DEFAULTS.keys()) | _LEGACY_EXECUTION_OPTION_KEYS
 )
 _JS_BRIDGE_REMOVED_MESSAGE = (
-    "JS bridge removed. Use the traigent-js npm package for JavaScript optimization."
+    "JS bridge removed. The JavaScript SDK is not published to npm yet; "
+    "see https://github.com/Traigent/Traigent/blob/main/docs/guides/js-bridge.md"
 )
 _JS_BRIDGE_REMOVED_PARAMETERS = frozenset(
     (

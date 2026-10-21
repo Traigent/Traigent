@@ -467,9 +467,8 @@ def _dump_example_results(
     configuration_space={
         "model": [
             # "openai/invalid-model-xyz",  # Test invalid model
-            "openai/gpt-4o-mini",
-            "openai/gpt-4.1-nano",
-            # "openai/gpt-3.5-turbo",
+            "openai/gpt-4.1-mini",
+            "openai/gpt-4.1",
             # "openai/gpt-5-nano",
         ],
         # "temperature": [0, 0.1, 0.3],  # Multiple values for Bayesian search
@@ -481,7 +480,7 @@ def _dump_example_results(
 )
 def answer(
     question: str,
-    model: str = "openai/gpt-4o-mini",
+    model: str = "openai/gpt-4.1-mini",
     temperature: float = 0.1,
     max_tokens: int = 128,
 ) -> str:

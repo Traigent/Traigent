@@ -22,7 +22,7 @@ import traigent
 
 @traigent.optimize(
     eval_dataset="examples/datasets/simple-prompt/evaluation_set.jsonl",
-    configuration_space={"model": ["claude-3-haiku-20240307"], "temperature": [0.0, 0.7]},
+    configuration_space={"model": ["claude-haiku-4-5-20251001"], "temperature": [0.0, 0.7]},
     objectives=["accuracy"],
 )
 def summarize(text: str) -> str:

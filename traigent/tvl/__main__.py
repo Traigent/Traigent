@@ -37,7 +37,8 @@ def validate_tvl_files(
 
     Args:
         files: List of TVL file paths to validate.
-        strict: If True, treat warnings as errors.
+        strict: If True, also fail on warning-severity schema issues
+            (schema errors always fail).
         verbose: If True, print success messages.
 
     Returns:
@@ -69,26 +70,21 @@ def validate_tvl_files(
                 failed += 1
                 continue
 
-            # Validate schema structure
-            issues = validate_tvl_schema(raw_data, strict=strict)
+            # Schema errors fail in every mode: load_tvl_spec rejects the same
+            # messages, so a spec the SDK cannot load must not pass the gate
+            # (#2678). --strict additionally fails on warning-severity issues.
+            issues = validate_tvl_schema(raw_data, include_warnings=strict)
 
             if issues:
-                if strict:
-                    print(f"FAILED: {file_path}", file=sys.stderr)
-                    for issue in issues:
-                        print(f"  - {issue}", file=sys.stderr)
-                    failed += 1
-                    continue
-                else:
-                    # Warnings only in non-strict mode
-                    if verbose:
-                        print(f"WARNING: {file_path}")
-                        for issue in issues:
-                            print(f"  - {issue}")
+                print(f"FAILED: {file_path}", file=sys.stderr)
+                for issue in issues:
+                    print(f"  - {issue}", file=sys.stderr)
+                failed += 1
+                continue
 
             # Try full loading to catch deeper issues
             try:
-                load_tvl_spec(spec_path=str(file_path), validate_schema=False)
+                load_tvl_spec(spec_path=str(file_path))
             except TVLValidationError as e:
                 print(f"FAILED: {file_path}", file=sys.stderr)
                 print(f"  - {e}", file=sys.stderr)
@@ -157,7 +153,10 @@ def main() -> int:
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="Treat warnings as errors.",
+        help=(
+            "Also fail on warning-severity schema issues. Schema errors "
+            "always fail, with or without this flag."
+        ),
     )
     parser.add_argument(
         "--verbose",

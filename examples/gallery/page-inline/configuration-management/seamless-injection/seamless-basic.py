@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -14,7 +15,9 @@ else:
     for _depth in range(1, 7):
         try:
             _repo_root = _module_path.parents[_depth]
-            if (_repo_root / "traigent").is_dir() and (_repo_root / "examples").is_dir():
+            if (_repo_root / "traigent").is_dir() and (
+                _repo_root / "examples"
+            ).is_dir():
                 if str(_repo_root) not in sys.path:
                     sys.path.insert(0, str(_repo_root))
                 break
@@ -44,7 +47,7 @@ except ImportError:  # pragma: no cover - support IDE execution paths
 
 def generate_summary(text: str) -> str:
     llm = ChatOpenAI(
-        model="gpt-3.5-turbo",  # Traigent will optimize this
+        model="gpt-4.1-mini",  # Traigent will optimize this
         temperature=0.7,  # And this
         max_tokens=150,  # And this
     )
@@ -59,7 +62,7 @@ def generate_summary(text: str) -> str:
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.1, 0.3, 0.5, 0.7, 0.9],
         "max_tokens": [100, 150, 200, 300],
     },
@@ -69,7 +72,7 @@ def generate_summary(text: str) -> str:
 def optimized_summary(text: str) -> str:
     # Exact same code - Traigent seamlessly injects optimal parameters
     llm = ChatOpenAI(
-        model="gpt-3.5-turbo",  # Becomes optimal model automatically
+        model="gpt-4.1-mini",  # Becomes optimal model automatically
         temperature=0.7,  # Becomes optimal temperature automatically
         max_tokens=150,  # Becomes optimal token limit automatically
     )
@@ -79,7 +82,7 @@ def optimized_summary(text: str) -> str:
     return getattr(response, "content", str(response))
 
 
-# Traigent finds: model="gpt-4o-mini", temperature=0.3, max_tokens=200
+# Traigent finds: model="gpt-4.1-mini", temperature=0.3, max_tokens=200
 # Your function automatically uses these optimal values!
 
 if __name__ == "__main__":

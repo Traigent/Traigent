@@ -152,7 +152,7 @@ class TestLangChainMetadataCapture:
         capture.set_last_response(response3)
 
         assert len(capture._storage.responses) == 3
-        assert capture._storage.responses == [response1, response2, response3]
+        assert list(capture._storage.responses) == [response1, response2, response3]
 
     def test_get_last_response_retrieves_and_removes(
         self, capture: LangChainMetadataCapture, mock_response: MagicMock
@@ -794,6 +794,53 @@ class TestPatchLangChainForMetadataCapture:
         mock_logger.debug.assert_any_call("ChatAnthropic not available, skipping")
         mock_logger.debug.assert_any_call("ChatOpenAI not available, skipping")
 
+    def test_outcomes_report_absent_failed_and_already_installed(self) -> None:
+        """Sol r5 F5: per-provider outcome distinguishes failed from absent."""
+        import types
+
+        class _Model:
+            pass
+
+        class _Exploding:
+            def __getattr__(self, name: str) -> Any:
+                raise RuntimeError("boom")
+
+        fake_openai = types.ModuleType("langchain_openai")
+        fake_openai.ChatOpenAI = _Exploding()  # attribute access raises -> failed
+        outcomes: dict[str, str] = {}
+        with patch.dict(
+            "sys.modules",
+            {
+                "langchain_anthropic": None,
+                "langchain_openai": fake_openai,
+                "langchain_aws": None,
+            },
+        ):
+            patch_langchain_for_metadata_capture(outcomes)
+        assert outcomes == {
+            "anthropic": "not-applicable",
+            "openai": "failed",
+            "bedrock": "not-applicable",
+        }
+
+        fake_anthropic = types.ModuleType("langchain_anthropic")
+        fake_anthropic.ChatAnthropic = _Model
+        _Model.invoke = lambda self, *a, **k: None
+        outcomes = {}
+        with patch.dict(
+            "sys.modules",
+            {
+                "langchain_anthropic": fake_anthropic,
+                "langchain_openai": None,
+                "langchain_aws": None,
+            },
+        ):
+            patch_langchain_for_metadata_capture(outcomes)
+            assert outcomes["anthropic"] == "installed"
+            outcomes = {}
+            patch_langchain_for_metadata_capture(outcomes)
+            assert outcomes["anthropic"] == "already-installed"
+
     def test_clear_removes_storage_correctly(self) -> None:
         """Test that clear operation removes all stored responses."""
         # Store some responses
@@ -1003,3 +1050,31 @@ class TestPatchLangChainBedrock:
         }
         captured = get_captured_response()
         assert captured is response
+
+
+class TestThreadLocalCaptureBounded:
+    """The per-thread response stack must not grow without bound (#2444)."""
+
+    def test_thread_local_list_does_not_grow_across_many_examples(self) -> None:
+        capture = LangChainMetadataCapture()
+        for i in range(5000):
+            capture.set_last_response(f"resp-{i}")
+        assert len(capture._storage.responses) <= 64
+        # Newest response is still retrievable.
+        assert capture.get_last_response() == "resp-4999"
+
+    def test_scoped_cost_accounting_still_sees_every_response(self) -> None:
+        from traigent.utils.langchain_interceptor import capture_scope
+
+        capture = LangChainMetadataCapture()
+        with capture_scope():
+            for i in range(1000):
+                capture.set_last_response(f"resp-{i}")
+            assert len(capture.get_all_responses()) == 1000
+        assert len(capture._storage.responses) <= 64
+
+    def test_unscoped_global_accounting_unaffected(self) -> None:
+        capture = LangChainMetadataCapture()
+        for i in range(300):
+            capture.set_last_response(i)
+        assert capture.get_all_responses() == list(range(300))

@@ -74,7 +74,7 @@ class ProviderValidationError(ConfigurationError):
     Example:
         >>> from traigent.providers import get_failed_providers, validate_providers
         >>> from traigent.utils.exceptions import ProviderValidationError
-        >>> results = validate_providers(["gpt-4o-mini", "claude-3-haiku-20240307"])
+        >>> results = validate_providers(["gpt-4o-mini", "claude-haiku-4-5-20251001"])
         >>> failed = get_failed_providers(results)
         >>> if failed:
         ...     raise ProviderValidationError(

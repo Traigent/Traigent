@@ -777,6 +777,24 @@ class CostEnforcer:
         with self._lock:
             return self._unknown_cost_cap_waived
 
+    def zero_trial_stop_detail(self, completed_trials: int) -> str | None:
+        """Explain a cost-limit stop that happened before any trial ran (#2671).
+
+        Returns None unless no trial completed and no spend was recorded, i.e.
+        the limit sits below what admitting one trial reserves.
+        """
+        with self._lock:
+            if completed_trials > 0 or self._accumulated_cost > 0:
+                return None
+            reservation = self.config.estimated_cost_per_trial
+            return (
+                f"Stopped at 0 trials: the cost limit (${self.config.limit:.4f}) "
+                f"is below the per-trial budget reservation "
+                f"(${reservation:.4f}), so no trial was admitted and no model "
+                "call was made. Raise cost_limit= (or TRAIGENT_RUN_COST_LIMIT) "
+                "above the reservation to run trials."
+            )
+
     def budget_block_message(self, planned_trials: int | None) -> str:
         """Explicit message for a budget-gate block of planned trials.
 
@@ -795,12 +813,22 @@ class CostEnforcer:
                 else str(max(planned_trials, 0))
             )
             if self._unknown_cost_mode and not self._unknown_cost_cap_waived:
+                if _spend_reached_limit(self._accumulated_cost, self.config.limit):
+                    # #2675: measured spend stopped the run, not the trial cap.
+                    cause = (
+                        f"per-trial cost unknown: cost limit "
+                        f"${self.config.limit:.2f} reached at "
+                        f"{self._trial_count} trials"
+                    )
+                else:
+                    cause = (
+                        f"per-trial cost unknown: fallback trial limit "
+                        f"{self.config.fallback_trial_limit} reached at "
+                        f"{self._trial_count} trials; cost limit "
+                        f"${self.config.limit:.2f}"
+                    )
                 return (
-                    f"budget gate blocked {blocked} planned trials "
-                    f"(per-trial cost unknown: fallback trial limit "
-                    f"{self.config.fallback_trial_limit} reached at "
-                    f"{self._trial_count} trials; cost limit "
-                    f"${self.config.limit:.2f}). "
+                    f"budget gate blocked {blocked} planned trials ({cause}). "
                     + unmeasured_cost_stop_message(
                         self._trial_count,
                         self.config.fallback_trial_limit,

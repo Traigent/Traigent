@@ -82,7 +82,7 @@ def _json_accuracy(
     max_trials=10,
 )
 def extract_fields(text: str) -> str:
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.0)
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
     prompt = (
         "Extract company and amount as JSON with keys 'company' and 'amount'."
         f"\nText: {text}\nReturn only JSON."

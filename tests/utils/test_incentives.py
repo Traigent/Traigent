@@ -169,7 +169,7 @@ class TestIncentiveManager:
         assert hint is not None
         assert "3 optimizations completed" in hint
         assert "Advanced Bayesian optimization" in hint
-        assert "traigent login" in hint
+        assert "traigent auth login" in hint
 
         # Should update state
         assert self.incentive_manager._state["last_hint"] is not None
@@ -348,7 +348,7 @@ class TestIncentiveManager:
         tips_text = " ".join(tips)
         assert "TRAIGENT_RESULTS_FOLDER" in tips_text
         assert "traigent local list" in tips_text
-        assert "traigent login" in tips_text
+        assert "traigent auth login" in tips_text
 
     def test_hint_tracking_and_analytics(self):
         """Test that hints are properly tracked for analytics."""

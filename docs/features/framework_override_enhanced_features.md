@@ -33,8 +33,8 @@ PARAMETER_MAPPINGS = {
 
 ### Example:
 ```python
-# Traigent config has: {"model": "gpt-4", "temperature": 0.5}
-# OpenAI expects: model="gpt-4", temperature=0.5
+# Traigent config has: {"model": "gpt-4.1", "temperature": 0.5}
+# OpenAI expects: model="gpt-4.1", temperature=0.5
 # Mapping is straightforward: model -> model, temperature -> temperature
 ```
 

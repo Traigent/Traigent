@@ -13,7 +13,7 @@ python examples/core/multi-objective-tradeoff/run_openai.py --max-trials 5
 
 | Parameter | Values | Purpose |
 |-----------|--------|---------|
-| `model` | gpt-4o-mini, gpt-4.1-nano, gpt-5-nano | Model comparison |
+| `model` | gpt-4o-mini, gpt-4.1-mini, gpt-5-nano | Model comparison |
 | `temperature` | 0, 0.1, 0.3 | Response variance |
 | `max_tokens` | 64, 128, 256 | Output length limit |
 

@@ -290,7 +290,24 @@ class PromotionGate:
         Args:
             policy: Promotion policy configuration.
             objectives: List of objective specifications.
+
+        Raises:
+            ValueError: If ``policy.min_effect`` lacks an entry for any
+                standard objective (including misspelt or wrong-case keys).
+                Banded objectives are exempt: they are judged by their band
+                (TOST), not by an epsilon, as in the TVL spec and linter.
         """
+        missing = [
+            obj.name
+            for obj in objectives
+            if obj.direction != "band" and obj.name not in policy.min_effect
+        ]
+        if missing:
+            raise ValueError(
+                "PromotionPolicy.min_effect must name every standard objective; missing "
+                f"{sorted(missing)} (present keys: {sorted(policy.min_effect)}). "
+                "A missing min_effect is not treated as 0.0 (Traigent#2658)."
+            )
         self.policy = policy
         self.objectives = {obj.name: obj for obj in objectives}
         self._objective_list = objectives
@@ -410,6 +427,25 @@ class PromotionGate:
         objective_results, raw_super_p = self._evaluate_objectives(
             incumbent_metrics, candidate_metrics
         )
+        # Fail closed (Traigent#2642): a declared objective with no samples on
+        # either side must never be silently dropped from the decision. This
+        # mirrors the chance-constraint path (missing data => not satisfied).
+        missing_objectives = [
+            obj.name
+            for obj in self._objective_list
+            if obj.name not in incumbent_metrics or obj.name not in candidate_metrics
+        ]
+        if objective_results and missing_objectives:
+            return PromotionDecision(
+                decision="reject",
+                reason=(
+                    "Missing metric data for declared objectives: "
+                    f"{', '.join(sorted(missing_objectives))}"
+                ),
+                objective_results=objective_results,
+                chance_results=self._evaluate_chance_constraints(constraint_data or {}),
+                dominance_satisfied=False,
+            )
         if not objective_results:
             return PromotionDecision(
                 decision="no_decision",
@@ -507,7 +543,11 @@ class PromotionGate:
         Returns:
             ObjectiveResult with comparison outcome.
         """
-        epsilon = self.policy.get_epsilon(obj.name, 0.0)
+        if obj.direction == "band":
+            # Banded objectives are exempt from the min_effect requirement.
+            epsilon = self.policy.get_epsilon(obj.name, default=0.0)
+        else:
+            epsilon = self.policy.get_epsilon(obj.name)
 
         inc_mean = sum(incumbent_samples) / len(incumbent_samples)
         cand_mean = sum(candidate_samples) / len(candidate_samples)

@@ -34,6 +34,12 @@ RETIRED_MODEL_IDS: frozenset[str] = frozenset(
         # Anthropic Claude 3 Opus (retirement track), incl. -latest alias
         "claude-3-opus-20240229",
         "claude-3-opus-latest",
+        # Anthropic models retired at the provider (#2646): Claude Haiku 3
+        # (2026-04-20), Claude Sonnet 3.7 (2026-02-19), Claude Sonnet 3.5
+        # (2025-10-28; dotted spelling is the OpenRouter id).
+        "claude-3-haiku-20240307",
+        "claude-3-7-sonnet-20250219",
+        "claude-3.5-sonnet",
         # Gemini 1.x (deprecated) + 2.0 preview, incl. -latest and
         # "models/"-prefixed aliases of the same retired models
         "gemini-1.5-flash",
@@ -55,6 +61,12 @@ RETIRED_MODEL_IDS: frozenset[str] = frozenset(
     }
 )
 
+# LiteLLM / OpenRouter routing prefixes (``anthropic/claude-...``,
+# ``gemini/gemini-...``, ``vertex_ai/...``, ``openrouter/anthropic/...``).
+_ROUTING_PREFIX_RE = re.compile(
+    r"^(?:(?:anthropic|openai|gemini|google|vertex_ai|openrouter|bedrock)[/:])+"
+)
+
 # Bedrock-style vendor prefixes (``anthropic.claude-...``, ``meta.llama...``).
 _VENDOR_PREFIX_RE = re.compile(r"^(anthropic|amazon|meta|mistral|cohere|ai21)\.")
 
@@ -65,12 +77,16 @@ _BEDROCK_VERSION_SUFFIX_RE = re.compile(r"-v\d+(?::\d+)*$")
 def normalize_model_id(model_id: str) -> str:
     """Collapse alias forms of a model ID to its canonical spelling.
 
-    Strips a ``models/`` resource prefix (Gemini), a Bedrock vendor prefix
+    Strips a ``models/`` resource prefix (Gemini), LiteLLM/OpenRouter routing
+    prefixes (``anthropic/``, ``gemini/``, ``vertex_ai/`` …), a Bedrock vendor prefix
     (``anthropic.`` …), and a Bedrock ``-vN[:M…]`` version suffix. Does NOT
     collapse ``-latest`` or dated aliases — those are distinct catalog entries
     listed explicitly in :data:`RETIRED_MODEL_IDS`.
     """
     normalized = model_id.strip()
+    if normalized.startswith("models/"):
+        normalized = normalized[len("models/") :]
+    normalized = _ROUTING_PREFIX_RE.sub("", normalized)
     if normalized.startswith("models/"):
         normalized = normalized[len("models/") :]
     normalized = _VENDOR_PREFIX_RE.sub("", normalized)

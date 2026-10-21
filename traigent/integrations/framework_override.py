@@ -107,6 +107,23 @@ except ImportError:
 _OPENAI_USAGE_TARGETS = frozenset({"openai.OpenAI", "openai.AsyncOpenAI"})
 
 
+def _unwrap_raw_openai_response(response: Any) -> Any:
+    """Return the parsed object behind a ``with_raw_response`` result.
+
+    ``client.chat.completions.with_raw_response.create(...)`` (and ``parse``)
+    return a ``LegacyAPIResponse``. Its ``parse()`` caches the parsed object,
+    so the caller's own later ``parse()`` gets the same instance and the body
+    is not consumed twice. Anything else is returned unchanged.
+    """
+    try:
+        from openai._legacy_response import LegacyAPIResponse
+    except ImportError:  # pragma: no cover - openai always ships this module
+        return response
+    if isinstance(response, LegacyAPIResponse):
+        return response.parse()
+    return response
+
+
 def _capture_openai_usage(response: Any, call_kwargs: dict[str, Any]) -> None:
     """Record a raw OpenAI SDK response so the trial is charged for it.
 
@@ -117,14 +134,17 @@ def _capture_openai_usage(response: Any, call_kwargs: dict[str, Any]) -> None:
     True}``) after the caller consumes it, so it is not recorded and the
     example stays unmeasured. A call made underneath an instrumented wrapper
     (LangChain ``ChatOpenAI.invoke``, ``litellm.completion``) is skipped
-    because that wrapper records the same usage itself. Never raises into
-    the caller's LLM call.
+    because that wrapper records the same usage itself. Covers
+    ``chat.completions.create``/``parse`` (also reached through
+    ``beta.chat.completions`` and ``with_raw_response``) and
+    ``responses.create``/``parse``. Never raises into the caller's LLM call.
     """
     if call_kwargs.get("stream"):
         return
-    if getattr(response, "usage", None) is None:
-        return
     try:
+        response = _unwrap_raw_openai_response(response)
+        if getattr(response, "usage", None) is None:
+            return
         from traigent.utils.langchain_interceptor import (
             capture_observed_response,
             inside_instrumented_provider_call,
@@ -604,7 +624,18 @@ class FrameworkOverrideManager(BaseOverrideManager):
         resolved = self._resolve_annotation_name(annotation_name, globalns)
         if isinstance(resolved, type):
             return cast(type, resolved)
-        for module_name in self._annotation_candidate_modules(func):
+        candidate_modules = self._annotation_candidate_modules(func)
+        package_name = getattr(func, "__module__", "").split(".", 1)[0]
+        if package_name and annotation_name.isidentifier():
+            # SDKs such as openai declare ``def responses(self) -> Responses``
+            # but only import ``Responses`` under TYPE_CHECKING and do not
+            # re-export it from ``<pkg>.resources``; the class lives in
+            # ``<pkg>.resources.<lowercased name without Async>`` (Traigent#2444).
+            module_stem = annotation_name.lower().removeprefix("async")
+            sub_module = f"{package_name}.resources.{module_stem}"
+            if sub_module not in candidate_modules:
+                candidate_modules.append(sub_module)
+        for module_name in candidate_modules:
             try:
                 module = importlib.import_module(module_name)
             except (ImportError, ValueError):

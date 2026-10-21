@@ -21,8 +21,10 @@ Design notes:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -125,6 +127,27 @@ def _trial_count(value: Any) -> int | None:
         return None
 
 
+@contextlib.contextmanager
+def _scoped_mock_cost_approval() -> Iterator[None]:
+    """Pre-approve cost for the demo invocation only, never process-wide.
+
+    The mock-mode preflights stay on (#2681): raw provider calls can be real
+    under the mock flag. These demos route every call through LangChain or
+    LiteLLM, which the mock intercepts, so a mock demo run pre-approves, and
+    the previous value is restored afterwards so a later real run in the same
+    process does not inherit approval.
+    """
+    is_mock = os.environ.get("TRAIGENT_MOCK_LLM", "true").strip().lower() != "false"
+    if not is_mock or "TRAIGENT_COST_APPROVED" in os.environ:
+        yield
+        return
+    os.environ["TRAIGENT_COST_APPROVED"] = "true"
+    try:
+        yield
+    finally:
+        os.environ.pop("TRAIGENT_COST_APPROVED", None)
+
+
 def run_optimization(
     answer_fn: Any, *, max_trials: int = 6, algorithm: str = "grid"
 ) -> Any:
@@ -135,7 +158,10 @@ def run_optimization(
     would otherwise return a result and exit 0. For a demo that is misleading,
     so we surface it as a non-zero exit with an actionable message.
     """
-    result = asyncio.run(answer_fn.optimize(max_trials=max_trials, algorithm=algorithm))
+    with _scoped_mock_cost_approval():
+        result = asyncio.run(
+            answer_fn.optimize(max_trials=max_trials, algorithm=algorithm)
+        )
 
     successful = _trial_count(getattr(result, "successful_trials", None))
     total = _trial_count(getattr(result, "trials", None))

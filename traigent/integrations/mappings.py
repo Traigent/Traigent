@@ -187,6 +187,11 @@ PARAMETER_MAPPINGS: dict[str, dict[str, str]] = {
 METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
     # OpenAI SDK methods that accept parameters
     "openai.OpenAI": {
+        # Capture-only entries: usage is recorded for the trial's cost, but no
+        # trial parameters are injected into these calls (issue #2444).
+        "chat.completions.parse": [],
+        "responses.create": [],
+        "responses.parse": [],
         "completions.create": [
             "model",
             "temperature",
@@ -205,6 +210,11 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
         ],
     },
     "openai.AsyncOpenAI": {
+        # Capture-only entries: usage is recorded for the trial's cost, but no
+        # trial parameters are injected into these calls (issue #2444).
+        "chat.completions.parse": [],
+        "responses.create": [],
+        "responses.parse": [],
         "completions.create": [
             "model",
             "temperature",

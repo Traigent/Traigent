@@ -62,6 +62,69 @@ _logger = logging.getLogger(__name__)
 _lock = threading.Lock()
 _enabled = False
 _activation_logged = False
+_scope_logged = False
+
+
+def log_raw_client_scope_caveat() -> None:
+    """Warn once per process that raw provider clients are blocked, not mocked.
+
+    Shared by the in-code and ``TRAIGENT_MOCK_LLM`` activation paths (#2418).
+    """
+    global _scope_logged
+    if _scope_logged:
+        return
+    _scope_logged = True
+    _logger.warning(
+        "[traigent.testing] mock interception scope: LiteLLM and "
+        "LangChain calls are mocked. Raw "
+        "openai.chat.completions.create(...) and anthropic.messages.create(...) "
+        "calls are NOT intercepted (no canned response), but any HTTP request "
+        "to a known LLM provider host is blocked with an error while mock "
+        "mode is on, so no real provider call is made."
+    )
+
+
+_INSTALL_FAILED_MESSAGE = (
+    "traigent.testing could not install the LiteLLM/LangChain mock "
+    "interceptors or the provider-host transport guard; mock mode was NOT enabled. Fix the installation "
+    "problem and call enable_mock_mode_for_quickstart() again."
+)
+
+
+def _install_mock_interceptors() -> None:
+    """Install the LiteLLM and LangChain interceptors now (#2416).
+
+    They are otherwise installed lazily when an evaluator is built inside an
+    optimization run, so calls made earlier (or from a standalone
+    ``ExampleSynthesizer``) would reach the real provider right after the
+    "mock mode is now ACTIVE" warning. Installation is idempotent. A failure
+    raises ``RuntimeError`` (content-free; the cause is chained) so activation
+    fails closed instead of announcing interception that is not in place; a
+    retry after the cause is fixed re-runs the install and can succeed.
+    """
+    try:
+        from traigent.utils.langchain_interceptor import (
+            patch_langchain_for_metadata_capture,
+        )
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
+
+        from traigent.utils.mock_transport_guard import (
+            install_mock_transport_guard,
+        )
+
+        outcomes: dict[str, str] = {}
+        install_mock_transport_guard()
+        patch_litellm_for_metadata_capture(outcomes)
+        patch_langchain_for_metadata_capture(outcomes)
+    except Exception as exc:  # noqa: BLE001 - re-raised as a closed error
+        raise RuntimeError(_INSTALL_FAILED_MESSAGE) from exc
+    # The patch functions log (not raise) per-provider failures: a provider
+    # that failed to install would still reach the real API, so refuse to
+    # activate. Absent optional packages ("not-applicable") are not failures.
+    if any(state == "failed" for state in outcomes.values()):
+        raise RuntimeError(_INSTALL_FAILED_MESSAGE)
 
 
 def enable_mock_mode_for_quickstart() -> None:
@@ -102,6 +165,8 @@ def enable_mock_mode_for_quickstart() -> None:
                 "of real LLM calls. If you want a keyless demo, run with "
                 "ENVIRONMENT!=production."
             )
+        # Install first: only mark enabled once interception is in place.
+        _install_mock_interceptors()
         _enabled = True
         if not _activation_logged:
             _activation_logged = True
@@ -111,12 +176,7 @@ def enable_mock_mode_for_quickstart() -> None:
                 "run in production. Enabled via "
                 "traigent.testing.enable_mock_mode_for_quickstart()."
             )
-            _logger.info(
-                "[traigent.testing] mock interception scope: LiteLLM and "
-                "LangChain calls are mocked. Raw openai.chat.completions.create(...) "
-                "and anthropic.messages.create(...) calls are not intercepted and "
-                "can hit the real provider API."
-            )
+        log_raw_client_scope_caveat()
 
 
 def disable_mock_mode() -> None:
@@ -144,12 +204,13 @@ def disable_mock_mode() -> None:
     (if set) is a separate mechanism — unset it yourself if your process
     also relies on that path.
     """
-    global _enabled, _activation_logged
+    global _enabled, _activation_logged, _scope_logged
     with _lock:
         if not _enabled:
             return
         _enabled = False
         _activation_logged = False
+        _scope_logged = False
         _logger.info(
             "[traigent.testing] mock mode is now INACTIVE — LLM calls will "
             "no longer be intercepted and will hit real providers again. "
@@ -170,7 +231,8 @@ def is_mock_mode_enabled() -> bool:
 
 def _reset_for_tests() -> None:
     """Reset the flag. Tests only — not part of the public API."""
-    global _enabled, _activation_logged
+    global _enabled, _activation_logged, _scope_logged
     with _lock:
         _enabled = False
         _activation_logged = False
+        _scope_logged = False

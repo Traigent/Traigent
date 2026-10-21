@@ -27,19 +27,16 @@ def simulate_evaluation(config: dict) -> dict:
     """Simulate metric evaluation for a configuration."""
     # Base metrics depend on model choice
     model_quality = {
-        "gpt-4o": 0.92,
-        "gpt-4o-mini": 0.85,
-        "gpt-3.5-turbo": 0.75,
+        "gpt-4.1": 0.92,
+        "gpt-4.1-mini": 0.85,
     }
     model_cost = {
-        "gpt-4o": 0.005,
-        "gpt-4o-mini": 0.00015,
-        "gpt-3.5-turbo": 0.0005,
+        "gpt-4.1": 0.005,
+        "gpt-4.1-mini": 0.00015,
     }
     model_latency = {
-        "gpt-4o": 2000,
-        "gpt-4o-mini": 500,
-        "gpt-3.5-turbo": 300,
+        "gpt-4.1": 2000,
+        "gpt-4.1-mini": 500,
     }
 
     model = config["model"]
@@ -147,60 +144,39 @@ def main():
 
     configs = [
         {
-            "model": "gpt-4o",
+            "model": "gpt-4.1",
             "temperature": 0.3,
             "max_tokens": 1024,
             "retrieval_k": 7,
             "use_cot": True,
         },
         {
-            "model": "gpt-4o",
+            "model": "gpt-4.1",
             "temperature": 0.7,
             "max_tokens": 512,
             "retrieval_k": 5,
             "use_cot": True,
         },
         {
-            "model": "gpt-4o-mini",
+            "model": "gpt-4.1-mini",
             "temperature": 0.5,
             "max_tokens": 512,
             "retrieval_k": 5,
             "use_cot": False,
         },
         {
-            "model": "gpt-4o-mini",
+            "model": "gpt-4.1-mini",
             "temperature": 0.7,
             "max_tokens": 768,
             "retrieval_k": 6,
             "use_cot": False,
         },
         {
-            "model": "gpt-4o-mini",
+            "model": "gpt-4.1-mini",
             "temperature": 0.3,
             "max_tokens": 1024,
             "retrieval_k": 8,
             "use_cot": True,
-        },
-        {
-            "model": "gpt-3.5-turbo",
-            "temperature": 0.5,
-            "max_tokens": 512,
-            "retrieval_k": 5,
-            "use_cot": False,
-        },
-        {
-            "model": "gpt-3.5-turbo",
-            "temperature": 0.7,
-            "max_tokens": 256,
-            "retrieval_k": 3,
-            "use_cot": False,
-        },
-        {
-            "model": "gpt-3.5-turbo",
-            "temperature": 0.3,
-            "max_tokens": 768,
-            "retrieval_k": 7,
-            "use_cot": False,
         },
     ]
 
@@ -225,7 +201,7 @@ def main():
 
     print("\n   Pareto-Optimal Configurations:")
     for i, (config, metrics) in enumerate(pareto_front):
-        print(f"\n   Solution {i+1}: {config['model']}")
+        print(f"\n   Solution {i + 1}: {config['model']}")
         print(
             f"     Config: temp={config['temperature']}, tokens={config['max_tokens']}, k={config['retrieval_k']}"
         )
@@ -256,7 +232,7 @@ def main():
         )
         accumulated_front.append(metrics)
         print(
-            f"   + Solution {i+1} ({config['model']}): HV improvement = {improvement:.4f}"
+            f"   + Solution {i + 1} ({config['model']}): HV improvement = {improvement:.4f}"
         )
 
     print("\n" + "=" * 60)

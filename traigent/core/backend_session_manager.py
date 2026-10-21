@@ -2092,8 +2092,15 @@ class BackendSessionManager:
         self,
         session_id: str | None,
         optimization_status: OptimizationStatus,
+        *,
+        best_config: dict[str, Any] | None = None,
+        best_score: float | None = None,
+        apply_best: bool = False,
     ) -> None:
         """Flip the LOCAL session record to a terminal status (#1939).
+
+        ``best_config`` / ``best_score`` carry the terminal selector's winner
+        onto the stored record so it agrees with the returned result (#2660).
 
         Connected, tracking-enabled runs finalize their local mirror through
         the backend client's own finalize path; this covers every run whose
@@ -2115,7 +2122,13 @@ class BackendSessionManager:
         if not session_id:
             return
         try:
-            self._finalize_local_session_unguarded(session_id, optimization_status)
+            self._finalize_local_session_unguarded(
+                session_id,
+                optimization_status,
+                best_config=best_config,
+                best_score=best_score,
+                apply_best=apply_best,
+            )
         except Exception as exc:
             # Only Exception: a KeyboardInterrupt/SystemExit raised through here
             # is the user or the interpreter asking to stop, and best-effort
@@ -2138,6 +2151,10 @@ class BackendSessionManager:
         self,
         session_id: str,
         optimization_status: OptimizationStatus,
+        *,
+        best_config: dict[str, Any] | None = None,
+        best_score: float | None = None,
+        apply_best: bool = False,
     ) -> None:
         """Body of :meth:`finalize_local_session`; may raise, and is guarded there."""
         remote_finalize_owns_mirror = (
@@ -2157,7 +2174,20 @@ class BackendSessionManager:
             local_status = OptimizationStatus.CANCELLED.value
         else:
             local_status = OptimizationStatus.FAILED.value
-        storage.finalize_session(session_id, local_status)
+        if apply_best and local_status in (
+            OptimizationStatus.COMPLETED.value,
+            OptimizationStatus.CANCELLED.value,
+        ):
+            # Final selection is authoritative, including "no winner".
+            storage.finalize_session(
+                session_id,
+                local_status,
+                best_config=best_config,
+                best_score=best_score,
+                apply_best=True,
+            )
+        else:
+            storage.finalize_session(session_id, local_status)
 
     def local_session_record_exists(self, session_id: str | None) -> bool:
         """Durability half of the #2020 predicate: does the local store the
