@@ -46,6 +46,12 @@ class _CaptureBucket:
     observed: dict[tuple[str, str, str | None, str | None], int] = field(
         default_factory=dict
     )
+    #: Every provider-call ATTEMPT made in this trial (SDK-41), including
+    #: failed and retried ones, as plain dicts (see ``traigent.utils.vendor_retry``).
+    #: A failed attempt may still have been billed, so each is kept with its
+    #: usage (``None`` = unknown, never a faked zero).
+    vendor_attempts: list[dict[str, Any]] = field(default_factory=list)
+    vendor_call_count: int = 0
 
     def observed_provider_versions(self) -> list[dict[str, Any]]:
         """This trial's observations as an ``ObservedProviderVersionV1`` list."""
@@ -53,6 +59,29 @@ class _CaptureBucket:
 
         with self.lock:
             return observations_payload(dict(self.observed))
+
+
+_MAX_VENDOR_ATTEMPT_RECORDS = 10_000
+
+
+def begin_vendor_call() -> int:
+    """Number a new logical provider call in the active trial (0 outside one)."""
+    bucket = _capture_scope.get()
+    if bucket is None:
+        return 0
+    with bucket.lock:
+        bucket.vendor_call_count += 1
+        return bucket.vendor_call_count
+
+
+def record_vendor_attempt(record: dict[str, Any]) -> None:
+    """Append one provider-call attempt to the active trial (dropped outside one)."""
+    bucket = _capture_scope.get()
+    if bucket is None:
+        return
+    with bucket.lock:
+        if len(bucket.vendor_attempts) < _MAX_VENDOR_ATTEMPT_RECORDS:
+            bucket.vendor_attempts.append(dict(record))
 
 
 #: The capture scope for the trial running in this context, or ``None`` when no

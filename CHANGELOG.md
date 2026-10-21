@@ -8,6 +8,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Per-call vendor retry, fault-injection hook, strict retry settings (SDK-41).**
+  With `TRAIGENT_VENDOR_MAX_RETRIES` > 0 the LiteLLM interceptor retries the
+  same provider call on 429/503 (retry_after, else exponential backoff), instead
+  of only moving on to the next configuration. Each trial reports
+  `vendor_call_attempts`, `vendor_call_retries` and per-attempt records
+  (failed attempts have unknown usage, not zero) in `TrialResult.metadata`,
+  totalled on `OptimizationResult.metadata`. New test-only
+  `traigent.testing.inject_vendor_failures(count, kind, per_call)` makes calls
+  fail on purpose (refused in production). Both retry env vars are now parsed
+  strictly: a malformed value raises `ConfigurationError` at run start instead
+  of silently disabling retries.
 - **Failed custom-evaluator rows are now visible (#2422).** When a
   `custom_evaluator` raises on some but not all rows of a trial, the trial
   metadata records `custom_evaluator_failed_rows` and
