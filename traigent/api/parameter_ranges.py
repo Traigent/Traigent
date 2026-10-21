@@ -562,6 +562,34 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
         """
         return cls(min_size, max_size, default=default, name="batch_size")
 
+    @classmethod
+    def thinking_budget_tokens(
+        cls,
+        *,
+        min_tokens: int = 1024,
+        max_tokens: int = 32768,
+        default: int = 8192,
+    ) -> IntRange:
+        """Reasoning/thinking token budget (provider-translated).
+
+        Maps to Anthropic ``thinking.budget_tokens`` (minimum 1024) and Gemini
+        2.5 ``thinking_config.thinking_budget``. OpenAI has no token-budget knob
+        (use :meth:`Choices.reasoning_effort`); it is skipped there.
+
+        Returns:
+            IntRange [min_tokens, max_tokens] named ``thinking_budget_tokens``
+
+        Example:
+            >>> budget = IntRange.thinking_budget_tokens()  # [1024, 32768]
+        """
+        return cls(
+            min_tokens,
+            max_tokens,
+            default=default,
+            name="thinking_budget_tokens",
+            unit="tokens",
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class LogRange(NumericConstraintBuilderMixin, ParameterRange):
@@ -938,6 +966,32 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
             default="none",
             name="reranker",
         )
+
+    @classmethod
+    def reasoning_effort(
+        cls,
+        *,
+        levels: Sequence[str] = ("minimal", "low", "medium", "high"),
+        default: str = "medium",
+    ) -> Choices[str]:
+        """Provider-agnostic reasoning effort (provider-translated).
+
+        Maps to OpenAI ``reasoning_effort``, Anthropic ``thinking.budget_tokens``
+        (effort -> token budget) and Gemini ``thinking_config``. Models known not
+        to reason skip the knob; unknown models receive the raw value unchanged.
+
+        Args:
+            levels: Subset of ``minimal|low|medium|high`` to search over.
+            default: Default level (must be in ``levels``).
+
+        Example:
+            >>> effort = Choices.reasoning_effort(levels=["low", "high"], default="low")
+        """
+        allowed = ("minimal", "low", "medium", "high")
+        values = list(levels)
+        if not values or any(v not in allowed for v in values):
+            raise ValueError(f"levels must be a non-empty subset of {allowed}")
+        return Choices(values, default=default, name="reasoning_effort")
 
 
 class TextDocument(Choices[str]):

@@ -17,6 +17,11 @@ from traigent.integrations.base_plugin import (
 )
 from traigent.integrations.llms.base_llm_plugin import LLMPlugin
 from traigent.integrations.utils import Framework
+from traigent.integrations.utils.model_capabilities import (
+    REASONING_EFFORT_KEY,
+    THINKING_BUDGET_KEY,
+    translate_anthropic,
+)
 
 if TYPE_CHECKING:
     from traigent.config.types import TraigentConfig
@@ -182,6 +187,29 @@ class AnthropicPlugin(LLMPlugin):
                 overridden["max_tokens"] = 4096
             else:
                 overridden["max_tokens"] = 1024
+
+        # Reasoning knobs (#1542): config-supplied only; a raw `thinking`
+        # kwarg from the caller always wins and is never rewritten.
+        effort = custom_params.get(REASONING_EFFORT_KEY)
+        budget = custom_params.get(THINKING_BUDGET_KEY)
+        overridden.pop(REASONING_EFFORT_KEY, None)
+        overridden.pop(THINKING_BUDGET_KEY, None)
+        if "thinking" not in kwargs:
+            explicit_max = kwargs.get("max_tokens") is not None or (
+                custom_params.get("max_tokens") is not None
+                or getattr(config_obj, "max_tokens", None) is not None
+            )
+            translated = translate_anthropic(
+                overridden.get("model"),
+                effort,
+                budget,
+                max_tokens=overridden["max_tokens"] if explicit_max else None,
+            )
+            if translated:
+                needed = translated["thinking"]["budget_tokens"] + 1024
+                if not explicit_max and overridden["max_tokens"] < needed:
+                    overridden["max_tokens"] = needed
+                overridden.update(translated)
 
         # Handle tool use format differences
         if "tools" in overridden:

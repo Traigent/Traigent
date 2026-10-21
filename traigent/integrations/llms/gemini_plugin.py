@@ -16,6 +16,11 @@ from traigent.integrations.base_plugin import (
 )
 from traigent.integrations.llms import LLMPlugin
 from traigent.integrations.utils import Framework
+from traigent.integrations.utils.model_capabilities import (
+    REASONING_EFFORT_KEY,
+    THINKING_BUDGET_KEY,
+    translate_gemini,
+)
 
 if TYPE_CHECKING:
     from traigent.config.types import TraigentConfig
@@ -159,6 +164,16 @@ class GeminiPlugin(LLMPlugin):
         if "stop" in custom_params and "stop_sequences" not in overridden:
             overridden["stop_sequences"] = custom_params["stop"]
 
+        # Reasoning knobs (#1542): config-supplied only; a caller-supplied
+        # thinking_config is never overwritten.
+        effort = custom_params.get(REASONING_EFFORT_KEY)
+        budget = custom_params.get(THINKING_BUDGET_KEY)
+        overridden.pop(REASONING_EFFORT_KEY, None)
+        overridden.pop(THINKING_BUDGET_KEY, None)
+        thinking = translate_gemini(
+            overridden.get("model_name") or overridden.get("model"), effort, budget
+        )
+
         # Gemini SDK requires generation params inside generation_config dict
         # Extract generation params and wrap them
         generation_params = [
@@ -177,6 +192,9 @@ class GeminiPlugin(LLMPlugin):
         for param in generation_params:
             if param in overridden:
                 generation_config[param] = overridden.pop(param)
+
+        if thinking and "thinking_config" not in overridden:
+            generation_config.setdefault("thinking_config", thinking["thinking_config"])
 
         if generation_config:
             overridden["generation_config"] = generation_config

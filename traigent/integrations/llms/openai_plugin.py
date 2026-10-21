@@ -16,6 +16,11 @@ from traigent.integrations.base_plugin import (
 )
 from traigent.integrations.llms.base_llm_plugin import LLMPlugin
 from traigent.integrations.utils import Framework
+from traigent.integrations.utils.model_capabilities import (
+    REASONING_EFFORT_KEY,
+    THINKING_BUDGET_KEY,
+    translate_openai,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +180,21 @@ class OpenAIPlugin(LLMPlugin):
 
         # Handle OpenAI-specific message formatting if needed
         custom_params = self._extract_custom_params(config_obj)
+
+        # Reasoning knobs (#1542): only config-supplied values are translated;
+        # a reasoning_effort the caller put in kwargs is left untouched.
+        if REASONING_EFFORT_KEY not in kwargs:
+            overridden.pop(REASONING_EFFORT_KEY, None)
+        overridden.pop(THINKING_BUDGET_KEY, None)
+        overridden.update(
+            translate_openai(
+                overridden.get("model"),
+                None
+                if REASONING_EFFORT_KEY in kwargs
+                else custom_params.get(REASONING_EFFORT_KEY),
+                custom_params.get(THINKING_BUDGET_KEY),
+            )
+        )
 
         system_message = custom_params.get("system")
 

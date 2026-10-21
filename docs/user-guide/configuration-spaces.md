@@ -83,6 +83,7 @@ See `docs/features/constraint-dsl.md` for full syntax and precedence details.
 - `IntRange.chunk_overlap()`
 - `IntRange.few_shot_count(max_examples=10)`
 - `IntRange.batch_size()`
+- `IntRange.thinking_budget_tokens(min_tokens=1024, max_tokens=32768, default=8192)`
 
 ### Choices Presets
 
@@ -92,6 +93,26 @@ See `docs/features/constraint-dsl.md` for full syntax and precedence details.
 - `Choices.retriever_type()`
 - `Choices.embedding_model(provider=None)`
 - `Choices.reranker_model()`
+- `Choices.reasoning_effort(levels=("minimal","low","medium","high"), default="medium")`
+
+### Reasoning knobs across providers
+
+Put `reasoning_effort` and/or `thinking_budget_tokens` in the config space; the
+provider plugins translate them to each provider's real parameter:
+
+| Provider | `reasoning_effort` | `thinking_budget_tokens` |
+|----------|--------------------|--------------------------|
+| OpenAI | `reasoning_effort` (o-series: `minimal` becomes `low`) | skipped (no equivalent) |
+| Anthropic | `thinking={"type": "enabled", "budget_tokens": N}` (minimal/low/medium/high = 1024/2048/8192/24576) | `budget_tokens` (>= 1024 and < `max_tokens`) |
+| Gemini 3 | `thinking_config.thinking_level` | skipped |
+| Gemini 2.5 | `thinking_config.thinking_budget` | `thinking_budget` |
+
+Models known not to reason (for example `gpt-4o`, `gemini-2.0-flash`) skip the
+knob with a warning; unknown model ids are passed through unchanged. Invalid
+values raise a `ValueError` that does not echo the value. A raw `reasoning_effort`,
+`thinking` or `thinking_config` you pass directly to the provider call still works
+and is never rewritten. The capability table lives in
+`traigent/integrations/utils/model_capabilities.py`.
 
 ## Notes
 

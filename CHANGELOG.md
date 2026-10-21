@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Reasoning-effort tuned variables with provider translation (#1542).** `Choices.reasoning_effort()` and `IntRange.thinking_budget_tokens()` plus a model capability table (`traigent/integrations/utils/model_capabilities.py`); the OpenAI, Anthropic and Gemini plugins translate them to `reasoning_effort`, `thinking.budget_tokens` and `thinking_config`. Non-reasoning models skip the knob; raw provider keys are unchanged. traigent-js has no equivalent yet.
+
 ### Fixed
 
 - **Anthropic key probe uses a current Claude id (#2651).** `validate_providers` probes with `claude-haiku-5-5` (was `claude-haiku-4-5-20251001`); the known-models list carries the Claude 5.5 ids and no retired `claude-3*` ids.
