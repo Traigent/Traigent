@@ -754,7 +754,9 @@ def test_transport_gate_refusal_passes_through_and_nothing_is_sent(
     import requests
 
     monkeypatch.setattr(
-        requests, "request", lambda *a, **k: sent.append("sent")  # pragma: no cover
+        requests,
+        "request",
+        lambda *a, **k: sent.append("sent"),  # pragma: no cover
     )
 
     def refusing_preflight(*_a: Any, **_k: Any) -> None:
