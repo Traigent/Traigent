@@ -4566,6 +4566,7 @@ class OptimizationOrchestrator:
             result.metadata["local_session_id"] = syncable_id
 
         persistence_status = "skipped"
+        required_cloud_finalize_failed = False
         if (
             self.backend_session_manager.backend_tracking_enabled
             and not backend_egress_disabled(self.traigent_config)
@@ -4634,26 +4635,39 @@ class OptimizationOrchestrator:
                     persistence_status = "succeeded"
             except Exception as exc:
                 persistence_status = "failed"
-                result.metadata["persistence_error"] = str(exc)
-                logger.error(
-                    "Backend persistence failed after optimization; backend session "
-                    "left RUNNING. Check the portal for this session id to confirm "
-                    "whether it was finalized; do not run whole-store "
-                    "`traigent sync` to repair it (an offline sync creates a NEW "
-                    "backend session and can duplicate the run). Keeping result source=%s, "
-                    "session_id=%s, and marking persistence_status=failed: %s",
-                    result.source,
-                    session_id,
-                    exc,
-                )
                 if policy_requires_cloud(policy_from_config(self.traigent_config)):
                     # Required cloud forbids finishing without the backend
-                    # record (#2510). Fixed text only: the backend error can
-                    # echo customer content. The local session stays on disk.
-                    raise CloudBrainUnavailableError(
-                        "session finalization",
-                        "required cloud tracking could not persist the run",
-                    ) from exc
+                    # record (#2510). The backend error can echo customer
+                    # content, so metadata and logs carry the class name only.
+                    required_cloud_finalize_failed = True
+                    result.metadata["persistence_error"] = type(exc).__name__
+                    logger.error(
+                        "Backend persistence failed after optimization under "
+                        "required cloud tracking (%s); backend session left "
+                        "RUNNING.",
+                        type(exc).__name__,
+                    )
+                else:
+                    result.metadata["persistence_error"] = str(exc)
+                    logger.error(
+                        "Backend persistence failed after optimization; backend "
+                        "session left RUNNING. Check the portal for this session "
+                        "id to confirm whether it was finalized; do not run "
+                        "whole-store `traigent sync` to repair it (an offline "
+                        "sync creates a NEW backend session and can duplicate "
+                        "the run). Keeping result source=%s, session_id=%s, and "
+                        "marking persistence_status=failed: %s",
+                        result.source,
+                        session_id,
+                        exc,
+                    )
+            if required_cloud_finalize_failed:
+                # Raised outside the except block with no chaining so the
+                # backend text is unreachable from a formatted traceback.
+                raise CloudBrainUnavailableError(
+                    "session finalization",
+                    "required cloud tracking could not persist the run",
+                ) from None
 
             # Populate experiment_id and cloud_url from session metadata
             self._populate_experiment_cloud_url(result)
@@ -4914,6 +4928,11 @@ class OptimizationOrchestrator:
         )
         try:
             await self._finalize_optimization(result, session_id, session_span)
+        except CloudBrainUnavailableError:
+            # Required cloud forbids returning a partial result without the
+            # backend record (#2510); the best-effort handler below is for
+            # optional tracking only.
+            raise
         except Exception as finalize_error:
             logger.warning(
                 "Finalization failed after user interrupt; returning partial "

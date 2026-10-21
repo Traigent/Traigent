@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import traceback
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -374,6 +375,7 @@ async def test_finalize_terminal_failure_is_loud_but_result_remains_usable(
 @pytest.mark.asyncio
 async def test_required_cloud_finalize_failure_fails_closed_with_closed_message(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """#2510: with TRAIGENT_REQUIRE_CLOUD a failed backend finalize must not
     return a normal result, and the error must not carry server text."""
@@ -394,13 +396,44 @@ async def test_required_cloud_finalize_failure_fails_closed_with_closed_message(
     orchestrator = _orchestrator(config, manager)
     result = _result()
 
-    with pytest.raises(CloudBrainUnavailableError) as excinfo:
-        await OptimizationOrchestrator._finalize_optimization(
-            orchestrator, result, "session-finalize", None
-        )
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(CloudBrainUnavailableError) as excinfo:
+            await OptimizationOrchestrator._finalize_optimization(
+                orchestrator, result, "session-finalize", None
+            )
 
     assert sentinel not in str(excinfo.value)
     assert sentinel not in repr(excinfo.value.reason)
+    assert sentinel not in repr(result.metadata)
+    assert sentinel not in caplog.text
+    assert sentinel not in "".join(traceback.format_exception(excinfo.value))
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__suppress_context__
+
+
+@pytest.mark.asyncio
+async def test_required_cloud_finalize_failure_not_swallowed_on_user_interrupt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2510: the user-interrupt handler must not turn a required-cloud
+    finalize failure into a returned partial result."""
+    from traigent.core.execution_policy_runtime import CloudBrainUnavailableError
+
+    monkeypatch.setattr(
+        "traigent.core.backend_session_manager.time.sleep", lambda _delay: None
+    )
+    monkeypatch.setenv("TRAIGENT_REQUIRE_CLOUD", "1")
+    config = _config(monkeypatch)
+    client = _backend_client(lambda *a, **k: (_ for _ in ()).throw(_HTTPError(503)))
+    orchestrator = _orchestrator(config, _manager(config, client))
+    orchestrator._create_optimization_result = Mock(return_value=_result())
+    orchestrator._add_winner_stability_cost_to_result = Mock()
+    orchestrator._winner_stability_accounted_cost = 0.0
+
+    with pytest.raises(CloudBrainUnavailableError):
+        await OptimizationOrchestrator._finalize_user_cancelled_optimization(
+            orchestrator, "session-finalize", None, KeyboardInterrupt()
+        )
 
 
 @pytest.mark.asyncio

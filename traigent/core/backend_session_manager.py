@@ -3408,7 +3408,7 @@ class BackendSessionManager:
                     attempt,
                     _FINALIZE_MAX_ATTEMPTS,
                     delay,
-                    exc,
+                    type(exc).__name__,  # class only: server text can echo content
                 )
                 time.sleep(delay)
 
