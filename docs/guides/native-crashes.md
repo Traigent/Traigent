@@ -59,6 +59,12 @@ with one object per trial, each holding its full `config` (read it with
 and summary fields. The storage directory is `TRAIGENT_RESULTS_FOLDER` when set,
 otherwise `~/.traigent`.
 
+A run that crashed before it saved a result has no `<result_name>` directory.
+Its session survives as a JSON file, written after each trial, at
+`<storage directory>/sessions/<session_id>.json`. Open that file to read the
+trials recorded so far, with their full configurations. The session ID is the
+bare value, without any `local:` prefix that `traigent results list` may show.
+
 ## Recover and re-run
 
 There is no resume command: `resume_from` does not exist in the SDK yet, and a

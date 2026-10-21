@@ -425,7 +425,8 @@ class ProgressBarCallback(OptimizationCallback):
         best_score_str = (
             f"{result.best_score:.3f}" if result.best_score is not None else "N/A"
         )
-        _safe_print(f"🏆 Best score: {best_score_str}")
+        if self._table_show_best:
+            _safe_print(f"🏆 Best score: {best_score_str}")
         _safe_print(f"⏱️  Total time: {result.duration:.1f}s")
         _safe_print(f"📈 Success rate: {result.success_rate:.1%}")
 
