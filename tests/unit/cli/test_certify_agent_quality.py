@@ -189,6 +189,8 @@ def test_unchecked_golden_bundle_human_output() -> None:
     assert lines[0] == "AGENT_QUALITY_VERIFIED"
     assert lines[1].startswith("verified_scope=signature_and_arithmetic")
     assert "reported by the customer" in lines[1]
+    assert "checked their arithmetic consistency" in lines[1]
+    assert "has not independently measured the quality" in lines[1]
     assert "process_record_base_status=not_checked" in lines
     assert "certification_eligible=false" in lines
     assert "holdout_item_count_source=client_reported" in lines
@@ -621,4 +623,25 @@ def test_verify_help_documents_agent_quality_exit_codes() -> None:
 def test_agent_quality_human_output_labels_numbers_as_customer_reported() -> None:
     result = _invoke(_base_args(kind="agent-quality", as_json=False))
     assert "reported by the customer" in result.output
-    assert "Traigent has not measured or verified" in result.output
+    assert "has not independently measured the quality" in result.output
+
+
+@requires_schema
+def test_abstained_human_output_scopes_to_signature_only(tmp_path: Path) -> None:
+    context = _load("agent_quality_context_unchecked.json")
+    context["accept_abstained_bundle"] = True
+    context_path = _write(tmp_path, "context.json", context)
+    result = _invoke(
+        _base_args(
+            bundle=FIXTURES / "agent_quality_abstained_bundle.json",
+            context=context_path,
+            kind="agent-quality",
+            as_json=False,
+        )
+    )
+    assert result.exit_code == 3, result.output
+    lines = result.output.splitlines()
+    assert lines[0] == "AGENT_QUALITY_CLAIM_ABSTAINED"
+    assert lines[1].startswith("verified_scope=signature_only")
+    assert "interval arithmetic not applicable" in lines[1]
+    assert "signature_and_arithmetic" not in result.output
