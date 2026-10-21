@@ -35,7 +35,9 @@ from traigent.core.exception_handler import VendorErrorCategory, classify_vendor
 from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.langchain_interceptor import (
     begin_vendor_call,
+    current_capture_bucket,
     record_vendor_attempt,
+    record_vendor_attempt_to,
 )
 from traigent.utils.logging import get_logger
 
@@ -280,8 +282,15 @@ def _record(
     error: BaseException | None = None,
     backoff_seconds: float | None = None,
     usage: dict[str, int] | None = None,
+    bucket: Any = None,
+    to_bucket: bool = False,
 ) -> None:
-    record_vendor_attempt(
+    sink = (
+        (lambda rec: record_vendor_attempt_to(bucket, rec))
+        if to_bucket
+        else record_vendor_attempt
+    )
+    sink(
         {
             "call_index": call_index,
             "attempt": attempt,
@@ -303,17 +312,21 @@ def _fault_hook(attempt_index: int) -> None:
 
 
 class _AttemptRecordingStream:
-    """Proxy a provider stream and record its FINAL outcome on consumption.
+    """Proxy a provider stream and record its FINAL outcome.
 
     Opening a stream succeeds before any chunk exists; the attempt is only
-    known to have worked once the stream is exhausted. A failure mid-stream is
-    recorded as a failed attempt and is never retried (chunks were emitted).
+    known to have worked once the stream is exhausted. The outcome is one of
+    ``success`` (exhausted), ``error`` (raised mid-stream, never retried),
+    ``closed_early`` (``close``/``aclose`` before exhaustion) or ``cancelled``.
+    It is written into the bucket that was active when the stream was OPENED,
+    wherever and whenever the stream is consumed. Recorded exactly once.
     """
 
     def __init__(self, stream: Any, call_index: int, attempt: int) -> None:
         self._stream = stream
         self._call_index = call_index
         self._attempt = attempt
+        self._bucket = current_capture_bucket()
         self._usage: dict[str, int] | None = None
         self._done = False
 
@@ -325,24 +338,35 @@ class _AttemptRecordingStream:
         if usage:
             self._usage = usage
 
-    def _finish(self, error: BaseException | None) -> None:
+    def _finish(self, outcome: str, error: BaseException | None = None) -> None:
         if self._done:
             return
         self._done = True
-        if error is None:
-            _record(
-                call_index=self._call_index,
-                attempt=self._attempt,
-                outcome="success",
-                usage=self._usage,
-            )
-        else:
-            _record(
-                call_index=self._call_index,
-                attempt=self._attempt,
-                outcome="error",
-                error=error,
-            )
+        _record(
+            call_index=self._call_index,
+            attempt=self._attempt,
+            outcome=outcome,
+            error=error,
+            usage=self._usage,
+            bucket=self._bucket,
+            to_bucket=True,
+        )
+
+    def close(self) -> Any:
+        try:
+            closer = getattr(self._stream, "close", None)
+            return closer() if callable(closer) else None
+        finally:
+            self._finish("closed_early")
+
+    async def aclose(self) -> Any:
+        try:
+            closer = getattr(self._stream, "aclose", None)
+            if callable(closer):
+                return await closer()
+            return None
+        finally:
+            self._finish("closed_early")
 
     def __iter__(self) -> _AttemptRecordingStream:
         return self
@@ -351,10 +375,13 @@ class _AttemptRecordingStream:
         try:
             chunk = next(self._stream)
         except StopIteration:
-            self._finish(None)
+            self._finish("success")
             raise
         except Exception as exc:
-            self._finish(exc)
+            self._finish("error", exc)
+            raise
+        except BaseException:
+            self._finish("cancelled")
             raise
         self._observe(chunk)
         return chunk
@@ -366,10 +393,13 @@ class _AttemptRecordingStream:
         try:
             chunk = await self._stream.__anext__()
         except StopAsyncIteration:
-            self._finish(None)
+            self._finish("success")
             raise
         except Exception as exc:
-            self._finish(exc)
+            self._finish("error", exc)
+            raise
+        except BaseException:  # asyncio.CancelledError and friends
+            self._finish("cancelled")
             raise
         self._observe(chunk)
         return chunk
