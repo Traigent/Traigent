@@ -175,3 +175,14 @@ def test_unrecognised_space_shape_skips_and_logs(mgr, caplog):
     with caplog.at_level(logging.WARNING):
         assert mgr.load_result("r").best_config == {"t": 1}
     assert any("check skipped" in r.getMessage() for r in caplog.records)
+
+
+def test_legacy_save_list_range_never_rejected(mgr, tmp_path):
+    # Pre-change saves stored a tuple range (0.0, 1.0) as the list [0.0, 1.0].
+    mgr.save_result(_result(best_config={"t": 0.5}, space={"t": [0.0, 1.0]}), name="r")
+    (tmp_path / "r" / MANIFEST).unlink()  # legacy: no manifest
+    assert mgr.load_result("r").best_config == {"t": 0.5}
+    mgr.save_result(_result(best_config={"t": 7.0}, space={"t": [0.0, 1.0]}), name="o")
+    (tmp_path / "o" / MANIFEST).unlink()
+    with pytest.raises(ValueError, match="outside"):
+        mgr.load_result("o")

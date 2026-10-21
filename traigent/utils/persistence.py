@@ -285,7 +285,7 @@ def _is_number(x: Any) -> bool:
     return isinstance(x, (int, float)) and not isinstance(x, bool)
 
 
-def _value_in_domain(value: Any, domain: Any) -> bool | None:
+def _value_in_domain(value: Any, domain: Any, legacy: bool = False) -> bool | None:
     """True/False when ``domain`` is a recognised shape, None when it is not.
 
     Follows the SDK's own config-space representation (see
@@ -306,7 +306,15 @@ def _value_in_domain(value: Any, domain: Any) -> bool | None:
                 return value in domain[key]
         return None
     if isinstance(domain, list):
-        return value in domain
+        if value in domain:
+            return True
+        # Saves without a manifest predate tuple ranges being written as
+        # {"low","high"}: a range (0.0, 1.0) was stored as the list [0.0, 1.0],
+        # indistinguishable from two choices. Never reject a valid legacy
+        # load: also accept anything inside the two-number span.
+        if legacy and len(domain) == 2 and all(_is_number(x) for x in (*domain, value)):
+            return bool(min(domain) <= value <= max(domain))
+        return False
     return None
 
 
@@ -327,7 +335,9 @@ def _serialize_configuration_space(space: Any) -> Any:
     return _safe_json_value(space)
 
 
-def _check_best_config_in_space(name: str, best_config: Any, space: Any) -> None:
+def _check_best_config_in_space(
+    name: str, best_config: Any, space: Any, legacy: bool = False
+) -> None:
     """Raise a value-free ValueError when best_config leaves the saved space.
 
     Only keys present in both are compared. Unrecognised domain shapes are
@@ -338,7 +348,7 @@ def _check_best_config_in_space(name: str, best_config: Any, space: Any) -> None
     for key, value in best_config.items():
         if key not in space:
             continue
-        verdict = _value_in_domain(value, space[key])
+        verdict = _value_in_domain(value, space[key], legacy)
         if verdict is False:
             raise ValueError(
                 f"Corrupted metadata for result '{name}': best_config is "
@@ -352,7 +362,9 @@ def _check_best_config_in_space(name: str, best_config: Any, space: Any) -> None
             )
 
 
-def _check_returned_best_config(name: str, result: Any, metadata: dict) -> None:
+def _check_returned_best_config(
+    name: str, result: Any, metadata: dict, legacy: bool = False
+) -> None:
     """Validate the best_config actually returned (the decoded one)."""
     returned = getattr(result, "best_config", None)
     outer = metadata.get("best_config")
@@ -363,7 +375,9 @@ def _check_returned_best_config(name: str, result: Any, metadata: dict) -> None:
     # Only the curated space is judged: it is the one written by
     # _serialize_configuration_space (tuple ranges kept as ranges); the encoded
     # copy inside result_fields flattens tuples to lists.
-    _check_best_config_in_space(name, returned, metadata.get("configuration_space"))
+    _check_best_config_in_space(
+        name, returned, metadata.get("configuration_space"), legacy
+    )
 
 
 class PersistenceManager:
@@ -691,7 +705,8 @@ class PersistenceManager:
                 f"Optimization result '{name}' not found in {self.base_dir}"
             )
 
-        if not verify_integrity_manifest(result_dir, list(_INTEGRITY_FILES)):
+        has_manifest = verify_integrity_manifest(result_dir, list(_INTEGRITY_FILES))
+        if not has_manifest:
             logger.warning(
                 "Result '%s' has no integrity manifest (saved by an older "
                 "version); loading without integrity verification. Re-save it "
@@ -808,13 +823,13 @@ class PersistenceManager:
             # break the verbatim metadata round trip pinned by #2026: a result
             # saved with `metadata == {}` would come back non-empty.
             decoded = decode_result(result_fields, trials=trials, artifact_name=name)
-            _check_returned_best_config(name, decoded, metadata)
+            _check_returned_best_config(name, decoded, metadata, not has_manifest)
             return decoded
 
         # Pre-#2031 artifact: the curated keys are all there ever was, so the
         # loader rebuilds `metadata` from them (see `_legacy_view`) — there is
         # no authoritative inner record to defer to.
-        _check_best_config_in_space(name, legacy_best, legacy_space)
+        _check_best_config_in_space(name, legacy_best, legacy_space, True)
         return decode_result(
             metadata,
             trials=trials,
