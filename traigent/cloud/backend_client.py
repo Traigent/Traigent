@@ -3023,7 +3023,6 @@ class BackendIntegratedClient:
             raise ProcessRecordRequestError(None, "invalid_backend_url")
         headers = self._get_sync_auth_headers(target="backend")
         headers["Cache-Control"] = "no-store"
-        preflight_requests(method, url, json=body)
         # Every failure below is re-raised as a closed ProcessRecordRequestError
         # OUTSIDE the except blocks: a requests/urllib3 exception carries the
         # prepared request (body with openings, X-API-Key header) and a JSON
@@ -3035,6 +3034,7 @@ class BackendIntegratedClient:
         status = 0
         code: str | None = None
         try:
+            preflight_requests(method, url, json=body)
             response = requests.request(  # nosec B113 - timeout is provided
                 method,
                 url,
@@ -3048,6 +3048,10 @@ class BackendIntegratedClient:
                 code = _envelope_error_code(response)
             else:
                 payload = response.json()
+        except TransportGateRefusal:
+            # Counts-only refusal (route + counts + cause type name): safe to
+            # propagate, and must not be masked as a transport error.
+            raise
         except Exception:  # noqa: BLE001 - closed re-raise below
             failure = "TRANSPORT_ERROR"
         if failure is not None:

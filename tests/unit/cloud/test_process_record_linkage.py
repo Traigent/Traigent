@@ -740,3 +740,29 @@ def test_transport_malformed_response_has_clean_chain(
         client.get_process_record_sync(SESSION)
     assert err.value.__cause__ is None and err.value.__context__ is None
     assert "OPENING-SECRET" not in _chain_text(err.value)
+
+
+def test_transport_gate_refusal_passes_through_and_nothing_is_sent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from traigent.cloud import backend_client as bc
+    from traigent.labels.transport_gate import TransportGateRefusal
+
+    client = _transport_client(monkeypatch, AssertionError("must not be sent"))
+    sent: list[str] = []
+
+    import requests
+
+    monkeypatch.setattr(
+        requests, "request", lambda *a, **k: sent.append("sent")  # pragma: no cover
+    )
+
+    def refusing_preflight(*_a: Any, **_k: Any) -> None:
+        raise TransportGateRefusal("process-records", {"blocked": 1})
+
+    monkeypatch.setattr(bc, "preflight_requests", refusing_preflight)
+
+    with pytest.raises(TransportGateRefusal) as err:
+        client.finalize_process_record_sync(SESSION, {})
+    assert not isinstance(err.value, ProcessRecordRequestError)
+    assert sent == []
