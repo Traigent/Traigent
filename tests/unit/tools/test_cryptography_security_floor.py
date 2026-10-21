@@ -141,18 +141,12 @@ def test_shipped_guidance_has_no_bare_full_mlflow_install_instruction() -> None:
     )
 
 
-def test_shipped_mlflow_example_explicitly_opts_into_file_store() -> None:
-    """The skinny-only example must not rely on MLflow's local default."""
-    skill = (
-        _REPO_ROOT / "traigent" / "skills" / "traigent-integrations" / "SKILL.md"
-    ).read_text()
+def test_mlflow_tracker_does_not_claim_a_local_default() -> None:
+    """The tracker docs must not rely on MLflow's local default."""
     tracker_source = (
         _REPO_ROOT / "traigent" / "integrations" / "observability" / "mlflow.py"
     ).read_text()
 
-    assert 'os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"' in skill
-    assert "mlflow.set_tracking_uri(tracking_dir.as_uri())" in skill
-    assert 'mlflow.set_experiment("traigent_optimization")' in skill
     assert "defaults to local" not in tracker_source
 
 

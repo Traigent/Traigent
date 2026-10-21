@@ -8,6 +8,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **BREAKING (packaging): the SDK no longer bundles `traigent/skills` (#1609).**
+  The folder and its package-data entry are removed; the skills live only in
+  `Traigent/traigent-skills` (`npx skills add Traigent/traigent-skills`, which
+  `traigent onboard` already runs). The runtime message that pointed at the bundled
+  folder now points to installing `traigent-skills`. The bundle-only content guards
+  (lifecycle-vocabulary lint, decorator-skill snippet test, MLflow skill example
+  check) go with it; the tracker no-local-default check stays.
 - **Nous provider auth flow is marked UNVERIFIED (#2067).** The six "confirm
   before merge" OWNER markers are now explicit UNVERIFIED notes (token endpoint,
   `auth.json` schema, refresh request shape, base URL, model-id form), the

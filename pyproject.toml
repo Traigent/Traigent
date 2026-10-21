@@ -312,7 +312,6 @@ exclude = ["tests*", "demos*", "docs*", "traigent.experimental*"]
 traigent = [
     "py.typed",
     "examples/**/*.jsonl",
-    "skills/**/*.md",
     "playbook/schemas/*.json",
     "observability/otel/*.json",
     "connectors/schemas/*.json",
@@ -518,7 +517,7 @@ exclude = [
     # Python-only tool -- the REQUIRED pr-gate 'preflight' job format-checks
     # `git diff -- '*.py'` only, while `make format-ruff` passes whole
     # directories and would silently rewrite 26 checked-in Markdown files
-    # (including the user-facing traigent/skills/**/SKILL.md docs), breaking
+    # (and any other checked-in Markdown), breaking
     # that target's documented "matches the REQUIRED 'preflight' CI check"
     # contract. Excluding *.md preserves the exact pre-0.16 scope; adopting
     # Markdown formatting is a separate, deliberate decision.
