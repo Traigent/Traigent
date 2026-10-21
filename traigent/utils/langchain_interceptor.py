@@ -11,6 +11,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Iterator
+from concurrent.futures import Future
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -48,8 +49,12 @@ class _CaptureBucket:
     by_key: dict[str, Any] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
     sealed: bool = False
-    # Sticky: a timed-out running worker may still incur uncaptured spend.
+    # Futures remain observable after timeout; completion before sealing clears
+    # uncertainty about workers still able to incur spend.
+    timed_out_workers: list[Future[Any]] = field(default_factory=list)
     incomplete: bool = False
+    late: list[tuple[Any, str | None]] = field(default_factory=list)
+    finished: bool = False
     #: Provider/model versions observed from REAL provider responses in this
     #: trial (content identity v1, ``ObservedProviderVersionV1``), keyed by
     #: ``(provider, requested_model, response_model, system_fingerprint)``.
@@ -171,6 +176,7 @@ class capture_scope:
 
     def __exit__(self, *exc_info: Any) -> None:
         seal_captured_responses()
+        finish_captured_responses(discard=True)
         _capture_scope.reset(self._token)
 
     async def __aenter__(self) -> _CaptureBucket:
@@ -248,8 +254,18 @@ class LangChainMetadataCapture:
         if bucket is not None:
             with bucket.lock:
                 if bucket.sealed:
-                    # Finalization already classified live timed-out workers as
-                    # unknown spend. Never reopen or leak into a later trial.
+                    if not bucket.finished:
+                        bucket.late.append(
+                            (
+                                response,
+                                requested_model
+                                if isinstance(requested_model, str)
+                                else None,
+                            )
+                        )
+                    # Captures after evaluate's final handoff cannot update its
+                    # returned result. Live timed-out workers already make that
+                    # trial unmeasured; never assume their remaining spend is $0.
                     return
                 bucket.responses.append(response)
                 bucket.owners.append(_capture_owner.get())
@@ -482,11 +498,12 @@ def snapshot_captured_responses() -> tuple[
     return _metadata_capture.snapshot()
 
 
-def mark_capture_incomplete() -> None:
+def mark_capture_incomplete(worker: Future[Any]) -> None:
     """A timed-out live worker leaves this trial's eventual spend unknown."""
     bucket = _capture_scope.get()
     if bucket is not None:
         with bucket.lock:
+            bucket.timed_out_workers.append(worker)
             bucket.incomplete = True
 
 
@@ -496,8 +513,29 @@ def seal_captured_responses() -> bool:
     if bucket is None:
         return False
     with bucket.lock:
+        if not bucket.sealed:
+            bucket.incomplete = any(
+                not worker.done() for worker in bucket.timed_out_workers
+            )
         bucket.sealed = True
         return bucket.incomplete
+
+
+def finish_captured_responses(*, discard: bool = False) -> list[tuple[Any, str | None]]:
+    """Take late captures; close only at an empty final handoff.
+
+    Pricing a drained batch may let another worker capture, so callers fold
+    batches until an empty take atomically closes appends. Scope exit discards
+    any remaining batch when unwinding without a result.
+    """
+    bucket = _capture_scope.get()
+    if bucket is None:
+        return []
+    with bucket.lock:
+        late, bucket.late = bucket.late, []
+        if discard or not late:
+            bucket.finished = True
+        return late
 
 
 def clear_captured_responses() -> None:

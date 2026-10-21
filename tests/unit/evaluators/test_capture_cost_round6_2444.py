@@ -158,6 +158,28 @@ def test_user_evaluation_cost_aggregate_excludes_sdk_samples_and_missing_values(
     assert summary["count"] == 1
 
 
+def _timeout_after_event(
+    monkeypatch: pytest.MonkeyPatch, ready: threading.Event
+) -> None:
+    """Trigger the first worker's timeout only once its sibling has captured.
+
+    Exercise the real timeout handling without a scheduling deadline for the
+    ordinary example. The suite timeout remains the deadlock guard.
+    """
+    calls = 0
+
+    async def wait_for(awaitable: Any, timeout: Any = None) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            while not ready.is_set():
+                await asyncio.sleep(0)
+            raise TimeoutError
+        return await awaitable
+
+    monkeypatch.setattr(asyncio, "wait_for", wait_for)
+
+
 @pytest.mark.parametrize("during_summary", [False, True])
 def test_timeout_plus_measured_example_is_unknown_and_scope_closes(
     during_summary: bool,
@@ -165,6 +187,8 @@ def test_timeout_plus_measured_example_is_unknown_and_scope_closes(
 ) -> None:
     release = threading.Event()
     captured = threading.Event()
+    sibling_captured = threading.Event()
+    _timeout_after_event(monkeypatch, sibling_captured)
     measured = _Resp(2000, 700)
     late = _Resp(9000, 3000)
     original = MetricsTracker.format_as_summary_stats
@@ -176,12 +200,13 @@ def test_timeout_plus_measured_example_is_unknown_and_scope_closes(
             captured.set()
         else:
             capture_langchain_response(measured)
+            sibling_captured.set()
         return "ok"
 
     def summary(tracker: MetricsTracker, **kwargs: Any) -> Any:
         release.set()
         assert captured.wait(5)
-        # A sealed scope cannot accumulate captures after the final drain.
+        # Sealed late captures are separate from normal per-example reads.
         assert get_all_captured_responses() == []
         return original(tracker, **kwargs)
 
@@ -191,7 +216,7 @@ def test_timeout_plus_measured_example_is_unknown_and_scope_closes(
         metrics=["accuracy"],
         detailed=True,
         max_workers=2,
-        timeout=0.1,
+        timeout=10.0,
         execution_mode="local",
     )
     try:
@@ -203,10 +228,14 @@ def test_timeout_plus_measured_example_is_unknown_and_scope_closes(
         )
         assert result.aggregated_metrics["cost_unmeasured"] == 1.0
         assert result.aggregated_metrics.get("cost") is None
+        expected_floor = _cost(measured) + (_cost(late) if during_summary else 0.0)
         assert result.aggregated_metrics["cost_lower_bound"] == pytest.approx(
-            _cost(measured)
+            expected_floor
         )
         assert result.summary_stats["metrics"]["cost_unmeasured"] == 1.0
+        assert result.summary_stats["metrics"]["cost_lower_bound"] == pytest.approx(
+            expected_floor
+        )
     finally:
         release.set()
         assert captured.wait(5)

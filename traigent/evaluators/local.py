@@ -9,6 +9,7 @@ import inspect
 import math
 import time
 from collections.abc import Callable, Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -45,6 +46,7 @@ from traigent.utils.langchain_interceptor import (
     get_captured_response_by_key,
     drain_captured_responses,
     seal_captured_responses,
+    finish_captured_responses,
     snapshot_captured_responses,
     patch_langchain_for_metadata_capture,
 )
@@ -405,6 +407,15 @@ class _CaptureOwnership:
             for p, r in enumerate(self.responses)
             if p not in self.taken
         ]
+
+
+# Progress has its own cursor over evaluation-scoped identity history. Preview
+# extraction may advance this cursor, but never consumes final accounting's
+# returned_seen/taken sets. Context isolation also covers a shared evaluator
+# serving concurrent evaluate() calls.
+_progress_capture_history: ContextVar[_CaptureOwnership | None] = ContextVar(
+    "traigent_progress_capture_history", default=None
+)
 
 
 class _AggregatedResponses:
@@ -1382,9 +1393,17 @@ class LocalEvaluator(BaseEvaluator):
             return super()._extract_progress_call_metrics(
                 example_id, example, result, config, dataset, example_index
             )
-        return self._extract_llm_metrics_for_output(
+        history = _progress_capture_history.get()
+        if history is not None:
+            captures.returned_seen = history.returned_seen.copy()
+            captures.captured_ids.update(history.captured_ids)
+        metrics = self._extract_llm_metrics_for_output(
             result.actual_output, example_index, config, dataset, responses, captures
         )
+        if history is not None:
+            history.returned_seen.update(captures.returned_seen)
+            history.captured_ids.update(captures.captured_ids)
+        return metrics
 
     def _extract_llm_metrics_for_output(
         self,
@@ -2808,14 +2827,18 @@ class LocalEvaluator(BaseEvaluator):
         """
         with coercion_log_scope():
             async with capture_scope():
-                return await self._evaluate_within_capture_scope(
-                    func,
-                    config,
-                    dataset,
-                    sample_lease=sample_lease,
-                    progress_callback=progress_callback,
-                    budget=budget,
-                )
+                history_token = _progress_capture_history.set(_CaptureOwnership([], []))
+                try:
+                    return await self._evaluate_within_capture_scope(
+                        func,
+                        config,
+                        dataset,
+                        sample_lease=sample_lease,
+                        progress_callback=progress_callback,
+                        budget=budget,
+                    )
+                finally:
+                    _progress_capture_history.reset(history_token)
 
     async def _evaluate_within_capture_scope(
         self,
@@ -3035,9 +3058,9 @@ class LocalEvaluator(BaseEvaluator):
             if accuracy_is_custom_objective and "accuracy" in aggregated_metrics:
                 aggregated_metrics["score"] = aggregated_metrics["accuracy"]
 
-        # Seal BEFORE draining: no worker can append between this drain and
-        # return. Live workers that timed out leave eventual spend unknown,
-        # even when they have not produced a response yet (#2444).
+        # Seal normal accounting before draining. Late captures have a separate
+        # buffer folded at the final handoff below. Workers still live here
+        # leave eventual spend unknown even without a response yet (#2444).
         if seal_captured_responses():
             metrics_tracker.unattributed_spend = True
             for metric in metrics_tracker.example_metrics:
@@ -3196,9 +3219,47 @@ class LocalEvaluator(BaseEvaluator):
         result.sample_budget_exhausted = budget_exhausted
         result.examples_consumed = consumed_examples
 
-        return self._finalize_execution_budget_evaluation(
+        result = self._finalize_execution_budget_evaluation(
             budget, result, execution_budget_lease
         )
+        # Last handoff before return: include known spend produced while
+        # summary/result generation ran. After this boundary a still-live
+        # timed-out worker cannot update the returned result; the trial remains
+        # unmeasured, never a claim that its remaining work costs $0.
+        floor = float(
+            comprehensive_metrics.get("cost_lower_bound")
+            or comprehensive_metrics.get("cost")
+            or 0.0
+        )
+        while late := finish_captured_responses():
+            floor += sum(
+                self._call_cost_floor(
+                    self._price_one_call(
+                        response,
+                        agent_model=None,
+                        is_agent_call=False,
+                        requested_model=requested,
+                    )
+                )
+                for response, requested in late
+            )
+            enforce_unknown_cost_invariant(
+                result.aggregated_metrics,
+                unknown=True,
+                floor=floor,
+                sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
+            )
+            if result.summary_stats and isinstance(
+                result.summary_stats.get("metrics"), dict
+            ):
+                enforce_unknown_cost_invariant(
+                    result.summary_stats["metrics"],
+                    unknown=True,
+                    floor=floor,
+                    nullify=True,
+                    sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
+                )
+        return result
 
     def _compute_real_accuracy(self, actual_output: Any, expected_output: Any) -> float:
         """Compute real accuracy by comparing actual vs expected output.

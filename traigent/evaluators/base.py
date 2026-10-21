@@ -2777,7 +2777,7 @@ class BaseEvaluator(ABC):
                         )
                     except TimeoutError:
                         if not future.cancel() and not future.done():
-                            mark_capture_incomplete()
+                            mark_capture_incomplete(future)
                         # A running thread cannot be interrupted.  The worker
                         # completion callback retains the lane and any sample
                         # admission until it settles, while this caller gets

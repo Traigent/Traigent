@@ -12,7 +12,7 @@ import pytest
 
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.evaluators.local import LocalEvaluator
-from traigent.evaluators.metrics_tracker import extract_llm_metrics
+from traigent.evaluators.metrics_tracker import extract_llm_metrics, is_cost_value_key
 from traigent.utils.langchain_interceptor import capture_langchain_response
 
 MODEL = "gpt-4o-mini"
@@ -600,7 +600,7 @@ def _walk(node: Any, where: str, *, require_unknown: bool = False) -> list[str]:
     """Violations of the unknown-cost rule anywhere in an emitted structure.
 
     Every dict that declares ``cost_unmeasured`` must carry no numeric value in
-    any ``cost`` / ``*_cost`` field (only the flag and ``cost_lower_bound``).
+    any SDK-owned cost field (only the flag and ``cost_lower_bound``).
     """
     bad: list[str] = []
     if isinstance(node, dict):
@@ -617,7 +617,10 @@ def _walk(node: Any, where: str, *, require_unknown: bool = False) -> list[str]:
             bad.append(f"{where}: unknown usage lacks cost_unmeasured")
         if node.get("cost_unmeasured"):
             for key, value in node.items():
-                if (key == "cost" or str(key).endswith("_cost")) and value is not None:
+                if (
+                    is_cost_value_key(key, sdk_evaluation_cost=True)
+                    and value is not None
+                ):
                     bad.append(f"{where}.{key}={value!r}")
         for key, value in node.items():
             bad.extend(_walk(value, f"{where}.{key}", require_unknown=require_unknown))
@@ -697,6 +700,31 @@ def _scenario_modelless_async_progress(payloads: list[Any]) -> Any:
     )
 
 
+def _scenario_user_business_cost(payloads: list[Any]) -> Any:
+    async def fn(text: str, **_cfg: Any) -> Any:
+        capture_langchain_response(_Usageless())
+        return "ok"
+
+    ev = LocalEvaluator(
+        metrics=["accuracy"],
+        metric_functions={
+            "business_cost": lambda output, expected, llm_metrics=None: 77.0
+        },
+        detailed=True,
+        execution_mode="local",
+    )
+    result = asyncio.run(
+        ev.evaluate(
+            fn, {}, _dataset(2), progress_callback=lambda i, p: payloads.append(p)
+        )
+    )
+    assert result.aggregated_metrics["business_cost"] == 77.0
+    assert result.summary_stats["metrics"]["business_cost"]["mean"] == 77.0
+    assert all(row.metrics["business_cost"] == 77.0 for row in result.example_results)
+    assert all(payload["metrics"]["business_cost"] == 77.0 for payload in payloads)
+    return result
+
+
 def _judge_scenario(judge_calls: list[Any]) -> Any:
     def make(payloads: list[Any]) -> Any:
         def fn(text: str, **_cfg: Any) -> str:
@@ -747,6 +775,7 @@ def _scenario_cost_metric_unpriced_non_strict(payloads: list[Any]) -> Any:
     "scenario",
     [
         pytest.param(_scenario_unpriced_model, id="unpriced-model"),
+        pytest.param(_scenario_user_business_cost, id="user-business-cost"),
         pytest.param(_scenario_modelless_async_progress, id="modelless-async-progress"),
         pytest.param(
             _scenario_usageless_async_detailed_progress, id="usageless-async-progress"
@@ -786,6 +815,7 @@ def test_unknown_cost_invariant_holds_on_every_emitted_structure(
             require_unknown=scenario
             in {
                 _scenario_unpriced_model,
+                _scenario_user_business_cost,
                 _scenario_modelless_async_progress,
                 _scenario_usageless_async_detailed_progress,
                 _scenario_cost_metric_unpriced_non_strict,
@@ -798,7 +828,9 @@ def test_unknown_cost_invariant_holds_on_every_emitted_structure(
     for payload in payloads:
         metrics = payload.get("metrics") or {}
         if metrics.get("cost_unmeasured"):
-            assert not any(k == "cost" or k.endswith("_cost") for k in metrics), metrics
+            assert not any(
+                is_cost_value_key(k, sdk_evaluation_cost=True) for k in metrics
+            ), metrics
 
 
 def test_capture_arriving_after_the_last_drain_reaches_the_floor() -> None:
