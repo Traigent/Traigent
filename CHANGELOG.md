@@ -13,15 +13,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   span-attribute scrubbers, so the SDK now logs one warning and uses the
   built-in scrubbed tracing instead. The add-on is bumped to 0.1.1.
 
-### Changed
-
-- **User-cancelled runs are now clearly labelled (#2666).** `optimize()` still
-  returns the partial result after a Ctrl+C (the caller owns the exit code),
-  with `status` CANCELLED and `stop_reason` `user_cancelled`. It now logs one
-  warning with counts only (N of M trials finished, result is partial), and
-  `traigent results list` has a Status column. Results saved before this
-  change show `unknown`.
-
 ### Added
 
 - **RAGAS reports row coverage and fails below a minimum scored share (#2677).**
@@ -103,6 +94,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   backend, offline run, no bound agent) publish exactly as before.
 
 ### Changed
+
+- **User-cancelled runs are now clearly labelled (#2666).** `optimize()` still
+  returns the partial result after a Ctrl+C (the caller owns the exit code),
+  with `status` CANCELLED and `stop_reason` `user_cancelled`. It now logs one
+  warning with counts only (N of M trials finished, result is partial), and
+  `traigent results list` has a Status column. Results saved before this
+  change show `unknown`.
 
 - **`traigent hooks validate --exit-code` fails on an empty explicit target
   (#2639).** When a target path is given explicitly and contains no
