@@ -4013,18 +4013,19 @@ class OptimizationOrchestrator:
             )
             return None
 
-        self._vendor_retry_counts[category] = used + 1
+        # Honor the vendor's requested wait (all header forms) via the shared
+        # helper; a wait beyond its cap is refused: the pause stands.
+        from traigent.utils.vendor_retry import compute_delay
 
-        # Honor a vendor-provided Retry-After when available, else exponential.
-        retry_after = getattr(exc.original_error, "retry_after", None)
-        try:
-            delay = float(retry_after) if retry_after is not None else None
-        except (TypeError, ValueError):
-            delay = None
-        if delay is None or delay < 0:
-            delay = base_backoff * (2**used)
+        delay = compute_delay(exc.original_error or exc, base_backoff, used)
         if delay is None:
-            raise RuntimeError("vendor retry delay fallback did not produce a value")
+            logger.warning(
+                "traigent.vendor_auto_retry refused category=%s: vendor-requested "
+                "wait exceeds the retry cap",
+                category.value,
+            )
+            return None
+        self._vendor_retry_counts[category] = used + 1
         delay_seconds = float(delay)
 
         logger.warning(

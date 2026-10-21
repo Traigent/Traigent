@@ -57,6 +57,11 @@ class _CaptureBucket:
     vendor_retry_total: int = 0
     vendor_unknown_usage_total: int = 0
     vendor_records_truncated: bool = False
+    #: Set when a nested scope ends: its ledger was merged into ``parent`` and
+    #: later records (a stream finishing after the scope) are forwarded there.
+    parent: Any = None
+    closed: bool = False
+    merge_offset: int = 0
 
     def observed_provider_versions(self) -> list[dict[str, Any]]:
         """This trial's observations as an ``ObservedProviderVersionV1`` list."""
@@ -93,7 +98,28 @@ def _add_vendor_attempt_locked(bucket: _CaptureBucket, record: dict[str, Any]) -
 
 def record_vendor_attempt(record: dict[str, Any]) -> None:
     """Append one provider-call attempt to the active trial (dropped outside one)."""
-    bucket = _capture_scope.get()
+    record_vendor_attempt_to(_capture_scope.get(), record)
+
+
+def current_capture_bucket() -> _CaptureBucket | None:
+    """The active trial's capture bucket, if any (to record into it later)."""
+    return _capture_scope.get()
+
+
+def record_vendor_attempt_to(
+    bucket: _CaptureBucket | None, record: dict[str, Any]
+) -> None:
+    """Record into a specific bucket (None drops it).
+
+    A bucket whose scope already ended forwards to its parent, so an attempt
+    that finishes late (a stream consumed after the call returned) still
+    lands in the enclosing trial.
+    """
+    record = dict(record)
+    while bucket is not None and bucket.closed and bucket.parent is not None:
+        if record.get("call_index"):
+            record["call_index"] = record["call_index"] + bucket.merge_offset
+        bucket = bucket.parent
     if bucket is None:
         return
     with bucket.lock:
@@ -116,6 +142,14 @@ def _merge_vendor_attempts(child: _CaptureBucket, parent: _CaptureBucket) -> Non
             child.vendor_call_count,
         )
     with parent.lock:
+        # Offset call ids by the parent's current sequence so merged records
+        # from sibling scopes stay distinguishable.
+        offset = parent.vendor_call_count
+        child.merge_offset = offset
+        if offset:
+            for rec in records:
+                if rec.get("call_index"):
+                    rec["call_index"] += offset
         room = max(0, _MAX_VENDOR_ATTEMPT_RECORDS - len(parent.vendor_attempts))
         parent.vendor_attempts.extend(records[:room])
         parent.vendor_attempt_total += totals[0]
@@ -234,6 +268,8 @@ class capture_scope:
         _capture_scope.reset(self._token)
         if self._parent is not None:
             _merge_vendor_attempts(self._bucket, self._parent)
+            self._bucket.parent = self._parent
+            self._bucket.closed = True
 
     async def __aenter__(self) -> _CaptureBucket:
         return self.__enter__()

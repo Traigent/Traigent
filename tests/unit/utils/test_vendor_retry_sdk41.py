@@ -854,3 +854,129 @@ def test_e2e_without_injection_is_unchanged(tmp_path, monkeypatch):
     assert result.metadata["vendor_call_attempts"] == 10
     assert result.metadata["vendor_call_retries"] == 0
     assert not is_cost_unmeasured(result.trials[0].metrics)
+
+
+# ------------------------------------------------------------ review round 2
+
+
+@pytest.mark.asyncio
+async def test_outer_retry_honours_wait_cap_and_header_forms():
+    from traigent.core.exception_handler import VendorErrorCategory
+    from traigent.core.orchestrator import OptimizationOrchestrator
+    from traigent.utils.exceptions import VendorPauseError
+
+    def make(error):
+        o = MagicMock()
+        o._vendor_retry_counts = {}
+        o._vendor_retry_settings = OptimizationOrchestrator._vendor_retry_settings
+        o._maybe_auto_retry_vendor_error = (
+            OptimizationOrchestrator._maybe_auto_retry_vendor_error.__get__(o)
+        )
+        return o, VendorPauseError(
+            "rl", original_error=error, category=VendorErrorCategory.RATE_LIMIT
+        )
+
+    import os
+
+    os.environ[RETRIES] = "2"
+    try:
+        o, exc = make(RateLimitError("429"))
+        exc.original_error.headers = {"retry-after": "500"}
+        assert await o._maybe_auto_retry_vendor_error(exc) is None
+        assert o._vendor_retry_counts == {}  # budget not consumed by a refusal
+
+        o, exc = make(RateLimitError("429"))
+        exc.original_error.headers = {"retry-after-ms": "10"}
+        with patch("asyncio.sleep") as sleep:
+            sleep.return_value = None
+            assert await o._maybe_auto_retry_vendor_error(exc) == "continue"
+        assert sleep.call_args.args[0] == 0.01
+    finally:
+        os.environ.pop(RETRIES, None)
+
+
+def test_sync_stream_close_early_recorded_once(mock_off, monkeypatch):
+    mod, p = _patched([_SyncStream()])
+    try:
+        with capture_scope() as bucket:
+            stream = mod.completion(model="gpt-4o", stream=True)
+            next(stream)
+            stream.close()
+            stream.close()
+        (rec,) = bucket.vendor_attempts
+        assert rec["outcome"] == "closed_early" and rec["usage_known"] is False
+    finally:
+        p.stop()
+
+
+@pytest.mark.asyncio
+async def test_async_stream_aclose_and_cancellation(mock_off):
+    import asyncio
+
+    mod, p = _patched([_AsyncStream(), _AsyncStream()])
+    try:
+        with capture_scope() as bucket:
+            stream = await mod.acompletion(model="gpt-4o", stream=True)
+            await stream.__anext__()
+            await stream.aclose()
+            await stream.aclose()
+            assert [a["outcome"] for a in bucket.vendor_attempts] == ["closed_early"]
+
+            stream2 = await mod.acompletion(model="gpt-4o", stream=True)
+
+            async def boom():
+                raise asyncio.CancelledError
+
+            stream2._stream.__anext__ = boom
+            with pytest.raises(asyncio.CancelledError):
+                await stream2.__anext__()
+            assert bucket.vendor_attempts[-1]["outcome"] == "cancelled"
+            assert len(bucket.vendor_attempts) == 2
+    finally:
+        p.stop()
+
+
+def test_stream_records_into_originating_bucket(mock_off):
+    mod, p = _patched([_SyncStream(), _SyncStream()])
+    try:
+        with capture_scope() as opener:
+            s1 = mod.completion(model="gpt-4o", stream=True)
+            s2 = mod.completion(model="gpt-4o", stream=True)
+        # consumed in a different scope, and outside any scope
+        with capture_scope() as other:
+            list(s1)
+        list(s2)
+        assert other.vendor_attempt_total == 0
+        assert opener.vendor_attempt_total == 2
+    finally:
+        p.stop()
+
+
+def test_late_stream_in_nested_scope_forwards_to_parent(mock_off):
+    mod, p = _patched([_SyncStream()])
+    try:
+        with capture_scope() as outer:
+            with capture_scope():
+                s = mod.completion(model="gpt-4o", stream=True)
+            list(s)  # inner scope already merged and closed
+        assert outer.vendor_attempt_total == 1
+    finally:
+        p.stop()
+
+
+def test_sibling_nested_scopes_get_distinct_call_ids():
+    from traigent.utils.langchain_interceptor import (
+        begin_vendor_call,
+        record_vendor_attempt,
+    )
+
+    with capture_scope() as outer:
+        for _ in range(2):
+            with capture_scope():
+                idx = begin_vendor_call()
+                record_vendor_attempt({"call_index": idx, "usage_known": True})
+        idx = begin_vendor_call()
+        record_vendor_attempt({"call_index": idx, "usage_known": True})
+    ids = [r["call_index"] for r in outer.vendor_attempts]
+    assert len(set(ids)) == 3
+    assert outer.vendor_attempt_total == 3
