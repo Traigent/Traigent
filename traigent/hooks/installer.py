@@ -286,8 +286,8 @@ class HooksInstaller:
             if not hook_path.exists():
                 status[hook_name] = "not installed"
             else:
-                content = safe_read_text(hook_path, hooks_dir)
-                if HOOK_MARKER in content:
+                content = _read_hook_text(hook_path, hooks_dir)
+                if _is_traigent_hook(content):
                     status[hook_name] = "installed (traigent)"
                 else:
                     status[hook_name] = "installed (other)"

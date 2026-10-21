@@ -437,10 +437,10 @@ class TestHooksInstaller:
         installer.install()
         status = installer.status()
 
-        # pre-push has HOOK_MARKER so it's detected as Traigent
+        # pre-push carries HOOK_MARKER; pre-commit carries PRE_COMMIT_HOOK_MARKER.
+        # status() must use the same ownership check as install/uninstall (#2707).
         assert status["pre-push"] == "installed (traigent)"
-        # pre-commit doesn't have HOOK_MARKER so it's detected as other
-        assert status["pre-commit"] == "installed (other)"
+        assert status["pre-commit"] == "installed (traigent)"
 
     def test_status_returns_installed_other_for_non_traigent_hooks(
         self, installer: HooksInstaller
