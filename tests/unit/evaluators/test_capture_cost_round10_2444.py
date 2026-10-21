@@ -64,8 +64,9 @@ def test_custom_uncertainty_overrides_captured_numeric_cost(
     )
     if with_progress:
         assert len(payloads) == 2
-        # In the equality case, preview and final authority carry exactly the
-        # same floor and flag. Exercise real preview writes via evaluate().
+        # The custom-evaluator path forwards its own early callback unchanged
+        # (base.py custom branch); it does not create SDK preview evidence, so
+        # this checks public progress output, not preview-cleanup provenance.
         assert payloads[0]["metrics"]["cost_lower_bound"] == custom_floor
         assert payloads[0]["metrics"]["cost_unmeasured"] == 1.0
     for metrics in [result.example_results[0].metrics] + [
