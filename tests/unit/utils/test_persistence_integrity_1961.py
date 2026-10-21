@@ -186,3 +186,19 @@ def test_legacy_save_list_range_never_rejected(mgr, tmp_path):
     (tmp_path / "o" / MANIFEST).unlink()
     with pytest.raises(ValueError, match="outside"):
         mgr.load_result("o")
+
+
+def test_tuple_range_survives_two_save_load_rounds(mgr):
+    mgr.save_result(_result(best_config={"t": 0.5}, space={"t": (0, 1)}), name="a")
+    first = mgr.load_result("a")
+    assert first.metadata["configuration_space"]["t"] == (0, 1)
+    mgr.save_result(first, name="b")
+    second = mgr.load_result("b")
+    assert second.best_config == {"t": 0.5}
+    assert second.metadata["configuration_space"]["t"] == (0, 1)
+
+
+def test_choice_list_still_rejects_between_values_across_rounds(mgr):
+    mgr.save_result(_result(best_config={"t": 0.5}, space={"t": [0, 1]}), name="a")
+    with pytest.raises(ValueError, match="outside"):
+        mgr.load_result("a")

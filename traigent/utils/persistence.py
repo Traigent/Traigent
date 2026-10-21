@@ -335,6 +335,31 @@ def _serialize_configuration_space(space: Any) -> Any:
     return _safe_json_value(space)
 
 
+def _restore_tuple_ranges(result: Any, curated_space: Any) -> None:
+    """Turn flattened ranges in the decoded config space back into tuples.
+
+    The curated copy keeps a tuple range as ``{"low", "high"}`` while the
+    encoded copy inside ``result_fields`` flattens it to ``[low, high]``. Left
+    as a list it would be saved again as two choices and reject a winner
+    inside the range on the next load (#1961).
+    """
+    meta = getattr(result, "metadata", None)
+    if not isinstance(meta, dict) or not isinstance(curated_space, dict):
+        return
+    space = meta.get("configuration_space")
+    if not isinstance(space, dict):
+        return
+    for key, domain in curated_space.items():
+        if (
+            isinstance(domain, dict)
+            and set(domain) == {"low", "high"}
+            and _is_number(domain["low"])
+            and _is_number(domain["high"])
+            and space.get(key) == [domain["low"], domain["high"]]
+        ):
+            space[key] = (domain["low"], domain["high"])
+
+
 def _check_best_config_in_space(
     name: str, best_config: Any, space: Any, legacy: bool = False
 ) -> None:
@@ -823,6 +848,7 @@ class PersistenceManager:
             # break the verbatim metadata round trip pinned by #2026: a result
             # saved with `metadata == {}` would come back non-empty.
             decoded = decode_result(result_fields, trials=trials, artifact_name=name)
+            _restore_tuple_ranges(decoded, metadata.get("configuration_space"))
             _check_returned_best_config(name, decoded, metadata, not has_manifest)
             return decoded
 
