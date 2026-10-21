@@ -665,7 +665,8 @@ def test_stream_success_recorded_only_on_exhaustion(mock_off, monkeypatch):
     try:
         with capture_scope() as bucket:
             stream = mod.completion(model="gpt-4o", stream=True)
-            assert bucket.vendor_attempts == []  # not yet consumed
+            # counted at open, but not finished until consumed
+            assert [a["outcome"] for a in bucket.vendor_attempts] == ["in_progress"]
             assert len(list(stream)) == 3
         assert len(bucket.vendor_attempts) == 1
         rec = bucket.vendor_attempts[0]
@@ -980,3 +981,79 @@ def test_sibling_nested_scopes_get_distinct_call_ids():
     ids = [r["call_index"] for r in outer.vendor_attempts]
     assert len(set(ids)) == 3
     assert outer.vendor_attempt_total == 3
+
+
+# ------------------------------------------------------------ review round 3
+
+
+def test_concurrent_worker_recording_during_scope_close_lands_once():
+    import contextvars
+    import threading
+
+    from traigent.utils.langchain_interceptor import record_vendor_attempt
+
+    barrier = threading.Barrier(2)
+    done = threading.Event()
+
+    with capture_scope() as outer:
+        with capture_scope():
+            ctx = contextvars.copy_context()
+
+            def worker():
+                barrier.wait()  # released together with the scope close
+                ctx.run(record_vendor_attempt, {"usage_known": True})
+                done.set()
+
+            t = threading.Thread(target=worker)
+            t.start()
+            barrier.wait()
+        # inner scope has closed; the worker may record before or after
+        t.join()
+    assert done.is_set()
+    assert outer.vendor_attempt_total == 1
+    assert len(outer.vendor_attempts) == 1
+
+
+@pytest.mark.asyncio
+async def test_async_cancel_between_pulls_still_counts_one_attempt(mock_off):
+    mod, p = _patched([_AsyncStream()])
+    try:
+        with capture_scope() as bucket:
+            stream = await mod.acompletion(model="gpt-4o", stream=True)
+            await stream.__anext__()
+            # the consumer is cancelled in its loop body: the proxy is never
+            # asked again and never closed
+        s = summarize_bucket(bucket)
+        assert s["vendor_call_attempts"] == 1
+        assert s["vendor_call_incomplete_attempts"] == 1
+        assert s["vendor_call_unknown_usage_attempts"] == 1
+        assert s["vendor_call_attempt_records"][0]["outcome"] == "incomplete"
+
+        result = types.SimpleNamespace(metadata={}, metrics={"cost": 0.1})
+        TrialLifecycle._apply_vendor_attempts(result, bucket)
+        from traigent.utils.trial_costs import is_cost_unmeasured
+
+        assert is_cost_unmeasured(result.metrics)
+    finally:
+        p.stop()
+
+
+def test_late_call_in_ended_scope_gets_unique_id(mock_off):
+    mod, p = _patched([])
+    try:
+        with capture_scope() as outer:
+            with capture_scope() as inner:
+                mod.completion(model="gpt-4o")
+            # a worker still holding the ended inner scope's context
+            import contextvars
+
+            from traigent.utils.langchain_interceptor import _capture_scope
+
+            ctx = contextvars.copy_context()
+            ctx.run(_capture_scope.set, inner)
+            ctx.run(mod.completion, model="gpt-4o")
+            mod.completion(model="gpt-4o")
+        ids = [a["call_index"] for a in outer.vendor_attempts]
+        assert len(ids) == 3 and len(set(ids)) == 3
+    finally:
+        p.stop()

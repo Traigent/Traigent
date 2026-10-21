@@ -34,10 +34,10 @@ from typing import Any, TypeVar
 from traigent.core.exception_handler import VendorErrorCategory, classify_vendor_error
 from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.langchain_interceptor import (
+    VendorAttemptHandle,
     begin_vendor_call,
-    current_capture_bucket,
-    record_vendor_attempt,
-    record_vendor_attempt_to,
+    finish_vendor_attempt,
+    open_vendor_attempt,
 )
 from traigent.utils.logging import get_logger
 
@@ -274,34 +274,38 @@ def _usage_of(response: Any) -> dict[str, int] | None:
     return out or None
 
 
-def _record(
-    *,
-    call_index: int,
-    attempt: int,
-    outcome: str,
-    error: BaseException | None = None,
-    backoff_seconds: float | None = None,
-    usage: dict[str, int] | None = None,
-    bucket: Any = None,
-    to_bucket: bool = False,
-) -> None:
-    sink = (
-        (lambda rec: record_vendor_attempt_to(bucket, rec))
-        if to_bucket
-        else record_vendor_attempt
-    )
-    sink(
+def _open(call_index: int, attempt: int) -> VendorAttemptHandle:
+    """Count the attempt now; it is updated in place when it finishes."""
+    return open_vendor_attempt(
         {
             "call_index": call_index,
             "attempt": attempt,
-            "outcome": outcome,
-            "error_type": _error_type(error) if error is not None else None,
-            "retried": backoff_seconds is not None,
-            "backoff_seconds": backoff_seconds,
-            "usage": usage,
-            # Unknown, not zero: a failed attempt reports no usage.
-            "usage_known": usage is not None,
+            "error_type": None,
+            "retried": False,
+            "backoff_seconds": None,
+            "usage": None,
+            "usage_known": False,
         }
+    )
+
+
+def _finish(
+    handle: VendorAttemptHandle,
+    outcome: str,
+    *,
+    error: BaseException | None = None,
+    backoff_seconds: float | None = None,
+    usage: dict[str, int] | None = None,
+) -> None:
+    finish_vendor_attempt(
+        handle,
+        outcome=outcome,
+        error_type=_error_type(error) if error is not None else None,
+        retried=backoff_seconds is not None,
+        backoff_seconds=backoff_seconds,
+        usage=usage,
+        # Unknown, not zero: a failed attempt reports no usage.
+        usage_known=usage is not None,
     )
 
 
@@ -312,23 +316,20 @@ def _fault_hook(attempt_index: int) -> None:
 
 
 class _AttemptRecordingStream:
-    """Proxy a provider stream and record its FINAL outcome.
+    """Proxy a provider stream and record its FINAL outcome on its attempt.
 
-    Opening a stream succeeds before any chunk exists; the attempt is only
-    known to have worked once the stream is exhausted. The outcome is one of
-    ``success`` (exhausted), ``error`` (raised mid-stream, never retried),
-    ``closed_early`` (``close``/``aclose`` before exhaustion) or ``cancelled``.
-    It is written into the bucket that was active when the stream was OPENED,
-    wherever and whenever the stream is consumed. Recorded exactly once.
+    The attempt was counted when the stream was opened (``in_progress``). Its
+    final outcome is ``success`` (exhausted), ``error`` (raised mid-stream,
+    never retried), ``closed_early`` (``close``/``aclose``) or ``cancelled``.
+    A stream that is simply abandoned (for example the consumer is cancelled
+    between pulls) stays ``in_progress`` and is reported ``incomplete`` with
+    unknown usage when the trial's metadata is taken.
     """
 
-    def __init__(self, stream: Any, call_index: int, attempt: int) -> None:
+    def __init__(self, stream: Any, handle: VendorAttemptHandle) -> None:
         self._stream = stream
-        self._call_index = call_index
-        self._attempt = attempt
-        self._bucket = current_capture_bucket()
+        self._handle = handle
         self._usage: dict[str, int] | None = None
-        self._done = False
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._stream, name)
@@ -339,18 +340,7 @@ class _AttemptRecordingStream:
             self._usage = usage
 
     def _finish(self, outcome: str, error: BaseException | None = None) -> None:
-        if self._done:
-            return
-        self._done = True
-        _record(
-            call_index=self._call_index,
-            attempt=self._attempt,
-            outcome=outcome,
-            error=error,
-            usage=self._usage,
-            bucket=self._bucket,
-            to_bucket=True,
-        )
+        _finish(self._handle, outcome, error=error, usage=self._usage)
 
     def close(self) -> Any:
         try:
@@ -405,26 +395,22 @@ class _AttemptRecordingStream:
         return chunk
 
 
-def _wrap_stream(
-    response: Any, call_index: int, attempt: int, *, is_async: bool
-) -> Any:
+def _wrap_stream(response: Any, handle: VendorAttemptHandle, *, is_async: bool) -> Any:
     iterable = (
         hasattr(response, "__anext__") if is_async else hasattr(response, "__next__")
     )
     if not iterable:
-        # Not a stream we can observe: record the open as the outcome.
-        _record(
-            call_index=call_index,
-            attempt=attempt,
-            outcome="success",
-            usage=_usage_of(response),
-        )
+        # Not a stream we can observe: the open is the outcome.
+        _finish(handle, "success", usage=_usage_of(response))
         return response
-    return _AttemptRecordingStream(response, call_index, attempt)
+    return _AttemptRecordingStream(response, handle)
 
 
 def _on_failure(
-    exc: Exception, settings: VendorRetrySettings, attempt: int, call_index: int
+    exc: Exception,
+    settings: VendorRetrySettings,
+    attempt: int,
+    handle: VendorAttemptHandle,
 ) -> float | None:
     """Return the wait before retrying, or ``None`` to propagate ``exc``."""
     category = classify_retryable(exc)
@@ -434,15 +420,9 @@ def _on_failure(
         else None
     )
     if delay is None:
-        _record(call_index=call_index, attempt=attempt, outcome="error", error=exc)
+        _finish(handle, "error", error=exc)
         return None
-    _record(
-        call_index=call_index,
-        attempt=attempt,
-        outcome="error",
-        error=exc,
-        backoff_seconds=delay,
-    )
+    _finish(handle, "error", error=exc, backoff_seconds=delay)
     assert category is not None
     logger.warning(
         "traigent.vendor_call_retry category=%s retry=%s/%s backoff=%.2fs",
@@ -465,24 +445,23 @@ def run_with_vendor_retry(call: Callable[[], T], *, stream: bool = False) -> T:
     attempt = 0
     while True:
         attempt += 1
+        handle = _open(call_index, attempt)
         try:
             _fault_hook(attempt - 1)
             response = call()
         except Exception as exc:
-            delay = _on_failure(exc, settings, attempt, call_index)
+            delay = _on_failure(exc, settings, attempt, handle)
             if delay is None:
                 raise
             if delay > 0:
                 time.sleep(delay)
             continue
+        except BaseException:
+            _finish(handle, "cancelled")
+            raise
         if stream:
-            return _wrap_stream(response, call_index, attempt, is_async=False)
-        _record(
-            call_index=call_index,
-            attempt=attempt,
-            outcome="success",
-            usage=_usage_of(response),
-        )
+            return _wrap_stream(response, handle, is_async=False)
+        _finish(handle, "success", usage=_usage_of(response))
         return response
 
 
@@ -495,43 +474,52 @@ async def run_with_vendor_retry_async(
     attempt = 0
     while True:
         attempt += 1
+        handle = _open(call_index, attempt)
         try:
             _fault_hook(attempt - 1)
             response = await call()
         except Exception as exc:
-            delay = _on_failure(exc, settings, attempt, call_index)
+            delay = _on_failure(exc, settings, attempt, handle)
             if delay is None:
                 raise
             if delay > 0:
                 await asyncio.sleep(delay)
             continue
+        except BaseException:
+            _finish(handle, "cancelled")
+            raise
         if stream:
-            return _wrap_stream(response, call_index, attempt, is_async=True)
-        _record(
-            call_index=call_index,
-            attempt=attempt,
-            outcome="success",
-            usage=_usage_of(response),
-        )
+            return _wrap_stream(response, handle, is_async=True)
+        _finish(handle, "success", usage=_usage_of(response))
         return response
 
 
 def summarize_bucket(bucket: Any) -> dict[str, Any]:
-    """Trial/run metadata from a capture bucket's attempt ledger (empty if none).
+    """Trial/run metadata from the attempt ledger (empty if none).
 
     Totals come from independent counters, so they stay exact even when the
-    record list was capped (``vendor_call_attempt_records_truncated``).
+    record list was capped (``vendor_call_attempt_records_truncated``). An
+    attempt still ``in_progress`` is reported as ``incomplete`` with unknown
+    usage and counted in ``vendor_call_incomplete_attempts``.
     """
-    with bucket.lock:
-        total = bucket.vendor_attempt_total
+    root = bucket.root or bucket
+    with root.lock:
+        total = root.vendor_attempt_total
         if not total:
             return {}
+        records = []
+        for rec in root.vendor_attempts:
+            out = dict(rec)
+            if out.get("outcome") == "in_progress":
+                out["outcome"] = "incomplete"
+            records.append(out)
         return {
             "vendor_call_attempts": total,
-            "vendor_call_retries": bucket.vendor_retry_total,
-            "vendor_call_unknown_usage_attempts": bucket.vendor_unknown_usage_total,
-            "vendor_call_attempt_records": [dict(a) for a in bucket.vendor_attempts],
+            "vendor_call_retries": root.vendor_retry_total,
+            "vendor_call_unknown_usage_attempts": total - root.vendor_known_usage_total,
+            "vendor_call_incomplete_attempts": total - root.vendor_done_total,
+            "vendor_call_attempt_records": records,
             "vendor_call_attempt_records_truncated": bool(
-                bucket.vendor_records_truncated
+                root.vendor_records_truncated
             ),
         }

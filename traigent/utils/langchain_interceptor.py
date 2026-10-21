@@ -46,22 +46,20 @@ class _CaptureBucket:
     observed: dict[tuple[str, str, str | None, str | None], int] = field(
         default_factory=dict
     )
-    #: Every provider-call ATTEMPT made in this trial (SDK-41), including
-    #: failed and retried ones, as plain dicts (see ``traigent.utils.vendor_retry``).
-    #: A failed attempt may still have been billed, so each is kept with its
-    #: usage (``None`` = unknown, never a faked zero).
+    #: Provider-call attempt ledger (SDK-41). It lives ONLY on the ROOT
+    #: (outermost) bucket and is guarded by the root's lock: nested scopes
+    #: share their root's ledger, so there is nothing to merge or forward and
+    #: ids are unique across nested and ended scopes. See
+    #: ``traigent.utils.vendor_retry``. Counters are independent of the capped
+    #: record list.
+    root: Any = None
     vendor_attempts: list[dict[str, Any]] = field(default_factory=list)
     vendor_call_count: int = 0
-    #: Independent counters: the record list is capped, the totals are not.
-    vendor_attempt_total: int = 0
+    vendor_attempt_total: int = 0  # counted when an attempt is OPENED
+    vendor_done_total: int = 0  # attempts that reached a final outcome
     vendor_retry_total: int = 0
-    vendor_unknown_usage_total: int = 0
+    vendor_known_usage_total: int = 0
     vendor_records_truncated: bool = False
-    #: Set when a nested scope ends: its ledger was merged into ``parent`` and
-    #: later records (a stream finishing after the scope) are forwarded there.
-    parent: Any = None
-    closed: bool = False
-    merge_offset: int = 0
 
     def observed_provider_versions(self) -> list[dict[str, Any]]:
         """This trial's observations as an ``ObservedProviderVersionV1`` list."""
@@ -74,90 +72,82 @@ class _CaptureBucket:
 _MAX_VENDOR_ATTEMPT_RECORDS = 10_000
 
 
+def _root_of(bucket: _CaptureBucket | None) -> _CaptureBucket | None:
+    return None if bucket is None else (bucket.root or bucket)
+
+
 def begin_vendor_call() -> int:
-    """Number a new logical provider call in the active trial (0 outside one)."""
-    bucket = _capture_scope.get()
-    if bucket is None:
+    """Number a new logical provider call, from the root bucket (0 outside one)."""
+    root = _root_of(_capture_scope.get())
+    if root is None:
         return 0
-    with bucket.lock:
-        bucket.vendor_call_count += 1
-        return bucket.vendor_call_count
-
-
-def _add_vendor_attempt_locked(bucket: _CaptureBucket, record: dict[str, Any]) -> None:
-    bucket.vendor_attempt_total += 1
-    if record.get("retried"):
-        bucket.vendor_retry_total += 1
-    if not record.get("usage_known"):
-        bucket.vendor_unknown_usage_total += 1
-    if len(bucket.vendor_attempts) < _MAX_VENDOR_ATTEMPT_RECORDS:
-        bucket.vendor_attempts.append(dict(record))
-    else:
-        bucket.vendor_records_truncated = True
-
-
-def record_vendor_attempt(record: dict[str, Any]) -> None:
-    """Append one provider-call attempt to the active trial (dropped outside one)."""
-    record_vendor_attempt_to(_capture_scope.get(), record)
+    with root.lock:
+        root.vendor_call_count += 1
+        return root.vendor_call_count
 
 
 def current_capture_bucket() -> _CaptureBucket | None:
-    """The active trial's capture bucket, if any (to record into it later)."""
+    """The active trial's capture bucket, if any."""
     return _capture_scope.get()
 
 
-def record_vendor_attempt_to(
-    bucket: _CaptureBucket | None, record: dict[str, Any]
-) -> None:
-    """Record into a specific bucket (None drops it).
+class VendorAttemptHandle:
+    """One opened provider-call attempt, updated in place until it finishes."""
 
-    A bucket whose scope already ended forwards to its parent, so an attempt
-    that finishes late (a stream consumed after the call returned) still
-    lands in the enclosing trial.
+    __slots__ = ("root", "record", "done")
+
+    def __init__(self, root: _CaptureBucket | None, record: dict[str, Any] | None):
+        self.root = root
+        self.record = record
+        self.done = False
+
+
+def open_vendor_attempt(
+    record: dict[str, Any], bucket: _CaptureBucket | None = None
+) -> VendorAttemptHandle:
+    """Count an attempt the moment it is opened (outcome ``in_progress``).
+
+    An attempt that is abandoned (a stream never consumed, a cancelled
+    consumer) therefore stays counted, with unknown usage.
     """
-    record = dict(record)
-    while bucket is not None and bucket.closed and bucket.parent is not None:
-        if record.get("call_index"):
-            record["call_index"] = record["call_index"] + bucket.merge_offset
-        bucket = bucket.parent
-    if bucket is None:
+    root = _root_of(bucket if bucket is not None else _capture_scope.get())
+    if root is None:
+        return VendorAttemptHandle(None, None)
+    stored: dict[str, Any] | None = None
+    with root.lock:
+        root.vendor_attempt_total += 1
+        if len(root.vendor_attempts) < _MAX_VENDOR_ATTEMPT_RECORDS:
+            stored = {"outcome": "in_progress", "usage": None, **record}
+            root.vendor_attempts.append(stored)
+        else:
+            root.vendor_records_truncated = True
+    return VendorAttemptHandle(root, stored)
+
+
+def finish_vendor_attempt(handle: VendorAttemptHandle, **updates: Any) -> None:
+    """Give an opened attempt its final outcome (idempotent, atomic)."""
+    root = handle.root
+    if root is None:
         return
-    with bucket.lock:
-        _add_vendor_attempt_locked(bucket, record)
+    with root.lock:
+        if handle.done:
+            return
+        handle.done = True
+        root.vendor_done_total += 1
+        if updates.get("retried"):
+            root.vendor_retry_total += 1
+        if updates.get("usage_known"):
+            root.vendor_known_usage_total += 1
+        if handle.record is not None:
+            handle.record.update(updates)
 
 
-def _merge_vendor_attempts(child: _CaptureBucket, parent: _CaptureBucket) -> None:
-    """Fold a nested scope's attempt ledger into its enclosing scope.
-
-    The evaluator opens its own scope inside the trial's; without this the
-    trial's bucket would never see the attempts made by the agent.
-    """
-    with child.lock:
-        records = list(child.vendor_attempts)
-        totals = (
-            child.vendor_attempt_total,
-            child.vendor_retry_total,
-            child.vendor_unknown_usage_total,
-            child.vendor_records_truncated,
-            child.vendor_call_count,
-        )
-    with parent.lock:
-        # Offset call ids by the parent's current sequence so merged records
-        # from sibling scopes stay distinguishable.
-        offset = parent.vendor_call_count
-        child.merge_offset = offset
-        if offset:
-            for rec in records:
-                if rec.get("call_index"):
-                    rec["call_index"] += offset
-        room = max(0, _MAX_VENDOR_ATTEMPT_RECORDS - len(parent.vendor_attempts))
-        parent.vendor_attempts.extend(records[:room])
-        parent.vendor_attempt_total += totals[0]
-        parent.vendor_retry_total += totals[1]
-        parent.vendor_unknown_usage_total += totals[2]
-        parent.vendor_call_count += totals[4]
-        if totals[3] or len(records) > room:
-            parent.vendor_records_truncated = True
+def record_vendor_attempt(record: dict[str, Any]) -> None:
+    """Open and immediately finish one attempt (dropped outside a scope)."""
+    handle = open_vendor_attempt(record)
+    updates = dict(record)
+    updates.setdefault("outcome", "success")
+    finish_vendor_attempt(handle, **updates)
 
 
 #: The capture scope for the trial running in this context, or ``None`` when no
@@ -255,21 +245,17 @@ class capture_scope:
     wins and the outer one is restored on exit.
     """
 
-    __slots__ = ("_token", "_bucket", "_parent")
+    __slots__ = ("_token",)
 
     def __enter__(self) -> _CaptureBucket:
-        self._parent = _capture_scope.get()
+        parent = _capture_scope.get()
         bucket = _CaptureBucket()
-        self._bucket = bucket
+        bucket.root = parent.root or parent if parent is not None else bucket
         self._token = _capture_scope.set(bucket)
         return bucket
 
     def __exit__(self, *exc_info: Any) -> None:
         _capture_scope.reset(self._token)
-        if self._parent is not None:
-            _merge_vendor_attempts(self._bucket, self._parent)
-            self._bucket.parent = self._parent
-            self._bucket.closed = True
 
     async def __aenter__(self) -> _CaptureBucket:
         return self.__enter__()
