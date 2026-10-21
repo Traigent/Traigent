@@ -1812,6 +1812,20 @@ class LocalEvaluator(BaseEvaluator):
 
         # Transfer computed metrics (like accuracy) to custom_metrics
         if hasattr(example_result, "metrics") and example_result.metrics:
+            # Progress is a tentative view in completion order. Final accounting
+            # visits dataset order, so a shared returned response can change
+            # owners. Replace preview cost state in BOTH directions: neither its
+            # uncertainty/floor nor its numeric charge belongs to this final row.
+            for key in (
+                "cost",
+                "input_cost",
+                "output_cost",
+                "total_cost",
+                "cost_unmeasured",
+                "cost_unpriced",
+                "cost_lower_bound",
+            ):
+                example_result.metrics.pop(key, None)
             example_metric.custom_metrics.update(example_result.metrics)
 
         # Transfer token/cost metrics to example_results if in detailed mode
@@ -3219,9 +3233,6 @@ class LocalEvaluator(BaseEvaluator):
         result.sample_budget_exhausted = budget_exhausted
         result.examples_consumed = consumed_examples
 
-        result = self._finalize_execution_budget_evaluation(
-            budget, result, execution_budget_lease
-        )
         # Last handoff before return: include known spend produced while
         # summary/result generation ran. After this boundary a still-live
         # timed-out worker cannot update the returned result; the trial remains
@@ -3259,7 +3270,10 @@ class LocalEvaluator(BaseEvaluator):
                     nullify=True,
                     sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
                 )
-        return result
+        # Debit once, after all observable spend has reached the final floor.
+        return self._finalize_execution_budget_evaluation(
+            budget, result, execution_budget_lease
+        )
 
     def _compute_real_accuracy(self, actual_output: Any, expected_output: Any) -> float:
         """Compute real accuracy by comparing actual vs expected output.

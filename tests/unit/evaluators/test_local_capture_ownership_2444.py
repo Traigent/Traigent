@@ -12,10 +12,13 @@ import pytest
 
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.evaluators.local import LocalEvaluator
-from traigent.evaluators.metrics_tracker import extract_llm_metrics, is_cost_value_key
+from traigent.evaluators.metrics_tracker import extract_llm_metrics
 from traigent.utils.langchain_interceptor import capture_langchain_response
 
 MODEL = "gpt-4o-mini"
+# These matrix scenarios contain only SDK-produced evaluation_cost values.
+# Keep the oracle independent of production's cost-field classifier.
+SDK_COST_FIELDS = {"cost", "input_cost", "output_cost", "total_cost", "evaluation_cost"}
 
 
 class _Resp:
@@ -617,10 +620,7 @@ def _walk(node: Any, where: str, *, require_unknown: bool = False) -> list[str]:
             bad.append(f"{where}: unknown usage lacks cost_unmeasured")
         if node.get("cost_unmeasured"):
             for key, value in node.items():
-                if (
-                    is_cost_value_key(key, sdk_evaluation_cost=True)
-                    and value is not None
-                ):
+                if key in SDK_COST_FIELDS and value is not None:
                     bad.append(f"{where}.{key}={value!r}")
         for key, value in node.items():
             bad.extend(_walk(value, f"{where}.{key}", require_unknown=require_unknown))
@@ -828,9 +828,7 @@ def test_unknown_cost_invariant_holds_on_every_emitted_structure(
     for payload in payloads:
         metrics = payload.get("metrics") or {}
         if metrics.get("cost_unmeasured"):
-            assert not any(
-                is_cost_value_key(k, sdk_evaluation_cost=True) for k in metrics
-            ), metrics
+            assert not any(k in SDK_COST_FIELDS for k in metrics), metrics
 
 
 def test_capture_arriving_after_the_last_drain_reaches_the_floor() -> None:
