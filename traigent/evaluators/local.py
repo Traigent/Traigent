@@ -3150,8 +3150,12 @@ class LocalEvaluator(BaseEvaluator):
                     ex_result is not None
                     and ex_result.success
                     and ex_result.error_message is None
+                    and not (ex_result.metadata or {}).get(
+                        "resumed_example_from_prior_run"
+                    )
                 ):
-                    # Compute metrics for this specific example
+                    # Compute metrics for this specific example (reused rows keep
+                    # their stored scores, custom accuracy included, #2541)
                     example_metrics = self._compute_example_metrics(
                         ex_result.actual_output, ex_result.expected_output
                     )

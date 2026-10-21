@@ -712,3 +712,109 @@ def test_reused_whole_trials_do_not_use_the_sample_budget(_local: Path) -> None:
     resumed = agent.optimize_sync(max_trials=4, resume_from=first, max_total_examples=4)
     assert set(seen) == {"c", "d"}  # 4 new examples fit; reused 4 did not count
     assert len(resumed.trials) == 4
+
+
+# ---- review fixes for example-level reuse (#2541) -----------------------------
+
+
+def test_reused_rows_keep_custom_accuracy_scores(_local: Path) -> None:
+    """A custom scorer differing from exact match must survive row reuse."""
+    calls: list[tuple[str, str]] = []
+    Path("d4.jsonl").write_text(
+        "".join(
+            json.dumps({"input": {"q": str(i)}, "output": "a"}) + "\n"
+            for i in range(1, 5)
+        )
+    )
+
+    def scorer(output: Any, expected_output: Any = None, **_: Any) -> float:
+        return 0.25  # never equals the exact-match value (1.0)
+
+    @traigent.optimize(
+        configuration_space={"v": ["a", "b", "c"]},
+        objectives=["accuracy"],
+        offline=True,
+        max_trials=3,
+        algorithm="grid",
+        evaluation=EvaluationOptions(eval_dataset="d4.jsonl", scoring_function=scorer),
+    )
+    def agent(q: str) -> Any:
+        calls.append((traigent.get_config()["v"], q))
+        return "a"
+
+    first = agent.optimize_sync()
+    _make_partial(first)
+    calls.clear()
+
+    resumed = agent.optimize_sync(resume_from=first)
+
+    assert sorted(calls) == [("c", "3"), ("c", "4")]
+    trial_c = next(t for t in resumed.trials if t.config["v"] == "c")
+    assert trial_c.metrics["accuracy"] == pytest.approx(0.25)
+
+
+def _marked_row(example_id: str, **metrics: Any) -> dict[str, Any]:
+    from traigent.core.resume import RESUMED_EXAMPLE_KEY
+
+    return {
+        "example_id": example_id,
+        "success": True,
+        "actual_output": "a",
+        "metrics": metrics,
+        "metadata": {RESUMED_EXAMPLE_KEY: True},
+    }
+
+
+def _trial_with_rows(tid: str, rows: list[dict[str, Any]]) -> TrialResult:
+    trial = _trial(tid)
+    trial.config = {"v": "same"}
+    trial.metadata = {"example_results": rows}
+    return trial
+
+
+def test_reuse_stats_are_per_trial_not_per_config() -> None:
+    from traigent.core.resume import reused_rows_stats
+
+    t1 = _trial_with_rows("t1", [_marked_row("a", total_cost=0.5)] * 2)
+    t2 = _trial_with_rows("t2", [_marked_row("b", total_cost=0.25)])
+    t3 = _trial_with_rows("t3", [])
+    assert t1.config == t2.config  # concurrent baseline/grid trials share a config
+    assert reused_rows_stats(t1) == (2, pytest.approx(1.0))
+    assert reused_rows_stats(t2) == (1, pytest.approx(0.25))
+    assert reused_rows_stats(t3) == (0, 0.0)
+    assert reused_rows_stats(t1) == (2, pytest.approx(1.0))  # no pop semantics
+
+
+def test_unknown_cost_reused_row_floor_is_excluded_from_new_spend() -> None:
+    from traigent.core.resume import reused_rows_stats
+
+    row = _marked_row("a", cost_unmeasured=True, cost_lower_bound=0.3)
+    row["metrics"]["total_cost"] = None
+    trial = _trial_with_rows("t1", [row, _marked_row("b", total_cost=0.2)])
+    count, cost = reused_rows_stats(trial)
+    assert count == 2
+    assert cost == pytest.approx(0.5)  # known floor + known cost, both restored
+
+
+def test_redacted_top_level_rows_block_reuse_from_nested_rows() -> None:
+    from traigent.core.resume import stored_example_rows
+
+    full = {
+        "example_id": "a",
+        "success": True,
+        "input_data": {"q": "1"},
+        "expected_output": "a",
+        "actual_output": "a",
+        "metrics": {"accuracy": 1.0},
+    }
+    redacted = {**full, "input_data": None, "expected_output": None}
+    redacted["actual_output"] = None
+    trial = _trial("t1")
+    trial.metadata = {
+        "evaluation_result": {"example_results": [full]},
+        "example_results": [redacted],
+    }
+    assert stored_example_rows(trial) is None
+
+    trial.metadata["example_results"] = [full]  # not opted out: nested is used
+    assert stored_example_rows(trial) == [full]

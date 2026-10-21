@@ -1990,7 +1990,9 @@ class OptimizationOrchestrator:
         metadata = trial_result.metadata
         if prefill is None or metadata is None or "resumed_examples_reused" in metadata:
             return
-        count, cost = prefill.pop_stats(trial_result.config)
+        from traigent.core.resume import reused_rows_stats
+
+        count, cost = reused_rows_stats(trial_result)
         if count:
             metadata["resumed_examples_reused"] = count
             metadata["resumed_examples_reused_cost"] = cost

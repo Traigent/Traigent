@@ -155,9 +155,32 @@ def _row_dict(row: Any) -> dict[str, Any] | None:
     return None
 
 
+def _is_content_redacted(rows: Sequence[Mapping[str, Any]]) -> bool:
+    """True when every row has had its example content nulled (opt-out/redaction)."""
+    return all(
+        r.get("input_data") is None
+        and r.get("expected_output") is None
+        and r.get("actual_output") is None
+        for r in rows
+    )
+
+
 def stored_example_rows(trial: TrialResult) -> list[dict[str, Any]] | None:
-    """Per-example results persisted on a trial, or None when it carries none."""
+    """Per-example results persisted on a trial, or None when it carries none.
+
+    The nested ``evaluation_result`` rows are preferred, but when the top-level
+    rows (the ones persistence's content opt-out nulls) are redacted the nested
+    copy must not be used to bring the content back (#2541).
+    """
     metadata = trial.metadata or {}
+    top = metadata.get("example_results")
+    top_rows = (
+        [r for r in (_row_dict(x) for x in top) if r is not None]
+        if isinstance(top, list)
+        else []
+    )
+    if top_rows and _is_content_redacted(top_rows):
+        return None
     raw: Any = None
     evaluation = metadata.get("evaluation_result")
     if isinstance(evaluation, Mapping):
@@ -165,7 +188,7 @@ def stored_example_rows(trial: TrialResult) -> list[dict[str, Any]] | None:
     elif evaluation is not None:
         raw = getattr(evaluation, "example_results", None)
     if not raw:
-        raw = metadata.get("example_results")
+        raw = top
     if not isinstance(raw, list) or not raw:
         return None
     rows = [_row_dict(r) for r in raw]
@@ -199,7 +222,6 @@ class ResumePrefill:
         self._pool = pool
         self._keys = tuple(keys or ())
         self.active = True
-        self._stats: dict[str, list[Any]] = {}
 
     def lookup(
         self,
@@ -218,23 +240,45 @@ class ResumePrefill:
             row.get("expected_output") != expected_output
         ):
             return None
-        metrics = row["metrics"]
-        cost: float | None = None
-        if not is_cost_unmeasured(metrics):
-            cost = coerce_finite_cost(metrics.get("total_cost"))
-        stats = self._stats.setdefault(key, [0, 0.0])
-        stats[0] += 1
-        if cost is not None:
-            stats[1] += cost
         return row
-
-    def pop_stats(self, config: Mapping[str, Any]) -> tuple[int, float]:
-        """(rows reused, their known cost) for this config since the last pop."""
-        stats = self._stats.pop(config_key(config, self._keys), None)
-        return (int(stats[0]), float(stats[1])) if stats else (0, 0.0)
 
     def configs(self) -> int:
         return len(self._pool)
+
+
+def reused_rows_stats(trial: TrialResult) -> tuple[int, float]:
+    """(rows reused, known spend they carry) read off this trial's own rows (#2541).
+
+    Per trial, never per config: concurrent trials may share a configuration.
+    A reused row with unknown cost carries its known floor, which is restored
+    into the trial totals and therefore must be excluded from new spend too.
+    """
+    metadata = trial.metadata or {}
+    raw = metadata.get("example_results")
+    if not isinstance(raw, list) or not raw:
+        evaluation = metadata.get("evaluation_result")
+        raw = (
+            evaluation.get("example_results")
+            if isinstance(evaluation, Mapping)
+            else getattr(evaluation, "example_results", None)
+        )
+    count = 0
+    cost = 0.0
+    for item in raw if isinstance(raw, list) else []:
+        row = _row_dict(item)
+        if row is None or not (row.get("metadata") or {}).get(RESUMED_EXAMPLE_KEY):
+            continue
+        count += 1
+        metrics = row.get("metrics")
+        if not isinstance(metrics, Mapping):
+            continue
+        if is_cost_unmeasured(metrics):
+            known = coerce_finite_cost(metrics.get("cost_lower_bound"))
+        else:
+            known = coerce_finite_cost(metrics.get("total_cost"))
+        if known is not None:
+            cost += known
+    return count, cost
 
 
 def _known_cost(trial: TrialResult) -> float | None:
