@@ -152,7 +152,7 @@ def test_occurrence_reservation_is_atomic_across_threads(tmp_path) -> None:
     others: list[bool] = []
 
     def same() -> None:
-        wins.append(manifest.reserve_occurrence(state, "a", "k|fix|1", {}))
+        wins.append(manifest.reserve_occurrence(state, "a", "k|fix|0", {}))
 
     def distinct(i: int) -> None:
         others.append(manifest.reserve_occurrence(state, "a", f"d{i}|fix|1", {}))

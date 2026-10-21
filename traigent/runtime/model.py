@@ -14,6 +14,7 @@ import math
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any
 
 import yaml
@@ -94,6 +95,7 @@ E_EGRESS = "egress_disabled"
 E_NO_CREDENTIALS = "credentials_missing"
 E_BACKEND = "backend_error"
 E_NOT_APPLIED = "requirement_not_applied"
+E_MULTIPLE_OPTIMIZE = "multiple_optimize_rules"
 
 
 class RuntimeRequirementError(Exception):
@@ -175,8 +177,51 @@ class RuntimeEvent:
     withdrawn_reason: str | None = None
 
 
+def _canonical_number(value: int | float) -> str:
+    """Shortest round-trip decimal, never exponent notation; integers without ``.0``.
+
+    The Python and JS SDKs must produce byte-identical policy digests, so
+    ``1e-06`` is written ``0.000001``, ``1e21`` is written
+    ``1000000000000000000000`` and ``10.0`` is written ``10``.
+    """
+    if isinstance(value, int):
+        return str(value)
+    if value == 0:
+        return "0"
+    text = format(Decimal(repr(value)), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text
+
+
+def _canonical(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "null"
+    if isinstance(value, (int, float)):
+        if not math.isfinite(value):
+            raise ValueError("non-finite number")
+        return _canonical_number(value)
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=True)
+    if isinstance(value, Mapping):
+        items = sorted((str(k), v) for k, v in value.items())
+        return (
+            "{"
+            + ",".join(
+                f"{json.dumps(k, ensure_ascii=True)}:{_canonical(v)}" for k, v in items
+            )
+            + "}"
+        )
+    if isinstance(value, (list, tuple)):
+        return "[" + ",".join(_canonical(v) for v in value) + "]"
+    raise TypeError(f"not canonicalizable: {type(value).__name__}")
+
+
 def canonical_json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    """Canonical JSON: sorted keys, no spaces, ASCII, one number encoding (see above)."""
+    return _canonical(value)
 
 
 def digest_of(value: Any) -> str:
@@ -367,6 +412,15 @@ class RuntimeRequirement:
                 bad(f"{where}.severity")
             if rule.action == "optimize" and (rule.approval or "human") != "human":
                 issues.append(Issue(E_ACTION_UNSUPPORTED, f"{where}.approval", "error"))
+        optimize_rules = [
+            index
+            for index, rule in enumerate(self.rules)
+            if rule.action == "optimize" and rule.event == "episode_opened"
+        ]
+        for index in optimize_rules[
+            1:
+        ]:  # respond runs exactly one fix rule: refuse more
+            issues.append(Issue(E_MULTIPLE_OPTIMIZE, f"rules[{index}]", "error"))
         if self.max_fix_cost_usd is not None and not positive_finite(
             self.max_fix_cost_usd
         ):

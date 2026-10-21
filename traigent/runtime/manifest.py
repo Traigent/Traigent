@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, UTC
 from pathlib import Path
 from typing import Any
 
-from traigent.runtime.model import E_STATE, RuntimeRequirementError
+from traigent.runtime.model import E_HOLD, E_STATE, RuntimeRequirementError
 
 try:  # POSIX only; elsewhere the lock degrades to a no-op
     import fcntl
@@ -30,6 +30,9 @@ STATE_DIRNAME = ".traigent"
 TOKEN_MAP_FORMAT = "tvl-token-map/1"
 MANIFEST_FORMAT = "traigent-runtime-manifest/1"
 APPROVAL_TTL = timedelta(hours=24)
+#: A reserved occurrence with no outcome (no run id, not failed) older than this is
+#: treated as failed when read (INV-33), so a crashed controller cannot block forever.
+OCCURRENCE_LEASE = timedelta(hours=24)
 
 
 STATE_DIR_ENV = "TRAIGENT_RUNTIME_STATE_DIR"
@@ -202,10 +205,20 @@ def occurrence_key(breach_id: str, rule_id: str, occurrence: int) -> str:
     return f"{breach_id}|{rule_id}|{occurrence}"
 
 
-def read_occurrence(state_dir: Path, agent_id: str, key: str) -> dict[str, Any] | None:
+def read_occurrence(
+    state_dir: Path,
+    agent_id: str,
+    key: str,
+    *,
+    now: datetime | None = None,
+    lease: timedelta = OCCURRENCE_LEASE,
+) -> dict[str, Any] | None:
+    """The occurrence record, with an expired lease read as ``failed`` (INV-33)."""
     doc = _read_json(_occ_path(state_dir, agent_id), {})
     record = doc.get(key) if isinstance(doc, dict) else None
-    return record if isinstance(record, dict) else None
+    return effective_record(
+        record if isinstance(record, dict) else None, now=now, lease=lease
+    )
 
 
 @contextmanager
@@ -226,27 +239,81 @@ STATUS_STARTED = "started"
 STATUS_FAILED = "failed"
 
 
+def _lease_expired(record: Mapping[str, Any], now: datetime, lease: timedelta) -> bool:
+    """A started occurrence with no run id and no outcome, older than ``lease``."""
+    if (
+        record.get("status") != STATUS_STARTED
+        or record.get("run_id")
+        or record.get("finished")
+    ):
+        return False
+    try:
+        started = datetime.fromisoformat(str(record["started_at"]))
+    except (KeyError, ValueError):
+        return False  # unreadable start time: fail closed, keep blocking
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=UTC)
+    return now - started >= lease
+
+
+def effective_record(
+    record: dict[str, Any] | None,
+    *,
+    now: datetime | None = None,
+    lease: timedelta = OCCURRENCE_LEASE,
+) -> dict[str, Any] | None:
+    """``record`` with an expired lease read as ``failed`` (INV-33); never persisted."""
+    if record is None or not _lease_expired(record, now or utcnow(), lease):
+        return record
+    return {**record, "status": STATUS_FAILED}
+
+
+def failed_attempts(record: Mapping[str, Any] | None) -> int:
+    """Failed attempts recorded for an occurrence (``record`` already lease-resolved)."""
+    if record is None:
+        return 0
+    attempts = int(record.get("attempts", 1))
+    # A failed record's last attempt failed; an in-flight or finished one did not.
+    return attempts if record.get("status") == STATUS_FAILED else attempts - 1
+
+
 def reserve_occurrence(
-    state_dir: Path, agent_id: str, key: str, run_info: Mapping[str, Any]
+    state_dir: Path,
+    agent_id: str,
+    key: str,
+    run_info: Mapping[str, Any],
+    *,
+    attempt: int = 1,
+    now: datetime | None = None,
+    lease: timedelta = OCCURRENCE_LEASE,
 ) -> bool:
     """Atomically record an occurrence; ``False`` when it is already recorded.
 
-    A record whose status is ``failed`` (the optimize run raised) is released
-    for an explicit retry: it can be reserved again, with a new approval, and
-    the number of attempts is kept.
+    A record whose status is ``failed`` (the optimize run raised, or its lease
+    expired) is released for an explicit retry with a NEW approval.  The
+    approval carries ``attempt`` = failed attempts at approval time + 1; the
+    reservation succeeds only while the ledger still holds ``attempt - 1``
+    failures (compare-and-set under the ledger lock), so an approval issued
+    before a failure can never authorize the retry after it.  A generation
+    mismatch raises ``hold`` at ``approval``.
     """
     path = _occ_path(state_dir, agent_id)
     with _ledger_lock(path):
         doc = _read_json(path, {})
         if not isinstance(doc, dict):
             raise RuntimeRequirementError(E_STATE, "occurrences.json")
-        earlier = doc.get(key)
-        attempts = 1
-        if isinstance(earlier, dict):
-            if earlier.get("status") != STATUS_FAILED:
-                return False
-            attempts = int(earlier.get("attempts", 1)) + 1
-        doc[key] = {**dict(run_info), "status": STATUS_STARTED, "attempts": attempts}
+        earlier = effective_record(doc.get(key), now=now, lease=lease)
+        if isinstance(earlier, dict) and earlier.get("status") != STATUS_FAILED:
+            return False
+        failed = failed_attempts(earlier)
+        if failed != attempt - 1:
+            raise RuntimeRequirementError(E_HOLD, "approval")
+        doc[key] = {
+            "started_at": (now or utcnow()).isoformat(),
+            **dict(run_info),
+            "status": STATUS_STARTED,
+            "attempts": failed + 1,
+        }
         _write_json(path, doc)
     return True
 
@@ -282,6 +349,7 @@ def write_approval(
     breach_id: str,
     occurrence: int,
     cost_ceiling_usd: float,
+    attempt: int = 1,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     issued = now or utcnow()
@@ -291,6 +359,7 @@ def write_approval(
         "breach_id": breach_id,
         "occurrence": occurrence,
         "cost_ceiling_usd": cost_ceiling_usd,
+        "attempt": attempt,
         "issued_at": issued.isoformat(),
         "expires_at": (issued + APPROVAL_TTL).isoformat(),
     }
@@ -310,6 +379,22 @@ def read_approval(state_dir: Path, agent_id: str, key: str) -> dict[str, Any] | 
     return record if isinstance(record, dict) else None
 
 
+def _same(left: Any, right: Any) -> bool:
+    if isinstance(left, bool) or isinstance(right, bool):
+        return left is right
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return left == right
+    return isinstance(left, str) and isinstance(right, str) and left == right
+
+
+def approval_matches(record: Mapping[str, Any], **expected: Any) -> bool:
+    """Every named bound field of ``record`` equals the value this start will use."""
+    return all(
+        name in record and _same(record[name], value)
+        for name, value in expected.items()
+    )
+
+
 def approval_expired(record: Mapping[str, Any], now: datetime | None = None) -> bool:
     try:
         expires = datetime.fromisoformat(str(record["expires_at"]))
@@ -323,6 +408,13 @@ def approval_expired(record: Mapping[str, Any], now: datetime | None = None) -> 
 
 def _watch_path(state_dir: Path, agent_id: str) -> Path:
     return agent_dir(state_dir, agent_id) / "state.json"
+
+
+@contextmanager
+def watch_lock(state_dir: Path, agent_id: str) -> Iterator[None]:
+    """Exclusive lock across one watch poll's read, diff, emit and write."""
+    with _ledger_lock(_watch_path(state_dir, agent_id)):
+        yield
 
 
 def read_watch_state(state_dir: Path, agent_id: str) -> dict[str, Any]:

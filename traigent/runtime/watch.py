@@ -4,6 +4,12 @@ This is not an event feed.  The backend returns a bounded breach list, so a
 transition that happens and drops out of the snapshot while ``watch`` is
 offline can be missed; every poll therefore reports a coverage line.  Durable
 production alerts are the backend webhook (a later slice).
+
+Delivery is at-least-once per observed transition: an event is emitted BEFORE
+the state is saved, so a crash between the two re-emits it on the next poll.
+Emission is never duplicated by two pollers: the read, diff, emit and write of
+one poll run under an exclusive lock on the watch state, so a second poller on
+the same state directory waits and then sees the first one's saved state.
 """
 
 from __future__ import annotations
@@ -126,6 +132,21 @@ def poll_once(
     logger = logging.getLogger(LOGGER_NAME)
     state = state_dir or manifest.default_state_dir()
     api = client or RuntimeClient(project_id)
+    try:
+        with manifest.watch_lock(state, agent_id):
+            return _poll_locked(requirements, api, state, agent_id, logger)
+    except OSError:
+        logger.warning("watch state could not be locked")
+        return PollResult(coverage=COVERAGE_UNAVAILABLE, error="local_state_invalid")
+
+
+def _poll_locked(
+    requirements: Sequence[RuntimeRequirement],
+    api: RuntimeClient,
+    state: Path,
+    agent_id: str,
+    logger: logging.Logger,
+) -> PollResult:
     try:
         rows, has_more = api.list_breaches(agent_id)
         saved = manifest.read_watch_state(state, agent_id)

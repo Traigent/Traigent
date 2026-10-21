@@ -99,7 +99,7 @@ def test_happy_path_runs_existing_optimize_with_the_cost_limit(
     )
     (record,) = approvals.values()
     assert record["cost_ceiling_usd"] == 5.0 and record["rule_id"] == "fix"
-    assert record["breach_id"] == "b1" and record["occurrence"] == 1
+    assert record["breach_id"] == "b1" and record["occurrence"] == 0
 
 
 def test_same_occurrence_twice_is_refused(
@@ -284,7 +284,7 @@ async def test_expired_approval_holds(live: FakeBackend, state_dir: Path) -> Non
     fn, req = _fn_and_req()
     apply_requirement(req, project_id=PROJECT, agent_id=AGENT, state_dir=state_dir)
     base = manifest.utcnow()
-    ticks = iter([base, base + timedelta(hours=25), base + timedelta(hours=25)])
+    ticks = iter([base, base, base + timedelta(hours=25)])
     with pytest.raises(RuntimeRequirementError) as err:
         await respond(
             fn,
@@ -384,7 +384,7 @@ async def test_optimize_failure_is_closed_and_a_retry_needs_a_new_approval(
     with pytest.raises(RuntimeRequirementError) as err:
         await respond(fn, req, **kw)
     assert err.value.code == "optimize_failed" and sentinel not in repr(err.value)
-    key = manifest.occurrence_key("b1", "fix", 1)
+    key = manifest.occurrence_key("b1", "fix", 0)
     record = manifest.read_occurrence(state_dir, AGENT, key)
     assert record["status"] == "failed" and record["run_id"] is None
 

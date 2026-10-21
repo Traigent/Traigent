@@ -241,6 +241,8 @@ def _parse_responses(
         severity = rule.get("severity")
         approval = rule.get("approval")
         if action == "notify":
+            if severity is None:
+                severity = "critical"  # RFC 0003 section 7.2: the default severity
             if severity not in SEVERITIES:
                 raise _invalid(f"{path}.severity")
             if approval is not None:
