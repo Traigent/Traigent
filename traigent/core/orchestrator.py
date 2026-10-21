@@ -5838,7 +5838,7 @@ class OptimizationOrchestrator:
         # Per-example timeouts across the run (``example_timeout``): count only
         # what trials recorded; absent when no example timed out.
         timed_out_total = 0
-        for trial in self._trials:
+        for trial in getattr(self, "_trials", None) or ():
             trial_meta = getattr(trial, "metadata", None)
             value = (
                 trial_meta.get("timed_out_examples")
