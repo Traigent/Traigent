@@ -900,6 +900,12 @@ class LocalEvaluator(BaseEvaluator):
         stops the estimate from being silently indistinguishable from a
         real one once it lands on a trial.
 
+        Input tokens come from the dataset input or the configured prompt
+        template only; a system message written inside the user's function is
+        not visible here, so the estimate can be well below the provider's
+        count (#2517). Owner ruling: the estimate is kept and always carried
+        with the ``estimated`` label; it is never priced as cost.
+
         Args:
             example_metric: Metrics object to update
             output: String output from function

@@ -126,7 +126,7 @@ warning names the coverage.
 The same holds for a `cost` objective: a trial with no measured example has
 no `cost` (or `None` under strict nulls), never `0.0`; `cost_unmeasured` is
 `1.0` on a trial where any example had no measured cost, and token counts
-estimated from the input are labelled with `tokens_estimated`. The results
+estimated from text length (input from the dataset or prompt template, output from the returned string, about 4 characters per token; a system message written inside your function is not counted, so the estimate can be well below the provider's count) are labelled with `tokens_estimated` and are never priced. The results
 table shows the cost as `unmeasured`. Weighted `best_config` selection counts a
 missing cost as the worst cost, the Pareto front leaves out a trial that is
 missing a configured objective, and the batch composite score gives such a
