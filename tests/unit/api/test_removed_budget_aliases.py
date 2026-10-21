@@ -70,6 +70,30 @@ def test_runtime_optimize_refuses_removed_alias_naming_replacement(name: str) ->
 NONE_VALUED_ALIASES = sorted(REMOVED_ALIASES)
 
 
+class _StopAfterValidation(Exception):
+    """Raised by the spy once the real ``_prepare_algorithm_kwargs`` has returned."""
+
+
+def _spy_real_prepare(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[object]]:
+    """Wrap the real preparation so its refusals run, then stop the run deterministically.
+
+    ``calls`` records each call's input kwargs and merged output. A regression
+    raises ``TypeError`` from the real checks and propagates; any other earlier
+    failure also propagates, so nothing is swallowed.
+    """
+    calls: dict[str, list[object]] = {"input": [], "merged": []}
+    real_prepare = OptimizedFunction._prepare_algorithm_kwargs
+
+    def spy_prepare(self: OptimizedFunction, kwargs: dict[str, object]) -> object:
+        calls["input"].append(dict(kwargs))
+        merged = real_prepare(self, kwargs)
+        calls["merged"].append(dict(merged))  # type: ignore[call-overload]
+        raise _StopAfterValidation
+
+    monkeypatch.setattr(OptimizedFunction, "_prepare_algorithm_kwargs", spy_prepare)
+    return calls
+
+
 @pytest.mark.parametrize("name", NONE_VALUED_ALIASES)
 def test_decorator_treats_none_valued_removed_alias_as_absent(name: str) -> None:
     """``@optimize(<alias>=None)`` builds the decorator like an absent alias."""
@@ -87,50 +111,61 @@ def test_decorator_treats_none_valued_removed_alias_as_absent(name: str) -> None
 def test_runtime_optimize_treats_none_valued_removed_alias_as_absent(
     name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``.optimize(<alias>=None)`` must not reach the removed-alias or unknown-key checks.
-
-    The spy wraps the real ``_prepare_algorithm_kwargs`` so the real checks run;
-    a regression raises ``TypeError`` from them, which fails the test.
-    """
-    seen: dict[str, object] = {}
-    real_prepare = OptimizedFunction._prepare_algorithm_kwargs
-
-    def spy_prepare(self: OptimizedFunction, kwargs: dict[str, object]) -> object:
-        seen.update(kwargs)
-        return real_prepare(self, kwargs)
-
-    monkeypatch.setattr(OptimizedFunction, "_prepare_algorithm_kwargs", spy_prepare)
+    """``.optimize(<alias>=None)`` reaches the real preparation without the alias."""
+    calls = _spy_real_prepare(monkeypatch)
     target = _target()
 
-    try:
+    with pytest.raises(_StopAfterValidation):
         asyncio.run(target.optimize(**{name: None}))
-    except TypeError as exc:  # the regression: a removed-alias or unknown-key refusal
-        pytest.fail(f"None-valued {name} was refused: {exc}")
-    except Exception:  # noqa: BLE001 - later, unrelated validation may stop the run
-        pass
 
-    assert name not in seen
+    assert len(calls["input"]) == 1
+    assert name not in calls["input"][0]
 
 
 @pytest.mark.parametrize("name", NONE_VALUED_ALIASES)
 def test_optimize_sync_treats_none_valued_removed_alias_as_absent(
     name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    seen: dict[str, object] = {}
-    real_prepare = OptimizedFunction._prepare_algorithm_kwargs
-
-    def spy_prepare(self: OptimizedFunction, kwargs: dict[str, object]) -> object:
-        seen.update(kwargs)
-        return real_prepare(self, kwargs)
-
-    monkeypatch.setattr(OptimizedFunction, "_prepare_algorithm_kwargs", spy_prepare)
+    """``.optimize_sync(<alias>=None)`` reaches the real preparation without the alias."""
+    calls = _spy_real_prepare(monkeypatch)
     target = _target()
 
-    try:
+    with pytest.raises(_StopAfterValidation):
         target.optimize_sync(**{name: None})
-    except TypeError as exc:  # the regression: a removed-alias or unknown-key refusal
-        pytest.fail(f"None-valued {name} was refused: {exc}")
-    except Exception:  # noqa: BLE001 - later, unrelated validation may stop the run
-        pass
 
-    assert name not in seen
+    assert len(calls["input"]) == 1
+    assert name not in calls["input"][0]
+
+
+def test_constructor_none_valued_aliases_are_not_stored_or_merged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Direct ``OptimizedFunction(...)`` with None aliases stores none of them.
+
+    The merged kwargs that reach validation at ``.optimize()`` must not carry
+    them either, or the name-only refusal in the optimization pipeline fires.
+    """
+
+    def fn(x: int) -> int:
+        return x
+
+    opt = OptimizedFunction(
+        func=fn,
+        configuration_space={"a": [1, 2]},
+        objectives=["accuracy"],
+        budget_limit=None,
+        strategy=None,
+    )
+    stored = opt._decorator_runtime_overrides
+    assert "budget_limit" not in stored
+    assert "strategy" not in stored
+
+    calls = _spy_real_prepare(monkeypatch)
+    with pytest.raises(_StopAfterValidation):
+        asyncio.run(opt.optimize())
+
+    assert len(calls["merged"]) == 1
+    merged = calls["merged"][0]
+    assert isinstance(merged, dict)
+    assert "budget_limit" not in merged
+    assert "strategy" not in merged

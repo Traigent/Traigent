@@ -1112,6 +1112,9 @@ class OptimizedFunction(Generic[_P, _R]):
         # Refused before anything is stored: **kwargs would otherwise swallow
         # the removed preset arguments into _decorator_runtime_overrides and
         # run as if they had not been passed.
+        # A removed alias passed as None means "not passed": drop it before the
+        # refusals and before anything is stored.
+        kwargs = _without_none_removed_aliases(kwargs)
         _reject_removed_strategy_constructor_kwargs(kwargs)
         _reject_removed_mock_parameters(kwargs)
 

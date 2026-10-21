@@ -237,11 +237,10 @@ class HooksInstaller:
         results = {}
 
         with _hooks_lock(hooks_dir):
-            if force:
-                # Refuse before any hook is touched, so a symlinked second hook
-                # cannot leave the first one half-replaced.
-                for name in ("pre-push", "pre-commit"):
-                    _refuse_symlinked_hook(hooks_dir / name)
+            # Refuse before any hook is touched, with or without force, so a
+            # symlinked second hook cannot leave the first one half-written.
+            for name in ("pre-push", "pre-commit"):
+                _refuse_symlinked_hook(hooks_dir / name)
 
             # Install pre-push hook
             results["pre-push"] = self._install_hook(
@@ -267,8 +266,7 @@ class HooksInstaller:
             True if hook was installed successfully
         """
         hooks_dir = self.get_hooks_dir()
-        if force:
-            _refuse_symlinked_hook(hook_path)
+        _refuse_symlinked_hook(hook_path)
         hook_path = validate_path(hook_path, hooks_dir, must_exist=False)
 
         if hook_path.exists():

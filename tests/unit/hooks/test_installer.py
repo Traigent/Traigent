@@ -813,10 +813,11 @@ class TestHooksLockAndSymlinkRefusal:
         if not use_fcntl:
             assert not (hooks_dir / installer_module.HOOKS_LOCK_NAME).exists()
 
-    def test_force_install_refuses_symlinked_hook_and_touches_nothing(
-        self, installer: HooksInstaller
+    @pytest.mark.parametrize("force", [True, False])
+    def test_install_refuses_symlinked_hook_and_touches_nothing(
+        self, installer: HooksInstaller, force: bool
     ) -> None:
-        """pre-commit -> shared-hook: install --force refuses, leaves the link and target alone."""
+        """pre-commit -> shared-hook: install refuses with or without force, touching nothing."""
         shared = installer.hooks_dir / "shared-hook"
         shared.write_bytes(self.CUSTOMER_SHARED)
         link = installer.hooks_dir / "pre-commit"
@@ -824,7 +825,7 @@ class TestHooksLockAndSymlinkRefusal:
         (installer.hooks_dir / "pre-push").write_bytes(self.CUSTOMER_PRE_PUSH)
 
         with pytest.raises(RuntimeError) as exc_info:
-            installer.install(force=True)
+            installer.install(force=force)
 
         message = str(exc_info.value)
         assert "symbolic link" in message
@@ -836,6 +837,23 @@ class TestHooksLockAndSymlinkRefusal:
         assert not (installer.hooks_dir / "pre-push.backup").exists()
         assert (installer.hooks_dir / "pre-push").read_bytes() == self.CUSTOMER_PRE_PUSH
 
+    def test_install_without_force_refuses_dangling_symlink_and_creates_no_target(
+        self, installer: HooksInstaller
+    ) -> None:
+        """pre-commit -> missing-shared-hook: no force, the missing target is never created."""
+        link = installer.hooks_dir / "pre-commit"
+        link.symlink_to("missing-shared-hook")
+
+        with pytest.raises(RuntimeError) as exc_info:
+            installer.install(force=False)
+
+        assert "symbolic link" in str(exc_info.value)
+        assert "missing-shared-hook" not in str(exc_info.value)
+        assert link.is_symlink()
+        assert os.readlink(link) == "missing-shared-hook"
+        assert not (installer.hooks_dir / "missing-shared-hook").exists()
+        assert not (installer.hooks_dir / "pre-push").exists()
+
     def test_uninstall_refuses_symlinked_hook_and_touches_nothing(
         self, installer: HooksInstaller
     ) -> None:
@@ -844,8 +862,8 @@ class TestHooksLockAndSymlinkRefusal:
         shared.write_text(PRE_COMMIT_HOOK_SCRIPT)
         link = installer.hooks_dir / "pre-commit"
         link.symlink_to("shared-hook")
-        installer.install(force=False)  # pre-push becomes a regular Traigent hook
         pre_push = installer.hooks_dir / "pre-push"
+        pre_push.write_text(PRE_PUSH_HOOK_SCRIPT)
         pre_push_bytes = pre_push.read_bytes()
 
         with pytest.raises(RuntimeError) as exc_info:
