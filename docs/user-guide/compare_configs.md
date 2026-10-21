@@ -76,26 +76,48 @@ dataset by content fingerprint:
 
 ## Behavior notes
 
-* `compare()` calls the evaluator that `optimize()` builds (same factory, so the
-  same scoring, metric functions and cost capture) directly, once per
-  (config, repeat), on one fixed example list. It does **not** go through the
-  orchestrator: no backend session, no trial submission, no `save_to`
-  persistence, and `default_config` is never substituted for a requested config.
-  The comparison lives only in the returned object and `comparison_history`;
-  nothing is synced to the portal.
+* `compare()` is **local fixed-config evaluation**. It calls the evaluator that
+  `optimize()` builds, through the same trial lifecycle, once per
+  (config, repeat) on one fixed example list. It does not call `optimize()`:
+  no backend session, no trial submission, no `save_to` persistence, and
+  `default_config` is never substituted for a requested config. The comparison
+  lives only in the returned object and `comparison_history`; nothing is
+  synced to the portal. This is **not** a no-network guarantee: the function's
+  own LLM calls, or a configured hybrid API evaluator, still reach their
+  providers exactly as in a local `optimize()` run.
+* Cost, CI-approval and run-limit controls apply exactly as in `optimize()`,
+  over the whole comparison:
+  * the local CI approval gate runs before any evaluation;
+  * a pre-run estimate for configs x repeats x examples is checked against the
+    cost limit (`cost_limit`, `TRAIGENT_RUN_COST_LIMIT`) and needs approval
+    (`cost_approved` / `TRAIGENT_COST_APPROVED`) when it exceeds it;
+  * one cumulative cost enforcer covers every repeat (permit before each
+    evaluation, spend accounted afterwards, failed attempts included);
+  * `TRAIGENT_REQUIRE_COST_TRACKING`, strict accounting for cost objectives,
+    refusal of unmeasured successful trials under an explicit cap and the
+    no-usage guard raise and stop the comparison;
+  * the decorator's `timeout`, `max_examples` and `max_total_examples` apply,
+    and `compare(..., budget=ExecutionBudget(...))` shares a cumulative budget
+    with other runs.
+  When a limit is reached the result is partial: `stop_reason` names it
+  (`cost_limit`, `timeout`, `max_samples_reached`, `execution_budget`),
+  `completed` is `False`, and `n_runs_completed` / `n_runs_requested` say how
+  far it got.
 * The wrapper's exclusive slot is held once for the whole comparison, so no
   `optimize()` run or promotion can overlap it. `compare()` applies no config
   and leaves the applied config and optimization history unchanged, including
   on an exception or cancellation.
-* The decorator's `max_examples` cap is applied; `n_source_examples`,
-  `n_examples` and `max_examples_applied` report it. `example_ids` are the ids
-  the evaluator actually returned; `same_examples_across_configs` and
-  `coverage_complete` are `False` if any evaluation returned a different or
-  partial set (for example after a failed repeat).
-* A failed evaluation is recorded as a failed repeat (score `None`, cost
-  unknown); its message is reduced to the exception type.
+* `n_source_examples`, `n_examples` and `max_examples_applied` report any
+  `max_examples` cap. `example_ids` are the ids the evaluator actually
+  returned; `same_examples_across_configs` and `coverage_complete` are `False`
+  if any evaluation returned a different or partial set.
+* An ordinary evaluation failure is a failed repeat (score `None`, cost
+  unknown), as in `optimize()`. Policy errors are not converted into failed
+  repeats.
 * `best_config` follows the primary objective's declared orientation
   (maximize, minimize, or target band).
 * Config values are validated with the SDK's own domain semantics: integer
-  ranges need integers, `step` is enforced, categorical/fixed dicts match their
-  values.
+  ranges need integers and include the stepped high endpoint, `step` is
+  enforced, categorical/fixed dicts match their values.
+* `mock_llm_run` / `mock_llm_mixed` record mock-LLM provenance as for
+  optimization runs.

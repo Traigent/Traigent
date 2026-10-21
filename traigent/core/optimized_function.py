@@ -2667,19 +2667,25 @@ class OptimizedFunction(Generic[_P, _R]):
         *,
         eval_dataset: Any = None,
         repeats: int = 1,
+        budget: ExecutionBudget | None = None,
     ) -> Any:
         """Evaluate fixed configurations head-to-head and record ONE experiment.
 
-        Pure evaluation, no search. Each config is evaluated ``repeats`` times
-        on the SAME example list by calling the evaluator that ``optimize()``
-        builds (same factory: scoring, metric functions, cost capture and
-        honest-cost flags) directly, inside one hold of this wrapper's
-        exclusive slot. There is no orchestrator, backend session, trial
-        submission or ``save_to`` persistence: the comparison is recorded only
-        in the returned object and ``comparison_history``. LLM calls made by
-        the function itself behave as in a local ``optimize()`` run. Mirrors
-        :meth:`optimize_sync`; use :meth:`compare_async` from async code.
-        The decorator's ``max_examples`` cap is applied and reported.
+        Local fixed-config evaluation, no search. Each config is evaluated
+        ``repeats`` times on the SAME example list through the evaluator that
+        ``optimize()`` builds and its trial lifecycle, inside one hold of this
+        wrapper's exclusive slot. Cost, CI-approval, timeout,
+        ``max_total_examples`` and shared-``ExecutionBudget`` controls apply as
+        in ``optimize()``, over the whole comparison: a pre-run estimate for
+        configs x repeats x examples, one cumulative cost enforcer, and a
+        graceful partial result (``stop_reason``) when a limit is reached;
+        strict-cost and unknown-cost policy errors propagate. There is no
+        backend session, trial submission or ``save_to`` persistence; the
+        comparison is recorded only in the returned object and
+        ``comparison_history``. This is not a no-network guarantee: the
+        function's own LLM calls, or a configured hybrid API evaluator, still
+        reach their providers. Mirrors :meth:`optimize_sync`; use
+        :meth:`compare_async` from async code.
 
         Args:
             configs: Fully specified configs; each must name every declared
@@ -2693,6 +2699,8 @@ class OptimizedFunction(Generic[_P, _R]):
                 data is disjoint from the decorated (tuning) dataset.
             repeats: Evaluations per config (default 1); the result carries the
                 per-config mean and spread across repeats.
+            budget: Optional shared ``ExecutionBudget`` (as for ``optimize()``)
+                admitting and debiting every repeat.
 
         Returns:
             ``traigent.core.comparison.ComparisonResult``. Per-config cost is
@@ -2704,7 +2712,9 @@ class OptimizedFunction(Generic[_P, _R]):
             loop = asyncio.get_running_loop()
         except RuntimeError:
             loop = None
-        coro = self.compare_async(configs, eval_dataset=eval_dataset, repeats=repeats)
+        coro = self.compare_async(
+            configs, eval_dataset=eval_dataset, repeats=repeats, budget=budget
+        )
         if loop is not None and loop.is_running():
             import concurrent.futures
 
@@ -2718,33 +2728,42 @@ class OptimizedFunction(Generic[_P, _R]):
         *,
         eval_dataset: Any = None,
         repeats: int = 1,
+        budget: ExecutionBudget | None = None,
     ) -> Any:
         """Async form of :meth:`compare`."""
         from traigent.api.parameter_ranges import normalize_configuration_space
         from traigent.config.context import ConfigurationSpaceContext
         from traigent.core import comparison as cmp
-        from traigent.utils.cost_calculator import cost_run_scope
+        from traigent.utils.cost_calculator import (
+            cost_run_scope,
+            reset_captured_usage,
+            reset_unpriced_runtime_models,
+        )
 
         if isinstance(repeats, bool) or not isinstance(repeats, int) or repeats < 1:
             raise ValueError("compare() requires repeats to be an integer >= 1.")
         space, _ = normalize_configuration_space(self.configuration_space or {})
         fixed = cmp.validate_comparison_configs(configs, space)
         primary_metric, orientation, band = self._comparison_primary_objective()
+        validate_objectives(self.objectives)
 
         # ONE acquisition of the wrapper's exclusive slot for the whole
         # comparison: nothing else may advance or promote this wrapper while
         # configs are being evaluated, and it is released exactly once.
         self._acquire_exclusive_slot("run")
         evaluator: BaseEvaluator | None = None
+        orchestrator: OptimizationOrchestrator | None = None
         try:
             tuning_full = self._load_dataset()
-            tuning_dataset = self._capped_comparison_dataset(tuning_full)
+            tuning_dataset, max_total_examples_value, samples_include_pruned = (
+                self._capped_comparison_dataset(tuning_full)
+            )
             if eval_dataset is None:
                 source_dataset = tuning_full
                 dataset = tuning_dataset
             else:
                 source_dataset = self._dataset_from_source(eval_dataset)
-                dataset = self._capped_comparison_dataset(source_dataset)
+                dataset = self._capped_comparison_dataset(source_dataset)[0]
             n_source = len(source_dataset.examples)
             if not dataset.examples:
                 raise ValueError("compare() requires a non-empty evaluation dataset.")
@@ -2756,20 +2775,100 @@ class OptimizedFunction(Generic[_P, _R]):
             if holdout.holdout_valid is False and eval_dataset is not None:
                 logger.warning("compare(): %s", holdout.note)
 
-            # The SAME evaluator factory optimize() uses (evaluator, cost
-            # capture, metric functions, honest-cost flags); no orchestrator,
-            # backend session, trial submission or save_to persistence.
-            evaluator = self._create_effective_evaluator(
-                timeout=None,
-                custom_evaluator=None,
-                effective_batch_size=None,
-                effective_thread_workers=None,
-                effective_privacy_enabled=bool(getattr(self, "privacy_enabled", False)),
+            # Same policy surface as optimize(): local-only routing for the
+            # resolved policy, and the CI approval gate before any evaluation.
+            stored_policy = getattr(self, "execution_policy", None)
+            if not isinstance(stored_policy, ResolvedExecutionPolicy):
+                stored_policy = None
+            execution_policy = self._policy_for_runtime_algorithm(stored_policy, "grid")
+            result_source = initial_result_source(
+                execution_policy,
+                external_evaluator=(
+                    getattr(self, "external_service_evaluator", None) is not None
+                    or self.execution_mode == ExecutionMode.HYBRID_API.value
+                ),
             )
-            comparison_id = cmp.new_comparison_id()
-            rows: list[Any] = []
-            all_runs_ids: list[tuple[str, ...]] = []
-            with ConfigurationSpaceContext(space), cost_run_scope():
+            traigent_config = create_traigent_config(
+                execution_mode=self.execution_mode,
+                local_storage_path=self.local_storage_path,
+                minimal_logging=self.minimal_logging,
+                privacy_enabled=(
+                    bool(getattr(self, "privacy_enabled", False))
+                    and not bool(getattr(self, "_privacy_alias_enabled", False))
+                ),
+                execution_policy=execution_policy,
+                no_egress=result_source == SOURCE_OFFLINE,
+                result_source=result_source,
+            )
+            self.traigent_config = traigent_config
+            self._check_ci_approval()
+
+            with (
+                offline_run_scope(is_offline_requested(execution_policy)),
+                strict_cost_accounting_run_default(
+                    _objectives_include_cost(self.objectives)
+                ),
+                ConfigurationSpaceContext(space),
+                cost_run_scope(),
+            ):
+                total_runs = len(fixed) * repeats
+                algorithm_kwargs = self._prepare_algorithm_kwargs({})
+                evaluator = self._create_effective_evaluator(
+                    timeout=None,
+                    custom_evaluator=None,
+                    effective_batch_size=None,
+                    effective_thread_workers=None,
+                    effective_privacy_enabled=bool(
+                        getattr(self, "privacy_enabled", False)
+                    ),
+                )
+                first_cell = {k: [v] for k, v in fixed[0].items()}
+                optimizer_kwargs: dict[str, Any] = {"max_trials": total_runs}
+                if self.objective_schema is not None:
+                    optimizer_kwargs["objective_schema"] = self.objective_schema
+                optimizer = get_optimizer(
+                    "grid", first_cell, self.objectives, **optimizer_kwargs
+                )
+                # The orchestrator is used ONLY for its cost / budget / stop /
+                # accounting components and trial lifecycle. optimize() is never
+                # called: no backend session, no trial submission, no save_to.
+                orchestrator = self._build_optimization_orchestrator(
+                    optimizer=optimizer,
+                    evaluator=evaluator,
+                    max_trials=total_runs,
+                    max_total_examples_value=max_total_examples_value,
+                    timeout=getattr(self, "timeout", None),
+                    callbacks=None,
+                    traigent_config=traigent_config,
+                    effective_parallel_trials=None,
+                    samples_include_pruned_value=samples_include_pruned,
+                    algorithm_kwargs=algorithm_kwargs,
+                    artifact_fingerprint_payload={},
+                    requested_algorithm="grid",
+                    execution_budget=budget,
+                )
+                # The number of runs is explicit user sizing (configs x repeats):
+                # consent to run them even when cost is unmeasured, as for an
+                # explicit max_trials in optimize().
+                orchestrator.waive_unknown_cost_trial_cap()
+
+                comparison_id = cmp.new_comparison_id()
+                reset_unpriced_runtime_models()
+                reset_captured_usage()
+                rows: list[Any] = []
+                all_runs_ids: list[tuple[str, ...]] = []
+                all_trials: list[Any] = []
+                stop_reason: str | None = None
+                strict_origin = strict_cost_accounting_origin()
+                strict_effective = is_strict_cost_accounting()
+                orchestrator._start_time = time.time()
+                orchestrator._reset_mock_provenance()
+                orchestrator._apply_execution_budget()
+                # Whole-comparison estimate (configs x repeats x examples)
+                # against the cost limit; raises CostLimitExceeded if declined.
+                orchestrator._check_cost_approval(dataset)
+
+                stop_reason = None
                 for ci, config in enumerate(fixed):
                     one_cell = {k: [v] for k, v in config.items()}
                     self._preflight_model_cost_coverage(one_cell)
@@ -2777,21 +2876,50 @@ class OptimizedFunction(Generic[_P, _R]):
                     runs: list[Any] = []
                     run_ids: list[tuple[str, ...]] = []
                     for rep in range(repeats):
-                        run, ids = await self._evaluate_fixed_config_once(
-                            evaluator,
+                        stop_reason = self._comparison_stop_reason(
+                            orchestrator, total_runs - len(orchestrator._trials)
+                        )
+                        if stop_reason is not None:
+                            break
+                        trial = await self._run_compare_trial(
+                            orchestrator,
                             trial_func,
                             config,
                             dataset,
+                            trial_number=len(orchestrator._trials),
                             trial_id=f"{comparison_id}_c{ci}_r{rep}",
-                            primary_metric=primary_metric,
                         )
-                        runs.append(run)
-                        run_ids.append(ids)
-                    all_runs_ids.extend(run_ids)
-                    rows.append(
-                        cmp.aggregate_config(config, runs, primary_metric, run_ids[0])
-                    )
+                        if trial is None:
+                            stop_reason = orchestrator._stop_reason or "cost_limit"
+                            break
+                        orchestrator._trials.append(trial)
+                        all_trials.append(trial)
+                        runs.append(self._single_trial_result(trial))
+                        run_ids.append(self._trial_example_ids(trial))
+                    if runs:
+                        all_runs_ids.extend(run_ids)
+                        rows.append(
+                            cmp.aggregate_config(
+                                config, runs, primary_metric, run_ids[0]
+                            )
+                        )
+                    if stop_reason is not None:
+                        break
+
+                # Same end-of-run guards as optimize(): a cost objective that
+                # measured no usage at all must not read as a cheap run.
+                if all_trials:
+                    guard_view = self._single_trial_result(all_trials[0])
+                    guard_view.trials = list(all_trials)
+                    if stop_reason == "no_usage_captured":
+                        guard_view.stop_reason = "no_usage_captured"
+                    _guard_cost_objective_without_usage(guard_view, self.objectives)
+                    _warn_cost_objective_partial_coverage(guard_view, self.objectives)
+            mock_meta = orchestrator._mock_provenance_metadata()
         finally:
+            recorder = getattr(orchestrator, "_mock_recorder", None)
+            if recorder is not None:
+                recorder.deactivate()
             if evaluator is not None:
                 close = getattr(evaluator, "close", None)
                 if callable(close):
@@ -2803,7 +2931,7 @@ class OptimizedFunction(Generic[_P, _R]):
                         logger.debug("compare(): evaluator close failed", exc_info=True)
             self._release_exclusive_slot()
 
-        first = all_runs_ids[0]
+        first = all_runs_ids[0] if all_runs_ids else ()
         result = cmp.ComparisonResult(
             comparison_id=comparison_id,
             primary_metric=primary_metric,
@@ -2819,14 +2947,160 @@ class OptimizedFunction(Generic[_P, _R]):
             example_ids=first,
             same_examples_across_configs=bool(first)
             and all(ids == first for ids in all_runs_ids),
-            coverage_complete=all(
-                len(set(ids)) == len(dataset.examples) for ids in all_runs_ids
-            ),
+            coverage_complete=bool(all_runs_ids)
+            and all(len(set(ids)) == len(dataset.examples) for ids in all_runs_ids),
             holdout=holdout,
             configs=rows,
+            stop_reason=stop_reason,
+            n_configs_requested=len(fixed),
+            n_runs_completed=len(all_trials),
+            n_runs_requested=total_runs,
+            mock_llm_run=bool(mock_meta.get("mock_llm_run", False)),
+            mock_llm_mixed=bool(mock_meta.get("mock_llm_mixed", False)),
+            strict_cost_accounting=bool(strict_effective),
+            strict_cost_accounting_origin=strict_origin,
         )
         self.__dict__.setdefault("_comparison_history", []).append(result)
         return result
+
+    def _comparison_stop_reason(
+        self, orchestrator: OptimizationOrchestrator, remaining_runs: int
+    ) -> str | None:
+        """Pre-run admission: shared budget, stop conditions, timeout."""
+        reason = orchestrator._execution_budget_prebatch_reason(float(remaining_runs))
+        if reason is not None:
+            return str(reason)
+        triggered, why = orchestrator._stop_condition_manager.should_stop(
+            orchestrator._trials
+        )
+        if triggered:
+            mapped = {"max_samples": "max_samples_reached"}
+            return mapped.get(why or "", why or "condition")
+        timeout = orchestrator.timeout
+        start = orchestrator._start_time
+        if timeout and start and time.time() - start >= timeout:
+            return "timeout"
+        return None
+
+    async def _run_compare_trial(
+        self,
+        orchestrator: OptimizationOrchestrator,
+        trial_func: Callable[..., Any],
+        config: dict[str, Any],
+        dataset: Dataset,
+        *,
+        trial_number: int,
+        trial_id: str,
+    ) -> Any:
+        """One evaluation through the orchestrator's permit/lifecycle/accounting.
+
+        Mirrors the winner-stability rerun sequence: acquire a cost permit,
+        run the trial through ``TrialLifecycle`` (same evaluator, capture and
+        honest-cost flags), then account the spend (cost enforcer, shared
+        budget, example ledger) -- failed attempts included. Policy errors
+        (strict cost, unknown cost under a cap) propagate and stop the
+        comparison. Returns ``None`` when the cost limit denied the permit.
+        """
+        permit = None
+        trial = None
+        dispatched = False
+
+        def mark_dispatched() -> None:
+            nonlocal dispatched
+            dispatched = True
+
+        try:
+            if orchestrator.cost_enforcer is not None:
+                permit = await orchestrator.cost_enforcer.acquire_permit_async()
+                if not permit.is_granted:
+                    orchestrator._stop_reason = "cost_limit"
+                    return None
+            timeout = orchestrator.timeout
+            coro = orchestrator._trial_lifecycle.run_trial(
+                func=trial_func,
+                config=copy.deepcopy(config),
+                dataset=dataset,
+                trial_number=trial_number,
+                session_id=None,
+                on_evaluation_dispatch=mark_dispatched,
+            )
+            if timeout and timeout > 0:
+                remaining = max(
+                    timeout - (time.time() - (orchestrator._start_time or 0)), 0.0
+                )
+                grace = min(max(timeout * 0.25, 1.0), 300.0)
+                try:
+                    trial = await asyncio.wait_for(coro, timeout=remaining + grace)
+                except TimeoutError:
+                    orchestrator._stop_reason = "timeout"
+                    return None
+            else:
+                trial = await coro
+            task = asyncio.create_task(
+                orchestrator._account_winner_stability_rerun_attempt(
+                    rerun_trial=trial,
+                    rerun_dispatched=dispatched,
+                    permit=permit,
+                    trial_id=trial_id,
+                )
+            )
+            await asyncio.shield(task)
+            return trial
+        except BaseException:
+            if trial is None and dispatched:
+                # Dispatched but no result: record an untracked attempt so the
+                # ledgers carry a lower bound rather than a fabricated zero.
+                try:
+                    await asyncio.shield(
+                        asyncio.create_task(
+                            orchestrator._account_winner_stability_rerun_attempt(
+                                rerun_trial=None,
+                                rerun_dispatched=True,
+                                permit=permit,
+                                trial_id=trial_id,
+                            )
+                        )
+                    )
+                except Exception:  # pragma: no cover - never mask the real error
+                    logger.warning("compare(): could not account an attempt")
+            raise
+        finally:
+            if (
+                permit is not None
+                and permit.active
+                and orchestrator.cost_enforcer is not None
+            ):
+                orchestrator.cost_enforcer.release_permit(permit)
+
+    def _single_trial_result(self, trial: Any) -> OptimizationResult:
+        """In-memory single-trial result (cost/score aggregation view only)."""
+        return OptimizationResult(
+            trials=[trial],
+            best_config=None,
+            best_score=None,
+            optimization_id=str(getattr(trial, "trial_id", "compare")),
+            duration=float(getattr(trial, "duration", 0.0) or 0.0),
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=list(self.objectives),
+            algorithm="compare",
+            timestamp=datetime.now(UTC),
+        )
+
+    @staticmethod
+    def _trial_example_ids(trial: Any) -> tuple[str, ...]:
+        """Ids of the example rows the evaluator actually returned."""
+        entries = (getattr(trial, "metadata", None) or {}).get("example_results")
+        ids: list[str] = []
+        for entry in entries or []:
+            value = (
+                entry.get("example_id")
+                if isinstance(entry, Mapping)
+                else getattr(entry, "example_id", None)
+            )
+            if value is not None:
+                ids.append(str(value))
+        return tuple(ids)
 
     def _comparison_primary_objective(self) -> tuple[str, str, tuple[Any, Any] | None]:
         """Primary objective name, declared orientation and band (fail closed)."""
@@ -2844,95 +3118,23 @@ class OptimizedFunction(Generic[_P, _R]):
             return name, definition.orientation, band_pair
         return name, resolve_objective_orientation(name), None
 
-    def _capped_comparison_dataset(self, dataset: Dataset) -> Dataset:
-        """Apply the decorator's ``max_examples`` cap exactly as optimize() does."""
+    def _capped_comparison_dataset(
+        self, dataset: Dataset
+    ) -> tuple[Dataset, int | None, bool]:
+        """Apply optimize()'s dataset caps; also return its example/sample limits."""
         overrides = getattr(self, "_decorator_runtime_overrides", None) or {}
-        capped, _, _ = prepare_optimization_dataset(
+        kwargs = {
+            key: overrides[key]
+            for key in ("max_examples", "max_total_examples", "samples_include_pruned")
+            if key in overrides
+        }
+        return prepare_optimization_dataset(
             dataset,
-            {"max_examples": overrides.get("max_examples")},
+            kwargs,
             max_examples=getattr(self, "max_examples", None),
-            max_total_examples=None,
-            samples_include_pruned=True,
+            max_total_examples=getattr(self, "max_total_examples", None),
+            samples_include_pruned=getattr(self, "samples_include_pruned", True),
         )
-        return capped
-
-    async def _evaluate_fixed_config_once(
-        self,
-        evaluator: BaseEvaluator,
-        trial_func: Callable[..., Any],
-        config: dict[str, Any],
-        dataset: Dataset,
-        *,
-        trial_id: str,
-        primary_metric: str,
-    ) -> tuple[Any, tuple[str, ...]]:
-        """One evaluator call for one fixed config -> in-memory single-trial result.
-
-        Builds the trial exactly like ``TrialLifecycle`` does (same capture
-        scope, cost extraction and ``build_success_result``), so cost flags and
-        scores follow the optimize() rules. Nothing is persisted or submitted.
-        """
-        from traigent.config.context import TrialContext
-        from traigent.core.orchestrator_helpers import extract_cost_from_results
-        from traigent.core.trial_result_factory import build_success_result
-        from traigent.utils.langchain_interceptor import capture_scope
-
-        start = time.time()
-        eval_config = copy.deepcopy(config)
-        try:
-            async with (
-                capture_scope(),
-                TrialContext(trial_id=trial_id, metadata={"config": eval_config}),
-            ):
-                eval_result = await evaluator.evaluate(trial_func, eval_config, dataset)
-            attempted, total_cost = extract_cost_from_results(
-                eval_result, None, trial_id
-            )
-            trial = build_success_result(
-                trial_id=trial_id,
-                evaluation_config=eval_config,
-                eval_result=eval_result,
-                duration=time.time() - start,
-                examples_attempted=attempted,
-                total_cost=total_cost,
-                optuna_trial_id=None,
-                extra_reserved=getattr(
-                    evaluator, "_evaluator_computable_metric_names", frozenset
-                )(),
-                primary_objective=primary_metric,
-            )
-            ids = tuple(
-                str(row.example_id)
-                for row in (getattr(eval_result, "example_results", None) or [])
-                if getattr(row, "example_id", None) is not None
-            )
-        except Exception as exc:  # noqa: BLE001 - recorded as a failed repeat
-            from traigent.api.types import TrialResult, TrialStatus
-
-            logger.warning("compare(): an evaluation failed (%s)", type(exc).__name__)
-            trial = TrialResult(
-                trial_id=trial_id,
-                config=eval_config,
-                metrics={},
-                status=TrialStatus.FAILED,
-                duration=time.time() - start,
-                timestamp=datetime.now(UTC),
-                error_message=f"evaluation failed ({type(exc).__name__})",
-            )
-            ids = ()
-        run = OptimizationResult(
-            trials=[trial],
-            best_config=None,
-            best_score=None,
-            optimization_id=trial_id,
-            duration=trial.duration,
-            convergence_info={},
-            status=OptimizationStatus.COMPLETED,
-            objectives=list(self.objectives),
-            algorithm="compare",
-            timestamp=datetime.now(UTC),
-        )
-        return run, ids
 
     def _resolve_runtime_tvl_options(
         self,

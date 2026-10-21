@@ -30,7 +30,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from traigent.utils.discrete_domains import discrete_values_for_config_param
+from traigent.utils.discrete_domains import (
+    discrete_values_for_config_param,
+    stepped_int_contains,
+)
 
 __all__ = [
     "ComparisonResult",
@@ -85,7 +88,7 @@ def _in_numeric_range(
     if not _is_number(step) or step <= 0:
         return False
     if integer:
-        return _is_int(step) and (value - low) % step == 0
+        return _is_int(step) and stepped_int_contains(low, high, step, value)
     k = round((value - low) / step)
     return k >= 0 and math.isclose(low + k * step, value, rel_tol=1e-9, abs_tol=1e-12)
 
@@ -381,6 +384,24 @@ class ComparisonResult:
     holdout: HoldoutCheck
     configs: list[ConfigComparison]
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
+    #: Why the comparison stopped early (``cost_limit``, ``timeout``,
+    #: ``max_samples_reached``, ``execution_budget``, ...); ``None`` = finished.
+    stop_reason: str | None = None
+    n_configs_requested: int = 0
+    n_runs_completed: int = 0
+    n_runs_requested: int = 0
+    #: Mock-LLM provenance, as for optimization runs (#2516).
+    mock_llm_run: bool = False
+    mock_llm_mixed: bool = False
+    strict_cost_accounting: bool = False
+    strict_cost_accounting_origin: str | None = None
+
+    @property
+    def completed(self) -> bool:
+        """True when every requested (config, repeat) was evaluated."""
+        return self.stop_reason is None and (
+            self.n_runs_completed == self.n_runs_requested
+        )
 
     def _rank_key(self, mean: float) -> float:
         """Higher is better, per the objective's declared orientation."""
@@ -444,6 +465,15 @@ class ComparisonResult:
             "total_cost": self.total_cost,
             "cost_lower_bound": self.cost_lower_bound,
             "timestamp": self.timestamp.isoformat(),
+            "stop_reason": self.stop_reason,
+            "completed": self.completed,
+            "n_configs_requested": self.n_configs_requested,
+            "n_runs_completed": self.n_runs_completed,
+            "n_runs_requested": self.n_runs_requested,
+            "mock_llm_run": self.mock_llm_run,
+            "mock_llm_mixed": self.mock_llm_mixed,
+            "strict_cost_accounting": self.strict_cost_accounting,
+            "strict_cost_accounting_origin": self.strict_cost_accounting_origin,
         }
 
 
