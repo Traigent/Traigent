@@ -1672,6 +1672,12 @@ def test_nested_summary_writers_use_unique_temporary_paths(tmp_path, monkeypatch
 class TestAchievementBannerSuppression:
     """#2544: achievement banners honour minimal_logging and hint opt-outs."""
 
+    @pytest.fixture(autouse=True)
+    def _real_run(self, monkeypatch) -> None:
+        # tests/conftest.py enables mock mode globally, which would suppress
+        # the banner on its own and hide a broken guard under test (#2516).
+        monkeypatch.delenv("TRAIGENT_MOCK_LLM", raising=False)
+
     def _manager(self, tmp_path, minimal_logging: bool) -> IncentiveManager:
         return IncentiveManager(
             TraigentConfig(

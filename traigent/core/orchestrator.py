@@ -135,6 +135,7 @@ from traigent.utils.callbacks import CallbackManager, OptimizationCallback, Prog
 from traigent.utils.env_config import (  # noqa: F401
     is_backend_offline as is_backend_offline,
 )
+from traigent.utils.env_config import is_mock_llm
 from traigent.utils.exceptions import (
     ConfigurationError,
     OptimizationError,
@@ -5632,6 +5633,10 @@ class OptimizationOrchestrator:
         metadata: dict[str, Any] = {
             **({} if session_summary is None else {"session_summary": session_summary}),
             "safeguards": safeguards_telemetry,
+            # Mock provenance is a fact about THIS run, recorded when its result
+            # is built, so later display never depends on process state (#2516).
+            # It says LLM mocking was enabled, not that every call was mocked.
+            "mock_llm_run": bool(is_mock_llm()),
         }
 
         if self._function_descriptor is not None:

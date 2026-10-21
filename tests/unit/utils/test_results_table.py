@@ -241,25 +241,65 @@ class TestPrintResultsTableBanner:
         assert "All trials failed" not in out
         assert "Overall Best" in out
 
+    @staticmethod
+    def _print(metadata: dict[str, Any]) -> None:
+        trials = [
+            _trial({"model": "m1"}, {"accuracy": 0.0, "cost": 0.00007}),
+            _trial({"model": "m2"}, {"accuracy": 0.0, "cost": 0.00005}),
+        ]
+        results = TestPrintResultsTableBanner._build_results(trials)
+        results.metadata = metadata
+        print_results_table(
+            results,
+            config_space={"model": ["m1", "m2"]},
+            objectives=["accuracy", "cost"],
+        )
+
     def test_mock_run_is_labelled_next_to_the_results(
         self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """#2516: mock results say they are simulated, costs included."""
         monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
-        trials = [
-            _trial({"model": "m1"}, {"accuracy": 0.0, "cost": 0.00007}),
-            _trial({"model": "m2"}, {"accuracy": 0.0, "cost": 0.00005}),
-        ]
-        print_results_table(
-            self._build_results(trials),
-            config_space={"model": ["m1", "m2"]},
-            objectives=["accuracy", "cost"],
-        )
+        self._print({"mock_llm_run": True})
 
         out = capsys.readouterr().out
         assert "MOCK RUN" in out
         assert "not real spend" in out
         assert "not meaningful" in out
+
+    def test_mock_result_stays_labelled_after_mock_mode_is_disabled(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#2516: the label follows the result, not the process state."""
+        monkeypatch.delenv("TRAIGENT_MOCK_LLM", raising=False)
+        self._print({"mock_llm_run": True})
+
+        assert "MOCK RUN" in capsys.readouterr().out
+
+    def test_real_result_is_not_labelled_while_mock_mode_is_on(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+        self._print({"mock_llm_run": False})
+
+        out = capsys.readouterr().out
+        assert "MOCK RUN" not in out
+        assert "Mock mode is on" not in out
+
+    def test_unrecorded_provenance_is_hedged_never_claimed_real_or_mock(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+        self._print({})
+        out = capsys.readouterr().out
+        assert "MOCK RUN" not in out
+        assert "does not record" in out
+
+        monkeypatch.delenv("TRAIGENT_MOCK_LLM", raising=False)
+        self._print({})
+        out = capsys.readouterr().out
+        assert "MOCK RUN" not in out
+        assert "does not record" not in out
 
     def test_real_run_has_no_mock_label(
         self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
