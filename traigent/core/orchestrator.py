@@ -4989,8 +4989,8 @@ class OptimizationOrchestrator:
         """Finalize completed trials after a user interrupt."""
         self._stop_reason = "user_cancelled"
         self._status = OptimizationStatus.CANCELLED
-        finished = len(self._trials)
-        planned = self._max_trials
+        finished = len(getattr(self, "_trials", None) or ())
+        planned = getattr(self, "_max_trials", None)
         progress = (
             f"{finished} of {planned} trials finished"
             if isinstance(planned, int) and planned > 0
