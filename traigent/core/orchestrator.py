@@ -136,7 +136,7 @@ from traigent.utils.callbacks import CallbackManager, OptimizationCallback, Prog
 from traigent.utils.env_config import (  # noqa: F401
     is_backend_offline as is_backend_offline,
 )
-from traigent.utils.env_config import is_mock_llm
+from traigent.utils.env_config import is_mock_llm, skip_provider_validation
 from traigent.utils.mock_provenance import MockProvenanceRecorder
 from traigent.utils.exceptions import (
     ConfigurationError,
@@ -3609,7 +3609,39 @@ class OptimizationOrchestrator:
         cost limits are handled separately as graceful ``stop_reason="cost_limit"``
         results.
         """
+        self._preflight_provider_keys()
         self._cost_estimator.check_cost_approval(dataset)
+
+    def _preflight_provider_keys(self) -> None:
+        """Check provider keys once, before cost approval, for paid runs.
+
+        A run is paid when a cost limit is set or cost is approved (the cost
+        enforcer is configured) and mock mode is off. Only providers named by
+        the run's model(s) are checked. Honours
+        ``TRAIGENT_SKIP_PROVIDER_VALIDATION``. Raises ``ProviderValidationError``
+        on a bad key.
+        """
+        cost_limit = self.config.get("cost_limit")
+        cost_approved = normalize_cost_approved(self.config.get("cost_approved", False))
+        paid_run = (
+            cost_limit is not None or cost_approved or run_cost_limit_env_is_set()
+        )
+        if not paid_run or skip_provider_validation():
+            return
+        models = list(
+            self._extract_model_candidates_from_config_space(
+                getattr(self.optimizer, "config_space", None)
+            )
+        )
+        fixed_model = getattr(self.traigent_config, "model", None)
+        if isinstance(fixed_model, str) and fixed_model.strip():
+            models.append(fixed_model.strip())
+        models = list(dict.fromkeys(models))
+        if not models:
+            return
+        from traigent.providers.validation import preflight_run_providers
+
+        preflight_run_providers(models)
 
     def _is_cost_limit_reached(self) -> bool:
         """Return whether the shared cost enforcer has hit its run limit."""

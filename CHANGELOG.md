@@ -6,6 +6,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Paid runs check provider keys before cost approval (#1781).** When a cost
+  limit is set or cost is approved (mock mode off), the optimizer validates the
+  keys of only the providers the run's models use, once, and raises
+  `ProviderValidationError` (provider name and error type only, no key
+  material) before any trial. Adds an OpenRouter key check and an explicit
+  "skipped" status for Bedrock (`ProviderStatus.skipped`). Honours
+  `TRAIGENT_SKIP_PROVIDER_VALIDATION`; `validate_providers` stays callable
+  standalone.
+
 ### Fixed
 
 - **Model defaults no longer point at retiring models (#2650).** The `model`

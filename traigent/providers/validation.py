@@ -193,6 +193,9 @@ _KNOWN_MODELS: dict[str, frozenset[str]] = {
 # Default validation timeout in seconds
 _DEFAULT_VALIDATION_TIMEOUT = 5.0
 
+# OpenRouter's key-info endpoint: 200 for a valid key, 401 otherwise. Free.
+_OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
+
 # Authentication error types that indicate invalid keys (vs transient errors)
 # These are checked by exception class name to avoid importing all SDKs
 _AUTH_ERROR_TYPES = frozenset(
@@ -350,6 +353,10 @@ class ProviderStatus:
         models: List of valid models associated with this provider (optional).
         unknown_models: List of models not in known list (may still work).
         error_type: Type of error if validation failed (optional).
+        skipped: True when the provider was deliberately not checked (for
+            example Bedrock, which has no key/balance probe). A skipped
+            provider is never a pass (``valid`` is False) and never counts as
+            a failure in :func:`get_failed_providers`.
     """
 
     provider: str
@@ -358,6 +365,7 @@ class ProviderStatus:
     models: list[str] | None = None
     unknown_models: list[str] | None = None
     error_type: str | None = None
+    skipped: bool = False
 
 
 @dataclass
@@ -366,9 +374,10 @@ class ProviderValidator:
 
     This validator performs lightweight API calls to verify that provider
     keys are valid before starting potentially expensive optimization runs.
-    It is a standalone, opt-in check -- nothing calls it automatically, and
-    it never raises ``ProviderValidationError`` itself; it only reports
-    status. Callers decide whether/when to raise based on the results (see
+    It can be called standalone; the optimizer also runs it automatically
+    before cost approval for paid runs (a cost limit is set or cost is
+    approved), honouring ``TRAIGENT_SKIP_PROVIDER_VALIDATION``. It never raises
+    ``ProviderValidationError`` itself; it only reports status (see
     :func:`validate_providers` and :func:`get_failed_providers`).
 
     Validation behavior:
@@ -422,7 +431,7 @@ class ProviderValidator:
         unknown: list[str] = []
 
         for model in models:
-            provider = get_provider_for_model(model)
+            provider = get_run_provider_for_model(model)
             if provider:
                 providers.setdefault(provider, []).append(model)
             else:
@@ -490,6 +499,20 @@ class ProviderValidator:
         Returns:
             ProviderStatus with validation result.
         """
+        if provider == "bedrock":
+            return ProviderStatus(
+                provider="bedrock",
+                valid=False,
+                message=(
+                    "Skipped: Bedrock authenticates with AWS credentials and "
+                    "has no key or balance check; its key is not "
+                    "preflight-checked."
+                ),
+                error_type="NotValidated",
+                skipped=True,
+            )
+        if provider == "openrouter":
+            return self._check_openrouter()
         validate_method = getattr(self, f"_validate_{provider}", None)
         if validate_method is None:
             # Distinguish a provider that is *recognized* by the SDK but
@@ -522,6 +545,84 @@ class ProviderValidator:
 
         result: ProviderStatus = validate_method()
         return result
+
+    def _check_openrouter(self) -> ProviderStatus:
+        """Validate an OpenRouter API key via its key-info endpoint.
+
+        Not a ``_validate_<provider>`` method on purpose: OpenRouter is routed
+        through the OpenAI-compatible client and is not in the provider-support
+        table, so it must not look like a first-class validated provider.
+        """
+        key = os.getenv("OPENROUTER_API_KEY")
+        if not key:
+            return ProviderStatus(
+                provider="openrouter",
+                valid=False,
+                message="Set OPENROUTER_API_KEY",
+                error_type="MissingKey",
+            )
+
+        if self._is_cached("openrouter", key):
+            return ProviderStatus(
+                provider="openrouter",
+                valid=True,
+                message=_MSG_AVAILABLE_CACHED,
+            )
+
+        try:
+            import requests
+
+            response = requests.get(
+                _OPENROUTER_KEY_URL,
+                headers={"Authorization": f"Bearer {key}"},
+                timeout=self.timeout,
+            )
+            code = response.status_code
+        except Exception as exc:
+            # Never include the exception text: it can echo the request.
+            error_type = type(exc).__name__
+            logger.warning(_MSG_TRANSIENT_WARNING, "OpenRouter", error_type)
+            return ProviderStatus(
+                provider="openrouter",
+                valid=True,
+                message=_MSG_AVAILABLE_UNVERIFIED.format(error_type=error_type),
+                error_type=error_type,
+            )
+
+        if 200 <= code < 300:
+            self._cache_success("openrouter", key)
+            return ProviderStatus(
+                provider="openrouter", valid=True, message="Available"
+            )
+        if code in (401, 403):
+            return ProviderStatus(
+                provider="openrouter",
+                valid=False,
+                message=_MSG_INVALID_KEY.format(error_type=f"HTTP{code}"),
+                error_type="AuthenticationError",
+            )
+        if code == 402:
+            return ProviderStatus(
+                provider="openrouter",
+                valid=False,
+                message=_MSG_INSUFFICIENT_FUNDS.format(provider="OpenRouter"),
+                error_type="InsufficientFunds",
+            )
+        if code == 429 or code >= 500:
+            error_type = f"HTTP{code}"
+            logger.warning(_MSG_TRANSIENT_WARNING, "OpenRouter", error_type)
+            return ProviderStatus(
+                provider="openrouter",
+                valid=True,
+                message=_MSG_AVAILABLE_UNVERIFIED.format(error_type=error_type),
+                error_type=error_type,
+            )
+        return ProviderStatus(
+            provider="openrouter",
+            valid=False,
+            message=_MSG_VALIDATION_FAILED.format(error_type=f"HTTP{code}"),
+            error_type=f"HTTP{code}",
+        )
 
     def _validate_openai(self) -> ProviderStatus:
         """Validate OpenAI API key."""
@@ -1050,6 +1151,21 @@ def get_provider_for_model(model_name: str) -> str | None:
     return None
 
 
+def get_run_provider_for_model(model_name: str) -> str | None:
+    """Like :func:`get_provider_for_model`, but also names OpenRouter/Bedrock.
+
+    Those two have no first-class validator mapping in
+    :func:`get_provider_for_model` (it returns ``None`` for them), yet a run
+    that uses them still spends money, so the pre-run check needs to see them.
+    """
+    prefix_match = _LITELLM_PREFIX_PATTERN.match(model_name)
+    if prefix_match:
+        prefix = prefix_match.group(1).lower()
+        if prefix in ("openrouter", "bedrock"):
+            return prefix
+    return get_provider_for_model(model_name)
+
+
 def validate_providers(
     models: Sequence[str],
     *,
@@ -1089,7 +1205,7 @@ def print_provider_status(results: dict[str, ProviderStatus]) -> None:
     unknown_all: list[str] = []
 
     for provider, status in sorted(results.items()):
-        symbol = "[OK]" if status.valid else "[--]"
+        symbol = "[OK]" if status.valid else ("[SK]" if status.skipped else "[--]")
         print(f"  {symbol} {provider.capitalize()}: {status.message}")
         if status.valid and status.models:
             models_str = ", ".join(status.models)
@@ -1117,5 +1233,59 @@ def get_failed_providers(
     return [
         (provider, status.error_type or "Unknown")
         for provider, status in results.items()
-        if not status.valid
+        if not status.valid and not status.skipped
     ]
+
+
+# Error types that mean "could not check", not "the key is bad": the run's own
+# call will surface a real problem, so the pre-run gate must not block on them.
+_NON_BLOCKING_ERROR_TYPES = frozenset(
+    {"NotValidated", "UnsupportedProvider", "ModuleNotFoundError", "Skipped"}
+)
+
+
+def preflight_run_providers(
+    models: Sequence[str],
+    *,
+    timeout: float | None = None,
+) -> dict[str, ProviderStatus]:
+    """Check the keys of the providers a paid run will use, failing closed.
+
+    Called once per run by the optimizer, before cost approval, for paid runs.
+    Raises :class:`~traigent.utils.exceptions.ProviderValidationError` when a
+    provider's key is missing, invalid or out of funds. The message names the
+    provider and the error type only -- never key material or server text.
+    Providers that cannot be checked (Bedrock, mapping-only providers, an SDK
+    that is not installed) are reported in the result but never block.
+
+    Returns:
+        Dict mapping provider name to ProviderStatus (skipped ones included).
+    """
+    from traigent.utils.env_config import get_validation_timeout
+    from traigent.utils.exceptions import ProviderValidationError
+
+    results = validate_providers(
+        models,
+        timeout=get_validation_timeout() if timeout is None else timeout,
+    )
+    failed = [
+        (provider, status.error_type or "Unknown")
+        for provider, status in results.items()
+        if not status.valid
+        and not status.skipped
+        and (status.error_type or "Unknown") not in _NON_BLOCKING_ERROR_TYPES
+    ]
+    for provider, status in results.items():
+        if status.skipped:
+            logger.info(
+                "Provider '%s' not preflight-checked: %s", provider, status.message
+            )
+    if failed:
+        listing = ", ".join(f"{provider} ({error})" for provider, error in failed)
+        raise ProviderValidationError(
+            "Provider key check failed before the paid run started: "
+            f"{listing}. Fix the key (or set TRAIGENT_SKIP_PROVIDER_VALIDATION=true "
+            "to skip this check).",
+            failed_providers=failed,
+        )
+    return results

@@ -767,12 +767,11 @@ def is_development() -> bool:
 def skip_provider_validation() -> bool:
     """Check if provider validation should be skipped.
 
-    NOTE: there is no ``validate_providers`` parameter on
-    ``@traigent.optimize`` and the SDK never calls provider validation
-    automatically. This helper exists for callers who wrap
-    :func:`traigent.providers.validate_providers` in their own pre-run
-    check and want that check to honor the same skip signal the rest of
-    the SDK uses.
+    The optimizer runs :func:`traigent.providers.validate_providers`
+    automatically before cost approval for paid runs (a cost limit is set or
+    cost is approved) and uses this helper to decide whether to skip. Callers
+    who wrap ``validate_providers`` in their own pre-run check can use it to
+    honor the same skip signal.
 
     Skip is signaled when:
     - TRAIGENT_SKIP_PROVIDER_VALIDATION=true is set
@@ -790,8 +789,8 @@ def skip_provider_validation() -> bool:
 
     See also:
         - :func:`is_mock_llm`: Check if LLM API calls should be mocked
-        - :func:`traigent.providers.validate_providers`: the standalone,
-          opt-in provider validation function this flag is meant to gate
+        - :func:`traigent.providers.validate_providers`: the provider
+          validation function this flag gates (callable standalone too)
     """
     # Skip if mock mode is enabled (no real API calls anyway)
     if is_mock_llm():
