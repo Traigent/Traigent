@@ -1136,3 +1136,66 @@ async def test_parallel_trials_in_outer_scope_report_own_attempts_and_sum():
     )
     assert totals["vendor_call_attempts"] == 5
     assert totals["vendor_call_retries"] == 1
+
+
+# ------------------------------------------------------------ review round 5
+
+
+def _flagged(bucket):
+    from traigent.utils.trial_costs import is_cost_unmeasured
+
+    result = types.SimpleNamespace(metadata={}, metrics={"cost": 0.1})
+    TrialLifecycle._apply_vendor_attempts(result, bucket)
+    return is_cost_unmeasured(result.metrics), result
+
+
+def test_partial_stream_closed_early_then_success_is_unmeasured(mock_off):
+    mod, p = _patched([_SyncStream(), _response()])
+    try:
+        with capture_scope(ledger_owner=True) as bucket:
+            stream = mod.completion(model="gpt-4o", stream=True)
+            next(stream)
+            stream.close()
+            mod.completion(model="gpt-4o")  # a normal, fully measured call
+        s = summarize_bucket(bucket)
+        assert s["vendor_call_retries"] == 0
+        assert s["vendor_call_incomplete_attempts"] == 0
+        flagged, result = _flagged(bucket)
+        assert flagged and result.metrics["cost"] == 0.1  # floor kept
+    finally:
+        p.stop()
+
+
+def test_caught_mid_stream_failure_is_unmeasured(mock_off):
+    mod, p = _patched([_SyncStream(fail_after=1), _response()])
+    try:
+        with capture_scope(ledger_owner=True) as bucket:
+            with pytest.raises(RateLimitError):
+                list(mod.completion(model="gpt-4o", stream=True))
+            mod.completion(model="gpt-4o")
+        assert _flagged(bucket)[0]
+    finally:
+        p.stop()
+
+
+def test_clean_calls_are_not_flagged_real_and_mock(mock_off, monkeypatch):
+    mod, p = _patched([])
+    try:
+        with capture_scope(ledger_owner=True) as bucket:
+            mod.completion(model="gpt-4o")
+        assert summarize_bucket(bucket)["vendor_call_unknown_usage_attempts"] == 0
+        assert not _flagged(bucket)[0]
+    finally:
+        p.stop()
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    with patch(
+        "traigent.integrations.utils.mock_adapter.MockAdapter.is_mock_enabled",
+        return_value=True,
+    ):
+        mod, p = _patched([])
+        try:
+            with capture_scope(ledger_owner=True) as bucket:
+                mod.completion(model="gpt-4o")
+            assert not _flagged(bucket)[0]
+        finally:
+            p.stop()
