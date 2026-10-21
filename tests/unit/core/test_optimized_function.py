@@ -696,6 +696,61 @@ class TestOptimizedFunction:
         ]
 
     @pytest.mark.asyncio
+    async def test_implicit_cap_warns_when_grid_is_larger_2058(
+        self, caplog, mock_function, sample_objectives, sample_dataset
+    ):
+        """An unset max_trials truncating a 24-point grid warns with counts."""
+        space = {"a": [1, 2, 3, 4], "b": [1, 2, 3], "c": [True, False]}
+        opt_func = OptimizedFunction(
+            func=mock_function,
+            configuration_space=space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+        )
+        with (
+            patch("traigent.core.optimized_function.get_optimizer") as mock_get,
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator"
+            ) as mock_orch_cls,
+            caplog.at_level("WARNING", logger="traigent.core.optimized_function"),
+        ):
+            mock_get.return_value = Mock()
+            mock_orch = Mock()
+            from datetime import datetime
+
+            fake = OptimizationResult(
+                trials=[],
+                best_config={"a": 1, "b": 1, "c": True},
+                best_score=0.8,
+                optimization_id="opt_2058",
+                duration=1.0,
+                convergence_info={},
+                status=OptimizationStatus.COMPLETED,
+                objectives=sample_objectives,
+                algorithm="grid",
+                timestamp=datetime.now(),
+                metadata={},
+            )
+            mock_orch.optimize = AsyncMock(return_value=fake)
+            mock_orch_cls.return_value = mock_orch
+            await opt_func.optimize(algorithm="grid")
+            warnings = [
+                r.getMessage()
+                for r in caplog.records
+                if r.levelname == "WARNING"
+                and "max_trials was not set" in r.getMessage()
+            ]
+            assert len(warnings) == 1
+            assert "only 10 of 24 grid combinations" in warnings[0]
+            assert "max_trials=24" in warnings[0]
+
+            caplog.clear()
+            await opt_func.optimize(algorithm="grid", max_trials=24)
+            assert not any(
+                "max_trials was not set" in r.getMessage() for r in caplog.records
+            )
+
+    @pytest.mark.asyncio
     async def test_optimize_skips_default_notice_for_explicit_max_trials(
         self,
         caplog,

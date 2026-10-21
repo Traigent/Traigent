@@ -952,6 +952,23 @@ _APPLY_FALSE_WITHDRAWN_MESSAGE = (
 )
 
 
+def _finite_grid_size(config_space: Any) -> int | None:
+    """Number of grid combinations, or None when the space is not a finite grid.
+
+    Lists are categorical axes, scalars are fixed values; any other shape (for
+    example a continuous range) means the size is unknown and is never guessed.
+    """
+    if not isinstance(config_space, dict) or not config_space:
+        return None
+    size = 1
+    for definition in config_space.values():
+        if isinstance(definition, list):
+            size *= max(len(definition), 1)
+        elif isinstance(definition, (tuple, dict, set, frozenset)):
+            return None
+    return size
+
+
 class OptimizedFunction(Generic[_P, _R]):
     """Wrapper for functions decorated with @traigent.optimize.
 
@@ -3700,7 +3717,27 @@ Remediation:
             and getattr(self, "_max_trials_uses_sdk_default", False)
             and max_trials == DEFAULT_MAX_TRIALS
         )
-        if (
+        grid_size = (
+            _finite_grid_size(effective_config_space)
+            if used_implicit_default_max_trials and algorithm == "grid"
+            else None
+        )
+        if grid_size is not None and grid_size > max_trials:
+            # Issue #2058: the implicit cap silently truncates an exhaustive
+            # grid. Counts only; no user content is echoed.
+            logger.warning(
+                "max_trials was not set, so the SDK default cap of %d applies: "
+                "only %d of %d grid combinations will be evaluated and the "
+                "reported best configuration is the best of those, not of the "
+                "whole space. Pass max_trials=%d (or higher) to evaluate the "
+                "full grid.",
+                max_trials,
+                max_trials,
+                grid_size,
+                grid_size,
+            )
+            self._max_trials_default_notice_logged = True
+        elif (
             used_implicit_default_max_trials
             and not self._max_trials_default_notice_logged
         ):
