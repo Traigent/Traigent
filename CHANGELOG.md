@@ -8,6 +8,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **New stop reason `safety_constraint_insufficient_evidence` (#2481).** A run
+  halts with it when a safety constraint is neither proven nor violated for
+  lack of enough evidence. `OptimizationResult.stop_reason` can now carry this
+  value; code that switches on stop reasons should handle it.
 - **Failed custom-evaluator rows are now visible (#2422).** When a
   `custom_evaluator` raises on some but not all rows of a trial, the trial
   metadata records `custom_evaluator_failed_rows` and
@@ -75,6 +79,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Partially acknowledged runs now report `local_fallback` (#2027).** When the
+  backend acknowledges only some of a run's trials, `result_source` /
+  `source` is `local_fallback` instead of `cloud_brain`, because the run was
+  not fully cloud-confirmed.
+- **A run where every trial failed now ends `FAILED` with
+  `ALL_TRIALS_FAILED` (#2477),** regardless of the stop reason, including
+  `cost_limit` and `execution_budget` stops. The `stop_reason` value itself is
+  unchanged.
 - **Mock mode no longer skips the cost preflights (#2681).** The pre-run cost
   approval and the model-price coverage preflight now run under plain
   `TRAIGENT_MOCK_LLM`, unless `TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT=true` is set
