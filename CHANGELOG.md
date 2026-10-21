@@ -6,6 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **No-model-call examples point at `with_usage(total_cost=0)` (#2449).** The
+  unmeasured-cost error and warning now say plainly that a path making no model
+  calls should wrap its return value in `traigent.with_usage(value,
+  total_cost=0)` to record a measured $0; unknown stays the default. Documented in
+  `docs/guides/execution-budget.md`, with a test that a wrapped no-call example
+  counts as measured $0 and an unwrapped one stays unknown.
+
 ### Added
 
 - **Paid runs check provider keys before cost approval (#1781).** When a cost

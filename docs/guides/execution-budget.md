@@ -126,6 +126,28 @@ explicitly — e.g. from `with_usage()` data:
 budget.record_external(cost_usd=0.012, examples=1)
 ```
 
+### Agents that make no model calls
+
+Cost with no captured usage is **unknown**, never `$0`: an unmeasured example would
+otherwise rank as the cheapest. If an example path genuinely makes no model calls
+(a rule-based or lookup agent), say so by wrapping its return value in
+`traigent.with_usage(value, total_cost=0)`. That records a *measured* `$0`:
+
+```python
+@traigent.optimize(
+    configuration_space={"threshold": [0.2, 0.5, 0.8]},
+    objectives=["accuracy", "cost"],
+    eval_dataset="qa.jsonl",
+)
+def answer(question: str):
+    threshold = traigent.get_config()["threshold"]
+    value = rule_based_answer(question, threshold)  # no provider call
+    return traigent.with_usage(value, total_cost=0)
+```
+
+Unwrapped, the same function reports cost as unmeasured and a strict run
+(`TRAIGENT_REQUIRE_COST_TRACKING`) names this fix in its error.
+
 ## Honesty — what is, and isn't, a hard guarantee
 
 - **Examples are a hard limit.** Observable on every execution path, so exhaustion
