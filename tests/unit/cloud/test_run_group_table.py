@@ -262,3 +262,17 @@ def test_to_dataframe_keeps_missing_cost_missing() -> None:
     df = RunGroupTable("g", [build_run_group_row(dto)]).to_dataframe()
     assert list(df["run_id"]) == ["run_a"]
     assert pd.isna(df["cost"].iloc[0])
+
+
+def test_experiment_groups_page_dto_reads_nested_pagination() -> None:
+    from traigent.cloud.dtos import ExperimentGroupsPageDTO
+
+    envelope = _legacy_page([], has_next=True)["data"]
+    envelope["pagination"].update({"page": 2, "per_page": 10, "total": 31})
+    page = ExperimentGroupsPageDTO.from_dict(envelope)
+    assert (page.page, page.page_size, page.total) == (2, 10, 31)
+    assert page.total_pages == 5
+    assert page.has_next is True
+    assert "pagination" not in page.extra_fields
+    flat = ExperimentGroupsPageDTO.from_dict({"items": [], "page": 3, "has_next": True})
+    assert flat.page == 3 and flat.has_next is True

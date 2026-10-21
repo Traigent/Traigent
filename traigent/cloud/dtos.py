@@ -1322,26 +1322,28 @@ class ExperimentGroupsPageDTO:
             "has_next",
             "has_previous",
             "has_prev",
+            "pagination",
         }
         rows = payload.get(
             "items", payload.get("experiment_groups", payload.get("groups", []))
         )
-        page_size = _int_or_default(
-            payload.get("page_size", payload.get("per_page")), 50
-        )
+        # Backend nests paging under ``data.pagination``; flat keys are fallback.
+        nested = payload.get("pagination")
+        pg: Mapping[str, Any] = nested if isinstance(nested, Mapping) else payload
+        page_size = _int_or_default(pg.get("page_size", pg.get("per_page")), 50)
         return cls(
             items=[
                 ExperimentGroupOverviewDTO.from_dict(item)
                 for item in _copy_list(rows)
                 if isinstance(item, Mapping)
             ],
-            page=_int_or_default(payload.get("page"), 1),
+            page=_int_or_default(pg.get("page"), 1),
             page_size=page_size,
-            total=_int_or_default(payload.get("total", payload.get("total_items")), 0),
-            total_pages=_int_or_default(payload.get("total_pages"), 0),
-            has_next=_bool_or_default(payload.get("has_next"), False),
+            total=_int_or_default(pg.get("total", pg.get("total_items")), 0),
+            total_pages=_int_or_default(pg.get("total_pages"), 0),
+            has_next=_bool_or_default(pg.get("has_next"), False),
             has_previous=_bool_or_default(
-                payload.get("has_previous", payload.get("has_prev")),
+                pg.get("has_previous", pg.get("has_prev")),
                 False,
             ),
             extra_fields=_extra_fields(payload, known),
