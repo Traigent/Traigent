@@ -84,6 +84,7 @@ from traigent.core.execution_policy_runtime import (
     policy_from_config,
     policy_is_cloud_brain,
     policy_is_cloud_required,
+    policy_requires_cloud,
     unsupported_backend_smart_algorithm_message,
 )
 from traigent.core.logger_facade import LoggerFacade
@@ -4645,6 +4646,14 @@ class OptimizationOrchestrator:
                     session_id,
                     exc,
                 )
+                if policy_requires_cloud(policy_from_config(self.traigent_config)):
+                    # Required cloud forbids finishing without the backend
+                    # record (#2510). Fixed text only: the backend error can
+                    # echo customer content. The local session stays on disk.
+                    raise CloudBrainUnavailableError(
+                        "session finalization",
+                        "required cloud tracking could not persist the run",
+                    ) from exc
 
             # Populate experiment_id and cloud_url from session metadata
             self._populate_experiment_cloud_url(result)

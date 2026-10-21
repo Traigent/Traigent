@@ -17,8 +17,8 @@ from traigent.core.orchestrator import OptimizationOrchestrator
 
 
 class _HTTPError(RuntimeError):
-    def __init__(self, status_code: int) -> None:
-        super().__init__(f"HTTP {status_code}")
+    def __init__(self, status_code: int, detail: str = "") -> None:
+        super().__init__(f"HTTP {status_code} {detail}".strip())
         self.status_code = status_code
 
 
@@ -369,3 +369,57 @@ async def test_finalize_terminal_failure_is_loud_but_result_remains_usable(
     assert "Run `traigent local sync`" not in caplog.text
     assert "Check the portal for this session id" in caplog.text
     assert "can duplicate the run" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_required_cloud_finalize_failure_fails_closed_with_closed_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2510: with TRAIGENT_REQUIRE_CLOUD a failed backend finalize must not
+    return a normal result, and the error must not carry server text."""
+    from traigent.core.execution_policy_runtime import CloudBrainUnavailableError
+
+    monkeypatch.setattr(
+        "traigent.core.backend_session_manager.time.sleep", lambda _delay: None
+    )
+    monkeypatch.setenv("TRAIGENT_REQUIRE_CLOUD", "1")
+    config = _config(monkeypatch)
+    sentinel = "sentinel-server-text"
+
+    def _boom(*_args, **_kwargs):
+        raise _HTTPError(503, sentinel)
+
+    client = _backend_client(_boom)
+    manager = _manager(config, client)
+    orchestrator = _orchestrator(config, manager)
+    result = _result()
+
+    with pytest.raises(CloudBrainUnavailableError) as excinfo:
+        await OptimizationOrchestrator._finalize_optimization(
+            orchestrator, result, "session-finalize", None
+        )
+
+    assert sentinel not in str(excinfo.value)
+    assert sentinel not in repr(excinfo.value.reason)
+
+
+@pytest.mark.asyncio
+async def test_optional_cloud_finalize_failure_still_returns_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "traigent.core.backend_session_manager.time.sleep", lambda _delay: None
+    )
+    monkeypatch.delenv("TRAIGENT_REQUIRE_CLOUD", raising=False)
+    config = _config(monkeypatch)
+    client = _backend_client(
+        lambda *args, **kwargs: (_ for _ in ()).throw(_HTTPError(503))
+    )
+    manager = _manager(config, client)
+    orchestrator = _orchestrator(config, manager)
+    result = _result()
+
+    await OptimizationOrchestrator._finalize_optimization(
+        orchestrator, result, "session-finalize", None
+    )
+    assert result.metadata["persistence_status"] == "failed"
