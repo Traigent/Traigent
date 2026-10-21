@@ -137,3 +137,72 @@ def test_decorator_offline_true_alone_sets_scope_during_run(
     agent.optimize_sync()
     assert observed and all(o is True and t is None for o, t in observed)
     assert is_backend_offline() is False
+
+
+def test_plugin_path_is_gated_at_sdk_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With a traigent_tracing plugin installed, offline still gates every entry."""
+    import importlib
+    import sys
+    import types
+    from contextlib import contextmanager
+
+    calls: list[str] = []
+    fake = types.ModuleType("traigent_tracing")
+
+    @contextmanager
+    def _span(*args: Any, **kwargs: Any):
+        calls.append("span")
+        yield "real-span"
+
+    def _record(*args: Any, **kwargs: Any) -> str:
+        calls.append("record")
+        return "recorded"
+
+    def _get_tracer() -> str:
+        calls.append("tracer")
+        return "real-tracer"
+
+    for name, val in {
+        "OTEL_AVAILABLE": True,
+        "TRACING_ENABLED": True,
+        "SecureIdGenerator": object,
+        "clear_test_context": lambda: None,
+        "get_test_context": dict,
+        "set_test_context": lambda *a, **k: None,
+        "example_evaluation_span": _span,
+        "optimization_session_span": _span,
+        "trial_span": _span,
+        "record_example_result": _record,
+        "record_optimization_complete": _record,
+        "record_trial_result": _record,
+        "get_tracer": _get_tracer,
+    }.items():
+        setattr(fake, name, val)
+    monkeypatch.setitem(sys.modules, "traigent_tracing", fake)
+    try:
+        mod = importlib.reload(tracing)
+        assert mod._PLUGIN_AVAILABLE is True
+        # online: delegated to the plugin
+        assert mod.get_tracer() == "real-tracer"
+        with mod.trial_span("t", 1, {}) as sp:
+            assert sp == "real-span"
+        assert mod.record_trial_result(None, "ok") == "recorded"
+        calls.clear()
+        with offline_run_scope(True):
+            assert mod.get_tracer() is None
+            for cm in (
+                mod.optimization_session_span("f"),
+                mod.trial_span("t", 1, {}),
+                mod.example_evaluation_span("e", 0, {}),
+            ):
+                with cm as sp:
+                    assert sp is None
+            assert mod.record_trial_result(None, "ok") is None
+            assert mod.record_example_result(None, None) is None
+            assert mod.record_optimization_complete(None, {}) is None
+        assert calls == []
+    finally:
+        monkeypatch.delitem(sys.modules, "traigent_tracing", raising=False)
+        importlib.reload(tracing)

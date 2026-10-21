@@ -41,6 +41,45 @@ try:
 
     _PLUGIN_AVAILABLE = True
 
+    # Gate at the SDK boundary: the offline predicate must apply whichever
+    # implementation is imported, so the plugin's functions are wrapped rather
+    # than trusted. While offline (offline=True run or the offline env vars) no
+    # tracer is handed out, spans are no-ops and nothing is recorded.
+    import functools as _functools
+    from contextlib import contextmanager as _contextmanager
+    from typing import Any as _Any
+
+    from traigent.utils.env_config import is_backend_offline as _is_offline
+
+    def _gate_call(fn: _Any) -> _Any:
+        @_functools.wraps(fn)
+        def wrapper(*args: _Any, **kwargs: _Any) -> _Any:
+            if _is_offline():
+                return None
+            return fn(*args, **kwargs)
+
+        return wrapper
+
+    def _gate_span(fn: _Any) -> _Any:
+        @_functools.wraps(fn)
+        @_contextmanager
+        def wrapper(*args: _Any, **kwargs: _Any) -> _Any:
+            if _is_offline():
+                yield None
+                return
+            with fn(*args, **kwargs) as span:
+                yield span
+
+        return wrapper
+
+    get_tracer = _gate_call(get_tracer)
+    optimization_session_span = _gate_span(optimization_session_span)
+    trial_span = _gate_span(trial_span)
+    example_evaluation_span = _gate_span(example_evaluation_span)
+    record_example_result = _gate_call(record_example_result)
+    record_optimization_complete = _gate_call(record_optimization_complete)
+    record_trial_result = _gate_call(record_trial_result)
+
 except ImportError:
     # Plugin not installed, use embedded implementation
     _PLUGIN_AVAILABLE = False

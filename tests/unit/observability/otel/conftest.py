@@ -17,6 +17,18 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (  # noqa: E4
 CANARY = "CANARY-7f3a91c2-do-not-egress"
 
 
+@pytest.fixture(autouse=True)
+def _otel_tests_run_online(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The pipeline now rechecks offline at record/send time (#2240).
+
+    The root conftest defaults unit tests to TRAIGENT_OFFLINE_MODE=true, which
+    would drop every span here; these tests exercise a mocked transport, so put
+    them in connected mode (tests that need offline set it themselves).
+    """
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
+
+
 @pytest.fixture
 def canary() -> str:
     return CANARY

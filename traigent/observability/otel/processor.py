@@ -36,6 +36,7 @@ from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor
 
 from traigent.observability.otel.exporter import ExportOutcome, TraigentOTLPExporter
 from traigent.observability.otel.lineage import stamp_span
+from traigent.utils.env_config import is_backend_offline
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -55,6 +56,7 @@ _STAT_KEYS = (
     "dropped_retry_exhausted",
     "dropped_non_retryable",
     "dropped_deadline",
+    "dropped_offline",
     "rejected_by_server",
     "sampled_out",
     "content_attrs_stripped",
@@ -136,6 +138,12 @@ class TraigentSpanProcessor(SpanProcessor):
 
     def on_end(self, span: ReadableSpan) -> None:
         if self._shutdown:
+            return
+        if is_backend_offline():
+            # Offline (offline=True run or the offline env vars) is checked at
+            # record time, not only at init: a pipeline initialised online must
+            # not queue spans recorded while offline. Dropped, never queued.
+            self._bump("dropped_offline")
             return
         ctx = span.context
         if ctx is None or not ctx.trace_flags.sampled:
@@ -290,6 +298,7 @@ class TraigentSpanProcessor(SpanProcessor):
             s["dropped_retry_exhausted"] += outcome.dropped_retry_exhausted
             s["dropped_non_retryable"] += outcome.dropped_non_retryable
             s["dropped_deadline"] += outcome.dropped_deadline
+            s["dropped_offline"] += outcome.dropped_offline
             s["rejected_by_server"] += outcome.rejected_by_server
             s["protocol_failures"] += outcome.protocol_failures
             s["content_attrs_stripped"] += outcome.stripped_attrs
