@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -99,18 +100,49 @@ def _integrity_child(directory: Path, name: object) -> Path:
         or Path(name).is_absolute()
     ):
         raise invalid
-    root = directory.resolve()
-    target = (root / name).resolve()
+    try:
+        root = directory.resolve()
+        target = (root / name).resolve()
+    except (OSError, RuntimeError):
+        raise invalid from None
     if target.parent != root:
         raise invalid
     return target
 
 
+def _open_integrity_file(directory: Path, name: str) -> int:
+    """Open an allowlisted file read-only without following symlinks.
+
+    Uses ``dir_fd`` plus ``O_NOFOLLOW`` where supported so a file swapped for
+    a symlink after validation cannot redirect the read. Returns an fd.
+    """
+    invalid = ValueError("Integrity manifest names a file that is not allowed")
+    target = _integrity_child(directory, name)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        if os.open in os.supports_dir_fd and hasattr(os, "O_DIRECTORY"):
+            dir_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                fd = os.open(name, flags, dir_fd=dir_fd)
+            finally:
+                os.close(dir_fd)
+        else:
+            fd = os.open(target, flags)
+    except OSError:
+        raise invalid from None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise invalid
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
 def sha256_file(directory: Path, name: str) -> str:
     """Hex sha256 of an allowlisted result file inside ``directory``."""
-    target = _integrity_child(directory, name)
     digest = hashlib.sha256()
-    with open(target, "rb") as f:
+    with os.fdopen(_open_integrity_file(directory, name), "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
@@ -161,7 +193,7 @@ def verify_integrity_manifest(directory: Path, required: list[str]) -> bool:
         if name not in required:
             continue
         target = _integrity_child(directory, name)
-        if not target.is_file():
+        if not os.path.lexists(target):
             raise ValueError(
                 "A result file listed in the integrity manifest is missing"
             )

@@ -227,3 +227,26 @@ def test_write_manifest_rejects_non_allowlisted_name(tmp_path):
         write_integrity_manifest(tmp_path, ["other.txt"])
     with pytest.raises(ValueError, match="not allowed"):
         write_integrity_manifest(tmp_path, ["../other.txt"])
+
+
+def test_symlinked_result_file_pointing_outside_rejected(mgr, tmp_path):
+    mgr.save_result(_result(), name="r")
+    outside = tmp_path / "outside_secret.json"
+    outside.write_text("{}")
+    target = tmp_path / "r" / "metadata.json"
+    target.unlink()
+    target.symlink_to(outside)
+    with pytest.raises(ValueError, match="not allowed") as exc:
+        mgr.load_result("r")
+    assert str(tmp_path) not in str(exc.value)
+    assert "outside_secret" not in str(exc.value)
+
+
+def test_self_loop_symlink_rejected_without_path(mgr, tmp_path):
+    mgr.save_result(_result(), name="r")
+    target = tmp_path / "r" / "trials.json.gz"
+    target.unlink()
+    target.symlink_to(target)
+    with pytest.raises(ValueError, match="not allowed") as exc:
+        mgr.load_result("r")
+    assert str(tmp_path) not in str(exc.value)
