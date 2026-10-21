@@ -1,0 +1,82 @@
+# Comparing Fixed Configurations
+
+`compare()` evaluates a list of fully specified configurations head-to-head and
+records them as **one experiment**. It is pure evaluation: there is no search.
+Use it for "winner vs. current default on a held-out set", or an A/B/N of pinned
+agents.
+
+```python
+import traigent
+
+@traigent.optimize(
+    eval_dataset="dev.jsonl",
+    objectives=["accuracy"],
+    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"], "temperature": (0.0, 1.0)},
+)
+def answer(question: str) -> str: ...
+
+result = answer.compare(
+    [
+        {"model": "gpt-4o", "temperature": 0.0},        # winner
+        {"model": "gpt-4o-mini", "temperature": 0.5},   # current default
+    ],
+    eval_dataset="holdout.jsonl",   # optional; default is the decorated dataset
+    repeats=3,
+)
+
+result.best_config
+for row in result.configs:
+    print(row.config, row.mean_score, row.score_stdev, row.total_cost, row.cost_lower_bound)
+print(result.holdout.status, result.holdout.holdout_valid)
+```
+
+## API
+
+`OptimizedFunction.compare(configs, *, eval_dataset=None, repeats=1)` (sync) and
+`await compare_async(...)`. It lives on the decorated function, mirroring
+`optimize_sync()` / `optimize()`, so it reuses that function's evaluator,
+metrics, objectives and execution policy. Past results:
+`answer.comparison_history`.
+
+* **`configs`**: each config must name every declared parameter with a value
+  inside the declared configuration space, otherwise `ValueError`. Errors name
+  the config's position and the declared parameter names, never client values.
+* **`eval_dataset`**: a `Dataset`, JSONL path, list of paths, or inline
+  examples, used for this comparison only. `optimize()` rejects a call-time
+  `eval_dataset` because it would be ignored; `compare()` honors it.
+* **`repeats`**: evaluations per config. Every config runs on the same examples.
+
+## What the result contains
+
+`ComparisonResult` (`traigent.core.comparison`): `configs` (one row per config),
+`best_config`, `example_ids`, `same_examples_across_configs`, `holdout`,
+`total_cost`, `cost_lower_bound`, `to_dict()`.
+
+Each `ConfigComparison` row has `scores` (one per repeat), `mean_score`,
+`score_stdev`, `score_min`/`score_max`, `metrics_mean`, `total_cost`,
+`cost_lower_bound`, `cost_unmeasured_repeats`, `failed_repeats`.
+
+### Cost is never a silent zero
+
+If any repeat's cost could not be measured (for example no LLM usage was
+captured), `total_cost` is `None` and `cost_lower_bound` holds the spend that
+was actually seen (a floor). `0.0` only appears when zero spend was measured.
+See [Token and Cost Capture](cost_capture.md).
+
+### Holdout check
+
+`result.holdout` compares the evaluation examples with the decorated (tuning)
+dataset by content fingerprint:
+
+| `status` | Meaning | `holdout_valid` |
+|----------|---------|-----------------|
+| `tuning_dataset` | no `eval_dataset` given; scored on the tuning data | `False` |
+| `holdout` | `eval_dataset` shares no example with the tuning data | `True` |
+| `overlaps_tuning_dataset` | some examples are also in the tuning data (a warning is logged) | `False` |
+
+## Behavior notes
+
+* Each (config, repeat) is one single-trial run of the normal pipeline over a
+  one-cell space on the local grid path; nothing is synced to the portal.
+* `compare()` does not apply any config: the wrapper's applied config, best
+  config and optimization history are unchanged afterwards.

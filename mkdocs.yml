@@ -81,6 +81,7 @@ nav:
           - Injection Modes: user-guide/injection_modes.md
           - Interactive Optimization: user-guide/interactive_optimization.md
           - Tuned Variables: user-guide/tuned_variables.md
+          - Comparing Fixed Configurations: user-guide/compare_configs.md
       - Operations:
           - Azure OpenAI: operations/azure_openai.md
           - Amazon Bedrock: operations/bedrock.md
