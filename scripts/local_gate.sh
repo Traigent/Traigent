@@ -152,8 +152,38 @@ if ! skip schema-types; then
   if [[ -z "$schema_repo" || ! -d "$schema_repo" ]]; then
     echo "  ⚠️  no TraigentSchema checkout found (set TRAIGENT_SCHEMA_REPO or place one at"
     echo "     ../TraigentSchema); skipping locally. This check is REQUIRED and fail-closed in CI."
+    schema_repo=""
   else
     echo "  • TRAIGENT_SCHEMA_REPO=$schema_repo"
+    # The gate must test against the schema build CI uses (#2469):
+    # scripts/ci/schema-pin.txt is the single source of truth. If the checkout
+    # is not at the pin, export the pinned commit to a temp dir (no mutation of
+    # the checkout); if the pin is unreadable or absent, fail closed.
+    pin_sha="$(grep -oE '@[0-9a-f]{40}$' scripts/ci/schema-pin.txt 2>/dev/null | tr -d '@' | head -n1)"
+    if [[ -z "$pin_sha" ]]; then
+      echo "  ❌ cannot read the TraigentSchema pin from scripts/ci/schema-pin.txt"
+      FAIL=1
+      schema_repo=""
+    elif git -C "$schema_repo" cat-file -e "${pin_sha}^{commit}" 2>/dev/null; then
+      # Always export: the generator reads working-tree files, so a dirty or
+      # untracked checkout must never influence the verdict.
+      schema_pin_dir="$(mktemp -d)"
+      trap 'rm -rf "$schema_pin_dir"' EXIT
+      if git -C "$schema_repo" archive "$pin_sha" | tar -x -C "$schema_pin_dir"; then
+        echo "  • using TraigentSchema@${pin_sha:0:12} exported to a temp dir (checkout working tree is ignored)"
+        schema_repo="$schema_pin_dir"
+      else
+        echo "  ❌ could not export TraigentSchema@${pin_sha:0:12} from the checkout"
+        FAIL=1
+        schema_repo=""
+      fi
+    else
+      echo "  ❌ TraigentSchema checkout lacks pinned commit ${pin_sha:0:12} (run 'git fetch' there)"
+      FAIL=1
+      schema_repo=""
+    fi
+  fi
+  if [[ -n "$schema_repo" ]]; then
     py_bin="python3"; [[ -x ".venv/bin/python" ]] && py_bin=".venv/bin/python"
     if TRAIGENT_SCHEMA_REPO="$schema_repo" "$py_bin" scripts/generate_schema_types.py --check; then
       echo "  ✅ generated schema types are current"

@@ -30,6 +30,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from traigent.api.types import TrialResult
+from traigent.utils.trial_costs import COST_FLOOR_WIRE_KEY
 from traigent.cloud.session_budgets import (
     ensure_cost_metric_for_budgeted_completed_submission,
 )
@@ -337,7 +338,10 @@ async def _assert_unmeasured_through_the_pipeline(run: Run, tmp_path: Path) -> N
     assert run.budget_mutated is True
     reported_floor = run.aggregated.get("cost_lower_bound") or 0.0
     assert run.trial.metrics.get("cost_lower_bound") == (reported_floor or None)
-    assert run.budget_metrics["cost"] == pytest.approx(reported_floor)
+    assert (
+        run.budget_metrics["cost"] == run.budget_metrics[COST_FLOOR_WIRE_KEY]
+    )  # TEMPORARY bridge (#2688)
+    assert run.budget_metrics[COST_FLOOR_WIRE_KEY] == pytest.approx(reported_floor)
     assert run.budget_metrics["cost_unmeasured"] == 1.0
     # ranking: neither the Pareto front nor best-config selection picks it
     measured = await _measured_trial(tmp_path)
@@ -522,7 +526,10 @@ async def test_isolated_external_per_item_flag_cannot_overwrite_the_computed_fla
     assert run.budget_mutated is True
     reported_floor = run.aggregated.get("cost_lower_bound") or 0.0
     assert run.trial.metrics.get("cost_lower_bound") == (reported_floor or None)
-    assert run.budget_metrics["cost"] == pytest.approx(reported_floor)
+    assert (
+        run.budget_metrics["cost"] == run.budget_metrics[COST_FLOOR_WIRE_KEY]
+    )  # TEMPORARY bridge (#2688)
+    assert run.budget_metrics[COST_FLOOR_WIRE_KEY] == pytest.approx(reported_floor)
     assert run.budget_metrics["cost_unmeasured"] == 1.0
     assert all(row["cost_usd"] is None for row in run.logged_rows)
 

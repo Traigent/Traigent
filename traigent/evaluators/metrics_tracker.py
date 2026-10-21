@@ -56,6 +56,8 @@ except Exception:
 
 TOKENCOST_AVAILABLE = _TOKENCOST_AVAILABLE
 
+from traigent.utils.response_timing import recorded_response_time_ms  # noqa: E402
+
 REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO = 0.5
 
 # Provenance tags for ``CostMetrics.cost_source`` (#2505).
@@ -1971,6 +1973,9 @@ class OpenAIResponseHandler(ResponseHandler):
         return tokens
 
     def extract_response_time(self, response: Any) -> float:
+        recorded = recorded_response_time_ms(response)
+        if recorded is not None:
+            return recorded
         if hasattr(response, "response_time_ms") and isinstance(
             response.response_time_ms, (int, float)
         ):
@@ -2255,6 +2260,9 @@ class GenericResponseHandler(ResponseHandler):
         return TokenMetrics()  # Return empty metrics
 
     def extract_response_time(self, response: Any) -> float:
+        recorded = recorded_response_time_ms(response)
+        if recorded is not None:
+            return recorded
         # Try common response time attributes
         for attr in ["response_time_ms", "latency", "_response_time"]:
             if hasattr(response, attr):

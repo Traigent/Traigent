@@ -161,21 +161,17 @@ traigent:InjectionMode_Seamless a traigent:DimensionValue ;
 traigent:ExecutionMode a traigent:Dimension ;
     rdfs:label "Execution Mode" .
 
-traigent:ExecutionMode_EdgeAnalytics a traigent:DimensionValue ;
+traigent:ExecutionMode_Local a traigent:DimensionValue ;
     traigent:belongsToDimension traigent:ExecutionMode ;
-    rdfs:label "edge_analytics" .
-
-traigent:ExecutionMode_Privacy a traigent:DimensionValue ;
-    traigent:belongsToDimension traigent:ExecutionMode ;
-    rdfs:label "privacy" .
+    rdfs:label "local" .
 
 traigent:ExecutionMode_Hybrid a traigent:DimensionValue ;
     traigent:belongsToDimension traigent:ExecutionMode ;
     rdfs:label "hybrid" .
 
-traigent:ExecutionMode_Cloud a traigent:DimensionValue ;
+traigent:ExecutionMode_HybridApi a traigent:DimensionValue ;
     traigent:belongsToDimension traigent:ExecutionMode ;
-    rdfs:label "cloud" .
+    rdfs:label "hybrid_api" .
 ```
 
 ### 3. Optimizer Algorithm

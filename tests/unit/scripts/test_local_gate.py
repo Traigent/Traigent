@@ -159,3 +159,101 @@ def test_local_gate_fails_clearly_when_venv_lacks_xdist(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert "cannot import pytest-xdist" in result.stdout
     assert ".venv/bin/python" in result.stdout
+
+
+def _schema_gate_script(tmp_path: Path, pin: str | None) -> Path:
+    """Copy the gate into a sandbox repo with a stubbed generator + pin file."""
+    repo = tmp_path / "gate"
+    (repo / "scripts" / "ci").mkdir(parents=True)
+    shutil.copy2(LOCAL_GATE, repo / "scripts" / "local_gate.sh")
+    (repo / "scripts" / "ci" / "spine_preflight.py").write_text(
+        "raise SystemExit(0)\n", encoding="utf-8"
+    )
+    (repo / "scripts" / "generate_schema_types.py").write_text(
+        "import os\nprint('SCHEMA_REPO=' + os.environ['TRAIGENT_SCHEMA_REPO'])\n",
+        encoding="utf-8",
+    )
+    if pin is not None:
+        (repo / "scripts" / "ci" / "schema-pin.txt").write_text(
+            f"traigent-schema @ git+https://example.invalid/s.git@{pin}\n",
+            encoding="utf-8",
+        )
+    _run_git(repo, "init", "-q")
+    _run_git(repo, "config", "user.email", "t@example.invalid")
+    _run_git(repo, "config", "user.name", "t")
+    _run_git(repo, "add", ".")
+    _run_git(repo, "commit", "-qm", "fixture")
+    _run_git(repo, "update-ref", "refs/remotes/origin/develop", "HEAD")
+    _run_git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    return repo
+
+
+def _schema_checkout(tmp_path: Path) -> tuple[Path, str, str]:
+    schema = tmp_path / "schema"
+    schema.mkdir()
+    _run_git(schema, "init", "-q")
+    _run_git(schema, "config", "user.email", "t@example.invalid")
+    _run_git(schema, "config", "user.name", "t")
+    (schema / "f").write_text("one", encoding="utf-8")
+    _run_git(schema, "add", ".")
+    _run_git(schema, "commit", "-qm", "one")
+    first = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=schema, capture_output=True, text=True
+    ).stdout.strip()
+    (schema / "f").write_text("two", encoding="utf-8")
+    _run_git(schema, "commit", "-qam", "two")
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=schema, capture_output=True, text=True
+    ).stdout.strip()
+    return schema, first, head
+
+
+def _run_schema_gate(repo: Path, schema: Path) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env.update(
+        {
+            "TRAIGENT_SCHEMA_REPO": str(schema),
+            "LOCAL_GATE_SKIP": "pytest,sonar",
+        }
+    )
+    return subprocess.run(
+        ["bash", "scripts/local_gate.sh"],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_local_gate_uses_schema_pin_when_checkout_is_elsewhere(
+    tmp_path: Path,
+) -> None:
+    schema, pinned, _head = _schema_checkout(tmp_path)
+    repo = _schema_gate_script(tmp_path, pinned)
+    result = _run_schema_gate(repo, schema)
+    out = result.stdout + result.stderr
+    assert "exported to a temp dir" in out
+    assert f"\nSCHEMA_REPO={schema}\n" not in out
+    assert "\nSCHEMA_REPO=" in out
+
+
+def test_local_gate_exports_pin_even_when_checkout_is_at_pin_and_dirty(
+    tmp_path: Path,
+) -> None:
+    schema, _first, head = _schema_checkout(tmp_path)
+    (schema / "f").write_text("dirty", encoding="utf-8")
+    (schema / "untracked").write_text("x", encoding="utf-8")
+    repo = _schema_gate_script(tmp_path, head)
+    result = _run_schema_gate(repo, schema)
+    out = result.stdout + result.stderr
+    assert "exported to a temp dir" in out
+    assert f"\nSCHEMA_REPO={schema}\n" not in out
+
+
+def test_local_gate_fails_closed_without_a_readable_pin(tmp_path: Path) -> None:
+    schema, _first, _head = _schema_checkout(tmp_path)
+    repo = _schema_gate_script(tmp_path, None)
+    result = _run_schema_gate(repo, schema)
+    assert result.returncode != 0
+    assert "cannot read the TraigentSchema pin" in result.stdout + result.stderr

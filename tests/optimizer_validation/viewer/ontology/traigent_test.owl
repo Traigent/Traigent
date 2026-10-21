@@ -240,25 +240,17 @@
 # ExecutionMode Individuals
 # =============================================================================
 
-:execution_edge_analytics a :ExecutionMode ;
-    rdfs:label "edge_analytics" ;
-    rdfs:comment "Local execution with analytics" .
-
-:execution_privacy a :ExecutionMode ;
-    rdfs:label "privacy" ;
-    rdfs:comment "Local execution, no data transmission" .
+:execution_local a :ExecutionMode ;
+    rdfs:label "local" ;
+    rdfs:comment "Local-only execution (canonical local member of ExecutionMode)" .
 
 :execution_hybrid a :ExecutionMode ;
     rdfs:label "hybrid" ;
-    rdfs:comment "Local with cloud fallback" .
+    rdfs:comment "Local execution with hybrid backend routing" .
 
-:execution_cloud a :ExecutionMode ;
-    rdfs:label "cloud" ;
-    rdfs:comment "Full cloud execution" .
-
-:execution_standard a :ExecutionMode ;
-    rdfs:label "standard" ;
-    rdfs:comment "Default execution mode" .
+:execution_hybrid_api a :ExecutionMode ;
+    rdfs:label "hybrid_api" ;
+    rdfs:comment "Hybrid execution routed through the API" .
 
 # =============================================================================
 # Algorithm Individuals

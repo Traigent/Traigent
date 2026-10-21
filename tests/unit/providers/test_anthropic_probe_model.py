@@ -41,3 +41,32 @@ def test_anthropic_probe_model_is_known_to_validator() -> None:
 
     assert "gemini-3.8-flash" in _KNOWN_MODELS["google"]
     assert "claude-haiku-4-5-20251001" in _KNOWN_MODELS["anthropic"]
+
+
+def test_anthropic_probe_uses_current_claude_5_5_haiku(monkeypatch) -> None:
+    pytest.importorskip("anthropic")
+    from traigent.providers import ProviderValidator
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-key-not-real")
+    sent: dict[str, object] = {}
+
+    def fake_count_tokens(self, **kwargs):  # noqa: ANN001, ANN003
+        sent.update(kwargs)
+        return mock.Mock()
+
+    with mock.patch(
+        "anthropic.resources.messages.Messages.count_tokens", fake_count_tokens
+    ):
+        ProviderValidator()._validate_anthropic()
+    assert sent["model"] == "claude-haiku-5-5"
+    assert not str(sent["model"]).startswith("claude-3")
+
+
+def test_known_anthropic_models_include_5_5_and_exclude_retired() -> None:
+    from traigent.providers.validation import _KNOWN_MODELS
+
+    known = _KNOWN_MODELS["anthropic"]
+    for model_id in ("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"):
+        assert model_id in known
+    assert not [m for m in known if is_retired_model(m)]
+    assert not any(m.startswith("claude-3") for m in known)

@@ -293,7 +293,6 @@ def jwt_development_mode(monkeypatch, request):
     _live_test_paths = (
         "tests/cloud/test_sync_live_contract.py",
         "tests/integration/backend/test_hybrid_session_live.py",
-        "tests/integration/backend/test_backend_minimal.py",
         "tests/integration/test_ctd_execution_modes_live.py",
     )
     _node_path = _test_path(request.node)

@@ -35,7 +35,7 @@ from traigent.config.backend_config import BackendConfig
 from traigent.core.session_types import safe_http_error_summary
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.logging import get_logger
-from traigent.utils.trial_costs import is_cost_unmeasured
+from traigent.utils.trial_costs import is_cost_unmeasured, lift_cost_floor_to_body
 
 # HTTP Content-Type header constant
 _JSON_CONTENT_TYPE_HEADER = {"Content-Type": "application/json"}
@@ -1061,6 +1061,8 @@ class TrialOperations:
                 metadata=metadata,
             )
 
+            lift_cost_floor_to_body(result_data)
+
             # Add measures and summary_stats at the top level if present
             if measures is not None:
                 result_data["measures"] = copy.deepcopy(measures)
@@ -1283,6 +1285,7 @@ class TrialOperations:
                     telemetry_sources=(summary_stats, submission_metadata),
                     logger=logger,
                 )
+                lift_cost_floor_to_body(submission_data)
 
             # Validate the submission data. Schema validation is authoritative;
             # invalid payloads must not be posted to the backend.

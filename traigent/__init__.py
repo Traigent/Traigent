@@ -94,8 +94,8 @@ if not _is_truthy_env(os.environ.get("TRAIGENT_LITELLM_LIVE_PRICES")):
             "LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS pin could not prevent "
             "its import-time network fetch. Import traigent before "
             "litellm, or set those two env vars yourself, to avoid it. "
-            "See traigent/skills/traigent-quickstart/references/"
-            "environment-variables.md."
+            "The environment variables are documented in the traigent-skills "
+            "repo (install it with `npx skills add Traigent/traigent-skills`)."
         )
 
 

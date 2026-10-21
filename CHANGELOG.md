@@ -6,7 +6,51 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Anthropic key probe uses a current Claude id (#2651).** `validate_providers` probes with `claude-haiku-5-5` (was `claude-haiku-4-5-20251001`); the known-models list carries the Claude 5.5 ids and no retired `claude-3*` ids.
+- **Dev tooling now agrees with CI (#2469).** `release-review.yml` formats with
+  `ruff format --check` (as the required PR gate does) instead of black; the `dev`
+  extra exact-pins `isort==9.0.1` and `mypy==2.3.1` (the versions in
+  `.pre-commit-config.yaml` and `uv.lock`); `scripts/local_gate.sh` tests generated
+  schema types against the commit in `scripts/ci/schema-pin.txt` (exporting it from
+  the sibling checkout when that is at another commit, failing closed when the pin
+  is unreadable or absent).
+- **BREAKING (packaging): the SDK no longer bundles `traigent/skills` (#1609).**
+  The folder and its package-data entry are removed; the skills live only in
+  `Traigent/traigent-skills` (`npx skills add Traigent/traigent-skills`, which
+  `traigent onboard` already runs). The runtime message that pointed at the bundled
+  folder now points to installing `traigent-skills`. The bundle-only content guards
+  (lifecycle-vocabulary lint, decorator-skill snippet test, MLflow skill example
+  check) go with it; the tracker no-local-default check stays.
+- **Nous provider auth flow is marked UNVERIFIED (#2067).** The six "confirm
+  before merge" OWNER markers are now explicit UNVERIFIED notes (token endpoint,
+  `auth.json` schema, refresh request shape, base URL, model-id form), the
+  provider logs one value-free warning at first use, and
+  `docs/guides/nous-provider.md` states the flow was not checked against the live
+  service.
+
+- **`generate-config -o tvl` structural constraints now load (#2647).** The
+  generator's known constraint shapes (`require(...)`, `implies(...)`,
+  `lambda config: ...`) are translated to the `expr` / `when`-`then` forms the
+  SDK's own `load_tvl_spec` accepts. A shape outside that grammar is skipped
+  with a value-free warning naming only the constraint id, instead of being
+  written as an unloadable `code` entry.
+
 ### Changed
+
+- **Honest run cost totals; unmeasured-cost floor in its own field (#2688).** When
+  any trial's cost is unmeasured, `OptimizationResult.total_cost` and
+  `metrics["total_cost"]` are now unknown (`None` / absent) instead of a partial
+  sum; `metrics["cost_floor_usd"]` (known costs plus the floors of unmeasured
+  trials) and `metrics["cost_unmeasured_trials"]` report the exact lower bound
+  and count. Unmeasured trials are submitted with `cost_unmeasured = 1.0` and
+  their floor as top-level `cost_floor_usd` in the results body; budget-armed
+  sessions additionally keep `metrics.cost = floor` as a temporary bridge until
+  the backend reads `cost_floor_usd`; other sessions send no `metrics.cost`.
+  `SimpleScoringEvaluator`
+  no longer hands placeholder `$0` costs (unmeasured or unpriced usage) to the
+  scoring function, progress callback or trial metrics.
 
 - **Finalize propagates ownership/auth errors (#2510).** HTTP 401/403 from the
   session finalize call now raise `CloudServiceError` instead of being swallowed

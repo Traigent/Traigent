@@ -24,6 +24,7 @@ from traigent.utils.langchain_interceptor import (
 )
 from traigent.utils.logging import configure_litellm_logging, get_logger
 from traigent.utils.mock_provenance import note_real_call
+from traigent.utils.response_timing import record_response_time_ms
 
 logger = get_logger(__name__)
 
@@ -249,8 +250,9 @@ def patch_litellm_for_metadata_capture(
                 if kwargs.get("stream", False):
                     return response
 
-                # Inject timing into response for the handler chain
-                response.response_time_ms = response_time_ms
+                # Record timing for the handler chain without mutating a
+                # pydantic response (#1812: races LiteLLM's model_dump thread).
+                record_response_time_ms(response, response_time_ms)
 
                 capture_observed_response(
                     response,
@@ -305,8 +307,9 @@ def patch_litellm_for_metadata_capture(
                 if kwargs.get("stream", False):
                     return response
 
-                # Inject timing into response for the handler chain
-                response.response_time_ms = response_time_ms
+                # Record timing for the handler chain without mutating a
+                # pydantic response (#1812: races LiteLLM's model_dump thread).
+                record_response_time_ms(response, response_time_ms)
 
                 capture_observed_response(
                     response,

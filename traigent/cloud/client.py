@@ -82,6 +82,8 @@ from .models import (
     session_narrative_to_wire,
     session_task_type_to_wire,
 )
+from traigent.utils.trial_costs import lift_cost_floor_to_body
+
 from .session_budgets import (
     ensure_cost_metric_for_budgeted_completed_submission,
     is_cost_budget_armed_session,
@@ -1940,6 +1942,7 @@ class TraigentCloudClient(BaseTraigentClient):
                 telemetry_sources=(result.metadata, request_data.get("metadata")),
                 logger=logger,
             )
+            lift_cost_floor_to_body(request_data)
 
             async with self._aio_session.post(
                 url, json=request_data, headers=await self._get_headers()

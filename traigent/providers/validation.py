@@ -92,6 +92,10 @@ _LITELLM_PREFIX_PATTERN = re.compile(r"^([a-z][a-z0-9_]*)[:/](.+)$")
 # Known valid models per provider (as of Jan 2026)
 # Used to warn users about potentially invalid model names before API calls
 # Note: This list may not be exhaustive; unknown models get a warning, not an error
+# Cheapest current Claude id (same 5.5 family as model_discovery's
+# KNOWN_ANTHROPIC_MODELS); never a retired claude-3* id (#2651).
+_ANTHROPIC_PROBE_MODEL = "claude-haiku-5-5"
+
 _KNOWN_MODELS: dict[str, frozenset[str]] = {
     "openai": frozenset(
         {
@@ -827,7 +831,7 @@ class ProviderValidator:
             client = Anthropic(api_key=key, timeout=self.timeout)
             # Use count_tokens - zero cost, validates auth
             client.messages.count_tokens(
-                model="claude-haiku-4-5-20251001",
+                model=_ANTHROPIC_PROBE_MODEL,
                 messages=[{"role": "user", "content": "ping"}],
             )
             self._cache_success("anthropic", key)

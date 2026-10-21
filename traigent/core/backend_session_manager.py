@@ -74,9 +74,10 @@ from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.function_identity import FunctionDescriptor
 from traigent.utils.logging import get_logger
 from traigent.utils.trial_costs import (
+    COST_FLOOR_WIRE_KEY,
     TRIAL_COST_FIELDS,
     extract_trial_cost_metric,
-    lift_flagged_cost_to_floor,
+    move_flagged_cost_to_floor_field,
     is_cost_unmeasured,
     is_finite_numeric_cost,
 )
@@ -1068,18 +1069,17 @@ class BackendSessionManager:
         if is_cost_unmeasured(metrics_payload) or is_cost_unmeasured(
             getattr(trial_result, "metrics", None)
         ):
-            # Flagged unknown. A budget-armed session needs a numeric cost, so
-            # send the reported lower bound WITH the flag (the flag is the
-            # signal); a flagged ``cost`` of 0 never overrides reported spend.
-            # Elsewhere cost stays omitted.
-            if session_id in self._session_cost_budget_armed:
-                metrics_payload["cost_unmeasured"] = 1.0
-                lift_flagged_cost_to_floor(
-                    metrics_payload,
-                    getattr(trial_result, "metrics", None),
-                    getattr(trial_result, "metadata", None),
-                    metadata,
-                )
+            # Flagged unknown: send the reported floor in its own field WITH
+            # the flag. Only a budget-armed session also gets the TEMPORARY
+            # metrics.cost bridge (Traigent#2688); elsewhere cost stays absent.
+            metrics_payload["cost_unmeasured"] = 1.0
+            move_flagged_cost_to_floor_field(
+                metrics_payload,
+                getattr(trial_result, "metrics", None),
+                getattr(trial_result, "metadata", None),
+                metadata,
+                bridge_cost=session_id in self._session_cost_budget_armed,
+            )
             return
 
         if is_finite_numeric_cost(metrics_payload.get("cost")):
@@ -1104,7 +1104,12 @@ class BackendSessionManager:
 
         # No cost and no flag: the spend is unknown, never a measured $0.
         metrics_payload["cost_unmeasured"] = 1.0
-        metrics_payload["cost"] = 0.0  # lower bound: nothing reported
+        # Nothing reported: the floor (0.0) travels in its own field, never
+        # as ``cost``.
+        metrics_payload.pop("cost", None)
+        metrics_payload[COST_FLOOR_WIRE_KEY] = 0.0
+        # TEMPORARY bridge until backend reads cost_floor_usd (Traigent#2688)
+        metrics_payload["cost"] = 0.0
         if not self._cost_budget_zero_backfill_logged:
             logger.debug(
                 "no cost telemetry; submitting budgeted trial as "

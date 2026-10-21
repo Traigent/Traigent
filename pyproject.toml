@@ -230,9 +230,9 @@ dev = [
     "pytest-mock>=3.10.0",
     "pytest-xdist>=3.0.0",  # Required by addopts: -n auto --dist loadgroup
     "black>=26.3.1",  # CVE-2026-32274 fix
-    "isort>=5.10.0",
+    "isort==9.0.1",  # Exact pin (#2469): matches .pre-commit-config.yaml + uv.lock
     "flake8>=5.0.0",
-    "mypy>=1.0.0",
+    "mypy==2.3.1",  # Exact pin (#2469): matches .pre-commit-config.yaml + uv.lock
     "types-PyYAML>=6.0.0",
     "types-requests>=2.31.0",
     "types-bleach>=6.0.0",
@@ -319,7 +319,6 @@ exclude = ["tests*", "demos*", "docs*", "traigent.experimental*"]
 traigent = [
     "py.typed",
     "examples/**/*.jsonl",
-    "skills/**/*.md",
     "playbook/schemas/*.json",
     "observability/otel/*.json",
     "connectors/schemas/*.json",
@@ -525,7 +524,7 @@ exclude = [
     # Python-only tool -- the REQUIRED pr-gate 'preflight' job format-checks
     # `git diff -- '*.py'` only, while `make format-ruff` passes whole
     # directories and would silently rewrite 26 checked-in Markdown files
-    # (including the user-facing traigent/skills/**/SKILL.md docs), breaking
+    # (and any other checked-in Markdown), breaking
     # that target's documented "matches the REQUIRED 'preflight' CI check"
     # contract. Excluding *.md preserves the exact pre-0.16 scope; adopting
     # Markdown formatting is a separate, deliberate decision.

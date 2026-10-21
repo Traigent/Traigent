@@ -20,7 +20,8 @@ import pytest
 from traigent.cloud.session_budgets import (
     ensure_cost_metric_for_budgeted_completed_submission as ensure,
 )
-from traigent.utils.trial_costs import lift_flagged_cost_to_floor
+from traigent.utils.trial_costs import move_flagged_cost_to_floor_field
+from traigent.utils.trial_costs import COST_FLOOR_WIRE_KEY
 
 REPO = Path(__file__).resolve().parents[3]
 ADVANCED = REPO / "examples" / "advanced"
@@ -85,17 +86,17 @@ def test_marker_absent_with_real_client(monkeypatch: pytest.MonkeyPatch) -> None
 # --- follow-up 1: a numeric string cost never survives the floor lift --------
 def test_lift_replaces_numeric_string_cost_with_floor() -> None:
     metrics = {"cost": "0.4", "cost_lower_bound": 0.4, "cost_unmeasured": 1}
-    assert lift_flagged_cost_to_floor(metrics) is True
-    assert metrics["cost"] == pytest.approx(0.4)
-    assert isinstance(metrics["cost"], float)
+    assert move_flagged_cost_to_floor_field(metrics) is True
+    assert "cost" not in metrics  # no bridge unless the session is budget-armed
+    assert metrics[COST_FLOOR_WIRE_KEY] == pytest.approx(0.4)
 
 
 def test_budget_writer_cloud_lifts_numeric_string_cost() -> None:
     client = SimpleNamespace(_cost_budget_armed_sessions={"s1"})
     metrics = {"cost": "0.4", "cost_lower_bound": 0.4, "cost_unmeasured": 1}
     ensure(client=client, session_id="s1", metrics=metrics, status="COMPLETED")
-    assert isinstance(metrics["cost"], float)
-    assert metrics["cost"] == pytest.approx(0.4)
+    assert metrics["cost"] == metrics[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
+    assert metrics[COST_FLOOR_WIRE_KEY] == pytest.approx(0.4)
 
 
 def test_budget_writer_session_manager_lifts_numeric_string_cost() -> None:
@@ -111,14 +112,15 @@ def test_budget_writer_session_manager_lifts_numeric_string_cost() -> None:
     manager._ensure_budget_cost_metric(
         session_id="s1", trial_result=trial, metrics_payload=payload, metadata={}
     )
-    assert isinstance(payload["cost"], float)
-    assert payload["cost"] == pytest.approx(0.4)
+    assert payload["cost"] == payload[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
+    assert payload[COST_FLOOR_WIRE_KEY] == pytest.approx(0.4)
 
 
-def test_lift_keeps_numeric_original_above_floor() -> None:
+def test_floor_field_keeps_numeric_original_above_floor() -> None:
     metrics = {"cost": 0.9, "cost_lower_bound": 0.4, "cost_unmeasured": 1}
-    assert lift_flagged_cost_to_floor(metrics) is False
-    assert metrics["cost"] == 0.9
+    assert move_flagged_cost_to_floor_field(metrics) is True
+    assert "cost" not in metrics  # no bridge unless the session is budget-armed
+    assert metrics[COST_FLOOR_WIRE_KEY] == 0.9
 
 
 # --- follow-up 2: walkthrough 06 scorer unwraps the with_usage envelope ------

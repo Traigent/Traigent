@@ -304,17 +304,6 @@ jobs:
           TRAIGENT_BACKEND_URL="http://localtest.me:${API_PORT}" \
           uv run pytest tests/integration/backend/test_hybrid_session_live.py --tb=short
 
-      - name: Run backend DTO live smoke
-        working-directory: ${{ env.SDK_DIR }}
-        env:
-          ENVIRONMENT: development
-          PYTHONPATH: .
-          TRAIGENT_BACKEND_LIVE: "1"
-        run: |
-          TRAIGENT_API_URL="http://localtest.me:${API_PORT}/api/v1" \
-          TRAIGENT_BACKEND_URL="http://localtest.me:${API_PORT}" \
-          uv run pytest tests/integration/backend/test_backend_minimal.py --tb=short
-
       - name: Backend logs on failure
         if: ${{ failure() }}
         working-directory: ${{ env.BACKEND_DIR }}

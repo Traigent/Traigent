@@ -4518,13 +4518,14 @@ class SimpleScoringEvaluator(BaseEvaluator):
         Returns:
             Dictionary of LLM metrics
         """
-        return {
+        cost = metrics_obj.cost
+        unpriced = bool(getattr(cost, "unpriced", False))
+        unmeasured = bool(getattr(cost, "unmeasured", False))
+        known_cost = getattr(cost, "known_cost", 0.0)
+        llm_metrics: dict[str, Any] = {
             "total_tokens": getattr(metrics_obj.tokens, "total_tokens", 0),
             "prompt_tokens": getattr(metrics_obj.tokens, "prompt_tokens", 0),
             "completion_tokens": getattr(metrics_obj.tokens, "completion_tokens", 0),
-            "total_cost": getattr(metrics_obj.cost, "total_cost", 0.0),
-            "input_cost": getattr(metrics_obj.cost, "input_cost", 0.0),
-            "output_cost": getattr(metrics_obj.cost, "output_cost", 0.0),
             # True when this example's cost could not be priced -- unknown
             # spend recorded as $0, not verified-free $0 (#1597). Threaded
             # through so per-trial aggregation can distinguish the two
@@ -4532,19 +4533,26 @@ class SimpleScoringEvaluator(BaseEvaluator):
             # Numeric flag (1.0/0.0), never a Python bool: the wire-format
             # ``MeasuresDict`` rejects bool measures for JSON Schema parity
             # (``traigent.cloud.dtos.MeasuresDict._validate_dict``).
-            "cost_unpriced": (
-                1.0 if getattr(metrics_obj.cost, "unpriced", False) else 0.0
-            ),
+            "cost_unpriced": 1.0 if unpriced else 0.0,
             # No captured usage: the cost is unknown, not $0 (#2517).
-            "cost_unmeasured": (
-                1.0 if getattr(metrics_obj.cost, "unmeasured", False) else 0.0
-            ),
-            "known_cost": getattr(metrics_obj.cost, "known_cost", 0.0),
+            "cost_unmeasured": 1.0 if unmeasured else 0.0,
+            "known_cost": known_cost,
             "response_time_ms": getattr(metrics_obj.response, "response_time_ms", 0),
             "tokens_per_second": getattr(metrics_obj.response, "tokens_per_second", 0),
             "model": model_name or "unknown",
             "_full_metrics": metrics_obj,
         }
+        total_cost = getattr(cost, "total_cost", 0.0)
+        if unmeasured or unpriced:
+            # Unknown cost: the cost keys stay out so the scoring function and
+            # progress callback never see a placeholder $0 as a measured
+            # number; the exact known part is the floor (#2688).
+            llm_metrics["known_cost"] = max(float(known_cost or 0.0), float(total_cost))
+        else:
+            llm_metrics["total_cost"] = total_cost
+            llm_metrics["input_cost"] = getattr(cost, "input_cost", 0.0)
+            llm_metrics["output_cost"] = getattr(cost, "output_cost", 0.0)
+        return llm_metrics
 
     def _build_metric_kwargs(
         self,
@@ -4705,8 +4713,9 @@ class SimpleScoringEvaluator(BaseEvaluator):
         )
         missing_default = None if strict_nulls else 0.0
 
-        if llm_metrics.get("cost_unmeasured"):
-            # Unknown cost: leave the cost keys out; never record 0.0 (#2517).
+        if llm_metrics.get("cost_unmeasured") or llm_metrics.get("cost_unpriced"):
+            # Unknown cost (no usage, or usage that could not be priced): leave
+            # the cost keys out; never record a placeholder 0.0 (#2517, #2688).
             example_metrics["cost_unmeasured"] = 1.0
             if llm_metrics.get("known_cost"):
                 example_metrics["known_cost"] = llm_metrics["known_cost"]
@@ -5293,7 +5302,11 @@ class SimpleScoringEvaluator(BaseEvaluator):
         logger.debug(
             f"Captured LLM metrics for example {example_index}: "
             f"tokens={llm_metrics['total_tokens']}, "
-            f"cost=${llm_metrics['total_cost']:.8f}"
+            + (
+                "cost=unmeasured"
+                if "total_cost" not in llm_metrics
+                else f"cost=${llm_metrics['total_cost']:.8f}"
+            )
         )
 
         return llm_metrics

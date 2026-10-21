@@ -215,18 +215,17 @@ class AutoConfigResult:
         # ``header`` section is rejected as an unknown top-level key (#2647).
         spec["tvl"] = {"module": module_name}
 
-        # Append structural constraints from the pipeline (stored as code
-        # strings, not live Constraint objects, so we add them directly).
+        # Structural constraints are stored as code strings; translate the known
+        # shapes to loader-accepted expr / when-then entries and skip (with a
+        # value-free warning) any shape the loader grammar cannot express (#2647).
         if self.structural_constraints:
-            structural = [
-                {
-                    "description": sc.description,
-                    "code": sc.constraint_code,
-                    "requires": list(sc.requires_tvars),
-                }
-                for sc in self.structural_constraints
-            ]
-            spec.setdefault("constraints", {})["structural"] = structural
+            from traigent.config_generator.tvl_constraints import (
+                structural_constraints_to_tvl,
+            )
+
+            structural = structural_constraints_to_tvl(self.structural_constraints)
+            if structural:
+                spec.setdefault("constraints", {})["structural"] = structural
 
         if self.objectives:
             spec["objectives"] = [
