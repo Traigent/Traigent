@@ -4311,7 +4311,7 @@
     <span class="n">agent_platform</span><span class="o">=</span><span class="s2">"openai"</span><span class="p">,</span>      <span class="c1"># or "langchain", "custom"</span>
     <span class="n">prompt_template</span><span class="o">=</span><span class="s2">"Your prompt with </span><span class="si">{variables}</span><span class="s2">"</span><span class="p">,</span>
     <span class="n">model_parameters</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">"model"</span><span class="p">:</span> <span class="s2">"o4-mini"</span><span class="p">,</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="s2">"gpt-4.1-mini"</span><span class="p">,</span>
         <span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.7</span><span class="p">,</span>
         <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="mi">150</span>
     <span class="p">},</span>
@@ -4326,7 +4326,7 @@
 <p>Define which parameters to optimize:</p>
 <div class="highlight"><pre><span></span><code><span class="n">configuration_space</span> <span class="o">=</span> <span class="p">{</span>
     <span class="c1"># Categorical parameters</span>
-    <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"o4-mini"</span><span class="p">,</span> <span class="s2">"GPT-4o"</span><span class="p">],</span>
+    <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4.1-mini"</span><span class="p">,</span> <span class="s2">"GPT-4o"</span><span class="p">],</span>
 
     <span class="c1"># Continuous parameters</span>
     <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
@@ -4368,7 +4368,7 @@
     <span class="n">agent_type</span><span class="o">=</span><span class="s2">"conversational"</span><span class="p">,</span>
     <span class="n">agent_platform</span><span class="o">=</span><span class="s2">"openai"</span><span class="p">,</span>
     <span class="n">prompt_template</span><span class="o">=</span><span class="s2">"Answer the question: </span><span class="si">{question}</span><span class="s2">"</span><span class="p">,</span>
-    <span class="n">model_parameters</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"o4-mini"</span><span class="p">,</span> <span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.7</span><span class="p">}</span>
+    <span class="n">model_parameters</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"gpt-4.1-mini"</span><span class="p">,</span> <span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.7</span><span class="p">}</span>
 <span class="p">)</span>
 
 <span class="c1"># Create evaluation dataset</span>
@@ -4595,7 +4595,7 @@
 <h2 id="platform-specific-considerations">Platform-Specific Considerations<a class="headerlink" href="#platform-specific-considerations" title="Permanent link">&para;</a></h2>
 <h3 id="openai-platform">OpenAI Platform<a class="headerlink" href="#openai-platform" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Supports models: o4-mini, gpt-4, etc.</li>
+<li>Supports models: gpt-4.1-mini, gpt-4.1, etc.</li>
 <li>Key parameters: temperature, max_tokens, top_p, frequency_penalty</li>
 <li>Cost calculation based on token usage</li>
 </ul>
@@ -4746,7 +4746,7 @@
         <span class="s2">"warm_start"</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
         <span class="s2">"initial_configs"</span><span class="p">:</span> <span class="p">[</span>
             <span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"GPT-4o"</span><span class="p">,</span> <span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">},</span>
-            <span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"o4-mini"</span><span class="p">,</span> <span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.7</span><span class="p">}</span>
+            <span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"gpt-4.1-mini"</span><span class="p">,</span> <span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.7</span><span class="p">}</span>
         <span class="p">]</span>
     <span class="p">}</span>
 <span class="p">)</span>

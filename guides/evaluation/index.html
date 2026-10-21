@@ -1607,6 +1607,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="4) Advanced custom evaluators">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#failure-semantics-custom_evaluator-vs-metric_functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure semantics: custom_evaluator vs metric_functions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -3697,6 +3714,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="4) Advanced custom evaluators">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#failure-semantics-custom_evaluator-vs-metric_functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure semantics: custom_evaluator vs metric_functions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -4100,6 +4134,34 @@ with an explicit error and log at ERROR level. The contract is
 <span class="k">def</span><span class="w"> </span><span class="nf">strict_agent</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="o">...</span>
 </code></pre></div>
+<h4 id="failure-semantics-custom_evaluator-vs-metric_functions">Failure semantics: <code>custom_evaluator</code> vs <code>metric_functions</code><a class="headerlink" href="#failure-semantics-custom_evaluator-vs-metric_functions" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th><code>custom_evaluator</code></th>
+<th><code>metric_functions</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Your code raises on one row</td>
+<td>That row scores 0.0 on quality metrics (cost-family metrics stay unmeasured). The trial stays completed unless every row fails. When some but not all rows failed, the trial metadata records <code>custom_evaluator_failed_rows</code> and <code>custom_evaluator_total_rows</code>, and <code>result.warning_codes</code> contains <code>CUSTOM_EVALUATOR_ROWS_FAILED</code>.</td>
+<td>A metric function that raises on an objective metric fails the trial; on a non-objective metric the error is recorded in <code>metric_errors</code> and the metric is left out for that row.</td>
+</tr>
+<tr>
+<td>All rows raise</td>
+<td>The trial fails (no warning code; the failure itself is the signal).</td>
+<td>Same for an objective metric.</td>
+</tr>
+<tr>
+<td>A row omits an objective key</td>
+<td>The trial fails with an <code>EvaluationError</code> naming the metric and the row count. No 0.0 is substituted.</td>
+<td>The trial fails; no 0.0 is substituted for an objective.</td>
+</tr>
+</tbody>
+</table>
+<p>The warning code carries counts only, never row inputs, outputs or exception text.</p>
 <h3 id="5-mock-mode">5) Mock mode<a class="headerlink" href="#5-mock-mode" title="Permanent link">&para;</a></h3>
 <p>Call <code>traigent.testing.enable_mock_mode_for_quickstart()</code> near the top of local tutorial or test code to intercept external LLM/API calls and replace them with canned/deterministic responses. Your evaluator (custom or the built-in <code>LocalEvaluator</code>) still scores those canned responses with its real scoring logic - the SDK no longer synthesizes metrics. Ideal for CI, demos, and budget-safe smoke tests.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">enable_mock_mode_for_quickstart</span>

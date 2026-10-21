@@ -4624,7 +4624,7 @@ GET  /traigent/v1/health         - Optional
 <span class="nd">@app</span><span class="o">.</span><span class="n">tunables</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">config_space</span><span class="p">():</span>
     <span class="k">return</span> <span class="p">{</span>
-        <span class="s2">"model"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"enum"</span><span class="p">,</span> <span class="s2">"values"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4"</span><span class="p">,</span> <span class="s2">"claude-3"</span><span class="p">]},</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"enum"</span><span class="p">,</span> <span class="s2">"values"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4.1"</span><span class="p">,</span> <span class="s2">"claude-3"</span><span class="p">]},</span>
         <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"float"</span><span class="p">,</span> <span class="s2">"range"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">]},</span>
     <span class="p">}</span>
 
@@ -4657,7 +4657,7 @@ GET  /traigent/v1/health         - Optional
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
     <span class="n">accuracy</span> <span class="o">=</span> <span class="n">compute_accuracy</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="n">target</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"strict_mode"</span><span class="p">)</span> <span class="ow">and</span> <span class="n">context</span><span class="o">.</span><span class="n">execution_config</span><span class="p">:</span>
-        <span class="k">if</span> <span class="n">context</span><span class="o">.</span><span class="n">execution_config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"model"</span><span class="p">)</span> <span class="o">==</span> <span class="s2">"gpt-4"</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">context</span><span class="o">.</span><span class="n">execution_config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"model"</span><span class="p">)</span> <span class="o">==</span> <span class="s2">"gpt-4.1"</span><span class="p">:</span>
             <span class="n">accuracy</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">accuracy</span><span class="p">,</span> <span class="mf">0.95</span><span class="p">)</span>
     <span class="k">return</span> <span class="p">{</span>
         <span class="s2">"accuracy"</span><span class="p">:</span> <span class="n">accuracy</span><span class="p">,</span>
@@ -5036,7 +5036,7 @@ npx<span class="w"> </span>@redocly/cli<span class="w"> </span>lint<span class="
 <ol>
 <li>Leave <code>offline=False</code> and do not set <code>TRAIGENT_OFFLINE=1</code>.</li>
 <li>Set a reachable backend (<code>TRAIGENT_BACKEND_URL</code> or <code>TRAIGENT_API_URL</code>).</li>
-<li>Set <code>TRAIGENT_API_KEY</code> (or <code>TRAIGENT_ACCESS_TOKEN</code>).</li>
+<li>Set <code>TRAIGENT_API_KEY</code>.</li>
 <li>Ensure network/DNS reachability to the backend from the runtime environment.</li>
 </ol>
 <p>If these are missing, optimization may still run locally but backend sync can be skipped.</p>

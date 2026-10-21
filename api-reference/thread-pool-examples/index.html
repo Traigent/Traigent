@@ -3859,7 +3859,7 @@
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"latency"</span><span class="p">],</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4"</span><span class="p">],</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4.1"</span><span class="p">],</span>
         <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">],</span>
     <span class="p">},</span>
     <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">"eval_dataset"</span><span class="p">:</span> <span class="s2">"documents.jsonl"</span><span class="p">},</span>
@@ -3908,7 +3908,7 @@
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">,</span> <span class="s2">"latency"</span><span class="p">],</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4"</span><span class="p">],</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4.1"</span><span class="p">],</span>
         <span class="s2">"batch_size"</span><span class="p">:</span> <span class="p">[</span><span class="mi">10</span><span class="p">,</span> <span class="mi">20</span><span class="p">,</span> <span class="mi">50</span><span class="p">],</span>
         <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
     <span class="p">},</span>
@@ -3967,9 +3967,9 @@
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"latency"</span><span class="p">],</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">"researcher_model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4"</span><span class="p">],</span>
-        <span class="s2">"writer_model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4"</span><span class="p">],</span>
-        <span class="s2">"editor_model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4"</span><span class="p">],</span>
+        <span class="s2">"researcher_model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4.1"</span><span class="p">],</span>
+        <span class="s2">"writer_model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4.1"</span><span class="p">],</span>
+        <span class="s2">"editor_model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4.1"</span><span class="p">],</span>
         <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">],</span>
     <span class="p">},</span>
     <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">"eval_dataset"</span><span class="p">:</span> <span class="s2">"articles.jsonl"</span><span class="p">},</span>
@@ -4034,8 +4034,8 @@
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">],</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">"mapper_model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4"</span><span class="p">],</span>
-        <span class="s2">"reducer_model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4"</span><span class="p">],</span>
+        <span class="s2">"mapper_model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4.1"</span><span class="p">],</span>
+        <span class="s2">"reducer_model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4.1"</span><span class="p">],</span>
         <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">],</span>
     <span class="p">},</span>
     <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">"eval_dataset"</span><span class="p">:</span> <span class="s2">"large_documents.jsonl"</span><span class="p">},</span>

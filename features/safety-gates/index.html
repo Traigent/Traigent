@@ -1268,6 +1268,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#mock-mode-and-the-cost-preflight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mock Mode and the Cost Preflight
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#dataset-path-containment" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3398,6 +3409,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#mock-mode-and-the-cost-preflight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mock Mode and the Cost Preflight
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#dataset-path-containment" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3484,8 +3506,9 @@ your provider may still bill you, use one explicit approval:</p>
 <li>or create the XDG cost approval token (<code>approved</code> or <code>approved:&lt;limit&gt;</code>).</li>
 </ul>
 <p>Approved runs still emit the unpriced-model warning. Mock LLM quickstart mode
-skips this model-pricing preflight, but it is a test/demo mode, not a production
-billing bypass.</p>
+does not skip this model-pricing preflight (raw provider calls can still be real
+under the mock flag); pass <code>cost_approved=True</code> or set <code>TRAIGENT_COST_APPROVED=true</code>
+for a keyless demo that uses unpriced model names.</p>
 <p>To fail before any trial starts, enable strict cost accounting:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_STRICT_COST_ACCOUNTING</span><span class="o">=</span><span class="nb">true</span>
 </code></pre></div>
@@ -3500,6 +3523,15 @@ environment approval is:</p>
 <span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_APPROVED_BY</span><span class="o">=</span><span class="s2">"your_name"</span>
 </code></pre></div>
 <p><code>TRAIGENT_MOCK_LLM</code> does not bypass this CI approval gate.</p>
+<h2 id="mock-mode-and-the-cost-preflight">Mock Mode and the Cost Preflight<a class="headerlink" href="#mock-mode-and-the-cost-preflight" title="Permanent link">&para;</a></h2>
+<p>Mock mode alone does not skip the pre-run cost approval or the model-price
+coverage preflight, so an agent that mixes real and mock calls is still checked.
+Keyless walkthroughs and tests that are genuinely fully mocked opt out with
+<code>TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT=true</code>. The exemption applies only when mock
+LLM mode is on and the environment (<code>ENVIRONMENT</code>, <code>TRAIGENT_ENV</code> or
+<code>TRAIGENT_ENVIRONMENT</code>) is explicitly non-production, e.g. <code>ENVIRONMENT=development</code>.
+An unset or unknown environment counts as production and never gets the
+exemption. It is test/walkthrough-only and must not be set for real-LLM runs. Runtime cost accounting stays active.</p>
 <h2 id="dataset-path-containment">Dataset Path Containment<a class="headerlink" href="#dataset-path-containment" title="Permanent link">&para;</a></h2>
 <p>Evaluation datasets must resolve under the trusted dataset root. Set the root
 explicitly when a process should only read datasets from one directory:</p>
@@ -3509,9 +3541,8 @@ explicitly when a process should only read datasets from one directory:</p>
 trusted root.</p>
 <h2 id="backend-validation-loopback-gate">Backend Validation Loopback Gate<a class="headerlink" href="#backend-validation-loopback-gate" title="Permanent link">&para;</a></h2>
 <p>Loopback backend validation is default-closed. For local backend development,
-use an explicit non-production environment and opt in:</p>
+use an explicit non-production environment:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ENVIRONMENT</span><span class="o">=</span>development
-<span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_ALLOW_INSECURE_BACKEND</span><span class="o">=</span><span class="nb">true</span>
 </code></pre></div>
 <p>Do not use this override for production.</p>
 <h2 id="content-logging-opt-out">Content Logging Opt-Out<a class="headerlink" href="#content-logging-opt-out" title="Permanent link">&para;</a></h2>

@@ -3295,6 +3295,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#which-interpreter-the-gate-uses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which interpreter the gate uses
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3367,6 +3378,11 @@ tree does not block you.</p>
 <h2 id="bypassing">Bypassing<a class="headerlink" href="#bypassing" title="Permanent link">&para;</a></h2>
 <p><code>git push --no-verify</code> skips the pre-push hook. Use it only when you have
 verified the change another way.</p>
+<h2 id="which-interpreter-the-gate-uses">Which interpreter the gate uses<a class="headerlink" href="#which-interpreter-the-gate-uses" title="Permanent link">&para;</a></h2>
+<p><code>scripts/local_gate.sh</code> prefers the repo's <code>.venv</code> (<code>.venv/bin/pytest</code>, <code>.venv/bin/ruff</code>) over any
+<code>pytest</code>/<code>ruff</code> on <code>PATH</code>, because the pre-push hook does not activate the venv and <code>pyproject.toml</code>
+<code>addopts</code> needs <code>pytest-xdist</code> from the <code>dev</code> extra. The gate prints the resolved tools in its header
+and fails with an install hint if that interpreter cannot import <code>xdist</code>.</p>
 
 
 

@@ -3519,14 +3519,14 @@ should drop this paragraph once that lands and the test above passes again.</p>
 </tr>
 <tr>
 <td><code>traigent/cli/onboard_commands.py:125</code></td>
-<td><code>traigent mcp --help</code></td>
-<td>Check the MCP server entry point works</td>
+<td><code>traigent mcp register --help</code></td>
+<td>Check the MCP registration subcommand exists before offering it</td>
 <td><code>traigent onboard</code> CLI only</td>
 </tr>
 <tr>
-<td><code>traigent/cli/onboard_commands.py:144</code></td>
+<td><code>traigent/cli/onboard_commands.py:138</code></td>
 <td><code>traigent mcp register --agent &lt;name&gt;</code></td>
-<td>Register the MCP server with a coding agent</td>
+<td>Register the MCP server with a coding agent (offered only when the probe above succeeds)</td>
 <td><code>traigent onboard</code> CLI, after the user confirms</td>
 </tr>
 <tr>

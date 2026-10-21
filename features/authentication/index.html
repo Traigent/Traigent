@@ -5155,7 +5155,7 @@ and the <a href="../../api-reference/telemetry/">telemetry documentation</a>.</p
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">"eval_dataset"</span><span class="p">:</span> <span class="s2">"data.jsonl"</span><span class="p">},</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4"</span><span class="p">,</span> <span class="s2">"gpt-3.5-turbo"</span><span class="p">]}</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4.1"</span><span class="p">,</span> <span class="s2">"gpt-4.1-mini"</span><span class="p">]}</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">my_function</span><span class="p">(</span><span class="n">input_text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>

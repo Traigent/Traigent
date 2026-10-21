@@ -3513,7 +3513,7 @@ credentials.</p>
 <ul>
 <li>Never commit API keys or credentials</li>
 <li>Use environment variables for sensitive configuration</li>
-<li>Enable privacy mode for sensitive data</li>
+<li>Use <code>offline=True</code> to stop submission to the Traigent backend (the legacy <code>privacy_enabled</code> setting is deprecated and does not protect data). While an <code>offline=True</code> run is in flight, OpenTelemetry trace export, the langfuse client, workflow-trace ingestion and the standalone API clients are also disabled (fail closed; process-wide, <code>traigent/utils/env_config.py</code> <code>offline_run_scope</code>). <code>offline=True</code> is not a guarantee that nothing leaves the machine: model-provider calls use your own provider credentials and are not gated by it. Traigent observability is not privacy-preserving (issue #2240).</li>
 <li>Keep dependencies updated</li>
 </ul>
 

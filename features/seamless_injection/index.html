@@ -3502,7 +3502,7 @@ back to a runtime shim when no assignments can be rewritten.</p>
 <h2 id="how-it-works">How It Works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>AST rewrite first</strong>: Traigent replaces literal assignments that match
-   configuration keys (for example <code>model = "gpt-4"</code>).</li>
+   configuration keys (for example <code>model = "gpt-4.1"</code>).</li>
 <li><strong>Runtime shim fallback</strong>: If nothing is rewritten and the configuration
    overlaps the function signature, Traigent injects values at call time.</li>
 </ol>
@@ -3511,8 +3511,8 @@ parameters or defaults.</p>
 <h2 id="supported-patterns">Supported Patterns<a class="headerlink" href="#supported-patterns" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Variable assignments inside the function body</li>
-<li>Signature defaults (<code>def fn(model="gpt-4")</code>)</li>
-<li>Keyword-only defaults (<code>def fn(*, model="gpt-4")</code>)</li>
+<li>Signature defaults (<code>def fn(model="gpt-4.1")</code>)</li>
+<li>Keyword-only defaults (<code>def fn(*, model="gpt-4.1")</code>)</li>
 <li>Required parameters when callers omit them (shim fills from config)</li>
 </ul>
 <h2 id="known-limitations">Known Limitations<a class="headerlink" href="#known-limitations" title="Permanent link">&para;</a></h2>

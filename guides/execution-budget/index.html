@@ -3307,6 +3307,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#agents-that-make-no-model-calls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agents that make no model calls
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3452,6 +3463,23 @@ auto-debited. If you want them to count against the same budget, record them
 explicitly — e.g. from <code>with_usage()</code> data:</p>
 <div class="highlight"><pre><span></span><code><span class="n">budget</span><span class="o">.</span><span class="n">record_external</span><span class="p">(</span><span class="n">cost_usd</span><span class="o">=</span><span class="mf">0.012</span><span class="p">,</span> <span class="n">examples</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
 </code></pre></div>
+<h3 id="agents-that-make-no-model-calls">Agents that make no model calls<a class="headerlink" href="#agents-that-make-no-model-calls" title="Permanent link">&para;</a></h3>
+<p>Cost with no captured usage is <strong>unknown</strong>, never <code>$0</code>: an unmeasured example would
+otherwise rank as the cheapest. If an example path genuinely makes no model calls
+(a rule-based or lookup agent), say so by wrapping its return value in
+<code>traigent.with_usage(value, total_cost=0)</code>. That records a <em>measured</em> <code>$0</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"threshold"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.8</span><span class="p">]},</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">],</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"qa.jsonl"</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">answer</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+    <span class="n">threshold</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()[</span><span class="s2">"threshold"</span><span class="p">]</span>
+    <span class="n">value</span> <span class="o">=</span> <span class="n">rule_based_answer</span><span class="p">(</span><span class="n">question</span><span class="p">,</span> <span class="n">threshold</span><span class="p">)</span>  <span class="c1"># no provider call</span>
+    <span class="k">return</span> <span class="n">traigent</span><span class="o">.</span><span class="n">with_usage</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="n">total_cost</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+</code></pre></div>
+<p>Unwrapped, the same function reports cost as unmeasured and a strict run
+(<code>TRAIGENT_REQUIRE_COST_TRACKING</code>) names this fix in its error.</p>
 <h2 id="honesty-what-is-and-isnt-a-hard-guarantee">Honesty — what is, and isn't, a hard guarantee<a class="headerlink" href="#honesty-what-is-and-isnt-a-hard-guarantee" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Examples are a hard limit.</strong> Observable on every execution path, so exhaustion

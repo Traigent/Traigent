@@ -1942,6 +1942,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#mock-provenance-in-result-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mock provenance in result metadata
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#when-nothing-was-captured" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3423,6 +3434,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#mock-provenance-in-result-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mock provenance in result metadata
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#when-nothing-was-captured" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3482,9 +3504,9 @@ not know, and what a trial reports when nothing was captured.</p>
 </thead>
 <tbody>
 <tr>
-<td>LangChain <code>ChatOpenAI.invoke</code>, <code>ChatAnthropic.invoke</code>, Bedrock chat models</td>
+<td>LangChain <code>ChatOpenAI</code>, <code>ChatAnthropic</code>, Bedrock chat models: <code>invoke</code>, <code>ainvoke</code>, <code>abatch</code>, <code>stream</code>, <code>astream</code></td>
 <td>always (patched by the evaluator)</td>
-<td>synchronous <code>invoke</code> only: <code>ainvoke</code>/<code>abatch</code> are not captured yet (<a href="https://github.com/Traigent/Traigent/issues/2445">#2445</a>); <code>stream</code>/<code>astream</code> capture the last chunk, which carries usage only with <code>stream_usage=True</code></td>
+<td><code>ainvoke</code>/<code>abatch</code> are captured (<a href="https://github.com/Traigent/Traigent/issues/2424">#2424</a>, <a href="https://github.com/Traigent/Traigent/issues/2445">#2445</a>). <code>stream</code>/<code>astream</code> capture the last chunk, which carries usage only with <code>stream_usage=True</code>; without it the call is reported as unmeasured, not <code>$0</code></td>
 </tr>
 <tr>
 <td><code>litellm.completion</code> / <code>litellm.acompletion</code></td>
@@ -3497,9 +3519,14 @@ not know, and what a trial reports when nothing was captured.</p>
 <td></td>
 </tr>
 <tr>
-<td>Raw OpenAI SDK: <code>openai.OpenAI</code> / <code>openai.AsyncOpenAI</code> <code>chat.completions.create</code> and <code>completions.create</code></td>
+<td>Raw OpenAI SDK, sync and async: <code>chat.completions.create</code>, <code>chat.completions.parse</code> (also <code>beta.chat.completions.parse</code>), <code>completions.create</code>, <code>responses.create</code>, <code>responses.parse</code>, and the <code>with_raw_response</code> form of each</td>
 <td>the OpenAI override is active (see below)</td>
-<td>non-streaming calls that return <code>usage</code></td>
+<td>non-streaming calls that return <code>usage</code>. Responses API <code>input_tokens</code>/<code>output_tokens</code> are counted as prompt/completion tokens. Your code still receives the normal return value; a <code>with_raw_response</code> result is parsed once and the parsed object is cached, so your own <code>.parse()</code> returns it</td>
+</tr>
+<tr>
+<td>Direct <code>google.genai</code> calls (Gemini API or Vertex AI client)</td>
+<td>never</td>
+<td>Traigent does not patch this client, so these calls are outside cost tracking. A trial can show a cost of 0.0, and a run with a cost cap can stop with an unmeasured-cost error. Calling Gemini through <code>litellm.completion</code> gets its usage captured.</td>
 </tr>
 </tbody>
 </table>
@@ -3542,8 +3569,16 @@ model several times per example is billed for all of them.</p>
   unmeasured, not as <code>$0</code>.</li>
 <li><strong>Responses without <code>usage</code></strong> (some gateways omit it) are not captured.
   They are reported as unmeasured.</li>
-<li><code>client.chat.completions.with_raw_response.create(...)</code> and the Responses
-  API (<code>client.responses.create</code>) are not captured.</li>
+<li><strong>Not captured:</strong> streaming forms (<code>stream=True</code>, <code>chat.completions.stream</code>,
+  <code>responses.stream</code>), <code>completions.create</code> on a gateway that omits <code>usage</code>,
+  and any other method (embeddings, images, audio, <code>responses.retrieve</code>).
+  A client whose <code>with_raw_response</code> accessor was first used before the
+  override was activated keeps the unpatched method: build the client after
+  enabling the override, or access <code>with_raw_response</code> only afterwards.</li>
+<li>The new parse and Responses paths are capture-only: Traigent records their
+  usage but does not inject trial parameters (<code>model</code>, <code>temperature</code>, ...)
+  into them. Only <code>chat.completions.create</code> and <code>completions.create</code> receive
+  injected parameters.</li>
 <li>When LangChain's <code>ChatOpenAI.invoke</code> or <code>litellm.completion</code> makes the
   OpenAI call for you, that wrapper records the usage and the underlying
   OpenAI call is not counted a second time.</li>
@@ -3551,10 +3586,19 @@ model several times per example is billed for all of them.</p>
 <h2 id="pricing-a-model-traigent-does-not-know">Pricing a model Traigent does not know<a class="headerlink" href="#pricing-a-model-traigent-does-not-know" title="Permanent link">&para;</a></h2>
 <p>Traigent prices tokens from LiteLLM's model table. A gateway alias such as
 <code>acme-gateway/house-model</code> is not in that table, so its calls are
-<strong>unpriced</strong>: tokens are recorded, cost is not known. With
-<code>TRAIGENT_STRICT_COST_ACCOUNTING=true</code> an unpriced model raises; otherwise its
-calls are recorded at <code>$0</code> and the run's result carries a warning naming the
-unpriced model.</p>
+<strong>unpriced</strong>: tokens are recorded, cost is not known. What happens next
+depends on <code>TRAIGENT_STRICT_COST_ACCOUNTING</code>:</p>
+<ul>
+<li><code>true</code>: an unpriced model raises.</li>
+<li>unset: a run whose objectives include <code>cost</code> is strict at runtime, so it
+  stops at the first call that has neither a table price nor a
+  provider-reported cost. A run without a <code>cost</code> objective records the call at
+  <code>$0</code> and the result carries an <code>UNPRICED_MODEL_RUNTIME</code> warning.</li>
+<li><code>false</code>: explicit opt-out. The call is recorded at <code>$0</code> with the same
+  warning. The trial is flagged <code>cost_unpriced</code>, and a flagged trial is left
+  out of cost ranking (best config, Pareto front, weighted scores), so a
+  placeholder <code>$0</code> never wins as "cheapest".</li>
+</ul>
 <p>Give the alias a price with <code>TRAIGENT_CUSTOM_MODEL_PRICING_JSON</code> (inline) or
 <code>TRAIGENT_CUSTOM_MODEL_PRICING_FILE</code> (path to the same JSON). Prices are USD
 per token:</p>
@@ -3568,6 +3612,31 @@ per token:</p>
 <p>The key must be the model name Traigent prices. In the custom-evaluator lane
 that is the trial's <code>model</code> setting when the configuration has one, otherwise
 the model the response reports.</p>
+<h2 id="mock-provenance-in-result-metadata">Mock provenance in result metadata<a class="headerlink" href="#mock-provenance-in-result-metadata" title="Permanent link">&para;</a></h2>
+<p>A result records whether its LLM calls were simulated in <code>result.metadata</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mock_llm_run</code></td>
+<td><code>True</code> if any mock response was served during the run, <code>False</code> if the run's calls were real.</td>
+</tr>
+<tr>
+<td><code>mock_llm_mixed</code></td>
+<td>Present and <code>True</code> only when both mock and real calls were observed.</td>
+</tr>
+</tbody>
+</table>
+<p>Both keys are saved and restored by <code>PersistenceManager</code>. A result saved before
+these keys existed, or built by hand, has no <code>mock_llm_run</code> key: that means
+<strong>unknown</strong>, not <code>False</code>. Read it with <code>result.metadata.get("mock_llm_run")</code> and
+treat <code>None</code> as "not recorded". The results table labels a recorded mock run,
+and hedges an unrecorded result only while mock mode is on in the process.</p>
 <h2 id="when-nothing-was-captured">When nothing was captured<a class="headerlink" href="#when-nothing-was-captured" title="Permanent link">&para;</a></h2>
 <p>A missing measurement is not a free call. When a custom-evaluator example has
 no captured usage, its result has <code>metadata["llm_usage_measured"] = False</code>
@@ -3579,7 +3648,7 @@ warning names the coverage.</p>
 <p>The same holds for a <code>cost</code> objective: a trial with no measured example has
 no <code>cost</code> (or <code>None</code> under strict nulls), never <code>0.0</code>; <code>cost_unmeasured</code> is
 <code>1.0</code> on a trial where any example had no measured cost, and token counts
-estimated from the input are labelled with <code>tokens_estimated</code>. The results
+estimated from text length (input from the dataset or prompt template, output from the returned string, about 4 characters per token; a system message written inside your function is not counted, so the estimate can be well below the provider's count) are labelled with <code>tokens_estimated</code> and are never priced. The results
 table shows the cost as <code>unmeasured</code>. Weighted <code>best_config</code> selection counts a
 missing cost as the worst cost, the Pareto front leaves out a trial that is
 missing a configured objective, and the batch composite score gives such a
@@ -3631,7 +3700,7 @@ argument; passing the same value as the default counts.</p>
 <p>To continue after the safety stop, either:</p>
 <ol>
 <li><strong>Get cost measured for every configuration.</strong> Call the model through a
-   captured client (the table above; for LangChain, the synchronous <code>invoke</code>).
+   captured client (the table above).
    In a mixed run, find why the unmeasured configurations report no usage: a
    gateway that omits <code>usage</code>, a streaming call, or an uncaptured client. A
    fully measured run is bounded by its cost budget instead of the trial limit,

@@ -3867,7 +3867,7 @@ cat<span class="w"> </span><span class="s">&lt;&lt; 'PYTHON'</span>
 <span class="s">@traigent.optimize(</span>
 <span class="s">    # Define TUNED VARIABLES - parameters to optimize</span>
 <span class="s">    configuration_space={</span>
-<span class="s">        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],</span>
+<span class="s">        "model": ["gpt-4.1-mini", "gpt-4o-mini", "gpt-4o"],</span>
 <span class="s">        "temperature": [0.1, 0.5, 0.9],</span>
 <span class="s">        "max_tokens": [500, 1000, 2000]</span>
 <span class="s">    },</span>
@@ -3917,13 +3917,13 @@ sleep<span class="w"> </span><span class="m">0</span>.5
 <span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
 sleep<span class="w"> </span><span class="m">1</span>
 
-<span class="nb">echo</span><span class="w"> </span><span class="s2">"[1/27] Testing: gpt-3.5-turbo, temp=0.1, tokens=500"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"[1/27] Testing: gpt-4.1-mini, temp=0.1, tokens=500"</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"       Score: accuracy=0.72, cost=\$0.002"</span>
 sleep<span class="w"> </span><span class="m">0</span>.3
-<span class="nb">echo</span><span class="w"> </span><span class="s2">"[2/27] Testing: gpt-3.5-turbo, temp=0.1, tokens=1000"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"[2/27] Testing: gpt-4.1-mini, temp=0.1, tokens=1000"</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"       Score: accuracy=0.75, cost=\$0.003"</span>
 sleep<span class="w"> </span><span class="m">0</span>.3
-<span class="nb">echo</span><span class="w"> </span><span class="s2">"[3/27] Testing: gpt-3.5-turbo, temp=0.5, tokens=500"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"[3/27] Testing: gpt-4.1-mini, temp=0.5, tokens=500"</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"       Score: accuracy=0.68, cost=\$0.002"</span>
 sleep<span class="w"> </span><span class="m">0</span>.3
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"..."</span>
@@ -3949,7 +3949,7 @@ sleep<span class="w"> </span><span class="m">1</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"  accuracy: 0.89 (89%)"</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"  cost: \$0.008 per query"</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">"Compared to default (gpt-3.5-turbo, temp=0.7):"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"Compared to default (gpt-4.1-mini, temp=0.7):"</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"  +17% accuracy improvement"</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"  Best cost/accuracy trade-off"</span>
 sleep<span class="w"> </span><span class="m">3</span>

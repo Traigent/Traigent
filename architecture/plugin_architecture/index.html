@@ -4017,15 +4017,15 @@
 <div class="highlight"><pre><span></span><code><span class="c1"># User code</span>
 <span class="n">client</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">()</span>
 <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
-    <span class="n">model</span><span class="o">=</span><span class="s2">"gpt-3.5-turbo"</span><span class="p">,</span>
+    <span class="n">model</span><span class="o">=</span><span class="s2">"gpt-4.1-mini"</span><span class="p">,</span>
     <span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">"role"</span><span class="p">:</span> <span class="s2">"user"</span><span class="p">,</span> <span class="s2">"content"</span><span class="p">:</span> <span class="s2">"Hello"</span><span class="p">}]</span>
 <span class="p">)</span>
 
-<span class="c1"># Behind the scenes with TraigentConfig(model="gpt-4", temperature=0.5)</span>
+<span class="c1"># Behind the scenes with TraigentConfig(model="gpt-4.1", temperature=0.5)</span>
 <span class="c1"># 1. OpenAIPlugin intercepts the call</span>
-<span class="c1"># 2. Maps: model="gpt-4", temperature=0.5</span>
+<span class="c1"># 2. Maps: model="gpt-4.1", temperature=0.5</span>
 <span class="c1"># 3. Validates: model is in allowed list, temperature in range</span>
-<span class="c1"># 4. Calls original with: model="gpt-4", temperature=0.5, messages=[...]</span>
+<span class="c1"># 4. Calls original with: model="gpt-4.1", temperature=0.5, messages=[...]</span>
 </code></pre></div>
 <h2 id="built-in-plugins">Built-in Plugins<a class="headerlink" href="#built-in-plugins" title="Permanent link">&para;</a></h2>
 <p>The built-in plugin surface is regenerated from the current
@@ -4043,9 +4043,9 @@
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.integrations.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">Framework</span><span class="p">,</span> <span class="n">normalize_params</span><span class="p">,</span> <span class="n">get_normalizer</span>
 
 <span class="c1"># Direct conversion between frameworks</span>
-<span class="n">params</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"model_name"</span><span class="p">:</span> <span class="s2">"gpt-4"</span><span class="p">,</span> <span class="s2">"streaming"</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="mi">100</span><span class="p">}</span>
+<span class="n">params</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"model_name"</span><span class="p">:</span> <span class="s2">"gpt-4.1"</span><span class="p">,</span> <span class="s2">"streaming"</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="mi">100</span><span class="p">}</span>
 <span class="n">normalized</span> <span class="o">=</span> <span class="n">normalize_params</span><span class="p">(</span><span class="n">params</span><span class="p">,</span> <span class="s2">"langchain"</span><span class="p">,</span> <span class="s2">"openai"</span><span class="p">)</span>
-<span class="c1"># Result: {"model": "gpt-4", "stream": True, "max_tokens": 100}</span>
+<span class="c1"># Result: {"model": "gpt-4.1", "stream": True, "max_tokens": 100}</span>
 
 <span class="c1"># Or use the normalizer instance for more control</span>
 <span class="n">normalizer</span> <span class="o">=</span> <span class="n">get_normalizer</span><span class="p">()</span>

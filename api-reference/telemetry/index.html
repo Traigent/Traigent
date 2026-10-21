@@ -4234,12 +4234,12 @@ never leave.</p>
 </code></pre></div>
 <p>No-egress runs keep Traigent optimization metadata local while still allowing your
 own function to call LLM providers or other services.</p>
-<p><code>offline=True</code> does not disable OpenTelemetry export: if you have set
-<code>TRAIGENT_TRACE_ENABLED=true</code> and <code>OTEL_EXPORTER_OTLP_ENDPOINT</code>, evaluation
-spans — including truncated model output — are still exported to the collector
-you configured. The observability lanes (<code>@observe</code>, <code>TRAIGENT_TRACE_ENABLED</code>)
-have their own content controls, described below, and carry no privacy
-guarantee.</p>
+<p><code>offline=True</code> also disables OpenTelemetry export, the langfuse client and the
+standalone API clients while the run is in flight, even if
+<code>TRAIGENT_TRACE_ENABLED</code> and <code>OTEL_EXPORTER_OTLP_ENDPOINT</code> are set. Outside an
+<code>offline=True</code> run, the observability lanes (<code>@observe</code>,
+<code>TRAIGENT_TRACE_ENABLED</code>) have their own content controls, described below, and
+carry no privacy guarantee.</p>
 <p>Use <code>TRAIGENT_DISABLE_TELEMETRY=true</code> for SDK telemetry opt-out, effective
 <code>TraigentConfig.privacy_enabled</code> privacy mode to redact tuned string config
 values on per-trial submissions made after session creation, and
