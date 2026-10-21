@@ -1346,6 +1346,18 @@ def preflight_run_providers(
             logger.info(
                 "Provider '%s' not preflight-checked: %s", provider, status.message
             )
+    if not failed:
+        unverified = sorted(
+            provider
+            for provider, status in results.items()
+            if status.funds in (_FUNDS_NOT_CHECKED, _FUNDS_UNKNOWN)
+        )
+        if unverified:
+            logger.warning(
+                "Funds not verified for: %s - the run may fail on the first call "
+                "if the account has no credit.",
+                ", ".join(unverified),
+            )
     if failed:
         listing = ", ".join(f"{provider} ({error})" for provider, error in failed)
         raise ProviderValidationError(

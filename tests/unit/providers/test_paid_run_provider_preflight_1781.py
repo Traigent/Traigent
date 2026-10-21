@@ -257,3 +257,45 @@ class TestVertexAndFunds:
         assert status.funds == "not_checked"
         print_provider_status({"openai": status})
         assert "funds not checked" in capsys.readouterr().out
+
+
+class TestFundsNotVerifiedWarning:
+    """#1781: funds=not_checked must not be silently discarded."""
+
+    def _funds_records(self, caplog):
+        return [r for r in caplog.records if "Funds not verified" in r.getMessage()]
+
+    def test_openai_run_warns_once_naming_openai_and_proceeds(
+        self, monkeypatch, caplog
+    ):
+        monkeypatch.setenv("OPENAI_API_KEY", _SECRET)
+        ok = {"openai": ProviderStatus("openai", True, "Available", None, None, None)}
+        with patch(f"{_VALIDATION}.validate_providers", return_value=ok):
+            with caplog.at_level("WARNING", logger=_VALIDATION):
+                results = preflight_run_providers(["gpt-4o-mini"])
+        records = self._funds_records(caplog)
+        assert len(records) == 1
+        assert "openai" in records[0].getMessage()
+        assert _SECRET not in records[0].getMessage()
+        assert results["openai"].valid is True
+
+    def test_openrouter_with_known_funds_not_listed(self, monkeypatch, caplog):
+        monkeypatch.setenv("OPENROUTER_API_KEY", _SECRET)
+        body = {"data": {"limit": 10, "limit_remaining": 4.2}}
+        response = SimpleNamespace(status_code=200, json=lambda: body)
+        with patch("requests.get", return_value=response):
+            with caplog.at_level("WARNING", logger=_VALIDATION):
+                preflight_run_providers(["openrouter/openai/gpt-4o"])
+        assert self._funds_records(caplog) == []
+
+    def test_depleted_still_fails_closed_without_funds_warning(
+        self, monkeypatch, caplog
+    ):
+        monkeypatch.setenv("OPENROUTER_API_KEY", _SECRET)
+        body = {"data": {"limit": 1, "limit_remaining": -0.5}}
+        response = SimpleNamespace(status_code=200, json=lambda: body)
+        with patch("requests.get", return_value=response):
+            with caplog.at_level("WARNING", logger=_VALIDATION):
+                with pytest.raises(ProviderValidationError):
+                    preflight_run_providers(["openrouter/openai/gpt-4o"])
+        assert self._funds_records(caplog) == []
