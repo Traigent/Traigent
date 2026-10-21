@@ -62,7 +62,11 @@ from traigent.core.config_state_manager import (
 from traigent.core.config_state_manager import (
     OptimizationState,  # Lifecycle state owned by that manager.
 )
-from traigent.core.cost_enforcement import is_cost_preapproved, normalize_cost_approved
+from traigent.core.cost_enforcement import (
+    CostTrackingRequiredError,
+    is_cost_preapproved,
+    normalize_cost_approved,
+)
 from traigent.core.execution_budget import ExecutionBudget
 from traigent.core.execution_policy_runtime import (
     SOURCE_CLOUD_BRAIN,
@@ -136,6 +140,7 @@ from traigent.utils.env_config import (
 from traigent.utils.exceptions import (
     AuthenticationError,
     ConfigurationError,
+    CostLimitExceeded,
     OptimizationError,
     OverlappingOptimizationError,
     TVLValidationError,
@@ -2652,6 +2657,520 @@ class OptimizedFunction(Generic[_P, _R]):
             # No event loop running - safe to use asyncio.run
             return asyncio.run(coro)
 
+    # ------------------------------------------------------------------
+    # compare(): fixed configs as ONE experiment (issue #1952)
+    # ------------------------------------------------------------------
+
+    @property
+    def comparison_history(self) -> list[Any]:
+        """``ComparisonResult`` objects recorded by :meth:`compare`, oldest first."""
+        return list(self.__dict__.get("_comparison_history", []))
+
+    def compare(
+        self,
+        configs: Sequence[Mapping[str, Any]],
+        *,
+        eval_dataset: Any = None,
+        repeats: int = 1,
+        budget: ExecutionBudget | None = None,
+    ) -> Any:
+        """Evaluate fixed configurations head-to-head and record ONE experiment.
+
+        Local fixed-config evaluation, no search. Each config is evaluated
+        ``repeats`` times on the SAME example list through the evaluator that
+        ``optimize()`` builds and its trial lifecycle, inside one hold of this
+        wrapper's exclusive slot. Cost, CI-approval, timeout,
+        ``max_total_examples`` and shared-``ExecutionBudget`` controls apply as
+        in ``optimize()``, over the whole comparison: a pre-run estimate for
+        configs x repeats x examples, one cumulative cost enforcer, and a
+        graceful partial result (``stop_reason``) when a limit is reached;
+        strict-cost and unknown-cost policy errors propagate. There is no
+        backend session, trial submission or ``save_to`` persistence; the
+        comparison is recorded only in the returned object and
+        ``comparison_history``. This is not a no-network guarantee: the
+        function's own LLM calls, or a configured hybrid API evaluator, still
+        reach their providers. Mirrors :meth:`optimize_sync`; use
+        :meth:`compare_async` from async code.
+
+        Args:
+            configs: Fully specified configs; each must name every declared
+                parameter with a value inside the declared configuration space
+                (``ValueError`` otherwise; messages never echo values).
+            eval_dataset: Optional dataset (Dataset, JSONL path, paths, or
+                inline examples) used for this comparison only, e.g. a held-out
+                set. Unlike ``optimize()`` (which rejects a call-time
+                ``eval_dataset``) it is honored here, never ignored. Default:
+                the decorated dataset. ``result.holdout`` records whether the
+                data is disjoint from the decorated (tuning) dataset.
+            repeats: Evaluations per config (default 1); the result carries the
+                per-config mean and spread across repeats.
+            budget: Optional shared ``ExecutionBudget`` (as for ``optimize()``)
+                admitting and debiting every repeat.
+
+        Returns:
+            ``traigent.core.comparison.ComparisonResult``. Per-config cost is
+            ``None`` plus ``cost_lower_bound`` when any repeat's cost could not
+            be measured, never ``0.0``. The wrapper's applied config and
+            optimization history are left unchanged.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        coro = self.compare_async(
+            configs, eval_dataset=eval_dataset, repeats=repeats, budget=budget
+        )
+        if loop is not None and loop.is_running():
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                return executor.submit(asyncio.run, coro).result()
+        return asyncio.run(coro)
+
+    async def compare_async(
+        self,
+        configs: Sequence[Mapping[str, Any]],
+        *,
+        eval_dataset: Any = None,
+        repeats: int = 1,
+        budget: ExecutionBudget | None = None,
+    ) -> Any:
+        """Async form of :meth:`compare`."""
+        from traigent.api.parameter_ranges import normalize_configuration_space
+        from traigent.config.context import ConfigurationSpaceContext
+        from traigent.core import comparison as cmp
+        from traigent.utils.cost_calculator import (
+            cost_run_scope,
+            reset_captured_usage,
+            reset_unpriced_runtime_models,
+        )
+
+        if isinstance(repeats, bool) or not isinstance(repeats, int) or repeats < 1:
+            raise ValueError("compare() requires repeats to be an integer >= 1.")
+        space, _ = normalize_configuration_space(self.configuration_space or {})
+        fixed = cmp.validate_comparison_configs(configs, space)
+        primary_metric, orientation, band = self._comparison_primary_objective()
+        validate_objectives(self.objectives)
+
+        # ONE acquisition of the wrapper's exclusive slot for the whole
+        # comparison: nothing else may advance or promote this wrapper while
+        # configs are being evaluated, and it is released exactly once.
+        self._acquire_exclusive_slot("run")
+        evaluator: BaseEvaluator | None = None
+        orchestrator: OptimizationOrchestrator | None = None
+        try:
+            tuning_full = self._load_dataset()
+            tuning_dataset, max_total_examples_value, samples_include_pruned = (
+                self._capped_comparison_dataset(tuning_full)
+            )
+            if eval_dataset is None:
+                source_dataset = tuning_full
+                dataset = tuning_dataset
+            else:
+                source_dataset = self._dataset_from_source(eval_dataset)
+                dataset = self._capped_comparison_dataset(source_dataset)[0]
+            n_source = len(source_dataset.examples)
+            if not dataset.examples:
+                raise ValueError("compare() requires a non-empty evaluation dataset.")
+            holdout = cmp.build_holdout_check(
+                [cmp.example_fingerprint(e) for e in dataset.examples],
+                [cmp.example_fingerprint(e) for e in tuning_dataset.examples],
+                eval_dataset_supplied=eval_dataset is not None,
+            )
+            if holdout.holdout_valid is False and eval_dataset is not None:
+                logger.warning("compare(): %s", holdout.note)
+
+            # Same policy surface as optimize(): local-only routing for the
+            # resolved policy, and the CI approval gate before any evaluation.
+            stored_policy = getattr(self, "execution_policy", None)
+            if not isinstance(stored_policy, ResolvedExecutionPolicy):
+                stored_policy = None
+            execution_policy = self._policy_for_runtime_algorithm(stored_policy, "grid")
+            result_source = initial_result_source(
+                execution_policy,
+                external_evaluator=(
+                    getattr(self, "external_service_evaluator", None) is not None
+                    or self.execution_mode == ExecutionMode.HYBRID_API.value
+                ),
+            )
+            traigent_config = create_traigent_config(
+                execution_mode=self.execution_mode,
+                local_storage_path=self.local_storage_path,
+                minimal_logging=self.minimal_logging,
+                privacy_enabled=(
+                    bool(getattr(self, "privacy_enabled", False))
+                    and not bool(getattr(self, "_privacy_alias_enabled", False))
+                ),
+                execution_policy=execution_policy,
+                # compare() never opens a backend session or client: no backend
+                # construction, hostname resolution or Redis ping. Provider calls
+                # and a configured hybrid-API evaluator are unaffected (this flag
+                # only gates backend transport).
+                no_egress=True,
+                result_source=result_source,
+            )
+            self.traigent_config = traigent_config
+            self._check_ci_approval()
+
+            with (
+                offline_run_scope(is_offline_requested(execution_policy)),
+                strict_cost_accounting_run_default(
+                    _objectives_include_cost(self.objectives)
+                ),
+                ConfigurationSpaceContext(space),
+                cost_run_scope(),
+            ):
+                total_runs = len(fixed) * repeats
+                algorithm_kwargs = self._prepare_algorithm_kwargs({})
+                evaluator = self._create_effective_evaluator(
+                    timeout=None,
+                    custom_evaluator=None,
+                    effective_batch_size=None,
+                    effective_thread_workers=None,
+                    effective_privacy_enabled=bool(
+                        getattr(self, "privacy_enabled", False)
+                    ),
+                )
+                first_cell = {k: [v] for k, v in fixed[0].items()}
+                optimizer_kwargs: dict[str, Any] = {"max_trials": total_runs}
+                if self.objective_schema is not None:
+                    optimizer_kwargs["objective_schema"] = self.objective_schema
+                optimizer = get_optimizer(
+                    "grid", first_cell, self.objectives, **optimizer_kwargs
+                )
+                # The orchestrator is used ONLY for its cost / budget / stop /
+                # accounting components and trial lifecycle. optimize() is never
+                # called: no backend session, no trial submission, no save_to.
+                orchestrator = self._build_optimization_orchestrator(
+                    optimizer=optimizer,
+                    evaluator=evaluator,
+                    max_trials=total_runs,
+                    max_total_examples_value=max_total_examples_value,
+                    timeout=getattr(self, "timeout", None),
+                    callbacks=None,
+                    traigent_config=traigent_config,
+                    effective_parallel_trials=None,
+                    samples_include_pruned_value=samples_include_pruned,
+                    algorithm_kwargs=algorithm_kwargs,
+                    artifact_fingerprint_payload={},
+                    requested_algorithm="grid",
+                    execution_budget=budget,
+                )
+                # The number of runs is explicit user sizing (configs x repeats):
+                # consent to run them even when cost is unmeasured, as for an
+                # explicit max_trials in optimize().
+                orchestrator.waive_unknown_cost_trial_cap()
+
+                comparison_id = cmp.new_comparison_id()
+                reset_unpriced_runtime_models()
+                reset_captured_usage()
+                rows: list[Any] = []
+                all_runs_ids: list[tuple[str, ...]] = []
+                all_trials: list[Any] = []
+                stop_reason: str | None = None
+                strict_origin = strict_cost_accounting_origin()
+                strict_effective = is_strict_cost_accounting()
+                orchestrator._start_time = time.time()
+                orchestrator._reset_mock_provenance()
+                orchestrator._apply_execution_budget()
+                # Whole-comparison estimate (configs x repeats x examples)
+                # against the cost limit; raises CostLimitExceeded if declined.
+                orchestrator._check_multi_config_cost_approval(
+                    dataset,
+                    [{k: [v] for k, v in cfg.items()} for cfg in fixed],
+                    repeats,
+                )
+
+                stop_reason = None
+                for ci, config in enumerate(fixed):
+                    one_cell = {k: [v] for k, v in config.items()}
+                    self._preflight_model_cost_coverage(one_cell)
+                    trial_func = self._trial_callable_for_config_space(one_cell)
+                    runs: list[Any] = []
+                    run_ids: list[tuple[str, ...]] = []
+                    for rep in range(repeats):
+                        stop_reason = self._comparison_stop_reason(
+                            orchestrator, total_runs - len(orchestrator._trials)
+                        )
+                        if stop_reason is not None:
+                            break
+                        trial = await self._run_compare_trial(
+                            orchestrator,
+                            trial_func,
+                            config,
+                            dataset,
+                            trial_number=len(orchestrator._trials),
+                            trial_id=f"{comparison_id}_c{ci}_r{rep}",
+                        )
+                        if trial is None:
+                            stop_reason = orchestrator._stop_reason or "cost_limit"
+                            break
+                        orchestrator._trials.append(trial)
+                        all_trials.append(trial)
+                        runs.append(self._single_trial_result(trial))
+                        run_ids.append(self._trial_example_ids(trial))
+                    if runs:
+                        all_runs_ids.extend(run_ids)
+                        rows.append(
+                            cmp.aggregate_config(
+                                config, runs, primary_metric, run_ids[0]
+                            )
+                        )
+                    if stop_reason is not None:
+                        break
+
+                # Same end-of-run guards as optimize(): a cost objective that
+                # measured no usage at all must not read as a cheap run.
+                if all_trials:
+                    guard_view = self._single_trial_result(all_trials[0])
+                    guard_view.trials = list(all_trials)
+                    if stop_reason == "no_usage_captured":
+                        guard_view.stop_reason = "no_usage_captured"
+                    _guard_cost_objective_without_usage(guard_view, self.objectives)
+                    _warn_cost_objective_partial_coverage(guard_view, self.objectives)
+            mock_meta = orchestrator._mock_provenance_metadata()
+        finally:
+            recorder = getattr(orchestrator, "_mock_recorder", None)
+            if recorder is not None:
+                recorder.deactivate()
+            if evaluator is not None:
+                close = getattr(evaluator, "close", None)
+                if callable(close):
+                    try:
+                        maybe = close()
+                        if inspect.isawaitable(maybe):
+                            await maybe
+                    except Exception:  # pragma: no cover - best effort
+                        logger.debug("compare(): evaluator close failed", exc_info=True)
+            self._release_exclusive_slot()
+
+        first = all_runs_ids[0] if all_runs_ids else ()
+        result = cmp.ComparisonResult(
+            comparison_id=comparison_id,
+            primary_metric=primary_metric,
+            orientation=orientation,
+            band=band,
+            objectives=list(self.objectives),
+            repeats=repeats,
+            n_examples=len(dataset.examples),
+            n_source_examples=n_source,
+            max_examples_applied=(
+                len(dataset.examples) if n_source > len(dataset.examples) else None
+            ),
+            example_ids=first,
+            same_examples_across_configs=bool(first)
+            and all(ids == first for ids in all_runs_ids),
+            coverage_complete=bool(all_runs_ids)
+            and all(len(set(ids)) == len(dataset.examples) for ids in all_runs_ids),
+            holdout=holdout,
+            configs=rows,
+            stop_reason=stop_reason,
+            n_configs_requested=len(fixed),
+            n_runs_completed=len(all_trials),
+            n_runs_requested=total_runs,
+            mock_llm_run=bool(mock_meta.get("mock_llm_run", False)),
+            mock_llm_mixed=bool(mock_meta.get("mock_llm_mixed", False)),
+            strict_cost_accounting=bool(strict_effective),
+            strict_cost_accounting_origin=strict_origin,
+        )
+        self.__dict__.setdefault("_comparison_history", []).append(result)
+        return result
+
+    def _comparison_stop_reason(
+        self, orchestrator: OptimizationOrchestrator, remaining_runs: int
+    ) -> str | None:
+        """Pre-run admission: shared budget, stop conditions, timeout."""
+        reason = orchestrator._execution_budget_prebatch_reason(float(remaining_runs))
+        if reason is not None:
+            return str(reason)
+        triggered, why = orchestrator._stop_condition_manager.should_stop(
+            orchestrator._trials
+        )
+        if triggered:
+            mapped = {"max_samples": "max_samples_reached"}
+            return mapped.get(why or "", why or "condition")
+        timeout = orchestrator.timeout
+        start = orchestrator._start_time
+        if timeout and start and time.time() - start >= timeout:
+            return "timeout"
+        return None
+
+    async def _run_compare_trial(
+        self,
+        orchestrator: OptimizationOrchestrator,
+        trial_func: Callable[..., Any],
+        config: dict[str, Any],
+        dataset: Dataset,
+        *,
+        trial_number: int,
+        trial_id: str,
+    ) -> Any:
+        """One evaluation through the orchestrator's permit/lifecycle/accounting.
+
+        Mirrors the winner-stability rerun sequence: acquire a cost permit,
+        run the trial through ``TrialLifecycle`` (same evaluator, capture and
+        honest-cost flags), then account the spend (cost enforcer, shared
+        budget, example ledger) -- failed attempts included. Policy errors
+        (strict cost, unknown cost under a cap) propagate and stop the
+        comparison. Returns ``None`` when the cost limit denied the permit.
+        """
+        permit = None
+        trial = None
+        dispatched = False
+        # Set BEFORE the untracked-attempt accounting call so an attempt is
+        # debited once even if that call raises (strict cost tracking).
+        accounted = False
+
+        def mark_dispatched() -> None:
+            nonlocal dispatched
+            dispatched = True
+
+        try:
+            if orchestrator.cost_enforcer is not None:
+                permit = await orchestrator.cost_enforcer.acquire_permit_async()
+                if not permit.is_granted:
+                    orchestrator._stop_reason = "cost_limit"
+                    return None
+            timeout = orchestrator.timeout
+            coro = orchestrator._trial_lifecycle.run_trial(
+                func=trial_func,
+                config=copy.deepcopy(config),
+                dataset=dataset,
+                trial_number=trial_number,
+                session_id=None,
+                on_evaluation_dispatch=mark_dispatched,
+            )
+            if timeout and timeout > 0:
+                remaining = max(
+                    timeout - (time.time() - (orchestrator._start_time or 0)), 0.0
+                )
+                grace = min(max(timeout * 0.25, 1.0), 300.0)
+                try:
+                    trial = await asyncio.wait_for(coro, timeout=remaining + grace)
+                except TimeoutError:
+                    orchestrator._stop_reason = "timeout"
+                    # The watchdog cancelled the attempt: a dispatched attempt
+                    # still debits the shared budget and marks spend untracked.
+                    if dispatched:
+                        accounted = True
+                        await asyncio.shield(
+                            asyncio.create_task(
+                                orchestrator._account_winner_stability_rerun_attempt(
+                                    rerun_trial=None,
+                                    rerun_dispatched=True,
+                                    permit=permit,
+                                    trial_id=trial_id,
+                                )
+                            )
+                        )
+                    return None
+            else:
+                trial = await coro
+            task = asyncio.create_task(
+                orchestrator._account_winner_stability_rerun_attempt(
+                    rerun_trial=trial,
+                    rerun_dispatched=dispatched,
+                    permit=permit,
+                    trial_id=trial_id,
+                )
+            )
+            await asyncio.shield(task)
+            return trial
+        except BaseException as original:
+            if trial is None and dispatched and not accounted:
+                # Dispatched but no result: record an untracked attempt so the
+                # ledgers carry a lower bound rather than a fabricated zero.
+                accounted = True
+                try:
+                    await asyncio.shield(
+                        asyncio.create_task(
+                            orchestrator._account_winner_stability_rerun_attempt(
+                                rerun_trial=None,
+                                rerun_dispatched=True,
+                                permit=permit,
+                                trial_id=trial_id,
+                            )
+                        )
+                    )
+                except (CostTrackingRequiredError, CostLimitExceeded) as policy_exc:
+                    # Policy errors from attempt accounting must surface; chain
+                    # the original failure so neither is lost.
+                    raise policy_exc from original
+                except Exception:  # pragma: no cover - never mask the real error
+                    logger.warning("compare(): could not account an attempt")
+            raise
+        finally:
+            if (
+                permit is not None
+                and permit.active
+                and orchestrator.cost_enforcer is not None
+            ):
+                orchestrator.cost_enforcer.release_permit(permit)
+
+    def _single_trial_result(self, trial: Any) -> OptimizationResult:
+        """In-memory single-trial result (cost/score aggregation view only)."""
+        return OptimizationResult(
+            trials=[trial],
+            best_config=None,
+            best_score=None,
+            optimization_id=str(getattr(trial, "trial_id", "compare")),
+            duration=float(getattr(trial, "duration", 0.0) or 0.0),
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=list(self.objectives),
+            algorithm="compare",
+            timestamp=datetime.now(UTC),
+        )
+
+    @staticmethod
+    def _trial_example_ids(trial: Any) -> tuple[str, ...]:
+        """Ids of the example rows the evaluator actually returned."""
+        entries = (getattr(trial, "metadata", None) or {}).get("example_results")
+        ids: list[str] = []
+        for entry in entries or []:
+            value = (
+                entry.get("example_id")
+                if isinstance(entry, Mapping)
+                else getattr(entry, "example_id", None)
+            )
+            if value is not None:
+                ids.append(str(value))
+        return tuple(ids)
+
+    def _comparison_primary_objective(self) -> tuple[str, str, tuple[Any, Any] | None]:
+        """Primary objective name, declared orientation and band (fail closed)."""
+        from traigent.core.objective_directions import resolve_objective_orientation
+
+        objectives = list(self.objectives)
+        if not objectives:
+            raise ValueError("compare() requires at least one declared objective.")
+        name = objectives[0]
+        schema = getattr(self, "objective_schema", None)
+        definition = schema.get_objective(name) if schema is not None else None
+        if definition is not None:
+            band = definition.band
+            band_pair = (band.low, band.high) if band is not None else None
+            return name, definition.orientation, band_pair
+        return name, resolve_objective_orientation(name), None
+
+    def _capped_comparison_dataset(
+        self, dataset: Dataset
+    ) -> tuple[Dataset, int | None, bool]:
+        """Apply optimize()'s dataset caps; also return its example/sample limits."""
+        overrides = getattr(self, "_decorator_runtime_overrides", None) or {}
+        kwargs = {
+            key: overrides[key]
+            for key in ("max_examples", "max_total_examples", "samples_include_pruned")
+            if key in overrides
+        }
+        return prepare_optimization_dataset(
+            dataset,
+            kwargs,
+            max_examples=getattr(self, "max_examples", None),
+            max_total_examples=getattr(self, "max_total_examples", None),
+            samples_include_pruned=getattr(self, "samples_include_pruned", True),
+        )
+
     def _resolve_runtime_tvl_options(
         self,
         spec: str | Path | None,
@@ -4429,23 +4948,26 @@ Remediation:
         # precedence so synthesized examples persist across re-optimization rounds.
         if self._dataset_override is not None:
             return self._dataset_override
+        return self._dataset_from_source(self.eval_dataset)
 
-        if isinstance(self.eval_dataset, Dataset):
-            return self.eval_dataset
+    def _dataset_from_source(self, source: Any) -> Dataset:
+        """Resolve a dataset spec (Dataset, path, paths, inline examples)."""
+        if isinstance(source, Dataset):
+            return source
 
-        elif isinstance(self.eval_dataset, str):
+        elif isinstance(source, str):
             try:
-                return Dataset.from_jsonl(self.eval_dataset)
+                return Dataset.from_jsonl(source)
             except Exception as e:
                 raise ConfigurationError(
-                    f"Failed to load dataset from {self.eval_dataset}: {e}"
+                    f"Failed to load dataset from {source}: {e}"
                 ) from e
 
-        elif isinstance(self.eval_dataset, list):
-            if all(isinstance(item, str) for item in self.eval_dataset):
+        elif isinstance(source, list):
+            if all(isinstance(item, str) for item in source):
                 # Multiple datasets - combine them
                 all_examples = []
-                for path in self.eval_dataset:
+                for path in source:
                     try:
                         dataset = Dataset.from_jsonl(path)
                         all_examples.extend(dataset.examples)
@@ -4457,15 +4979,12 @@ Remediation:
                 return Dataset(
                     examples=all_examples,
                     name="combined_dataset",
-                    description=f"Combined dataset from {len(self.eval_dataset)} files",
+                    description=f"Combined dataset from {len(source)} files",
                 )
 
-            if all(
-                isinstance(item, (dict, EvaluationExample))
-                for item in self.eval_dataset
-            ):
+            if all(isinstance(item, (dict, EvaluationExample)) for item in source):
                 try:
-                    return load_inline_dataset(self.eval_dataset)
+                    return load_inline_dataset(source)
                 except Exception as e:
                     raise ConfigurationError(
                         f"Failed to load inline dataset: {e}"
@@ -4476,7 +4995,7 @@ Remediation:
             )
 
         else:
-            raise ConfigurationError(f"Invalid dataset type: {type(self.eval_dataset)}")
+            raise ConfigurationError(f"Invalid dataset type: {type(source)}")
 
     def _build_empty_result(self, algorithm: str) -> OptimizationResult:
         """Create a result representing a skipped optimization run."""

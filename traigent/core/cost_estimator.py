@@ -346,7 +346,14 @@ class CostEstimator:
             )
             return
 
-        estimated_cost = self.estimate_optimization_cost(dataset)
+        self.approve_estimated_cost(self.estimate_optimization_cost(dataset))
+
+    def approve_estimated_cost(self, estimated_cost: float) -> None:
+        """Run the approval decision for an already computed total estimate.
+
+        Raises:
+            CostLimitExceeded: If pre-run cost approval is declined.
+        """
         if not self._cost_enforcer.check_and_approve(
             estimated_cost,
             estimated_calls_per_example=self._estimated_calls_per_example,
