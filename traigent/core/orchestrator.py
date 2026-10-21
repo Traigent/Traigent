@@ -136,6 +136,7 @@ from traigent.utils.env_config import (  # noqa: F401
     is_backend_offline as is_backend_offline,
 )
 from traigent.utils.env_config import is_mock_llm
+from traigent.utils.mock_provenance import MockProvenanceRecorder
 from traigent.utils.exceptions import (
     ConfigurationError,
     OptimizationError,
@@ -3554,12 +3555,12 @@ class OptimizationOrchestrator:
             reset_run_content_identity_keys,
         )
 
-        self._reset_mock_provenance()
         fetched_identity_keys = await self._fetch_run_content_identity_keys()
         identity_keys_token = bind_run_content_identity_keys(fetched_identity_keys)
         sigterm_scope = sigterm_as_cancellation()  # #2667
         sigterm_scope.__enter__()
         try:
+            self._reset_mock_provenance()
             # Content identity v1: one snapshot per run, taken from the rows' and
             # the agent's CURRENT state before the session is created. None without
             # a Backend purpose-key grant -- then nothing new is emitted anywhere.
@@ -3591,6 +3592,9 @@ class OptimizationOrchestrator:
                     session_span=session_span,
                 )
         finally:
+            recorder = getattr(self, "_mock_recorder", None)
+            if recorder is not None:
+                recorder.deactivate()
             sigterm_scope.__exit__(None, None, None)
             reset_run_content_identity_keys(identity_keys_token)
 
@@ -5075,6 +5079,8 @@ class OptimizationOrchestrator:
             # cancellation, timeout, or failure — and before finalize so the
             # recorded block rides the same persistence pass as the result.
             await self._maybe_run_winner_stability(result, func, dataset, session_id)
+            # Reruns serve LLM calls too: provenance is final only now (#2516).
+            self._refresh_mock_provenance(result)
             await self._finalize_optimization(result, session_id, session_span)
             return result
 
@@ -5630,20 +5636,38 @@ class OptimizationOrchestrator:
         """Start a run's mock provenance: the state now, and no trials seen (#2516)."""
         self._mock_states_seen: set[bool] = set()
         self._mock_state_at_run_start = bool(is_mock_llm())
+        recorder = getattr(self, "_mock_recorder", None)
+        if recorder is not None:
+            recorder.deactivate()
+        self._mock_recorder = MockProvenanceRecorder()
+        self._mock_recorder.activate()
 
     def record_trial_mock_state(self) -> None:
         """Record whether mock mode is on as a trial is dispatched (#2516)."""
         if not hasattr(self, "_mock_states_seen"):
-            self._reset_mock_provenance()
+            self._mock_states_seen = set()
+            self._mock_state_at_run_start = bool(is_mock_llm())
         self._mock_states_seen.add(bool(is_mock_llm()))
 
     def _mock_provenance_metadata(self) -> dict[str, bool]:
-        """Per-run mock provenance from the states trials actually executed under.
+        """Per-run mock provenance, from where responses were actually served.
 
-        True if any trial ran mocked; False only if every executed trial ran with
-        mock off; a run with no trials uses the state at run start. Trials under
-        both states record ``mock_llm_mixed`` and stay labelled (fail closed).
+        The run's recorder counts mock responses served (every MockAdapter
+        interception) and non-mock LLM calls observed (LiteLLM wrappers).
+        ``mock_llm_run`` is True if any mock response was served; both kinds
+        observed also set ``mock_llm_mixed``. Only when no call was observed at
+        all does it fall back to the per-trial dispatch record, and then to the
+        state at run start for a run with no trials (fail closed: any mocked
+        trial counts).
         """
+        recorder = getattr(self, "_mock_recorder", None)
+        served = recorder.mock_responses_served if recorder is not None else 0
+        real = recorder.real_calls_observed if recorder is not None else 0
+        if served or real:
+            meta = {"mock_llm_run": served > 0}
+            if served and real:
+                meta["mock_llm_mixed"] = True
+            return meta
         seen = getattr(self, "_mock_states_seen", None)
         if not seen:
             start = getattr(self, "_mock_state_at_run_start", None)
@@ -5652,6 +5676,15 @@ class OptimizationOrchestrator:
         if len(seen) > 1:
             meta["mock_llm_mixed"] = True
         return meta
+
+    def _refresh_mock_provenance(self, result: OptimizationResult) -> None:
+        """Re-derive mock provenance after winner verification (#2516)."""
+        metadata = getattr(result, "metadata", None)
+        if not isinstance(metadata, dict):
+            return
+        metadata.pop("mock_llm_run", None)
+        metadata.pop("mock_llm_mixed", None)
+        metadata.update(self._mock_provenance_metadata())
 
     def _build_result_metadata(
         self,

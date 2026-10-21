@@ -23,6 +23,7 @@ from traigent.utils.langchain_interceptor import (
     instrumented_provider_call,
 )
 from traigent.utils.logging import configure_litellm_logging, get_logger
+from traigent.utils.mock_provenance import note_real_call
 
 logger = get_logger(__name__)
 
@@ -237,6 +238,7 @@ def patch_litellm_for_metadata_capture(
                     capture_langchain_response(mock_data)
                     return mock_data
 
+                note_real_call()
                 start_time = time.perf_counter()
                 with instrumented_provider_call():
                     response = original_completion(*args, **kwargs)
@@ -292,6 +294,7 @@ def patch_litellm_for_metadata_capture(
                     capture_langchain_response(mock_data)
                     return mock_data
 
+                note_real_call()
                 start_time = time.perf_counter()
                 with instrumented_provider_call():
                     response = await original_acompletion(*args, **kwargs)

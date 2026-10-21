@@ -112,5 +112,6 @@ async def test_trials_under_both_states_are_marked_mixed_and_labelled(
     assert result.metadata["mock_llm_run"] is True
     assert result.metadata["mock_llm_mixed"] is True
     notice = _mock_run_notice(result) or ""
-    assert "MOCK RUN" in notice
-    assert "Only some trials were simulated" in notice
+    assert "mix simulated and real results" in notice
+    assert "not real spend" not in notice
+    assert "synthetic estimate" not in notice
