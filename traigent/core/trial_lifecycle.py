@@ -861,7 +861,8 @@ class TrialLifecycle:
     def _apply_vendor_attempts(result: TrialResult, capture_bucket: Any) -> None:
         """Record per-trial provider-call attempts (SDK-41); no-op when none.
 
-        A failed attempt that was retried reports no cost telemetry, so the
+        Any attempt without reported usage (a retried failure, a stream closed
+        early or failed mid-way, an incomplete attempt) has no cost telemetry, so the
         trial's spend is a lower bound: it is flagged ``cost_unmeasured`` (known
         spend kept as the floor) and flows through the existing honest-cost
         machinery, including strict-mode ``CostTrackingRequiredError``.
@@ -876,10 +877,7 @@ class TrialLifecycle:
             if not summary:
                 return
             result.metadata = {**(result.metadata or {}), **summary}
-            if (
-                summary["vendor_call_retries"] > 0
-                or summary["vendor_call_incomplete_attempts"] > 0
-            ):
+            if summary["vendor_call_unknown_usage_attempts"] > 0:
                 metrics = result.metrics
                 if isinstance(metrics, dict):
                     metrics["cost_unmeasured"] = 1.0
