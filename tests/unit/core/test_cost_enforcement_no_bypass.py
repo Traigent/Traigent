@@ -187,8 +187,9 @@ class TestCostEstimatorMockPreflight:
             os.environ.pop("TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT", None)
             enforcer = CostEnforcer(CostEnforcerConfig(limit=0.01, approved=False))
 
-            estimator = CostEstimator.__new__(CostEstimator)
-            estimator._cost_enforcer = enforcer
+            estimator = CostEstimator(
+                cost_enforcer=enforcer, max_trials=1, max_total_examples=None
+            )
             with (
                 patch("traigent.utils.env_config.is_mock_llm", return_value=True),
                 patch.object(
@@ -216,8 +217,9 @@ class TestCostEstimatorMockPreflight:
         with patch.dict(os.environ, mock_env, clear=False):
             enforcer = CostEnforcer(CostEnforcerConfig(limit=0.01, approved=False))
 
-            estimator = CostEstimator.__new__(CostEstimator)
-            estimator._cost_enforcer = enforcer
+            estimator = CostEstimator(
+                cost_enforcer=enforcer, max_trials=1, max_total_examples=None
+            )
             with (
                 patch(
                     "traigent.core.cost_estimator.cost_preflight_mock_exempt",
