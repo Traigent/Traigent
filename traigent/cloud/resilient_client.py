@@ -396,6 +396,15 @@ class ResilientClient:
         logger.debug("Retry statistics reset")
 
 
+# HTTP methods whose replay can duplicate a write (#1975).
+_NON_IDEMPOTENT_METHODS = frozenset({"POST", "PATCH"})
+_RATE_LIMITED_MESSAGE = "Rate limited"
+_AMBIGUOUS_NO_RETRY_MESSAGE = (
+    "Request not retried: ambiguous failure of a non-idempotent request "
+    "without an Idempotency-Key"
+)
+
+
 # Example usage wrapper for backend operations
 async def resilient_backend_request(
     client: ResilientClient,
@@ -428,7 +437,29 @@ async def resilient_backend_request(
 
     raise_if_cloud_egress_disabled("resilient backend request", no_egress=no_egress)
 
+    unsafe_unkeyed = method.upper() in _NON_IDEMPOTENT_METHODS and not any(
+        str(name).lower() == "idempotency-key" for name in (headers or {})
+    )
+
     async def make_request() -> dict[str, Any]:
+        try:
+            return await _send_once()
+        except RetryableError as exc:
+            # 429 means the server refused before processing: safe to replay.
+            if not unsafe_unkeyed or str(exc) == _RATE_LIMITED_MESSAGE:
+                raise
+            raise NonRetryableError(_AMBIGUOUS_NO_RETRY_MESSAGE) from None
+        except NonRetryableError:
+            raise
+        except Exception:
+            if not unsafe_unkeyed:
+                raise
+            # Ambiguous failure (timeout/reset/...): the server may have
+            # processed the request, so never replay a non-idempotent call
+            # that carries no Idempotency-Key (#1975). Fixed text only.
+            raise NonRetryableError(_AMBIGUOUS_NO_RETRY_MESSAGE) from None
+
+    async def _send_once() -> dict[str, Any]:
         try:
             import aiohttp
         except ImportError as exc:  # pragma: no cover - environment specific
@@ -473,7 +504,9 @@ async def resilient_backend_request(
                                 "Non-numeric Retry-After header encountered: %s",
                                 retry_after_header,
                             )
-                    raise RetryableError("Rate limited", retry_after_value) from None
+                    raise RetryableError(
+                        _RATE_LIMITED_MESSAGE, retry_after_value
+                    ) from None
                 if status in {401, 403}:
                     raise NonRetryableError("Authentication failed")
                 if status >= 400:

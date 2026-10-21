@@ -614,3 +614,75 @@ def test_1968_http_404_is_not_retried() -> None:
     with pytest.raises(NonRetryableError):
         _run_counting_backend_request(404, counter, max_retries=1)
     assert counter[0] == 1, "404 must not be retried (single attempt)"
+
+
+def _run_counting_request(
+    method: str,
+    status: int,
+    counter: list[int],
+    *,
+    headers: dict[str, str] | None = None,
+    max_retries: int = 2,
+) -> None:
+    from traigent.cloud import resilient_client as rc
+
+    client = rc.ResilientClient(max_retries=max_retries)
+
+    async def _no_sleep(*_a, **_k) -> None:
+        return None
+
+    with (
+        mock.patch(
+            "traigent.cloud.client.raise_if_cloud_egress_disabled",
+            lambda *a, **k: None,
+        ),
+        mock.patch(
+            "aiohttp.ClientSession",
+            lambda *a, **k: _CountingSession(status, counter),
+        ),
+        mock.patch.object(rc.asyncio, "sleep", _no_sleep),
+    ):
+        asyncio.run(
+            rc.resilient_backend_request(
+                client, method, "https://example.test/x", headers=headers
+            )
+        )
+
+
+def test_1975_post_without_idempotency_key_not_retried_on_5xx() -> None:
+    from traigent.utils.exceptions import NonRetryableError
+
+    counter = [0]
+    with pytest.raises(NonRetryableError) as ei:
+        _run_counting_request("POST", 503, counter)
+    assert counter[0] == 1, "unkeyed POST must not be replayed on ambiguous failure"
+    assert "Idempotency-Key" in str(ei.value)
+
+
+def test_1975_post_with_idempotency_key_is_retried() -> None:
+    from traigent.utils.exceptions import RetryableError
+
+    counter = [0]
+    with pytest.raises(RetryableError):
+        _run_counting_request(
+            "POST", 503, counter, headers={"Idempotency-Key": "k-1"}, max_retries=1
+        )
+    assert counter[0] == 2
+
+
+def test_1975_get_still_retried_on_5xx() -> None:
+    from traigent.utils.exceptions import RetryableError
+
+    counter = [0]
+    with pytest.raises(RetryableError):
+        _run_counting_request("GET", 503, counter, max_retries=1)
+    assert counter[0] == 2
+
+
+def test_1975_post_without_key_still_retried_on_429() -> None:
+    from traigent.utils.exceptions import RetryableError
+
+    counter = [0]
+    with pytest.raises(RetryableError):
+        _run_counting_request("POST", 429, counter, max_retries=1)
+    assert counter[0] == 2
