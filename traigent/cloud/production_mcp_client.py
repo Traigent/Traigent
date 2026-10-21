@@ -82,6 +82,7 @@ from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
 from traigent.utils.retry import NetworkError, RetryConfig, RetryHandler, RetryStrategy
 from traigent.utils.validation import CoreValidators, validate_or_raise
+from traigent.cloud.wire_text import error_code_for_wire
 
 from .backend_bridges import bridge
 from .models import AgentSpecification, OptimizationRequest
@@ -795,7 +796,8 @@ class ProductionMCPClient:
             "config_run_id": config_run_id,
             "status": status,
             "results": metrics,
-            "error_message": error_message,
+            # Closed code only (#2241): the raw text may quote a prompt or a reply.
+            "error_message": error_code_for_wire(error_message),
             "completed_at": time.time(),
         }
 

@@ -18,6 +18,7 @@ from traigent.admin.dtos import (
     TenantMembershipStatus,
     TenantSSOConfigDTO,
 )
+from traigent.cloud.wire_text import filter_wire_metadata
 from traigent.core.session_types import safe_http_error_summary
 from traigent.security.tenant import TenantStatus, TenantTier
 from traigent.utils.env_config import raise_if_backend_offline
@@ -91,7 +92,7 @@ class EnterpriseAdminClient:
                 "status": status.value,
                 "tier": tier.value,
                 "quotas": dict(quotas or {}),
-                "metadata": dict(metadata or {}),
+                "metadata": filter_wire_metadata(metadata),
             },
         )
         return TenantDTO.from_dict(self._unwrap_data(payload, "tenant create"))

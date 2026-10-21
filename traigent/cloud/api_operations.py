@@ -20,6 +20,7 @@ from traigent.cloud.client import (
     raise_if_cloud_egress_disabled,
 )
 from traigent.cloud import content_less as content_less_session
+from traigent.cloud.wire_text import filter_wire_metadata
 from traigent.cloud.governance import promotion_policy_to_wire, tvl_governance_to_wire
 from traigent.cloud.models import (
     AgentExecutionRequest,
@@ -793,6 +794,7 @@ class ApiOperations:
         if "evaluator_id" in identity_v2:
             payload.pop("evaluator_definition_id", None)
         payload.update(identity_v2)
+        payload["metadata"] = filter_wire_metadata(payload["metadata"])
         return payload
 
     def _build_legacy_session_payload(
@@ -843,6 +845,7 @@ class ApiOperations:
             payload["smart_pruning"] = wire_smart_pruning
         self._attach_evaluator_identity(payload, session_request)
         self._attach_artifact_fingerprint_payload(payload, session_request)
+        payload["metadata"] = filter_wire_metadata(payload["metadata"])
         return payload
 
     @staticmethod

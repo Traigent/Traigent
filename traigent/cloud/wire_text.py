@@ -17,6 +17,7 @@ TraigentSchema/backend side of the closed list is tracked separately.
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Mapping
 from typing import Any
 
@@ -51,6 +52,10 @@ def error_code_for_wire(error_message: str | None) -> str | None:
     """
     if not error_message:
         return None
+    # Idempotent (#2241 review r78): a value that is already a closed code is
+    # returned unchanged, so a second pass cannot reclassify it.
+    if isinstance(error_message, str) and error_message in WIRE_ERROR_CODES:
+        return error_message
     text = str(error_message)
     lowered = text.strip().lower()
     if lowered.startswith("no examples succeeded"):
@@ -171,3 +176,42 @@ def filter_surrogate_evaluator(value: Mapping[str, Any]) -> dict[str, Any]:
 def filter_summary_stats_metadata(value: Mapping[str, Any]) -> dict[str, Any]:
     """Keep only allowlisted keys of ``summary_stats.metadata``."""
     return _apply(value, SUMMARY_STATS_METADATA_SPEC)
+
+
+def filter_summary_stats(value: Any) -> dict[str, Any]:
+    """Return a detached copy of a summary-statistics dict with its metadata filtered.
+
+    The top-level keys are kept as they are; ``metadata`` (the free-form map)
+    is rebuilt from its allowlist. A non-mapping value becomes ``{}``.
+    """
+    if not isinstance(value, Mapping):
+        return {}
+    out: dict[str, Any] = copy.deepcopy(dict(value))
+    out["metadata"] = filter_summary_stats_metadata(value.get("metadata") or {})
+    return out
+
+
+#: Metadata keys whose values are free-form and therefore allowlisted on the wire.
+_WIRE_METADATA_FILTERS = (
+    ("agent_configuration", filter_agent_configuration),
+    ("surrogate_evaluator", filter_surrogate_evaluator),
+)
+
+
+def filter_wire_metadata(metadata: Any) -> dict[str, Any]:
+    """Return a detached copy of a metadata dict safe to send to the backend (#2241).
+
+    Applies the three allowlists to the keys that exist: ``agent_configuration``,
+    ``surrogate_evaluator`` and ``summary_stats`` (its ``metadata``). A key that
+    is present with a non-mapping value becomes ``{}``. Other keys pass through.
+    A non-mapping ``metadata`` argument yields ``{}``.
+    """
+    if not isinstance(metadata, Mapping):
+        return {}
+    out: dict[str, Any] = copy.deepcopy(dict(metadata))
+    for key, keep in _WIRE_METADATA_FILTERS:
+        if key in out:
+            out[key] = keep(out[key])
+    if "summary_stats" in out:
+        out["summary_stats"] = filter_summary_stats(out["summary_stats"])
+    return out

@@ -28,9 +28,9 @@ from traigent.cloud.client import (
 )
 from traigent.cloud.dtos import MeasuresDict
 from traigent.cloud.wire_text import (
-    filter_agent_configuration,
+    filter_summary_stats,
     filter_summary_stats_metadata,
-    filter_surrogate_evaluator,
+    filter_wire_metadata,
 )
 from traigent.cloud.session_budgets import (
     ensure_cost_metric_for_budgeted_completed_submission,
@@ -723,13 +723,9 @@ class TrialOperations:
         result_metadata.pop("execution_mode", None)
         result_metadata.pop("mode", None)
         result_metadata["sdk_version"] = get_version()
-        # Closed key allowlists (#2241) for the free-form dictionaries.
-        for key, keep in (
-            ("surrogate_evaluator", filter_surrogate_evaluator),
-            ("agent_configuration", filter_agent_configuration),
-        ):
-            if isinstance(result_metadata.get(key), dict):
-                result_metadata[key] = keep(result_metadata[key])
+        # Closed key allowlists (#2241) for the free-form maps, applied whenever
+        # the key exists (a non-mapping becomes {}), including summary_stats.metadata.
+        result_metadata = filter_wire_metadata(result_metadata)
         result_data: dict[str, Any] = {
             "trial_id": trial_id,
             "config": copy.deepcopy(config),
@@ -1081,12 +1077,7 @@ class TrialOperations:
             self._log_measures_debug(trial_id, measures)
 
             if summary_stats is not None:
-                wire_stats = copy.deepcopy(summary_stats)
-                if isinstance(wire_stats, dict):
-                    wire_stats["metadata"] = filter_summary_stats_metadata(
-                        wire_stats.get("metadata") or {}
-                    )
-                result_data["summary_stats"] = wire_stats
+                result_data["summary_stats"] = filter_summary_stats(summary_stats)
             self._log_summary_stats_debug(trial_id, summary_stats)
 
             # Validate the submission data. Schema validation is authoritative;
