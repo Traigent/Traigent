@@ -260,14 +260,26 @@ class capture_scope:
 
     Usable as ``with`` or ``async with``.  Nesting is safe: the innermost scope
     wins and the outer one is restored on exit.
+
+    The provider-call attempt ledger (SDK-41) belongs to the nearest enclosing
+    *ledger owner*. A scope with ``ledger_owner=True`` (the trial scope) starts
+    a fresh ledger with its own lock, so trials started inside another scope
+    never see each other's attempts; a plain nested scope (the evaluator's)
+    shares its nearest owner's ledger. A top-level scope is always an owner.
     """
 
-    __slots__ = ("_token",)
+    __slots__ = ("_token", "_ledger_owner")
+
+    def __init__(self, ledger_owner: bool = False) -> None:
+        self._ledger_owner = ledger_owner
 
     def __enter__(self) -> _CaptureBucket:
         parent = _capture_scope.get()
         bucket = _CaptureBucket()
-        bucket.root = parent.root or parent if parent is not None else bucket
+        if parent is None or self._ledger_owner:
+            bucket.root = bucket
+        else:
+            bucket.root = parent.root or parent
         self._token = _capture_scope.set(bucket)
         return bucket
 

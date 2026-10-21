@@ -598,7 +598,7 @@ class TrialLifecycle:
                 # trial drain -- and be charged for -- another's judge calls
                 # (Traigent#2387). Opened OUTSIDE the evaluator so it spans the
                 # agent's own calls as well as the metric functions'.
-                capture_scope() as capture_bucket,
+                capture_scope(ledger_owner=True) as capture_bucket,
                 TrialContext(
                     trial_id=trial_id,
                     metadata={
