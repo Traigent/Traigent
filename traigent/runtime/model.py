@@ -96,6 +96,10 @@ E_NO_CREDENTIALS = "credentials_missing"
 E_BACKEND = "backend_error"
 E_NOT_APPLIED = "requirement_not_applied"
 E_MULTIPLE_OPTIMIZE = "multiple_optimize_rules"
+E_STATE_VERSION = "state_version_unsupported"
+E_STATE_OWNER = "state_owned_by_other_sdk"
+E_WATCH_REENTRY = "watch_reentry"
+E_EPISODE_FIX_RUNNING = "episode_fix_running"
 
 
 class RuntimeRequirementError(Exception):

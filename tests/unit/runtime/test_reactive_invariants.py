@@ -233,7 +233,7 @@ async def test_inv33_lease_is_overridable_and_a_run_id_is_never_stale(
     old = (now - timedelta(hours=2)).isoformat()
     manifest.reserve_occurrence(state_dir, AGENT, "k", {"started_at": old})
     manifest.reserve_occurrence(state_dir, AGENT, "done", {"started_at": old})
-    manifest.update_occurrence(state_dir, AGENT, "done", {"run_id": "r1"})
+    manifest.update_occurrence(state_dir, AGENT, "done", {"run_id": "r1"}, attempt=1)
     short = timedelta(hours=1)
     assert (
         manifest.read_occurrence(state_dir, AGENT, "k", now=now, lease=short)["status"]
@@ -272,6 +272,7 @@ async def test_c9_step_for_another_breach_holds(
     fn.optimize.assert_not_awaited()
 
 
+# control: passes without the fix (the old code already took the first breach)
 async def test_c9_matching_reference_proceeds_even_with_two_open_breaches(
     live: FakeBackend, state_dir: Path
 ) -> None:
@@ -382,6 +383,7 @@ def test_c11_two_concurrent_pollers_emit_an_episode_once(
     assert seen == ["b1"]
 
 
+# control: passes without the fix (the old code had no lock to leak)
 def test_c11_lock_released_after_a_poll(backend: FakeBackend, caplog) -> None:
     backend.on(*BREACHES, 200, {"items": [], "has_more": False})
     caplog.set_level(logging.INFO, logger="traigent.runtime")
@@ -455,7 +457,7 @@ def test_unreadable_lease_timestamp_fails_closed(state_dir: Path) -> None:
 
 def test_reservation_with_a_stale_attempt_holds(state_dir: Path) -> None:
     assert manifest.reserve_occurrence(state_dir, AGENT, "k", {"run_id": None})
-    manifest.update_occurrence(state_dir, AGENT, "k", {"status": "failed"})
+    manifest.update_occurrence(state_dir, AGENT, "k", {"status": "failed"}, attempt=1)
     with pytest.raises(RuntimeRequirementError) as err:
         manifest.reserve_occurrence(state_dir, AGENT, "k", {}, attempt=1)
     assert (err.value.code, err.value.path) == ("hold", "approval")

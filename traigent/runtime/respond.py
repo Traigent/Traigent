@@ -15,6 +15,9 @@ its own human approval.  Occurrence numbers start at 0 (TVL RFC 0003, 7.4).
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -38,6 +41,7 @@ from traigent.runtime.model import (
     positive_finite,
 )
 
+LOGGER = logging.getLogger("traigent.runtime")
 RESTORE_CODE = "RESTORE_PRODUCTION_REQUIREMENT"
 OCCURRENCE = (
     0  # RFC 0003 7.4: the first firing is occurrence 0; one start per (breach, rule)
@@ -278,25 +282,67 @@ async def respond(
         state,
         agent_id,
         key,
-        {"started_at": clock().isoformat(), "run_id": None},
+        {"started_at": clock().isoformat(), "run_id": None, "breach_id": breach_id},
         attempt=attempt,
         now=clock(),
         lease=occurrence_lease,
     ):
         raise OccurrenceUsed()
+    # Reserving may have waited on the ledger lock across the approval's expiry.
+    if manifest.approval_expired(approval, clock()):
+        # The fix never started: undo the reservation (no retry consumed).
+        manifest.release_occurrence(state, agent_id, key, attempt=attempt)
+        raise RuntimeRequirementError(E_APPROVAL_EXPIRED)
 
+    def record(info: dict[str, Any]) -> None:
+        if not manifest.update_occurrence(state, agent_id, key, info, attempt=attempt):
+            LOGGER.warning("stale_outcome_dropped")
+
+    heartbeat = asyncio.create_task(
+        _heartbeat(state, agent_id, key, attempt, clock, occurrence_lease)
+    )
     try:
         result = await fn.optimize(cost_limit=float(ceiling))
     except Exception:  # noqa: BLE001 - user code; its text is never surfaced
         # Spend may have occurred and is never undone.  The occurrence is marked
         # failed (kept in the ledger with its attempt count) so that an explicit
         # retry is possible, but only through a NEW human approval.
-        manifest.update_occurrence(
-            state, agent_id, key, {"status": manifest.STATUS_FAILED, "run_id": None}
-        )
+        await _stop(heartbeat)
+        record({"status": manifest.STATUS_FAILED, "run_id": None})
         raise RuntimeRequirementError(E_OPTIMIZE_FAILED) from None
+    await _stop(heartbeat)
     run_id = _run_id(result)
-    manifest.update_occurrence(
-        state, agent_id, key, {"run_id": run_id, "finished": True}
-    )
+    record({"run_id": run_id, "finished": True})
     return RespondResult(breach_id, rule_id, OCCURRENCE, run_id, float(ceiling))
+
+
+async def _heartbeat(
+    state: Path,
+    agent_id: str,
+    key: str,
+    attempt: int,
+    clock: Callable[[], datetime],
+    lease: timedelta,
+) -> None:
+    """Renew the reservation's heartbeat every lease/4 while the run is awaited."""
+    interval = max(lease.total_seconds() / 4, 0.001)
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            fenced_in = manifest.update_occurrence(
+                state,
+                agent_id,
+                key,
+                {"heartbeat_at": clock().isoformat()},
+                attempt=attempt,
+            )
+        except (OSError, RuntimeRequirementError):
+            continue  # a missed beat only shortens the lease; the next one retries
+        if not fenced_in:
+            return
+
+
+async def _stop(task: asyncio.Task[None]) -> None:
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task

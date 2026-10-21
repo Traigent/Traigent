@@ -9,7 +9,14 @@ Delivery is at-least-once per observed transition: an event is emitted BEFORE
 the state is saved, so a crash between the two re-emits it on the next poll.
 Emission is never duplicated by two pollers: the read, diff, emit and write of
 one poll run under an exclusive lock on the watch state, so a second poller on
-the same state directory waits and then sees the first one's saved state.
+the same state directory waits (bounded) and then sees the first one's saved state.
+
+A poll whose hook calls ``poll_once`` for the same agent and state would wait on
+itself; it raises ``watch_reentry`` instead.
+
+If saving the state fails (the poll result carries ``persisted=False`` and
+``watch_state_not_persisted`` is logged) the next poll replays the same
+transitions: a failed save can duplicate delivery, not only a crash.
 """
 
 from __future__ import annotations
@@ -25,6 +32,7 @@ from typing import Any
 from traigent.runtime import manifest
 from traigent.runtime.client import RuntimeClient
 from traigent.runtime.model import (
+    E_STATE,
     SEVERITIES,
     RuntimeEvent,
     RuntimeRequirement,
@@ -48,6 +56,7 @@ class PollResult:
     coverage: str = COVERAGE_COMPLETE
     rows: int = 0
     error: str | None = None
+    persisted: bool = True
 
 
 def coverage_for(rows: int, has_more: bool | None) -> str:
@@ -135,7 +144,9 @@ def poll_once(
     try:
         with manifest.watch_lock(state, agent_id):
             return _poll_locked(requirements, api, state, agent_id, logger)
-    except OSError:
+    except (OSError, RuntimeRequirementError) as exc:
+        if isinstance(exc, RuntimeRequirementError) and exc.code != E_STATE:
+            raise
         logger.warning("watch state could not be locked")
         return PollResult(coverage=COVERAGE_UNAVAILABLE, error="local_state_invalid")
 
@@ -195,7 +206,8 @@ def _poll_locked(
     try:
         manifest.write_watch_state(state, agent_id, saved)
     except (OSError, RuntimeRequirementError):
-        logger.warning("watch state could not be saved")
+        result.persisted = False
+        logger.warning("watch_state_not_persisted")
     logger.info("coverage: %s", result.coverage)
     return result
 

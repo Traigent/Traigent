@@ -13,13 +13,23 @@ import json
 import os
 import secrets
 import tempfile
+import threading
+import time
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta, UTC
 from pathlib import Path
 from typing import Any
 
-from traigent.runtime.model import E_HOLD, E_STATE, RuntimeRequirementError
+from traigent.runtime.model import (
+    E_EPISODE_FIX_RUNNING,
+    E_HOLD,
+    E_STATE,
+    E_STATE_OWNER,
+    E_STATE_VERSION,
+    E_WATCH_REENTRY,
+    RuntimeRequirementError,
+)
 
 try:  # POSIX only; elsewhere the lock degrades to a no-op
     import fcntl
@@ -27,8 +37,15 @@ except ImportError:  # pragma: no cover
     fcntl = None  # type: ignore[assignment]
 
 STATE_DIRNAME = ".traigent"
-TOKEN_MAP_FORMAT = "tvl-token-map/1"
-MANIFEST_FORMAT = "traigent-runtime-manifest/1"
+SDK_NAME = "python"
+#: Version 2: occurrence numbers start at 0, canonical plain-number digests, heartbeat
+#: leases.  A state directory written by an earlier version is refused, never converted.
+STATE_VERSION = 2
+STATE_MARKER = "state-owner.json"
+TOKEN_MAP_FORMAT = "tvl-token-map/2"
+MANIFEST_FORMAT = "traigent-runtime-manifest/2"
+#: Longest wait for a ledger lock (same default as the JS SDK).
+LOCK_TIMEOUT_S = 60.0
 APPROVAL_TTL = timedelta(hours=24)
 #: A reserved occurrence with no outcome (no run id, not failed) older than this is
 #: treated as failed when read (INV-33), so a crashed controller cannot block forever.
@@ -39,9 +56,73 @@ STATE_DIR_ENV = "TRAIGENT_RUNTIME_STATE_DIR"
 
 
 def default_state_dir() -> Path:
-    """``$TRAIGENT_RUNTIME_STATE_DIR`` if set, else ``./.traigent``."""
+    """``$TRAIGENT_RUNTIME_STATE_DIR`` if set, else ``./.traigent/python``.
+
+    One SDK per state directory: the default includes the SDK name.
+    """
     override = os.environ.get(STATE_DIR_ENV)
-    return Path(override) if override else Path.cwd() / STATE_DIRNAME
+    return Path(override) if override else Path.cwd() / STATE_DIRNAME / SDK_NAME
+
+
+def _has_state(state_dir: Path) -> bool:
+    try:
+        return any(state_dir.iterdir())
+    except OSError:
+        return False
+
+
+def _write_marker(state_dir: Path, marker: Path) -> bool:
+    """Publish the marker atomically (temp file hard-linked into place); False if it exists."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(
+        dir=str(state_dir), prefix=STATE_MARKER + ".", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({"sdk": SDK_NAME, "state_version": STATE_VERSION}))
+        try:
+            os.link(tmp, str(marker))
+        except FileExistsError:
+            return False
+        return True
+    finally:
+        with suppress(OSError):
+            os.unlink(tmp)
+
+
+def check_state_dir(state_dir: Path, *, create: bool = False) -> None:
+    """Refuse a directory owned by another SDK or written by an earlier version.
+
+    The marker is published atomically on first use when ``create``.  A
+    directory holding state but no marker predates versioning and is refused.
+    """
+    marker = state_dir / STATE_MARKER
+    text: str | None = None
+    for _attempt in range(2):
+        try:
+            text = marker.read_text(encoding="utf-8")
+            break
+        except FileNotFoundError:
+            if _has_state(state_dir):
+                continue  # a concurrent first use may have just published it: re-read
+            if not create:
+                return
+            if _write_marker(state_dir, marker):
+                return
+        except OSError:
+            raise RuntimeRequirementError(E_STATE, STATE_MARKER) from None
+    if text is None:
+        raise RuntimeRequirementError(E_STATE_VERSION, "state_dir")
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        raise RuntimeRequirementError(E_STATE, STATE_MARKER) from None
+    if not isinstance(doc, dict):
+        raise RuntimeRequirementError(E_STATE, STATE_MARKER)
+    if doc.get("sdk") != SDK_NAME:
+        raise RuntimeRequirementError(E_STATE_OWNER, "state_dir")
+    if doc.get("state_version") != STATE_VERSION:
+        raise RuntimeRequirementError(E_STATE_VERSION, "state_dir")
 
 
 def agent_dir(state_dir: Path, agent_id: str) -> Path:
@@ -93,6 +174,7 @@ def ensure_tokens(
 
     ``persist=False`` (dry runs) mints in memory and writes nothing.
     """
+    check_state_dir(state_dir, create=persist)
     path = state_dir / "tvl-token-map.json"
     doc = _read_json(path, {"format": TOKEN_MAP_FORMAT, "tokens": []})
     if (
@@ -130,6 +212,7 @@ def token_for(token_map: Mapping[str, Any], namespace: str, local: str) -> str:
 
 def local_for(state_dir: Path, namespace: str, hosted: str) -> str | None:
     """Resolve an opaque ref back to a local name (``traigent requirements explain``)."""
+    check_state_dir(state_dir)
     doc = _read_json(state_dir / "tvl-token-map.json", {"tokens": []})
     for entry in doc.get("tokens", []) if isinstance(doc, dict) else []:
         if entry.get("hosted") == hosted and (
@@ -147,6 +230,7 @@ def manifest_path(state_dir: Path, agent_id: str) -> Path:
 
 
 def read_manifest(state_dir: Path, agent_id: str) -> dict[str, Any]:
+    check_state_dir(state_dir)
     doc = _read_json(
         manifest_path(state_dir, agent_id),
         {"format": MANIFEST_FORMAT, "requirements": {}},
@@ -167,7 +251,7 @@ def record_apply(
     route: str,
     receipt: Mapping[str, Any],
 ) -> None:
-    with _ledger_lock(manifest_path(state_dir, agent_id)):
+    with _ledger_lock(state_dir, manifest_path(state_dir, agent_id)):
         _record_apply_locked(
             state_dir, agent_id, name, policy_digest, hosted_digest, key, route, receipt
         )
@@ -214,6 +298,7 @@ def read_occurrence(
     lease: timedelta = OCCURRENCE_LEASE,
 ) -> dict[str, Any] | None:
     """The occurrence record, with an expired lease read as ``failed`` (INV-33)."""
+    check_state_dir(state_dir)
     doc = _read_json(_occ_path(state_dir, agent_id), {})
     record = doc.get(key) if isinstance(doc, dict) else None
     return effective_record(
@@ -221,16 +306,47 @@ def read_occurrence(
     )
 
 
+_HELD = threading.local()
+
+
 @contextmanager
-def _ledger_lock(path: Path) -> Iterator[None]:
-    """Exclusive, process-safe lock around a read-modify-write of one ledger file."""
+def _ledger_lock(
+    state_dir: Path,
+    path: Path,
+    *,
+    reentry_code: str | None = None,
+    timeout: float | None = None,
+) -> Iterator[None]:
+    """Exclusive, process-safe lock around a read-modify-write of one ledger file.
+
+    Waiting is bounded (``E_STATE`` ``lock`` on timeout).  Re-entering a lock
+    this thread already holds would self-deadlock; with ``reentry_code`` it
+    raises that code at once instead.
+    """
+    check_state_dir(state_dir, create=True)
     path.parent.mkdir(parents=True, exist_ok=True)
+    held: set[str] = _HELD.__dict__.setdefault("paths", set())
+    ident = str(path)
+    if ident in held:
+        raise RuntimeRequirementError(reentry_code or E_STATE, path.name)
     with open(str(path) + ".lock", "a", encoding="utf-8") as handle:
         if fcntl is not None:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            deadline = time.monotonic() + (
+                LOCK_TIMEOUT_S if timeout is None else timeout
+            )
+            while True:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise RuntimeRequirementError(E_STATE, "lock") from None
+                    time.sleep(0.01)
+        held.add(ident)
         try:
             yield
         finally:
+            held.discard(ident)
             if fcntl is not None:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
@@ -240,7 +356,11 @@ STATUS_FAILED = "failed"
 
 
 def _lease_expired(record: Mapping[str, Any], now: datetime, lease: timedelta) -> bool:
-    """A started occurrence with no run id and no outcome, older than ``lease``."""
+    """A started occurrence with no run id and no outcome whose last heartbeat is older than ``lease``.
+
+    A running controller renews ``heartbeat_at``; the lease is measured from it
+    (or from ``started_at`` when no heartbeat was ever recorded).
+    """
     if (
         record.get("status") != STATUS_STARTED
         or record.get("run_id")
@@ -248,7 +368,9 @@ def _lease_expired(record: Mapping[str, Any], now: datetime, lease: timedelta) -
     ):
         return False
     try:
-        started = datetime.fromisoformat(str(record["started_at"]))
+        started = datetime.fromisoformat(
+            str(record.get("heartbeat_at") or record["started_at"])
+        )
     except (KeyError, ValueError):
         return False  # unreadable start time: fail closed, keep blocking
     if started.tzinfo is None:
@@ -300,7 +422,7 @@ def reserve_occurrence(
     passes it.
     """
     path = _occ_path(state_dir, agent_id)
-    with _ledger_lock(path):
+    with _ledger_lock(state_dir, path):
         doc = _read_json(path, {})
         if not isinstance(doc, dict):
             raise RuntimeRequirementError(E_STATE, "occurrences.json")
@@ -310,9 +432,25 @@ def reserve_occurrence(
         failed = failed_attempts(earlier)
         if attempt is not None and failed != attempt - 1:
             raise RuntimeRequirementError(E_HOLD, "approval")
+        breach_id = _breach_of_key(key)
+        for other_key, other in doc.items():
+            # Episode-wide exclusion: any rule's non-final, live record blocks.
+            if other_key == key or _breach_of_key(other_key) != breach_id:
+                continue
+            live = effective_record(
+                other if isinstance(other, dict) else None, now=now, lease=lease
+            )
+            if (
+                isinstance(live, dict)
+                and live.get("status") == STATUS_STARTED
+                and not live.get("finished")
+            ):
+                raise RuntimeRequirementError(E_EPISODE_FIX_RUNNING, "breach")
+        started_at = (now or utcnow()).isoformat()
         doc[key] = {
-            "started_at": (now or utcnow()).isoformat(),
+            "started_at": started_at,
             **dict(run_info),
+            "heartbeat_at": dict(run_info).get("started_at", started_at),
             "status": STATUS_STARTED,
             "attempts": failed + 1,
         }
@@ -320,15 +458,57 @@ def reserve_occurrence(
     return True
 
 
+def _breach_of_key(key: str) -> str:
+    """The breach id of an occurrence key (``breach|rule|occurrence``)."""
+    return key.rsplit("|", 2)[0] if key.count("|") >= 2 else key
+
+
 def update_occurrence(
-    state_dir: Path, agent_id: str, key: str, run_info: Mapping[str, Any]
-) -> None:
+    state_dir: Path,
+    agent_id: str,
+    key: str,
+    run_info: Mapping[str, Any],
+    *,
+    attempt: int,
+) -> bool:
+    """Merge ``run_info`` into the record only if it still belongs to ``attempt``.
+
+    A writer whose reservation was superseded (its lease expired and a newer
+    approved attempt took over) is fenced out: nothing is written, ``False``.
+    """
     path = _occ_path(state_dir, agent_id)
-    with _ledger_lock(path):
+    with _ledger_lock(state_dir, path):
         doc = _read_json(path, {})
-        if isinstance(doc, dict) and key in doc:
-            doc[key].update(run_info)
-            _write_json(path, doc)
+        record = doc.get(key) if isinstance(doc, dict) else None
+        if not isinstance(record, dict) or record.get("attempts") != attempt:
+            return False
+        record.update(run_info)
+        _write_json(path, doc)
+    return True
+
+
+def release_occurrence(
+    state_dir: Path, agent_id: str, key: str, *, attempt: int
+) -> bool:
+    """Undo a reservation whose fix never started (only if it is still ``attempt``'s).
+
+    The first attempt's record is deleted; a retry's record goes back to the
+    ``failed`` record it replaced, so the recorded failures are kept and the
+    unstarted fix consumes no retry.
+    """
+    path = _occ_path(state_dir, agent_id)
+    with _ledger_lock(state_dir, path):
+        doc = _read_json(path, {})
+        record = doc.get(key) if isinstance(doc, dict) else None
+        if not isinstance(record, dict) or record.get("attempts") != attempt:
+            return False
+        if attempt <= 1:
+            del doc[key]
+        else:
+            doc[key] = {**record, "status": STATUS_FAILED, "attempts": attempt - 1}
+            doc[key].pop("heartbeat_at", None)
+        _write_json(path, doc)
+    return True
 
 
 # --- approvals ------------------------------------------------------------------------
@@ -366,7 +546,7 @@ def write_approval(
         "expires_at": (issued + APPROVAL_TTL).isoformat(),
     }
     path = _approval_path(state_dir, agent_id)
-    with _ledger_lock(path):
+    with _ledger_lock(state_dir, path):
         doc = _read_json(path, {})
         if not isinstance(doc, dict):
             raise RuntimeRequirementError(E_STATE, "approvals.json")
@@ -376,6 +556,7 @@ def write_approval(
 
 
 def read_approval(state_dir: Path, agent_id: str, key: str) -> dict[str, Any] | None:
+    check_state_dir(state_dir)
     doc = _read_json(_approval_path(state_dir, agent_id), {})
     record = doc.get(key) if isinstance(doc, dict) else None
     return record if isinstance(record, dict) else None
@@ -415,11 +596,14 @@ def _watch_path(state_dir: Path, agent_id: str) -> Path:
 @contextmanager
 def watch_lock(state_dir: Path, agent_id: str) -> Iterator[None]:
     """Exclusive lock across one watch poll's read, diff, emit and write."""
-    with _ledger_lock(_watch_path(state_dir, agent_id)):
+    with _ledger_lock(
+        state_dir, _watch_path(state_dir, agent_id), reentry_code=E_WATCH_REENTRY
+    ):
         yield
 
 
 def read_watch_state(state_dir: Path, agent_id: str) -> dict[str, Any]:
+    check_state_dir(state_dir)
     doc = _read_json(_watch_path(state_dir, agent_id), {"breaches": {}})
     if not isinstance(doc, dict) or not isinstance(doc.get("breaches"), dict):
         raise RuntimeRequirementError(E_STATE, "state.json")
