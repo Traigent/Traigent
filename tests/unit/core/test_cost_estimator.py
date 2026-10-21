@@ -368,13 +368,7 @@ class TestCheckCostApproval:
         enforcer.check_and_approve.return_value = True
         estimator = CostEstimator(enforcer, max_trials=5, max_total_examples=None)
         with (
-            patch.dict(
-                os.environ,
-                {
-                    "TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT": "true",
-                    "ENVIRONMENT": "development",
-                },
-            ),
+            patch.dict(os.environ, {"ENVIRONMENT": "development"}),
             patch("traigent.utils.env_config.is_mock_llm", return_value=True),
             patch.object(
                 estimator,
@@ -382,6 +376,7 @@ class TestCheckCostApproval:
                 return_value=999.0,
             ) as estimate_cost,
         ):
+            os.environ.pop("TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT", None)
             estimator.check_cost_approval(_FakeDataset())
         estimate_cost.assert_called_once()
         enforcer.check_and_approve.assert_called_once()

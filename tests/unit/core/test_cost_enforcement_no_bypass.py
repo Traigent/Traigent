@@ -182,12 +182,9 @@ class TestCostEstimatorMockPreflight:
         from traigent.core.cost_estimator import CostEstimator
         from traigent.utils.exceptions import CostLimitExceeded
 
-        exempt_env = {
-            **mock_env,
-            "TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT": "true",
-            "ENVIRONMENT": "development",
-        }
-        with patch.dict(os.environ, exempt_env, clear=False):
+        env = {**mock_env, "ENVIRONMENT": "development"}
+        with patch.dict(os.environ, env, clear=False):
+            os.environ.pop("TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT", None)
             enforcer = CostEnforcer(CostEnforcerConfig(limit=0.01, approved=False))
 
             estimator = CostEstimator.__new__(CostEstimator)
