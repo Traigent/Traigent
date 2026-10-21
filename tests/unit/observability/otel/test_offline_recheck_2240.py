@@ -96,3 +96,31 @@ def test_span_started_offline_but_ended_online_is_dropped() -> None:
         assert stats["queued"] == 0
     finally:
         provider.shutdown()
+
+
+def test_offline_tracking_overflow_latches_drop_all(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from traigent.observability.otel import processor as processor_mod
+
+    monkeypatch.setattr(processor_mod, "_MAX_OFFLINE_TRACKED", 2)
+    provider, proc, transport = _pipeline()
+    tracer = provider.get_tracer("t")
+    try:
+        with offline_run_scope(True):
+            spans = [tracer.start_span(f"op{i}") for i in range(3)]
+        # Scope exited; end the two tracked spans, then the untracked one online.
+        spans[0].end()
+        spans[1].end()
+        spans[2].end()
+        proc.flush(2.0)
+        assert transport.posts == []
+        assert proc.stats()["dropped_offline"] == 3
+        # Latched: a fresh online span is also dropped.
+        with tracer.start_as_current_span("fresh"):
+            pass
+        proc.flush(2.0)
+        assert transport.posts == []
+        assert proc.stats()["dropped_offline"] == 4
+    finally:
+        provider.shutdown()

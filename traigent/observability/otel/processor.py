@@ -143,7 +143,14 @@ class TraigentSpanProcessor(SpanProcessor):
             if is_backend_offline():
                 ctx = span.get_span_context()
                 if len(self._started_offline) >= _MAX_OFFLINE_TRACKED:
-                    self._offline_overflow = True
+                    if not self._offline_overflow:
+                        # Latched for the processor's lifetime: untracked
+                        # offline spans may still be active, so fail closed.
+                        self._offline_overflow = True
+                        logger.warning(
+                            "Offline span tracking overflowed; dropping all "
+                            "ending spans for the rest of this process"
+                        )
                 else:
                     self._started_offline.add((ctx.trace_id, ctx.span_id))
         except Exception:
@@ -163,8 +170,8 @@ class TraigentSpanProcessor(SpanProcessor):
             if key in self._started_offline:
                 self._started_offline.discard(key)
                 started_offline = True
-        if self._offline_overflow and not self._started_offline:
-            self._offline_overflow = False
+        # _offline_overflow is never auto-cleared: an empty tracked set does
+        # not prove the untracked offline spans have ended.
         if started_offline or is_backend_offline():
             # Offline (offline=True run or the offline env vars) is checked at
             # record time, not only at init: a pipeline initialised online must
