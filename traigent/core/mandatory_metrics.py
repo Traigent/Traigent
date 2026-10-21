@@ -25,6 +25,9 @@ _SPEND_ACCUMULATING_STATUSES = {
     TrialStatus.FAILED,
 }
 
+#: Attempts that may have spent money without reaching a terminal result.
+_ATTEMPT_STATUSES = {TrialStatus.CANCELLED, TrialStatus.RUNNING}
+
 
 @dataclass(slots=True)
 class MandatoryMetricsTotals:
@@ -67,6 +70,7 @@ class MandatoryMetricsCollector:
 
     def accumulate(self, trial: TrialResult) -> None:
         if trial.status not in _SPEND_ACCUMULATING_STATUSES:
+            self._accumulate_non_terminal_spend(trial)
             return
 
         try:
@@ -77,6 +81,28 @@ class MandatoryMetricsCollector:
         self._totals.total_examples_attempted += self._extract_examples_attempted(trial)
 
         cost_increment, token_increment = self._extract_cost_and_tokens(trial)
+        self._add_cost(trial, cost_increment)
+        self._totals.total_tokens += token_increment
+
+    def _accumulate_non_terminal_spend(self, trial: TrialResult) -> None:
+        """Count cost of a cancelled/in-flight/other attempt that may have spent.
+
+        Duration and example counts keep their completed/failed/pruned scope;
+        only cost is classified here so a cancelled trial can never hide
+        unknown spend behind a numeric run total (#2688). A cancelled or
+        running attempt with no cost data spent an unknown amount; any other
+        status only counts when it carries a cost signal.
+        """
+
+        cost_increment, token_increment = self._extract_cost_and_tokens(trial)
+        attempted = trial.status in _ATTEMPT_STATUSES
+        flagged = is_cost_unmeasured(trial.metrics or {})
+        if not (attempted or flagged or cost_increment > 0):
+            return
+        self._add_cost(trial, cost_increment)
+        self._totals.total_tokens += token_increment
+
+    def _add_cost(self, trial: TrialResult, cost_increment: float) -> None:
         if self._is_cost_unmeasured(trial, cost_increment):
             self._totals.cost_unmeasured_trials += 1
             floor = max(
@@ -89,7 +115,6 @@ class MandatoryMetricsCollector:
         else:
             self._totals.cost_floor_usd += cost_increment
             self._totals.total_cost += cost_increment
-        self._totals.total_tokens += token_increment
 
     @staticmethod
     def _is_cost_unmeasured(trial: TrialResult, cost_increment: float) -> bool:

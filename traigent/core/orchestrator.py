@@ -91,6 +91,7 @@ from traigent.core.execution_policy_runtime import (
 from traigent.core.logger_facade import LoggerFacade
 from traigent.core.metadata_helpers import merge_run_metrics_into_session_summary
 from traigent.core.metric_registry import MetricRegistry, MetricSpec
+from traigent.core.mandatory_metrics import MandatoryMetricsCollector
 from traigent.core.metrics_aggregator import (
     aggregate_metrics,
     build_safeguards_telemetry,
@@ -162,6 +163,7 @@ from traigent.utils.optimization_logger import OptimizationLogger
 from traigent.utils.trial_costs import (
     COST_FLOOR_WIRE_KEY,
     is_cost_unmeasured,
+    known_spend_lower_bound,
     unmeasured_example_ids,
 )
 
@@ -1223,6 +1225,7 @@ class OptimizationOrchestrator:
         # intentionally excluded from ``_trials`` and must therefore be carried
         # into both normal and cancellation result construction explicitly.
         self._winner_stability_accounted_cost = 0.0
+        self._winner_stability_unmeasured_reruns = 0
         # The backend session id for the active run. Read by the
         # certified-selection report guard to verify the incumbent's trial id
         # was backend-acknowledged before attesting a winner.
@@ -2365,32 +2368,63 @@ class OptimizationOrchestrator:
                 # Stability reruns are excluded from optimizer history, but
                 # their sample accounting is still serialized.
                 self._register_examples_attempted(rerun_trial)
+                known = float(trial_cost or 0.0)
+                if MandatoryMetricsCollector._is_cost_unmeasured(rerun_trial, known):
+                    # Unknown rerun spend: keep unknownness and the exact floor.
+                    self._winner_stability_unmeasured_reruns += 1
+                    floor = max(
+                        known,
+                        known_spend_lower_bound(
+                            rerun_trial.metrics, rerun_trial.metadata
+                        ),
+                    )
+                    return floor if floor > 0 else trial_cost
                 return trial_cost
             if rerun_dispatched:
                 await self._account_untracked_trial_attempt(
                     trial_id=trial_id,
                     permit=permit,
                 )
+                # Dispatched with no result: spend unknown, floor unknown (0).
+                self._winner_stability_unmeasured_reruns += 1
             return None
 
     @staticmethod
     def _add_winner_stability_cost_to_result(
         result: OptimizationResult,
         stability_cost: float,
+        unmeasured_reruns: int = 0,
     ) -> None:
-        """Reconcile known stability-rerun spend into an outward result."""
-        if stability_cost <= 0:
+        """Reconcile stability-rerun spend into an outward result.
+
+        Known rerun spend is added to the total. A rerun whose cost is
+        unmeasured makes the run total unknown (#2688): ``total_cost`` becomes
+        ``None``, ``cost_floor_usd`` carries known spend plus the rerun floors
+        and ``cost_unmeasured_trials`` counts the rerun.
+        """
+        if stability_cost <= 0 and unmeasured_reruns <= 0:
             return
         floor_key = COST_FLOOR_WIRE_KEY
-        if result.total_cost is None and floor_key in result.metrics:
-            # Unmeasured-cost run: the total stays unknown; the known stability
-            # spend raises the floor (#2688).
+        already_unknown = result.total_cost is None and floor_key in result.metrics
+        if already_unknown or unmeasured_reruns > 0:
+            if already_unknown:
+                prior_floor = result.metrics[floor_key]
+            else:
+                prior_floor = result.total_cost or 0.0
             try:
-                result.metrics[floor_key] = float(result.metrics[floor_key]) + (
-                    stability_cost
-                )
+                floor = float(prior_floor) + stability_cost
             except (TypeError, ValueError):
-                result.metrics[floor_key] = stability_cost
+                floor = stability_cost
+            result.total_cost = None
+            result.metrics.pop("total_cost", None)
+            result.metrics[floor_key] = floor
+            try:
+                prior_count = int(result.metrics.get("cost_unmeasured_trials", 0))
+            except (TypeError, ValueError):
+                prior_count = 0
+            result.metrics["cost_unmeasured_trials"] = float(
+                prior_count + unmeasured_reruns
+            )
             return
         prior_total_cost = result.total_cost or 0.0
         result.total_cost = prior_total_cost + stability_cost
@@ -3242,6 +3276,7 @@ class OptimizationOrchestrator:
         self._strict_withheld_promotions = []
         self._certified_promotions = 0
         self._winner_stability_accounted_cost = 0.0
+        self._winner_stability_unmeasured_reruns = 0
 
         # Reset stop conditions for fresh optimization run
         self._stop_condition_manager.reset()
@@ -4476,6 +4511,9 @@ class OptimizationOrchestrator:
                                 self._add_winner_stability_cost_to_result(
                                     result,
                                     self._winner_stability_accounted_cost,
+                                    getattr(
+                                        self, "_winner_stability_unmeasured_reruns", 0
+                                    ),
                                 )
                         except Exception:
                             logger.warning(
@@ -4559,6 +4597,7 @@ class OptimizationOrchestrator:
             self._add_winner_stability_cost_to_result(
                 result,
                 self._winner_stability_accounted_cost,
+                getattr(self, "_winner_stability_unmeasured_reruns", 0),
             )
 
             if not scores:
@@ -5060,6 +5099,7 @@ class OptimizationOrchestrator:
         self._add_winner_stability_cost_to_result(
             result,
             self._winner_stability_accounted_cost,
+            getattr(self, "_winner_stability_unmeasured_reruns", 0),
         )
         try:
             await self._finalize_optimization(result, session_id, session_span)
