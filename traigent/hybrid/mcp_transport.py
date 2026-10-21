@@ -218,23 +218,23 @@ class MCPTransport:
 
             content = response.data.get("content") if response.data else None
             if content is None:
-                raise TransportError(f"No content returned for resource: {uri}")
+                raise TransportError("No content returned for MCP resource")
 
             result: dict[str, Any] = json.loads(content)
             return result
 
         except json.JSONDecodeError as e:
             raise TransportError(
-                f"Invalid JSON in resource {uri}: {type(e).__name__}",
+                f"Invalid JSON in MCP resource: {type(e).__name__}",
                 cause=e,
-            ) from e
+            ) from None
         except Exception as e:
             if isinstance(e, TransportError):
                 raise
             raise TransportConnectionError(
                 f"MCP read_resource failed: {type(e).__name__}",
                 cause=e,
-            ) from e
+            ) from None
 
     async def _call_tool(
         self,
@@ -275,7 +275,7 @@ class MCPTransport:
             raise TransportConnectionError(
                 f"MCP call_tool({tool_name}) failed: {type(e).__name__}",
                 cause=e,
-            ) from e
+            ) from None
 
     async def capabilities(self) -> ServiceCapabilities:
         """Fetch service capabilities via MCP resource.

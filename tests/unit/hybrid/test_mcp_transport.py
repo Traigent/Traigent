@@ -207,6 +207,43 @@ class TestMCPTransportReadResource:
         assert "MCP read_resource failed" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    async def test_discover_config_space_failure_never_exposes_tunable_id(
+        self, transport: MCPTransport
+    ) -> None:
+        """#2555: tunable_id (customer content) and server text stay out of
+        exception messages and formatted traceback chains."""
+        import traceback
+
+        sentinel = "sentinel-private-tunable"
+        server_text = "sentinel-server-text"
+        # The wrapped error carries both the URI and server text.
+        transport._client.read_resource = AsyncMock(
+            side_effect=Exception(f"failed {server_text} tunable_id={sentinel}")
+        )
+
+        with pytest.raises(TransportConnectionError) as exc_info:
+            await transport.discover_config_space(tunable_id=sentinel)
+
+        formatted = "".join(traceback.format_exception(exc_info.value))
+        for text in (sentinel, server_text):
+            assert text not in str(exc_info.value)
+            assert text not in formatted
+
+    @pytest.mark.asyncio
+    async def test_read_resource_no_content_and_bad_json_omit_uri(
+        self, transport: MCPTransport
+    ) -> None:
+        sentinel = "sentinel-private-tunable"
+        uri = f"traigent://config-space?tunable_id={sentinel}"
+        for data in ({}, {"content": "not json {"}):
+            transport._client.read_resource = AsyncMock(
+                return_value=MockMCPResponse(success=True, data=data)
+            )
+            with pytest.raises(TransportError) as exc_info:
+                await transport._read_resource(uri)
+            assert sentinel not in str(exc_info.value)
+
+    @pytest.mark.asyncio
     async def test_read_resource_null_data(self, transport: MCPTransport) -> None:
         """Test resource read with null data."""
         mock_response = MockMCPResponse(

@@ -620,14 +620,20 @@ class ProductionMCPClient:
             # Preserve the structured JSON-RPC error code so the transport
             # layer can classify not-found/unsupported without sniffing the
             # human-readable message.
-            logger.error("Failed to read MCP resource %s: %s", uri, _safe_error_text(e))
+            logger.error(
+                "Failed to read MCP resource (operation=read_resource): %s",
+                _safe_error_text(e),
+            )
             return MCPResponse(
                 success=False,
                 error_message=_safe_error_text(e),
                 data={"error_code": e.error.code},
             )
         except Exception as e:
-            logger.error("Failed to read MCP resource %s: %s", uri, _safe_error_text(e))
+            logger.error(
+                "Failed to read MCP resource (operation=read_resource): %s",
+                _safe_error_text(e),
+            )
             return MCPResponse(success=False, error_message=_safe_error_text(e))
 
     # Backend Integration Operations
