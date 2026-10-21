@@ -283,7 +283,7 @@ def reserve_occurrence(
     key: str,
     run_info: Mapping[str, Any],
     *,
-    attempt: int = 1,
+    attempt: int | None = None,
     now: datetime | None = None,
     lease: timedelta = OCCURRENCE_LEASE,
 ) -> bool:
@@ -295,7 +295,9 @@ def reserve_occurrence(
     reservation succeeds only while the ledger still holds ``attempt - 1``
     failures (compare-and-set under the ledger lock), so an approval issued
     before a failure can never authorize the retry after it.  A generation
-    mismatch raises ``hold`` at ``approval``.
+    mismatch raises ``hold`` at ``approval``.  ``attempt=None`` (a low-level
+    caller with no approval) skips the generation check; ``respond`` always
+    passes it.
     """
     path = _occ_path(state_dir, agent_id)
     with _ledger_lock(path):
@@ -306,7 +308,7 @@ def reserve_occurrence(
         if isinstance(earlier, dict) and earlier.get("status") != STATUS_FAILED:
             return False
         failed = failed_attempts(earlier)
-        if failed != attempt - 1:
+        if attempt is not None and failed != attempt - 1:
             raise RuntimeRequirementError(E_HOLD, "approval")
         doc[key] = {
             "started_at": (now or utcnow()).isoformat(),
