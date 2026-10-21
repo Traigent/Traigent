@@ -6,6 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Model defaults no longer point at retiring models (#2650).** The `model`
+  range preset drops `gpt-4.1-mini`/`gpt-4.1-nano` for `gpt-5.4-mini`/
+  `gpt-5.4-nano`; the OpenAI executor's model allow-list is now derived from the
+  SDK's known-models table (case-insensitive, retired families still rejected);
+  and `Choices.model()` raises `ValueError` for a provider with no defaults
+  instead of silently returning an OpenAI model. `DEFAULT_MODEL` is unchanged.
+
 ### Security
 
 - **Old `traigent-tracing` add-ons are ignored (#1894).** An installed

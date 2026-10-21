@@ -164,3 +164,20 @@ def test_recorded_historical_block_is_narrow_and_present() -> None:
     assert "recorded-historical-begin" in raw
     assert GPT35_PATTERN.search(raw) and not GPT35_PATTERN.search(stripped)
     assert "def main" in stripped
+
+
+def test_model_range_preset_has_no_announced_shutdown_models() -> None:
+    """The ``model`` range preset must not offer retiring or deprecated ids (#2650)."""
+    from traigent.config_generator.presets.range_presets import get_preset_range
+
+    preset = get_preset_range("model")
+    assert preset is not None
+    table = _litellm_table()
+    offenders = []
+    for model in preset["kwargs"]["values"]:
+        if model.startswith(("gpt-3.5", "gpt-4.1", "claude-3")):
+            offenders.append(model)
+        for key in (model, f"openai/{model}"):
+            if (table.get(key) or {}).get("deprecation_date"):
+                offenders.append(model)
+    assert not offenders, offenders

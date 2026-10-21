@@ -46,6 +46,23 @@ except (
 if TYPE_CHECKING:
     from traigent.cloud.models import AgentSpecification
 
+
+# Model families that are retired or have an announced shutdown; never accepted
+# by the executor even though the known-models table may still list them.
+_RETIRED_OPENAI_PREFIXES = ("gpt-3.5", "gpt-4.1", "gpt-4-turbo", "gpt-4-32k")
+
+
+def _openai_supported_models() -> list[str]:
+    """Known OpenAI model ids minus retired families (single source: validation)."""
+    from traigent.providers.validation import _KNOWN_MODELS
+
+    return sorted(
+        m
+        for m in _KNOWN_MODELS["openai"]
+        if not m.lower().startswith(_RETIRED_OPENAI_PREFIXES)
+    )
+
+
 logger = get_logger(__name__)
 
 # Common model alias fixes
@@ -614,16 +631,13 @@ class OpenAIAgentExecutor(AgentExecutor):
         model = agent_spec.model_parameters["model"]
         validate_or_raise(CoreValidators.validate_string(model, "model", min_length=1))
 
-        # Validate model is in supported list (deduplicated)
-        supported_models = [
-            "gpt-4o-mini",
-            "gpt-4o",
-            "gpt-4-turbo",
-            "GPT-4o",
-        ]
-        validate_or_raise(
-            CoreValidators.validate_choices(model, "model", supported_models)
-        )
+        # Allow-list is derived from the SDK's known OpenAI models (#2650),
+        # case-insensitive; retired/retiring families stay rejected.
+        supported_models = _openai_supported_models()
+        if model.strip().lower() not in {m.lower() for m in supported_models}:
+            validate_or_raise(
+                CoreValidators.validate_choices(model, "model", supported_models)
+            )
 
     async def _validate_platform_config(
         self, config: dict[str, Any]
