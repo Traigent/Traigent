@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime
 from types import SimpleNamespace
 
-from traigent.core.cache_usage import normalize_cache_usage
+from traigent.core.cache_usage import cache_counts_from_usage, normalize_cache_usage
 from traigent.api.types import OptimizationResult, TrialResult, TrialStatus
 from traigent.evaluators.local import LocalEvaluator
 from traigent.evaluators.metrics_tracker import ExampleMetrics, MetricsTracker
@@ -56,7 +56,9 @@ def test_response_without_cache_fields_is_unknown():
 
 def test_with_usage_meta_populates_example_cache_fields():
     # Same envelope with_usage(provider_usage=...) builds in optimization mode.
-    cache = normalize_cache_usage({"inputTokens": 6, "cacheReadInputTokens": 4609})
+    cache = normalize_cache_usage(
+        {"inputTokens": 6, "cacheReadInputTokens": 4609, "cacheWriteInputTokens": 0}
+    )
     meta = {
         "total_cost": 0.001,
         "usage": {"input_tokens": cache.input_tokens},
@@ -117,3 +119,42 @@ def test_summary_no_note_for_close_or_unknown_rates():
     assert (
         "cache_note" not in _result([_trial("a", None), _trial("b", 0.9)]).get_summary()
     )
+
+
+def test_anthropic_read_without_write_count_has_unknown_rate():
+    # #2069: input 100, cache read 100, writes unreported must not become 50%.
+    usage = {"input_tokens": 100, "cache_read_input_tokens": 100}
+    assert cache_counts_from_usage(usage) == (None, None)
+    cache = normalize_cache_usage(usage)
+    metrics = ExampleMetrics()
+    LocalEvaluator._inject_cache_usage_from_meta(
+        {"usage": {"input_tokens": 100}, "cache_usage": cache.as_metadata()}, metrics
+    )
+    assert metrics.cache_read_tokens is None
+    assert metrics.cache_total_input_tokens is None
+
+
+def test_anthropic_with_reported_write_count_has_a_rate():
+    usage = {
+        "input_tokens": 100,
+        "cache_read_input_tokens": 100,
+        "cache_creation_input_tokens": 0,
+    }
+    assert cache_counts_from_usage(usage) == (100, 200)
+
+
+def test_bedrock_read_without_write_count_is_unknown():
+    usage = {"inputTokens": 6, "cacheReadInputTokens": 4609}
+    assert cache_counts_from_usage(usage) == (None, None)
+
+
+def test_openai_and_gemini_have_no_write_concept_so_rate_is_known():
+    openai = {"prompt_tokens": 200, "prompt_tokens_details": {"cached_tokens": 100}}
+    assert cache_counts_from_usage(openai) == (100, 200)
+    responses = {
+        "input_tokens": 200,
+        "input_tokens_details": {"cached_tokens": 50},
+    }
+    assert cache_counts_from_usage(responses) == (50, 200)
+    gemini = {"promptTokenCount": 200, "cachedContentTokenCount": 100}
+    assert cache_counts_from_usage(gemini) == (100, 200)

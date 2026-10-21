@@ -1996,6 +1996,12 @@ class LocalEvaluator(BaseEvaluator):
             isinstance(creation, bool) or not isinstance(creation, int) or creation < 0
         ):
             creation = None
+        from traigent.core.cache_usage import cache_total_is_measurable
+
+        if not cache_total_is_measurable(cache.get("provider_shape"), creation):
+            # A write-reporting provider (Anthropic/Bedrock) without a write
+            # count: the total is a lower bound, so the rate is unknown.
+            return
         metrics.cache_read_tokens = read
         metrics.cache_total_input_tokens = fresh + read + (creation or 0)
 

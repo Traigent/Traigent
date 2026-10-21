@@ -37,6 +37,7 @@ from typing import Any
 __all__ = [
     "CacheUsage",
     "cache_counts_from_usage",
+    "cache_total_is_measurable",
     "normalize_cache_usage",
     "usage_as_dict",
 ]
@@ -84,6 +85,21 @@ _TTL_KEYS = {
     "ephemeral_5m_input_tokens": "ephemeral_5m",
     "ephemeral_1h_input_tokens": "ephemeral_1h",
 }
+
+
+# Shapes whose usage format has no cache-write concept: the provider never reports
+# a write count, so its absence is not a gap. Every other shape (Anthropic, Bedrock)
+# reports writes, and a missing write count there is an unknown, never zero (#2069).
+_NO_WRITE_CONCEPT_SHAPES = frozenset({"openai_chat", "openai_responses", "gemini"})
+
+
+def cache_total_is_measurable(
+    provider_shape: str | None, cache_creation_tokens: int | None
+) -> bool:
+    """False when a write-reporting provider left the cache-write count unknown."""
+    if provider_shape in _NO_WRITE_CONCEPT_SHAPES:
+        return True
+    return cache_creation_tokens is not None
 
 
 @dataclass(frozen=True)
@@ -313,6 +329,10 @@ def cache_counts_from_usage(usage: Any) -> tuple[int | None, int | None]:
         return None, None
     normalized = normalize_cache_usage(payload)
     if normalized.cache_read_tokens is None:
+        return None, None
+    if not cache_total_is_measurable(
+        normalized.provider_shape, normalized.cache_creation_tokens
+    ):
         return None, None
     total = normalized.billable_input_tokens
     if total is None:
