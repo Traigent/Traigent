@@ -26,6 +26,8 @@ from .conftest import (
     head,
 )
 
+pytestmark = pytest.mark.backend_online
+
 CREATE = ("POST", "/production-requirements")
 IMPORT = ("POST", "/production-requirements/tvl-import")
 LIST = ("GET", "/production-requirements")

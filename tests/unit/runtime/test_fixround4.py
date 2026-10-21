@@ -142,6 +142,7 @@ def _occ(state_dir: Path, key: str = "b1|fix|0") -> dict:
     )
 
 
+@pytest.mark.backend_online
 async def test_sync_run_outliving_the_lease_is_not_recorded_finished(
     backend: FakeBackend, state_dir: Path
 ) -> None:
@@ -165,6 +166,7 @@ async def test_sync_run_outliving_the_lease_is_not_recorded_finished(
     assert not _occ(state_dir).get("run_id")
 
 
+@pytest.mark.backend_online
 async def test_refused_heartbeat_cancels_the_run(
     backend: FakeBackend, state_dir: Path
 ) -> None:
@@ -258,6 +260,7 @@ def test_heartbeat_samples_the_clock_after_the_lock_wait(state_dir: Path) -> Non
     assert _occ(state_dir)["heartbeat_at"] == t0.isoformat()
 
 
+@pytest.mark.backend_online
 async def test_heartbeat_errors_stop_counting_as_ownership_after_the_deadline(
     backend: FakeBackend, state_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -294,6 +297,7 @@ async def test_heartbeat_errors_stop_counting_as_ownership_after_the_deadline(
     assert cancelled == [True]
 
 
+@pytest.mark.backend_online
 async def test_failed_final_ownership_check_never_authorises_success(
     backend: FakeBackend, state_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -310,6 +314,7 @@ async def test_failed_final_ownership_check_never_authorises_success(
     assert not _occ(state_dir).get("finished")
 
 
+@pytest.mark.backend_online
 async def test_a_raising_run_is_drained_even_when_the_lease_was_lost(
     backend: FakeBackend, state_dir: Path
 ) -> None:
@@ -340,6 +345,7 @@ async def test_a_raising_run_is_drained_even_when_the_lease_was_lost(
     assert unretrieved == []
 
 
+@pytest.mark.backend_online
 async def test_final_write_fencing_drops_the_stale_outcome(
     backend: FakeBackend, state_dir: Path, monkeypatch: pytest.MonkeyPatch, caplog
 ) -> None:
@@ -369,6 +375,7 @@ async def test_final_write_fencing_drops_the_stale_outcome(
     assert not record.get("finished")
 
 
+@pytest.mark.backend_online
 async def test_named_breach_is_the_one_fixed(
     backend: FakeBackend, state_dir: Path
 ) -> None:
@@ -382,6 +389,7 @@ async def test_named_breach_is_the_one_fixed(
     assert result.breach_id == "b2"
 
 
+@pytest.mark.backend_online
 async def test_unnamed_breach_ref_holds(backend: FakeBackend, state_dir: Path) -> None:
     other = {
         "step": {"code": "RESTORE_PRODUCTION_REQUIREMENT"},
@@ -394,6 +402,7 @@ async def test_unnamed_breach_ref_holds(backend: FakeBackend, state_dir: Path) -
     assert (err.value.code, err.value.path) == ("hold", "breach")
 
 
+@pytest.mark.backend_online
 def test_malformed_list_item_fails_closed(backend: FakeBackend) -> None:
     backend.on(*LIST, 200, {"items": [head(), "junk"]})
     backend.on(*BREACHES, 200, {"items": [breach("b1"), 7], "has_more": False})
@@ -404,6 +413,7 @@ def test_malformed_list_item_fails_closed(backend: FakeBackend) -> None:
         assert (err.value.code, err.value.path) == ("backend_error", "response")
 
 
+@pytest.mark.backend_online
 async def test_cancelled_run_is_marked_failed_and_cancellation_propagates(
     backend: FakeBackend, state_dir: Path
 ) -> None:

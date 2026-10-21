@@ -63,6 +63,7 @@ def test_heartbeat_keeps_a_running_reservation_alive(state_dir: Path) -> None:
     )
 
 
+@pytest.mark.backend_online
 async def test_respond_renews_heartbeat_while_optimize_runs(
     live: FakeBackend,
     state_dir: Path,
@@ -98,6 +99,7 @@ def test_stale_attempt_cannot_write_an_outcome(state_dir: Path) -> None:
     assert record["attempts"] == 2 and not record.get("finished")
 
 
+@pytest.mark.backend_online
 async def test_respond_drops_a_fenced_out_outcome(
     live: FakeBackend,
     state_dir: Path,
@@ -171,6 +173,7 @@ def test_first_use_writes_the_owner_marker_and_default_dir_names_the_sdk(
 # --- 5': approval expiring while the reservation waits -------------------------------------
 
 
+@pytest.mark.backend_online
 async def test_expiry_during_reservation_releases_it_and_does_not_start(
     live: FakeBackend,
     state_dir: Path,
@@ -221,6 +224,7 @@ def test_ledger_lock_wait_is_bounded(state_dir: Path) -> None:
 # --- 8: re-entrant poll -------------------------------------------------------------------
 
 
+@pytest.mark.backend_online
 def test_poll_from_inside_the_hook_is_refused_not_deadlocked(
     backend: FakeBackend,
 ) -> None:
@@ -289,6 +293,7 @@ def test_a_stale_heartbeat_does_not_block_the_episode(state_dir: Path) -> None:
 # --- 10: a failed save is visible -----------------------------------------------------------------
 
 
+@pytest.mark.backend_online
 def test_save_failure_reports_persisted_false(
     backend: FakeBackend, monkeypatch: pytest.MonkeyPatch, caplog
 ) -> None:

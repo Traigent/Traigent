@@ -14,6 +14,8 @@ from traigent.runtime.watch import poll_once
 
 from .conftest import AGENT, PROJECT, FakeBackend, breach
 
+pytestmark = pytest.mark.backend_online
+
 LIST = ("GET", f"/agents/{AGENT}/production-breaches")
 
 

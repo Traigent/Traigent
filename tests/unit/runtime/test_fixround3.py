@@ -35,6 +35,7 @@ def live(backend: FakeBackend) -> FakeBackend:
     return backend
 
 
+@pytest.mark.backend_online
 async def test_lease_starts_after_the_lock_is_acquired(
     live: FakeBackend, state_dir: Path
 ) -> None:
@@ -72,6 +73,7 @@ async def test_lease_starts_after_the_lock_is_acquired(
     assert seen["status"] == "started"  # not expired for a second controller
 
 
+@pytest.mark.backend_online
 async def test_cancelling_respond_leaves_no_heartbeat_task(
     live: FakeBackend, state_dir: Path
 ) -> None:

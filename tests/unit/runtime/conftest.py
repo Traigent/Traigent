@@ -143,8 +143,6 @@ def backend(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[FakeBac
     fake.thread.start()
     monkeypatch.setenv("TRAIGENT_BACKEND_URL", fake.url)
     monkeypatch.setenv("TRAIGENT_API_KEY", "test-only-key")
-    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
-    monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
     monkeypatch.setenv("TRAIGENT_RUNTIME_STATE_DIR", str(tmp_path / "state"))
     try:
         yield fake

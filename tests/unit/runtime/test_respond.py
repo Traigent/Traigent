@@ -84,6 +84,7 @@ def _applied(path: Path) -> None:
     assert _cli(path, "apply").exit_code == 0
 
 
+@pytest.mark.backend_online
 def test_happy_path_runs_existing_optimize_with_the_cost_limit(
     live: FakeBackend, optimize_mock: AsyncMock, user_module
 ) -> None:
@@ -102,6 +103,7 @@ def test_happy_path_runs_existing_optimize_with_the_cost_limit(
     assert record["breach_id"] == "b1" and record["occurrence"] == 0
 
 
+@pytest.mark.backend_online
 def test_same_occurrence_twice_is_refused(
     live: FakeBackend, optimize_mock: AsyncMock, user_module
 ) -> None:
@@ -114,6 +116,7 @@ def test_same_occurrence_twice_is_refused(
     assert optimize_mock.await_count == 1
 
 
+@pytest.mark.backend_online
 def test_declining_the_prompt_runs_nothing(
     live: FakeBackend, optimize_mock: AsyncMock, user_module
 ) -> None:
@@ -124,6 +127,7 @@ def test_declining_the_prompt_runs_nothing(
     optimize_mock.assert_not_awaited()
 
 
+@pytest.mark.backend_online
 def test_no_tty_means_approval_required(
     live: FakeBackend,
     optimize_mock: AsyncMock,
@@ -148,6 +152,7 @@ def _fragment_module(user_module, extra: str = "") -> Path:
 
 
 @pytest.mark.parametrize("ceiling", ["0", "-1", "nan", "inf"])
+@pytest.mark.backend_online
 def test_missing_or_invalid_ceiling_is_refused(
     live: FakeBackend, optimize_mock: AsyncMock, user_module, ceiling: str
 ) -> None:
@@ -161,6 +166,7 @@ def test_missing_or_invalid_ceiling_is_refused(
     optimize_mock.assert_not_awaited()
 
 
+@pytest.mark.backend_online
 def test_cli_ceiling_flag_is_bound_into_the_run(
     live: FakeBackend,
     optimize_mock: AsyncMock,
@@ -225,6 +231,7 @@ def test_cli_ceiling_flag_is_bound_into_the_run(
         "step_unreadable",
     ],
 )
+@pytest.mark.backend_online
 def test_failed_check_holds_and_nothing_runs(
     live: FakeBackend, optimize_mock: AsyncMock, user_module, setup, code: str
 ) -> None:
@@ -236,6 +243,7 @@ def test_failed_check_holds_and_nothing_runs(
     optimize_mock.assert_not_awaited()
 
 
+@pytest.mark.backend_online
 def test_local_policy_changed_since_apply_holds(
     live: FakeBackend, optimize_mock: AsyncMock, user_module
 ) -> None:
@@ -251,6 +259,7 @@ def test_local_policy_changed_since_apply_holds(
     optimize_mock.assert_not_awaited()
 
 
+@pytest.mark.backend_online
 def test_never_applied_holds(
     live: FakeBackend, optimize_mock: AsyncMock, user_module
 ) -> None:
@@ -258,6 +267,7 @@ def test_never_applied_holds(
     assert result.exit_code == 1 and "requirement_not_applied" in result.output
 
 
+@pytest.mark.backend_online
 def test_alert_only_policy_has_nothing_to_respond_with(
     live: FakeBackend, optimize_mock: AsyncMock, user_module
 ) -> None:
@@ -280,6 +290,7 @@ def _fn_and_req():
     return fn, fn.requirements[0]
 
 
+@pytest.mark.backend_online
 async def test_expired_approval_holds(live: FakeBackend, state_dir: Path) -> None:
     fn, req = _fn_and_req()
     apply_requirement(req, project_id=PROJECT, agent_id=AGENT, state_dir=state_dir)
@@ -300,6 +311,7 @@ async def test_expired_approval_holds(live: FakeBackend, state_dir: Path) -> Non
     fn.optimize.assert_not_awaited()
 
 
+@pytest.mark.backend_online
 async def test_policy_edit_after_approval_invalidates_it(
     live: FakeBackend, state_dir: Path
 ) -> None:
@@ -327,6 +339,7 @@ async def test_policy_edit_after_approval_invalidates_it(
     fn.optimize.assert_not_awaited()
 
 
+@pytest.mark.backend_online
 async def test_facts_shown_to_the_person_are_closed_numbers_and_ids(
     live: FakeBackend, state_dir: Path
 ) -> None:
@@ -361,6 +374,7 @@ async def test_facts_shown_to_the_person_are_closed_numbers_and_ids(
     fn.optimize.assert_awaited_once_with(cost_limit=2.0)
 
 
+@pytest.mark.backend_online
 async def test_optimize_failure_is_closed_and_a_retry_needs_a_new_approval(
     live: FakeBackend, state_dir: Path
 ) -> None:
@@ -394,6 +408,7 @@ async def test_optimize_failure_is_closed_and_a_retry_needs_a_new_approval(
     assert manifest.read_occurrence(state_dir, AGENT, key)["attempts"] == 2
 
 
+@pytest.mark.backend_online
 async def test_declaration_changed_while_the_person_decides_holds(
     live: FakeBackend, state_dir: Path
 ) -> None:
@@ -441,6 +456,7 @@ def test_optimize_and_next_step_rules_only_on_opened_episodes(event: str) -> Non
 
 
 @pytest.mark.parametrize("event", ["episode_resolved", "episode_withdrawn"])
+@pytest.mark.backend_online
 async def test_respond_refuses_a_fix_rule_on_a_closing_event(
     live: FakeBackend, state_dir: Path, event: str
 ) -> None:
@@ -459,6 +475,7 @@ async def test_respond_refuses_a_fix_rule_on_a_closing_event(
     fn.optimize.assert_not_awaited()
 
 
+@pytest.mark.backend_online
 def test_cli_prints_closed_optimize_failed(
     live: FakeBackend, user_module, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -472,6 +489,7 @@ def test_cli_prints_closed_optimize_failed(
     assert "SECRET_X" not in result.output
 
 
+@pytest.mark.backend_online
 async def test_declared_ceiling_changed_during_confirm_is_refused(
     live: FakeBackend, state_dir: Path
 ) -> None:

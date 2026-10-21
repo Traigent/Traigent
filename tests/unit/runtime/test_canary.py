@@ -22,6 +22,8 @@ from .conftest import (
     head,
 )
 
+pytestmark = pytest.mark.backend_online
+
 ENV = "staging-eu-canary7"
 NAME = "SecretLatencyName"
 HOOK = "secret_hook_callable_name"

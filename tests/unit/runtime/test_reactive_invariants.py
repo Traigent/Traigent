@@ -83,6 +83,7 @@ class Clock:
 # --- C7: expiry re-checked at the last moment --------------------------------------------
 
 
+@pytest.mark.backend_online
 async def test_c7_approval_expiring_during_second_fresh_round_holds(
     live: FakeBackend, state_dir: Path
 ) -> None:
@@ -118,6 +119,7 @@ async def test_c7_approval_expiring_during_second_fresh_round_holds(
         ("attempt", 5),
     ],
 )
+@pytest.mark.backend_online
 async def test_c6_tampered_approval_field_holds(
     live: FakeBackend,
     state_dir: Path,
@@ -148,6 +150,7 @@ async def test_c6_tampered_approval_field_holds(
 # --- C5: attempt generation ----------------------------------------------------------------
 
 
+@pytest.mark.backend_online
 async def test_c5_pre_failure_approval_cannot_authorize_post_failure_retry(
     live: FakeBackend, state_dir: Path
 ) -> None:
@@ -181,6 +184,7 @@ async def test_c5_pre_failure_approval_cannot_authorize_post_failure_retry(
     assert record["status"] == "failed" and record["attempts"] == 1
 
 
+@pytest.mark.backend_online
 async def test_c5_retry_after_failure_with_a_new_approval_is_attempt_two(
     live: FakeBackend, state_dir: Path
 ) -> None:
@@ -200,6 +204,7 @@ async def test_c5_retry_after_failure_with_a_new_approval_is_attempt_two(
 # --- INV-33: lease ---------------------------------------------------------------------------
 
 
+@pytest.mark.backend_online
 async def test_inv33_stale_reservation_is_read_as_failed_and_needs_a_new_approval(
     live: FakeBackend, state_dir: Path
 ) -> None:
@@ -260,6 +265,7 @@ def _step_with_ref(ref: str | None) -> dict:
     }
 
 
+@pytest.mark.backend_online
 async def test_c9_step_for_another_breach_holds(
     live: FakeBackend, state_dir: Path
 ) -> None:
@@ -273,6 +279,7 @@ async def test_c9_step_for_another_breach_holds(
 
 
 # control: passes without the fix (the old code already took the first breach)
+@pytest.mark.backend_online
 async def test_c9_matching_reference_proceeds_even_with_two_open_breaches(
     live: FakeBackend, state_dir: Path
 ) -> None:
@@ -285,6 +292,7 @@ async def test_c9_matching_reference_proceeds_even_with_two_open_breaches(
     assert result.breach_id == "b1"
 
 
+@pytest.mark.backend_online
 async def test_c9_no_reference_and_two_open_breaches_is_ambiguous(
     live: FakeBackend, state_dir: Path
 ) -> None:
@@ -312,6 +320,7 @@ def test_c14_two_episode_opened_optimize_rules_are_refused() -> None:
     assert not [i for i in req.validate() if i.severity == "error"]
 
 
+@pytest.mark.backend_online
 async def test_c14_respond_refuses_two_optimize_rules(
     live: FakeBackend, state_dir: Path
 ) -> None:
@@ -329,6 +338,7 @@ async def test_c14_respond_refuses_two_optimize_rules(
 # --- occurrence numbering from 0 -------------------------------------------------------------------
 
 
+@pytest.mark.backend_online
 async def test_first_occurrence_is_numbered_zero(
     live: FakeBackend, state_dir: Path
 ) -> None:
@@ -352,6 +362,7 @@ def test_notify_rule_without_severity_defaults_to_critical() -> None:
 # --- C11: one poller at a time on a state dir ---------------------------------------------------------
 
 
+@pytest.mark.backend_online
 def test_c11_two_concurrent_pollers_emit_an_episode_once(
     backend: FakeBackend,
 ) -> None:
@@ -384,6 +395,7 @@ def test_c11_two_concurrent_pollers_emit_an_episode_once(
 
 
 # control: passes without the fix (the old code had no lock to leak)
+@pytest.mark.backend_online
 def test_c11_lock_released_after_a_poll(backend: FakeBackend, caplog) -> None:
     backend.on(*BREACHES, 200, {"items": [], "has_more": False})
     caplog.set_level(logging.INFO, logger="traigent.runtime")
@@ -464,6 +476,7 @@ def test_reservation_with_a_stale_attempt_holds(state_dir: Path) -> None:
     assert manifest.reserve_occurrence(state_dir, AGENT, "k", {}, attempt=2)
 
 
+@pytest.mark.backend_online
 def test_c11_unlockable_state_is_a_closed_unavailable_result(
     backend: FakeBackend, monkeypatch: pytest.MonkeyPatch, state_dir: Path
 ) -> None:
