@@ -2652,6 +2652,209 @@ class OptimizedFunction(Generic[_P, _R]):
             # No event loop running - safe to use asyncio.run
             return asyncio.run(coro)
 
+    # ------------------------------------------------------------------
+    # compare(): fixed configs as ONE experiment (issue #1952)
+    # ------------------------------------------------------------------
+
+    @property
+    def comparison_history(self) -> list[Any]:
+        """``ComparisonResult`` objects recorded by :meth:`compare`, oldest first."""
+        return list(self.__dict__.get("_comparison_history", []))
+
+    def compare(
+        self,
+        configs: Sequence[Mapping[str, Any]],
+        *,
+        eval_dataset: Any = None,
+        repeats: int = 1,
+    ) -> Any:
+        """Evaluate fixed configurations head-to-head and record ONE experiment.
+
+        Pure evaluation, no search: each config is run ``repeats`` times on the
+        SAME examples through the normal ``optimize()`` pipeline (same evaluator,
+        metrics, honest-cost rules) as a single-trial run over a one-cell
+        configuration space. It mirrors :meth:`optimize_sync`; use
+        :meth:`compare_async` from async code. Routing follows the wrapper's
+        execution policy; the runs use the local grid path, so nothing is
+        synced to the portal.
+
+        Args:
+            configs: Fully specified configs; each must name every declared
+                parameter with a value inside the declared configuration space
+                (``ValueError`` otherwise; messages never echo values).
+            eval_dataset: Optional dataset (Dataset, JSONL path, paths, or
+                inline examples) used for this comparison only, e.g. a held-out
+                set. Unlike ``optimize()`` (which rejects a call-time
+                ``eval_dataset``) it is honored here, never ignored. Default:
+                the decorated dataset. ``result.holdout`` records whether the
+                data is disjoint from the decorated (tuning) dataset.
+            repeats: Evaluations per config (default 1); the result carries the
+                per-config mean and spread across repeats.
+
+        Returns:
+            ``traigent.core.comparison.ComparisonResult``. Per-config cost is
+            ``None`` plus ``cost_lower_bound`` when any repeat's cost could not
+            be measured, never ``0.0``. The wrapper's applied config and
+            optimization history are left unchanged.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        coro = self.compare_async(configs, eval_dataset=eval_dataset, repeats=repeats)
+        if loop is not None and loop.is_running():
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                return executor.submit(asyncio.run, coro).result()
+        return asyncio.run(coro)
+
+    async def compare_async(
+        self,
+        configs: Sequence[Mapping[str, Any]],
+        *,
+        eval_dataset: Any = None,
+        repeats: int = 1,
+    ) -> Any:
+        """Async form of :meth:`compare`."""
+        from traigent.api.parameter_ranges import Choices, normalize_configuration_space
+        from traigent.core import comparison as cmp
+
+        if isinstance(repeats, bool) or not isinstance(repeats, int) or repeats < 1:
+            raise ValueError("compare() requires repeats to be an integer >= 1.")
+        space, _ = normalize_configuration_space(self.configuration_space or {})
+        fixed = cmp.validate_comparison_configs(configs, space)
+
+        previous_override = self._dataset_override
+        self._dataset_override = None
+        try:
+            tuning_dataset = self._load_dataset()
+            if eval_dataset is None:
+                dataset = tuning_dataset
+            elif isinstance(eval_dataset, Dataset):
+                dataset = eval_dataset
+            else:
+                saved_source = self.eval_dataset
+                self.eval_dataset = eval_dataset
+                try:
+                    dataset = self._load_dataset()
+                finally:
+                    self.eval_dataset = saved_source
+        finally:
+            self._dataset_override = previous_override
+        if not dataset.examples:
+            raise ValueError("compare() requires a non-empty evaluation dataset.")
+        eval_fps = [cmp.example_fingerprint(e) for e in dataset.examples]
+        tuning_fps = [cmp.example_fingerprint(e) for e in tuning_dataset.examples]
+        holdout = cmp.build_holdout_check(
+            eval_fps, tuning_fps, eval_dataset_supplied=eval_dataset is not None
+        )
+        if holdout.holdout_valid is False and eval_dataset is not None:
+            logger.warning("compare(): %s", holdout.note)
+
+        objectives = list(self.objectives)
+        primary_metric = objectives[0] if objectives else "accuracy"
+        expected_ids = tuple(
+            f"example_{i}"
+            if not (e.metadata or {}).get("example_id")
+            else str(e.metadata["example_id"])
+            for i, e in enumerate(dataset.examples)
+        )
+
+        rows = []
+        observed_ids: list[tuple[str, ...]] = []
+        saved_state = self._snapshot_for_compare()
+        try:
+            for config in fixed:
+                one_cell = {k: Choices([v]) for k, v in config.items()}
+                runs = []
+                for _ in range(repeats):
+                    self._dataset_override = dataset
+                    try:
+                        runs.append(
+                            await self.optimize(
+                                algorithm="grid",
+                                configuration_space=one_cell,
+                                max_trials=1,
+                                progress_bar=False,
+                            )
+                        )
+                    finally:
+                        self._dataset_override = previous_override
+                    observed_ids.append(self._trial_example_ids(runs[-1], expected_ids))
+                rows.append(
+                    cmp.aggregate_config(config, runs, primary_metric, expected_ids)
+                )
+        finally:
+            self._restore_after_compare(saved_state)
+
+        result = cmp.ComparisonResult(
+            comparison_id=cmp.new_comparison_id(),
+            primary_metric=primary_metric,
+            objectives=objectives,
+            repeats=repeats,
+            n_examples=len(dataset.examples),
+            example_ids=expected_ids,
+            same_examples_across_configs=all(
+                o == observed_ids[0] for o in observed_ids
+            ),
+            holdout=holdout,
+            configs=rows,
+        )
+        self.__dict__.setdefault("_comparison_history", []).append(result)
+        return result
+
+    @staticmethod
+    def _trial_example_ids(run: Any, fallback: tuple[str, ...]) -> tuple[str, ...]:
+        """Example ids a run evaluated (falls back to the dataset's own ids)."""
+        trials = getattr(run, "trials", None) or []
+        entries = (
+            (getattr(trials[0], "metadata", None) or {}).get("example_results")
+            if trials
+            else None
+        )
+        ids: list[str] = []
+        for entry in entries or []:
+            value = (
+                entry.get("example_id")
+                if isinstance(entry, Mapping)
+                else getattr(entry, "example_id", None)
+            )
+            if value is not None:
+                ids.append(str(value))
+        return tuple(ids) if ids else fallback
+
+    _COMPARE_RESTORED_CSM_ATTRS = (
+        "_current_config",
+        "_best_config",
+        "_best_config_snapshot",
+        "_best_config_precondition",
+        "_override_sticky",
+        "_optimization_results",
+        "_optimization_history",
+        "_state",
+    )
+
+    def _snapshot_for_compare(self) -> dict[str, Any]:
+        """State an advancing ``optimize()`` run mutates, restored by compare().
+
+        compare() is evaluation, not a promotion: each underlying single-trial
+        run would otherwise apply its (only) config as the wrapper's best.
+        """
+        csm = self._csm
+        saved = {
+            name: copy.copy(getattr(csm, name))
+            for name in self._COMPARE_RESTORED_CSM_ATTRS
+            if hasattr(csm, name)
+        }
+        return {"csm": saved, "wrapped_func": self._wrapped_func}
+
+    def _restore_after_compare(self, snapshot: dict[str, Any]) -> None:
+        with self._csm._state_lock:
+            for name, value in snapshot["csm"].items():
+                setattr(self._csm, name, value)
+        self._wrapped_func = snapshot["wrapped_func"]
+
     def _resolve_runtime_tvl_options(
         self,
         spec: str | Path | None,
