@@ -24,6 +24,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Cached input tokens and cache-hit rate per trial (#2069).** Trial metadata
+  now carries `cached_input_tokens` and `cache_hit_rate` (cached / total input
+  tokens), and `OptimizationResult.get_summary()` adds a `cache_note` when hit
+  rates differ by more than 20 percentage points across trials, since cost
+  comparisons may then reflect run order. Both values are `None` (unknown, never
+  0) when a provider does not report cache usage. No behaviour change.
+
 - **RAGAS reports row coverage and fails below a minimum scored share (#2677).**
   For each RAGAS metric the trial metrics now carry integer
   `ragas_<name>_rows_scored` and `ragas_<name>_rows_total`. Rows RAGAS leaves

@@ -1691,6 +1691,19 @@ class LocalEvaluator(BaseEvaluator):
                 c.cost.total_cost for c in calls if not c.cost.unmeasured
             )
         out.measured = any(c.measured for c in calls)
+        # Cache usage is summed only when EVERY call reported it; one unknown
+        # call makes the row unknown, never a partial sum or a zero (#2069).
+        if all(
+            c.cache_read_tokens is not None and c.cache_total_input_tokens is not None
+            for c in calls
+        ):
+            out.cache_read_tokens = sum(int(c.cache_read_tokens or 0) for c in calls)
+            out.cache_total_input_tokens = sum(
+                int(c.cache_total_input_tokens or 0) for c in calls
+            )
+        else:
+            out.cache_read_tokens = None
+            out.cache_total_input_tokens = None
         out.call_breakdown = [b for c in calls for b in c.call_breakdown]
         return out
 
@@ -1960,6 +1973,32 @@ class LocalEvaluator(BaseEvaluator):
         except Exception as e:
             logger.error(f"Failed to inject response_time_ms: {e}")
 
+    @staticmethod
+    def _inject_cache_usage_from_meta(
+        meta: dict[str, Any], metrics: ExampleMetrics
+    ) -> None:
+        """Record cached input tokens from ``meta["cache_usage"]`` (#2069).
+
+        Left unknown (None) unless the cache read count AND the input count are
+        both reported as real integers; absent is never recorded as zero.
+        """
+        cache = meta.get("cache_usage")
+        usage = meta.get("usage")
+        if not isinstance(cache, dict) or not isinstance(usage, dict):
+            return
+        read = cache.get("cache_read_tokens")
+        fresh = usage.get("input_tokens")
+        creation = cache.get("cache_creation_tokens")
+        for value in (read, fresh):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                return
+        if creation is not None and (
+            isinstance(creation, bool) or not isinstance(creation, int) or creation < 0
+        ):
+            creation = None
+        metrics.cache_read_tokens = read
+        metrics.cache_total_input_tokens = fresh + read + (creation or 0)
+
     def _inject_call_breakdown_from_meta(
         self, calls: list[Any], metrics: ExampleMetrics
     ) -> None:
@@ -2078,6 +2117,9 @@ class LocalEvaluator(BaseEvaluator):
         # Inject usage data (tokens, response time)
         if "usage" in meta:
             self._inject_usage_from_meta(cast(dict, meta["usage"]), metrics)
+
+        # Prompt-cache usage reported by with_usage(provider_usage=...) (#2069).
+        self._inject_cache_usage_from_meta(cast(dict, meta), metrics)
 
         # Inject per-call/per-model cost breakdown for multi-model agents (#1598)
         if "calls" in meta:
@@ -3265,6 +3307,7 @@ class LocalEvaluator(BaseEvaluator):
         # __traigent_meta__["calls"] reported this trial. Empty when no
         # example reported a breakdown.
         model_costs = metrics_tracker.aggregate_call_breakdown()
+        cache_usage_totals = metrics_tracker.aggregate_cache_usage()
 
         result = EvaluationResult(
             config=config,
@@ -3279,6 +3322,7 @@ class LocalEvaluator(BaseEvaluator):
             errors=errors,
             metric_errors=metric_errors,
             model_costs=model_costs,
+            cache_usage=cache_usage_totals,
         )
 
         # Attach summary_stats if generated

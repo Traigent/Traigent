@@ -1398,6 +1398,12 @@ class EvaluationResult:
     # when no example reported a per-call breakdown.
     model_costs: list[dict[str, Any]] = field(default_factory=list)
 
+    # Per-trial prompt-cache usage (Traigent#2069): ``cached_input_tokens`` and
+    # ``cache_hit_rate`` (cached / total input tokens). Each is ``None`` when
+    # the provider did not report cache usage for every measured example --
+    # unknown, never a measured zero. Local-only; not a wire metric.
+    cache_usage: dict[str, Any] = field(default_factory=dict)
+
     def __post_init__(self) -> None:
         # Backward compatibility mapping
         if self.metrics is None:
@@ -1452,6 +1458,7 @@ class EvaluationResult:
             "has_errors": self.has_errors,
             "metric_errors": _safe_json_value(self.metric_errors),
             "model_costs": _safe_json_value(self.model_costs),
+            "cache_usage": _safe_json_value(self.cache_usage),
         }
 
     @classmethod
@@ -1485,6 +1492,7 @@ class EvaluationResult:
             errors=data.get("errors"),
             metric_errors=data.get("metric_errors") or [],
             model_costs=data.get("model_costs") or [],
+            cache_usage=data.get("cache_usage") or {},
         )
 
 

@@ -334,6 +334,13 @@ def _build_success_trial_metadata(
     if isinstance(model_costs, list) and model_costs:
         trial_metadata["model_costs"] = model_costs
 
+    # Prompt-cache usage (Traigent#2069): local trial metadata only. Unknown
+    # stays None -- never zero. ``isinstance`` guards a Mock eval_result.
+    cache_usage = getattr(eval_result, "cache_usage", None)
+    if isinstance(cache_usage, dict) and cache_usage:
+        trial_metadata["cached_input_tokens"] = cache_usage.get("cached_input_tokens")
+        trial_metadata["cache_hit_rate"] = cache_usage.get("cache_hit_rate")
+
     summary_stats = getattr(eval_result, "summary_stats", None)
     if isinstance(summary_stats, dict):
         for key in ("custom_evaluator_failed_rows", "custom_evaluator_total_rows"):

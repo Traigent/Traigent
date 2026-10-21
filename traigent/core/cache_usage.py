@@ -34,7 +34,12 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-__all__ = ["CacheUsage", "normalize_cache_usage"]
+__all__ = [
+    "CacheUsage",
+    "cache_counts_from_usage",
+    "normalize_cache_usage",
+    "usage_as_dict",
+]
 
 # Field names, per provider, and whether the provider's input count already
 # INCLUDES the cache-read tokens. Ordered so the first shape that matches wins.
@@ -265,3 +270,51 @@ def normalize_cache_usage(usage: dict[str, Any] | None) -> CacheUsage:
         unreported_fields=unreported,
         provider_shape=shape,
     )
+
+
+def usage_as_dict(usage: Any) -> dict[str, Any] | None:
+    """A provider ``usage`` object or mapping as a plain dict, or None."""
+    if isinstance(usage, dict):
+        return usage
+    if usage is None:
+        return None
+    for attr in ("model_dump", "dict"):
+        dump = getattr(type(usage), attr, None)
+        if callable(dump):
+            try:
+                out = dump(usage)
+            except Exception:  # noqa: BLE001 - unknown shape is an honest unknown
+                return None
+            return out if isinstance(out, dict) else None
+    try:
+        raw = vars(usage)
+    except TypeError:
+        return None
+    return {
+        k: (
+            usage_as_dict(v)
+            if v is not None and not isinstance(v, (str, bytes, int, float, bool))
+            else v
+        )
+        for k, v in raw.items()
+        if not k.startswith("_")
+    }
+
+
+def cache_counts_from_usage(usage: Any) -> tuple[int | None, int | None]:
+    """``(cache_read_tokens, total_input_tokens)`` for one call, else Nones.
+
+    Both are ``None`` (unknown, never zero) when the provider reported no cache
+    read count or the input count is unknown. The total is every input token
+    the provider invoiced: fresh + cache read + cache write (Traigent#2069).
+    """
+    payload = usage_as_dict(usage)
+    if payload is None:
+        return None, None
+    normalized = normalize_cache_usage(payload)
+    if normalized.cache_read_tokens is None:
+        return None, None
+    total = normalized.billable_input_tokens
+    if total is None:
+        return None, None
+    return normalized.cache_read_tokens, total

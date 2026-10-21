@@ -626,6 +626,13 @@ class ExampleMetrics:
     # ``ExampleMetrics(...)`` calls elsewhere in the codebase) keeps its
     # current behavior unless it explicitly opts out.
     measured: bool = True
+    # Prompt-cache usage for this example (Traigent#2069). ``cache_read_tokens``
+    # is input tokens served from the provider cache; ``cache_total_input_tokens``
+    # is every input token the provider invoiced (fresh + cache read + cache
+    # write), i.e. the hit-rate denominator. ``None`` means the provider did not
+    # report cache usage -- UNKNOWN, never a measured zero.
+    cache_read_tokens: int | None = None
+    cache_total_input_tokens: int | None = None
     # Per-call/per-model token+cost attribution reported via
     # ``__traigent_meta__["calls"]`` (``with_usage(model_costs=...)``) for
     # multi-model / multi-step agents (Traigent#1598). Each entry is
@@ -733,6 +740,29 @@ class MetricsTracker:
                 entry["calls"] += 1
 
         return [totals[model] for model in sorted(totals)]
+
+    def aggregate_cache_usage(self) -> dict[str, Any]:
+        """Per-trial cached input tokens and cache-hit rate (Traigent#2069).
+
+        ``cached_input_tokens`` sums cache reads over the measured examples and
+        ``cache_hit_rate`` is cached / total input tokens. Both are ``None``
+        (unknown) when no example was measured, or when ANY measured example did
+        not report cache usage: a partial sum is a floor, not the trial's figure,
+        and unknown is never reported as zero.
+        """
+        rows = [m for m in self.example_metrics if m.measured]
+        unknown: dict[str, Any] = {"cached_input_tokens": None, "cache_hit_rate": None}
+        if not rows or any(
+            m.cache_read_tokens is None or m.cache_total_input_tokens is None
+            for m in rows
+        ):
+            return unknown
+        cached = sum(int(m.cache_read_tokens or 0) for m in rows)
+        total = sum(int(m.cache_total_input_tokens or 0) for m in rows)
+        return {
+            "cached_input_tokens": cached,
+            "cache_hit_rate": (cached / total) if total > 0 else None,
+        }
 
     def get_duration(self) -> float:
         """Get total duration in seconds."""
@@ -1721,6 +1751,19 @@ class ResponseHandler(ABC):
             except (TypeError, ValueError):
                 pass
 
+    @classmethod
+    def _extract_cache_counts(cls, response: Any) -> tuple[int | None, int | None]:
+        """Cached/total input tokens from the response usage; unknown -> Nones."""
+        from traigent.core.cache_usage import cache_counts_from_usage
+
+        usage = cls._safe_getattr(response, "usage")
+        if usage is None and isinstance(response, dict):
+            usage = response.get("usage")
+        try:
+            return cache_counts_from_usage(usage)
+        except Exception:  # noqa: BLE001 - never fail metrics on cache parsing
+            return None, None
+
     @staticmethod
     def _safe_getattr(obj: Any, name: str) -> Any:
         try:
@@ -1819,6 +1862,10 @@ class ResponseHandler(ABC):
         if self.can_handle(response):
             metrics = ExampleMetrics()
             metrics.tokens = self.extract_tokens(response)
+            (
+                metrics.cache_read_tokens,
+                metrics.cache_total_input_tokens,
+            ) = self._extract_cache_counts(response)
             metrics.response.response_time_ms = self.extract_response_time(response)
 
             # Extract cost from response if available
