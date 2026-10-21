@@ -242,7 +242,7 @@ def _parse_expires_at(raw: Any) -> str | None:
         return None
     try:
         parsed = datetime.fromisoformat(raw.strip())
-    except ValueError:
+    except ValueError:  # silent-ok: malformed expires_at is deliberately treated as absent (value-free, #1635)
         return None
     if parsed.tzinfo is None:
         return None

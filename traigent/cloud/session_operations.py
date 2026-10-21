@@ -1675,7 +1675,7 @@ class SessionOperations:
                             f"Backend finalization endpoint returned {safe_http_error_summary(response.status, error_text)}"
                         )
                         return None
-        except Exception as e:
+        except Exception as e:  # silent-ok: None is the documented "finalize endpoint unavailable" signal; caller logs it and backend auto-finalizes (#890)
             # Class name only: the exception text can echo server/client content.
             logger.debug("Error calling backend finalization API: %s", type(e).__name__)
             return None
