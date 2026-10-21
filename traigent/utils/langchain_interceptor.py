@@ -60,6 +60,13 @@ class _CaptureBucket:
     vendor_retry_total: int = 0
     vendor_known_usage_total: int = 0
     vendor_records_truncated: bool = False
+    #: Per-example attribution (an example's agent run is a "slot"): attempts
+    #: and known-usage attempts per slot, and the slots whose agent explicitly
+    #: reported its total cost (``with_usage``), which covers all the slot's spend.
+    vendor_slot_count: int = 0
+    vendor_slot_attempts: dict[int, int] = field(default_factory=dict)
+    vendor_slot_known: dict[int, int] = field(default_factory=dict)
+    vendor_reported_slots: set[int] = field(default_factory=set)
 
     def observed_provider_versions(self) -> list[dict[str, Any]]:
         """This trial's observations as an ``ObservedProviderVersionV1`` list."""
@@ -91,15 +98,52 @@ def current_capture_bucket() -> _CaptureBucket | None:
     return _capture_scope.get()
 
 
+_example_slot: ContextVar[int | None] = ContextVar(
+    "traigent_example_slot", default=None
+)
+
+
+@contextmanager
+def example_slot() -> Iterator[int | None]:
+    """Attribute provider attempts made inside to one example's agent run."""
+    root = _root_of(_capture_scope.get())
+    if root is None:
+        yield None
+        return
+    with root.lock:
+        root.vendor_slot_count += 1
+        slot = root.vendor_slot_count
+    token = _example_slot.set(slot)
+    try:
+        yield slot
+    finally:
+        _example_slot.reset(token)
+
+
+def mark_example_cost_reported(slot: int | None) -> None:
+    """The example's agent reported its own total cost: it covers the slot."""
+    root = _root_of(_capture_scope.get())
+    if root is None or slot is None:
+        return
+    with root.lock:
+        root.vendor_reported_slots.add(slot)
+
+
 class VendorAttemptHandle:
     """One opened provider-call attempt, updated in place until it finishes."""
 
-    __slots__ = ("root", "record", "done")
+    __slots__ = ("root", "record", "done", "slot")
 
-    def __init__(self, root: _CaptureBucket | None, record: dict[str, Any] | None):
+    def __init__(
+        self,
+        root: _CaptureBucket | None,
+        record: dict[str, Any] | None,
+        slot: int | None = None,
+    ):
         self.root = root
         self.record = record
         self.done = False
+        self.slot = slot
 
 
 def open_vendor_attempt(
@@ -114,14 +158,17 @@ def open_vendor_attempt(
     if root is None:
         return VendorAttemptHandle(None, None)
     stored: dict[str, Any] | None = None
+    slot = _example_slot.get()
     with root.lock:
         root.vendor_attempt_total += 1
+        if slot is not None:
+            root.vendor_slot_attempts[slot] = root.vendor_slot_attempts.get(slot, 0) + 1
         if len(root.vendor_attempts) < _MAX_VENDOR_ATTEMPT_RECORDS:
             stored = {"outcome": "in_progress", "usage": None, **record}
             root.vendor_attempts.append(stored)
         else:
             root.vendor_records_truncated = True
-    return VendorAttemptHandle(root, stored)
+    return VendorAttemptHandle(root, stored, slot)
 
 
 def finish_vendor_attempt(handle: VendorAttemptHandle, **updates: Any) -> None:
@@ -138,6 +185,10 @@ def finish_vendor_attempt(handle: VendorAttemptHandle, **updates: Any) -> None:
             root.vendor_retry_total += 1
         if updates.get("usage_known"):
             root.vendor_known_usage_total += 1
+            if handle.slot is not None:
+                root.vendor_slot_known[handle.slot] = (
+                    root.vendor_slot_known.get(handle.slot, 0) + 1
+                )
         if handle.record is not None:
             handle.record.update(updates)
 

@@ -2820,6 +2820,38 @@ class BaseEvaluator(ABC):
         worker_done_callback: Callable[[], None] | None = None,
         bound_lane_wait: bool = False,
     ) -> tuple[Any, str | None]:
+        """Run one example's agent call, attributing provider attempts to it.
+
+        Attempts made inside belong to this example (SDK-41); if the agent
+        reports its own total cost (``with_usage``) that report covers them.
+        """
+        from traigent.utils.langchain_interceptor import example_slot
+        from traigent.utils.vendor_retry import mark_if_agent_reported_cost
+
+        with example_slot() as slot:
+            output, error = await self._execute_function_unattributed(
+                func,
+                config,
+                input_data,
+                executor,
+                worker_started_callback,
+                worker_done_callback,
+                bound_lane_wait,
+            )
+            if error is None:
+                mark_if_agent_reported_cost(slot, output)
+            return output, error
+
+    async def _execute_function_unattributed(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        input_data: dict[str, Any],
+        executor: Any | None = None,
+        worker_started_callback: Callable[[], None] | None = None,
+        worker_done_callback: Callable[[], None] | None = None,
+        bound_lane_wait: bool = False,
+    ) -> tuple[Any, str | None]:
         """Execute function with configuration context and timeout.
 
         This method encapsulates the common pattern of:
