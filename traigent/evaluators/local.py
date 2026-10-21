@@ -57,6 +57,16 @@ from traigent.utils.response_model import infer_response_model
 logger = get_logger(__name__)
 _METADATA_PATCHES_ATTEMPTED = False
 
+_PREVIEW_COST_KEYS = (
+    "cost",
+    "input_cost",
+    "output_cost",
+    "total_cost",
+    "cost_unmeasured",
+    "cost_unpriced",
+    "cost_lower_bound",
+)
+
 _OUTPUT_METRIC_PARAM_NAMES = {
     "actual",
     "actual_output",
@@ -1373,6 +1383,34 @@ class LocalEvaluator(BaseEvaluator):
             "output": output,
         }
 
+    def _extract_response_metrics(
+        self,
+        example_id: str,
+        example: Any,
+        result: Any,
+        config: dict[str, Any],
+        *,
+        dataset: Dataset | None = None,
+        example_index: int = 0,
+    ) -> tuple[dict[str, float], Any]:
+        """Remember which row cost values the tentative progress pass changed."""
+        before = {
+            k: result.metrics[k] for k in _PREVIEW_COST_KEYS if k in result.metrics
+        }
+        extracted = super()._extract_response_metrics(
+            example_id,
+            example,
+            result,
+            config,
+            dataset=dataset,
+            example_index=example_index,
+        )
+        after = {
+            k: result.metrics[k] for k in _PREVIEW_COST_KEYS if k in result.metrics
+        }
+        result._sdk_preview_cost_evidence = (before, after)
+        return extracted
+
     def _extract_progress_call_metrics(
         self,
         example_id: str,
@@ -1812,20 +1850,26 @@ class LocalEvaluator(BaseEvaluator):
 
         # Transfer computed metrics (like accuracy) to custom_metrics
         if hasattr(example_result, "metrics") and example_result.metrics:
-            # Progress is a tentative view in completion order. Final accounting
-            # visits dataset order, so a shared returned response can change
-            # owners. Replace preview cost state in BOTH directions: neither its
-            # uncertainty/floor nor its numeric charge belongs to this final row.
-            for key in (
-                "cost",
-                "input_cost",
-                "output_cost",
-                "total_cost",
-                "cost_unmeasured",
-                "cost_unpriced",
-                "cost_lower_bound",
-            ):
-                example_result.metrics.pop(key, None)
+            # Final dataset-order ownership can differ from completion-order
+            # previews. Undo only preview changes still present on this row;
+            # preserve authoritative evidence supplied before or after them.
+            preview = getattr(example_result, "_sdk_preview_cost_evidence", None)
+            if preview is not None:
+                before, after = preview
+                missing = object()
+                for key in before.keys() | after.keys():
+                    previous = before.get(key, missing)
+                    written = after.get(key, missing)
+                    if (
+                        previous == written
+                        or example_result.metrics.get(key, missing) != written
+                    ):
+                        continue
+                    if key in before:
+                        example_result.metrics[key] = previous
+                    else:
+                        example_result.metrics.pop(key, None)
+                del example_result._sdk_preview_cost_evidence
             example_metric.custom_metrics.update(example_result.metrics)
 
         # Transfer token/cost metrics to example_results if in detailed mode
@@ -3237,43 +3281,46 @@ class LocalEvaluator(BaseEvaluator):
         # summary/result generation ran. After this boundary a still-live
         # timed-out worker cannot update the returned result; the trial remains
         # unmeasured, never a claim that its remaining work costs $0.
-        floor = float(
-            comprehensive_metrics.get("cost_lower_bound")
-            or comprehensive_metrics.get("cost")
-            or 0.0
-        )
-        while late := finish_captured_responses():
-            floor += sum(
-                self._call_cost_floor(
-                    self._price_one_call(
-                        response,
-                        agent_model=None,
-                        is_agent_call=False,
-                        requested_model=requested,
+        try:
+            floor = float(
+                comprehensive_metrics.get("cost_lower_bound")
+                or comprehensive_metrics.get("cost")
+                or 0.0
+            )
+            while late := finish_captured_responses():
+                floor += sum(
+                    self._call_cost_floor(
+                        self._price_one_call(
+                            response,
+                            agent_model=None,
+                            is_agent_call=False,
+                            requested_model=requested,
+                        )
                     )
+                    for response, requested in late
                 )
-                for response, requested in late
-            )
-            enforce_unknown_cost_invariant(
-                result.aggregated_metrics,
-                unknown=True,
-                floor=floor,
-                sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
-            )
-            if result.summary_stats and isinstance(
-                result.summary_stats.get("metrics"), dict
-            ):
                 enforce_unknown_cost_invariant(
-                    result.summary_stats["metrics"],
+                    result.aggregated_metrics,
                     unknown=True,
                     floor=floor,
-                    nullify=True,
                     sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
                 )
-        # Debit once, after all observable spend has reached the final floor.
-        return self._finalize_execution_budget_evaluation(
-            budget, result, execution_budget_lease
-        )
+                if result.summary_stats and isinstance(
+                    result.summary_stats.get("metrics"), dict
+                ):
+                    enforce_unknown_cost_invariant(
+                        result.summary_stats["metrics"],
+                        unknown=True,
+                        floor=floor,
+                        nullify=True,
+                        sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
+                    )
+        finally:
+            # Debit once and close the lease even if strict late pricing raises.
+            self._finalize_execution_budget_evaluation(
+                budget, result, execution_budget_lease
+            )
+        return result
 
     def _compute_real_accuracy(self, actual_output: Any, expected_output: Any) -> float:
         """Compute real accuracy by comparing actual vs expected output.

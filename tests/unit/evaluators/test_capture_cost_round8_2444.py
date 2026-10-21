@@ -16,6 +16,7 @@ from tests.unit.evaluators.test_local_capture_ownership_2444 import (
 )
 from traigent.api.types import ExampleResult
 from traigent.core.execution_budget import ExecutionBudget
+from traigent.evaluators.base import BaseEvaluator
 from traigent.evaluators.local import LocalEvaluator
 from traigent.evaluators.metrics_tracker import (
     CostMetrics,
@@ -76,7 +77,9 @@ def test_out_of_order_cached_response_final_ownership_replaces_preview() -> None
 
 
 @pytest.mark.parametrize("measured", [True, False])
-def test_final_row_discards_preview_cost_flags_and_floor(measured: bool) -> None:
+def test_final_row_discards_preview_cost_flags_and_floor(
+    measured: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
     row = ExampleResult(
         example_id="example_0",
         execution_time=0.0,
@@ -98,6 +101,20 @@ def test_final_row_discards_preview_cost_flags_and_floor(measured: bool) -> None
     if not measured:
         final.cost.known_cost = 0.2
     evaluator = LocalEvaluator(metrics=["accuracy"], detailed=True)
+    # Model an SDK preview write explicitly: pre-existing evaluator metrics
+    # are authoritative and must not be mistaken for preview-owned evidence.
+    preview = {
+        key: row.metrics.pop(key)
+        for key in tuple(row.metrics)
+        if key not in {"evaluation_cost", "business_cost"}
+    }
+
+    def write_preview(*args: Any, **kwargs: Any) -> Any:
+        row.metrics.update(preview)
+        return {}, None
+
+    monkeypatch.setattr(BaseEvaluator, "_extract_response_metrics", write_preview)
+    evaluator._extract_response_metrics("example_0", None, row, {})
     evaluator._update_example_metric_from_result(final, row, 0)
     evaluator._add_standard_metrics_to_custom(final)
     evaluator._enforce_row_cost_invariant(final, row)
