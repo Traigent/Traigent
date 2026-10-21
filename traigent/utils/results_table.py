@@ -608,6 +608,7 @@ def print_results_table(
     *,
     mode_label: str | None = None,
     metric_overrides: dict[str, list[float]] | None = None,
+    show_best: bool = True,
 ) -> None:
     """Print a rich trial-results table to stdout.
 
@@ -617,6 +618,8 @@ def print_results_table(
         objectives: Objectives list (e.g. ``["accuracy"]``) or ``ObjectiveSchema``.
         mode_label: Optional label rendered in the table title, e.g. ``"MOCK"``.
         metric_overrides: Optional per-metric display values by trial index.
+        show_best: When False, no trial is starred and no "Overall Best"
+            legend or winner notice is printed (plumbing checks, #1690).
     """
     trials = results.trials
     if not trials:
@@ -647,6 +650,8 @@ def print_results_table(
 
     # Overall best trial identity, from optimizer selection metadata when present.
     best_trial_index = _find_best_trial_index(results, trials, metric_info, objectives)
+    if not show_best:
+        best_trial_index = None
 
     # When every trial produced zero successful examples, refuse to crown a winner.
     all_failed = _trials_all_failed(trials)
@@ -758,6 +763,9 @@ def print_results_table(
             f"Inspect per-example errors in "
             f".traigent/optimization_logs/experiments/.../runs/{C.RESET}"
         )
+    elif not show_best:
+        # Plumbing run: no winner framing, so no legend or "no winner" notice.
+        pass
     elif best_trial_index is None and _all_eligible_cost_unmeasured(
         trials, metric_names
     ):

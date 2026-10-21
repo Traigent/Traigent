@@ -56,6 +56,7 @@ except ModuleNotFoundError as exc:
 import traigent  # noqa: E402
 from traigent.api.decorators import EvaluationOptions  # noqa: E402
 from traigent.examples.quickstart._messages import completion_message  # noqa: E402
+from traigent.utils.callbacks import ProgressBarCallback  # noqa: E402
 
 DATASET = [
     {"input": {"question": "What is the capital of France?"}, "output": "Paris"},
@@ -160,7 +161,14 @@ def answer(question: str) -> str:
 
 def main() -> None:
     """Synchronous entry point used by the CLI subcommand and ``python -m``."""
-    result = asyncio.run(answer.optimize(max_trials=6))
+    # show_best=False: the keyless demo is a plumbing check with no winner, so
+    # the results table must not star a trial or print "Overall Best" (#1690).
+    result = asyncio.run(
+        answer.optimize(
+            max_trials=6,
+            callbacks=[ProgressBarCallback(show_best=False)],
+        )
+    )
 
     # Fail closed on an all-failed run. If every trial errors (or the run is
     # otherwise misconfigured), optimize() returns NORMALLY with best_score=None
