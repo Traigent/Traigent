@@ -536,6 +536,21 @@ class TestSafetyValidator:
         assert result_above.satisfied is True
         assert result_below.satisfied is False
 
+    @pytest.mark.parametrize("value", [0.1, 0.5, 0.9])
+    def test_required_rate_is_derived_from_operator_at_same_threshold(
+        self, value: float
+    ) -> None:
+        """GH #2204 (owner: derived): above(x) -> x, below(x) -> 1 - x."""
+        from traigent.api.safety import _required_compliance_rate
+
+        metric = MetricKeyMetric(name="m", metric_key="m")
+        assert _required_compliance_rate(metric.above(value).threshold) == value
+        assert _required_compliance_rate(
+            metric.below(value).threshold
+        ) == pytest.approx(1.0 - value)
+        # Out of [0, 1] a complement is meaningless: fail closed.
+        assert _required_compliance_rate(metric.below(100).threshold) == 1.0
+
 
 class TestNonRAGASPresets:
     """Tests for non-RAGAS metric factory functions."""

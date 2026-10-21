@@ -8,6 +8,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Safety compliance target is documented as derived (#2204).** The required
+  compliance rate stays derived from a constraint's operator and value
+  (`above(x)` needs `x`, `below(x)` needs `1 - x`); explained in
+  `docs/features/safety-compliance-target.md`, with a regression test that
+  `above()` and `below()` at the same threshold derive different rates.
 - **Mock-provenance metadata is documented and guarded (#2493).** Results keep
   the `mock_llm_run` / `mock_llm_mixed` metadata keys; they are described in
   `docs/user-guide/cost_capture.md` and the `traigent-analyze-results` skill, and
