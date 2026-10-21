@@ -108,7 +108,9 @@ def test_six_of_ten_passes_and_reports_coverage_keys(stub) -> None:
     assert out["ragas_faithfulness_rows_scored"] == 6
     assert out["ragas_faithfulness_rows_total"] == 10
     assert isinstance(out["ragas_faithfulness_rows_scored"], int)
-    assert out["faithfulness"] == pytest.approx(0.48)
+    # Undefined rows are excluded from the mean, as before (#2677 owner ruling):
+    # 6 x 0.8 + 4 undefined stays 0.8, never 0.48.
+    assert out["faithfulness"] == pytest.approx(0.8)
 
 
 def test_floor_is_configurable_and_zero_disables(stub) -> None:

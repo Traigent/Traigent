@@ -595,8 +595,10 @@ def compute_ragas_metrics(
                 f"{rows_total} rows, below the minimum scored share of {floor:g}; "
                 "failing the trial instead of averaging the remaining rows."
             )
-        # Agent-failed rows contribute 0.0 over the full denominator.
-        aggregated[metric.name] = float(defined.sum() / rows_total)
+        # Scoring is unchanged (#2677): agent-failed rows contribute 0.0 and
+        # rows RAGAS left undefined are excluded from the mean; the coverage
+        # keys and the floor below are what make the exclusion visible.
+        aggregated[metric.name] = float(defined.sum() / rows_scored)
         scored_key, total_key = ragas_coverage_keys(metric.name)
         aggregated[scored_key] = int(rows_scored)  # type: ignore[assignment]
         aggregated[total_key] = int(rows_total)  # type: ignore[assignment]
