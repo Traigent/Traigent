@@ -718,3 +718,45 @@ def test_compare_makes_no_backend_connection_or_name_resolution(monkeypatch):
     result = _make().compare([_GOOD, _BAD])
     assert len(result.configs) == 2
     assert seen == []
+
+
+def test_compare_never_builds_a_backend_client_under_an_online_policy(monkeypatch):
+    # Force an ONLINE policy: offline switches off, credentials present, so
+    # optimize() would construct a backend client for this function.
+    for name in ("TRAIGENT_OFFLINE_MODE", "TRAIGENT_OFFLINE"):
+        monkeypatch.setenv(name, "false")
+    monkeypatch.setenv("TRAIGENT_API_KEY", "tg_" + "x" * 40)
+    monkeypatch.setenv("TRAIGENT_BACKEND_URL", "https://backend.invalid")
+    from traigent.core import backend_session_manager as bsm
+
+    def agent(text: str) -> str:
+        cfg = traigent.get_config()
+        return (
+            "yes"
+            if int(text.split()[-1]) % 2
+            else "no"
+            if cfg.get("mode") == "good"
+            else "yes"
+        )
+
+    # No execution_mode: resolves to the online cloud-brain policy, not offline.
+    fn = traigent.optimize(
+        eval_dataset=_ROWS,
+        objectives=["accuracy"],
+        configuration_space={"mode": ["good", "bad"], "temperature": (0.0, 1.0)},
+    )(agent)
+    built: list[str] = []
+    real = bsm.BackendSessionManager.create_backend_client
+
+    def recording(traigent_config):
+        built.append("create_backend_client")
+        return real(traigent_config)
+
+    with patch.object(
+        bsm.BackendSessionManager, "create_backend_client", staticmethod(recording)
+    ):
+        result = fn.compare([_GOOD, _BAD])
+    assert fn.execution_policy.offline is False  # the policy really is online
+    assert len(result.configs) == 2
+    assert result.configs[0].mean_score == pytest.approx(1.0)
+    assert built == []
