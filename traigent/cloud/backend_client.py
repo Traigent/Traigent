@@ -876,6 +876,57 @@ class ExperimentGroupsNamespace:
                 page_size=page_size,
             )
 
+    async def table(
+        self,
+        group_id: str,
+        project_id: str,
+        *,
+        page_size: int = 100,
+        max_rows: int = 10_000,
+    ) -> Any:
+        """Return one table across all runs in a run group (Traigent#1711).
+
+        Pages through the group's configuration-run rows (read-only) and
+        returns a :class:`~traigent.cloud.run_group_table.RunGroupTable`.
+        Cost is ``None`` when unmeasured, never ``0``. Fetching stops after
+        ``max_rows`` rows and sets ``truncated``. Backend errors surface as
+        :class:`~traigent.cloud.analytics_client.AnalyticsClientError` that
+        carries only the HTTP status, never request or response content.
+        """
+        from traigent.cloud.analytics_client import AnalyticsClientError
+        from traigent.cloud.run_group_table import RunGroupTable, build_run_group_row
+
+        project_id = _require_project_id(project_id)
+        if not isinstance(group_id, str) or not group_id.strip():
+            raise ValueError("group_id must be a non-empty string")
+        if page_size < 1 or max_rows < 1:
+            raise ValueError("page_size and max_rows must be positive")
+        rows: list[Any] = []
+        truncated = False
+        page = 1
+        try:
+            async with await self._new_read_client() as reader:
+                while True:
+                    result = await reader.list_experiment_group_configuration_runs(
+                        group_id, project_id, page=page, page_size=page_size
+                    )
+                    rows.extend(build_run_group_row(r) for r in result.items)
+                    if len(rows) >= max_rows:
+                        truncated = bool(result.has_next) or len(rows) > max_rows
+                        rows = rows[:max_rows]
+                        break
+                    if not result.has_next or not result.items:
+                        break
+                    page += 1
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if isinstance(status, int):
+                raise AnalyticsClientError(
+                    f"run group table request failed (HTTP {status})"
+                ) from None
+            raise
+        return RunGroupTable(group_id=group_id, rows=rows, truncated=truncated)
+
 
 # Backwards compatibility: expose shared bridge instance at this module scope so
 # existing tests patching ``traigent.cloud.backend_client.bridge`` continue to

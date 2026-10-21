@@ -38,6 +38,8 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
         "traigent.cloud.dtos",
         "GroupedConfigurationRunRowDTO",
     ),
+    "RunGroupRow": ("traigent.cloud.run_group_table", "RunGroupRow"),
+    "RunGroupTable": ("traigent.cloud.run_group_table", "RunGroupTable"),
     "ExperimentGroupOverviewDTO": (
         "traigent.cloud.dtos",
         "ExperimentGroupOverviewDTO",
@@ -89,6 +91,8 @@ __all__ = [
     "ExperimentGroupStatusSummaryDTO",
     "ExperimentGroupsPageDTO",
     "GroupedConfigurationRunsPageDTO",
+    "RunGroupRow",
+    "RunGroupTable",
     "UsageTracker",
     "SmartSubsetSelector",
     "DiverseSampling",
