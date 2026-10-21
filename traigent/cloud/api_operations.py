@@ -624,7 +624,9 @@ class ApiOperations:
                 # backend: the legacy contract would be refused the same way, so
                 # do not retry it (#2550).
                 typed_failure = getattr(typed_exc, "session_creation_failure", None)
-                if getattr(typed_failure, "is_quota_refusal", False):
+                if getattr(typed_failure, "is_quota_refusal", False) or getattr(
+                    typed_failure, "is_closed_refusal", False
+                ):
                     raise
                 logger.warning(
                     "Typed session create failed; retrying once with the "
@@ -677,6 +679,8 @@ class ApiOperations:
             # caller can tell it from a connectivity failure (#2550).
             if getattr(
                 getattr(e, "session_creation_failure", None), "is_quota_refusal", False
+            ) or getattr(
+                getattr(e, "session_creation_failure", None), "is_closed_refusal", False
             ):
                 raise
             self._handle_generic_session_exception(e)

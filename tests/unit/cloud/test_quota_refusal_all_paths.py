@@ -299,3 +299,80 @@ class TestInteractivePath:
         assert info.value.error_code == code
         _assert_clean(str(info.value))
         _assert_clean(" ".join(r.getMessage() for r in caplog.records))
+
+
+CLOSED_CODES = [
+    "typed_storage_mapping_unavailable",
+    "director_tokens_required",
+    "director_opaque_ids_required",
+    "no_key_wrapper_configured",
+]
+
+
+class TestClosedRefusalClassification:
+    """SDK-52: closed backend refusals are typed, never connectivity."""
+
+    @pytest.mark.parametrize("code", CLOSED_CODES)
+    def test_closed_code_is_closed_refusal_and_rendered(self, code):
+        detail = SessionCreationFailureDetail.from_http_response(503, _body(code))
+        assert detail.is_closed_refusal
+        assert not detail.is_quota_refusal
+        assert detail.safe_error_code == code
+        assert code in detail.one_line_summary()
+        _assert_clean(detail.one_line_summary())
+
+    def test_unknown_503_code_is_not_closed_refusal(self):
+        detail = SessionCreationFailureDetail.from_http_response(
+            503, _body("some_new_backend_code")
+        )
+        assert not detail.is_closed_refusal
+        assert detail.safe_error_code == "unknown"
+
+    def test_closed_code_in_message_only_is_not_closed_refusal(self):
+        detail = SessionCreationFailureDetail.from_http_response(
+            503, '{"message": "director_tokens_required"}'
+        )
+        assert not detail.is_closed_refusal
+
+    @pytest.mark.parametrize("code", CLOSED_CODES)
+    def test_closed_refusal_is_not_connectivity_and_names_code(self, code):
+        from traigent.core.execution_policy_runtime import (
+            fallback_reason_from_session_result,
+            session_failure_is_connectivity,
+        )
+        from traigent.core.session_types import (
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+
+        result = SessionCreationResult(
+            session_id="",
+            backend_connected=False,
+            failure_reason=SessionCreationFailureReason.SESSION_FAILED,
+            failure_response=SessionCreationFailureDetail.from_http_response(
+                503, _body(code)
+            ),
+        )
+        assert not session_failure_is_connectivity(result)
+        reason = fallback_reason_from_session_result(result)
+        assert reason == f"backend refused the session: {code}"
+        assert "unreachable" not in reason.lower()
+
+    def test_unknown_503_still_connectivity(self):
+        from traigent.core.execution_policy_runtime import (
+            session_failure_is_connectivity,
+        )
+        from traigent.core.session_types import (
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+
+        result = SessionCreationResult(
+            session_id="",
+            backend_connected=False,
+            failure_reason=SessionCreationFailureReason.SESSION_FAILED,
+            failure_response=SessionCreationFailureDetail.from_http_response(
+                503, _body("some_new_backend_code")
+            ),
+        )
+        assert session_failure_is_connectivity(result)
