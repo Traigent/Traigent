@@ -61,7 +61,7 @@ def _severity(requirement: RuntimeRequirement, event: str) -> str | None:
     ]
     if not found:
         return None
-    return max(found, key=SEVERITIES.index)
+    return str(max(found, key=SEVERITIES.index))
 
 
 def _owner(
