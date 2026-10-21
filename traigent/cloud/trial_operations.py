@@ -268,17 +268,19 @@ class TrialOperations:
 
     @staticmethod
     def _contains_string(value: Any, depth: int = 0) -> bool:
-        """Return True when a config value contains free-text string content."""
+        """Return True when a config value contains free-text string content.
+
+        Strings, and the keys of any non-empty nested dict, count as content.
+        """
 
         if depth > 10:
             return True
         if isinstance(value, str):
             return True
         if isinstance(value, dict):
-            return any(
-                TrialOperations._contains_string(item, depth + 1)
-                for item in value.values()
-            )
+            # Nested dict keys are customer-authored text (content): any
+            # non-empty mapping is treated as string content (fail closed).
+            return bool(value)
         if isinstance(value, (list, tuple, set)):
             return any(
                 TrialOperations._contains_string(item, depth + 1) for item in value
