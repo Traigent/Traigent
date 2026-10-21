@@ -460,3 +460,96 @@ def test_continuous_random_same_seed_does_not_replay_marked_configs() -> None:
         again.mark_config_evaluated(config)
     fresh = [again.suggest_next_trial([]) for _ in range(5)]
     assert not any(c in done for c in fresh)
+
+
+def test_in_flight_baseline_is_not_executed(_local: Path) -> None:
+    seen: list[str] = []
+
+    @traigent.optimize(
+        configuration_space={"v": ["a", "b", "c"]},
+        default_config={"v": "a"},
+        objectives=["accuracy"],
+        offline=True,
+        max_trials=3,
+        algorithm="grid",
+        evaluation=EvaluationOptions(eval_dataset="d.jsonl"),
+    )
+    def agent(q: str) -> str:
+        seen.append(traigent.get_config()["v"])
+        return "a"
+
+    first = agent.optimize_sync(max_trials=2)
+    for t in first.trials:
+        t.status = TrialStatus.RUNNING  # outcome unknown, baseline included
+    seen.clear()
+    resumed = agent.optimize_sync(max_trials=3, resume_from=first)
+    assert "a" not in seen
+    assert resumed.metadata["resume"]["reused_trials"] == 0
+
+
+def test_concurrent_resume_is_refused_and_does_not_mix_state(_local: Path) -> None:
+    import threading
+
+    from traigent.utils.exceptions import OverlappingOptimizationError
+
+    started, release = threading.Event(), threading.Event()
+    seen: list[str] = []
+
+    @traigent.optimize(
+        configuration_space={"v": ["a", "b", "c", "d"]},
+        objectives=["accuracy"],
+        offline=True,
+        max_trials=4,
+        algorithm="grid",
+        evaluation=EvaluationOptions(eval_dataset="d.jsonl"),
+    )
+    def agent(q: str) -> str:
+        started.set()
+        release.wait(timeout=30)
+        seen.append(traigent.get_config()["v"])
+        return "a"
+
+    release.set()
+    first = agent.optimize_sync(max_trials=2)
+    release.clear()
+    started.clear()
+    seen.clear()
+    box: dict[str, Any] = {}
+
+    def run() -> None:
+        box["r"] = agent.optimize_sync(max_trials=4, resume_from=first)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    try:
+        assert started.wait(timeout=30)
+        with pytest.raises(OverlappingOptimizationError):
+            agent.optimize_sync(max_trials=4, resume_from=first)
+    finally:
+        release.set()
+        worker.join(timeout=60)
+    resumed = box["r"]
+    assert resumed.metadata["resume"]["reused_trials"] == 2
+    assert set(seen) == {"c", "d"}
+    assert len(resumed.trials) == 4
+
+
+def test_resumed_local_run_makes_no_network_connection(
+    _local: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import socket
+
+    seen: list[str] = []
+    agent = _agent(["a", "b", "c", "d"], seen)
+    first = agent.optimize_sync(max_trials=2)
+    attempts: list[Any] = []
+
+    def refuse(self: Any, address: Any, *a: Any, **k: Any) -> None:
+        attempts.append(address)
+        raise OSError("network disabled in test")
+
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    resumed = agent.optimize_sync(max_trials=4, resume_from=first)
+    assert attempts == []
+    assert resumed.metadata.get("offline_mode") is True
+    assert resumed.metadata["resume"]["reused_trials"] == 2

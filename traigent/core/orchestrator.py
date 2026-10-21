@@ -5851,10 +5851,11 @@ class OptimizationOrchestrator:
                     logger.warning("resume_from: optimizer could not exclude a config")
         baseline = getattr(self, "_default_config", None)
         if baseline and any(
-            all(t.config.get(k) == v for k, v in baseline.items())
-            for t in plan.reusable
+            all(c.get(k) == v for k, v in baseline.items())
+            for c in [t.config for t in plan.reusable] + list(plan.blocked_configs)
         ):
-            # The baseline was already evaluated; do not spend a trial on it.
+            # The baseline was already evaluated (reused) or is in flight with an
+            # unknown outcome (never retried); do not spend a trial on it.
             self._default_config_used = True
         self._resume_summary = {
             "reused_trials": len(plan.reusable),

@@ -51,7 +51,10 @@ proposed again.
 
 ## Limits
 
-If the run has a `default_config` baseline that a reused trial already covers, the
+`max_total_examples` counts only examples this run newly attempts; reused trials
+execute none, so they use none of that budget.
+
+If the run has a `default_config` baseline that a reused or in-flight prior trial already covers, the
 baseline is not run again. Batch optimizers forward the exclusions to their inner
 optimizer.
 
