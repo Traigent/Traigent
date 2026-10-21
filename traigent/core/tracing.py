@@ -21,8 +21,53 @@ For best tracing support, install the plugin:
 
 from __future__ import annotations
 
+_MIN_PLUGIN_VERSION = (0, 1, 1)
+_PLUGIN_REJECTED = False
+
+
+def _plugin_version_ok() -> bool:
+    """Return True only when the traigent-tracing add-on is >= 0.1.1.
+
+    Older add-ons predate the span-attribute scrubbers, so they are ignored in
+    favour of the embedded scrubbed implementation. Fails closed: any error,
+    a missing version or an unparseable version means "not acceptable".
+    """
+    try:
+        import importlib
+        import importlib.metadata as _md
+        import re as _re
+
+        raw: object = None
+        try:
+            raw = _md.version("traigent-tracing")
+        except Exception:
+            raw = None
+        if not isinstance(raw, str):
+            raw = getattr(
+                importlib.import_module("traigent_tracing"), "__version__", None
+            )
+        if not isinstance(raw, str) or not _re.fullmatch(r"\d+(\.\d+)*", raw.strip()):
+            return False
+        parts = tuple(int(x) for x in raw.strip().split("."))
+        parts += (0,) * (len(_MIN_PLUGIN_VERSION) - len(parts))
+        return parts >= _MIN_PLUGIN_VERSION
+    except Exception:
+        return False
+
+
 # Try to import from the plugin first
 try:
+    import importlib.util as _ilu
+
+    try:
+        _plugin_present = _ilu.find_spec("traigent_tracing") is not None
+    except (ImportError, ValueError):
+        _plugin_present = True  # unreadable spec: treat as present, then verify
+
+    if _plugin_present and not _plugin_version_ok():
+        _PLUGIN_REJECTED = True
+        raise ImportError("traigent-tracing add-on rejected")
+
     from traigent_tracing import (
         OTEL_AVAILABLE,
         TRACING_ENABLED,
@@ -81,8 +126,17 @@ try:
     record_trial_result = _gate_call(record_trial_result)
 
 except ImportError:
-    # Plugin not installed, use embedded implementation
+    # Plugin not installed or rejected, use embedded implementation
     _PLUGIN_AVAILABLE = False
+
+    if _PLUGIN_REJECTED:
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "Ignoring the traigent-tracing add-on: version is older than "
+            "0.1.1 or could not be determined. Using the built-in scrubbed "
+            "tracing; upgrade the add-on to use it."
+        )
 
     import json
     import os

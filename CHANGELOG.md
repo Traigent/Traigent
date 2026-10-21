@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+- **Old `traigent-tracing` add-ons are ignored (#1894).** An installed
+  `traigent-tracing` older than 0.1.1 (or with an unreadable version) lacks the
+  span-attribute scrubbers, so the SDK now logs one warning and uses the
+  built-in scrubbed tracing instead. The add-on is bumped to 0.1.1.
+
 ### Added
 
 - **New stop reason `safety_constraint_insufficient_evidence` (#2481).** A run
