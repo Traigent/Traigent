@@ -52,6 +52,11 @@ class _CaptureBucket:
     #: usage (``None`` = unknown, never a faked zero).
     vendor_attempts: list[dict[str, Any]] = field(default_factory=list)
     vendor_call_count: int = 0
+    #: Independent counters: the record list is capped, the totals are not.
+    vendor_attempt_total: int = 0
+    vendor_retry_total: int = 0
+    vendor_unknown_usage_total: int = 0
+    vendor_records_truncated: bool = False
 
     def observed_provider_versions(self) -> list[dict[str, Any]]:
         """This trial's observations as an ``ObservedProviderVersionV1`` list."""
@@ -74,14 +79,51 @@ def begin_vendor_call() -> int:
         return bucket.vendor_call_count
 
 
+def _add_vendor_attempt_locked(bucket: _CaptureBucket, record: dict[str, Any]) -> None:
+    bucket.vendor_attempt_total += 1
+    if record.get("retried"):
+        bucket.vendor_retry_total += 1
+    if not record.get("usage_known"):
+        bucket.vendor_unknown_usage_total += 1
+    if len(bucket.vendor_attempts) < _MAX_VENDOR_ATTEMPT_RECORDS:
+        bucket.vendor_attempts.append(dict(record))
+    else:
+        bucket.vendor_records_truncated = True
+
+
 def record_vendor_attempt(record: dict[str, Any]) -> None:
     """Append one provider-call attempt to the active trial (dropped outside one)."""
     bucket = _capture_scope.get()
     if bucket is None:
         return
     with bucket.lock:
-        if len(bucket.vendor_attempts) < _MAX_VENDOR_ATTEMPT_RECORDS:
-            bucket.vendor_attempts.append(dict(record))
+        _add_vendor_attempt_locked(bucket, record)
+
+
+def _merge_vendor_attempts(child: _CaptureBucket, parent: _CaptureBucket) -> None:
+    """Fold a nested scope's attempt ledger into its enclosing scope.
+
+    The evaluator opens its own scope inside the trial's; without this the
+    trial's bucket would never see the attempts made by the agent.
+    """
+    with child.lock:
+        records = list(child.vendor_attempts)
+        totals = (
+            child.vendor_attempt_total,
+            child.vendor_retry_total,
+            child.vendor_unknown_usage_total,
+            child.vendor_records_truncated,
+            child.vendor_call_count,
+        )
+    with parent.lock:
+        room = max(0, _MAX_VENDOR_ATTEMPT_RECORDS - len(parent.vendor_attempts))
+        parent.vendor_attempts.extend(records[:room])
+        parent.vendor_attempt_total += totals[0]
+        parent.vendor_retry_total += totals[1]
+        parent.vendor_unknown_usage_total += totals[2]
+        parent.vendor_call_count += totals[4]
+        if totals[3] or len(records) > room:
+            parent.vendor_records_truncated = True
 
 
 #: The capture scope for the trial running in this context, or ``None`` when no
@@ -179,15 +221,19 @@ class capture_scope:
     wins and the outer one is restored on exit.
     """
 
-    __slots__ = ("_token",)
+    __slots__ = ("_token", "_bucket", "_parent")
 
     def __enter__(self) -> _CaptureBucket:
+        self._parent = _capture_scope.get()
         bucket = _CaptureBucket()
+        self._bucket = bucket
         self._token = _capture_scope.set(bucket)
         return bucket
 
     def __exit__(self, *exc_info: Any) -> None:
         _capture_scope.reset(self._token)
+        if self._parent is not None:
+            _merge_vendor_attempts(self._bucket, self._parent)
 
     async def __aenter__(self) -> _CaptureBucket:
         return self.__enter__()
