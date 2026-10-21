@@ -8,6 +8,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Nous provider auth flow is marked UNVERIFIED (#2067).** The six "confirm
+  before merge" OWNER markers are now explicit UNVERIFIED notes (token endpoint,
+  `auth.json` schema, refresh request shape, base URL, model-id form), the
+  provider logs one value-free warning at first use, and
+  `docs/guides/nous-provider.md` states the flow was not checked against the live
+  service.
+
 - **`generate-config -o tvl` structural constraints now load (#2647).** The
   generator's known constraint shapes (`require(...)`, `implies(...)`,
   `lambda config: ...`) are translated to the `expr` / `when`-`then` forms the

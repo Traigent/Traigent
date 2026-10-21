@@ -31,9 +31,9 @@ from traigent.integrations.utils import Framework
 
 logger = logging.getLogger(__name__)
 
-# OWNER: confirm the exact portal-served model-ID string form (bare vs
-# "NousResearch/"-prefixed) against ``traigent models -p nous --json`` in
-# Phase-0 before merge. The pattern accepts BOTH forms, so discovery validates
+# UNVERIFIED: the exact portal-served model-ID string form (bare vs
+# "NousResearch/"-prefixed) was not confirmed against the live service
+# (``traigent models -p nous --json``). The pattern accepts BOTH forms, so discovery validates
 # either spelling; the seeded known_models (config/models.yaml) use the
 # HuggingFace-canonical "NousResearch/..." form.
 NOUS_MODEL_PATTERN = r"^(NousResearch/|Hermes-|DeepHermes-)"
