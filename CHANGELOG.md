@@ -372,6 +372,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `max_trials`, and are not charged to the new run's cost limit; in-flight
   trials are never reused or retried. Cloud and hybrid runs raise `ValueError`.
   See `docs/features/resume-from.md`.
+- **`resume_from` reuses completed examples of partial trials (#2541, #1697).**
+  A prior trial that finished only some examples is re-run for the same config
+  with the completed examples (matching example id, input and expected output)
+  reused and only the missing ones evaluated, aggregated as one trial. Reused
+  examples are not charged again to the cost limit, stay in totals, keep unknown
+  cost unknown, and use none of `max_total_examples`. Results without
+  per-example data fall back to trial-level reuse. Call-time `eval_dataset`
+  remains rejected (#1683).
 - **`example_timeout` option, decoupled from the run timeout (#2509).** New
   `@optimize(example_timeout=...)` / `ExecutionOptions(example_timeout=...)`
   (positive number of seconds; default 60) sets the per-example limit for the

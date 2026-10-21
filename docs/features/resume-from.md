@@ -39,6 +39,34 @@ not retried: they are not counted, and their configurations are excluded from
 this run's suggestions. Failed and cancelled trials are not reused and may be
 proposed again.
 
+## Partial trials: example-level reuse
+
+A prior trial that finished only some of its examples (interrupted and saved,
+cut short by `max_total_examples`, or with example-level failures) is not counted
+as a trial. When the optimizer proposes that same configuration again, the
+examples it completed are reused and only the missing ones run; the result is
+aggregated as one trial over the whole dataset.
+
+A stored example is reused only when all of these hold:
+
+- the run identity (dataset, scorer, agent, space fingerprints) matches, as above;
+- the example completed: success, no error, and an output;
+- its example id equals the current dataset row's id, and its stored input and
+  expected output equal the row's (a changed row is re-run);
+- the trial's cost for it is not charged again: it stays in the trial and study
+  totals, but is not charged to this run's `cost_limit` or shared budget, and a
+  row whose cost was unknown stays unknown.
+
+Failed or unfinished examples are never reused. Reused examples are not
+re-executed, re-scored or re-judged: their stored scores are used. They use none
+of the `max_total_examples` budget.
+
+Fallbacks: a trial whose result carries no per-example results (or only
+redacted ones) is handled at trial level, as above. Prior trials still marked
+running or pending are never retried, even if they stored some examples. Example
+reuse needs the detailed per-example evaluator (the local default); otherwise the
+trial is re-run in full.
+
 ## Accounting
 
 - Reused trials count toward `max_trials`, appear in `result.trials` with
@@ -51,8 +79,8 @@ proposed again.
 
 ## Limits
 
-`max_total_examples` counts only examples this run newly attempts; reused trials
-execute none, so they use none of that budget.
+`max_total_examples` counts only examples this run newly attempts. Reused trials
+and reused examples execute nothing, so they use none of that budget.
 
 If the run has a `default_config` baseline that a reused or in-flight prior trial already covers, the
 baseline is not run again. Batch optimizers forward the exclusions to their inner

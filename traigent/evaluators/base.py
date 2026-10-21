@@ -320,6 +320,23 @@ _COERCION_TALLY: ContextVar[dict[str, int] | None] = ContextVar(
     "traigent_accuracy_coercion_tally", default=None
 )
 
+# Resume support (#1697, #2541): completed example results of a partially-run
+# prior trial. Bound by the orchestrator for the duration of a resumed run;
+# ``None`` everywhere else, so every other evaluation is byte-identical.
+_RESUME_PREFILL: ContextVar[Any | None] = ContextVar(
+    "traigent_resume_prefill", default=None
+)
+
+
+def bind_resume_prefill(prefill: Any) -> Any:
+    """Bind a resume prefill for this context; returns the reset token."""
+    return _RESUME_PREFILL.set(prefill)
+
+
+def reset_resume_prefill(token: Any) -> None:
+    """Undo :func:`bind_resume_prefill`."""
+    _RESUME_PREFILL.reset(token)
+
 
 def _report_coercion(kind: str, source_len: int) -> None:
     logger.debug(
@@ -3024,6 +3041,46 @@ class BaseEvaluator(ABC):
 
         return output, error
 
+    def _resume_prefilled_example(
+        self,
+        config: dict[str, Any],
+        example: EvaluationExample,
+        index: int,
+        detailed: bool,
+    ) -> ExampleResult | None:
+        """A completed example result from a resumed prior trial, or None.
+
+        Only in detailed mode, and only when the stored row's example id, input
+        and expected output equal this row's (#2541). The row is not executed and
+        takes no sample budget.
+        """
+        prefill = _RESUME_PREFILL.get()
+        if prefill is None or not detailed:
+            return None
+        identity = result_identity_fields(example, f"example_{index}")
+        stored = prefill.lookup(
+            config, identity["example_id"], example.input_data, example.expected_output
+        )
+        if stored is None:
+            return None
+        return stamp_row_index(
+            ExampleResult(
+                **identity,
+                input_data=example.input_data,
+                expected_output=example.expected_output,
+                actual_output=stored["actual_output"],
+                metrics=dict(stored["metrics"]),
+                execution_time=float(stored.get("execution_time") or 0.0),
+                success=True,
+                error_message=None,
+                metadata={
+                    **(example.metadata.copy() if example.metadata else {}),
+                    "resumed_example_from_prior_run": True,
+                },
+            ),
+            index,
+        )
+
     async def _evaluate_batch_sequential(
         self,
         func: Callable[..., Any],
@@ -3043,6 +3100,13 @@ class BaseEvaluator(ABC):
 
         try:
             for i, example in enumerate(dataset.examples):
+                prefilled = self._resume_prefilled_example(config, example, i, detailed)
+                if prefilled is not None:
+                    example_results.append(prefilled)
+                    outputs.append(prefilled.actual_output)
+                    errors.append(None)
+                    consumed += 1
+                    continue
                 if sample_lease and not sample_lease.try_take(1):
                     exhausted = True
                     break
@@ -3537,8 +3601,19 @@ class BaseEvaluator(ABC):
 
         def schedule_more() -> bool:
             """Schedule more tasks. Returns True if budget exhausted."""
-            nonlocal next_index
+            nonlocal next_index, consumed
             while next_index < len(examples) and len(pending_tasks) < self.max_workers:
+                prefilled = self._resume_prefilled_example(
+                    config, examples[next_index], next_index, detailed
+                )
+                if prefilled is not None:
+                    # Reused row (#2541): no execution, no sample budget.
+                    outputs_by_index[next_index] = prefilled.actual_output
+                    errors_by_index[next_index] = None
+                    example_results_by_index[next_index] = prefilled
+                    next_index += 1
+                    consumed += 1
+                    continue
                 if sample_lease and not sample_lease.try_take(1):
                     return True
                 example = examples[next_index]

@@ -30,6 +30,8 @@ from traigent.evaluators.base import (
 )
 from traigent.evaluators.metrics_tracker import (
     COST_SOURCE_MIXED,
+    CostMetrics,
+    TokenMetrics,
     COST_SOURCE_SELF_REPORTED,
     EMPTY_OUTPUT_RATE_WARNING_THRESHOLD,
     ExampleMetrics,
@@ -2207,6 +2209,56 @@ class LocalEvaluator(BaseEvaluator):
 
         return meta
 
+    def _example_metric_from_resumed(
+        self,
+        example_result: Any,
+        dataset: Dataset,
+        index: int,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+    ) -> ExampleMetrics:
+        """Rebuild an example's metrics from a stored prior result (#2541).
+
+        Nothing is re-executed, re-scored or re-judged: tokens, cost, latency and
+        scores come from the stored row. A stored row with no known cost stays
+        unknown (never a measured zero).
+        """
+        stored = dict(example_result.metrics or {})
+        metric = ExampleMetrics()
+        metric.tokens = TokenMetrics(
+            input_tokens=int(stored.get("input_tokens") or 0),
+            output_tokens=int(stored.get("output_tokens") or 0),
+        )
+        metric.response.response_time_ms = max(
+            0.0, float(example_result.execution_time or 0.0) * 1000
+        )
+        known = stored.get("total_cost")
+        if stored.get("cost_unmeasured") or not isinstance(known, (int, float)):
+            metric.cost.unmeasured = True
+            metric.cost.known_cost = float(stored.get("cost_lower_bound") or 0.0)
+        else:
+            metric.cost = CostMetrics(
+                input_cost=float(stored.get("input_cost") or 0.0),
+                output_cost=float(stored.get("output_cost") or 0.0),
+            )
+            metric.cost.total_cost = float(known)
+            metric.cost.cost_explicit = True
+        metric.success = True
+        expected = (
+            dataset.examples[index].expected_output
+            if index < len(dataset.examples)
+            else None
+        )
+        metric.accuracy_eligible = not _is_empty_expected_output(expected)
+        metric.custom_metrics.update(stored)
+        if progress_callback:
+            progress_callback(
+                index,
+                self._build_local_progress_payload(
+                    metric, example_result, example_result.actual_output
+                ),
+            )
+        return metric
+
     async def _process_single_output(
         self,
         output: Any,
@@ -2247,6 +2299,21 @@ class LocalEvaluator(BaseEvaluator):
         # spurious ``{"x": 1.0}``. We therefore unpack HERE only when the
         # carrier is absent (the genuinely non-detailed lane, where ``outputs``
         # still holds the raw tuple). Any non-matching shape is left untouched.
+        resumed = (
+            example_results[index]
+            if example_results
+            and index < len(example_results)
+            and example_results[index] is not None
+            and (example_results[index].metadata or {}).get(
+                "resumed_example_from_prior_run"
+            )
+            else None
+        )
+        if resumed is not None:
+            return self._example_metric_from_resumed(
+                resumed, dataset, index, progress_callback
+            )
+
         carrier = None
         if (
             example_results

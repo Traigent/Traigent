@@ -1224,6 +1224,8 @@ class OptimizationOrchestrator:
         # Trials reused from a prior result by ``resume_from`` (#1697).
         self._resume_source: OptimizationResult | None = None
         self._resume_summary: dict[str, Any] | None = None
+        self._resume_prefill: Any = None
+        self._resume_prefill_token: Any = None
         # Known spend from opt-in winner-stability reruns. These reruns are
         # intentionally excluded from ``_trials`` and must therefore be carried
         # into both normal and cancellation result construction explicitly.
@@ -1982,6 +1984,27 @@ class OptimizationOrchestrator:
             return float("inf")
         return max(self._max_total_examples - self._consumed_examples, 0)
 
+    def _note_resumed_examples(self, trial_result: TrialResult) -> None:
+        """Record how many example rows a trial reused from a prior run (#2541)."""
+        prefill = getattr(self, "_resume_prefill", None)
+        metadata = trial_result.metadata
+        if prefill is None or metadata is None or "resumed_examples_reused" in metadata:
+            return
+        count, cost = prefill.pop_stats(trial_result.config)
+        if count:
+            metadata["resumed_examples_reused"] = count
+            metadata["resumed_examples_reused_cost"] = cost
+
+    @staticmethod
+    def _resumed_reused_count(trial_result: TrialResult) -> int:
+        value = (trial_result.metadata or {}).get("resumed_examples_reused")
+        return value if isinstance(value, int) and value > 0 else 0
+
+    @staticmethod
+    def _resumed_reused_cost(trial_result: TrialResult) -> float:
+        value = (trial_result.metadata or {}).get("resumed_examples_reused_cost")
+        return float(value) if isinstance(value, (int, float)) and value > 0 else 0.0
+
     def _register_examples_attempted(self, trial_result: TrialResult) -> None:
         if self._sample_budget_manager is not None:
             self._consumed_examples = int(self._sample_budget_manager.consumed())
@@ -1996,6 +2019,8 @@ class OptimizationOrchestrator:
         )
         if attempted is None:
             return
+        # Reused example rows (#2541) ran no new evaluation.
+        attempted = max(0, attempted - self._resumed_reused_count(trial_result))
         self._consumed_examples += attempted
 
     def _extract_provider_failure_summary(
@@ -2275,7 +2300,13 @@ class OptimizationOrchestrator:
         trials.
         """
         effective_permit = permit or Permit(id=0, amount=0.0, active=True)
+        self._note_resumed_examples(trial_result)
         trial_cost = self._extract_trial_cost(trial_result)
+        if trial_cost is not None:
+            # Example rows reused by resume_from (#2541) were paid for by the
+            # prior run: they stay in the trial's totals but are not charged to
+            # this run's cost limit or shared budget.
+            trial_cost = max(0.0, trial_cost - self._resumed_reused_cost(trial_result))
         flagged = is_cost_unmeasured(trial_result.metrics)
         missing_examples = (
             unmeasured_example_ids((trial_result.metadata or {}).get("example_results"))
@@ -3756,6 +3787,15 @@ class OptimizationOrchestrator:
                 recorder.deactivate()
             sigterm_scope.__exit__(None, None, None)
             reset_run_content_identity_keys(identity_keys_token)
+            token = getattr(self, "_resume_prefill_token", None)
+            if token is not None:
+                from traigent.evaluators.base import reset_resume_prefill
+
+                self._resume_prefill_token = None
+                try:
+                    reset_resume_prefill(token)
+                except ValueError:  # token from another context: nothing to undo
+                    pass
 
     def _check_cost_approval(self, dataset: Dataset) -> None:
         """Check pre-run cost approval before optimization.
@@ -3908,7 +3948,9 @@ class OptimizationOrchestrator:
         attempted = extract_examples_attempted(
             trial_result, default=None, check_example_results=True
         )
-        return int(attempted) if attempted is not None else 0
+        if attempted is None:
+            return 0
+        return max(0, int(attempted) - self._resumed_reused_count(trial_result))
 
     def _effective_batch_size(self, remaining_trials: float) -> int:
         """Size of the next dispatched batch, for pre-batch cost admission (#1980).
@@ -4398,6 +4440,10 @@ class OptimizationOrchestrator:
         nothing here re-ranks, gates, or qualifies the winner. Guarded like the
         significance post-processing: a rerun failure must not fail the run.
         """
+        prefill = getattr(self, "_resume_prefill", None)
+        if prefill is not None:
+            # Reruns must re-measure, never replay reused example results.
+            prefill.active = False
         try:
             reps = int(self.config.get("winner_stability_reps", 0) or 0)
         except (TypeError, ValueError):
@@ -5233,7 +5279,7 @@ class OptimizationOrchestrator:
     ) -> OptimizationResult:
         """Run optimization with tracing enabled."""
         self._check_cost_approval(dataset)
-        self._apply_resume()
+        self._apply_resume(dataset)
 
         try:
             # Check for immediate timeout
@@ -5796,7 +5842,7 @@ class OptimizationOrchestrator:
         """
         self._resume_source = prior
 
-    def _apply_resume(self) -> int:
+    def _apply_resume(self, dataset: Dataset | None = None) -> int:
         """Seed this run with reusable trials from the resume source (#1697).
 
         Reused trials count toward ``max_trials`` and the result, are marked in
@@ -5814,9 +5860,27 @@ class OptimizationOrchestrator:
             warn_if_not_reusable,
         )
 
+        example_ids: list[str] | None = None
+        if dataset is not None and dataset.examples:
+            from traigent.identity.examples import result_identity_fields
+
+            example_ids = [
+                str(result_identity_fields(ex, f"example_{i}")["example_id"])
+                for i, ex in enumerate(dataset.examples)
+            ]
+        space_keys = tuple(getattr(self.optimizer, "config_space", {}) or {})
         plan = plan_resume(
-            prior, self.artifact_fingerprints, max_trials=self.max_trials
+            prior,
+            self.artifact_fingerprints,
+            max_trials=self.max_trials,
+            dataset_example_ids=example_ids,
+            config_keys=space_keys,
         )
+        self._resume_prefill = plan.prefill
+        if plan.prefill is not None:
+            from traigent.evaluators.base import bind_resume_prefill
+
+            self._resume_prefill_token = bind_resume_prefill(plan.prefill)
         warn_if_not_reusable(plan)
         reused_cost = 0.0
         unknown_cost_trials = 0
@@ -5865,6 +5929,7 @@ class OptimizationOrchestrator:
             "identity_mismatch": list(plan.mismatched_components),
             "reused_known_cost": reused_cost,
             "reused_unknown_cost_trials": unknown_cost_trials,
+            "partial_trials_with_reusable_examples": plan.partial_trials,
             "cost_charged_to_this_run_limit": False,
         }
         logger.info(

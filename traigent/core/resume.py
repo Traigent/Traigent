@@ -30,8 +30,9 @@ or the reason, never a path, a name, a score or a config value.
 from __future__ import annotations
 
 import copy
+import json
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,8 @@ class ResumePlan:
 
     reusable: tuple[TrialResult, ...] = ()
     blocked_configs: tuple[dict[str, Any], ...] = ()
+    partial_trials: int = 0
+    prefill: ResumePrefill | None = None
     not_reusable_unfinished: int = 0
     not_reusable_other: int = 0
     mismatched_components: tuple[str, ...] = ()
@@ -131,6 +134,109 @@ def load_resume_source(
     )
 
 
+RESUMED_EXAMPLE_KEY = "resumed_example_from_prior_run"
+
+
+def config_key(config: Mapping[str, Any], keys: Sequence[str] | None = None) -> str:
+    """Canonical, order-independent key for a configuration."""
+    items = {k: v for k, v in config.items() if not keys or k in keys}
+    return json.dumps(items, sort_keys=True, default=str)
+
+
+def _row_dict(row: Any) -> dict[str, Any] | None:
+    if isinstance(row, Mapping):
+        return dict(row)
+    to_dict = getattr(row, "to_dict", None)
+    if callable(to_dict):
+        try:
+            return dict(to_dict())
+        except Exception:
+            return None
+    return None
+
+
+def stored_example_rows(trial: TrialResult) -> list[dict[str, Any]] | None:
+    """Per-example results persisted on a trial, or None when it carries none."""
+    metadata = trial.metadata or {}
+    raw: Any = None
+    evaluation = metadata.get("evaluation_result")
+    if isinstance(evaluation, Mapping):
+        raw = evaluation.get("example_results")
+    elif evaluation is not None:
+        raw = getattr(evaluation, "example_results", None)
+    if not raw:
+        raw = metadata.get("example_results")
+    if not isinstance(raw, list) or not raw:
+        return None
+    rows = [_row_dict(r) for r in raw]
+    return [r for r in rows if r is not None] or None
+
+
+def _row_completed(row: Mapping[str, Any]) -> bool:
+    return (
+        row.get("success") is True
+        and not row.get("error_message")
+        and row.get("actual_output") is not None
+        and isinstance(row.get("metrics"), Mapping)
+        and bool(row.get("metrics"))
+        and isinstance(row.get("example_id"), str)
+    )
+
+
+class ResumePrefill:
+    """Completed example results of partially-run prior trials, by config.
+
+    Consulted by the evaluator row by row: a row is reused only when its example
+    id, input and expected output all equal the current row's. Never raises on a
+    miss; a miss simply means the row is evaluated.
+    """
+
+    def __init__(
+        self,
+        pool: dict[str, dict[str, dict[str, Any]]],
+        keys: Sequence[str] | None = None,
+    ) -> None:
+        self._pool = pool
+        self._keys = tuple(keys or ())
+        self.active = True
+        self._stats: dict[str, list[Any]] = {}
+
+    def lookup(
+        self,
+        config: Mapping[str, Any],
+        row_id: str,
+        input_data: Any,
+        expected_output: Any,
+    ) -> dict[str, Any] | None:
+        if not self.active:
+            return None
+        key = config_key(config, self._keys)
+        row = self._pool.get(key, {}).get(row_id)
+        if row is None:
+            return None
+        if row.get("input_data") != input_data or (
+            row.get("expected_output") != expected_output
+        ):
+            return None
+        metrics = row["metrics"]
+        cost: float | None = None
+        if not is_cost_unmeasured(metrics):
+            cost = coerce_finite_cost(metrics.get("total_cost"))
+        stats = self._stats.setdefault(key, [0, 0.0])
+        stats[0] += 1
+        if cost is not None:
+            stats[1] += cost
+        return row
+
+    def pop_stats(self, config: Mapping[str, Any]) -> tuple[int, float]:
+        """(rows reused, their known cost) for this config since the last pop."""
+        stats = self._stats.pop(config_key(config, self._keys), None)
+        return (int(stats[0]), float(stats[1])) if stats else (0, 0.0)
+
+    def configs(self) -> int:
+        return len(self._pool)
+
+
 def _known_cost(trial: TrialResult) -> float | None:
     """The measured cost of a trial from any alias, or None."""
     metrics = trial.metrics or {}
@@ -176,6 +282,8 @@ def plan_resume(
     current_fingerprints: Mapping[str, Any] | None,
     *,
     max_trials: int | None = None,
+    dataset_example_ids: Sequence[str] | None = None,
+    config_keys: Sequence[str] | None = None,
 ) -> ResumePlan:
     """Decide which prior trials to reuse. Never raises on mismatch."""
     prior_fps = (prior.metadata or {}).get(FINGERPRINTS_METADATA_KEY)
@@ -183,24 +291,42 @@ def plan_resume(
 
     unfinished = 0
     other = 0
+    partial = 0
     blocked: list[dict[str, Any]] = []
     eligible: list[TrialResult] = []
+    pool: dict[str, dict[str, dict[str, Any]]] = {}
+    current_ids = set(dataset_example_ids) if dataset_example_ids else None
     for trial in prior.trials:
-        if trial.status == TrialStatus.COMPLETED:
-            if _trial_cost_ok(trial):
-                eligible.append(trial)
-            else:
-                other += 1
-        elif trial.status in (
+        in_flight = trial.status not in (
+            TrialStatus.COMPLETED,
             TrialStatus.FAILED,
             TrialStatus.CANCELLED,
             TrialStatus.PRUNED,
-        ):
-            other += 1
-        else:
+        )
+        if in_flight:
             # running / pending / not started / unrecognised: outcome unknown.
             unfinished += 1
             blocked.append(copy.deepcopy(trial.config))
+            continue
+        rows = stored_example_rows(trial) if current_ids is not None else None
+        if rows is not None and current_ids is not None:
+            done = {
+                r["example_id"]: r
+                for r in rows
+                if _row_completed(r) and r["example_id"] in current_ids
+            }
+            if len(done) < len(current_ids):
+                # Partial: its finished examples are reused when this config
+                # runs again; the trial itself is not counted.
+                partial += 1
+                slot = pool.setdefault(config_key(trial.config, config_keys), {})
+                for example_id, row in done.items():
+                    slot.setdefault(example_id, row)
+                continue
+        if trial.status == TrialStatus.COMPLETED and _trial_cost_ok(trial):
+            eligible.append(trial)
+        else:
+            other += 1
 
     if mismatched:
         return ResumePlan(
@@ -235,6 +361,8 @@ def plan_resume(
     return ResumePlan(
         reusable=tuple(reused),
         blocked_configs=tuple(blocked),
+        partial_trials=partial,
+        prefill=ResumePrefill(pool, config_keys) if pool else None,
         not_reusable_unfinished=unfinished,
         not_reusable_other=other,
         dropped_over_max_trials=dropped,

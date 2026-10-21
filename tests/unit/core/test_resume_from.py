@@ -553,3 +553,162 @@ def test_resumed_local_run_makes_no_network_connection(
     assert attempts == []
     assert resumed.metadata.get("offline_mode") is True
     assert resumed.metadata["resume"]["reused_trials"] == 2
+
+
+# ---- example-level reuse (#2541) ----------------------------------------------
+
+
+def _agent_rows(calls: list[tuple[str, str]], *, with_cost: bool = True):
+    """Four-example dataset; records every (config value, input) executed."""
+    Path("d4.jsonl").write_text(
+        "".join(
+            json.dumps({"input": {"q": str(i)}, "output": "a"}) + "\n"
+            for i in range(1, 5)
+        )
+    )
+
+    @traigent.optimize(
+        configuration_space={"v": ["a", "b", "c"]},
+        objectives=["accuracy"],
+        offline=True,
+        max_trials=3,
+        algorithm="grid",
+        evaluation=EvaluationOptions(eval_dataset="d4.jsonl"),
+    )
+    def agent(q: str) -> Any:
+        calls.append((traigent.get_config()["v"], q))
+        if with_cost:
+            return traigent.with_usage("a", total_cost=0.01)
+        return "a"
+
+    return agent
+
+
+def _make_partial(first: OptimizationResult, keep: int = 2) -> TrialResult:
+    """Make the third trial partial: only the first ``keep`` rows completed."""
+    trial = next(t for t in first.trials if t.config["v"] == "c")
+    rows = trial.metadata["evaluation_result"]["example_results"]
+    for row in rows[keep:]:
+        row["success"] = False
+        row["error_message"] = "interrupted"
+    return trial
+
+
+def test_partial_trial_evaluates_only_missing_examples(_local: Path) -> None:
+    calls: list[tuple[str, str]] = []
+    agent = _agent_rows(calls)
+    first = agent.optimize_sync()
+    assert len(first.trials) == 3
+    _make_partial(first)
+    calls.clear()
+
+    resumed = agent.optimize_sync(resume_from=first)
+
+    assert sorted(calls) == [("c", "3"), ("c", "4")]  # only the missing rows
+    assert resumed.metadata["resume"]["partial_trials_with_reusable_examples"] == 1
+    trial_c = next(t for t in resumed.trials if t.config["v"] == "c")
+    assert trial_c.metrics["total_examples"] == 4  # one trial, aggregated
+    assert trial_c.metrics["accuracy"] == pytest.approx(1.0)
+    assert trial_c.metrics["total_cost"] == pytest.approx(0.04)
+    assert trial_c.metadata["resumed_examples_reused"] == 2
+    assert trial_c.metadata["resumed_examples_reused_cost"] == pytest.approx(0.02)
+    assert len(resumed.trials) == 3
+
+
+def test_reused_example_cost_is_not_charged_to_the_new_run(_local: Path) -> None:
+    calls: list[tuple[str, str]] = []
+    agent = _agent_rows(calls)
+    first = agent.optimize_sync()
+    trial = _make_partial(first)
+    for row in trial.metadata["evaluation_result"]["example_results"][:2]:
+        row["metrics"]["total_cost"] = 5.0  # far above the new run's limit
+    calls.clear()
+    resumed = agent.optimize_sync(resume_from=first, cost_limit=0.5, cost_approved=True)
+    assert resumed.stop_reason != "cost_limit"
+    assert sorted(calls) == [("c", "3"), ("c", "4")]
+    trial_c = next(t for t in resumed.trials if t.config["v"] == "c")
+    assert trial_c.metrics["total_cost"] == pytest.approx(10.02)  # in totals
+
+
+def test_reused_examples_do_not_use_the_sample_budget(_local: Path) -> None:
+    calls: list[tuple[str, str]] = []
+    agent = _agent_rows(calls)
+    first = agent.optimize_sync()
+    _make_partial(first)
+    calls.clear()
+    resumed = agent.optimize_sync(resume_from=first, max_total_examples=2)
+    trial_c = next(t for t in resumed.trials if t.config["v"] == "c")
+    assert trial_c.metrics["total_examples"] == 4  # 2 reused + 2 new fit in 2
+    assert sorted(calls) == [("c", "3"), ("c", "4")]
+
+
+def test_example_id_mismatch_reuses_nothing_for_that_trial(_local: Path) -> None:
+    calls: list[tuple[str, str]] = []
+    agent = _agent_rows(calls)
+    first = agent.optimize_sync()
+    trial = _make_partial(first)
+    for i, row in enumerate(trial.metadata["evaluation_result"]["example_results"]):
+        row["example_id"] = f"other_{i}"
+    calls.clear()
+    resumed = agent.optimize_sync(resume_from=first)
+    assert sorted(q for v, q in calls if v == "c") == ["1", "2", "3", "4"]
+    trial_c = next(t for t in resumed.trials if t.config["v"] == "c")
+    assert "resumed_examples_reused" not in trial_c.metadata
+
+
+def test_changed_input_under_same_id_is_not_reused(_local: Path) -> None:
+    calls: list[tuple[str, str]] = []
+    agent = _agent_rows(calls)
+    first = agent.optimize_sync()
+    trial = _make_partial(first)
+    trial.metadata["evaluation_result"]["example_results"][0]["input_data"] = {
+        "q": "changed"
+    }
+    calls.clear()
+    agent.optimize_sync(resume_from=first)
+    assert sorted(q for v, q in calls if v == "c") == ["1", "3", "4"]
+
+
+def test_failed_examples_are_never_reused(_local: Path) -> None:
+    calls: list[tuple[str, str]] = []
+    agent = _agent_rows(calls)
+    first = agent.optimize_sync()
+    _make_partial(first, keep=0)  # every row failed
+    calls.clear()
+    agent.optimize_sync(resume_from=first)
+    assert sorted(q for v, q in calls if v == "c") == ["1", "2", "3", "4"]
+
+
+def test_no_per_example_data_falls_back_to_trial_level(_local: Path) -> None:
+    calls: list[tuple[str, str]] = []
+    agent = _agent_rows(calls)
+    first = agent.optimize_sync()
+    trial = _make_partial(first)
+    trial.metadata.pop("evaluation_result", None)
+    trial.metadata.pop("example_results", None)
+    calls.clear()
+    resumed = agent.optimize_sync(resume_from=first)
+    assert calls == []  # the whole trial is reused as-is, nothing re-run
+    assert resumed.metadata["resume"]["reused_trials"] == 3
+
+
+def test_unknown_cost_of_reused_examples_stays_unknown(_local: Path) -> None:
+    calls: list[tuple[str, str]] = []
+    agent = _agent_rows(calls, with_cost=False)  # mock run: cost unmeasured
+    first = agent.optimize_sync()
+    _make_partial(first)
+    calls.clear()
+    resumed = agent.optimize_sync(resume_from=first)
+    trial_c = next(t for t in resumed.trials if t.config["v"] == "c")
+    assert trial_c.metrics.get("cost_unmeasured")
+    assert sorted(calls) == [("c", "3"), ("c", "4")]
+
+
+def test_reused_whole_trials_do_not_use_the_sample_budget(_local: Path) -> None:
+    seen: list[str] = []
+    agent = _agent(["a", "b", "c", "d"], seen)
+    first = agent.optimize_sync(max_trials=2)  # 2 examples each
+    seen.clear()
+    resumed = agent.optimize_sync(max_trials=4, resume_from=first, max_total_examples=4)
+    assert set(seen) == {"c", "d"}  # 4 new examples fit; reused 4 did not count
+    assert len(resumed.trials) == 4
