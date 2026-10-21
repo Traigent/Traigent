@@ -22,9 +22,16 @@ ANTHROPIC_MODEL_PATTERN = (
     r"(?:opus|sonnet|haiku)-4(?:-[a-z0-9]+)+)$"
 )
 
-# Known Anthropic models (shipped snapshot: 2026-07-05).
+# Known Anthropic models (shipped snapshot: 2026-10-21).
 # Keep this in sync with traigent/config/models.yaml.
 KNOWN_ANTHROPIC_MODELS = [
+    # Claude 5.5 family (#2689): current Anthropic ids, priced in the upstream
+    # litellm price map but NOT in the bundled 1.103.5 table (see
+    # traigent/providers/validation.py); offline/bundled pricing reports their
+    # cost as unmeasured (strict mode stops), never $0.
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
+    "claude-haiku-5-5",
     # Claude 4 family
     "claude-opus-4-8",
     "claude-opus-4-7",

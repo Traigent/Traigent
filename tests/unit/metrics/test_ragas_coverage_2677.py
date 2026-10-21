@@ -85,3 +85,97 @@ def test_nan_answered_row_plus_failed_rows_still_raises(stub) -> None:
     rows = [_row(0, "answer"), _row(1, None)]
     with pytest.raises(rm.RagasConfigurationError):
         rm.compute_ragas_metrics(rows, ["faithfulness"], config=rm.RagasConfig())
+
+
+def _scored(k: int, n: int):
+    return lambda size: [0.8] * k + [math.nan] * (n - k)
+
+
+def test_one_of_ten_defined_fails_below_default_floor(stub) -> None:
+    stub(_scored(1, 10))
+    rows = [_row(i, "a") for i in range(10)]
+    with pytest.raises(rm.RagasCoverageError) as excinfo:
+        rm.compute_ragas_metrics(rows, ["faithfulness"], config=rm.RagasConfig())
+    message = str(excinfo.value)
+    assert "1 of 10" in message
+    assert "q0" not in message and "ref" not in message.replace("rows", "")
+
+
+def test_six_of_ten_passes_and_reports_coverage_keys(stub) -> None:
+    stub(_scored(6, 10))
+    rows = [_row(i, "a") for i in range(10)]
+    out = rm.compute_ragas_metrics(rows, ["faithfulness"], config=rm.RagasConfig())
+    assert out["ragas_faithfulness_rows_scored"] == 6
+    assert out["ragas_faithfulness_rows_total"] == 10
+    assert isinstance(out["ragas_faithfulness_rows_scored"], int)
+    # Undefined rows are excluded from the mean, as before (#2677 owner ruling):
+    # 6 x 0.8 + 4 undefined stays 0.8, never 0.48.
+    assert out["faithfulness"] == pytest.approx(0.8)
+
+
+def test_floor_is_configurable_and_zero_disables(stub) -> None:
+    stub(_scored(1, 10))
+    rows = [_row(i, "a") for i in range(10)]
+    out = rm.compute_ragas_metrics(
+        rows, ["faithfulness"], config=rm.RagasConfig(min_scored_share=0.0)
+    )
+    assert out["ragas_faithfulness_rows_scored"] == 1
+    with pytest.raises(rm.RagasCoverageError):
+        rm.compute_ragas_metrics(
+            rows, ["faithfulness"], config=rm.RagasConfig(min_scored_share=0.2)
+        )
+    out = rm.compute_ragas_metrics(
+        rows, ["faithfulness"], config=rm.RagasConfig(min_scored_share=0.1)
+    )
+    assert out["ragas_faithfulness_rows_total"] == 10
+
+
+def test_agent_failed_rows_count_as_scored_in_coverage(stub) -> None:
+    stub(lambda n: [0.9] + [math.nan] * (n - 1) if n > 1 else [0.9])
+    rows = [_row(0, "answer")] + [_row(i, None) for i in range(1, 10)]
+    out = rm.compute_ragas_metrics(rows, ["faithfulness"], config=rm.RagasConfig())
+    assert out["ragas_faithfulness_rows_scored"] == 10
+    assert out["ragas_faithfulness_rows_total"] == 10
+
+
+def test_invalid_floor_rejected() -> None:
+    with pytest.raises(rm.RagasConfigurationError):
+        rm.configure_ragas_defaults(min_scored_share=1.5)
+
+
+def test_compute_metrics_passes_coverage_keys_and_reserves_them(monkeypatch) -> None:
+    import traigent.evaluators.base as base
+    from traigent.evaluators.base import SimpleScoringEvaluator
+
+    evaluator = SimpleScoringEvaluator(metrics=["context_precision"])
+    evaluator._ragas_metric_names = {"context_precision"}
+    monkeypatch.setattr(
+        base,
+        "compute_ragas_metrics",
+        lambda **kw: {
+            "context_precision": 0.5,
+            "ragas_context_precision_rows_scored": 6,
+            "ragas_context_precision_rows_total": 10,
+        },
+    )
+    out = evaluator.compute_metrics(["a"], ["b"], [None])
+    assert out["ragas_context_precision_rows_scored"] == 6
+    assert out["ragas_context_precision_rows_total"] == 10
+    reserved = evaluator._evaluator_computable_metric_names()
+    assert "ragas_context_precision_rows_scored" in reserved
+
+
+def test_compute_metrics_fails_closed_on_low_coverage(monkeypatch) -> None:
+    import traigent.evaluators.base as base
+    from traigent.evaluators.base import SimpleScoringEvaluator
+    from traigent.utils.exceptions import EvaluationError
+
+    evaluator = SimpleScoringEvaluator(metrics=["context_precision"])
+    evaluator._ragas_metric_names = {"context_precision"}
+
+    def boom(**kw):
+        raise rm.RagasCoverageError("scored 1 of 10 rows")
+
+    monkeypatch.setattr(base, "compute_ragas_metrics", boom)
+    with pytest.raises(EvaluationError):
+        evaluator.compute_metrics(["a"], ["b"], [None])

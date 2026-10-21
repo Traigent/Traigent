@@ -1,6 +1,6 @@
 # Traigent Cloud Integration Module
 
-This module provides backend integration capabilities for Traigent SDK, including portal-tracked hybrid sessions, privacy-preserving session/result submission, authentication, and analytics.
+This module provides backend integration capabilities for Traigent SDK, including portal-tracked hybrid sessions, session/result submission, authentication, and analytics.
 
 This module supports backend and portal integration for SDK-run trials. Users
 should select optimization behavior with `algorithm` and `offline`; the legacy
@@ -9,9 +9,9 @@ execution-mode field is kept only for compatibility.
 ## Components
 
 ### DTOs (`dtos.py`)
-Data Transfer Objects that provide type-safe communication with the backend while preserving privacy:
+Data Transfer Objects that provide type-safe communication with the backend:
 
-- **ExperimentDTO**: Represents optimization experiments with privacy-preserving defaults
+- **ExperimentDTO**: Represents optimization experiments with conservative defaults
 - **ExperimentRunDTO**: Tracks individual optimization runs
 - **ConfigurationRunDTO**: Manages configuration trials and results
 
@@ -24,7 +24,7 @@ Key features:
 ### Backend Client (`backend_client.py`)
 The `BackendIntegratedClient` provides:
 - HTTP communication with Traigent backend
-- Privacy-preserving session management
+- Session management
 - Asynchronous and synchronous interfaces
 - Fail-closed behavior for backend-required operations when dependencies or credentials are missing
 
@@ -34,16 +34,25 @@ Core data models for optimization requests, sessions, and results.
 ### Optimizer Client (`optimizer_client.py`)
 Direct metric submission for hybrid mode, where the SDK executes trials locally while the backend tracks sessions and results.
 
-## Privacy-Preserving Architecture
+## DTO defaults
 
-All DTOs implement privacy protection:
+DTOs null out some identifier fields by default. This is a payload-shaping default,
+not a privacy guarantee: Traigent observability is not privacy-preserving, and
+the `privacy_mode` metadata flag is a legacy marker, not a data-protection control.
+`offline=True` stops submission to the Traigent backend and, for the duration of the
+run, also switches off OpenTelemetry trace export, the langfuse client, workflow-trace
+ingestion and the standalone API clients (they refuse with `OfflineModeError`, or
+return a failed result for trace ingestion). It does not keep everything on the
+machine: model-provider calls your own function makes use your own provider
+credentials and are not gated by it. Traigent observability is not privacy-preserving.
+The switch is process-wide while any `offline=True` run is in flight (issue #2240):
 
 ```python
 # Example: Creating a Edge Analytics experiment
 experiment = create_local_experiment(
     experiment_id="exp_123",
     name="My Experiment",
-    description="Testing privacy mode",
+    description="Testing DTO defaults",
     configuration_space={...},
     max_trials=10,
     dataset_size=100
@@ -53,7 +62,7 @@ experiment = create_local_experiment(
 assert experiment.agent_id is None
 assert experiment.benchmark_id is None
 
-# Privacy metadata is included
+# Legacy metadata flag (informational only)
 assert experiment.metadata["privacy_mode"] is True
 assert experiment.metadata["execution_mode"] == "local"
 ```
@@ -101,7 +110,7 @@ pytest tests/integration/test_backend_integration.py
 
 When adding new DTOs:
 1. Base them on existing Traigent schemas
-2. Include privacy-preserving defaults
+2. Include conservative (nullable) defaults
 3. Add validation methods
 4. Update tests
 
@@ -111,10 +120,10 @@ Example:
 class NewFeatureDTO:
     id: str
     name: str
-    # Nullable for privacy
+    # Nullable by default
     sensitive_field: Optional[str] = None
 
-    # Privacy metadata
+    # Legacy metadata flag (informational only)
     metadata: Dict[str, Any] = field(default_factory=lambda: {
         "privacy_mode": True,
         "execution_mode": "local"

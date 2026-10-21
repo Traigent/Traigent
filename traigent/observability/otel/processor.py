@@ -36,6 +36,7 @@ from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor
 
 from traigent.observability.otel.exporter import ExportOutcome, TraigentOTLPExporter
 from traigent.observability.otel.lineage import stamp_span
+from traigent.utils.env_config import is_backend_offline
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -55,12 +56,16 @@ _STAT_KEYS = (
     "dropped_retry_exhausted",
     "dropped_non_retryable",
     "dropped_deadline",
+    "dropped_offline",
     "rejected_by_server",
     "sampled_out",
     "content_attrs_stripped",
     "retries",
     "protocol_failures",
 )
+
+
+_MAX_OFFLINE_TRACKED = 65_536
 
 
 def _estimate_bytes(span: ReadableSpan) -> int:
@@ -114,6 +119,11 @@ class TraigentSpanProcessor(SpanProcessor):
     def _init_state(self) -> None:
         self._cond = threading.Condition(threading.Lock())
         self._queue: deque[ReadableSpan] = deque()
+        # Spans that STARTED while offline (private, never exported).
+        # Keyed by (trace_id, span_id): on_end may receive a different object
+        # than on_start. Bounded; on overflow we fail closed (see on_end).
+        self._started_offline: set[tuple[int, int]] = set()
+        self._offline_overflow = False
         self._queued_bytes = 0
         self._first_queued_at: float | None = None
         self._in_flight = False
@@ -130,12 +140,43 @@ class TraigentSpanProcessor(SpanProcessor):
     # -- SpanProcessor API ---------------------------------------------
     def on_start(self, span: Span, parent_context: Context | None = None) -> None:
         try:
+            if is_backend_offline():
+                ctx = span.get_span_context()
+                if len(self._started_offline) >= _MAX_OFFLINE_TRACKED:
+                    if not self._offline_overflow:
+                        # Latched for the processor's lifetime: untracked
+                        # offline spans may still be active, so fail closed.
+                        self._offline_overflow = True
+                        logger.warning(
+                            "Offline span tracking overflowed; dropping all "
+                            "ending spans for the rest of this process"
+                        )
+                else:
+                    self._started_offline.add((ctx.trace_id, ctx.span_id))
+        except Exception:
+            logger.debug("offline provenance tracking failed", exc_info=True)
+        try:
             stamp_span(span, metadata_mode=self._exporter.content_mode)
         except Exception:  # never let stamping break the application
             logger.debug("lineage stamping failed", exc_info=True)
 
     def on_end(self, span: ReadableSpan) -> None:
         if self._shutdown:
+            return
+        started_offline = self._offline_overflow
+        ctx0 = span.context
+        if ctx0 is not None:
+            key = (ctx0.trace_id, ctx0.span_id)
+            if key in self._started_offline:
+                self._started_offline.discard(key)
+                started_offline = True
+        # _offline_overflow is never auto-cleared: an empty tracked set does
+        # not prove the untracked offline spans have ended.
+        if started_offline or is_backend_offline():
+            # Offline (offline=True run or the offline env vars) is checked at
+            # record time, not only at init: a pipeline initialised online must
+            # not queue spans recorded while offline. Dropped, never queued.
+            self._bump("dropped_offline")
             return
         ctx = span.context
         if ctx is None or not ctx.trace_flags.sampled:
@@ -290,6 +331,7 @@ class TraigentSpanProcessor(SpanProcessor):
             s["dropped_retry_exhausted"] += outcome.dropped_retry_exhausted
             s["dropped_non_retryable"] += outcome.dropped_non_retryable
             s["dropped_deadline"] += outcome.dropped_deadline
+            s["dropped_offline"] += outcome.dropped_offline
             s["rejected_by_server"] += outcome.rejected_by_server
             s["protocol_failures"] += outcome.protocol_failures
             s["content_attrs_stripped"] += outcome.stripped_attrs

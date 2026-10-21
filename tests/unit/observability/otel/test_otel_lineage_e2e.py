@@ -11,6 +11,10 @@ import asyncio
 import threading
 
 import pytest
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+    InMemorySpanExporter,
+)
 
 import traigent
 import traigent.observability.otel as otel
@@ -44,7 +48,13 @@ def optimizer_env(monkeypatch):
 
 
 def _real_optimizer_run(collector, *, max_trials=4, concurrency=1):
+    # offline=True runs never export (#2240): lineage stamping is verified on a
+    # local in-memory exporter attached to the same provider; the collector must
+    # stay empty (asserted by the callers).
     h = _init(collector, service_name="lineage-e2e")
+    memory = InMemorySpanExporter()
+    h.provider.add_span_processor(SimpleSpanProcessor(memory))
+    h.memory = memory
 
     @traigent.optimize(
         evaluation={"eval_dataset": DATASET},
@@ -83,15 +93,24 @@ def _by_name(collector):
     return out
 
 
+def _memory_by_name(h):
+    out: dict[str, list[dict]] = {}
+    for span in h.memory.get_finished_spans():
+        out.setdefault(span.name, []).append(dict(span.attributes or {}))
+    return out
+
+
 def test_real_optimizer_trials_stamp_matching_ids_on_every_span(
     collector, optimizer_env
 ):
-    _h, results = _real_optimizer_run(collector)
+    h, results = _real_optimizer_run(collector)
     reported = {str(t.trial_id) for t in results.trials}
     assert reported, "optimizer produced no trials"
-    spans = _by_name(collector)
+    # offline run: its spans were not exported (only the later online one was)
+    assert not {"llm-step", "inner-tool"} & set(_by_name(collector))
+    spans = _memory_by_name(h)
     llm = spans["llm-step"]
-    assert llm, "no instrumented spans reached the receiver"
+    assert llm, "no instrumented spans were recorded"
     seen = {a[C.ATTR_TRIAL_ID] for a in llm}
     assert len(llm) >= len(results.trials) * len(DATASET)  # every call exported
     assert seen <= reported and seen  # every span maps to a trial the optimizer reports
@@ -104,14 +123,19 @@ def test_real_optimizer_trials_stamp_matching_ids_on_every_span(
     after = spans["after-optimization"][0]
     assert not {C.ATTR_TRIAL_ID, C.ATTR_OPTIMIZATION_SESSION_ID} & set(after)
     # ids only: no optimizer configs/metrics/payloads ever ride on spans
-    for _rs, _ss, span in collector.spans():
+    exported = collector.spans()
+    assert exported, "the online span after the run should still export"
+    for _rs, _ss, span in exported:
         assert set(collector.attrs(span)) <= set(C.ATTRIBUTE_ALLOWLIST)
+    for attrs in (a for group in spans.values() for a in group):
+        assert set(attrs) <= set(C.ATTRIBUTE_ALLOWLIST)
 
 
 def test_concurrent_trials_keep_their_own_ids(collector, optimizer_env):
-    _h, results = _real_optimizer_run(collector, max_trials=4, concurrency=3)
+    h, results = _real_optimizer_run(collector, max_trials=4, concurrency=3)
     reported = {str(t.trial_id) for t in results.trials}
-    seen = {a[C.ATTR_TRIAL_ID] for a in _by_name(collector)["llm-step"]}
+    assert "llm-step" not in _by_name(collector)
+    seen = {a[C.ATTR_TRIAL_ID] for a in _memory_by_name(h)["llm-step"]}
     assert seen <= reported and len(seen) > 1
 
 

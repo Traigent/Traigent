@@ -3167,6 +3167,21 @@ class TestRuntimeDegradationSourceMarker:
         manager._backend_tracking_enabled = True
         assert manager.result_source(trial_count=3) == "local_fallback"
 
+    def test_result_source_local_when_any_trial_unacknowledged_2027(
+        self, backend_session_manager, monkeypatch
+    ):
+        monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+        monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+        manager = backend_session_manager
+        manager._traigent_config.execution_mode = "hybrid"
+        manager._backend_tracking_enabled = True
+        # Trial 1 acknowledged, trial 2 attempted but never acknowledged.
+        manager._attempted_trials.update({("s", "t1"), ("s", "t2")})
+        manager._acknowledged_trials.add(("s", "t1"))
+        assert manager.result_source(trial_count=2) == "local_fallback"
+        manager._acknowledged_trials.add(("s", "t2"))
+        assert manager.result_source(trial_count=2) == "cloud_brain"
+
     def test_result_source_local_when_tracking_disabled(
         self, backend_session_manager, monkeypatch
     ):
@@ -3997,20 +4012,18 @@ class TestSyncableLocalSessionId:
     ):
         """1 of 3 acknowledged: the backend is missing two trials.
 
-        The all-or-nothing test (``not self._acknowledged_trials``) that
-        ``result_source`` uses calls this set "non-empty" and so would withhold
-        the id — but the backend really is missing trials 2 and 3, exactly the
-        shape the ``submitted is None`` branch tells the user to "Recover via
+        The backend really is missing trials 2 and 3, exactly the shape the
+        ``submitted is None`` branch tells the user to "Recover via
         ``traigent sync``". ``_trials_not_fully_acknowledged`` subtracts the
-        acknowledgements from the attempts instead.
+        acknowledgements from the attempts; since #2027 ``result_source``
+        shares that predicate.
         """
         manager = self._connected(backend_session_manager, monkeypatch)
         manager._attempted_trials = self._attempts("sess-2020", 3)
         manager._acknowledged_trials = self._acks("sess-2020", 1)
         self._stub_storage(manager, Mock(return_value=Mock()))
 
-        # The looser provenance test disagrees — deliberately left unchanged.
-        assert manager.result_source(trial_count=3) == "cloud_brain"
+        assert manager.result_source(trial_count=3) == "local_fallback"
         assert manager.syncable_local_session_id("sess-2020") == "sess-2020"
 
     def test_acks_from_another_session_do_not_count(

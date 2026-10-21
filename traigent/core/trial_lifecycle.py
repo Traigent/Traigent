@@ -517,6 +517,9 @@ class TrialLifecycle:
         Returns:
             TrialResult with evaluation results
         """
+        # Mock provenance is sampled as the trial is dispatched (#2516).
+        self._orchestrator.record_trial_mock_state()
+
         # Phase 1: Setup trial context
         optuna_trial_id = extract_optuna_trial_id(config, optuna_trial_id)
         backend_trial_id = (

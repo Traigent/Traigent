@@ -10,6 +10,7 @@ Tests cover:
 
 # Traceability: CONC-Layer-Integration FUNC-INTEGRATIONS REQ-INT-008
 
+import json
 import tempfile
 import time
 import types
@@ -183,6 +184,37 @@ class TestModelCache:
         assert isinstance(entry.timestamp, float)
 
 
+class TestSnapshotInvalidation:
+    """Cached model lists are tied to the shipped snapshot (#2689)."""
+
+    def test_cache_written_by_older_snapshot_is_ignored(self, tmp_path: Path) -> None:
+        cache = ModelCache(cache_dir=tmp_path)
+        cache.set("anthropic", ["claude-stale"])
+        stale = json.loads((tmp_path / "anthropic_models.json").read_text())
+        stale["snapshot"] = "older-snapshot"
+        (tmp_path / "anthropic_models.json").write_text(json.dumps(stale))
+
+        fresh_process = ModelCache(cache_dir=tmp_path)
+        assert fresh_process.get("anthropic") is None
+
+    def test_cache_without_snapshot_marker_is_ignored(self, tmp_path: Path) -> None:
+        (tmp_path / "openai_models.json").write_text(
+            json.dumps(
+                {
+                    "data": ["old"],
+                    "timestamp": time.time(),
+                    "ttl_seconds": 86400,
+                    "provider": "openai",
+                }
+            )
+        )
+        assert ModelCache(cache_dir=tmp_path).get("openai") is None
+
+    def test_cache_from_current_snapshot_is_used(self, tmp_path: Path) -> None:
+        ModelCache(cache_dir=tmp_path).set("gemini", ["m1"])
+        assert ModelCache(cache_dir=tmp_path).get("gemini") == ["m1"]
+
+
 class TestGlobalCache:
     """Tests for global cache singleton."""
 
@@ -308,6 +340,14 @@ class TestAnthropicDiscovery:
             message = f"Retired model {retired} must not validate"
             assert not discovery.is_valid_model(retired), message
 
+    def test_current_claude_5_5_models_validate(self) -> None:
+        """Sourced Claude 5.5 IDs must be accepted by the snapshot (#2689)."""
+        discovery = AnthropicDiscovery(cache=ModelCache(enable_file_cache=False))
+
+        for model in ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"]:
+            assert discovery.is_valid_model(model), f"Model {model} should pass"
+            assert model in discovery.list_models()
+
     def test_pattern_validation_invalid_models(self) -> None:
         """Invalid Anthropic-like model names should fail pattern validation."""
         discovery = AnthropicDiscovery()
@@ -327,7 +367,7 @@ class TestAnthropicDiscovery:
 
     def test_known_models_included(self) -> None:
         """Known models should be included in list."""
-        discovery = AnthropicDiscovery()
+        discovery = AnthropicDiscovery(cache=ModelCache(enable_file_cache=False))
         models = discovery.list_models()
 
         for model in KNOWN_ANTHROPIC_MODELS:

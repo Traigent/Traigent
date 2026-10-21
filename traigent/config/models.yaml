@@ -68,7 +68,11 @@ openai:
 anthropic:
   support_level: validated
   known_models:
-    # Shipped snapshot: 2026-07-05
+    # Shipped snapshot: 2026-10-21
+    # Claude 5.5 family (#2689)
+    - claude-opus-5-5
+    - claude-sonnet-5-5
+    - claude-haiku-5-5
     # Claude 4 family
     - claude-opus-4-8
     - claude-opus-4-7

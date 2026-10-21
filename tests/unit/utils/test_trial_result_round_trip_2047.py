@@ -262,6 +262,8 @@ def test_legacy_persistence_payload_without_new_keys_still_loads(tmp_path) -> No
         trial.pop("score", None)
     with gzip.open(trials_file, "wt") as handle:
         json.dump(trials_data, handle)
+    # hand-edited artifact: drop the #1961 manifest (legacy shape)
+    (result_dir / "integrity.sha256.json").unlink(missing_ok=True)
 
     (loaded,) = store.load_result("legacy").trials
     assert loaded.error is None
@@ -320,6 +322,8 @@ def test_non_mapping_error_payload_does_not_abort_the_whole_load(
     trials_data[0]["error"] = corrupt
     with gzip.open(trials_file, "wt") as handle:
         json.dump(trials_data, handle)
+    # hand-edited artifact: drop the #1961 manifest (legacy shape)
+    (result_dir / "integrity.sha256.json").unlink(missing_ok=True)
 
     with caplog.at_level(logging.WARNING):
         (loaded,) = store.load_result("legacy-shape").trials
@@ -341,6 +345,8 @@ def test_non_numeric_score_does_not_abort_the_load(tmp_path, caplog) -> None:
     trials_data[0]["score"] = "not-a-number"
     with gzip.open(trials_file, "wt") as handle:
         json.dump(trials_data, handle)
+    # hand-edited artifact: drop the #1961 manifest (legacy shape)
+    (result_dir / "integrity.sha256.json").unlink(missing_ok=True)
 
     with caplog.at_level(logging.WARNING):
         (loaded,) = store.load_result("bad-score").trials

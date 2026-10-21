@@ -230,6 +230,25 @@ def _format_env_assignment_from_existing(line: str, key: str, value: str) -> str
     return f"{leading}{export_prefix or ''}{key}={_format_env_value(value)}"
 
 
+def _parse_expires_at(raw: Any) -> str | None:
+    """Return ``raw`` when it is a timezone-aware ISO-8601 timestamp, else None.
+
+    The backend may omit ``expires_at`` or send null; an absent or malformed
+    value is never replaced by an invented one (SDK #1635).
+    """
+    from datetime import datetime
+
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.strip())
+    except ValueError:  # silent-ok: malformed expires_at is deliberately treated as absent (value-free, #1635)
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return raw.strip()
+
+
 class TraigentAuthCLI:
     """Modern CLI authentication manager for Traigent SDK."""
 
@@ -634,7 +653,7 @@ class TraigentAuthCLI:
         if not isinstance(trial_limit, int) or not isinstance(api_call_limit, int):
             raise AuthenticationError("Malformed device token response: invalid quota")
 
-        return {
+        credentials: dict[str, Any] = {
             "api_key": api_key,
             "tenant_id": tenant_id,
             "project_id": project_id,
@@ -646,6 +665,10 @@ class TraigentAuthCLI:
             },
             "backend_url": self.backend_url,
         }
+        expires_at = _parse_expires_at(token_data.get("expires_at"))
+        if expires_at is not None:
+            credentials["expires_at"] = expires_at
+        return credentials
 
     @staticmethod
     def _device_error_from_envelope(data: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -1093,6 +1116,7 @@ class TraigentAuthCLI:
 
         # Step 2: Create API key using JWT token
         api_key = None
+        api_key_expires_at: str | None = None
         api_key_url = f"{self.backend_api_url}/keys"
 
         # Generate a unique key name to avoid conflicts
@@ -1138,6 +1162,9 @@ class TraigentAuthCLI:
                     try:
                         api_key_data = json.loads(response_text)
                         api_key = api_key_data["data"]["key"]
+                        api_key_expires_at = _parse_expires_at(
+                            api_key_data["data"].get("expires_at")
+                        )
                         console.print("[green]✓ API key created[/green]")
                     except (json.JSONDecodeError, KeyError) as e:
                         console.print("\n[yellow]--- API Key Response ---[/yellow]")
@@ -1180,6 +1207,8 @@ class TraigentAuthCLI:
         }
         if refresh_token:
             credentials["refresh_token"] = refresh_token
+        if api_key and api_key_expires_at is not None:
+            credentials["expires_at"] = api_key_expires_at
 
         return credentials
 
@@ -1475,6 +1504,54 @@ class TraigentAuthCLI:
             console.print("[red]❌ Failed to clear some credentials[/red]")
             return False
 
+    def _api_key_expiry_row(self, creds: dict[str, Any]) -> str | None:
+        """Describe the stored API key's expiry/rotation state (SDK #1635).
+
+        Only a recorded ``expires_at`` is reported; an unknown expiry is never
+        presented as a measured one. Returns None when nothing is known.
+        """
+        from datetime import UTC, datetime
+
+        raw = creds.get("expires_at")
+        expires_at: datetime | None = None
+        if isinstance(raw, str):
+            try:
+                expires_at = datetime.fromisoformat(raw)
+            except ValueError:
+                expires_at = None
+        elif isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            try:
+                expires_at = datetime.fromtimestamp(raw, tz=UTC)
+            except (OverflowError, OSError, ValueError):
+                expires_at = None
+        if expires_at is None:
+            return None
+
+        manager = getattr(self, "auth_manager", None) or AuthManager()
+        manager.set_api_key(
+            creds["api_key"], expires_at=expires_at, source="stored credentials"
+        )
+        status = manager.get_api_key_status()
+        state = status.get("state")
+        days = status.get("days_remaining")
+        if state == "expired":
+            return "[red]expired - run traigent auth login to rotate[/red]"
+        if not isinstance(days, (int, float)):
+            return None
+        if state == "critical":
+            return (
+                f"[red]expires in {days:.1f} days - rotate now "
+                "(traigent auth login)[/red]"
+            )
+        if state == "warning":
+            return (
+                f"[yellow]expires in {days:.0f} days - plan a rotation "
+                "(traigent auth login)[/yellow]"
+            )
+        if state == "ok":
+            return f"expires in {days:.0f} days"
+        return None
+
     def status(self) -> bool:
         """Show current authentication status.
 
@@ -1486,22 +1563,28 @@ class TraigentAuthCLI:
         # Check for stored credentials
         creds = self._load_stored_credentials()
 
+        # Environment first (SDK #2227): TRAIGENT_API_KEY beats stored login,
+        # the same order CredentialManager uses for every request.
+        env_api_key = os.environ.get("TRAIGENT_API_KEY")
+        if env_api_key:
+            env_table = Table(show_header=False, box=None)
+            env_table.add_column("Field", style="cyan")
+            env_table.add_column("Value")
+            env_table.add_row(
+                "Status", "[green]✅ Authenticated (environment variable)[/green]"
+            )
+            env_table.add_row("TRAIGENT_API_KEY", "configured (environment variable)")
+            env_table.add_row("Backend", self.backend_url)
+            if creds and creds.get("api_key"):
+                env_table.add_row(
+                    "Stored login",
+                    "present but not used (environment variable takes precedence)",
+                )
+            console.print(env_table)
+            console.print()
+            return True
+
         if not creds:
-            env_api_key = os.environ.get("TRAIGENT_API_KEY")
-            if env_api_key:
-                env_table = Table(show_header=False, box=None)
-                env_table.add_column("Field", style="cyan")
-                env_table.add_column("Value")
-                env_table.add_row(
-                    "Status", "[green]✅ Authenticated (environment variable)[/green]"
-                )
-                env_table.add_row(
-                    "TRAIGENT_API_KEY", "configured (environment variable)"
-                )
-                env_table.add_row("Backend", self.backend_url)
-                console.print(env_table)
-                console.print()
-                return True
             console.print("[yellow]❌ Not authenticated[/yellow]")
             console.print("\nRun [cyan]traigent auth login[/cyan] to authenticate.\n")
             return False
@@ -1519,6 +1602,9 @@ class TraigentAuthCLI:
 
         if creds.get("api_key"):
             table.add_row("API Key", "configured")
+            expiry_row = self._api_key_expiry_row(creds)
+            if expiry_row:
+                table.add_row("API Key expiry", expiry_row)
         else:
             table.add_row("Auth Type", "JWT Token")
 

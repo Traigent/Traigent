@@ -429,12 +429,6 @@ class DummyPrivacyServer:
 
     def _verify_privacy_compliant_result(self, result: TrialResultSubmission) -> None:
         """Verify that result submission is privacy compliant."""
-        # Check outputs_sample is either None or very limited
-        if result.outputs_sample is not None and len(result.outputs_sample) > 5:
-            self.privacy_violations.append(
-                f"Too many output samples in result: {len(result.outputs_sample)}"
-            )
-
         # Verify only aggregated metrics
         if result.metrics:
             for key, value in result.metrics.items():

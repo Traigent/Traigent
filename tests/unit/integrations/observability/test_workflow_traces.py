@@ -37,6 +37,10 @@ from traigent.integrations.observability.workflow_traces import (
 )
 
 
+# SDK #2033/#2240: ingestion is refused while offline; opt into connected paths.
+pytestmark = pytest.mark.backend_online
+
+
 class MockLangGraphNode:
     """Mock LangGraph node function."""
 

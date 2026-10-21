@@ -65,8 +65,9 @@ def _fold(
     row: ExampleMetrics,
     result: ExampleResult | None = None,
 ) -> None:
-    monkeypatch.setattr(local_module, "get_all_captured_responses", lambda: responses)
-    monkeypatch.setattr(local_module, "clear_captured_responses", lambda: None)
+    monkeypatch.setattr(
+        local_module, "drain_captured_responses", lambda: (responses, None, None)
+    )
     LocalEvaluator(metrics=["cost"])._fold_metric_function_llm_cost(
         row, example_result=result
     )

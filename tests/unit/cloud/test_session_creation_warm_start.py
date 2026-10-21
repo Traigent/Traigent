@@ -857,3 +857,28 @@ class TestWarmStartRefusalWarning:
     def test_silent_when_no_transfer_block(self, caplog):
         records = self._attach(caplog, warm_start_from="exp_prior_99", transfer=None)
         assert records == []
+
+
+class TestResultMetadataMockProvenance:
+    """#2516: each run's result records whether mock LLM mode was on."""
+
+    @staticmethod
+    def _build(monkeypatch, mock_on: bool):
+        import traigent.core.orchestrator as orch_mod
+        from traigent.core.orchestrator import OptimizationOrchestrator
+
+        monkeypatch.setattr(orch_mod, "policy_from_config", lambda _cfg: None)
+        monkeypatch.setattr(orch_mod, "is_offline_requested", lambda _policy: False)
+        monkeypatch.setattr(orch_mod, "is_mock_llm", lambda: mock_on)
+        fake_self = SimpleNamespace(
+            _warm_start_from=None, _function_descriptor=None, traigent_config=None
+        )
+        return OptimizationOrchestrator._build_result_metadata(
+            fake_self, session_summary=None, safeguards_telemetry={}
+        )
+
+    def test_records_mock_run_true(self, monkeypatch):
+        assert self._build(monkeypatch, True)["mock_llm_run"] is True
+
+    def test_records_mock_run_false(self, monkeypatch):
+        assert self._build(monkeypatch, False)["mock_llm_run"] is False

@@ -719,3 +719,44 @@ def test_create_session_local_routed_rejected_key_does_not_raise(monkeypatch):
     assert result.backend_connected is False
     assert result.degraded is False  # local run, key irrelevant — not a downgrade
     assert result.failure_reason == SessionCreationFailureReason.AUTH
+
+
+@pytest.mark.asyncio
+async def test_finalize_api_failure_log_carries_class_never_exception_text(
+    monkeypatch, caplog
+):
+    """A finalize transport failure logs the exception class, never its text."""
+    sentinel = "SECRET_SERVER_TEXT_123"
+
+    class _TransportError(RuntimeError):
+        pass
+
+    def _raising_post(*args, **kwargs):
+        raise _TransportError(sentinel)
+
+    class _GateContext:
+        async def __aenter__(self):
+            return SimpleNamespace(post=_raising_post)
+
+        async def __aexit__(self, *exc_info):
+            return False
+
+    monkeypatch.setattr(
+        "traigent.cloud.session_operations.aiohttp.ClientSession",
+        lambda **kwargs: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "traigent.cloud.session_operations.gate_session",
+        lambda session, origins=None: _GateContext(),
+    )
+
+    client = FakeClient()
+    client.auth_manager.augment_headers = AsyncMock(return_value={})
+    ops = SessionOperations(client)
+
+    caplog.set_level(logging.DEBUG)
+    result = await ops._finalize_session_via_api("session-1", "run-1")
+
+    assert result is None
+    assert sentinel not in caplog.text
+    assert "_TransportError" in caplog.text

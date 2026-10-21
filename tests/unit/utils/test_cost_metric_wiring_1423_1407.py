@@ -31,6 +31,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+import traigent
 import traigent.utils.cost_calculator as cost_calculator
 from traigent.api.decorators import optimize
 from traigent.api.types import TrialResult, TrialStatus
@@ -205,6 +206,10 @@ async def test_per_config_cost_nonzero_and_objective_prefers_cheaper():
         offline=True,
     )
     def fn(question: str = "", model: str = "gpt-4o", **_cfg):
+        # Call the model the trial configured (CONTEXT mode delivers it only
+        # through get_config()); the response reports that model, and cost is
+        # priced by the model a response reports (#2444).
+        model = traigent.get_config().get("model", model)
         return {"text": "A", "raw_response": _LLMResponse("A", model, 700, 300)}
 
     with warnings.catch_warnings():

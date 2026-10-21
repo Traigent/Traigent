@@ -240,6 +240,8 @@ class SyncManager:
                 "optimizer",
                 "plateau",
                 "convergence",
+                "safety_constraint",
+                "safety_constraint_insufficient_evidence",
                 "user_cancelled",
                 "condition",
                 "error",

@@ -6,75 +6,52 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Added
-
-- **Failed custom-evaluator rows are now visible (#2422).** When a
-  `custom_evaluator` raises on some but not all rows of a trial, the trial
-  metadata records `custom_evaluator_failed_rows` and
-  `custom_evaluator_total_rows`, and `result.warning_codes` contains
-  `CUSTOM_EVALUATOR_ROWS_FAILED` (per-trial counts in
-  `result.metadata["session_summary"]["custom_evaluator_failed_rows_by_trial"]`).
-  Counts only. Scoring is unchanged: a raising row still scores 0.0 on quality
-  metrics.
-- **`TraceRecord` and `SessionRecord` expose `tenant_id` and `project_id`
-  (#2605).** Both are optional and filled from the backend's trace and session
-  read responses, so a caller can confirm which project its traces landed in
-  when the scope was resolved from the API key. They are `None` when the
-  response does not carry them.
-- **Export a run's failing examples as a regression dataset.**
-  `OptimizationResult.failing_examples(threshold=0.5, mode="all_configs")`
-  returns the ids of examples that failed in every trial (or, with
-  `mode="best_config"`, in every trial of the winning configuration), read from
-  the per-example outcome matrix without re-running anything; the selector is
-  `traigent.utils.outcome_matrix.select_failing_example_ids`.
-  `traigent results export-failures RUN --dataset PATH --out PATH` joins each
-  id to the one dataset row whose input and expected_output equal what the run
-  recorded for that id (never by guessing the evaluator's id scheme; both are
-  compared in the redacted form the run stores, so export with the SDK version
-  that ran the optimization), and
-  writes the rows as JSONL that `Dataset.from_jsonl` reads back. It writes
-  nothing if any id has no recorded input, matches no row, or matches more than
-  one. Exported rows without a `metadata.example_id` gain their source id
-  (`example_<index>`) so the subset's ids stay unique. `RUN` is a saved result
-  name; logger run directories (which record no example inputs) and `local:`
-  sessions are refused. New helpers: `Dataset.to_jsonl()` (atomic, refuses
-  values JSON would alter) and
-  `traigent.utils.regression_dataset.select_examples_by_id(dataset, ids, run)`.
-  Nothing is sent over the network.
-- **Trace search filters: `model`, `tags`, `outcome_kind`, `has_outcome` (#2564).**
-  `BackendAnalyticsClient.search_observability_traces` and the
-  `observability_search_traces` MCP tool accept them and validate them before
-  any request: tags are exact, sent as repeated `tags` keys and must all match;
-  `outcome_kind` is one of the backend's outcome kinds; `has_outcome=False` is
-  sent explicitly. Free-text `search`, `user_id` and `session_id` remain
-  deliberately unsupported to keep the reader content-free.
-- **`ProjectUsageExperimentDTO`: optional `priced_configuration_runs` /
-  `unpriced_configuration_runs`.** Both default to `None` and are read from the
-  matching keys when present, so clients can tell an unmeasured cost (priced 0,
-  unpriced > 0) from a real zero.
-- **`traigent.observability.otel`: OpenTelemetry-based observability (extra `observability`).**
-  `init` / `instrument` / `observe` / `attributes` / `flush` / `shutdown` /
-  `stats`, a bounded best-effort span processor, an OTLP/HTTP exporter (official
-  protobuf encoders, retry only on 429/502/503/504 and network errors), an
-  egress-authoritative content policy built on a typed allowlist, parent-based
-  head sampling with shared vectors, an exposure gate for third-party
-  instrumentors, and automatic stamping of active optimization-trial ids on
-  every span. The legacy client API is unchanged. See
-  `docs/observability/otel.md`.
-- **`publish_best_config()` refuses to overwrite an agent head that moved during the run.**
-  When the backend discloses the agent a session is bound to, the SDK reads that
-  agent's head generation once, when the optimization step starts, and sends it
-  with the promoting publish. If another writer advanced the head in the
-  meantime the backend answers 409 and the SDK raises the new
-  `CloudBestConfigStaleHeadError` (a `CloudPublishUnavailable` subclass, reason
-  `stale_head_generation`) carrying `expected_generation`, `current_generation`,
-  `agent_id`, `environment` and the refused `best_config`. The published head is
-  left untouched and the run's `OptimizationResult` stays available to publish
-  again deliberately. Runs against a backend that reports no generation (older
-  backend, offline run, no bound agent) publish exactly as before.
-
 ### Changed
 
+- **Finalize propagates ownership/auth errors (#2510).** HTTP 401/403 from the
+  session finalize call now raise `CloudServiceError` instead of being swallowed
+  as "endpoint unavailable"; only an unavailable endpoint or transport failure
+  falls back to backend auto-finalization.
+- **Safety compliance target is documented as derived (#2204).** The required
+  compliance rate stays derived from a constraint's operator and value
+  (`above(x)` needs `x`, `below(x)` needs `1 - x`); explained in
+  `docs/features/safety-compliance-target.md`, with a regression test that
+  `above()` and `below()` at the same threshold derive different rates.
+- **Mock-provenance metadata is documented and guarded (#2493).** Results keep
+  the `mock_llm_run` / `mock_llm_mixed` metadata keys; they are described in
+  `docs/user-guide/cost_capture.md` and the `traigent-analyze-results` skill, and
+  tests show they survive save and load while a legacy result without them is
+  reported as unknown, not as a real run.
+- **No-model-call examples point at `with_usage(total_cost=0)` (#2449).** The
+  unmeasured-cost error and warning now say plainly that a path making no model
+  calls should wrap its return value in `traigent.with_usage(value,
+  total_cost=0)` to record a measured $0; unknown stays the default. Documented in
+  `docs/guides/execution-budget.md`, with a test that a wrapped no-call example
+  counts as measured $0 and an unwrapped one stays unknown.
+
+- **User-cancelled runs are now clearly labelled (#2666).** `optimize()` still
+  returns the partial result after a Ctrl+C (the caller owns the exit code),
+  with `status` CANCELLED and `stop_reason` `user_cancelled`. It now logs one
+  warning with counts only (N of M trials finished, result is partial), and
+  `traigent results list` has a Status column. Results saved before this
+  change show `unknown`. Progress, summary and logging callbacks and the CLI
+  summary now say "CANCELLED BY USER" and that results are partial, instead of
+  "timeout reached" or "complete".
+
+- **`traigent hooks validate --exit-code` fails on an empty explicit target
+  (#2639).** When a target path is given explicitly and contains no
+  `@traigent.optimize` functions, the command now exits non-zero; pass
+  `--allow-empty` to keep exit 0. With no path (default `.`, as the installed
+  pre-push hook runs it) behaviour is unchanged. Without `--exit-code`
+  nothing changes.
+- **Partially acknowledged runs now report `local_fallback` (#2027).** When the
+  backend acknowledges only some of a run's trials, `result_source` /
+  `source` is `local_fallback` instead of `cloud_brain`, because the run was
+  not fully cloud-confirmed.
+- **A run where every trial failed now ends `FAILED` with
+  `ALL_TRIALS_FAILED` (#2477),** regardless of the stop reason, including
+  `cost_limit` and `execution_budget` stops. The `stop_reason` value itself is
+  unchanged.
 - **Mock mode no longer skips the cost preflights (#2681).** The pre-run cost
   approval and the model-price coverage preflight now run under plain
   `TRAIGENT_MOCK_LLM`, unless `TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT=true` is set
@@ -113,41 +90,55 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   cost enforcer as a minimum; the trial keeps its `cost_unmeasured` flag and its
   objective value is unchanged.
 
-### Removed
-
-- **Candidate runs (`optimize(apply=False)`) are temporarily withdrawn.** Their
-  config isolation was not provably consistent under concurrent config
-  changes. `apply=False` now raises `ConfigurationError` immediately in every
-  entry point that accepts it -- `optimize()`, `optimize_sync()` (checked
-  before creating any event loop, coroutine or thread, not deferred to the
-  underlying `optimize()` call), and `optimize_with_guidance()` (checked
-  before resolving `rewrite_llm`, loading the dataset, or touching any
-  dataset override) -- with: "optimize(apply=False) (candidate runs) is
-  temporarily unavailable; it will return in a future release. Use
-  apply=True (the default)." The `apply` parameter remains in the signature
-  and `apply=True` (the default) is unaffected.
-- **BREAKING: the inert `mock_mode_config` and `mock` (`MockModeOptions`) parameters
-  are removed** (Traigent#1370 Item 6). Both were accepted and ignored since the
-  mock-mode retirement. Passing either to `@traigent.optimize`, runtime
-  `.optimize()`, `OptimizedFunction(...)` or `validate_optimize_parameters()` now
-  raises an error naming the removed parameter (even when the value is `None` or
-  `TRAIGENT_DISABLED` is set), and `traigent validate-config` reports a top-level
-  `mock_mode_config` / `mock` key as a failure. `MockModeOptions` is no longer
-  exported. Mock LLM behaviour is unchanged: use
-  `traigent.testing.enable_mock_mode_for_quickstart()` (or the `TRAIGENT_MOCK_LLM`
-  env var) instead.
-- **BREAKING: `OptimizedFunction(...)` rejects `use_cloud_service` and the singular
-  `framework_target`.** Presence alone raises (even `False` / `None`), instead of
-  being absorbed. Migration: drop `use_cloud_service` (it had no effect); use
-  `framework_targets` in place of `framework_target`.
-- **BREAKING: optimizer constructors and `get_optimizer(...)` reject `mock` and
-  `mock_mode_config`.** `get_optimizer` wraps the constructor `TypeError` in
-  `OptimizationError`; `validate_optimize_parameters()` raises `ValidationError`.
-- **BREAKING: evaluators reject `mock` and `mock_mode_config`.** `LocalEvaluator(...)`
-  (and every `BaseEvaluator` subclass) now raises `TypeError` for either name,
-  even when the value is `None`, instead of storing it in `evaluator.config`.
-
 ### Fixed
+
+- **Pre-run cost estimate samples the dataset and shows its assumptions
+  (#2498).** Input tokens per example are now estimated from the first 20
+  dataset examples (~4 ASCII chars/token, 1 token per non-ASCII char), plus a
+  200-token prompt-template allowance (minimum 256), so short inputs can
+  estimate below the old 2000-token default; a configured `max_tokens` in the config space is
+  the output cap; backend overrides still win and the 1.2x buffer is kept. The
+  cost-approval refusal lists model(s), example count, token estimates, source
+  and buffer, and states that real billing may differ and the runtime cost
+  limit still applies. No example text appears in the message.
+
+- **Provider-billed cost is no longer replaced by the plausibility floor (#2505).**
+  A cost read from the provider's own response (`usage.cost`, e.g. OpenRouter's
+  billed charge) is tagged `provider_billed` and skips the 50%-of-table-price
+  floor, so a cheaper upstream route is recorded as billed instead of at a stale
+  table price. Self-reported costs (`with_usage()`, injected `__traigent_meta__`,
+  raw paths) and any untagged cost keep the floor and its warning. Each cost now
+  carries a source (`provider_billed`, `self_reported`, `table`); the trial's
+  `summary_stats["metadata"]["cost_source"]` holds it (or `mixed`) and the
+  numeric measure `cost_provider_billed_fraction` gives the billed share.
+
+- **Model defaults no longer point at retiring models (#2650).** The `model`
+  range preset drops `gpt-4.1-mini`/`gpt-4.1-nano` for `gpt-5.4-mini`/
+  `gpt-5.4-nano`; the OpenAI executor's model allow-list is now derived from the
+  SDK's known-models table (case-insensitive, retired families still rejected);
+  and `Choices.model()` raises `ValueError` for a provider with no defaults
+  instead of silently returning an OpenAI model. `DEFAULT_MODEL` is unchanged.
+
+- **Revived traces keep their content policy and clearing markers (#2604).**
+  A late update to an evicted trace now resolves its content mode from the
+  trace's own tombstone (a malformed one fails closed to `metadata`), so a
+  trace set to `metadata` never sends content under a looser client `record`
+  policy. The tombstone also keeps per-field "content was delivered" flags, so
+  an `end_trace`/`record_observation` that withholds content sends the clearing
+  marker as it would for a live trace. Only the last 4096 evictions are
+  remembered: an update to a trace evicted longer ago raises `Unknown
+  trace_id`; set a longer `trace_state_grace_seconds` if late updates are
+  expected.
+- **Ended, delivered traces are evicted from the observability client (#2604).**
+  `ObservabilityClient` no longer keeps every trace it ever started. A trace
+  that has ended and whose latest snapshot the backend accepted is dropped from
+  memory after a grace window (`trace_state_grace_seconds`, default 300 s).
+  Traces that are still running, queued, in flight or failed stay for retry.
+  Restarting an evicted trace id starts a fresh snapshot.
+  Eviction depends on a per-item settled mark kept until the trace is evicted
+  (not a bounded delivery cache), and a later update to an evicted trace id
+  (`record_observation`, `end_trace`) starts a fresh snapshot instead of raising;
+  only ids the client never held still raise `Unknown trace_id`.
 
 - **TVL float ranges that declare `resolution` are now a grid (#1612).** A
   float `range` with a positive `resolution` loads as the discrete values
@@ -326,6 +317,178 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   also saw only one example per in-batch position (a single example at the
   default `batch_size=1`) when the rows carry no ids; they now see every
   example, so their results for such hybrid runs can change.
+
+### Added
+
+- **`example_timeout` option, decoupled from the run timeout (#2509).** New
+  `@optimize(example_timeout=...)` / `ExecutionOptions(example_timeout=...)`
+  (positive number of seconds; default 60) sets the per-example limit for the
+  local evaluator and custom-evaluator wrapper. Timed-out examples are counted
+  per trial (`trial.metadata["timed_out_examples"]`, run total in
+  `result.metadata["timed_out_examples"]`), shown in the progress line, and the
+  limit is printed in the run banner. A timed-out example is a failed example
+  (quality metrics 0.0, no fabricated cost). **Behaviour change:** the run-level
+  `optimize(timeout=...)` no longer sets the per-example limit (it used to), and
+  custom evaluators now actually enforce the per-example limit.
+
+- **Paid runs check provider keys before cost approval (#1781).** When a cost
+  limit is set or cost is approved (mock mode off), the optimizer validates the
+  keys of only the providers the run's models use, once, and raises
+  `ProviderValidationError` (provider name and error type only, no key
+  material) before any trial. Adds an OpenRouter key check and an explicit
+  "skipped" status for Bedrock (`ProviderStatus.skipped`). Honours
+  `TRAIGENT_SKIP_PROVIDER_VALIDATION`; `validate_providers` stays callable
+  standalone.
+
+- **Cached input tokens and cache-hit rate per trial (#2069).** Trial metadata
+  now carries `cached_input_tokens` and `cache_hit_rate` (cached / total input
+  tokens), and `OptimizationResult.get_summary()` adds a `cache_note` when hit
+  rates differ by more than 20 percentage points across trials, since cost
+  comparisons may then reflect run order. Both values are `None` (unknown, never
+  0) when a provider does not report cache usage. No behaviour change.
+
+- **RAGAS reports row coverage and fails below a minimum scored share (#2677).**
+  For each RAGAS metric the trial metrics now carry integer
+  `ragas_<name>_rows_scored` and `ragas_<name>_rows_total`. Rows RAGAS leaves
+  undefined are no longer dropped silently: if the scored share is below
+  `ragas_min_scored_share` (evaluator config key, or
+  `configure_ragas_defaults(min_scored_share=...)`; default 0.5, `0.0`
+  disables) the trial fails with a counts-only error. Agent-failed rows still
+  count as 0.0 and as scored. The metric value itself is unchanged: rows RAGAS
+  leaves undefined are excluded from the mean, not counted as zero. Existing
+  runs where fewer than half the rows were scored will now fail instead of
+  reporting a partial mean.
+- **New stop reason `safety_constraint_insufficient_evidence` (#2481).** A run
+  halts with it when a safety constraint is neither proven nor violated for
+  lack of enough evidence. `OptimizationResult.stop_reason` can now carry this
+  value; code that switches on stop reasons should handle it.
+- **Failed custom-evaluator rows are now visible (#2422).** When a
+  `custom_evaluator` raises on some but not all rows of a trial, the trial
+  metadata records `custom_evaluator_failed_rows` and
+  `custom_evaluator_total_rows`, and `result.warning_codes` contains
+  `CUSTOM_EVALUATOR_ROWS_FAILED` (per-trial counts in
+  `result.metadata["session_summary"]["custom_evaluator_failed_rows_by_trial"]`).
+  Counts only. Scoring is unchanged: a raising row still scores 0.0 on quality
+  metrics.
+- **`TraceRecord` and `SessionRecord` expose `tenant_id` and `project_id`
+  (#2605).** Both are optional and filled from the backend's trace and session
+  read responses, so a caller can confirm which project its traces landed in
+  when the scope was resolved from the API key. They are `None` when the
+  response does not carry them.
+- **Export a run's failing examples as a regression dataset.**
+  `OptimizationResult.failing_examples(threshold=0.5, mode="all_configs")`
+  returns the ids of examples that failed in every trial (or, with
+  `mode="best_config"`, in every trial of the winning configuration), read from
+  the per-example outcome matrix without re-running anything; the selector is
+  `traigent.utils.outcome_matrix.select_failing_example_ids`.
+  `traigent results export-failures RUN --dataset PATH --out PATH` joins each
+  id to the one dataset row whose input and expected_output equal what the run
+  recorded for that id (never by guessing the evaluator's id scheme; both are
+  compared in the redacted form the run stores, so export with the SDK version
+  that ran the optimization), and
+  writes the rows as JSONL that `Dataset.from_jsonl` reads back. It writes
+  nothing if any id has no recorded input, matches no row, or matches more than
+  one. Exported rows without a `metadata.example_id` gain their source id
+  (`example_<index>`) so the subset's ids stay unique. `RUN` is a saved result
+  name; logger run directories (which record no example inputs) and `local:`
+  sessions are refused. New helpers: `Dataset.to_jsonl()` (atomic, refuses
+  values JSON would alter) and
+  `traigent.utils.regression_dataset.select_examples_by_id(dataset, ids, run)`.
+  Nothing is sent over the network.
+- **Trace search filters: `model`, `tags`, `outcome_kind`, `has_outcome` (#2564).**
+  `BackendAnalyticsClient.search_observability_traces` and the
+  `observability_search_traces` MCP tool accept them and validate them before
+  any request: tags are exact, sent as repeated `tags` keys and must all match;
+  `outcome_kind` is one of the backend's outcome kinds; `has_outcome=False` is
+  sent explicitly. Free-text `search`, `user_id` and `session_id` remain
+  deliberately unsupported to keep the reader content-free.
+- **`ProjectUsageExperimentDTO`: optional `priced_configuration_runs` /
+  `unpriced_configuration_runs`.** Both default to `None` and are read from the
+  matching keys when present, so clients can tell an unmeasured cost (priced 0,
+  unpriced > 0) from a real zero.
+- **`traigent.observability.otel`: OpenTelemetry-based observability (extra `observability`).**
+  `init` / `instrument` / `observe` / `attributes` / `flush` / `shutdown` /
+  `stats`, a bounded best-effort span processor, an OTLP/HTTP exporter (official
+  protobuf encoders, retry only on 429/502/503/504 and network errors), an
+  egress-authoritative content policy built on a typed allowlist, parent-based
+  head sampling with shared vectors, an exposure gate for third-party
+  instrumentors, and automatic stamping of active optimization-trial ids on
+  every span. The legacy client API is unchanged. See
+  `docs/observability/otel.md`.
+- **`publish_best_config()` refuses to overwrite an agent head that moved during the run.**
+  When the backend discloses the agent a session is bound to, the SDK reads that
+  agent's head generation once, when the optimization step starts, and sends it
+  with the promoting publish. If another writer advanced the head in the
+  meantime the backend answers 409 and the SDK raises the new
+  `CloudBestConfigStaleHeadError` (a `CloudPublishUnavailable` subclass, reason
+  `stale_head_generation`) carrying `expected_generation`, `current_generation`,
+  `agent_id`, `environment` and the refused `best_config`. The published head is
+  left untouched and the run's `OptimizationResult` stays available to publish
+  again deliberately. Runs against a backend that reports no generation (older
+  backend, offline run, no bound agent) publish exactly as before.
+
+### Security
+
+- **Saved optimization results are integrity-checked at load (#1961).**
+  `PersistenceManager.save_result` now writes `integrity.sha256.json` with
+  sha256 digests of `metadata.json` and `trials.json.gz`; `load_result`
+  verifies them and raises a value-free `ValueError` on a mismatch, a missing
+  listed file or an unreadable manifest. Results saved before this change have
+  no manifest and load with one warning. `load_result` also raises
+  `ValueError` when `best_config` lies outside the saved configuration space.
+  This detects corruption and casual edits only; it is not tamper-proof,
+  since anyone who can rewrite the files can rewrite the manifest too.
+  The membership check judges the `best_config` actually returned (a
+  disagreeing outer copy raises), reads a plain list as a set of choices (not
+  an interval), and rejects a value of the wrong type against numeric bounds;
+  two-number tuple ranges are now saved as `{"low", "high"}` in the curated
+  `configuration_space`.
+- **Old `traigent-tracing` add-ons are ignored (#1894).** An installed
+  `traigent-tracing` older than 0.1.1 (or with an unreadable version) lacks the
+  span-attribute scrubbers, so the SDK now logs one warning and uses the
+  built-in scrubbed tracing instead. The add-on is bumped to 0.1.1.
+
+### Removed
+
+- **BREAKING: `outputs_sample` removed from `InteractiveOptimizer.report_results`
+  and the trial-result payload (#2239).** Model outputs are customer content and
+  are never sent to the backend. Passing `outputs_sample=` now raises
+  `TypeError`, and `error_message`/`metadata` on `report_results` and
+  `submit_trial_result` are now keyword-only so a legacy positional
+  `outputs_sample` cannot be silently rebound; drop the argument. The SDK no longer puts `outputs_sample` on
+  the wire.
+
+- **Candidate runs (`optimize(apply=False)`) are temporarily withdrawn.** Their
+  config isolation was not provably consistent under concurrent config
+  changes. `apply=False` now raises `ConfigurationError` immediately in every
+  entry point that accepts it -- `optimize()`, `optimize_sync()` (checked
+  before creating any event loop, coroutine or thread, not deferred to the
+  underlying `optimize()` call), and `optimize_with_guidance()` (checked
+  before resolving `rewrite_llm`, loading the dataset, or touching any
+  dataset override) -- with: "optimize(apply=False) (candidate runs) is
+  temporarily unavailable; it will return in a future release. Use
+  apply=True (the default)." The `apply` parameter remains in the signature
+  and `apply=True` (the default) is unaffected.
+- **BREAKING: the inert `mock_mode_config` and `mock` (`MockModeOptions`) parameters
+  are removed** (Traigent#1370 Item 6). Both were accepted and ignored since the
+  mock-mode retirement. Passing either to `@traigent.optimize`, runtime
+  `.optimize()`, `OptimizedFunction(...)` or `validate_optimize_parameters()` now
+  raises an error naming the removed parameter (even when the value is `None` or
+  `TRAIGENT_DISABLED` is set), and `traigent validate-config` reports a top-level
+  `mock_mode_config` / `mock` key as a failure. `MockModeOptions` is no longer
+  exported. Mock LLM behaviour is unchanged: use
+  `traigent.testing.enable_mock_mode_for_quickstart()` (or the `TRAIGENT_MOCK_LLM`
+  env var) instead.
+- **BREAKING: `OptimizedFunction(...)` rejects `use_cloud_service` and the singular
+  `framework_target`.** Presence alone raises (even `False` / `None`), instead of
+  being absorbed. Migration: drop `use_cloud_service` (it had no effect); use
+  `framework_targets` in place of `framework_target`.
+- **BREAKING: optimizer constructors and `get_optimizer(...)` reject `mock` and
+  `mock_mode_config`.** `get_optimizer` wraps the constructor `TypeError` in
+  `OptimizationError`; `validate_optimize_parameters()` raises `ValidationError`.
+- **BREAKING: evaluators reject `mock` and `mock_mode_config`.** `LocalEvaluator(...)`
+  (and every `BaseEvaluator` subclass) now raises `TypeError` for either name,
+  even when the value is `None`, instead of storing it in `evaluator.config`.
 
 ## [0.30.0] - 2026-09-26
 

@@ -22,10 +22,14 @@
 # ----------------------------------
 # traigent/economics/schema.py fingerprints the exact economics contract, so the
 # SDK needs one specific TraigentSchema build. The pin is the exact commit on
-# the requirement line at the bottom of this file (the single source of truth;
-# this comment deliberately names no SHA or version so it cannot go stale). It is
-# an intentional compatibility baseline for the economics/certification contract,
-# not a "latest major" target: major-version age alone is not a reason to bump,
+# the requirement line at the bottom of this file (the single source of truth).
+# Current compatibility target (checked against the requirement line when this
+# comment was last refreshed): TraigentSchema commit
+# d5d0cb6d1caf0cf0b90983afc312412e82b79a42. The same SHA is recorded in the
+# disposition dicts in traigent/cli/certify_commands.py; if you bump the pin,
+# change all three together. It is an intentional compatibility baseline
+# for the economics/certification contract, not a "latest major" target:
+# major-version age alone is not a reason to bump,
 # and a bump is an owner-selected, reviewed commit (#2494). It is not on PyPI.
 # Bumping the pin means recomputing EXPECTED_ECONOMICS_SCHEMA_FINGERPRINT in
 # traigent/economics/schema.py against the newly pinned build (see that
@@ -42,5 +46,7 @@
 # file directly. Do not reintroduce a token in the URL — pip echoes the
 # requirement string on failure and caches it, and Dependabot PRs never receive
 # org secrets, so a token here breaks them. This file is the single source of
-# truth for the pin — update it here only, and keep uv.lock in step.
-traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@31e0ddf818766d4570a58b3601b99b70dcc4c46e
+# truth for the pin — update it here only. uv.lock does not reference
+# traigent-schema (the pin is not a declared dependency), so there is nothing
+# to keep in step there.
+traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@d5d0cb6d1caf0cf0b90983afc312412e82b79a42

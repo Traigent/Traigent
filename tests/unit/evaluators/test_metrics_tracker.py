@@ -911,6 +911,11 @@ class TestOpenRouterCostExtraction:
         assert "implausibly below token-derived estimate" not in caplog.text
 
 
+def _captured_extract(*args, **kwargs):
+    """Extract as for a response the SDK itself captured from a provider."""
+    return extract_llm_metrics(*args, response_captured=True, **kwargs)
+
+
 class TestExplicitProviderCostEndToEnd:
     """#2274 end-to-end: an explicit provider charge must survive the WHOLE
     path, not just the extractor.
@@ -972,6 +977,7 @@ class TestExplicitProviderCostEndToEnd:
             usage = MockUsage()
 
         MockResponse.model = model
+        MockResponse.provider = "Upstream"  # OpenRouter-style marker
         if response_cost != "__absent__":
             MockResponse.cost = response_cost
         if hidden_response_cost != "__absent__":
@@ -996,9 +1002,8 @@ class TestExplicitProviderCostEndToEnd:
         is exactly what should be used -- and it is what the buggy code
         produced for the explicit-$0 case too, which is why the assertion
         below is the one that bites."""
-        from traigent.evaluators.metrics_tracker import extract_llm_metrics
 
-        metrics = extract_llm_metrics(self._response(), model_name=self._PRICED_MODEL)
+        metrics = _captured_extract(self._response(), model_name=self._PRICED_MODEL)
 
         assert metrics.cost.total_cost == pytest.approx(self._table_estimate())
         assert metrics.cost.total_cost > 0.0
@@ -1007,9 +1012,8 @@ class TestExplicitProviderCostEndToEnd:
     def test_explicit_zero_usage_cost_survives_to_the_ledger(self):
         """An explicit ``usage.cost == 0.0`` (provider says the call was free)
         must reach the trial ledger as $0 and suppress the estimate."""
-        from traigent.evaluators.metrics_tracker import extract_llm_metrics
 
-        metrics = extract_llm_metrics(
+        metrics = _captured_extract(
             self._response(usage_cost=0.0), model_name=self._PRICED_MODEL
         )
 
@@ -1027,10 +1031,9 @@ class TestExplicitProviderCostEndToEnd:
 
     def test_explicit_nonzero_usage_cost_survives_to_the_ledger(self):
         """A plausible explicit charge is also kept verbatim, not re-derived."""
-        from traigent.evaluators.metrics_tracker import extract_llm_metrics
 
         explicit = self._table_estimate() * 2.0
-        metrics = extract_llm_metrics(
+        metrics = _captured_extract(
             self._response(usage_cost=explicit), model_name=self._PRICED_MODEL
         )
 
@@ -1041,9 +1044,8 @@ class TestExplicitProviderCostEndToEnd:
         """``bool`` is an ``int`` subclass, so dropping the old ``> 0`` filter
         would let ``usage.cost = True`` price a call at $1.00. It must be
         rejected and the model priced normally instead."""
-        from traigent.evaluators.metrics_tracker import extract_llm_metrics
 
-        metrics = extract_llm_metrics(
+        metrics = _captured_extract(
             self._response(usage_cost=True), model_name=self._PRICED_MODEL
         )
 
@@ -1207,6 +1209,7 @@ class TestPlaceholderResponseCostDoesNotShadowRealCharge:
             usage = MockUsage()
 
         MockResponse.model = model or self._PRICED_MODEL
+        MockResponse.provider = "Upstream"  # OpenRouter-style marker
         if response_cost != "__absent__":
             MockResponse.cost = response_cost
         if hidden_response_cost != "__absent__":
@@ -1240,9 +1243,8 @@ class TestPlaceholderResponseCostDoesNotShadowRealCharge:
         Without the fix this is the price-table estimate ($0.00045), a 9.3x
         UNDER-report of a charge the provider stated explicitly.
         """
-        from traigent.evaluators.metrics_tracker import extract_llm_metrics
 
-        metrics = extract_llm_metrics(
+        metrics = _captured_extract(
             self._response(response_cost=0.0, usage_cost=self._PROVIDER_CHARGE),
             model_name=self._PRICED_MODEL,
         )
@@ -1262,9 +1264,8 @@ class TestPlaceholderResponseCostDoesNotShadowRealCharge:
         Without the fix the call is recorded at $0 and flagged
         ``unpriced`` -- real spend reported as unknown-and-free.
         """
-        from traigent.evaluators.metrics_tracker import extract_llm_metrics
 
-        metrics = extract_llm_metrics(
+        metrics = _captured_extract(
             self._response(
                 response_cost=0.0,
                 hidden_response_cost=self._PROVIDER_CHARGE,
@@ -1286,9 +1287,8 @@ class TestPlaceholderResponseCostDoesNotShadowRealCharge:
         Without the fix this is $0.00045 -- a 1282x under-report, and the
         worst of the three because the error scales with the real charge.
         """
-        from traigent.evaluators.metrics_tracker import extract_llm_metrics
 
-        metrics = extract_llm_metrics(
+        metrics = _captured_extract(
             self._response(response_cost=0, usage_cost=0.25),
             model_name=self._PRICED_MODEL,
         )
@@ -1307,9 +1307,8 @@ class TestPlaceholderResponseCostDoesNotShadowRealCharge:
         source itself says $0, that $0 still reaches the ledger -- even with a
         placeholder ``response.cost`` in front of it and a nonzero estimate
         behind it."""
-        from traigent.evaluators.metrics_tracker import extract_llm_metrics
 
-        metrics = extract_llm_metrics(
+        metrics = _captured_extract(
             self._response(
                 response_cost=0.0,
                 usage_cost=0.0,
@@ -1328,9 +1327,8 @@ class TestPlaceholderResponseCostDoesNotShadowRealCharge:
     def test_positive_response_cost_is_still_used(self):
         """A POSITIVE generic ``response.cost`` keeps winning: the fix narrows
         step 1 to positive values, it does not remove the source."""
-        from traigent.evaluators.metrics_tracker import extract_llm_metrics
 
-        metrics = extract_llm_metrics(
+        metrics = _captured_extract(
             self._response(response_cost=self._PROVIDER_CHARGE),
             model_name=self._PRICED_MODEL,
         )
@@ -1364,10 +1362,8 @@ class TestPlaceholderResponseCostDoesNotShadowRealCharge:
         """
         import logging
 
-        from traigent.evaluators.metrics_tracker import extract_llm_metrics
-
         with caplog.at_level(logging.WARNING):
-            metrics = extract_llm_metrics(
+            metrics = _captured_extract(
                 self._response(usage_cost=bad_cost), model_name=self._PRICED_MODEL
             )
 
@@ -1388,10 +1384,9 @@ class TestPlaceholderResponseCostDoesNotShadowRealCharge:
         ``cost: -1.0``."""
         from traigent.evaluators.metrics_tracker import (
             MetricsTracker,
-            extract_llm_metrics,
         )
 
-        metrics = extract_llm_metrics(
+        metrics = _captured_extract(
             self._response(usage_cost=-1.0), model_name=self._PRICED_MODEL
         )
         tracker = MetricsTracker()

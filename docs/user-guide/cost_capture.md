@@ -113,6 +113,21 @@ The key must be the model name Traigent prices. In the custom-evaluator lane
 that is the trial's `model` setting when the configuration has one, otherwise
 the model the response reports.
 
+## Mock provenance in result metadata
+
+A result records whether its LLM calls were simulated in `result.metadata`:
+
+| Key | Meaning |
+|---|---|
+| `mock_llm_run` | `True` if any mock response was served during the run, `False` if the run's calls were real. |
+| `mock_llm_mixed` | Present and `True` only when both mock and real calls were observed. |
+
+Both keys are saved and restored by `PersistenceManager`. A result saved before
+these keys existed, or built by hand, has no `mock_llm_run` key: that means
+**unknown**, not `False`. Read it with `result.metadata.get("mock_llm_run")` and
+treat `None` as "not recorded". The results table labels a recorded mock run,
+and hedges an unrecorded result only while mock mode is on in the process.
+
 ## When nothing was captured
 
 A missing measurement is not a free call. When a custom-evaluator example has
@@ -126,7 +141,7 @@ warning names the coverage.
 The same holds for a `cost` objective: a trial with no measured example has
 no `cost` (or `None` under strict nulls), never `0.0`; `cost_unmeasured` is
 `1.0` on a trial where any example had no measured cost, and token counts
-estimated from the input are labelled with `tokens_estimated`. The results
+estimated from text length (input from the dataset or prompt template, output from the returned string, about 4 characters per token; a system message written inside your function is not counted, so the estimate can be well below the provider's count) are labelled with `tokens_estimated` and are never priced. The results
 table shows the cost as `unmeasured`. Weighted `best_config` selection counts a
 missing cost as the worst cost, the Pareto front leaves out a trial that is
 missing a configured objective, and the batch composite score gives such a

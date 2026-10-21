@@ -988,6 +988,28 @@ class TestHealthAndAuthTools:
         assert "Authorization" not in client._auth_headers()
 
 
+class TestAuthStatusEnvJwtPrecedence:
+    @pytest.mark.asyncio
+    async def test_env_jwt_beats_stored_jwt(self, monkeypatch) -> None:
+        """SDK #2227: TRAIGENT_JWT_TOKEN wins over a stored login JWT."""
+        from traigent.analytics_mcp import tools as tools_mod
+
+        monkeypatch.setenv("TRAIGENT_JWT_TOKEN", "env-jwt")
+        monkeypatch.setattr(
+            "traigent.cloud.credential_manager.CredentialManager.get_credentials",
+            classmethod(lambda cls: {"jwt_token": "stored-jwt", "source": "cli"}),
+        )
+        monkeypatch.setattr(
+            "traigent.cloud.analytics_auth.resolve_analytics_read_client_credentials",
+            AsyncMock(return_value={"jwt_token": "env-jwt"}),
+        )
+
+        result = await tools_mod.auth_status_tool()
+
+        assert result["credential_source"] == "environment"
+        assert result["auth_type"] == "jwt"
+
+
 class TestNoTenantArgument:
     """The MCP must not accept caller-supplied tenancy; the backend owns it."""
 

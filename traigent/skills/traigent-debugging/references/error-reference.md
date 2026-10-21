@@ -93,13 +93,13 @@ Raised when configuration values are invalid, features are unsupported, or requi
 
 ### ProviderValidationError
 
-**API key validation failure -- but not automatic.**
+**API key validation failure before a paid run.**
 
-`@traigent.optimize` has no `validate_providers=` parameter and never raises
-this on its own. It only appears if your own code calls the standalone
-`traigent.providers.validate_providers()` helper as a pre-run check and
-raises `ProviderValidationError` after inspecting a failed result (see
-`traigent/providers/validation.py`).
+For paid runs (a cost limit is set or cost is approved, mock mode off) the SDK
+checks the keys of the providers the run uses, once, before cost approval, and
+raises this error if one is missing, invalid or out of funds. The standalone
+`traigent.providers.validate_providers()` helper is still callable on its own
+(see `traigent/providers/validation.py`).
 
 | Attribute | Type | Description |
 |---|---|---|
@@ -109,10 +109,8 @@ raises `ProviderValidationError` after inspecting a failed result (see
 
 **Resolution**:
 1. Set correct API keys in environment variables
-2. Or, if your own pre-run check should be skippable, gate it on
-   `traigent.utils.env_config.skip_provider_validation()` or check
-   `TRAIGENT_SKIP_PROVIDER_VALIDATION=true` directly -- there is no
-   decorator-level skip flag
+2. Or set `TRAIGENT_SKIP_PROVIDER_VALIDATION=true` to skip the automatic check
+   -- there is no decorator-level skip flag
 
 ### CostLimitExceeded
 

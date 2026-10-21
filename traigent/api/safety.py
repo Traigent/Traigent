@@ -835,13 +835,13 @@ def _required_compliance_rate(threshold: SafetyThreshold) -> float:
     (their compliance-rate target is unchanged) while making a ``below(0.1)``
     gate require ~90% compliance instead of ~10%.
 
-    Open question for the API owner (flagged in PR #2204's body, not decided
-    here): whether "the compliance-rate target should be derived from
-    threshold.value at all" is the right design long-term, versus exposing it
-    as its own explicit parameter on ``.above()``/``.below()`` (as issue #2204
-    itself suggests). This function documents the current, symmetric,
-    non-breaking interpretation; it is a considered default, not a proven
-    specification.
+    Decided (owner ruling on #2204): the compliance-rate target stays
+    *derived* from ``threshold.value`` and ``threshold.operator``, rather than
+    being a separate explicit parameter on ``.above()``/``.below()``. The rule:
+    ``>=``/``>`` require a compliance rate of ``value``; ``<=``/``<`` require
+    ``1 - value`` (out of [0, 1], fail closed at 1.0); ``==`` uses ``value``.
+    Example: ``above(0.9)`` and ``below(0.1)`` both require 90% of trials to
+    comply.
 
     ``==`` is left mapped to ``value`` unchanged (its existing, untested
     behavior) -- there is no evidence either way for what an equality safety

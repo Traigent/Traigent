@@ -130,6 +130,7 @@ from traigent.utils.env_config import (
     is_mock_llm,
     is_strict_cost_accounting,
     strict_cost_accounting_origin,
+    offline_run_scope,
     strict_cost_accounting_run_default,
 )
 from traigent.utils.exceptions import (
@@ -952,6 +953,38 @@ _APPLY_FALSE_WITHDRAWN_MESSAGE = (
 )
 
 
+# Counting saturates here: any grid this large already exceeds every max_trials.
+_GRID_SIZE_COUNT_CAP = 10**12
+
+
+def _finite_grid_size(config_space: Any) -> int | None:
+    """Number of grid combinations, or None when the space is not a finite grid.
+
+    Lists are categorical axes, scalars are fixed values, and dict domains are
+    counted exactly as the grid optimizer enumerates them (stepped ranges,
+    categorical, fixed). Any other shape (for example a continuous range)
+    means the size is unknown and is never guessed.
+    """
+    from traigent.utils.discrete_domains import discrete_cardinality_for_config_param
+
+    if not isinstance(config_space, dict) or not config_space:
+        return None
+    size = 1
+    for definition in config_space.values():
+        if isinstance(definition, list):
+            size = min(size * max(len(definition), 1), _GRID_SIZE_COUNT_CAP)
+        elif isinstance(definition, dict):
+            # Arithmetic count: never materializes the domain (a huge IntRange
+            # must not allocate before the grid optimizer's size guard runs).
+            count = discrete_cardinality_for_config_param(definition)
+            if count is None:
+                return None
+            size = min(size * max(count, 1), _GRID_SIZE_COUNT_CAP)
+        elif isinstance(definition, (tuple, set, frozenset)):
+            return None
+    return size
+
+
 class OptimizedFunction(Generic[_P, _R]):
     """Wrapper for functions decorated with @traigent.optimize.
 
@@ -1376,6 +1409,11 @@ class OptimizedFunction(Generic[_P, _R]):
         self.winner_stability_reps = self._store_optional_param(
             kwargs, sentinel, "winner_stability_reps", 0
         )
+        # Per-example evaluation limit in seconds (None = 60 s default);
+        # independent of the run-level ``timeout``.
+        self.example_timeout = self._store_optional_param(
+            kwargs, sentinel, "example_timeout", None
+        )
         self.smart_pruning = self._store_optional_param(
             kwargs, sentinel, "smart_pruning", None
         )
@@ -1440,6 +1478,7 @@ class OptimizedFunction(Generic[_P, _R]):
             "max_total_examples",
             "samples_include_pruned",
             "winner_stability_reps",
+            "example_timeout",
             "smart_pruning",
             "require_run_id",
             # Multi-agent configuration
@@ -2466,8 +2505,13 @@ class OptimizedFunction(Generic[_P, _R]):
             # recorded as free: the optimizer would rank it cheapest. Make
             # runtime cost accounting strict for this run unless the user set
             # TRAIGENT_STRICT_COST_ACCOUNTING explicitly (``false`` opts out).
-            with strict_cost_accounting_run_default(
-                _objectives_include_cost(self.objectives)
+            with (
+                offline_run_scope(
+                    is_offline_requested(getattr(self, "execution_policy", None))
+                ),
+                strict_cost_accounting_run_default(
+                    _objectives_include_cost(self.objectives)
+                ),
             ):
                 strict_origin = strict_cost_accounting_origin()
                 strict_effective = is_strict_cost_accounting()
@@ -2731,6 +2775,7 @@ class OptimizedFunction(Generic[_P, _R]):
         evaluator, _auxiliary_resource = create_effective_evaluator(
             timeout=timeout,
             custom_evaluator=custom_evaluator,
+            example_timeout=getattr(self, "example_timeout", None),
             effective_batch_size=effective_batch_size,
             effective_thread_workers=effective_thread_workers,
             effective_privacy_enabled=effective_privacy_enabled,
@@ -3700,7 +3745,42 @@ Remediation:
             and getattr(self, "_max_trials_uses_sdk_default", False)
             and max_trials == DEFAULT_MAX_TRIALS
         )
-        if (
+        grid_size = (
+            _finite_grid_size(effective_config_space)
+            if used_implicit_default_max_trials and algorithm == "grid"
+            else None
+        )
+        if grid_size is not None and grid_size > max_trials:
+            # Issue #2058: the implicit cap silently truncates an exhaustive
+            # grid. Counts only; no user content is echoed.
+            if grid_size >= _GRID_SIZE_COUNT_CAP:
+                # Counting saturated: the true size is unknown beyond the cap,
+                # so never present it as exact or recommend it as max_trials.
+                logger.warning(
+                    "max_trials was not set, so the SDK default cap of %d applies: "
+                    "only %d of at least %d grid combinations will be evaluated "
+                    "and the reported best configuration is the best of those, "
+                    "not of the whole space. The grid is too large to evaluate "
+                    "exhaustively; narrow the configuration space or set "
+                    "max_trials explicitly.",
+                    max_trials,
+                    max_trials,
+                    grid_size,
+                )
+            else:
+                logger.warning(
+                    "max_trials was not set, so the SDK default cap of %d applies: "
+                    "only %d of %d grid combinations will be evaluated and the "
+                    "reported best configuration is the best of those, not of the "
+                    "whole space. Pass max_trials=%d (or higher) to evaluate the "
+                    "full grid.",
+                    max_trials,
+                    max_trials,
+                    grid_size,
+                    grid_size,
+                )
+            self._max_trials_default_notice_logged = True
+        elif (
             used_implicit_default_max_trials
             and not self._max_trials_default_notice_logged
         ):

@@ -113,3 +113,83 @@ def test_status_env_api_key_shows_no_key_characters(cli, monkeypatch, length):
     }
     assert not leaked, f"key fragments in status output: {sorted(leaked)}"
     assert "configured (environment variable)" in output
+
+
+def test_status_env_key_beats_stored_login(cli, monkeypatch):
+    """SDK #2227: with both set, status reports the environment key as active."""
+    monkeypatch.setenv("TRAIGENT_API_KEY", "tg_" + "e" * 61)
+    stored = {
+        "user": {"email": "u@example.com", "id": 1},
+        "api_key": "stored-key",  # pragma: allowlist secret
+        "backend_url": "http://localhost",
+    }
+    buffer = io.StringIO()
+    console = Console(file=buffer, width=200, color_system=None, force_terminal=False)
+    with (
+        patch.object(cli, "_load_stored_credentials", return_value=stored),
+        patch("traigent.cli.auth_commands.console", console),
+    ):
+        result = cli.status()
+    output = buffer.getvalue()
+    assert result is True
+    assert "environment variable" in output
+    assert "not used" in output
+    assert "u@example.com" not in output
+
+
+def _render_stored(cli: TraigentAuthCLI, stored: dict) -> str:
+    buffer = io.StringIO()
+    console = Console(file=buffer, width=200, color_system=None, force_terminal=False)
+    with (
+        patch.object(cli, "_load_stored_credentials", return_value=stored),
+        patch("traigent.cli.auth_commands.console", console),
+    ):
+        assert cli.status() is True
+    return buffer.getvalue()
+
+
+def _stored_with_expiry(delta_days: float | None) -> dict:
+    from datetime import UTC, datetime, timedelta
+
+    creds = {
+        "user": {"email": "u@example.com", "id": 1},
+        "api_key": "tg_" + "s" * 61,  # pragma: allowlist secret
+        "backend_url": "http://localhost",
+    }
+    if delta_days is not None:
+        creds["expires_at"] = (
+            datetime.now(UTC) + timedelta(days=delta_days)
+        ).isoformat()
+    return creds
+
+
+@pytest.fixture()
+def cli_with_manager(cli, monkeypatch):
+    from traigent.cloud.auth import AuthManager
+
+    monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+    cli.auth_manager = AuthManager()
+    return cli
+
+
+@pytest.mark.parametrize(
+    ("delta_days", "expected"),
+    [
+        (-2, "expired"),
+        (3, "rotate now"),
+        (20, "plan a rotation"),
+        (200, "expires in"),
+    ],
+)
+def test_status_shows_api_key_rotation_state(cli_with_manager, delta_days, expected):
+    """SDK #1635: auth status surfaces the key's expiry/rotation state."""
+    output = _render_stored(cli_with_manager, _stored_with_expiry(delta_days))
+    assert "API Key expiry" in output
+    assert expected in output
+    assert "tg_ssss" not in output
+
+
+def test_status_omits_expiry_when_unknown(cli_with_manager):
+    """No recorded expiry: say nothing rather than invent a date."""
+    output = _render_stored(cli_with_manager, _stored_with_expiry(None))
+    assert "API Key expiry" not in output

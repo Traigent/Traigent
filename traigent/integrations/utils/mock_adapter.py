@@ -175,6 +175,12 @@ class MockAdapter:
         # This is useful for testing parallel execution visibility in traces
         cls._apply_mock_delay(provider)
 
+        # Every mock interception point serves through here: record that a mock
+        # response reached a caller, for the run's provenance (#2516).
+        from traigent.utils.mock_provenance import note_mock_response
+
+        note_mock_response()
+
         mock_data = MockResponse(
             text=response_text or MockResponse.text,
             model=model or kwargs.get("model", MockResponse.model),

@@ -1493,9 +1493,10 @@ Options:
                 f"Cost extraction failed for {trial_desc} and "
                 f"{self._require_cost_tracking_reason}. An unpriced call is "
                 "not recorded as $0, because the optimizer would rank it "
-                f"cheapest.{examples_text} To fix it: wrap a path that makes "
-                "no model call in traigent.with_usage(value, total_cost=0); "
-                "for an unpriced model, provide per-token pricing with "
+                f"cheapest.{examples_text} To fix it: if this example path "
+                "makes no model calls (a rule-based agent), wrap its return "
+                "value in traigent.with_usage(value, total_cost=0) to record "
+                "a measured $0; for an unpriced model, provide per-token pricing with "
                 "TRAIGENT_CUSTOM_MODEL_PRICING_JSON or "
                 "TRAIGENT_CUSTOM_MODEL_PRICING_FILE; or set "
                 "TRAIGENT_STRICT_COST_ACCOUNTING=false (and "
@@ -1504,7 +1505,12 @@ Options:
             )
         if examples_text:
             logger.warning(
-                "Cost partly unmeasured for %s.%s", trial_desc, examples_text
+                "Cost partly unmeasured for %s.%s If an example path makes no "
+                "model calls, wrap its return value in "
+                "traigent.with_usage(value, total_cost=0) to record a "
+                "measured $0.",
+                trial_desc,
+                examples_text,
             )
 
         if self.config.limit_explicit and not trial_failed:
