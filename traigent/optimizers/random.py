@@ -128,9 +128,14 @@ class RandomSearchOptimizer(BaseOptimizer):
                         "unique configurations have been tried"
                     )
             else:
-                # Continuous space - always accept (duplicates very unlikely)
+                # Continuous space: duplicates are very unlikely, except when a
+                # resumed run (#1697) marked configs evaluated and the same seed
+                # replays them. Skip those.
                 self.register_tried_config(config)
-                break
+                if self._hash_config(config) not in getattr(
+                    self, "_resume_marked_hashes", ()
+                ):
+                    break
         else:
             fallback_config = self._find_untried_discrete_config()
             if fallback_config is None:
@@ -149,7 +154,9 @@ class RandomSearchOptimizer(BaseOptimizer):
         """Scale retry effort with finite search-space size."""
 
         if cardinality is None:
-            return 100
+            # Continuous space: a resumed run (#1697) registers prior configs,
+            # and a same-seed replay yields them first; allow skipping all.
+            return 100 + len(self._tried_config_hashes)
         return min(max(cardinality * 2, 100), 10_000)
 
     def _find_untried_discrete_config(self) -> dict[str, Any] | None:
