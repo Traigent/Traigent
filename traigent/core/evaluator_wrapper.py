@@ -25,6 +25,7 @@ from traigent.evaluators.base import (
     EvaluationExample,
     EvaluationResult,
     _maybe_restore_trial_context,
+    EXAMPLE_TIMEOUT_ERROR_PREFIX,
     aggregate_measured_metric,
     failed_row_metrics,
 )
@@ -751,12 +752,19 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                         try:
                             if is_coroutine_callable(self.custom_evaluator):
                                 try:
-                                    example_result = await self.custom_evaluator(
-                                        func, config, example
+                                    # Per-example limit (``example_timeout``), not
+                                    # the run-level timeout.
+                                    example_result = await asyncio.wait_for(
+                                        self.custom_evaluator(func, config, example),
+                                        timeout=self.timeout or None,
                                     )
                                 except asyncio.CancelledError:
                                     cleanup_boundary.cancel()
                                     raise
+                                except TimeoutError:
+                                    raise RuntimeError(
+                                        f"{EXAMPLE_TIMEOUT_ERROR_PREFIX} {self.timeout}s"
+                                    ) from None
                             else:
                                 # Run blocking custom evaluators off the main event loop so
                                 # concurrent async tasks (progress callbacks, heartbeats)
@@ -778,7 +786,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                                     trial_ctx,
                                     worker_started_callback=cleanup_boundary.worker_started,
                                     worker_done_callback=cleanup_boundary.worker_done,
-                                    apply_timeout=False,
+                                    apply_timeout=True,
                                 )
                                 if execution_error is not None:
                                     raise RuntimeError(execution_error)

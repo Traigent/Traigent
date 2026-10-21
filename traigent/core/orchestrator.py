@@ -3294,6 +3294,11 @@ class OptimizationOrchestrator:
                 experiment_display_name=experiment_display_name,
             )
 
+        example_limit = getattr(self.evaluator, "timeout", None)
+        if isinstance(example_limit, (int, float)) and not isinstance(
+            example_limit, bool
+        ):
+            self.callback_manager.on_run_settings({"example_timeout": example_limit})
         self.callback_manager.on_optimization_start(
             config_space=self.optimizer.config_space,
             objectives=self.optimizer.objectives,
@@ -5829,6 +5834,21 @@ class OptimizationOrchestrator:
         # Only present for warm-started runs; absent otherwise.
         if self._warm_start_from:
             metadata["warm_start_from"] = self._warm_start_from
+
+        # Per-example timeouts across the run (``example_timeout``): count only
+        # what trials recorded; absent when no example timed out.
+        timed_out_total = 0
+        for trial in self._trials:
+            trial_meta = getattr(trial, "metadata", None)
+            value = (
+                trial_meta.get("timed_out_examples")
+                if isinstance(trial_meta, dict)
+                else None
+            )
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                timed_out_total += value
+        if timed_out_total:
+            metadata["timed_out_examples"] = timed_out_total
 
         describe_stop = getattr(self, "_describe_stop", None)
         stop_detail = describe_stop() if callable(describe_stop) else None

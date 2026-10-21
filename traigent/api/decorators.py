@@ -43,6 +43,7 @@ Examples:
 
 from __future__ import annotations
 
+import math
 import inspect
 import os
 from collections.abc import Callable, Collection, Mapping
@@ -284,6 +285,21 @@ def _coerce_winner_stability_reps(value: Any) -> int:
     return cast(int, value)
 
 
+def _coerce_example_timeout(value: Any) -> float | None:
+    """Validate the per-example evaluation timeout (``None`` = 60 s default).
+
+    Shared by the ``ExecutionOptions`` field validator and the direct
+    ``@optimize(example_timeout=...)`` path. Must be a finite positive number.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("example_timeout must be a positive number or None")
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("example_timeout must be a positive number or None")
+    return float(value)
+
+
 class ExecutionOptions(BaseModel):
     """Execution and orchestration preferences for optimization runs.
 
@@ -315,6 +331,13 @@ class ExecutionOptions(BaseModel):
             value raises ``pydantic.ValidationError`` at
             construction time. Per-configuration repetition aggregation
             requires Traigent Enterprise (contact ``sales@traigent.ai``).
+        example_timeout: Per-example evaluation time limit in seconds (a
+            positive number). ``None`` (default) means 60 seconds. It is
+            independent of the run-level ``timeout``. An example that exceeds
+            it is recorded as a failed example with a "timed out" error
+            (quality metrics 0.0, no fabricated cost); timed-out counts are
+            shown in the progress line and in trial metadata
+            (``timed_out_examples``).
         winner_stability_reps: Opt-in post-selection rerun count for the winning
             configuration. ``0`` (default) is off. When ``> 0``, after selection
             completes the winning config is re-executed that many times on the
@@ -368,6 +391,7 @@ class ExecutionOptions(BaseModel):
     reps_per_trial: int = 1
     reps_aggregation: str = "mean"
     winner_stability_reps: int = 0
+    example_timeout: float | None = None
     require_run_id: bool | None = None
 
     @model_validator(mode="wrap")
@@ -447,6 +471,11 @@ class ExecutionOptions(BaseModel):
                 "require Traigent Enterprise. Contact sales@traigent.ai."
             )
         return v
+
+    @field_validator("example_timeout", mode="before")
+    @classmethod
+    def _validate_example_timeout(cls, v: Any) -> float | None:
+        return _coerce_example_timeout(v)
 
     @field_validator("winner_stability_reps")
     @classmethod
@@ -993,6 +1022,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "max_total_examples": None,
     "samples_include_pruned": True,
     "winner_stability_reps": 0,
+    "example_timeout": None,
     "smart_pruning": None,
     "custom_evaluator": None,
     "scoring_function": None,
@@ -1203,6 +1233,7 @@ class LegacyOptimizeArgs:
     max_total_examples: int | None = None
     samples_include_pruned: bool | None = None
     winner_stability_reps: int | None = None
+    example_timeout: float | None = None
     custom_evaluator: Callable[..., Any] | None = None
     scoring_function: Callable[..., Any] | None = None
     metric_functions: dict[str, Callable[..., Any]] | None = None
@@ -1295,6 +1326,7 @@ class LegacyOptimizeArgs:
             ("max_total_examples", self.max_total_examples),
             ("samples_include_pruned", self.samples_include_pruned),
             ("winner_stability_reps", self.winner_stability_reps),
+            ("example_timeout", self.example_timeout),
             ("custom_evaluator", self.custom_evaluator),
             ("scoring_function", self.scoring_function),
             ("metric_functions", self.metric_functions),
@@ -1688,6 +1720,7 @@ class ResolvedExecutionOptions:
     samples_include_pruned: Any
     smart_pruning: Any
     winner_stability_reps: int = 0
+    example_timeout: float | None = None
     legacy_options: dict[str, Any] = field(default_factory=dict)
 
 
@@ -1792,6 +1825,12 @@ def _resolve_execution_bundle_options(
             "winner_stability_reps",
             base_options.winner_stability_reps,
             _explicit_bundle_value(execution_bundle, "winner_stability_reps"),
+            defaults,
+        ),
+        example_timeout=_resolve_option(
+            "example_timeout",
+            base_options.example_timeout,
+            _explicit_bundle_value(execution_bundle, "example_timeout"),
             defaults,
         ),
         legacy_options=legacy_options,
@@ -3060,6 +3099,7 @@ def optimize(  # NOSONAR(S107)
     winner_stability_reps = _coerce_winner_stability_reps(
         combined_settings["winner_stability_reps"]
     )
+    example_timeout = _coerce_example_timeout(combined_settings["example_timeout"])
     smart_pruning_value = combined_settings["smart_pruning"]
     custom_evaluator = combined_settings["custom_evaluator"]
     scoring_function = combined_settings["scoring_function"]
@@ -3222,6 +3262,7 @@ def optimize(  # NOSONAR(S107)
         samples_include_pruned=samples_include_pruned,
         smart_pruning=smart_pruning_value,
         winner_stability_reps=winner_stability_reps,
+        example_timeout=example_timeout,
         legacy_options=legacy_execution_options,
     )
     resolved_execution = _resolve_execution_bundle_options(
@@ -3241,6 +3282,7 @@ def optimize(  # NOSONAR(S107)
     samples_include_pruned = resolved_execution.samples_include_pruned
     smart_pruning_value = resolved_execution.smart_pruning
     winner_stability_reps_value = resolved_execution.winner_stability_reps
+    example_timeout_value = _coerce_example_timeout(resolved_execution.example_timeout)
     legacy_execution_options = resolved_execution.legacy_options
     # No direct @optimize(require_run_id=...) kwarg exists (execution-bundle-only
     # option), so this reads straight from the bundle rather than going through
@@ -3483,6 +3525,7 @@ def optimize(  # NOSONAR(S107)
             max_total_examples=max_total_examples,
             samples_include_pruned=samples_include_pruned,
             winner_stability_reps=winner_stability_reps_value,
+            example_timeout=example_timeout_value,
             require_run_id=require_run_id_value,
             smart_pruning=smart_pruning_config,
             parallel_config=combined_parallel_config,

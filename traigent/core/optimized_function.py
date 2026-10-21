@@ -1409,6 +1409,11 @@ class OptimizedFunction(Generic[_P, _R]):
         self.winner_stability_reps = self._store_optional_param(
             kwargs, sentinel, "winner_stability_reps", 0
         )
+        # Per-example evaluation limit in seconds (None = 60 s default);
+        # independent of the run-level ``timeout``.
+        self.example_timeout = self._store_optional_param(
+            kwargs, sentinel, "example_timeout", None
+        )
         self.smart_pruning = self._store_optional_param(
             kwargs, sentinel, "smart_pruning", None
         )
@@ -1473,6 +1478,7 @@ class OptimizedFunction(Generic[_P, _R]):
             "max_total_examples",
             "samples_include_pruned",
             "winner_stability_reps",
+            "example_timeout",
             "smart_pruning",
             "require_run_id",
             # Multi-agent configuration
@@ -2769,6 +2775,7 @@ class OptimizedFunction(Generic[_P, _R]):
         evaluator, _auxiliary_resource = create_effective_evaluator(
             timeout=timeout,
             custom_evaluator=custom_evaluator,
+            example_timeout=getattr(self, "example_timeout", None),
             effective_batch_size=effective_batch_size,
             effective_thread_workers=effective_thread_workers,
             effective_privacy_enabled=effective_privacy_enabled,

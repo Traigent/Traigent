@@ -236,6 +236,14 @@ class OptimizationCallback(ABC):
         """Called when optimization starts."""
         raise NotImplementedError
 
+    def on_run_settings(self, settings: dict[str, Any]) -> None:
+        """Called just before ``on_optimization_start`` with run-level settings.
+
+        Optional hook (default no-op). ``settings`` carries closed, non-content
+        values such as ``example_timeout`` (the per-example limit, in seconds).
+        """
+        return None
+
     @abstractmethod
     def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
         """Called when a trial starts."""
@@ -289,6 +297,14 @@ class ProgressBarCallback(OptimizationCallback):
         self._last_progress: ProgressInfo | None = None
         self._config_space: dict[str, Any] = {}
         self._objectives: list[str] = []
+        self._example_timeout: float | None = None
+        self._timed_out_examples = 0
+
+    def on_run_settings(self, settings: dict[str, Any]) -> None:
+        """Remember the per-example limit so the start banner can print it."""
+        value = settings.get("example_timeout")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            self._example_timeout = float(value)
 
     def on_optimization_start(
         self, config_space: dict[str, Any], objectives: list[str], algorithm: str
@@ -306,16 +322,32 @@ class ProgressBarCallback(OptimizationCallback):
         _safe_print(f"🚀 Starting optimization with {_sanitize_user_label(algorithm)}")
         _safe_print(f"📊 Objectives: {_sanitize_user_labels(objectives)}")
         _safe_print(f"⚙️  Configuration space: {len(config_space)} parameters")
+        if self._example_timeout is not None:
+            _safe_print(
+                f"⏳ Per-example time limit: {self._example_timeout:g}s "
+                "(examples over it count as failed)"
+            )
         _safe_print()
 
     def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
         """Called when a trial starts."""
         return None  # Update occurs on completion for cleaner output
 
+    def _timeout_segment(self) -> str:
+        if self._timed_out_examples <= 0:
+            return ""
+        return f"⌛ {self._timed_out_examples} timed out "
+
     def on_trial_complete(self, trial: TrialResult, progress: ProgressInfo) -> None:
         """Called when a trial completes."""
         # Always store last progress for final update
         self._last_progress = progress
+        metadata = getattr(trial, "metadata", None)
+        timed_out = (
+            metadata.get("timed_out_examples") if isinstance(metadata, dict) else None
+        )
+        if isinstance(timed_out, int) and not isinstance(timed_out, bool):
+            self._timed_out_examples += max(timed_out, 0)
 
         current_time = time.time()
 
@@ -343,6 +375,7 @@ class ProgressBarCallback(OptimizationCallback):
             f"({progress.completed_trials}/{progress.total_trials}) "
             f"✅ {progress.successful_trials} "
             f"❌ {progress.failed_trials} "
+            f"{self._timeout_segment()}"
             f"⏱️  {elapsed} "
             f"🏆 {best_score_str}",
             end="",
@@ -369,6 +402,7 @@ class ProgressBarCallback(OptimizationCallback):
                 f"({total}/{total}) "
                 f"✅ {self._last_progress.successful_trials} "
                 f"❌ {self._last_progress.failed_trials} "
+                f"{self._timeout_segment()}"
                 f"⏱️  {elapsed} "
                 f"🏆 {best_score_str}",
                 flush=True,
@@ -1226,6 +1260,14 @@ class CallbackManager:
         """Remove a callback."""
         if callback in self.callbacks:
             self.callbacks.remove(callback)
+
+    def on_run_settings(self, settings: dict[str, Any]) -> None:
+        """Notify callbacks that implement the optional run-settings hook."""
+        for callback in self.callbacks:
+            hook = getattr(callback, "on_run_settings", None)
+            if not callable(hook):
+                continue
+            self._invoke_callback_safe(callback, "on_run_settings", hook, settings)
 
     def on_optimization_start(
         self, config_space: dict[str, Any], objectives: list[str], algorithm: str

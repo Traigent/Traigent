@@ -103,6 +103,23 @@ record_example_result = None  # type: ignore
 
 logger = get_logger(__name__)
 
+#: Error-message prefix recorded for an example that exceeded the per-example
+#: limit (``example_timeout``). Such an example scores ``None`` (unmeasured).
+EXAMPLE_TIMEOUT_ERROR_PREFIX = "Function call timed out after"
+
+
+def count_timed_out_examples(example_results: Any) -> int:
+    """Count example results whose error records a per-example timeout."""
+    if not isinstance(example_results, list):
+        return 0
+    return sum(
+        1
+        for result in example_results
+        if isinstance(getattr(result, "error_message", None), str)
+        and result.error_message.startswith(EXAMPLE_TIMEOUT_ERROR_PREFIX)
+    )
+
+
 # Cost keys are measurements, not scores: a row that failed or did not report
 # one has an UNKNOWN cost. Imputing 0.0 for it makes a trial look cheaper than
 # it was and can let it win a cost objective (issue #2404).
@@ -1431,6 +1448,11 @@ class EvaluationResult:
         """Check if any evaluations failed."""
         return self.successful_examples < self.total_examples
 
+    @property
+    def timed_out_examples(self) -> int:
+        """Number of examples that exceeded the per-example time limit."""
+        return count_timed_out_examples(self.example_results)
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dictionary."""
         from traigent.utils.persistence import _safe_json_value
@@ -1456,6 +1478,7 @@ class EvaluationResult:
             "errors": self.errors,
             "success_rate": self.success_rate,
             "has_errors": self.has_errors,
+            "timed_out_examples": self.timed_out_examples,
             "metric_errors": _safe_json_value(self.metric_errors),
             "model_costs": _safe_json_value(self.model_costs),
             "cache_usage": _safe_json_value(self.cache_usage),
@@ -2811,7 +2834,7 @@ class BaseEvaluator(ABC):
                         # completion callback retains the lane and any sample
                         # admission until it settles, while this caller gets
                         # its timeout at the configured wall-clock boundary.
-                        error_msg = f"Function call timed out after {self.timeout}s"
+                        error_msg = f"{EXAMPLE_TIMEOUT_ERROR_PREFIX} {self.timeout}s"
                         logger.warning(error_msg)
                         return None, error_msg
                 else:
@@ -2906,7 +2929,7 @@ class BaseEvaluator(ABC):
         except ConfigurationError:
             raise
         except TimeoutError:
-            error_msg = f"Function call timed out after {self.timeout}s"
+            error_msg = f"{EXAMPLE_TIMEOUT_ERROR_PREFIX} {self.timeout}s"
             logger.warning(error_msg)
             return None, error_msg
         except (FriendlyTraigentError, CoreTraigentError):
