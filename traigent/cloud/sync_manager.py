@@ -541,16 +541,9 @@ class SyncManager:
 
         for result in self._convert_trials_to_results(trials):
             measures = self._configuration_run_measures(result)
-            experiment_parameters = result.get("experiment_parameters") or {}
-            if not experiment_parameters:
-                # The backend binds each trial to a non-empty config; fall back
-                # to a config recorded in the trial metadata (if any) before
-                # giving up.
-                metadata = result.get("metadata")
-                if isinstance(metadata, Mapping):
-                    metadata_config = metadata.get("config")
-                    if isinstance(metadata_config, Mapping) and metadata_config:
-                        experiment_parameters = dict(metadata_config)
+            experiment_parameters = self.upload_config_for_trial(
+                result.get("experiment_parameters"), result.get("metadata")
+            )
             status = "FAILED" if result.get("status") == "failed" else "COMPLETED"
             configuration_run: dict[str, Any] = {
                 "trial_id": result.get("trial_id"),
@@ -568,6 +561,21 @@ class SyncManager:
             configuration_runs.append(configuration_run)
 
         return configuration_runs
+
+    @staticmethod
+    def upload_config_for_trial(config: Any, metadata: Any) -> Any:
+        """The config sync submits for a trial; empty means sync SKIPS the trial.
+
+        The backend binds each trial to a non-empty config; fall back to a config
+        recorded in the trial metadata (if any) before giving up. Shared with
+        ``report-example-map --target synced`` so the map omits the same trials.
+        """
+        experiment_parameters = config or {}
+        if not experiment_parameters and isinstance(metadata, Mapping):
+            metadata_config = metadata.get("config")
+            if isinstance(metadata_config, Mapping) and metadata_config:
+                experiment_parameters = dict(metadata_config)
+        return experiment_parameters
 
     def _configuration_run_measures(self, result: dict[str, Any]) -> dict[str, Any]:
         """Build measures for the backend configuration-run schema."""

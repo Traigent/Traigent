@@ -14,7 +14,6 @@ from traigent.reporting.example_map import (
     compute_dataset_fingerprint,
     validate_example_content_map,
 )
-from traigent.utils.example_id import compute_dataset_hash, generate_stable_example_id
 from traigent.utils.exceptions import ValidationError
 
 
@@ -52,9 +51,8 @@ def test_build_example_content_map_from_jsonl(tmp_path):
     assert payload["dataset_fingerprint"].startswith("sha256:")
     assert len(payload["example_map"]) == 2
 
-    dataset_hash = compute_dataset_hash("qa_dataset_v1")
-    ex0 = generate_stable_example_id(dataset_hash, 0)
-    ex1 = generate_stable_example_id(dataset_hash, 1)
+    # Keys are the ids the SDK sends on the wire (SDK-minted example_<index>).
+    ex0, ex1 = "example_0", "example_1"
     assert payload["example_map"][ex0]["example_num"] == 1
     assert payload["example_map"][ex0]["expected_output"] == "France"
     assert payload["example_map"][ex0]["metadata"] == {"topic": "geo"}

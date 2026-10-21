@@ -42,6 +42,7 @@ from traigent.utils.env_config import is_truthy
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
 from traigent.utils.exceptions import ConfigurationError, EvaluationError
+from traigent.utils.example_id import stamp_row_index
 from traigent.utils.exceptions import TraigentError as CoreTraigentError
 from traigent.utils.exceptions import TrialPrunedError, ValidationError
 from traigent.utils.function_identity import is_coroutine_callable
@@ -3012,16 +3013,19 @@ class BaseEvaluator(ABC):
         error: Exception,
     ) -> ExampleResult:
         """Create ExampleResult for a failed concurrent evaluation."""
-        return ExampleResult(
-            **result_identity_fields(example, f"example_{index}"),
-            input_data=example.input_data,
-            expected_output=example.expected_output,
-            actual_output=None,
-            metrics={},
-            execution_time=0.0,
-            success=False,
-            error_message=str(error),
-            metadata=example.metadata.copy() if example.metadata else {},
+        return stamp_row_index(
+            ExampleResult(
+                **result_identity_fields(example, f"example_{index}"),
+                input_data=example.input_data,
+                expected_output=example.expected_output,
+                actual_output=None,
+                metrics={},
+                execution_time=0.0,
+                success=False,
+                error_message=str(error),
+                metadata=example.metadata.copy() if example.metadata else {},
+            ),
+            index,
         )
 
     def _process_concurrent_exception(
@@ -4022,7 +4026,7 @@ class BaseEvaluator(ABC):
                         "output": result.actual_output,
                     },
                 )
-            return result
+            return stamp_row_index(result, example_index)
         except asyncio.CancelledError:
             cleanup_boundary.cancel()
             raise
@@ -4035,7 +4039,7 @@ class BaseEvaluator(ABC):
             self._record_example_trace(span, result)
             if sample_lease:
                 sample_lease.mark_completed()
-            return result
+            return stamp_row_index(result, example_index)
 
     async def _evaluate_single_detailed(
         self,
@@ -4121,6 +4125,7 @@ class BaseEvaluator(ABC):
                 metadata=example.metadata.copy() if example.metadata else {},
                 user_metrics=user_metrics,
             )
+            stamp_row_index(result, example_index)
 
             # Record to tracing span
             self._record_example_trace(span, result)
@@ -4894,6 +4899,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
                     metadata=example.metadata.copy() if example.metadata else {},
                 )
 
+                stamp_row_index(example_result, i)
                 example_results.append(example_result)
                 if sample_lease:
                     sample_lease.mark_completed()
@@ -5181,14 +5187,17 @@ class SimpleScoringEvaluator(BaseEvaluator):
         Returns:
             ExampleResult with failure information
         """
-        return ExampleResult(
-            **result_identity_fields(example, f"example_{index}"),
-            input_data=example.input_data,
-            expected_output=example.expected_output,
-            actual_output=None,
-            metrics=failed_row_metrics(self.metrics),
-            execution_time=0.0,
-            success=False,
-            error_message=str(error),
-            metadata=example.metadata.copy() if example.metadata else {},
+        return stamp_row_index(
+            ExampleResult(
+                **result_identity_fields(example, f"example_{index}"),
+                input_data=example.input_data,
+                expected_output=example.expected_output,
+                actual_output=None,
+                metrics=failed_row_metrics(self.metrics),
+                execution_time=0.0,
+                success=False,
+                error_message=str(error),
+                metadata=example.metadata.copy() if example.metadata else {},
+            ),
+            index,
         )

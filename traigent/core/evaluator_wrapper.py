@@ -16,6 +16,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import ExampleResult
+from traigent.utils.example_id import stamp_row_index
 from traigent.core.utils import safe_get_nested_attr
 from traigent.evaluators.metrics_tracker import RESERVED_METRIC_KEYS
 from traigent.evaluators.base import (
@@ -437,16 +438,19 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         Returns:
             ExampleResult with failure information
         """
-        return ExampleResult(
-            **result_identity_fields(example, f"example_{index}"),
-            input_data=example.input_data,
-            expected_output=example.expected_output,
-            actual_output=None,
-            metrics=failed_row_metrics(self.metrics),
-            execution_time=0.0,
-            success=False,
-            error_message=str(error),
-            metadata=example.metadata.copy() if example.metadata else {},
+        return stamp_row_index(
+            ExampleResult(
+                **result_identity_fields(example, f"example_{index}"),
+                input_data=example.input_data,
+                expected_output=example.expected_output,
+                actual_output=None,
+                metrics=failed_row_metrics(self.metrics),
+                execution_time=0.0,
+                success=False,
+                error_message=str(error),
+                metadata=example.metadata.copy() if example.metadata else {},
+            ),
+            index,
         )
 
     def _require_objective_keys(
@@ -802,6 +806,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                     example_result, llm_metrics, per_example_duration
                 )
 
+                stamp_row_index(example_result, i)
                 example_results.append(example_result)
                 consumed_examples += 1
                 if sample_lease:

@@ -65,6 +65,11 @@ from traigent.evaluators.base import Dataset
 from traigent.metrics.content_features import SimhashFeatureExtractor
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.env_config import is_untracked_fallback_allowed
+from traigent.utils.example_id import (
+    LOCAL_MARKER_KEY,
+    TRIAL_ROW_INDICES_ATTR,
+    rows_from_indices,
+)
 from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.function_identity import FunctionDescriptor
 from traigent.utils.logging import get_logger
@@ -2557,6 +2562,39 @@ class BackendSessionManager:
         metadata_payload = dict(metadata)
         if score is None:
             metadata_payload["primary_objective_missing"] = True
+        # LOCAL record only (never added to the remote payload), nested under one
+        # reserved key so it cannot collide with a flattened custom metric:
+        # * rows: which dataset rows the trial's results positions refer to --
+        #   the list a subset trial evaluated, else "full" (the whole dataset,
+        #   in order). Recorded for EVERY trial (every persisted trial passes
+        #   this one function, sequential or parallel, connected or offline), so
+        #   `report-example-map` can map position-based example ids back to rows
+        #   and can refuse trials recorded before this field existed;
+        # * privacy_mode: privacy-enabled runs never post per-example measures
+        #   (see _log_trial_to_backend), so a "connected" map would key ids the
+        #   portal does not have.
+        local_marker: dict[str, Any] = {}
+        if bool(getattr(self._traigent_config, "privacy_enabled", False)):
+            local_marker["privacy_mode"] = True
+        run_local = (trial_result.metadata or {}).get(LOCAL_MARKER_KEY)
+        subset = (
+            run_local.get("subset_indices") if isinstance(run_local, dict) else None
+        )
+        # Row provenance comes from the evaluator itself (the true dataset row it
+        # stamped on each result), composed with the subset; a trial whose
+        # evaluator produced none (custom evaluators, length mismatch) is
+        # "unordered". Id spelling and trial status prove nothing about rows.
+        results = (trial_result.metadata or {}).get("example_results")
+        if isinstance(results, list) and results:
+            row_indices = getattr(trial_result, TRIAL_ROW_INDICES_ATTR, None)
+            local_marker["rows"] = rows_from_indices(
+                row_indices, len(results), subset if isinstance(subset, list) else None
+            )
+        else:
+            local_marker["rows"] = list(subset) if isinstance(subset, list) else "full"
+        # A custom metric literally named like the reserved key keeps its value.
+        if LOCAL_MARKER_KEY not in metadata_payload:
+            metadata_payload[LOCAL_MARKER_KEY] = local_marker
 
         if self._backend_client is not None and not self._egress_disabled():
             try:

@@ -231,6 +231,33 @@ def extract_optuna_trial_id(
     return None
 
 
+#: Attribute (not a field) on a trial's subset ``Dataset`` naming the rows it
+#: was built from. It lives on the dataset object only -- never on the trial
+#: config, which is hashed, sent to callbacks/optimizers and submitted.
+EFFECTIVE_SUBSET_ATTR = "_traigent_effective_subset"
+
+
+def effective_subset_indices(requested: Any, dataset_size: int) -> list[Any]:
+    """The requested subset indices that pass develop's range filter, in order.
+
+    Exactly develop's filter (``0 <= j < len(examples)``, applied to
+    ``list(requested or [])``): out-of-range and negative indices are dropped,
+    anything else is kept AS GIVEN, so indexing the examples with it raises (or
+    not) exactly as it does on develop -- ``0.5`` and ``"1"`` raise, ``True``
+    addresses row 1 -- and the caller falls back to the full dataset on the
+    exception. Use :func:`operator.index` on the kept values for the rows.
+    """
+    return [j for j in list(requested or []) if 0 <= j < dataset_size]
+
+
+def subset_indices_of_dataset(dataset: Any) -> list[int] | None:
+    """Rows a trial's subset dataset was built from, or ``None`` (whole dataset)."""
+    subset = getattr(dataset, EFFECTIVE_SUBSET_ATTR, None)
+    if isinstance(subset, list) and all(type(j) is int for j in subset):
+        return list(subset)
+    return None
+
+
 def prepare_evaluation_config(config: dict[str, Any]) -> dict[str, Any]:
     """Prepare evaluation config by filtering out internal Optuna keys.
 
