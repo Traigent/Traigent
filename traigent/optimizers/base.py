@@ -410,9 +410,11 @@ class BaseOptimizer(ABC):
         override this.
         """
         keys = set(self.config_space)
-        self.register_tried_config(
-            {k: v for k, v in config.items() if not keys or k in keys}
-        )
+        filtered = {k: v for k, v in config.items() if not keys or k in keys}
+        self.register_tried_config(filtered)
+        if not hasattr(self, "_resume_marked_hashes"):
+            self._resume_marked_hashes: set[str] = set()
+        self._resume_marked_hashes.add(self._hash_config(filtered))
 
     def is_config_space_exhausted(self) -> bool:
         """Check if all unique configurations have been tried.

@@ -2305,6 +2305,7 @@ class OptimizedFunction(Generic[_P, _R]):
         budget: ExecutionBudget | None = None,
         apply: bool = True,
         resume_from: OptimizationResult | str | os.PathLike[str] | None = None,
+        allow_unverified_resume: bool = False,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization on the function.
@@ -2365,6 +2366,10 @@ class OptimizedFunction(Generic[_P, _R]):
                 count toward ``max_trials`` and the result; their cost is
                 reported but not charged to this run's cost limit. Cloud and
                 hybrid runs raise ``ValueError``.
+            allow_unverified_resume: UNSAFE. By default a saved result passed to
+                ``resume_from`` must have a verifying integrity manifest; set
+                ``True`` to resume from a legacy result without one (its trials
+                are then trusted unverified). Ignored for in-memory results.
             **algorithm_kwargs: Additional algorithm-specific parameters.
                 For grid search (algorithm="grid"):
                     - parameter_order: dict[str, int | float] controlling iteration order.
@@ -2405,6 +2410,7 @@ class OptimizedFunction(Generic[_P, _R]):
             "progress_bar": progress_bar,
             "budget": budget,
             "resume_from": resume_from,
+            "allow_unverified_resume": allow_unverified_resume,
             "algorithm_kwargs": algorithm_kwargs,
         }
         from traigent.utils.cost_calculator import cost_run_scope
@@ -2437,6 +2443,7 @@ class OptimizedFunction(Generic[_P, _R]):
         progress_bar: bool | None,
         budget: ExecutionBudget | None,
         resume_from: OptimizationResult | str | os.PathLike[str] | None = None,
+        allow_unverified_resume: bool = False,
         algorithm_kwargs: dict[str, Any],
     ) -> OptimizationResult:
         """Body of :meth:`optimize` for one advancing run."""
@@ -2542,6 +2549,7 @@ class OptimizedFunction(Generic[_P, _R]):
                     algorithm_kwargs=algorithm_kwargs,
                     execution_budget=budget,
                     resume_from=resume_from,
+                    allow_unverified_resume=allow_unverified_resume,
                 )
                 # Inside the run scope: a cost objective that measured no
                 # usage at all recorded $0 everywhere, which is an absent
@@ -2579,6 +2587,7 @@ class OptimizedFunction(Generic[_P, _R]):
         budget: ExecutionBudget | None = None,
         apply: bool = True,
         resume_from: OptimizationResult | str | os.PathLike[str] | None = None,
+        allow_unverified_resume: bool = False,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization synchronously (convenience wrapper).
@@ -2610,6 +2619,7 @@ class OptimizedFunction(Generic[_P, _R]):
                 applies the winner to this wrapper. See :meth:`optimize`.
             resume_from: Resume a local run from a prior result; see
                 :meth:`optimize`.
+            allow_unverified_resume: Unsafe opt-in; see :meth:`optimize`.
             **algorithm_kwargs: Additional algorithm parameters
 
         Returns:
@@ -2656,6 +2666,7 @@ class OptimizedFunction(Generic[_P, _R]):
             budget=budget,
             apply=apply,
             resume_from=resume_from,
+            allow_unverified_resume=allow_unverified_resume,
             **algorithm_kwargs,
         )
 
@@ -3646,6 +3657,7 @@ Remediation:
         self,
         resume_from: OptimizationResult | str | os.PathLike[str] | None,
         algorithm: str | None,
+        allow_unverified_resume: bool = False,
     ) -> OptimizationResult | None:
         """Validate ``resume_from`` (#1697): local runs only, integrity-checked.
 
@@ -3670,7 +3682,9 @@ Remediation:
             SOURCE_EXPLICIT_LOCAL,
         }:
             raise ValueError(LOCAL_ONLY_MESSAGE)
-        return load_resume_source(resume_from)
+        return load_resume_source(
+            resume_from, allow_unverified_resume=allow_unverified_resume
+        )
 
     def _resolve_runtime_execution_mode(self, algorithm: str | None) -> ExecutionMode:
         """Re-derive the effective ``ExecutionMode`` for THIS call (Traigent#2352).
@@ -3726,13 +3740,16 @@ Remediation:
         algorithm_kwargs: dict[str, Any],
         execution_budget: ExecutionBudget | None = None,
         resume_from: OptimizationResult | str | os.PathLike[str] | None = None,
+        allow_unverified_resume: bool = False,
     ) -> OptimizationResult:
         """Execute optimization assuming objective schema is already resolved.
 
         This method orchestrates the optimization process by delegating to
         specialized helper methods for each phase of execution.
         """
-        resume_source = self._load_resume_source_for_local_run(resume_from, algorithm)
+        resume_source = self._load_resume_source_for_local_run(
+            resume_from, algorithm, allow_unverified_resume
+        )
         hybrid_auto_discovery_enabled = self._allows_empty_configuration_space()
         effective_privacy_enabled = bool(getattr(self, "privacy_enabled", False))
         hybrid_discovery_state: dict[str, Any] | None = None

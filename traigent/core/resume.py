@@ -10,8 +10,10 @@ fail-closed:
   (:mod:`traigent.utils.artifact_fingerprints`); no new hashing scheme is used.
   A missing fingerprint on either side counts as a mismatch.
 * Only trials with status ``completed`` and a measured or properly-unknown cost
-  are reused. Running, pending, failed, cancelled and unrecognised trials are
-  neither reused nor retried automatically; they are simply not counted.
+  are reused. Running, pending and unrecognised-status trials are neither
+  reused nor retried: they are not counted, and their configurations are
+  excluded from this run's suggestions. Failed and cancelled trials are not
+  reused and may be proposed again.
 * A result loaded by name goes through ``PersistenceManager.load_result``, which
   verifies the #1961 sha256 integrity manifest. A failed check raises
   ``ValueError``; nothing is reused.
@@ -58,6 +60,7 @@ class ResumePlan:
     """What a resume will reuse, and why anything was left out."""
 
     reusable: tuple[TrialResult, ...] = ()
+    blocked_configs: tuple[dict[str, Any], ...] = ()
     not_reusable_unfinished: int = 0
     not_reusable_other: int = 0
     mismatched_components: tuple[str, ...] = ()
@@ -65,13 +68,21 @@ class ResumePlan:
     dropped_over_max_trials: int = 0
 
 
-def load_resume_source(resume_from: Any) -> OptimizationResult:
+class _UnverifiedResult(Exception):
+    """Internal marker: the saved result has no integrity manifest."""
+
+
+def load_resume_source(
+    resume_from: Any, *, allow_unverified_resume: bool = False
+) -> OptimizationResult:
     """Return the prior result named by ``resume_from``.
 
     Accepts an ``OptimizationResult`` or a saved-result handle: a name (under
     ``.traigent``) or a directory path returned by
     ``PersistenceManager.save_result``. Raises ``TypeError`` for any other type
-    and ``ValueError`` (value-free) for a missing, corrupted or tampered result.
+    and ``ValueError`` (value-free) for a missing, corrupted or tampered result,
+    or one without a verifiable integrity manifest (unless
+    ``allow_unverified_resume`` is set).
     """
     if isinstance(resume_from, OptimizationResult):
         return resume_from
@@ -86,7 +97,23 @@ def load_resume_source(resume_from: Any) -> OptimizationResult:
         else:
             manager = PersistenceManager()
         try:
+            if not allow_unverified_resume:
+                from traigent.utils.file_versioning import verify_integrity_manifest
+                from traigent.utils.persistence import _INTEGRITY_FILES
+
+                result_dir = manager._resolve_path(manager.base_dir / raw.name)
+                if not result_dir.exists():
+                    raise FileNotFoundError
+                if not verify_integrity_manifest(result_dir, list(_INTEGRITY_FILES)):
+                    raise _UnverifiedResult
             return manager.load_result(raw.name)
+        except _UnverifiedResult:
+            raise ValueError(
+                "resume_from: saved result has no integrity manifest, so it "
+                "cannot be verified; nothing was reused. Re-save it with "
+                "PersistenceManager.save_result, or pass "
+                "allow_unverified_resume=True (unsafe)."
+            ) from None
         except FileNotFoundError:
             raise ValueError("resume_from: saved result not found") from None
         except ValueError:
@@ -104,19 +131,26 @@ def load_resume_source(resume_from: Any) -> OptimizationResult:
     )
 
 
-def _trial_cost_ok(trial: TrialResult) -> bool:
-    """True when the trial's cost is measured or properly flagged unknown."""
+def _known_cost(trial: TrialResult) -> float | None:
+    """The measured cost of a trial from any alias, or None."""
     metrics = trial.metrics or {}
-    if is_cost_unmeasured(metrics):
-        return True
     for key in ("total_cost", "cost"):
-        if key in metrics and coerce_finite_cost(metrics[key]) is not None:
-            return True
+        if key in metrics:
+            cost = coerce_finite_cost(metrics[key])
+            if cost is not None:
+                return cost
     metadata = trial.metadata or {}
     for key in ("total_example_cost", "total_cost", "cost"):
-        if key in metadata and coerce_finite_cost(metadata[key]) is not None:
-            return True
-    return False
+        if key in metadata:
+            cost = coerce_finite_cost(metadata[key])
+            if cost is not None:
+                return cost
+    return None
+
+
+def _trial_cost_ok(trial: TrialResult) -> bool:
+    """True when the trial's cost is measured or properly flagged unknown."""
+    return is_cost_unmeasured(trial.metrics or {}) or _known_cost(trial) is not None
 
 
 def differing_components(
@@ -149,6 +183,7 @@ def plan_resume(
 
     unfinished = 0
     other = 0
+    blocked: list[dict[str, Any]] = []
     eligible: list[TrialResult] = []
     for trial in prior.trials:
         if trial.status == TrialStatus.COMPLETED:
@@ -157,13 +192,15 @@ def plan_resume(
             else:
                 other += 1
         elif trial.status in (
-            TrialStatus.RUNNING,
-            TrialStatus.PENDING,
-            TrialStatus.NOT_STARTED,
+            TrialStatus.FAILED,
+            TrialStatus.CANCELLED,
+            TrialStatus.PRUNED,
         ):
-            unfinished += 1
-        else:
             other += 1
+        else:
+            # running / pending / not started / unrecognised: outcome unknown.
+            unfinished += 1
+            blocked.append(copy.deepcopy(trial.config))
 
     if mismatched:
         return ResumePlan(
@@ -187,11 +224,17 @@ def plan_resume(
             REUSED_TRIAL_KEY: True,
             "resumed_original_trial_id": str(trial.trial_id),
         }
+        if not is_cost_unmeasured(clone.metrics):
+            # Normalize to the canonical key the totals aggregator reads.
+            cost = _known_cost(trial)
+            if cost is not None:
+                clone.metrics = {**clone.metrics, "total_cost": cost}
         clone.trial_id = f"resumed-{trial.trial_id}"
         reused.append(clone)
 
     return ResumePlan(
         reusable=tuple(reused),
+        blocked_configs=tuple(blocked),
         not_reusable_unfinished=unfinished,
         not_reusable_other=other,
         dropped_over_max_trials=dropped,

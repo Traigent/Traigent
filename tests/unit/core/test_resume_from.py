@@ -275,3 +275,188 @@ def test_grid_optimizer_skips_marked_configs() -> None:
     opt = GridSearchOptimizer({"v": ["a", "b", "c"]}, ["accuracy"])
     opt.mark_config_evaluated({"v": "b", "ignored_extra": 1})
     assert [opt.suggest_next_trial([])["v"] for _ in range(2)] == ["a", "c"]
+
+
+# ---- reviewer follow-ups (#1697): execution-level -----------------------------
+
+
+def test_in_flight_prior_trial_config_is_never_run(_local: Path) -> None:
+    seen: list[str] = []
+    agent = _agent(["a", "b", "c", "d"], seen)
+    first = agent.optimize_sync(max_trials=3)  # a, b, c finished
+    first.trials[2].status = TrialStatus.RUNNING  # c: outcome unknown
+    seen.clear()
+
+    resumed = agent.optimize_sync(max_trials=4, resume_from=first)
+
+    assert "c" not in seen  # not retried
+    assert set(seen) == {"d"}
+    assert resumed.metadata["resume"]["unfinished_prior_trials_not_reused"] == 1
+    assert [t.config["v"] for t in resumed.trials].count("c") == 0
+
+
+def test_reused_baseline_does_not_spend_another_trial(_local: Path) -> None:
+    seen: list[str] = []
+
+    @traigent.optimize(
+        configuration_space={"v": ["a", "b", "c", "d"]},
+        default_config={"v": "a"},
+        objectives=["accuracy"],
+        offline=True,
+        max_trials=4,
+        algorithm="grid",
+        evaluation=EvaluationOptions(eval_dataset="d.jsonl"),
+    )
+    def agent(q: str) -> str:
+        seen.append(traigent.get_config()["v"])
+        return "a"
+
+    first = agent.optimize_sync(max_trials=2)
+    assert first.trials[0].config["v"] == "a"
+    seen.clear()
+    resumed = agent.optimize_sync(max_trials=4, resume_from=first)
+    assert "a" not in seen  # neither baseline nor grid point re-run
+    assert set(seen) == {"b", "c"}
+    assert len(resumed.trials) == 4
+
+
+def test_reused_measured_cost_is_in_study_total_and_not_charged(
+    _local: Path,
+) -> None:
+    seen: list[str] = []
+    agent = _agent(["a", "b", "c", "d"], seen)
+    first = agent.optimize_sync(max_trials=2)
+    for t in first.trials:  # measured cost under a non-canonical alias
+        t.metrics.pop("cost_unmeasured", None)
+        t.metrics.pop("total_cost", None)
+        t.metrics["cost"] = 0.25
+    resumed = agent.optimize_sync(max_trials=4, resume_from=first)
+    assert resumed.total_cost == pytest.approx(0.5)
+    summary = resumed.metadata["resume"]
+    assert summary["reused_known_cost"] == pytest.approx(0.5)
+    assert summary["cost_charged_to_this_run_limit"] is False
+    # New (unmeasured) trials stay unknown; reused measured cost is canonical.
+    reused = [t for t in resumed.trials if t.metadata.get(REUSED_TRIAL_KEY)]
+    assert all(t.metrics["total_cost"] == pytest.approx(0.25) for t in reused)
+
+
+def test_reused_cost_does_not_trip_a_small_cost_limit(_local: Path) -> None:
+    seen: list[str] = []
+
+    @traigent.optimize(
+        configuration_space={"v": ["a", "b", "c", "d"]},
+        objectives=["accuracy"],
+        offline=True,
+        max_trials=4,
+        algorithm="grid",
+        evaluation=EvaluationOptions(eval_dataset="d.jsonl"),
+    )
+    def agent(q: str) -> str:
+        value = traigent.get_config()["v"]
+        seen.append(value)
+        return traigent.with_usage(value, total_cost=0.01)
+
+    first = agent.optimize_sync(max_trials=2)
+    for t in first.trials:
+        t.metrics["total_cost"] = 5.0  # far above the new run's limit
+    seen.clear()
+    resumed = agent.optimize_sync(
+        max_trials=4, resume_from=first, cost_limit=1.0, cost_approved=True
+    )
+    assert resumed.stop_reason != "cost_limit"
+    assert set(seen) == {"c", "d"}
+    assert resumed.total_cost == pytest.approx(10.0 + 4 * 0.01 * 2, abs=0.2)
+
+
+def test_legacy_result_without_manifest_is_refused_unless_opted_in(
+    _local: Path,
+) -> None:
+    seen: list[str] = []
+    agent = _agent(["a", "b", "c", "d"], seen)
+    first = agent.optimize_sync(max_trials=2)
+    saved = Path(PersistenceManager(base_dir="saved").save_result(first, "first"))
+    (saved / "integrity.sha256.json").unlink()
+
+    with pytest.raises(ValueError, match="integrity manifest"):
+        agent.optimize_sync(max_trials=4, resume_from=str(saved))
+    seen.clear()
+    resumed = agent.optimize_sync(
+        max_trials=4, resume_from=str(saved), allow_unverified_resume=True
+    )
+    assert resumed.metadata["resume"]["reused_trials"] == 2
+
+
+def test_in_memory_result_needs_no_manifest(_local: Path) -> None:
+    first = _agent(["a", "b"], []).optimize_sync(max_trials=1)
+    assert load_resume_source(first) is first
+
+
+def test_cloud_route_is_refused_before_any_trial(
+    _local: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[str] = []
+    first = _agent(["a", "b"], seen).optimize_sync(max_trials=1)
+    seen.clear()
+    for name in ("TRAIGENT_OFFLINE", "TRAIGENT_OFFLINE_MODE"):
+        monkeypatch.setenv(name, "false")
+
+    @traigent.optimize(
+        configuration_space={"v": ["a", "b"]},
+        objectives=["accuracy"],
+        algorithm="auto",
+        evaluation=EvaluationOptions(eval_dataset="d.jsonl"),
+    )
+    def cloud_agent(q: str) -> str:
+        seen.append("ran")
+        return traigent.get_config()["v"]
+
+    with pytest.raises(ValueError, match="local runs only"):
+        cloud_agent.optimize_sync(resume_from=first)
+    assert seen == []
+
+
+def _discrete_batch_optimizers():
+    from traigent.optimizers.batch_optimizers import (
+        AdaptiveBatchOptimizer,
+        BatchOptimizationConfig,
+        MultiObjectiveBatchOptimizer,
+        ParallelBatchOptimizer,
+    )
+    from traigent.optimizers.random import RandomSearchOptimizer
+
+    space = {"v": ["a", "b", "c"]}
+    cfg = BatchOptimizationConfig(batch_size=2)
+
+    def base():
+        return RandomSearchOptimizer(space, ["accuracy"], max_trials=10)
+
+    return space, [
+        ParallelBatchOptimizer(base_optimizer=base(), batch_config=cfg)
+        if "base_optimizer" in ParallelBatchOptimizer.__init__.__code__.co_varnames
+        else ParallelBatchOptimizer(space, ["accuracy"], batch_config=cfg),
+        AdaptiveBatchOptimizer(base_optimizer=base(), batch_config=cfg),
+        MultiObjectiveBatchOptimizer(space, ["accuracy"], batch_config=cfg),
+    ]
+
+
+def test_batch_optimizers_forward_marks_to_inner_optimizer() -> None:
+    space, optimizers = _discrete_batch_optimizers()
+    for opt in optimizers:
+        opt.mark_config_evaluated({"v": "a"})
+        opt.mark_config_evaluated({"v": "b"})
+        got = {opt.suggest_next_trial([])["v"] for _ in range(1)}
+        assert got == {"c"}, type(opt).__name__
+
+
+def test_continuous_random_same_seed_does_not_replay_marked_configs() -> None:
+    from traigent.optimizers.random import RandomSearchOptimizer
+
+    space = {"x": (0.0, 1.0)}
+    first = RandomSearchOptimizer(space, ["accuracy"], max_trials=50, random_seed=7)
+    done = [first.suggest_next_trial([]) for _ in range(5)]
+
+    again = RandomSearchOptimizer(space, ["accuracy"], max_trials=50, random_seed=7)
+    for config in done:
+        again.mark_config_evaluated(config)
+    fresh = [again.suggest_next_trial([]) for _ in range(5)]
+    assert not any(c in done for c in fresh)

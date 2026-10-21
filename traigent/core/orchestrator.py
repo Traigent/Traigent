@@ -5820,6 +5820,7 @@ class OptimizationOrchestrator:
         warn_if_not_reusable(plan)
         reused_cost = 0.0
         unknown_cost_trials = 0
+        mark_reused = getattr(self.optimizer, "mark_config_evaluated", None)
         for trial in plan.reusable:
             self._trials.append(trial)
             if is_cost_unmeasured(trial.metrics):
@@ -5831,16 +5832,30 @@ class OptimizationOrchestrator:
                 self._successful_trials += 1
                 self.optimizer.update_best(trial)
                 self._update_best_trial_cache(trial)
-            mark = getattr(self.optimizer, "mark_config_evaluated", None)
-            if callable(mark):
+            if callable(mark_reused):
                 try:
-                    mark(trial.config)
+                    mark_reused(trial.config)
                 except (ValueError, TypeError, KeyError, AttributeError) as exc:
                     logger.warning(
                         "resume_from: optimizer could not record a reused "
                         "configuration (%s)",
                         type(exc).__name__,
                     )
+        mark = getattr(self.optimizer, "mark_config_evaluated", None)
+        if callable(mark):
+            # In-flight prior trials have an unknown outcome: never retry them.
+            for config in plan.blocked_configs:
+                try:
+                    mark(config)
+                except (ValueError, TypeError, KeyError, AttributeError):
+                    logger.warning("resume_from: optimizer could not exclude a config")
+        baseline = getattr(self, "_default_config", None)
+        if baseline and any(
+            all(t.config.get(k) == v for k, v in baseline.items())
+            for t in plan.reusable
+        ):
+            # The baseline was already evaluated; do not spend a trial on it.
+            self._default_config_used = True
         self._resume_summary = {
             "reused_trials": len(plan.reusable),
             "unfinished_prior_trials_not_reused": plan.not_reusable_unfinished,
