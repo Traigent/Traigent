@@ -15,7 +15,12 @@ CURATED_BEDROCK_INFERENCE_PROFILE_IDS = [
     "us.anthropic.claude-haiku-4-5-20251001-v1:0",
     "us.anthropic.claude-3-5-haiku-20241022-v1:0",
     "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
-    "us.anthropic.claude-3-haiku-20240307-v1:0",
+    # Replaced us.anthropic.claude-3-haiku-20240307-v1:0: LiteLLM 1.104.0 dropped
+    # every native/Bedrock claude-3-haiku-20240307 entry from its price map, so
+    # that profile id can no longer be priced (and must not be scored as free).
+    # The unprefixed claude-3-haiku-20240307 stays in COMMON_EXAMPLE_MODEL_IDS
+    # because the SDK's own static table still prices it.
+    "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
     "us.amazon.nova-micro-v1:0",
     "us.amazon.nova-lite-v1:0",
     "us.meta.llama3-1-8b-instruct-v1:0",

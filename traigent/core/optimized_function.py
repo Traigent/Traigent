@@ -39,6 +39,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Generic, ParamSpec, TypeVar, cast
 
 from traigent.api.types import OptimizationResult, OptimizationStatus
@@ -53,6 +54,7 @@ from traigent.config.types import (
     resolve_execution_policy,
     validate_execution_mode,
 )
+from traigent.core.best_config_runtime import function_ref_for
 from traigent.core.ci_approval import check_ci_approval
 from traigent.core.config_state_manager import (
     ConfigStateManager,  # Per-function configuration manager.
@@ -99,6 +101,7 @@ from traigent.core.optimization_pipeline import (
     resolve_execution_parameters,
 )
 from traigent.core.orchestrator import OptimizationOrchestrator, _safe_exception_text
+from traigent.core.stop_conditions import NoUsageCapturedStopCondition
 from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import (
     BaseEvaluator,
@@ -123,9 +126,11 @@ from traigent.utils.cost_calculator import (
     get_pricing_provenance,
 )
 from traigent.utils.env_config import (
+    cost_preflight_mock_exempt,
     is_mock_llm,
     is_strict_cost_accounting,
     strict_cost_accounting_origin,
+    offline_run_scope,
     strict_cost_accounting_run_default,
 )
 from traigent.utils.exceptions import (
@@ -707,6 +712,33 @@ def _warn_cost_objective_partial_coverage(
     logger.warning("%s (%s)", message, COST_OBJECTIVE_PARTIAL_USAGE_WARNING_CODE)
 
 
+def _no_usage_is_fatal() -> bool:
+    """True when a cost run with no captured usage must fail, not warn.
+
+    Shared by the post-run guard and the early stop rule so both fire under
+    exactly the same conditions (strict accounting on, mock LLM mode off).
+    """
+    return is_strict_cost_accounting() and not is_mock_llm()
+
+
+def _make_no_usage_stop_condition(
+    objective_names: Sequence[str] | None,
+) -> NoUsageCapturedStopCondition | None:
+    """Early stop rule for a strict cost run whose first success has no usage.
+
+    Returns ``None`` when no cost objective is declared. Strictness and mock
+    mode are read at check time (they are scoped to the running optimization).
+    Uses ``_run_captured_usage``, the same predicate as the post-run guard.
+    """
+    if not _objectives_include_cost(objective_names):
+        return None
+
+    def _usage_captured(trials: Sequence[Any]) -> bool:
+        return _run_captured_usage(SimpleNamespace(trials=list(trials)))
+
+    return NoUsageCapturedStopCondition(_usage_captured, _no_usage_is_fatal)
+
+
 def _guard_cost_objective_without_usage(
     result: Any, objective_names: Sequence[str] | None
 ) -> None:
@@ -733,12 +765,23 @@ def _guard_cost_objective_without_usage(
     if _run_captured_usage(result):
         return
 
-    if is_strict_cost_accounting() and not is_mock_llm():
-        raise UnknownModelError(
+    if _no_usage_is_fatal():
+        message = (
             _NO_USAGE_CAPTURED_MESSAGE
             + " Set TRAIGENT_STRICT_COST_ACCOUNTING=false to accept an "
             "unmeasured $0 cost column."
         )
+        if getattr(result, "stop_reason", None) == "no_usage_captured":
+            message += (
+                " The run was stopped after the first successful trial "
+                "without usage: no further trials were scheduled, but "
+                "already-dispatched trials may have completed and incurred "
+                "charges."
+            )
+        error = UnknownModelError(message)
+        # Keep the trials that did run: the caller can still inspect them.
+        error.result = result  # type: ignore[attr-defined]
+        raise error
 
     warning_codes = getattr(result, "warning_codes", None)
     if isinstance(warning_codes, list):
@@ -910,6 +953,38 @@ _APPLY_FALSE_WITHDRAWN_MESSAGE = (
 )
 
 
+# Counting saturates here: any grid this large already exceeds every max_trials.
+_GRID_SIZE_COUNT_CAP = 10**12
+
+
+def _finite_grid_size(config_space: Any) -> int | None:
+    """Number of grid combinations, or None when the space is not a finite grid.
+
+    Lists are categorical axes, scalars are fixed values, and dict domains are
+    counted exactly as the grid optimizer enumerates them (stepped ranges,
+    categorical, fixed). Any other shape (for example a continuous range)
+    means the size is unknown and is never guessed.
+    """
+    from traigent.utils.discrete_domains import discrete_cardinality_for_config_param
+
+    if not isinstance(config_space, dict) or not config_space:
+        return None
+    size = 1
+    for definition in config_space.values():
+        if isinstance(definition, list):
+            size = min(size * max(len(definition), 1), _GRID_SIZE_COUNT_CAP)
+        elif isinstance(definition, dict):
+            # Arithmetic count: never materializes the domain (a huge IntRange
+            # must not allocate before the grid optimizer's size guard runs).
+            count = discrete_cardinality_for_config_param(definition)
+            if count is None:
+                return None
+            size = min(size * max(count, 1), _GRID_SIZE_COUNT_CAP)
+        elif isinstance(definition, (tuple, set, frozenset)):
+            return None
+    return size
+
+
 class OptimizedFunction(Generic[_P, _R]):
     """Wrapper for functions decorated with @traigent.optimize.
 
@@ -963,7 +1038,7 @@ class OptimizedFunction(Generic[_P, _R]):
             config_param: Parameter name for injection_mode="parameter"
             auto_override_frameworks: Enable automatic framework parameter overrides
             framework_targets: List of framework class names to override (e.g., ["openai.OpenAI"])
-            execution_mode: Execution mode ("local", "hybrid", "hybrid_api"; "edge_analytics" and "privacy" are legacy aliases)
+            execution_mode: Execution mode ("local", "hybrid", "hybrid_api"; the removed "edge_analytics" selector raises, and "privacy" fails closed)
             local_storage_path: Custom path for local storage (local mode only)
             minimal_logging: Use minimal logging in local mode
             custom_evaluator: Custom evaluation function for advanced use cases
@@ -1251,6 +1326,8 @@ class OptimizedFunction(Generic[_P, _R]):
         # identity is exactly what fragments an agent's history into one-run cohorts.
         self._run_title: str | None = kwargs.pop("run_title", None)
         self._run_description: str | None = kwargs.pop("run_description", None)
+        # Content-less session options (``ContentLessOptions`` or None = legacy/env).
+        self._content_less: Any = kwargs.pop("content_less", None)
 
         self.timeout = kwargs.pop("timeout", None)
         kwargs["timeout"] = self.timeout
@@ -1332,6 +1409,11 @@ class OptimizedFunction(Generic[_P, _R]):
         self.winner_stability_reps = self._store_optional_param(
             kwargs, sentinel, "winner_stability_reps", 0
         )
+        # Per-example evaluation limit in seconds (None = 60 s default);
+        # independent of the run-level ``timeout``.
+        self.example_timeout = self._store_optional_param(
+            kwargs, sentinel, "example_timeout", None
+        )
         self.smart_pruning = self._store_optional_param(
             kwargs, sentinel, "smart_pruning", None
         )
@@ -1396,6 +1478,7 @@ class OptimizedFunction(Generic[_P, _R]):
             "max_total_examples",
             "samples_include_pruned",
             "winner_stability_reps",
+            "example_timeout",
             "smart_pruning",
             "require_run_id",
             # Multi-agent configuration
@@ -2422,8 +2505,13 @@ class OptimizedFunction(Generic[_P, _R]):
             # recorded as free: the optimizer would rank it cheapest. Make
             # runtime cost accounting strict for this run unless the user set
             # TRAIGENT_STRICT_COST_ACCOUNTING explicitly (``false`` opts out).
-            with strict_cost_accounting_run_default(
-                _objectives_include_cost(self.objectives)
+            with (
+                offline_run_scope(
+                    is_offline_requested(getattr(self, "execution_policy", None))
+                ),
+                strict_cost_accounting_run_default(
+                    _objectives_include_cost(self.objectives)
+                ),
             ):
                 strict_origin = strict_cost_accounting_origin()
                 strict_effective = is_strict_cost_accounting()
@@ -2687,6 +2775,7 @@ class OptimizedFunction(Generic[_P, _R]):
         evaluator, _auxiliary_resource = create_effective_evaluator(
             timeout=timeout,
             custom_evaluator=custom_evaluator,
+            example_timeout=getattr(self, "example_timeout", None),
             effective_batch_size=effective_batch_size,
             effective_thread_workers=effective_thread_workers,
             effective_privacy_enabled=effective_privacy_enabled,
@@ -2769,6 +2858,7 @@ class OptimizedFunction(Generic[_P, _R]):
             warm_start_from=getattr(self, "warm_start_from", None),
             run_title=self._run_title,
             run_description=self._run_description,
+            content_less=self._content_less,
         )
         orchestrator_kwargs["agent_key"] = self.declared_agent_name
         orchestrator_kwargs["requested_algorithm"] = requested_algorithm
@@ -2808,6 +2898,10 @@ class OptimizedFunction(Generic[_P, _R]):
             **orchestrator_kwargs,
         )
 
+        no_usage_stop = _make_no_usage_stop_condition(self.objectives)
+        if no_usage_stop is not None:
+            orchestrator.add_stop_condition(no_usage_stop)
+
         orchestrator.samples_include_pruned = samples_include_pruned_value
         orchestrator.artifact_fingerprints = artifact_fingerprint_payload.get(
             "artifact_fingerprints"
@@ -2819,6 +2913,13 @@ class OptimizedFunction(Generic[_P, _R]):
         orchestrator.task_type = self.task_type
         orchestrator.dataset_id = self.dataset_id
         orchestrator.head_environment = self._csm.best_config_environment
+        # The identity the SDK's own development log is stamped with, so that
+        # auto-discovery can later load only an artifact that is ours.
+        orchestrator.head_function_ref = function_ref_for(self._csm.func)
+        orchestrator.head_config_id = self._csm.config_id
+        orchestrator.head_environment_explicit = bool(
+            getattr(self._csm, "best_config_environment_explicit", False)
+        )
         # RFC 0001 §3.4: forward the user-attached knob resolver so the
         # public optimize() path resolves Fixed/CVAR bindings in-trial.
         # Attribute seam (like promotion_gate): set
@@ -3341,8 +3442,8 @@ class OptimizedFunction(Generic[_P, _R]):
         *,
         cost_approved: bool = False,
     ) -> None:
-        """Warn or fail before trials when a real run includes unpriced models."""
-        if is_mock_llm():
+        """Warn or fail before trials when a run includes unpriced models."""
+        if cost_preflight_mock_exempt():
             return
 
         model_ids = _extract_config_space_model_ids(effective_config_space)
@@ -3644,7 +3745,42 @@ Remediation:
             and getattr(self, "_max_trials_uses_sdk_default", False)
             and max_trials == DEFAULT_MAX_TRIALS
         )
-        if (
+        grid_size = (
+            _finite_grid_size(effective_config_space)
+            if used_implicit_default_max_trials and algorithm == "grid"
+            else None
+        )
+        if grid_size is not None and grid_size > max_trials:
+            # Issue #2058: the implicit cap silently truncates an exhaustive
+            # grid. Counts only; no user content is echoed.
+            if grid_size >= _GRID_SIZE_COUNT_CAP:
+                # Counting saturated: the true size is unknown beyond the cap,
+                # so never present it as exact or recommend it as max_trials.
+                logger.warning(
+                    "max_trials was not set, so the SDK default cap of %d applies: "
+                    "only %d of at least %d grid combinations will be evaluated "
+                    "and the reported best configuration is the best of those, "
+                    "not of the whole space. The grid is too large to evaluate "
+                    "exhaustively; narrow the configuration space or set "
+                    "max_trials explicitly.",
+                    max_trials,
+                    max_trials,
+                    grid_size,
+                )
+            else:
+                logger.warning(
+                    "max_trials was not set, so the SDK default cap of %d applies: "
+                    "only %d of %d grid combinations will be evaluated and the "
+                    "reported best configuration is the best of those, not of the "
+                    "whole space. Pass max_trials=%d (or higher) to evaluate the "
+                    "full grid.",
+                    max_trials,
+                    max_trials,
+                    grid_size,
+                    grid_size,
+                )
+            self._max_trials_default_notice_logged = True
+        elif (
             used_implicit_default_max_trials
             and not self._max_trials_default_notice_logged
         ):
@@ -4393,7 +4529,11 @@ Remediation:
         self._csm.save_optimization_results(path)
 
     def load_optimization_results(self, path: str) -> None:
-        """Load optimization results from file."""
+        """Load optimization results from file.
+
+        An explicit user call with a saved result in hand: it does not verify the
+        stored identity (``config_id`` / ``function_ref`` / environment) of the file.
+        """
         self._csm.load_optimization_results(path)
 
     @property
@@ -4416,7 +4556,11 @@ Remediation:
         self._csm.maybe_auto_load_config()
 
     def set_config(self, config: dict[str, Any]) -> None:
-        """Set current configuration manually."""
+        """Set current configuration manually.
+
+        An explicit user call with the values in hand: it does not verify stored
+        identity (``config_id`` / ``function_ref`` / environment) of anything.
+        """
         self._csm.set_config(config)
 
     def clear_override(self) -> bool:
@@ -4430,6 +4574,9 @@ Remediation:
 
     def apply_best_config(self, results: OptimizationResult | None = None) -> bool:
         """Apply best configuration from optimization results.
+
+        An explicit user call with the result in hand: it does not verify the stored
+        identity (``config_id`` / ``function_ref`` / environment) of ``results``.
 
         Promotion takes the same exclusive per-wrapper slot as an
         ``optimize(apply=True)`` run and holds it across the commit, so it is

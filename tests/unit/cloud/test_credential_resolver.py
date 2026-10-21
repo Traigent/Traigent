@@ -119,9 +119,13 @@ class TestLoadCredentials:
 
     @pytest.mark.asyncio
     async def test_load_uses_default_mode(
-        self, resolver: CredentialResolver, config: UnifiedAuthConfig
+        self,
+        resolver: CredentialResolver,
+        config: UnifiedAuthConfig,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test load_credentials uses default mode when none provided."""
+        monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
         resolver._get_provided_credentials_fn = lambda: None
 
         with patch.object(
@@ -139,9 +143,13 @@ class TestLoadCredentials:
 
     @pytest.mark.asyncio
     async def test_load_increments_cache_hits(
-        self, resolver: CredentialResolver, sample_credentials: AuthCredentials
+        self,
+        resolver: CredentialResolver,
+        sample_credentials: AuthCredentials,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test load_credentials increments cache hits stat."""
+        monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
         resolver._get_provided_credentials_fn = lambda: None
         increment_mock = MagicMock()
         resolver._increment_cache_hits_fn = increment_mock
@@ -541,3 +549,204 @@ class TestExpiresAtParsing:
         set_token_mock.assert_called_once()
         call_kwargs = set_token_mock.call_args
         assert call_kwargs[1]["expires_at"] is None
+
+
+class TestEnvironmentFirstPrecedence:
+    """SDK #2227: the environment beats the cached login on every path."""
+
+    @staticmethod
+    def _cached(mode: AuthMode, **kwargs: object) -> AuthCredentials:
+        return AuthCredentials(mode=mode, **kwargs)  # type: ignore[arg-type]
+
+    @pytest.mark.asyncio
+    async def test_env_api_key_beats_cached_login(
+        self, resolver: CredentialResolver, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env_key = "tg_" + "e" * 61
+        cached_key = "tg_" + "c" * 61
+        monkeypatch.setenv("TRAIGENT_API_KEY", env_key)
+        env_creds = self._cached(AuthMode.API_KEY, api_key=env_key)
+        with (
+            patch.object(
+                resolver,
+                "load_cached",
+                new_callable=AsyncMock,
+                return_value=self._cached(AuthMode.API_KEY, api_key=cached_key),
+            ) as cached_mock,
+            patch.object(resolver, "load_from_env", new_callable=AsyncMock) as env_mock,
+        ):
+            env_mock.return_value = env_creds
+            result = await resolver.load_credentials(AuthMode.API_KEY)
+        assert result is env_creds
+        cached_mock.assert_awaited()  # consulted only to log the disagreement
+
+    @pytest.mark.asyncio
+    async def test_disagreement_is_logged_without_values(
+        self,
+        resolver: CredentialResolver,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        env_key = "tg_" + "e" * 61
+        cached_key = "tg_" + "c" * 61
+        monkeypatch.setenv("TRAIGENT_API_KEY", env_key)
+        with (
+            patch.object(
+                resolver,
+                "load_cached",
+                new_callable=AsyncMock,
+                return_value=self._cached(AuthMode.API_KEY, api_key=cached_key),
+            ),
+            patch.object(
+                resolver,
+                "load_from_env",
+                new_callable=AsyncMock,
+                return_value=self._cached(AuthMode.API_KEY, api_key=env_key),
+            ),
+            caplog.at_level("WARNING"),
+        ):
+            await resolver.load_credentials(AuthMode.API_KEY)
+        assert "differs from the cached login" in caplog.text
+        assert env_key not in caplog.text and cached_key not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_unreadable_cache_does_not_break_env_auth(
+        self,
+        resolver: CredentialResolver,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """#2227: a cache whose decrypt raises ValueError must not block env auth."""
+        env_key = "tg_" + "e" * 61
+        monkeypatch.setenv("TRAIGENT_API_KEY", env_key)
+        env_creds = self._cached(AuthMode.API_KEY, api_key=env_key)
+        with (
+            patch.object(
+                resolver,
+                "load_cached",
+                new_callable=AsyncMock,
+                side_effect=ValueError("unsupported encryption version"),
+            ),
+            patch.object(
+                resolver,
+                "load_from_env",
+                new_callable=AsyncMock,
+                return_value=env_creds,
+            ),
+            caplog.at_level("WARNING"),
+        ):
+            result = await resolver.load_credentials(AuthMode.API_KEY)
+        assert result is env_creds
+        assert env_key not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_matching_env_and_cache_do_not_warn(
+        self,
+        resolver: CredentialResolver,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        key = "tg_" + "e" * 61
+        monkeypatch.setenv("TRAIGENT_API_KEY", key)
+        with (
+            patch.object(
+                resolver,
+                "load_cached",
+                new_callable=AsyncMock,
+                return_value=self._cached(AuthMode.API_KEY, api_key=key),
+            ),
+            patch.object(
+                resolver,
+                "load_from_env",
+                new_callable=AsyncMock,
+                return_value=self._cached(AuthMode.API_KEY, api_key=key),
+            ),
+            caplog.at_level("WARNING"),
+        ):
+            await resolver.load_credentials(AuthMode.API_KEY)
+        assert "differs" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_cache_used_when_env_unset(
+        self, resolver: CredentialResolver, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+        cached = self._cached(AuthMode.API_KEY, api_key="tg_" + "c" * 61)
+        with patch.object(
+            resolver, "load_cached", new_callable=AsyncMock, return_value=cached
+        ):
+            result = await resolver.load_credentials(AuthMode.API_KEY)
+        assert result is cached
+
+    @pytest.mark.asyncio
+    async def test_env_jwt_beats_cached_login_and_stored_jwt(
+        self, resolver: CredentialResolver, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TRAIGENT_JWT_TOKEN", "env-jwt")
+        with (
+            patch.object(
+                resolver,
+                "load_cached",
+                new_callable=AsyncMock,
+                return_value=self._cached(AuthMode.JWT_TOKEN, jwt_token="cached-jwt"),
+            ),
+            patch(
+                "traigent.cloud.credential_manager.CredentialManager.get_credentials",
+                return_value={"jwt_token": "stored-jwt", "source": "cli"},
+            ),
+        ):
+            result = await resolver.load_credentials(AuthMode.JWT_TOKEN)
+        assert result is not None
+        assert result.jwt_token == "env-jwt"
+        assert result.metadata.get("source") == "environment"
+
+    @pytest.mark.asyncio
+    async def test_env_jwt_beats_stored_jwt_in_load_from_env(
+        self, resolver: CredentialResolver, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TRAIGENT_JWT_TOKEN", "env-jwt")
+        with patch(
+            "traigent.cloud.credential_manager.CredentialManager.get_credentials",
+            return_value={"jwt_token": "stored-jwt", "source": "cli"},
+        ):
+            result = await resolver.load_from_env(AuthMode.JWT_TOKEN)
+        assert result is not None and result.jwt_token == "env-jwt"
+
+    @pytest.mark.asyncio
+    async def test_expired_cached_credentials_rejected(
+        self, resolver: CredentialResolver
+    ) -> None:
+        expired = {
+            "mode": AuthMode.API_KEY,
+            "api_key": "tg_" + "c" * 61,
+            "expires_at": 1.0,
+        }
+        with (
+            patch(
+                "traigent.security.crypto_utils.SecureFileManager.read_secure_file",
+                return_value=b"x",
+            ),
+            patch.object(resolver, "decrypt", return_value=expired),
+        ):
+            assert await resolver.load_cached() is None
+
+    @pytest.mark.asyncio
+    async def test_unexpired_cached_credentials_accepted(
+        self, resolver: CredentialResolver
+    ) -> None:
+        import time
+
+        valid = {
+            "mode": AuthMode.API_KEY,
+            "api_key": "tg_" + "c" * 61,
+            "expires_at": time.time() + 3600,
+        }
+        with (
+            patch(
+                "traigent.security.crypto_utils.SecureFileManager.read_secure_file",
+                return_value=b"x",
+            ),
+            patch.object(resolver, "decrypt", return_value=valid),
+        ):
+            result = await resolver.load_cached()
+        assert result is not None and result.api_key == valid["api_key"]

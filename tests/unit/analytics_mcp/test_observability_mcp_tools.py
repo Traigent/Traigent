@@ -1357,3 +1357,48 @@ async def test_registered_observability_wrappers_match_helper_contracts(
         )
     else:
         helper.assert_awaited_once_with(*expected)
+
+
+@pytest.mark.asyncio
+async def test_trace_search_status_filter_accepts_unknown_and_rejects_others(
+    monkeypatch,
+) -> None:
+    """#2588: ``unknown`` is a valid read-side status filter value."""
+    from traigent.analytics_mcp.tools import observability_search_traces_tool
+
+    reader = AsyncMock()
+    reader.search_observability_traces.return_value = _empty_trace_search()
+    _install_fake_client(monkeypatch, reader)
+    window = ("2026-07-01T00:00:00Z", "2026-07-02T00:00:00Z")
+
+    accepted = await observability_search_traces_tool(
+        "project-1", *window, status="unknown"
+    )
+    rejected = await observability_search_traces_tool(
+        "project-1", *window, status="bogus"
+    )
+
+    assert accepted["ok"] is True
+    assert reader.search_observability_traces.await_args.kwargs["status"] == "unknown"
+    assert rejected["code"] == "invalid_input"
+
+
+@pytest.mark.asyncio
+async def test_cohort_compare_accepts_unknown_trace_status(monkeypatch) -> None:
+    from traigent.analytics_mcp.tools import observability_compare_cohorts_tool
+
+    reader = AsyncMock()
+    reader.compare_observability_cohorts.return_value = _cohort_comparison()
+    _install_fake_client(monkeypatch, reader)
+    cohort = {
+        "start_time": "2026-07-01T00:00:00Z",
+        "end_time": "2026-07-02T00:00:00Z",
+        "trace_statuses": ["unknown"],
+        "sample_limit": 100,
+    }
+
+    result = await observability_compare_cohorts_tool(
+        "project-1", cohort, cohort, ["error_rate"]
+    )
+
+    assert result["ok"] is True

@@ -2036,3 +2036,95 @@ class TestLimitExplicitFailsClosed:
     ) -> None:
         monkeypatch.setenv("TRAIGENT_RUN_COST_LIMIT", "  ")
         assert CostEnforcer().config.limit_explicit is False
+
+
+class TestCostDivergenceNeedsObservedBaseline:
+    """#2538: the divergence warning compares only against observed trial costs."""
+
+    def test_first_trial_never_warns_against_the_seed_estimate(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=1.0, approved=True))
+        permit = enforcer.acquire_permit()
+
+        with caplog.at_level("WARNING", logger="traigent.core.cost_enforcement"):
+            enforcer.track_cost(0.27, permit=permit)
+
+        assert "Cost divergence" not in caplog.text
+        assert enforcer._estimated_cost == pytest.approx(0.27)
+
+    def test_later_trial_warns_against_observed_mean(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0, approved=True))
+        first = enforcer.acquire_permit()
+        enforcer.track_cost(0.10, permit=first)
+        second = enforcer.acquire_permit()
+
+        with caplog.at_level("WARNING", logger="traigent.core.cost_enforcement"):
+            enforcer.track_cost(0.50, permit=second)
+
+        assert "Cost divergence detected" in caplog.text
+        assert "$0.1000" in caplog.text
+
+
+def test_budget_block_message_names_real_cause_when_limit_reached_2675():
+    """#2675: measured spend over the limit must not claim the trial limit."""
+    from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig
+
+    e = CostEnforcer(
+        CostEnforcerConfig(limit=1.0, fallback_trial_limit=10, limit_explicit=False)
+    )
+    p = e.acquire_permit()
+    e.track_cost(None, permit=p)
+    p = e.acquire_permit()
+    e.track_cost(1.50, permit=p)
+    msg = e.budget_block_message(8)
+    assert "fallback trial limit 10 reached" not in msg
+    assert "cost limit ($1.00) was reached" in msg
+
+
+def test_budget_block_message_keeps_fallback_prefix_when_trial_cap_hit_2675():
+    from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig
+
+    e = CostEnforcer(
+        CostEnforcerConfig(limit=100.0, fallback_trial_limit=2, limit_explicit=False)
+    )
+    for _ in range(2):
+        p = e.acquire_permit()
+        e.track_cost(None, permit=p)
+    assert "fallback trial limit 2 reached at 2 trials" in e.budget_block_message(5)
+
+
+def test_zero_trial_cost_limit_stop_names_limit_and_reservation_2671():
+    """#2671: a cost_limit stop before any trial must say why and how to proceed."""
+    from types import SimpleNamespace
+
+    from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig
+    from traigent.core.orchestrator import OptimizationOrchestrator
+
+    enforcer = CostEnforcer(
+        CostEnforcerConfig(limit=0.002, estimated_cost_per_trial=0.05)
+    )
+    orch = SimpleNamespace(
+        _stop_reason="cost_limit", _trials=[], cost_enforcer=enforcer
+    )
+    detail = OptimizationOrchestrator._describe_stop(orch)
+    assert detail is not None
+    assert "$0.0020" in detail
+    assert "$0.0500" in detail
+    assert "Raise cost_limit" in detail
+
+
+def test_cost_limit_stop_after_trials_keeps_generic_detail_2671():
+    from types import SimpleNamespace
+
+    from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig
+    from traigent.core.orchestrator import OptimizationOrchestrator
+
+    enforcer = CostEnforcer(CostEnforcerConfig(limit=1.0))
+    orch = SimpleNamespace(
+        _stop_reason="cost_limit", _trials=[1], cost_enforcer=enforcer
+    )
+    detail = OptimizationOrchestrator._describe_stop(orch)
+    assert detail == "Stopped at 1 trials: the cost limit was reached."

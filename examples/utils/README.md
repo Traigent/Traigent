@@ -72,7 +72,7 @@ Full LangChain mocks for offline testing:
 from mock_langchain import ChatOpenAI, HumanMessage, SystemMessage
 
 # Works without LangChain installed
-llm = ChatOpenAI(model="gpt-4", temperature=0.7)
+llm = ChatOpenAI(model="gpt-4.1", temperature=0.7)
 response = llm.invoke([HumanMessage(content="Hello")])
 ```
 
@@ -89,7 +89,7 @@ Simpler compatibility layer:
 ```python
 from langchain_compat import ChatOpenAI, HumanMessage, extract_content
 
-llm = ChatOpenAI(model="gpt-4")
+llm = ChatOpenAI(model="gpt-4.1")
 response = llm.invoke([HumanMessage(content="Hi")])
 text = extract_content(response)  # Get content as string
 ```

@@ -18,6 +18,7 @@ from urllib.parse import quote, urlencode
 
 import requests  # Always needed for synchronous operations
 
+from traigent.labels.transport_gate import gate_session
 from traigent.cloud.api_operations import _typed_configuration_space
 from traigent.cloud.client import raise_if_cloud_egress_disabled
 from traigent.cloud.models import (
@@ -136,7 +137,7 @@ class SyncManager:
         # X-API-Key only — Authorization: Bearer is reserved for JWTs.
         self.headers = {"X-API-Key": api_key} if api_key else {}
         # Always create requests session for synchronous operations
-        self._session = requests.Session()
+        self._session = gate_session(requests.Session(), origins=[self.base_url])
         if api_key:
             self._session.headers.update(self.headers)
         self._request_timeout = self._resolve_request_timeout()
@@ -239,6 +240,8 @@ class SyncManager:
                 "optimizer",
                 "plateau",
                 "convergence",
+                "safety_constraint",
+                "safety_constraint_insufficient_evidence",
                 "user_cancelled",
                 "condition",
                 "error",
@@ -540,16 +543,9 @@ class SyncManager:
 
         for result in self._convert_trials_to_results(trials):
             measures = self._configuration_run_measures(result)
-            experiment_parameters = result.get("experiment_parameters") or {}
-            if not experiment_parameters:
-                # The backend binds each trial to a non-empty config; fall back
-                # to a config recorded in the trial metadata (if any) before
-                # giving up.
-                metadata = result.get("metadata")
-                if isinstance(metadata, Mapping):
-                    metadata_config = metadata.get("config")
-                    if isinstance(metadata_config, Mapping) and metadata_config:
-                        experiment_parameters = dict(metadata_config)
+            experiment_parameters = self.upload_config_for_trial(
+                result.get("experiment_parameters"), result.get("metadata")
+            )
             status = "FAILED" if result.get("status") == "failed" else "COMPLETED"
             configuration_run: dict[str, Any] = {
                 "trial_id": result.get("trial_id"),
@@ -567,6 +563,21 @@ class SyncManager:
             configuration_runs.append(configuration_run)
 
         return configuration_runs
+
+    @staticmethod
+    def upload_config_for_trial(config: Any, metadata: Any) -> Any:
+        """The config sync submits for a trial; empty means sync SKIPS the trial.
+
+        The backend binds each trial to a non-empty config; fall back to a config
+        recorded in the trial metadata (if any) before giving up. Shared with
+        ``report-example-map --target synced`` so the map omits the same trials.
+        """
+        experiment_parameters = config or {}
+        if not experiment_parameters and isinstance(metadata, Mapping):
+            metadata_config = metadata.get("config")
+            if isinstance(metadata_config, Mapping) and metadata_config:
+                experiment_parameters = dict(metadata_config)
+        return experiment_parameters
 
     def _configuration_run_measures(self, result: dict[str, Any]) -> dict[str, Any]:
         """Build measures for the backend configuration-run schema."""
@@ -849,6 +860,23 @@ class SyncManager:
                     "you want to upload, or `traigent local list` to see the "
                     "ids on this machine."
                 ) from None
+
+            from traigent.cloud import content_less as _content_less
+
+            if _content_less.replay_refused(getattr(session, "metadata", None)):
+                # Nothing is converted or sent: the replay body is a legacy identity body.
+                return {
+                    "session_id": session_id,
+                    "function_name": session.function_name,
+                    "status": "error",
+                    "error_code": _content_less.REPLAY_UNSUPPORTED,
+                    "dry_run": dry_run,
+                    "data_converted": False,
+                    "errors": [
+                        "Content-less sessions cannot be replayed yet "
+                        f"({_content_less.REPLAY_UNSUPPORTED})."
+                    ],
+                }
 
             # Convert to Traigent format
             traigent_data = self.convert_session_to_traigent_format(session)

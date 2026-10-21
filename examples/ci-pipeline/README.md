@@ -9,7 +9,7 @@ CI-driven LLM tuning.
 | Stage | Script | Purpose |
 |---|---|---|
 | `prepare_dataset` | `scripts/auto_tune/prepare_dataset.py` | Split raw data into train/test |
-| `optimize` | `traigent.cli optimize` | Run Traigent optimization loop |
+| `optimize` | `python -m traigent optimize optimize_target.py`, then `export_results.py` | Run the optimization loop on your `@traigent.optimize` file, then export the persisted result as `optimization_results/latest.json` and `metrics.json` |
 | `evaluate` | `scripts/auto_tune/evaluate_performance.py` | Compare against baseline |
 | `report` | `scripts/auto_tune/generate_report.py` | Generate performance report |
 
@@ -20,7 +20,7 @@ CI-driven LLM tuning.
 pip install dvc "traigent[recommended]"
 
 # Copy pipeline files to your project root
-cp dvc.yaml params.yaml /path/to/your/project/
+cp dvc.yaml params.yaml export_results.py /path/to/your/project/
 
 # Initialize DVC and run
 cd /path/to/your/project
@@ -29,6 +29,15 @@ dvc repro
 ```
 
 ## Configuration
+
+The `optimize` stage runs `python -m traigent optimize` on `optimize_target.py`,
+a Python file in your project root containing your `@traigent.optimize`
+function. Create it before running `dvc repro`.
+
+The CLI persists each run under `optimization_results/<function>_<algorithm>_<max_trials>/`.
+`export_results.py` reads the newest such run and writes the flat
+`optimization_results/latest.json` and `metrics.json` that the DVC outputs and
+the downstream `evaluate` and `report` stages consume.
 
 Edit `params.yaml` to control:
 
@@ -52,3 +61,19 @@ outputs, so only stages with changed dependencies re-run.
   env:
     TRAIGENT_API_KEY: ${{ secrets.TRAIGENT_API_KEY }}
 ```
+
+## Result export and cost honesty
+
+`export_results.py` reads the complete per-trial record (`trials.json.gz`,
+failed trials included, with their `status`), not `trials_summary.json`, which
+is only a sample of the first 50 successful trials. If that record is missing,
+unreadable or does not match the run's trial count, the export exits non-zero
+with a content-free message instead of writing empty results.
+
+Each exported trial carries `cost` (the measured value, or `null`) and
+`cost_status` (`measured`, `unmeasured` or `unpriced`), plus
+`cost_lower_bound` when a known spend floor exists. Unknown cost is never
+exported as `0`. The `evaluate` and `report` stages exclude non-measured trials
+from cost totals and comparisons and show them as "unmeasured".
+
+Self-check: `pytest tests/examples/test_ci_pipeline_export.py` (in the Traigent repo).

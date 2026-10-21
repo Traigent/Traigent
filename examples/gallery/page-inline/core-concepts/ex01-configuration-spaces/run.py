@@ -34,7 +34,7 @@ def main() -> None:
             results.best_config
             if results and hasattr(results, "best_config")
             else {
-                "model": "gpt-3.5-turbo",
+                "model": "gpt-4.1-mini",
                 "temperature": 0.5,
                 "max_tokens": 200,
                 "top_p": 0.9,
@@ -45,7 +45,7 @@ def main() -> None:
     except Exception as e:
         print(f"Note: {e}")
         best_config = {
-            "model": "gpt-3.5-turbo",
+            "model": "gpt-4.1-mini",
             "temperature": 0.5,
             "max_tokens": 200,
             "top_p": 0.9,
@@ -60,7 +60,7 @@ def main() -> None:
         "best_configuration": best_config,
         "configuration_types": {
             "discrete_choices": {
-                "example": "model: ['gpt-3.5-turbo', 'gpt-4o-mini', 'gpt-4o']",
+                "example": "model: ['gpt-4.1-mini', 'gpt-4.1']",
                 "description": "Select from predefined options",
             },
             "numerical_ranges": {

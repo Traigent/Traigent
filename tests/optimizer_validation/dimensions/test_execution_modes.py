@@ -1,8 +1,9 @@
 """Tests for execution mode configurations.
 
-Tests execution modes. edge_analytics and hybrid are supported today.
-standard is a deprecated compatibility value that warns and resolves.
-privacy and cloud fail closed instead of normalizing.
+Tests execution modes. The real modes are the members of ExecutionMode
+(local, hybrid, hybrid_api). standard is a deprecated compatibility value that
+warns and resolves. edge_analytics, privacy and cloud are removed and fail
+closed instead of normalizing; they appear here only as negative cases.
 """
 
 from __future__ import annotations
@@ -15,10 +16,17 @@ from tests.optimizer_validation.specs import (
     TestScenario,
     basic_scenario,
 )
+from traigent.config.types import ExecutionMode
 from traigent.utils.exceptions import ConfigurationError
 
-# Supported local execution modes.
-SUPPORTED_EXECUTION_MODES = ["edge_analytics", "hybrid"]
+# Real execution modes that can run in this suite, derived from the SDK enum.
+# hybrid_api needs a live API endpoint, so it is covered by validation tests only.
+SUPPORTED_EXECUTION_MODES = [
+    mode.value for mode in ExecutionMode if mode is not ExecutionMode.HYBRID_API
+]
+
+# Removed selectors that must fail closed.
+REMOVED_EXECUTION_MODES = ["edge_analytics", "privacy", "cloud"]
 
 
 class TestExecutionModeMatrix:
@@ -119,22 +127,22 @@ class TestInvalidExecutionMode:
         assert validation.passed, validation.summary()
 
 
-class TestEdgeAnalyticsMode:
-    """Tests specific to EDGE_ANALYTICS execution mode."""
+class TestLocalMode:
+    """Tests specific to LOCAL execution mode."""
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_edge_analytics_runs_locally(
+    async def test_local_runs_locally(
         self,
         scenario_runner,
         result_validator,
     ) -> None:
-        """Test edge_analytics mode runs optimization locally."""
+        """Test local mode runs optimization locally."""
         scenario = basic_scenario(
-            name="edge_analytics_local",
-            execution_mode="edge_analytics",
+            name="local_mode",
+            execution_mode="local",
             max_trials=3,
-            gist_template="edge_analytics -> {trial_count()} | {status()}",
+            gist_template="local -> {trial_count()} | {status()}",
         )
 
         _, result = await scenario_runner(scenario)
@@ -153,19 +161,19 @@ class TestEdgeAnalyticsMode:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_edge_analytics_with_minimal_logging(
+    async def test_local_with_minimal_logging(
         self,
         scenario_runner,
         result_validator,
     ) -> None:
-        """Test edge_analytics mode with minimal logging enabled."""
+        """Test local mode with minimal logging enabled."""
         scenario = TestScenario(
-            name="edge_analytics_minimal_log",
-            description="Edge analytics with minimal logging",
-            execution_mode="edge_analytics",
+            name="local_minimal_log",
+            description="Local mode with minimal logging",
+            execution_mode="local",
             config_space={"model": ["gpt-3.5-turbo", "gpt-4"]},
             max_trials=2,
-            gist_template="edge_analytics -> {trial_count()} | {status()}",
+            gist_template="local -> {trial_count()} | {status()}",
         )
 
         _, result = await scenario_runner(scenario)
@@ -193,6 +201,55 @@ class TestPrivacyMode:
 
         with pytest.raises(ConfigurationError, match="fails closed"):
             validate_execution_mode("privacy")
+
+
+class TestRemovedEdgeAnalyticsMode:
+    """edge_analytics was removed and must fail closed, never silently remap."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "removed_mode", ["edge_analytics", "EDGE_ANALYTICS", "  edge_analytics  "]
+    )
+    def test_edge_analytics_fails_closed(self, removed_mode: str) -> None:
+        """validate_execution_mode raises the removal error for edge_analytics."""
+        from traigent.config.types import validate_execution_mode
+
+        with pytest.raises(ConfigurationError, match="has been removed"):
+            validate_execution_mode(removed_mode)
+
+    @pytest.mark.unit
+    def test_edge_analytics_enum_access_fails_closed(self) -> None:
+        """The ExecutionMode enum no longer exposes or accepts edge_analytics."""
+        with pytest.raises(ValueError, match="has been removed"):
+            ExecutionMode("edge_analytics")
+        with pytest.raises(KeyError, match="removed"):
+            ExecutionMode["EDGE_ANALYTICS"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_edge_analytics_scenario_is_rejected(self, scenario_runner) -> None:
+        """A scenario using edge_analytics surfaces the removal ConfigurationError."""
+        scenario = basic_scenario(
+            name="edge_analytics_removed",
+            execution_mode="edge_analytics",
+            max_trials=1,
+            gist_template="edge_analytics -> {error_type()} | {status()}",
+        )
+
+        _, result = await scenario_runner(scenario)
+
+        assert isinstance(result, ConfigurationError), f"Got: {result!r}"
+        assert "has been removed" in str(result)
+
+
+class TestRealExecutionModesAreTheEnum:
+    """The suite's real-mode list must follow the SDK enum."""
+
+    @pytest.mark.unit
+    def test_real_modes_match_enum(self) -> None:
+        assert {m.value for m in ExecutionMode} == {"local", "hybrid", "hybrid_api"}
+        for removed in REMOVED_EXECUTION_MODES:
+            assert removed not in {m.value for m in ExecutionMode}
 
 
 class TestHybridMode:
@@ -346,7 +403,7 @@ class TestExecutionModeEdgeCases:
             name="execution_mode_uppercase",
             description="Execution mode with uppercase",
             config_space={"model": ["gpt-3.5-turbo", "gpt-4"]},
-            execution_mode="EDGE_ANALYTICS",  # Uppercase instead of lowercase
+            execution_mode="LOCAL",  # Uppercase instead of lowercase
             max_trials=2,
             gist_template="case_mode -> {trial_count()} | {status()}",
         )
@@ -377,7 +434,7 @@ class TestExecutionModeEdgeCases:
             name="execution_mode_whitespace",
             description="Execution mode with whitespace",
             config_space={"model": ["gpt-3.5-turbo", "gpt-4"]},
-            execution_mode="  edge_analytics  ",  # Whitespace around value
+            execution_mode="  local  ",  # Whitespace around value
             max_trials=2,
             gist_template="ws_mode -> {trial_count()} | {status()}",
         )

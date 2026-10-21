@@ -8,6 +8,7 @@ defined in traigent.yml.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,10 @@ from traigent.utils.cost_calculator import ESTIMATION_MODEL_PRICING, MODEL_NAME_
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+# A dated snapshot suffix of the SAME model id: -YYYYMMDD, -YYYY-MM-DD, @YYYYMMDD.
+_SNAPSHOT_SUFFIX = re.compile(r"^[-@](\d{8}|\d{4}-\d{2}-\d{2})$")
 
 
 def _build_model_cost_per_1k() -> dict[str, float]:
@@ -45,6 +50,10 @@ def _build_model_cost_per_1k() -> dict[str, float]:
 # Model cost estimates per 1K tokens (input + output average).
 # Derived from the canonical ESTIMATION_MODEL_PRICING in cost_calculator.py.
 MODEL_COST_PER_1K: dict[str, float] = _build_model_cost_per_1k()
+
+# Ids that may be the base of a dated-snapshot match. Family aliases
+# (``claude-haiku``) are exact-only: they must never price another generation.
+_SNAPSHOT_BASES: frozenset[str] = frozenset(ESTIMATION_MODEL_PRICING)
 
 # Default tokens per query estimate
 DEFAULT_TOKENS_PER_QUERY = 1000
@@ -297,6 +306,23 @@ class AgentValidator:
         cost_constraints = self.config.constraints.cost
         estimated_cost = self._estimate_cost_per_query(agent)
 
+        # Fail closed: a cost ceiling is a policy surface, so a model with no
+        # known price must never count as free (error, not warning).
+        if cost_constraints.max_cost_per_query is not None:
+            unpriced = self._unpriced_models(agent)
+            if unpriced:
+                errors.append(
+                    ValidationIssue(
+                        severity="error",
+                        code="COST_UNKNOWN",
+                        message=(
+                            f"{len(unpriced)} configured model(s) have no known price, "
+                            "so max_cost_per_query cannot be verified"
+                        ),
+                        suggestion="Use a model with a known price",
+                    )
+                )
+
         if estimated_cost is None:
             return errors, warnings
 
@@ -327,6 +353,34 @@ class AgentValidator:
 
         return errors, warnings
 
+    @staticmethod
+    def _lookup_cost_per_1k(model: str) -> float | None:
+        """Return blended cost per 1K tokens for a model, or None if unpriced.
+
+        Exact match first, then a dated snapshot of the same model id
+        (``gpt-4o-mini-2024-07-18`` -> ``gpt-4o-mini``,
+        ``claude-haiku-4-5-20260101`` -> ``claude-haiku-4-5``). Family aliases
+        and other-generation ids never match by prefix, so an unknown model is
+        reported as unpriced rather than mis-priced.
+        """
+        name = model.lower()
+        exact = MODEL_COST_PER_1K.get(name)
+        if exact is not None:
+            return exact
+        best: str | None = None
+        for known in _SNAPSHOT_BASES:
+            if (
+                name.startswith(known)
+                and _SNAPSHOT_SUFFIX.match(name[len(known) :])
+                and (best is None or len(known) > len(best))
+            ):
+                best = known
+        return MODEL_COST_PER_1K[best] if best is not None else None
+
+    def _unpriced_models(self, agent: AgentInfo) -> list[str]:
+        """Models in the agent config that have no known price."""
+        return [m for m in agent.models if self._lookup_cost_per_1k(m) is None]
+
     def _estimate_cost_per_query(self, agent: AgentInfo) -> float | None:
         """Estimate cost per query for an agent.
 
@@ -344,13 +398,7 @@ class AgentValidator:
         # Calculate max cost across all configured models
         costs = []
         for model in agent.models:
-            cost_per_1k = MODEL_COST_PER_1K.get(model.lower())
-            if cost_per_1k is None:
-                # Try partial match for model variants
-                for known_model, known_cost in MODEL_COST_PER_1K.items():
-                    if known_model in model.lower() or model.lower() in known_model:
-                        cost_per_1k = known_cost
-                        break
+            cost_per_1k = self._lookup_cost_per_1k(model)
 
             if cost_per_1k is not None:
                 costs.append(cost_per_1k * (max_tokens / 1000))
@@ -386,8 +434,13 @@ class AgentValidator:
                 )
                 results.append(self.validate_agent(agent))
 
-        except Exception as e:
-            logger.warning(f"Failed to validate {file_path}: {e}")
+        except (Exception, SystemExit) as e:
+            # SystemExit: a scanned module may call sys.exit() at import time;
+            # it must be reported as a failure, not terminate the validator.
+            # Report only the exception class: the message may carry content
+            # from the scanned module (e.g. sys.exit("<secret>")).
+            error_type = type(e).__name__
+            logger.warning(f"Failed to validate file: {error_type}")
             results.append(
                 ValidationResult(
                     function_name=str(file_path),
@@ -396,7 +449,7 @@ class AgentValidator:
                         ValidationIssue(
                             severity="error",
                             code="DISCOVERY_ERROR",
-                            message=f"Failed to discover functions: {e}",
+                            message=f"Failed to discover functions ({error_type})",
                             suggestion="Check file syntax and imports",
                         )
                     ],
@@ -423,9 +476,11 @@ class AgentValidator:
         pattern = "**/*.py" if recursive else "*.py"
         for py_file in directory.glob(pattern):
             # Skip common non-source directories
+            # Only inspect components below the scan root so an explicit
+            # target such as ``_agents/`` is not skipped.
             if any(
                 part.startswith((".", "_", "venv", "node_modules", "__pycache__"))
-                for part in py_file.parts
+                for part in py_file.relative_to(directory).parts
             ):
                 continue
 

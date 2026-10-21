@@ -104,7 +104,8 @@ def test_verify_fixture_reports_checked_active() -> None:
     )
     assert result.exit_code == 0, result.output
     assert result.output.splitlines() == [
-        "VERIFIED",
+        "signature_and_structure=VERIFIED "
+        "(quality numbers are customer-reported; see the certificate non-claims)",
         "trust_status_evidence=checked_active",
         "trust_status_effective_time=2026-09-08T10:10:00Z",
     ]

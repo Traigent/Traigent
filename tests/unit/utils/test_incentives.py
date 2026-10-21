@@ -567,7 +567,7 @@ class TestGetContextualHint:
         assert hint is not None
         assert "optimizations completed" in hint.lower()
         assert "traigent cloud" in hint.lower()
-        assert "traigent login" in hint.lower()
+        assert "traigent auth login" in hint.lower()
 
     def test_get_contextual_hint_returns_storage_growing_hint(
         self, manager: IncentiveManager
@@ -782,7 +782,13 @@ class TestCheckAchievements:
         return TraigentConfig(
             execution_mode=ExecutionMode.LOCAL.value,
             local_storage_path=temp_storage_path,
+            minimal_logging=False,
         )
+
+    @pytest.fixture(autouse=True)
+    def _real_run(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The suite runs with mock LLM on; these tests cover real-run banners."""
+        monkeypatch.delenv("TRAIGENT_MOCK_LLM", raising=False)
 
     @pytest.fixture
     def manager(self, edge_analytics_config: TraigentConfig) -> IncentiveManager:
@@ -1334,7 +1340,7 @@ class TestShowOnboardingTips:
 
         assert "traigent local list" in tips_text
         assert "traigent local show" in tips_text
-        assert "traigent login" in tips_text
+        assert "traigent auth login" in tips_text
 
 
 class TestGlobalFunctions:
@@ -1661,3 +1667,126 @@ def test_nested_summary_writers_use_unique_temporary_paths(tmp_path, monkeypatch
     storage.session_summaries()
     assert len(sources) == 2
     assert len(set(sources)) == 2
+
+
+class TestAchievementBannerSuppression:
+    """#2544: achievement banners honour minimal_logging and hint opt-outs."""
+
+    @pytest.fixture(autouse=True)
+    def _real_run(self, monkeypatch) -> None:
+        # tests/conftest.py enables mock mode globally, which would suppress
+        # the banner on its own and hide a broken guard under test (#2516).
+        monkeypatch.delenv("TRAIGENT_MOCK_LLM", raising=False)
+
+    def _manager(self, tmp_path, minimal_logging: bool) -> IncentiveManager:
+        return IncentiveManager(
+            TraigentConfig(
+                execution_mode=ExecutionMode.LOCAL.value,
+                local_storage_path=str(tmp_path),
+                minimal_logging=minimal_logging,
+            )
+        )
+
+    @staticmethod
+    def _sessions() -> list:
+        return [
+            Mock(spec=OptimizationSession, status=OptimizationStatus.COMPLETED.value)
+        ]
+
+    def test_minimal_logging_prints_no_banner(self, tmp_path, capsys) -> None:
+        manager = self._manager(tmp_path, minimal_logging=True)
+
+        manager._check_achievements(self._sessions())
+
+        assert capsys.readouterr().out == ""
+        assert manager._state["achievement_unlocked"] == []
+
+    def test_env_opt_out_prints_no_banner(self, tmp_path, capsys, monkeypatch) -> None:
+        monkeypatch.setenv("TRAIGENT_DISABLE_HINTS", "1")
+        manager = self._manager(tmp_path, minimal_logging=False)
+
+        manager._check_achievements(self._sessions())
+
+        assert capsys.readouterr().out == ""
+
+    def test_dismissed_hints_print_no_banner(self, tmp_path, capsys) -> None:
+        manager = self._manager(tmp_path, minimal_logging=False)
+        manager._state["upgrade_dismissed"] = True
+
+        manager._check_achievements(self._sessions())
+
+        assert capsys.readouterr().out == ""
+
+    def test_mock_run_prints_no_achievement_and_unlocks_nothing(
+        self, tmp_path, capsys, monkeypatch
+    ) -> None:
+        """#2516: a mock run is not a real first optimization."""
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+        manager = self._manager(tmp_path, minimal_logging=False)
+
+        manager._check_achievements(self._sessions())
+
+        assert capsys.readouterr().out == ""
+        assert manager._state["achievement_unlocked"] == []
+
+
+class TestHintEligibilityEnvOptOut:
+    """#2544: TRAIGENT_DISABLE_HINTS also gates the shared hint-eligibility path."""
+
+    @staticmethod
+    def _milestone_manager(tmp_path) -> IncentiveManager:
+        manager = IncentiveManager(
+            TraigentConfig(
+                execution_mode=ExecutionMode.LOCAL.value,
+                local_storage_path=str(tmp_path),
+            )
+        )
+        manager._state["completed_sessions"] = 3
+        manager._state["last_hint"] = None
+        return manager
+
+    def test_milestone_hint_shows_without_opt_out(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.delenv("TRAIGENT_DISABLE_HINTS", raising=False)
+        manager = self._milestone_manager(tmp_path)
+        assert manager.should_show_hint("session_complete") is True
+
+    def test_env_opt_out_blocks_milestone_hint(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("TRAIGENT_DISABLE_HINTS", "1")
+        manager = self._milestone_manager(tmp_path)
+        assert manager.should_show_hint("session_complete") is False
+        assert manager.get_contextual_hint("session_complete") is None
+
+    def test_show_upgrade_hint_helper_honours_env_opt_out(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.LOCAL.value,
+            local_storage_path=str(tmp_path),
+        )
+
+        def _run(env_value: str | None) -> Mock:
+            if env_value is None:
+                monkeypatch.delenv("TRAIGENT_DISABLE_HINTS", raising=False)
+            else:
+                monkeypatch.setenv("TRAIGENT_DISABLE_HINTS", env_value)
+            with (
+                patch.object(TraigentConfig, "from_environment", return_value=config),
+                patch.object(IncentiveManager, "update_usage_stats"),
+                patch.object(
+                    IncentiveManager,
+                    "_load_state",
+                    return_value={
+                        "completed_sessions": 3,
+                        "hints_shown": [],
+                        "last_hint": None,
+                        "upgrade_dismissed": False,
+                    },
+                ),
+                patch.object(IncentiveManager, "_save_state"),
+                patch("traigent.utils.incentives.logger") as mock_logger,
+            ):
+                show_upgrade_hint("session_complete")
+            return mock_logger
+
+        assert _run(None).info.called
+        assert not _run("1").info.called

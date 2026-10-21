@@ -1109,3 +1109,39 @@ class TestDominanceMissingObjectiveNonComparable:
         assert calc.calculate_hypervolume([partial, complete], ref) == pytest.approx(
             expected
         )
+
+
+@pytest.mark.parametrize(
+    "cost_name",
+    [
+        "cost",
+        "input_cost",
+        "output_cost",
+        "total_cost",
+        "cost_per_example_mean",
+        "cost_per_1k",
+    ],
+)
+def test_unpriced_zero_cost_never_dominates_measured_for_any_cost_objective(cost_name):
+    """#2539 review: every SDK cost objective name honours is_cost_unranked."""
+
+    def _trial(tid, cost, flagged):
+        metrics = {"accuracy": 0.9, cost_name: cost}
+        if flagged:
+            metrics["cost_unpriced"] = 1.0
+        return TrialResult(
+            trial_id=tid,
+            config={"id": tid},
+            metrics=metrics,
+            status="completed",
+            duration=0.1,
+            timestamp=datetime.now(),
+            metadata={},
+        )
+
+    calc = ParetoFrontCalculator(maximize={"accuracy": True, cost_name: False})
+    front = calc.calculate_pareto_front(
+        [_trial("unpriced", 0.0, True), _trial("measured", 0.5, False)],
+        ["accuracy", cost_name],
+    )
+    assert [p.trial.trial_id for p in front] == ["measured"]

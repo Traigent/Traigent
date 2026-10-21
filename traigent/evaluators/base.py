@@ -15,12 +15,12 @@ import stat
 import threading
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 from collections.abc import Mapping
 from collections.abc import Mapping as CollectionsMapping
 from collections.abc import Sequence
 from contextlib import contextmanager
-from contextvars import copy_context
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
@@ -42,10 +42,15 @@ from traigent.utils.env_config import is_truthy
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
 from traigent.utils.exceptions import ConfigurationError, EvaluationError
+from traigent.utils.example_id import stamp_row_index
 from traigent.utils.exceptions import TraigentError as CoreTraigentError
 from traigent.utils.exceptions import TrialPrunedError, ValidationError
 from traigent.utils.function_identity import is_coroutine_callable
-from traigent.utils.langchain_interceptor import get_captured_response_by_key
+from traigent.utils.langchain_interceptor import (
+    capture_owner,
+    get_captured_response_by_key,
+    mark_capture_incomplete,
+)
 from traigent.utils.logging import get_logger
 from traigent.utils.removed_params import reject_removed_mock_parameters
 from traigent.utils.trial_costs import (
@@ -98,6 +103,24 @@ example_evaluation_span = None  # type: ignore
 record_example_result = None  # type: ignore
 
 logger = get_logger(__name__)
+
+#: Error-message prefix recorded for an example that exceeded the per-example
+#: limit (``example_timeout``). Such an example is recorded as a failed row
+#: (quality 0.0, cost unknown), not as a ``None`` score.
+EXAMPLE_TIMEOUT_ERROR_PREFIX = "Function call timed out after"
+
+
+def count_timed_out_examples(example_results: Any) -> int:
+    """Count example results whose error records a per-example timeout."""
+    if not isinstance(example_results, list):
+        return 0
+    return sum(
+        1
+        for result in example_results
+        if isinstance(getattr(result, "error_message", None), str)
+        and result.error_message.startswith(EXAMPLE_TIMEOUT_ERROR_PREFIX)
+    )
+
 
 # Cost keys are measurements, not scores: a row that failed or did not report
 # one has an UNKNOWN cost. Imputing 0.0 for it makes a trial look cheaper than
@@ -289,17 +312,59 @@ def _typed_accuracy_equality(actual: Any, expected: Any) -> bool:
     return cast(bool, actual == expected)
 
 
+# Per-trial tally of exact-match string coercions (Traigent#2513, #2499).
+# Inside a scope, coercions are counted and summarised once at WARNING with
+# no content; outside a scope each coercion is reported on its own. Per-example
+# detail is DEBUG and never includes output or expected content.
+_COERCION_TALLY: ContextVar[dict[str, int] | None] = ContextVar(
+    "traigent_accuracy_coercion_tally", default=None
+)
+
+
+def _report_coercion(kind: str, source_len: int) -> None:
+    logger.debug(
+        "Coercing string output (length %d) to %s for exact-match accuracy comparison",
+        source_len,
+        kind,
+    )
+    tally = _COERCION_TALLY.get()
+    if tally is None:
+        logger.warning(
+            "Coercing string output to %s for exact-match accuracy comparison",
+            kind,
+        )
+        return
+    tally[kind] = tally.get(kind, 0) + 1
+
+
+@contextmanager
+def coercion_log_scope() -> Iterator[None]:
+    """Summarise string coercions once for the enclosed trial (no content)."""
+    if _COERCION_TALLY.get() is not None:
+        yield
+        return
+    tally: dict[str, int] = {}
+    token = _COERCION_TALLY.set(tally)
+    try:
+        yield
+    finally:
+        _COERCION_TALLY.reset(token)
+        for kind, count in sorted(tally.items()):
+            logger.warning(
+                "Coercing string output to %s for exact-match accuracy "
+                "comparison (%d examples this trial)",
+                kind,
+                count,
+            )
+
+
 def _accuracy_values_match(actual: Any, expected: Any) -> bool:
     """Return whether two accuracy values match under SDK exact-match semantics."""
     original_actual = actual
     if isinstance(actual, str) and not isinstance(expected, str):
         actual, coerced = _coerce_string_to_expected_type(actual, expected)
         if coerced:
-            logger.warning(
-                "Coercing string output %r to %s for exact-match accuracy comparison",
-                original_actual,
-                type(expected).__name__,
-            )
+            _report_coercion(type(expected).__name__, len(original_actual))
 
     # Container elements get zero normalization otherwise: recurse the same
     # scalar rules element-wise (list/tuple) or value-wise (dict), keyed on
@@ -343,12 +408,7 @@ def _accuracy_values_match(actual: Any, expected: Any) -> bool:
             expected_num = float(expected.strip())
         except ValueError:
             return False
-        logger.warning(
-            "Coercing string output %r and expected %r to numeric for "
-            "exact-match accuracy comparison",
-            actual,
-            expected,
-        )
+        _report_coercion("numeric", len(actual))
         return math.isclose(
             actual_num,
             expected_num,
@@ -493,7 +553,10 @@ try:  # pragma: no cover - import guard for optional dependency
         RAGAS_AVAILABLE,
         RagasConfig,
         RagasConfigurationError,
+        RagasCoverageError,
         compute_ragas_metrics,
+        layer_over_global_defaults,
+        ragas_coverage_keys,
     )
 except ImportError:  # pragma: no cover - executed only when module missing
     POPULAR_RAGAS_METRICS = ()
@@ -504,10 +567,18 @@ except ImportError:  # pragma: no cover - executed only when module missing
         column_map: Mapping[str, str] | None = None
         llm: Any | None = None
         embeddings: Any | None = None
+        min_scored_share: float | None = None
 
     RagasConfig = _FallbackRagasConfig  # type: ignore[misc, assignment]
     RagasConfigurationError = RuntimeError  # type: ignore[misc, assignment]
+    RagasCoverageError = RuntimeError  # type: ignore[misc, assignment]
     compute_ragas_metrics = None  # type: ignore[assignment]
+
+    def layer_over_global_defaults(config: Any) -> Any:  # type: ignore[misc]
+        return config
+
+    def ragas_coverage_keys(metric_name: str) -> tuple[str, str]:  # type: ignore[misc]
+        return f"ragas_{metric_name}_rows_scored", f"ragas_{metric_name}_rows_total"
 
 
 DATASET_ROOT_ENV = "TRAIGENT_DATASET_ROOT"
@@ -1346,6 +1417,12 @@ class EvaluationResult:
     # when no example reported a per-call breakdown.
     model_costs: list[dict[str, Any]] = field(default_factory=list)
 
+    # Per-trial prompt-cache usage (Traigent#2069): ``cached_input_tokens`` and
+    # ``cache_hit_rate`` (cached / total input tokens). Each is ``None`` when
+    # the provider did not report cache usage for every measured example --
+    # unknown, never a measured zero. Local-only; not a wire metric.
+    cache_usage: dict[str, Any] = field(default_factory=dict)
+
     def __post_init__(self) -> None:
         # Backward compatibility mapping
         if self.metrics is None:
@@ -1373,6 +1450,11 @@ class EvaluationResult:
         """Check if any evaluations failed."""
         return self.successful_examples < self.total_examples
 
+    @property
+    def timed_out_examples(self) -> int:
+        """Number of examples that exceeded the per-example time limit."""
+        return count_timed_out_examples(self.example_results)
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dictionary."""
         from traigent.utils.persistence import _safe_json_value
@@ -1398,8 +1480,10 @@ class EvaluationResult:
             "errors": self.errors,
             "success_rate": self.success_rate,
             "has_errors": self.has_errors,
+            "timed_out_examples": self.timed_out_examples,
             "metric_errors": _safe_json_value(self.metric_errors),
             "model_costs": _safe_json_value(self.model_costs),
+            "cache_usage": _safe_json_value(self.cache_usage),
         }
 
     @classmethod
@@ -1433,6 +1517,7 @@ class EvaluationResult:
             errors=data.get("errors"),
             metric_errors=data.get("metric_errors") or [],
             model_costs=data.get("model_costs") or [],
+            cache_usage=data.get("cache_usage") or {},
         )
 
 
@@ -1758,10 +1843,18 @@ class BaseEvaluator(ABC):
             mapping = self.config["ragas_column_map"]
             if isinstance(mapping, Mapping):
                 column_map = mapping
-        return RagasConfig(
-            column_map=column_map,
-            llm=self.config.get("ragas_llm"),
-            embeddings=self.config.get("ragas_embeddings"),
+        # Evaluator kwargs win field by field; globals from
+        # configure_ragas_defaults() fill the gaps (Traigent#2473).
+        return cast(
+            RagasConfig,
+            layer_over_global_defaults(
+                RagasConfig(
+                    column_map=column_map,
+                    llm=self.config.get("ragas_llm"),
+                    embeddings=self.config.get("ragas_embeddings"),
+                    min_scored_share=self.config.get("ragas_min_scored_share"),
+                )
+            ),
         )
 
     def override_metric(self, name: str, func: Callable[..., Any]) -> None:
@@ -1800,7 +1893,9 @@ class BaseEvaluator(ABC):
         (which would drift).
         """
         names: set[str] = set(self._metric_registry)
-        names.update(getattr(self, "_ragas_metric_names", set()))
+        for ragas_name in getattr(self, "_ragas_metric_names", set()):
+            names.add(ragas_name)
+            names.update(ragas_coverage_keys(ragas_name))
         names.update(getattr(self, "metric_functions", None) or {})
         return frozenset(names)
 
@@ -1920,6 +2015,13 @@ class BaseEvaluator(ABC):
                     outputs=outputs,
                     config=self._get_ragas_config(),
                 )
+            except RagasCoverageError as exc:
+                # Too few rows scored: the mean would hide the gap, so the
+                # trial fails closed even for a non-objective metric (#2677).
+                raise EvaluationError(
+                    f"RAGAS coverage below the minimum scored share: {exc}",
+                    original_error=exc,
+                ) from exc
             except RagasConfigurationError as exc:
                 ragas_results = self._fail_or_record_metric_batch_error(
                     exc,
@@ -1938,6 +2040,10 @@ class BaseEvaluator(ABC):
         for metric_name in metric_names:
             if metric_name in ragas_results:
                 metrics[metric_name] = ragas_results[metric_name]
+                # Coverage counts (ints) travel with the score (#2677).
+                for coverage_key in ragas_coverage_keys(metric_name):
+                    if coverage_key in ragas_results:
+                        metrics[coverage_key] = ragas_results[coverage_key]  # type: ignore[assignment]
                 continue
 
             if metric_name in self._metric_registry:
@@ -2007,14 +2113,15 @@ class BaseEvaluator(ABC):
         correct = 0
         total = 0
 
-        for output, exp, error in zip(outputs, expected, errors, strict=False):
-            # Skip only when the expected output itself is missing/empty --
-            # an error is not a reason to drop the example from the count.
-            if _is_empty_expected_output(exp):
-                continue
-            total += 1
-            if error is None and _accuracy_matches_after_unwrap(output, exp):
-                correct += 1
+        with coercion_log_scope():
+            for output, exp, error in zip(outputs, expected, errors, strict=False):
+                # Skip only when the expected output itself is missing/empty --
+                # an error is not a reason to drop the example from the count.
+                if _is_empty_expected_output(exp):
+                    continue
+                total += 1
+                if error is None and _accuracy_matches_after_unwrap(output, exp):
+                    correct += 1
 
         return correct / total if total > 0 else 0.0
 
@@ -2723,12 +2830,13 @@ class BaseEvaluator(ABC):
                             asyncio.shield(async_future), timeout=self.timeout
                         )
                     except TimeoutError:
-                        future.cancel()
+                        if not future.cancel() and not future.done():
+                            mark_capture_incomplete(future)
                         # A running thread cannot be interrupted.  The worker
                         # completion callback retains the lane and any sample
                         # admission until it settles, while this caller gets
                         # its timeout at the configured wall-clock boundary.
-                        error_msg = f"Function call timed out after {self.timeout}s"
+                        error_msg = f"{EXAMPLE_TIMEOUT_ERROR_PREFIX} {self.timeout}s"
                         logger.warning(error_msg)
                         return None, error_msg
                 else:
@@ -2759,11 +2867,7 @@ class BaseEvaluator(ABC):
         """
         api_key_tokens = ("api key", "api_key", "authentication", "openai_api_key")
         if any(token in str(error).lower() for token in api_key_tokens):
-            raise APIKeyError(
-                f"API key error detected. Set the required API key environment "
-                f"variable or use TRAIGENT_MOCK_LLM=true for testing. "
-                f"Original error: {error}"
-            ) from error
+            raise APIKeyError.from_provider_error(error) from error
 
     async def _execute_function(
         self,
@@ -2827,7 +2931,7 @@ class BaseEvaluator(ABC):
         except ConfigurationError:
             raise
         except TimeoutError:
-            error_msg = f"Function call timed out after {self.timeout}s"
+            error_msg = f"{EXAMPLE_TIMEOUT_ERROR_PREFIX} {self.timeout}s"
             logger.warning(error_msg)
             return None, error_msg
         except (FriendlyTraigentError, CoreTraigentError):
@@ -2839,6 +2943,28 @@ class BaseEvaluator(ABC):
             return None, error_msg
 
     async def _evaluate_single_non_detailed(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        example: EvaluationExample,
+        index: int,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+        sample_lease: SampleBudgetLease | None = None,
+        execution_budget_lease: SampleBudgetLease | None = None,
+    ) -> tuple[Any, str | None]:
+        """Run one example inside its own capture-ownership scope (#2444)."""
+        with capture_owner(index):
+            return await self._evaluate_single_non_detailed_owned(
+                func,
+                config,
+                example,
+                index,
+                progress_callback,
+                sample_lease,
+                execution_budget_lease,
+            )
+
+    async def _evaluate_single_non_detailed_owned(
         self,
         func: Callable[..., Any],
         config: dict[str, Any],
@@ -2967,16 +3093,19 @@ class BaseEvaluator(ABC):
         error: Exception,
     ) -> ExampleResult:
         """Create ExampleResult for a failed concurrent evaluation."""
-        return ExampleResult(
-            **result_identity_fields(example, f"example_{index}"),
-            input_data=example.input_data,
-            expected_output=example.expected_output,
-            actual_output=None,
-            metrics={},
-            execution_time=0.0,
-            success=False,
-            error_message=str(error),
-            metadata=example.metadata.copy() if example.metadata else {},
+        return stamp_row_index(
+            ExampleResult(
+                **result_identity_fields(example, f"example_{index}"),
+                input_data=example.input_data,
+                expected_output=example.expected_output,
+                actual_output=None,
+                metrics={},
+                execution_time=0.0,
+                success=False,
+                error_message=str(error),
+                metadata=example.metadata.copy() if example.metadata else {},
+            ),
+            index,
         )
 
     def _process_concurrent_exception(
@@ -3392,15 +3521,16 @@ class BaseEvaluator(ABC):
                     sample_lease, execution_budget_lease
                 )
                 try:
-                    return await self._execute_function(
-                        func,
-                        config,
-                        example.input_data,
-                        executor=None,
-                        worker_started_callback=cleanup_boundary.worker_started,
-                        worker_done_callback=cleanup_boundary.worker_done,
-                        bound_lane_wait=True,
-                    )
+                    with capture_owner(idx):
+                        return await self._execute_function(
+                            func,
+                            config,
+                            example.input_data,
+                            executor=None,
+                            worker_started_callback=cleanup_boundary.worker_started,
+                            worker_done_callback=cleanup_boundary.worker_done,
+                            bound_lane_wait=True,
+                        )
                 except asyncio.CancelledError:
                     cleanup_boundary.cancel()
                     raise
@@ -3479,43 +3609,49 @@ class BaseEvaluator(ABC):
                 return [{"role": "user", "content": str(input_data)}]
         return [{"role": "user", "content": str(input_data)}]
 
+    def _extract_progress_call_metrics(
+        self,
+        example_id: str,
+        example: EvaluationExample,
+        result: ExampleResult,
+        config: dict[str, Any],
+        dataset: Dataset | None,
+        example_index: int,
+    ) -> Any:
+        """Extract a progress measurement; local evaluation overrides ownership."""
+        captured = get_captured_response_by_key(example_id)
+        if captured is None:
+            return None
+        prompt_repr = (
+            str(example.input_data)
+            if not isinstance(example.input_data, dict)
+            else str(example.input_data.get("text") or example.input_data)
+        )
+        return extract_llm_metrics(
+            captured,
+            model_name=config.get("model"),
+            original_prompt=None,
+            response_text=None,
+            prompt_length=len(prompt_repr),
+            response_length=len(str(result.actual_output))
+            if result.actual_output is not None
+            else 0,
+        )
+
     def _extract_response_metrics(
         self,
         example_id: str,
         example: EvaluationExample,
         result: ExampleResult,
         config: dict[str, Any],
+        *,
+        dataset: Dataset | None = None,
+        example_index: int = 0,
     ) -> tuple[dict[str, float], Any]:
         """Extract response metrics and return (metrics_payload_update, response_metrics)."""
-        model_name = config.get("model") if isinstance(config, dict) else None
-        response_metrics = None
-
         try:
-            captured = get_captured_response_by_key(example_id)
-            if captured is None:
-                return {}, None
-
-            original_prompt: Any | None = None
-            response_text: str | None = None
-            prompt_repr = (
-                str(example.input_data)
-                if not isinstance(example.input_data, dict)
-                else str(example.input_data.get("text") or example.input_data)
-            )
-            prompt_length: int | None = len(prompt_repr)
-            response_length: int | None = (
-                len(str(result.actual_output))
-                if result.actual_output is not None
-                else 0
-            )
-
-            response_metrics = extract_llm_metrics(
-                captured,
-                model_name=model_name,
-                original_prompt=original_prompt,
-                response_text=response_text,
-                prompt_length=prompt_length,
-                response_length=response_length,
+            response_metrics = self._extract_progress_call_metrics(
+                example_id, example, result, config, dataset, example_index
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -3526,6 +3662,29 @@ class BaseEvaluator(ABC):
         if response_metrics is None:
             return {}, None
 
+        if not response_metrics.cost_measured:
+            # Unknown cost (no usage, or usage no price covers): never write a
+            # placeholder/partial number into the row or the progress payload;
+            # carry the flag and the exact known floor only (#2444).
+            from traigent.evaluators.metrics_tracker import (
+                enforce_unknown_cost_invariant,
+            )
+
+            cost = response_metrics.cost
+            floor = float(cost.known_cost) + (
+                0.0 if cost.unmeasured else float(cost.total_cost)
+            )
+            result.metrics.update(
+                {
+                    "input_tokens": response_metrics.tokens.input_tokens,
+                    "output_tokens": response_metrics.tokens.output_tokens,
+                    "total_tokens": response_metrics.tokens.total_tokens,
+                }
+            )
+            enforce_unknown_cost_invariant(result.metrics, unknown=True, floor=floor)
+            update: dict[str, float] = {}
+            enforce_unknown_cost_invariant(update, unknown=True, floor=floor)
+            return update, response_metrics
         result.metrics.update(
             {
                 "input_tokens": response_metrics.tokens.input_tokens,
@@ -3603,7 +3762,12 @@ class BaseEvaluator(ABC):
     ) -> dict[str, Any]:
         """Build progress callback payload with metrics."""
         metrics_update, _ = self._extract_response_metrics(
-            example_id, example, result, config
+            example_id,
+            example,
+            result,
+            config,
+            dataset=dataset,
+            example_index=example_index,
         )
         llm_metrics = dict(result.metrics or metrics_update)
 
@@ -3624,6 +3788,19 @@ class BaseEvaluator(ABC):
                 example_id=example_id,
             )
         metrics_payload.update(metrics_update)
+        # One emit-boundary rule: unknown-cost rows leave with no numeric cost.
+        from traigent.evaluators.metrics_tracker import (
+            enforce_unknown_cost_invariant,
+        )
+
+        enforce_unknown_cost_invariant(
+            metrics_payload,
+            unknown=bool(
+                metrics_payload.get("cost_unmeasured")
+                or (result.metrics or {}).get("cost_unmeasured")
+            ),
+            floor=(result.metrics or {}).get("cost_lower_bound"),
+        )
 
         payload: dict[str, Any] = {
             "success": result.success,
@@ -3977,7 +4154,7 @@ class BaseEvaluator(ABC):
                         "output": result.actual_output,
                     },
                 )
-            return result
+            return stamp_row_index(result, example_index)
         except asyncio.CancelledError:
             cleanup_boundary.cancel()
             raise
@@ -3990,9 +4167,35 @@ class BaseEvaluator(ABC):
             self._record_example_trace(span, result)
             if sample_lease:
                 sample_lease.mark_completed()
-            return result
+            return stamp_row_index(result, example_index)
 
     async def _evaluate_single_detailed(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        example: EvaluationExample,
+        example_index: int,
+        dataset: Dataset,
+        executor: Any | None = None,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
+        sample_lease: SampleBudgetLease | None = None,
+        execution_budget_lease: SampleBudgetLease | None = None,
+    ) -> ExampleResult:
+        """Run one example inside its own capture-ownership scope (#2444)."""
+        with capture_owner(example_index):
+            return await self._evaluate_single_detailed_owned(
+                func,
+                config,
+                example,
+                example_index,
+                dataset,
+                executor=executor,
+                progress_callback=progress_callback,
+                sample_lease=sample_lease,
+                execution_budget_lease=execution_budget_lease,
+            )
+
+    async def _evaluate_single_detailed_owned(
         self,
         func: Callable[..., Any],
         config: dict[str, Any],
@@ -4076,6 +4279,7 @@ class BaseEvaluator(ABC):
                 metadata=example.metadata.copy() if example.metadata else {},
                 user_metrics=user_metrics,
             )
+            stamp_row_index(result, example_index)
 
             # Record to tracing span
             self._record_example_trace(span, result)
@@ -4424,8 +4628,14 @@ class SimpleScoringEvaluator(BaseEvaluator):
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.warning(f"Metric function {metric_name} failed: {e}")
-                example_metrics[metric_name] = 0.0
+                # A failed scorer is a failed example, never a measured 0.0
+                # (#2653; same contract as compute_metrics, #1722).
+                raise EvaluationError(
+                    f"Metric function '{metric_name}' raised "
+                    f"{type(e).__name__}: {e}. Refusing to substitute a "
+                    "fabricated 0.0 score.",
+                    original_error=e,
+                ) from e
         return example_metrics
 
     def _call_scoring_function(
@@ -4465,8 +4675,12 @@ class SimpleScoringEvaluator(BaseEvaluator):
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.warning(f"Scoring function failed: {e}")
-            example_metrics["score"] = 0.0
+            # A failed scorer is a failed example, never a measured 0.0 (#2653).
+            raise EvaluationError(
+                f"Scoring function raised {type(e).__name__}: {e}. Refusing "
+                "to substitute a fabricated 0.0 score.",
+                original_error=e,
+            ) from e
         return example_metrics
 
     def _add_llm_metrics_to_example(
@@ -4694,14 +4908,15 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 config=self._get_ragas_config(),
             )
             aggregated_metrics.update(ragas_results)
-        except RagasConfigurationError as exc:
-            logger.warning("RAGAS metrics unavailable: %s", exc)
-            for name in ragas_metric_names:
-                aggregated_metrics.setdefault(name, 0.0)
-        except Exception as exc:  # pragma: no cover - defensive guard
-            logger.warning("Failed to compute ragas metrics: %s", exc)
-            for name in ragas_metric_names:
-                aggregated_metrics.setdefault(name, 0.0)
+        except Exception as exc:
+            # These are this evaluator's objectives: an unavailable or failed
+            # judge is an error, never a substituted 0.0 (#2653).
+            raise EvaluationError(
+                f"RAGAS metrics {ragas_metric_names} could not be computed "
+                f"({type(exc).__name__}: {exc}). Refusing to substitute a "
+                "fabricated 0.0 score for an optimization objective.",
+                original_error=exc,
+            ) from exc
 
     async def evaluate(
         self,
@@ -4838,6 +5053,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
                     metadata=example.metadata.copy() if example.metadata else {},
                 )
 
+                stamp_row_index(example_result, i)
                 example_results.append(example_result)
                 if sample_lease:
                     sample_lease.mark_completed()
@@ -4988,6 +5204,13 @@ class SimpleScoringEvaluator(BaseEvaluator):
             budget, result, execution_budget_lease
         )
 
+    @staticmethod
+    def _model_of_captured_response(response: Any) -> str | None:
+        """The model a captured response reports for itself, if any."""
+        from traigent.utils.response_model import infer_response_model
+
+        return infer_response_model(response)
+
     def _capture_llm_metrics_for_example(
         self, output: Any, config: dict[str, Any], example_index: int
     ) -> dict[str, Any] | None:
@@ -5004,23 +5227,66 @@ class SimpleScoringEvaluator(BaseEvaluator):
         if not (self.capture_llm_metrics and self._metrics_available):
             return None
 
-        captured_responses = self._get_all_captured_responses()
+        captured_responses = [r for r in self._get_all_captured_responses() if r]
         if not captured_responses:
             return None
 
-        response = captured_responses[0]
-        if not response:
-            return None
-
-        model_name = config.get("model")
+        # Every call made while this example ran is charged, each at its own
+        # model, not only the first (Traigent#2411). A call with no usage stays
+        # unmeasured: it makes the example total a floor, never a $0.
+        config_model = config.get("model")
         response_text = self._extract_response_text_from_output(output)
+        metrics_obj = None
+        model_name = config_model
+        measured_cost = 0.0
+        unmeasured_known = 0.0
+        any_unmeasured = False
+        first_metrics = None
+        for position, response in enumerate(captured_responses):
+            call_model = self._model_of_captured_response(response) or config_model
+            call_metrics = self._extract_llm_metrics(
+                response=response,
+                model_name=call_model,
+                original_prompt=None,
+                response_text=response_text if position == 0 else None,
+            )
+            if call_metrics is None:
+                any_unmeasured = True
+                continue
+            if first_metrics is None:
+                first_metrics = call_metrics
+            if getattr(call_metrics, "measured", True) is False or getattr(
+                call_metrics.cost, "unmeasured", False
+            ):
+                any_unmeasured = True
+                unmeasured_known += getattr(call_metrics.cost, "known_cost", 0.0)
+                continue
+            if metrics_obj is None:
+                metrics_obj = call_metrics
+                model_name = call_model
+            else:
+                metrics_obj.tokens.input_tokens += call_metrics.tokens.input_tokens
+                metrics_obj.tokens.output_tokens += call_metrics.tokens.output_tokens
+                metrics_obj.tokens.total_tokens += call_metrics.tokens.total_tokens
+                metrics_obj.cost.input_cost += call_metrics.cost.input_cost
+                metrics_obj.cost.output_cost += call_metrics.cost.output_cost
+                metrics_obj.cost.total_cost += call_metrics.cost.total_cost
+                metrics_obj.cost.unpriced = (
+                    metrics_obj.cost.unpriced or call_metrics.cost.unpriced
+                )
+                metrics_obj.response.response_time_ms += (
+                    call_metrics.response.response_time_ms
+                )
+            measured_cost = metrics_obj.cost.total_cost
 
-        metrics_obj = self._extract_llm_metrics(
-            response=response,
-            model_name=model_name,
-            original_prompt=None,
-            response_text=response_text,
-        )
+        if metrics_obj is None:
+            # Nothing was measured: report the first call's own (unmeasured) shape.
+            metrics_obj = first_metrics
+            if metrics_obj is None:
+                return None
+        elif any_unmeasured:
+            metrics_obj.cost.unmeasured = True
+            metrics_obj.cost.known_cost = measured_cost + unmeasured_known
 
         llm_metrics = self._build_llm_metrics_dict(metrics_obj, model_name)
 
@@ -5075,14 +5341,17 @@ class SimpleScoringEvaluator(BaseEvaluator):
         Returns:
             ExampleResult with failure information
         """
-        return ExampleResult(
-            **result_identity_fields(example, f"example_{index}"),
-            input_data=example.input_data,
-            expected_output=example.expected_output,
-            actual_output=None,
-            metrics=failed_row_metrics(self.metrics),
-            execution_time=0.0,
-            success=False,
-            error_message=str(error),
-            metadata=example.metadata.copy() if example.metadata else {},
+        return stamp_row_index(
+            ExampleResult(
+                **result_identity_fields(example, f"example_{index}"),
+                input_data=example.input_data,
+                expected_output=example.expected_output,
+                actual_output=None,
+                metrics=failed_row_metrics(self.metrics),
+                execution_time=0.0,
+                success=False,
+                error_message=str(error),
+                metadata=example.metadata.copy() if example.metadata else {},
+            ),
+            index,
         )

@@ -18,6 +18,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from traigent.config.types import ExecutionMode
+
+# Real execution modes, derived from the SDK enum (never hand-written).
+EXECUTION_MODE_VALUES = [mode.value for mode in ExecutionMode]
+
 # Use simple dict-based graph if rdflib not available
 try:
     from rdflib import Graph, Literal, Namespace
@@ -43,7 +48,7 @@ CORE_DIMENSIONS = {
         "description": "How config values are passed to the function",
     },
     "ExecutionMode": {
-        "values": ["edge_analytics", "privacy", "hybrid", "cloud", "standard"],
+        "values": list(EXECUTION_MODE_VALUES),
         "description": "Execution environment mode",
     },
     "Algorithm": {
@@ -106,16 +111,9 @@ DIMENSIONS = {
         "core_count": 4,
     },
     "ExecutionMode": {
-        "values": [
-            "edge_analytics",
-            "privacy",
-            "hybrid",
-            "cloud",
-            "standard",
-            "invalid",
-        ],
+        "values": [*EXECUTION_MODE_VALUES, "invalid"],
         "description": "Execution environment mode",
-        "core_count": 5,
+        "core_count": len(EXECUTION_MODE_VALUES),
     },
     "Algorithm": {
         "values": [
@@ -547,11 +545,11 @@ class TestParser:
         defaults: dict[str, Any] = {
             "TestScenario": {
                 "injection_mode": "context",
-                "execution_mode": "edge_analytics",
+                "execution_mode": "local",
             },
             "basic_scenario": {
                 "injection_mode": "context",
-                "execution_mode": "edge_analytics",
+                "execution_mode": "local",
                 "config_space": {
                     "model": ["gpt-3.5-turbo", "gpt-4"],
                     "temperature": [0.3, 0.7],
@@ -908,16 +906,12 @@ class TestParser:
         elif "context" in combined_text:
             dimensions["InjectionMode"] = "context"
 
-        if "edge_analytics" in combined_text:
-            dimensions["ExecutionMode"] = "edge_analytics"
-        elif "privacy" in combined_text and "mode" in combined_text:
-            dimensions["ExecutionMode"] = "privacy"
+        if "hybrid_api" in combined_text:
+            dimensions["ExecutionMode"] = "hybrid_api"
         elif "hybrid" in combined_text and "mode" in combined_text:
             dimensions["ExecutionMode"] = "hybrid"
-        elif "cloud" in combined_text and "mode" in combined_text:
-            dimensions["ExecutionMode"] = "cloud"
-        elif "standard" in combined_text and "mode" in combined_text:
-            dimensions["ExecutionMode"] = "standard"
+        elif "execution_mode" in combined_text and "local" in combined_text:
+            dimensions["ExecutionMode"] = "local"
 
         if "cmaes" in combined_text or "cma-es" in combined_text:
             dimensions["Algorithm"] = "optuna_cmaes"
@@ -1096,8 +1090,8 @@ class TestParser:
         text = aliases.get(dim, {}).get(text, text)
         if dim == "InjectionMode" and text in {"none", "null"}:
             text = "none"
-        if dim == "ExecutionMode" and text == "edgeanalytics":
-            text = "edge_analytics"
+        if dim == "ExecutionMode" and text == "hybridapi":
+            text = "hybrid_api"
         if text in DIMENSIONS.get(dim, {}).get("values", []):
             return text
         return None
@@ -1297,7 +1291,7 @@ class TestParser:
 
         if param_values:
             # pytest uses values only, joined by '-', in alphabetical key order
-            # e.g., [edge_analytics-context] not [execution_mode=edge_analytics,injection_mode=context]
+            # e.g., [local-context] not [execution_mode=local,injection_mode=context]
             param_parts = "-".join(
                 str(param_values[key]) for key in sorted(param_values)
             )

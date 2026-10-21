@@ -1,0 +1,1123 @@
+{
+ "_comment": "Leak identities (route, location, field_path, canary kind) the SDK egress canary run finds on the wire. 'baseline' is the set at creation (2026-10-16, after the coverage expansion) and is never edited. 'register' only shrinks: an identity leaves it only with an entry in leak_dispositions.json (route, location, field_path, kind, reason, reference) naming why it is gone. Additions fail the ratchet test; there is no pass that may add to the register. Single owner-approved exception: on 2026-10-19 decision card security-policy-2026-10-19-egress-primary-objective (option A) added exactly one identity (POST /api/v1/sessions/{id}/results, body.value, $.metadata.comparability.primary_objective, metric_name) to both baseline and register as an open phase-2 leak; no other addition is authorized.",
+ "baseline": [
+  {
+   "route": "GET /api/v1/best-configs/{id}",
+   "location": "query",
+   "field_path": "environment,function_ref",
+   "kind": "agent_name"
+  },
+  {
+   "route": "POST /api/v1/best-configs",
+   "location": "body.key",
+   "field_path": "$.spec.cnryKnob_Dh7S-2bVn4Xe9",
+   "kind": "knob_name"
+  },
+  {
+   "route": "POST /api/v1/best-configs",
+   "location": "body.value",
+   "field_path": "$.environment",
+   "kind": "agent_name"
+  },
+  {
+   "route": "POST /api/v1/best-configs",
+   "location": "body.value",
+   "field_path": "$.spec.cnryKnob_Dh7S-2bVn4Xe9",
+   "kind": "choice_value"
+  },
+  {
+   "route": "POST /api/v1/best-configs",
+   "location": "body.value",
+   "field_path": "$.spec.metric",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/example-sets",
+   "location": "body.value",
+   "field_path": "$.agent_id",
+   "kind": "agent_name"
+  },
+  {
+   "route": "POST /api/v1/example-sets",
+   "location": "body.value",
+   "field_path": "$.name",
+   "kind": "dataset_file_name"
+  },
+  {
+   "route": "POST /api/v1/example-sets/{id}/upload",
+   "location": "body.raw",
+   "field_path": "",
+   "kind": "example_id"
+  },
+  {
+   "route": "POST /api/v1/example-sets/{id}/upload",
+   "location": "body.raw",
+   "field_path": "",
+   "kind": "input_text"
+  },
+  {
+   "route": "POST /api/v1/example-sets/{id}/upload",
+   "location": "body.raw",
+   "field_path": "",
+   "kind": "metadata_key"
+  },
+  {
+   "route": "POST /api/v1/example-sets/{id}/upload",
+   "location": "body.raw",
+   "field_path": "",
+   "kind": "metadata_value"
+  },
+  {
+   "route": "POST /api/v1/example-sets/{id}/upload",
+   "location": "body.raw",
+   "field_path": "",
+   "kind": "output_text"
+  },
+  {
+   "route": "POST /api/v1/hybrid/optimizer/{id}/batch",
+   "location": "body.key",
+   "field_path": "$.submissions[0].metadata.cnryMetaKey_Nb2J-7rKs5Yf4",
+   "kind": "metadata_key"
+  },
+  {
+   "route": "POST /api/v1/hybrid/optimizer/{id}/batch",
+   "location": "body.key",
+   "field_path": "$.submissions[0].metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/hybrid/optimizer/{id}/batch",
+   "location": "body.key",
+   "field_path": "$.submissions[1].metadata.cnryMetaKey_Nb2J-7rKs5Yf4",
+   "kind": "metadata_key"
+  },
+  {
+   "route": "POST /api/v1/hybrid/optimizer/{id}/batch",
+   "location": "body.key",
+   "field_path": "$.submissions[1].metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/hybrid/optimizer/{id}/batch",
+   "location": "body.value",
+   "field_path": "$.submissions[0].metadata.cnryMetaKey_Nb2J-7rKs5Yf4",
+   "kind": "metadata_value"
+  },
+  {
+   "route": "POST /api/v1/hybrid/optimizer/{id}/batch",
+   "location": "body.value",
+   "field_path": "$.submissions[1].metadata.cnryMetaKey_Nb2J-7rKs5Yf4",
+   "kind": "metadata_value"
+  },
+  {
+   "route": "POST /api/v1/hybrid/sessions",
+   "location": "body.key",
+   "field_path": "$.metadata.cnryMetaKey_Nb2J-7rKs5Yf4",
+   "kind": "metadata_key"
+  },
+  {
+   "route": "POST /api/v1/hybrid/sessions",
+   "location": "body.key",
+   "field_path": "$.search_space.cnryKnob_Dh7S-2bVn4Xe9",
+   "kind": "knob_name"
+  },
+  {
+   "route": "POST /api/v1/hybrid/sessions",
+   "location": "body.value",
+   "field_path": "$.metadata.cnryMetaKey_Nb2J-7rKs5Yf4",
+   "kind": "metadata_value"
+  },
+  {
+   "route": "POST /api/v1/hybrid/sessions",
+   "location": "body.value",
+   "field_path": "$.metadata.title",
+   "kind": "run_title"
+  },
+  {
+   "route": "POST /api/v1/hybrid/sessions",
+   "location": "body.value",
+   "field_path": "$.optimization_config.objectives[0]",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/hybrid/sessions",
+   "location": "body.value",
+   "field_path": "$.problem_statement",
+   "kind": "agent_name"
+  },
+  {
+   "route": "POST /api/v1/hybrid/sessions",
+   "location": "body.value",
+   "field_path": "$.search_space.cnryKnob_Dh7S-2bVn4Xe9[0]",
+   "kind": "choice_value"
+  },
+  {
+   "route": "POST /api/v1/hybrid/sessions",
+   "location": "body.value",
+   "field_path": "$.search_space.cnryKnob_Dh7S-2bVn4Xe9[1]",
+   "kind": "prompt_template"
+  },
+  {
+   "route": "POST /api/v1/optimize",
+   "location": "body.key",
+   "field_path": "$.configuration_space.cnryKnob_Dh7S-2bVn4Xe9",
+   "kind": "knob_name"
+  },
+  {
+   "route": "POST /api/v1/optimize",
+   "location": "body.key",
+   "field_path": "$.metadata.cnryMetaKey_Nb2J-7rKs5Yf4",
+   "kind": "metadata_key"
+  },
+  {
+   "route": "POST /api/v1/optimize",
+   "location": "body.value",
+   "field_path": "$.configuration_space.cnryKnob_Dh7S-2bVn4Xe9[0]",
+   "kind": "choice_value"
+  },
+  {
+   "route": "POST /api/v1/optimize",
+   "location": "body.value",
+   "field_path": "$.function_name",
+   "kind": "function_name"
+  },
+  {
+   "route": "POST /api/v1/optimize",
+   "location": "body.value",
+   "field_path": "$.metadata.cnryMetaKey_Nb2J-7rKs5Yf4",
+   "kind": "metadata_value"
+  },
+  {
+   "route": "POST /api/v1/optimize",
+   "location": "body.value",
+   "field_path": "$.objectives[0]",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.key",
+   "field_path": "$.configuration_space.cnryCKnob_Wf4P_8aLz3Rq7",
+   "kind": "constraint_knob"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.key",
+   "field_path": "$.configuration_space.cnryKnob_Dh7S-2bVn4Xe9",
+   "kind": "knob_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.key",
+   "field_path": "$.configuration_space.cnryKnob_Dh7S-2bVn4Xe9-tpl",
+   "kind": "knob_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.key",
+   "field_path": "$.default_config.cnryKnob_Dh7S-2bVn4Xe9",
+   "kind": "knob_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.agent_id",
+   "kind": "agent_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.agent_key",
+   "kind": "agent_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.configuration_space.cnryCKnob_Wf4P_8aLz3Rq7.choices[0]",
+   "kind": "choice_value"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.configuration_space.cnryCKnob_Wf4P_8aLz3Rq7.choices[1]",
+   "kind": "choice_value"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.configuration_space.cnryKnob_Dh7S-2bVn4Xe9-tpl.choices[0]",
+   "kind": "prompt_template"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.configuration_space.cnryKnob_Dh7S-2bVn4Xe9-tpl.choices[1]",
+   "kind": "prompt_template"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.configuration_space.cnryKnob_Dh7S-2bVn4Xe9.choices[0]",
+   "kind": "choice_value"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.configuration_space.cnryKnob_Dh7S-2bVn4Xe9.choices[1]",
+   "kind": "choice_value"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.dataset_id",
+   "kind": "dataset_identity"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.dataset_metadata.name",
+   "kind": "evaluation_set"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.dataset_metadata.name",
+   "kind": "function_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.default_config.cnryKnob_Dh7S-2bVn4Xe9",
+   "kind": "default_config_value"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.evaluator_id",
+   "kind": "evaluator_id"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.function_name",
+   "kind": "agent_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.metadata.evaluation_set",
+   "kind": "evaluation_set"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.metadata.function_display_name",
+   "kind": "agent_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.metadata.function_display_name",
+   "kind": "function_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.metadata.function_name",
+   "kind": "function_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.objectives[0]",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.objectives[0].name",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.run_description",
+   "kind": "run_description"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.run_title",
+   "kind": "run_title"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/finalize",
+   "location": "body.key",
+   "field_path": "$.session_aggregation.metrics.run_cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/finalize",
+   "location": "body.value",
+   "field_path": "$.session_aggregation.primary_objective",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/intermediate-report",
+   "location": "body.value",
+   "field_path": "$.objective_name",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.config.cnryCKnob_Wf4P_8aLz3Rq7",
+   "kind": "constraint_knob"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.config.cnryKnob_Dh7S-2bVn4Xe9",
+   "kind": "knob_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.config.cnryKnob_Dh7S-2bVn4Xe9-tpl",
+   "kind": "knob_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.measures[0].metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.measures[1].metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.metadata.cnryMetaKey_Nb2J-7rKs5Yf4",
+   "kind": "metadata_key"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.metadata.comparability.per_metric_coverage.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.metadata.measures[0].metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.metadata.measures[1].metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.metadata.summary_stats.metadata.aggregation_summary.metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.metadata.summary_stats.metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.metadata.tvar_observation_v1.metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.summary_stats.metadata.aggregation_summary.metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.summary_stats.metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.config.cnryCKnob_Wf4P_8aLz3Rq7",
+   "kind": "choice_value"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.config.cnryKnob_Dh7S-2bVn4Xe9",
+   "kind": "choice_value"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.config.cnryKnob_Dh7S-2bVn4Xe9",
+   "kind": "default_config_value"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.config.cnryKnob_Dh7S-2bVn4Xe9-tpl",
+   "kind": "prompt_template"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.config.prompt",
+   "kind": "prompt_template"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.error_message",
+   "kind": "exception_message"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.metadata.cnryMetaKey_Nb2J-7rKs5Yf4",
+   "kind": "metadata_value"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.metadata.summary_stats.metadata.aggregation_summary.primary_objective",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.metadata.comparability.primary_objective",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.metadata.tvar_observation_v1.primary_metric",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.metadata.tvar_observation_v1.variables[0].name",
+   "kind": "knob_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.metadata.tvar_observation_v1.variables[0].value",
+   "kind": "choice_value"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.metadata.tvar_observation_v1.variables[0].value",
+   "kind": "default_config_value"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.metadata.tvar_observation_v1.variables[1].name",
+   "kind": "knob_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.metadata.tvar_observation_v1.variables[1].value",
+   "kind": "prompt_template"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.outputs_sample[0]",
+   "kind": "model_output"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.summary_stats.metadata.aggregation_summary.primary_objective",
+   "kind": "metric_name"
+  },
+  {
+   "route": "PUT /api/v1/configuration-runs/{id}/measures",
+   "location": "body.key",
+   "field_path": "$.measures[0].cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "PUT /api/v1/configuration-runs/{id}/status",
+   "location": "body.value",
+   "field_path": "$.error_message",
+   "kind": "exception_message"
+  }
+ ],
+ "register": [
+  {
+   "route": "GET /api/v1/best-configs/{id}",
+   "location": "query",
+   "field_path": "environment,function_ref",
+   "kind": "agent_name"
+  },
+  {
+   "route": "POST /api/v1/best-configs",
+   "location": "body.key",
+   "field_path": "$.spec.cnryKnob_Dh7S-2bVn4Xe9",
+   "kind": "knob_name"
+  },
+  {
+   "route": "POST /api/v1/best-configs",
+   "location": "body.value",
+   "field_path": "$.environment",
+   "kind": "agent_name"
+  },
+  {
+   "route": "POST /api/v1/best-configs",
+   "location": "body.value",
+   "field_path": "$.spec.cnryKnob_Dh7S-2bVn4Xe9",
+   "kind": "choice_value"
+  },
+  {
+   "route": "POST /api/v1/best-configs",
+   "location": "body.value",
+   "field_path": "$.spec.metric",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/example-sets",
+   "location": "body.value",
+   "field_path": "$.agent_id",
+   "kind": "agent_name"
+  },
+  {
+   "route": "POST /api/v1/example-sets",
+   "location": "body.value",
+   "field_path": "$.name",
+   "kind": "dataset_file_name"
+  },
+  {
+   "route": "POST /api/v1/example-sets/{id}/upload",
+   "location": "body.raw",
+   "field_path": "",
+   "kind": "example_id"
+  },
+  {
+   "route": "POST /api/v1/example-sets/{id}/upload",
+   "location": "body.raw",
+   "field_path": "",
+   "kind": "input_text"
+  },
+  {
+   "route": "POST /api/v1/example-sets/{id}/upload",
+   "location": "body.raw",
+   "field_path": "",
+   "kind": "metadata_key"
+  },
+  {
+   "route": "POST /api/v1/example-sets/{id}/upload",
+   "location": "body.raw",
+   "field_path": "",
+   "kind": "metadata_value"
+  },
+  {
+   "route": "POST /api/v1/example-sets/{id}/upload",
+   "location": "body.raw",
+   "field_path": "",
+   "kind": "output_text"
+  },
+  {
+   "route": "POST /api/v1/hybrid/optimizer/{id}/batch",
+   "location": "body.key",
+   "field_path": "$.submissions[0].metadata.cnryMetaKey_Nb2J-7rKs5Yf4",
+   "kind": "metadata_key"
+  },
+  {
+   "route": "POST /api/v1/hybrid/optimizer/{id}/batch",
+   "location": "body.key",
+   "field_path": "$.submissions[0].metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/hybrid/optimizer/{id}/batch",
+   "location": "body.key",
+   "field_path": "$.submissions[1].metadata.cnryMetaKey_Nb2J-7rKs5Yf4",
+   "kind": "metadata_key"
+  },
+  {
+   "route": "POST /api/v1/hybrid/optimizer/{id}/batch",
+   "location": "body.key",
+   "field_path": "$.submissions[1].metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/hybrid/optimizer/{id}/batch",
+   "location": "body.value",
+   "field_path": "$.submissions[0].metadata.cnryMetaKey_Nb2J-7rKs5Yf4",
+   "kind": "metadata_value"
+  },
+  {
+   "route": "POST /api/v1/hybrid/optimizer/{id}/batch",
+   "location": "body.value",
+   "field_path": "$.submissions[1].metadata.cnryMetaKey_Nb2J-7rKs5Yf4",
+   "kind": "metadata_value"
+  },
+  {
+   "route": "POST /api/v1/hybrid/sessions",
+   "location": "body.key",
+   "field_path": "$.metadata.cnryMetaKey_Nb2J-7rKs5Yf4",
+   "kind": "metadata_key"
+  },
+  {
+   "route": "POST /api/v1/hybrid/sessions",
+   "location": "body.key",
+   "field_path": "$.search_space.cnryKnob_Dh7S-2bVn4Xe9",
+   "kind": "knob_name"
+  },
+  {
+   "route": "POST /api/v1/hybrid/sessions",
+   "location": "body.value",
+   "field_path": "$.metadata.cnryMetaKey_Nb2J-7rKs5Yf4",
+   "kind": "metadata_value"
+  },
+  {
+   "route": "POST /api/v1/hybrid/sessions",
+   "location": "body.value",
+   "field_path": "$.metadata.title",
+   "kind": "run_title"
+  },
+  {
+   "route": "POST /api/v1/hybrid/sessions",
+   "location": "body.value",
+   "field_path": "$.optimization_config.objectives[0]",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/hybrid/sessions",
+   "location": "body.value",
+   "field_path": "$.problem_statement",
+   "kind": "agent_name"
+  },
+  {
+   "route": "POST /api/v1/hybrid/sessions",
+   "location": "body.value",
+   "field_path": "$.search_space.cnryKnob_Dh7S-2bVn4Xe9[0]",
+   "kind": "choice_value"
+  },
+  {
+   "route": "POST /api/v1/hybrid/sessions",
+   "location": "body.value",
+   "field_path": "$.search_space.cnryKnob_Dh7S-2bVn4Xe9[1]",
+   "kind": "prompt_template"
+  },
+  {
+   "route": "POST /api/v1/optimize",
+   "location": "body.key",
+   "field_path": "$.configuration_space.cnryKnob_Dh7S-2bVn4Xe9",
+   "kind": "knob_name"
+  },
+  {
+   "route": "POST /api/v1/optimize",
+   "location": "body.key",
+   "field_path": "$.metadata.cnryMetaKey_Nb2J-7rKs5Yf4",
+   "kind": "metadata_key"
+  },
+  {
+   "route": "POST /api/v1/optimize",
+   "location": "body.value",
+   "field_path": "$.configuration_space.cnryKnob_Dh7S-2bVn4Xe9[0]",
+   "kind": "choice_value"
+  },
+  {
+   "route": "POST /api/v1/optimize",
+   "location": "body.value",
+   "field_path": "$.function_name",
+   "kind": "function_name"
+  },
+  {
+   "route": "POST /api/v1/optimize",
+   "location": "body.value",
+   "field_path": "$.metadata.cnryMetaKey_Nb2J-7rKs5Yf4",
+   "kind": "metadata_value"
+  },
+  {
+   "route": "POST /api/v1/optimize",
+   "location": "body.value",
+   "field_path": "$.objectives[0]",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.key",
+   "field_path": "$.configuration_space.cnryCKnob_Wf4P_8aLz3Rq7",
+   "kind": "constraint_knob"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.key",
+   "field_path": "$.configuration_space.cnryKnob_Dh7S-2bVn4Xe9",
+   "kind": "knob_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.key",
+   "field_path": "$.configuration_space.cnryKnob_Dh7S-2bVn4Xe9-tpl",
+   "kind": "knob_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.key",
+   "field_path": "$.default_config.cnryKnob_Dh7S-2bVn4Xe9",
+   "kind": "knob_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.agent_key",
+   "kind": "agent_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.configuration_space.cnryCKnob_Wf4P_8aLz3Rq7.choices[0]",
+   "kind": "choice_value"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.configuration_space.cnryCKnob_Wf4P_8aLz3Rq7.choices[1]",
+   "kind": "choice_value"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.configuration_space.cnryKnob_Dh7S-2bVn4Xe9-tpl.choices[0]",
+   "kind": "prompt_template"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.configuration_space.cnryKnob_Dh7S-2bVn4Xe9-tpl.choices[1]",
+   "kind": "prompt_template"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.configuration_space.cnryKnob_Dh7S-2bVn4Xe9.choices[0]",
+   "kind": "choice_value"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.configuration_space.cnryKnob_Dh7S-2bVn4Xe9.choices[1]",
+   "kind": "choice_value"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.dataset_id",
+   "kind": "dataset_identity"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.dataset_metadata.name",
+   "kind": "function_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.default_config.cnryKnob_Dh7S-2bVn4Xe9",
+   "kind": "default_config_value"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.function_name",
+   "kind": "agent_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.metadata.evaluation_set",
+   "kind": "evaluation_set"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.metadata.function_display_name",
+   "kind": "agent_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.metadata.function_display_name",
+   "kind": "function_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.metadata.function_name",
+   "kind": "function_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.objectives[0]",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.objectives[0].name",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.run_description",
+   "kind": "run_description"
+  },
+  {
+   "route": "POST /api/v1/sessions",
+   "location": "body.value",
+   "field_path": "$.run_title",
+   "kind": "run_title"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/finalize",
+   "location": "body.key",
+   "field_path": "$.session_aggregation.metrics.run_cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/finalize",
+   "location": "body.value",
+   "field_path": "$.session_aggregation.primary_objective",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/intermediate-report",
+   "location": "body.value",
+   "field_path": "$.objective_name",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.config.cnryCKnob_Wf4P_8aLz3Rq7",
+   "kind": "constraint_knob"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.config.cnryKnob_Dh7S-2bVn4Xe9",
+   "kind": "knob_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.config.cnryKnob_Dh7S-2bVn4Xe9-tpl",
+   "kind": "knob_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.measures[0].metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.measures[1].metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.metadata.cnryMetaKey_Nb2J-7rKs5Yf4",
+   "kind": "metadata_key"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.metadata.comparability.per_metric_coverage.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.metadata.measures[0].metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.metadata.measures[1].metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.metadata.summary_stats.metadata.aggregation_summary.metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.metadata.summary_stats.metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.metadata.tvar_observation_v1.metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.summary_stats.metadata.aggregation_summary.metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.key",
+   "field_path": "$.summary_stats.metrics.cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.config.cnryCKnob_Wf4P_8aLz3Rq7",
+   "kind": "choice_value"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.config.cnryKnob_Dh7S-2bVn4Xe9",
+   "kind": "choice_value"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.config.cnryKnob_Dh7S-2bVn4Xe9",
+   "kind": "default_config_value"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.config.cnryKnob_Dh7S-2bVn4Xe9-tpl",
+   "kind": "prompt_template"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.config.prompt",
+   "kind": "prompt_template"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.error_message",
+   "kind": "exception_message"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.metadata.cnryMetaKey_Nb2J-7rKs5Yf4",
+   "kind": "metadata_value"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.metadata.summary_stats.metadata.aggregation_summary.primary_objective",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.metadata.comparability.primary_objective",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.metadata.tvar_observation_v1.primary_metric",
+   "kind": "metric_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.metadata.tvar_observation_v1.variables[0].name",
+   "kind": "knob_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.metadata.tvar_observation_v1.variables[0].value",
+   "kind": "choice_value"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.metadata.tvar_observation_v1.variables[0].value",
+   "kind": "default_config_value"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.metadata.tvar_observation_v1.variables[1].name",
+   "kind": "knob_name"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.metadata.tvar_observation_v1.variables[1].value",
+   "kind": "prompt_template"
+  },
+  {
+   "route": "POST /api/v1/sessions/{id}/results",
+   "location": "body.value",
+   "field_path": "$.summary_stats.metadata.aggregation_summary.primary_objective",
+   "kind": "metric_name"
+  },
+  {
+   "route": "PUT /api/v1/configuration-runs/{id}/measures",
+   "location": "body.key",
+   "field_path": "$.measures[0].cnryMetric_Gx9B_4aWz7Pl3",
+   "kind": "metric_name"
+  },
+  {
+   "route": "PUT /api/v1/configuration-runs/{id}/status",
+   "location": "body.value",
+   "field_path": "$.error_message",
+   "kind": "exception_message"
+  }
+ ]
+}

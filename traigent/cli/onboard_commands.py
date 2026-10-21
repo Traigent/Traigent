@@ -123,7 +123,7 @@ def _mcp_help_succeeds() -> bool:
         return False
     try:
         result = subprocess.run(
-            [executable, "mcp", "--help"],
+            [executable, "mcp", "register", "--help"],
             capture_output=True,
             text=True,
             timeout=15,

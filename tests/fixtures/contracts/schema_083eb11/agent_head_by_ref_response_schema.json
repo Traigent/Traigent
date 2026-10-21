@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/agent_head_by_ref_response_schema.json",
+  "title": "AgentHeadByRefResponse",
+  "description": "Response of GET /api/v1/best-configs/agent-heads/by-ref/{agent_ref}?environment=<SessionEnvironment>: the promotion head generation of the agent the Backend-issued `agent_ref` stands for, in the caller's tenant and project. Closed: it carries the ref, the closed environment, the generation and whether the agent was ever promoted there; never a raw agent id, name, best-config id or run id. INVARIANTS (enforced by the oneOf below): `exists` is false if and only if `generation` is 0, and true if and only if `generation` >= 1. TRANSITIONS: the first promotion takes the head 0 -> 1, a later one g -> g+1, atomically with the publication of the configuration version; of several promotions that name the same expected generation exactly one wins, every other one is refused as stale and changes nothing. Read-route refusals use best_config_head_refusal_schema.json and echo nothing; precedence: authentication and permissions, then a malformed path ref or `environment` (400 head_capture_invalid), then an unknown or foreign ref (404 reference_not_found).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "agent_ref",
+    "environment",
+    "generation",
+    "exists"
+  ],
+  "properties": {
+    "agent_ref": {
+      "$ref": "../labels/label_common_schema.json#/definitions/AgentRef",
+      "description": "The ref that was asked about, returned unchanged (it is a Backend-issued opaque value the caller already holds)."
+    },
+    "environment": {
+      "$ref": "./session_capabilities_schema.json#/definitions/SessionEnvironment"
+    },
+    "generation": {
+      "x-content-class": "number",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "Current head generation; the value a run captures when it STARTS and sends back as X-Traigent-Expected-Head-Generation when it publishes its own result. It is not a token to refresh and reuse for a result computed against an older head (see head_generation_stale). JSON-safe integer bound."
+    },
+    "exists": {
+      "x-content-class": "closed_enum",
+      "type": "boolean",
+      "description": "True when the agent was promoted at least once in this environment (generation >= 1); false means generation 0."
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "exists": {
+          "x-content-class": "closed_enum",
+          "const": false
+        },
+        "generation": {
+          "x-content-class": "number",
+          "type": "integer",
+          "const": 0
+        }
+      }
+    },
+    {
+      "properties": {
+        "exists": {
+          "x-content-class": "closed_enum",
+          "const": true
+        },
+        "generation": {
+          "x-content-class": "number",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  ]
+}

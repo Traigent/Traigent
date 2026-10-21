@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import traceback as traceback_module
 import warnings
 from collections import Counter
@@ -27,6 +28,18 @@ logger = get_logger(__name__)
 
 SelectionGrade = Literal["advisory"]
 ADVISORY_SELECTION_GRADE: SelectionGrade = "advisory"
+
+
+def _require_pandas() -> Any:
+    """Import pandas or raise an ImportError naming the extra to install."""
+    try:
+        import pandas as pd  # noqa: PLC0415
+    except ImportError as exc:
+        raise ImportError(
+            "pandas is required for this method but is not installed. "
+            'Install it with: pip install "traigent[analytics]"'
+        ) from exc
+    return pd
 
 
 def _name_suggests_minimize(name: str) -> bool:
@@ -168,6 +181,8 @@ StopReason = Literal[
     "convergence",
     "semantic_saturation",
     "safety_constraint",  # Statistical chance-constraint violated (issue #1532)
+    "safety_constraint_insufficient_evidence",  # Halted: safety unproven, not violated (#2481)
+    "no_usage_captured",  # Strict cost objective, first successful trial had no usage (#2421)
     "user_cancelled",
     "condition",  # Generic stop condition triggered
     "error",  # Optimization failed due to an exception
@@ -1439,9 +1454,9 @@ class OptimizationResult:
         from traigent.utils.multi_objective import (  # noqa: PLC0415
             _COST_OBJECTIVE_NAMES,
         )
-        from traigent.utils.trial_costs import is_cost_unmeasured  # noqa: PLC0415
+        from traigent.utils.trial_costs import is_cost_unranked  # noqa: PLC0415
 
-        return objective in _COST_OBJECTIVE_NAMES and is_cost_unmeasured(
+        return objective in _COST_OBJECTIVE_NAMES and is_cost_unranked(
             getattr(trial, "metrics", None)
         )
 
@@ -2358,7 +2373,7 @@ class OptimizationResult:
 
     def to_dataframe(self) -> pd.DataFrame:
         """Convert results to pandas DataFrame."""
-        import pandas as pd  # noqa: PLC0415
+        pd = _require_pandas()
 
         data = []
         for trial in self.trials:
@@ -2514,7 +2529,7 @@ class OptimizationResult:
                 - <metric>_mean for each metric present
                 - duration_mean
         """
-        import pandas as pd  # noqa: PLC0415
+        pd = _require_pandas()
 
         if not self.trials:
             return pd.DataFrame()
@@ -2670,6 +2685,41 @@ class OptimizationResult:
 
         return analyzer.analyze(objective_name)
 
+    #: Spread in cache-hit rate (fraction) above which the summary warns that
+    #: cost comparisons may reflect run order (Traigent#2069).
+    CACHE_HIT_RATE_SPREAD_THRESHOLD = 0.20
+
+    def _cache_hit_rate_note(self) -> str | None:
+        """Value-free note when cache-hit rates differ materially across configs.
+
+        Provider prompt caches warm as a run proceeds, so a later configuration
+        can look cheaper only because an earlier one primed the cache. Only
+        trials with a KNOWN rate are compared (unknown is not zero). Counts and
+        percentages only -- no configuration values.
+        """
+        rates: list[float] = []
+        for trial in self.trials:
+            metadata = getattr(trial, "metadata", None)
+            rate = (
+                metadata.get("cache_hit_rate") if isinstance(metadata, dict) else None
+            )
+            if (
+                isinstance(rate, (int, float))
+                and not isinstance(rate, bool)
+                and math.isfinite(rate)
+            ):
+                rates.append(float(rate))
+        if len(rates) < 2:
+            return None
+        spread = max(rates) - min(rates)
+        if spread <= self.CACHE_HIT_RATE_SPREAD_THRESHOLD:
+            return None
+        return (
+            f"Prompt-cache hit rate ranged from {min(rates):.0%} to {max(rates):.0%} "
+            f"across {len(rates)} trials; cost and latency comparisons may "
+            "reflect run order rather than the configurations."
+        )
+
     def get_summary(self) -> dict[str, Any]:
         """Compute high-level summary statistics about the optimization run."""
 
@@ -2704,6 +2754,10 @@ class OptimizationResult:
             summary["cost_unmeasured_trials"] = unmeasured_trials
             floor = max(total_cost, self._reported_cost_floor())
             summary["cost_lower_bound"] = floor if floor > 0 else None
+
+        cache_note = self._cache_hit_rate_note()
+        if cache_note:
+            summary["cache_note"] = cache_note
 
         # Include best configuration information if available
         summary["best_config"] = self.best_config

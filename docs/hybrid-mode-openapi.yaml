@@ -746,7 +746,7 @@ components:
             type: string
             maxLength: 512
           example:
-            - requires model == gpt-4
+            - requires model == gpt-4.1
     EvaluationKwargDefinition:
       type: object
       description: |

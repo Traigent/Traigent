@@ -2,10 +2,10 @@
 
 <p align="center">
   <a href="https://github.com/Traigent/Traigent/actions/workflows/tests.yml"><img src="https://github.com/Traigent/Traigent/actions/workflows/tests.yml/badge.svg" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg" alt="License: AGPL-3.0"></a>
+  <a href="https://github.com/Traigent/Traigent/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg" alt="License: AGPL-3.0"></a>
   <a href="https://pypi.org/project/traigent/"><img src="https://img.shields.io/pypi/v/traigent.svg" alt="PyPI version"></a>
   <a href="https://pypi.org/project/traigent/"><img src="https://img.shields.io/pypi/pyversions/traigent.svg" alt="Python versions"></a>
-  <a href="docs/getting-started/GETTING_STARTED.md"><img src="https://img.shields.io/badge/docs-getting%20started-brightgreen.svg" alt="Docs"></a>
+  <a href="https://github.com/Traigent/Traigent/blob/main/docs/getting-started/GETTING_STARTED.md"><img src="https://img.shields.io/badge/docs-getting%20started-brightgreen.svg" alt="Docs"></a>
 </p>
 
 **Traigent is an AI Agent infrastructure that allows companies to take AI agents out of the lab and deploy them at high scale with high confidence.**
@@ -120,10 +120,10 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 
 <p align="center">
   <a href="https://portal.traigent.ai">Portal</a> &middot;
-  <a href="docs/getting-started/GETTING_STARTED.md">Quickstart</a> &middot;
-  <a href="examples/">Examples</a> &middot;
-  <a href="docs/agent-skill.md">Skill</a> &middot;
-  <a href="docs/walkthrough.md">Walkthrough</a>
+  <a href="https://github.com/Traigent/Traigent/blob/main/docs/getting-started/GETTING_STARTED.md">Quickstart</a> &middot;
+  <a href="https://github.com/Traigent/Traigent/tree/main/examples">Examples</a> &middot;
+  <a href="https://github.com/Traigent/Traigent/blob/main/docs/agent-skill.md">Skill</a> &middot;
+  <a href="https://github.com/Traigent/Traigent/blob/main/docs/walkthrough.md">Walkthrough</a>
 </p>
 
 ---
@@ -132,22 +132,22 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 
 | Goal | Resource | Time |
 |------|----------|------|
-| **Get started quickly** | [Quick Start Guide](docs/getting-started/GETTING_STARTED.md) | 5 min |
-| **Understand the architecture** | [Architecture Overview](docs/architecture/ARCHITECTURE.md) | 5 min |
+| **Get started quickly** | [Quick Start Guide](https://github.com/Traigent/Traigent/blob/main/docs/getting-started/GETTING_STARTED.md) | 5 min |
+| **Understand the architecture** | [Architecture Overview](https://github.com/Traigent/Traigent/blob/main/docs/architecture/ARCHITECTURE.md) | 5 min |
 | **Track runs in the portal** | [Portal tracking](#portal-tracking) | 5 min |
-| **Try examples locally, then make runs portal-visible** | [Mock walkthrough](walkthrough/mock/) (8 steps) → [Portal](https://portal.traigent.ai) | 15 min |
-| **Read the full API reference** | [Decorator Reference →](docs/api-reference/decorator-reference.md) | — |
+| **Try examples locally, then make runs portal-visible** | [Mock walkthrough](https://github.com/Traigent/Traigent/tree/main/walkthrough/mock) (8 steps) → [Portal](https://portal.traigent.ai) | 15 min |
+| **Read the full API reference** | [Decorator Reference →](https://github.com/Traigent/Traigent/blob/main/docs/api-reference/decorator-reference.md) | — |
 
 <details>
 <summary>Full documentation index</summary>
 
 | | |
 | --- | --- |
-| **Get started** | [Installation](docs/getting-started/installation.md) · [5-minute tutorial](docs/getting-started/GETTING_STARTED.md) |
-| **User guides** | [Injection Modes](docs/user-guide/injection_modes.md) · [Configuration Spaces](docs/user-guide/configuration-spaces.md) · [Evaluation](docs/user-guide/evaluation_guide.md) |
-| **Tunable Variable Language** | [TVL Guide](docs/user-guide/tuned_variables.md) |
-| **Advanced** | [Agent Optimization](docs/user-guide/agent_optimization.md) |
-| **API reference** | [Decorator Reference](docs/api-reference/decorator-reference.md) · [Constraint DSL](docs/features/constraint-dsl.md) |
+| **Get started** | [Installation](https://github.com/Traigent/Traigent/blob/main/docs/getting-started/installation.md) · [5-minute tutorial](https://github.com/Traigent/Traigent/blob/main/docs/getting-started/GETTING_STARTED.md) |
+| **User guides** | [Injection Modes](https://github.com/Traigent/Traigent/blob/main/docs/user-guide/injection_modes.md) · [Configuration Spaces](https://github.com/Traigent/Traigent/blob/main/docs/user-guide/configuration-spaces.md) · [Evaluation](https://github.com/Traigent/Traigent/blob/main/docs/user-guide/evaluation_guide.md) |
+| **Tunable Variable Language** | [TVL Guide](https://github.com/Traigent/Traigent/blob/main/docs/user-guide/tuned_variables.md) |
+| **Advanced** | [Agent Optimization](https://github.com/Traigent/Traigent/blob/main/docs/user-guide/agent_optimization.md) |
+| **API reference** | [Decorator Reference](https://github.com/Traigent/Traigent/blob/main/docs/api-reference/decorator-reference.md) · [Constraint DSL](https://github.com/Traigent/Traigent/blob/main/docs/features/constraint-dsl.md) |
 
 </details>
 
@@ -158,9 +158,9 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 
 | Demo | |
 |------|-|
-| **LLM Agent Optimization** | [![Optimization Demo](docs/demos/output/optimize-still.svg)](docs/demos/output/optimize.svg) |
-| **Optimization Callbacks** | [![Callbacks Demo](docs/demos/output/hooks-still.svg)](docs/demos/output/hooks.svg) |
-| **Agent Configuration Hooks** | [![Agent Hooks Demo](docs/demos/output/github-hooks-still.svg)](docs/demos/output/github-hooks.svg) |
+| **LLM Agent Optimization** | [![Optimization Demo](https://github.com/Traigent/Traigent/raw/main/docs/demos/output/optimize-still.svg)](https://github.com/Traigent/Traigent/raw/main/docs/demos/output/optimize.svg) |
+| **Optimization Callbacks** | [![Callbacks Demo](https://github.com/Traigent/Traigent/raw/main/docs/demos/output/hooks-still.svg)](https://github.com/Traigent/Traigent/raw/main/docs/demos/output/hooks.svg) |
+| **Agent Configuration Hooks** | [![Agent Hooks Demo](https://github.com/Traigent/Traigent/raw/main/docs/demos/output/github-hooks-still.svg)](https://github.com/Traigent/Traigent/raw/main/docs/demos/output/github-hooks.svg) |
 
 </details>
 
@@ -175,9 +175,9 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 4. **Record** — results update the optimizer's model
 5. **Repeat** — loop continues until budget/trials exhausted, then outputs results
 
-![Architecture Overview](docs/demos/output/architecture.svg)
+![Architecture Overview](https://github.com/Traigent/Traigent/raw/main/docs/demos/output/architecture.svg)
 
-**[Read the full architecture guide →](docs/architecture/ARCHITECTURE.md)**
+**[Read the full architecture guide →](https://github.com/Traigent/Traigent/blob/main/docs/architecture/ARCHITECTURE.md)**
 
 </details>
 
@@ -203,7 +203,7 @@ The walkthrough examples use local mock mode through the quickstart/testing help
 
 </details>
 
-**[Browse reference examples →](examples/) · [Injection modes →](docs/user-guide/injection_modes.md)**
+**[Browse reference examples →](https://github.com/Traigent/Traigent/tree/main/examples) · [Injection modes →](https://github.com/Traigent/Traigent/blob/main/docs/user-guide/injection_modes.md)**
 
 ---
 
@@ -278,6 +278,8 @@ def multi_provider_agent(question: str) -> str:
 
 Python 3.11+ on Linux, macOS, or Windows. The published package on [PyPI](https://pypi.org/project/traigent/) is the recommended way to install — `pip install "traigent[recommended]"` or `uv add "traigent[recommended]"`. No repository checkout is required to use the SDK or its `traigent` CLI.
 
+Commitment linking is POSIX-only for now: it relies on owner-only (mode 0600) bundle files and directory fsync. `traigent certify finalize` is POSIX-only for now, with or without `--link-commitments`, because it always writes a client bundle; `traigent certify verify --open-commitments` is likewise POSIX-only. On other platforms these commands refuse with `LINKAGE_UNSUPPORTED_PLATFORM` before any secret is generated or read and before any request is sent.
+
 | Feature Set | Description |
 |-------------|-------------|
 | `[recommended]` | All user-facing features (default) |
@@ -286,7 +288,7 @@ Python 3.11+ on Linux, macOS, or Windows. The published package on [PyPI](https:
 | `[bayesian]` | Bayesian optimization dependencies (used by the Traigent cloud; not available locally) |
 | `[all]` | Everything |
 
-**[Full installation guide →](docs/getting-started/installation.md)**
+**[Full installation guide →](https://github.com/Traigent/Traigent/blob/main/docs/getting-started/installation.md)**
 
 Contributor / source install (only needed to hack on Traigent itself or run the
 coordinated release-validation suite — not required to use the SDK):
@@ -310,9 +312,9 @@ Cost estimates, budgets, limits, alerts, and thresholds are best-effort software
 provider-side billing guarantees. Actual billing is determined by your LLM/cloud providers, and you
 remain responsible for provider charges. The legacy `TRAIGENT_MOCK_LLM=true` env var is supported
 only for backwards-compatible local scripts and is disabled when `ENVIRONMENT=production`.
-Mock mode skips the optimized-function pricing preflight for supported calls made through
-Traigent's integration/interceptor path; direct provider calls made outside that path should
-be stubbed explicitly for a guaranteed $0 rehearsal. See [DISCLAIMER.md](DISCLAIMER.md)
+Mock mode does not skip the cost-approval or pricing preflights (pre-approve a keyless demo
+with `TRAIGENT_COST_APPROVED=true`); direct provider calls made outside the integration/interceptor
+path should be stubbed explicitly for a guaranteed $0 rehearsal. See [DISCLAIMER.md](https://github.com/Traigent/Traigent/blob/main/DISCLAIMER.md)
 for details.
 
 ### Evaluation
@@ -327,7 +329,7 @@ Provide a JSONL dataset — Traigent scores outputs by exact / case-insensitive 
 - `input` (required): your function's parameter names as keys
 - `output` (optional): expected output for accuracy scoring
 
-**[Evaluation guide →](docs/guides/evaluation.md)** — custom evaluators, dataset formats, troubleshooting
+**[Evaluation guide →](https://github.com/Traigent/Traigent/blob/main/docs/guides/evaluation.md)** — custom evaluators, dataset formats, troubleshooting
 
 ### Optimization Routing
 
@@ -340,7 +342,7 @@ Provide a JSONL dataset — Traigent scores outputs by exact / case-insensitive 
 
 Most users should omit these settings. Use `grid` or `random` for explicit local search; use `offline=True` only for no-egress runs.
 
-**[Optimization routing guide →](docs/guides/execution-modes.md)** — defaults, local search, portal sync, and migration notes
+**[Optimization routing guide →](https://github.com/Traigent/Traigent/blob/main/docs/guides/execution-modes.md)** — defaults, local search, portal sync, and migration notes
 
 ### Quick Reference
 
@@ -361,7 +363,7 @@ Most users should omit these settings. Use `grid` or `random` for explicit local
 | **Seamless** | Existing functions with simple local config defaults | Pass `injection_mode="seamless"`; Traigent rewrites simple local variable assignments that match configuration keys. |
 | **Parameter** | New development | Pass `injection_mode="parameter"`; the decorated function receives a `config` argument with explicit `config.get("key")` access. |
 
-**[Injection modes guide →](docs/user-guide/injection_modes.md)**
+**[Injection modes guide →](https://github.com/Traigent/Traigent/blob/main/docs/user-guide/injection_modes.md)**
 
 ### CLI
 
@@ -383,7 +385,7 @@ traigent --help                              # Full command reference
 | Missing API keys | Copy `.env.example` to `.env`; or run `python -m traigent.examples.quickstart` for a no-key demo |
 | `pytest` rejects `-n` / `--dist` | Install dev test tooling first: `pip install -e ".[all,dev]"` |
 | `uv sync --all-extras --dev` breaks `pytest tests/unit` collection (`ModuleNotFoundError: No module named 'langchain.schema'`) | Use `uv sync --all-extras --no-extra deepeval --dev` — `deepeval` is opt-in only (see Development below) |
-| `execution={"runtime": "node"}` fails | Python SDK 0.12.0 removed the temporary JS bridge. Use native `@traigent/sdk`; see [JS bridge migration](docs/guides/js-bridge.md). |
+| `execution={"runtime": "node"}` fails | Python SDK 0.12.0 removed the temporary JS bridge. Use native `@traigent/sdk`; see [JS bridge migration](https://github.com/Traigent/Traigent/blob/main/docs/guides/js-bridge.md). |
 | Permission errors | Create a fresh venv and reinstall dependencies |
 
 </details>
@@ -408,20 +410,20 @@ version `--all-extras` also resolves no longer provides, and `pytest tests/unit`
 CI installs with `pip install -e ".[all,dev]"`, which never selects `deepeval`, so this only shows
 up locally with `uv sync --all-extras`.
 
-**[Architecture guide →](docs/architecture/ARCHITECTURE.md) · [Project structure →](docs/architecture/project-structure.md)**
+**[Architecture guide →](https://github.com/Traigent/Traigent/blob/main/docs/architecture/ARCHITECTURE.md) · [Project structure →](https://github.com/Traigent/Traigent/blob/main/docs/architecture/project-structure.md)**
 
 ## 🤝 Contributing
 
-We welcome bug reports and feature requests via [GitHub Issues](https://github.com/Traigent/Traigent/issues). See [CONTRIBUTING.md](CONTRIBUTING.md) and our [Code of Conduct](CODE_OF_CONDUCT.md). For security vulnerabilities, please email security@traigent.ai (see [SECURITY.md](SECURITY.md)).
+We welcome bug reports and feature requests via [GitHub Issues](https://github.com/Traigent/Traigent/issues). See [CONTRIBUTING.md](https://github.com/Traigent/Traigent/blob/main/CONTRIBUTING.md) and our [Code of Conduct](https://github.com/Traigent/Traigent/blob/main/CODE_OF_CONDUCT.md). For security vulnerabilities, please email security@traigent.ai (see [SECURITY.md](https://github.com/Traigent/Traigent/blob/main/SECURITY.md)).
 
 ## 💬 Support
 
-Questions: [GitHub Discussions](https://github.com/Traigent/Traigent/discussions). Bugs: [GitHub Issues](https://github.com/Traigent/Traigent/issues). Details: [SUPPORT.md](SUPPORT.md).
+Questions: [GitHub Discussions](https://github.com/Traigent/Traigent/discussions). Bugs: [GitHub Issues](https://github.com/Traigent/Traigent/issues). Details: [SUPPORT.md](https://github.com/Traigent/Traigent/blob/main/SUPPORT.md).
 
 ## 📄 License
 
-This project is **dual-licensed**: the GNU Affero General Public License v3.0 only (AGPL-3.0-only) - see [LICENSE](LICENSE) - **or** a Traigent commercial license under a separate written agreement (see [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)). SPDX: `AGPL-3.0-only OR LicenseRef-Traigent-Commercial`. Commercial inquiries: legal@traigent.ai.
+This project is **dual-licensed**: the GNU Affero General Public License v3.0 only (AGPL-3.0-only) - see [LICENSE](https://github.com/Traigent/Traigent/blob/main/LICENSE) - **or** a Traigent commercial license under a separate written agreement (see [COMMERCIAL-LICENSE.md](https://github.com/Traigent/Traigent/blob/main/COMMERCIAL-LICENSE.md)). SPDX: `AGPL-3.0-only OR LicenseRef-Traigent-Commercial`. Commercial inquiries: legal@traigent.ai.
 
 ---
 
-**[Get Started →](docs/getting-started/GETTING_STARTED.md)** | **[Examples →](examples/)** | **[Portal →](https://portal.traigent.ai)** | **[Skill →](docs/agent-skill.md)** | **[Walkthrough →](docs/walkthrough.md)** | **[GitHub Issues](https://github.com/Traigent/Traigent/issues)** | **[Discussions](https://github.com/Traigent/Traigent/discussions)**
+**[Get Started →](https://github.com/Traigent/Traigent/blob/main/docs/getting-started/GETTING_STARTED.md)** | **[Examples →](https://github.com/Traigent/Traigent/tree/main/examples)** | **[Portal →](https://portal.traigent.ai)** | **[Skill →](https://github.com/Traigent/Traigent/blob/main/docs/agent-skill.md)** | **[Walkthrough →](https://github.com/Traigent/Traigent/blob/main/docs/walkthrough.md)** | **[GitHub Issues](https://github.com/Traigent/Traigent/issues)** | **[Discussions](https://github.com/Traigent/Traigent/discussions)**

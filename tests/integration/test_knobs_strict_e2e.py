@@ -110,6 +110,7 @@ def _dataset(size: int = 3) -> Dataset:
 def _strict_gate() -> PromotionGate:
     policy = PromotionPolicy(
         require_calibration=RequireCalibration(enabled=True),
+        min_effect={"accuracy": 0.0},
     )
     return PromotionGate(policy, [ObjectiveSpec("accuracy", "maximize")])
 

@@ -100,6 +100,10 @@ class RetryConfig:
     failure_threshold: int = 5
     recovery_timeout: float = 60.0
     success_threshold: int = 2
+    #: Optional predicate: a failure for which it returns True neither opens nor
+    #: advances the breaker (the call is still retried by the handler). For a
+    #: transport whose timeouts do not prove the server is down (#2599).
+    circuit_breaker_ignore_failure: Callable[[Exception], bool] | None = None
 
     # Monitoring
     log_attempts: bool = True
@@ -188,8 +192,10 @@ class CircuitBreaker:
         failure_threshold: int = 5,
         recovery_timeout: float = 60.0,
         success_threshold: int = 2,
+        ignore_failure: Callable[[Exception], bool] | None = None,
     ) -> None:
         """Initialize circuit breaker."""
+        self._ignore_failure = ignore_failure
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
         self.success_threshold = success_threshold
@@ -224,9 +230,26 @@ class CircuitBreaker:
             result = func(*args, **kwargs)
             self._on_success()
             return result
-        except Exception:
-            self._on_failure()
+        except Exception as exc:
+            if self._is_ignored_failure(exc):
+                self._on_neutral()
+            else:
+                self._on_failure()
             raise
+
+    def _is_ignored_failure(self, exc: Exception) -> bool:
+        """True when the configured predicate says this failure is not counted."""
+        if self._ignore_failure is None:
+            return False
+        try:
+            return bool(self._ignore_failure(exc))
+        except Exception:  # a broken predicate must never hide a real failure
+            return False
+
+    def _on_neutral(self) -> None:
+        """An uncounted failure: release a half-open probe, change no counters."""
+        with self._lock:
+            self._half_open_in_flight = False
 
     def _should_attempt_reset(self, reference_time: datetime | None = None) -> bool:
         """Check if we should try to reset the circuit."""
@@ -283,6 +306,7 @@ class RetryHandler:
                 failure_threshold=config.failure_threshold,
                 recovery_timeout=config.recovery_timeout,
                 success_threshold=config.success_threshold,
+                ignore_failure=config.circuit_breaker_ignore_failure,
             )
 
     def execute(self, func: Callable[..., T], *args, **kwargs) -> T:

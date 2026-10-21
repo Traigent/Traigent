@@ -439,6 +439,24 @@ def _validate_range_membership(
     return issues
 
 
+def _validate_tuple_components(
+    name: str, domain: dict[str, Any], default: Any, raw_type: str | None
+) -> list[str]:
+    """Validate a canonical tuple ``components`` domain and default membership."""
+    from traigent.tvl.models import _enumerate_tuple_components
+
+    try:
+        values = _enumerate_tuple_components(name, domain["components"])
+    except ValueError as exc:
+        return [str(exc)]
+    if default is _MISSING:
+        return []
+    candidate = tuple(default) if isinstance(default, list) else default
+    if candidate not in values:
+        return [f"TVAR '{name}' default {default!r} is outside declared tuple domain"]
+    return []
+
+
 def _validate_domain_structure(
     name: str,
     domain: Any,
@@ -486,9 +504,12 @@ def _validate_domain_structure(
             return issues
         if "registry" in domain or domain_type == "registry":
             return issues
+        if "components" in domain and normalized_type == "tuple":
+            return _validate_tuple_components(name, domain, default, raw_type)
 
         issues.append(
-            f"TVAR '{name}' domain must define one of range, set, values, or registry"
+            f"TVAR '{name}' domain must define one of range, set, values, "
+            "registry, or (tuple types) components"
         )
         return issues
 
@@ -1034,6 +1055,16 @@ def load_tvl_spec(
     Supports both legacy format (configuration_space) and TVL 0.9 format (tvars).
     Auto-detects format based on presence of 'tvars' vs 'configuration_space'.
 
+    Float ranges: a TVAR range is continuous unless it declares ``resolution``,
+    in which case it becomes the discrete grid ``min, min+resolution, ...`` (never
+    above ``max``). This differs from the official TVL default step of 0.001.
+
+    Registry domains: raising ``TVLValidationError`` at load time for a registry
+    domain with no resolver is deliberate. It fails fast so an optimisation never
+    starts with a missing setting; it differs from the official TVL reference
+    model, which keeps lazy placeholders. Pass ``registry_resolver`` to load
+    such specs.
+
     Args:
         spec_path: Path to the TVL spec file.
         environment: Optional environment overlay key to apply.
@@ -1044,7 +1075,8 @@ def load_tvl_spec(
             to catch errors early with clearer error messages.
         registry_resolver: Optional resolver used to materialize registry domains
             into concrete configuration values. If a spec contains a registry
-            domain and no resolver is provided, spec loading fails fast.
+            domain and no resolver is provided, spec loading fails fast
+            (deliberately, see above).
     """
     path = Path(spec_path).expanduser()
     raw_data = _load_and_parse_yaml(path)
@@ -1338,6 +1370,9 @@ def _resolve_registry_domain(
     registry_resolver: RegistryResolver | None,
 ) -> list[Any]:
     """Resolve a registry domain to concrete values."""
+    # Fail fast on purpose (#1616): never start an optimisation with a missing
+    # setting. Unlike the official TVL reference model's lazy placeholders,
+    # callers load such specs by passing ``registry_resolver``.
     if registry_resolver is None:
         raise TVLValidationError(
             f"TVAR '{name}' uses a registry domain ('{domain.registry}') "
@@ -1448,7 +1483,12 @@ def _parse_tvars(
             configuration_space[name] = domain.to_configuration_space_entry()
 
         if default is not None:
-            defaults[name] = default
+            # YAML spells a tuple default as a list; config-space values are tuples.
+            defaults[name] = (
+                tuple(default)
+                if tvar_type == "tuple" and isinstance(default, list)
+                else default
+            )
 
     return tvars, configuration_space, defaults, units
 

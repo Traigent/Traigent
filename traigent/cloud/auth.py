@@ -25,6 +25,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, cast
 
+from traigent.labels.transport_gate import preflight_requests
+from traigent.labels.transport_gate import gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.api_key_manager import APIKeyManager
 from traigent.cloud.credential_resolver import CredentialResolver
@@ -1676,9 +1678,11 @@ class AuthManager:
                 return f"transport error: {exc.__class__.__name__}"
 
         try:
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=15),
-                trust_env=True,
+            async with gate_session(
+                aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=15),
+                    trust_env=True,
+                )
             ) as session:
                 async with session.post(
                     url,
@@ -1838,6 +1842,7 @@ class AuthManager:
             return "backend egress disabled"
 
         try:
+            preflight_requests("POST", url, json=validation_payload)
             response = requests.post(
                 url,
                 headers=headers,
@@ -1964,9 +1969,11 @@ class AuthManager:
             ),
         }
 
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=30),
-            trust_env=True,
+        async with gate_session(
+            aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=30),
+                trust_env=True,
+            )
         ) as session:
             async with session.post(token_url, data=data) as response:
                 if response.status == 200:

@@ -70,7 +70,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "summarization_eval.jsonl")
 )
 def summarize(document: str) -> str:
     cfg = traigent.get_config()
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=cfg.get("temperature", 0.0))
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=cfg.get("temperature", 0.0))
 
     def _sum(text: str) -> str:
         p = f"Summarize in 1-2 sentences:\n\n{text}"

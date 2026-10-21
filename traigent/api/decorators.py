@@ -43,6 +43,7 @@ Examples:
 
 from __future__ import annotations
 
+import math
 import inspect
 import os
 from collections.abc import Callable, Collection, Mapping
@@ -284,13 +285,28 @@ def _coerce_winner_stability_reps(value: Any) -> int:
     return cast(int, value)
 
 
+def _coerce_example_timeout(value: Any) -> float | None:
+    """Validate the per-example evaluation timeout (``None`` = 60 s default).
+
+    Shared by the ``ExecutionOptions`` field validator and the direct
+    ``@optimize(example_timeout=...)`` path. Must be a finite positive number.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("example_timeout must be a positive number or None")
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("example_timeout must be a positive number or None")
+    return float(value)
+
+
 class ExecutionOptions(BaseModel):
     """Execution and orchestration preferences for optimization runs.
 
     Note:
         ``runtime`` and ``js_*`` execution fields were removed with the
-        temporary Python-orchestrated JS bridge. Use the ``traigent-js`` npm
-        package for JavaScript optimization.
+        temporary Python-orchestrated JS bridge. The JavaScript SDK is not
+        published to npm yet; see docs/guides/js-bridge.md.
 
     Attributes:
         algorithm: Optimizer selector. ``auto`` (default) resolves to the
@@ -315,6 +331,13 @@ class ExecutionOptions(BaseModel):
             value raises ``pydantic.ValidationError`` at
             construction time. Per-configuration repetition aggregation
             requires Traigent Enterprise (contact ``sales@traigent.ai``).
+        example_timeout: Per-example evaluation time limit in seconds (a
+            positive number). ``None`` (default) means 60 seconds. It is
+            independent of the run-level ``timeout``. An example that exceeds
+            it is recorded as a failed example with a "timed out" error
+            (quality metrics 0.0, no fabricated cost); timed-out counts are
+            shown in the progress line and in trial metadata
+            (``timed_out_examples``).
         winner_stability_reps: Opt-in post-selection rerun count for the winning
             configuration. ``0`` (default) is off. When ``> 0``, after selection
             completes the winning config is re-executed that many times on the
@@ -368,6 +391,7 @@ class ExecutionOptions(BaseModel):
     reps_per_trial: int = 1
     reps_aggregation: str = "mean"
     winner_stability_reps: int = 0
+    example_timeout: float | None = None
     require_run_id: bool | None = None
 
     @model_validator(mode="wrap")
@@ -447,6 +471,11 @@ class ExecutionOptions(BaseModel):
                 "require Traigent Enterprise. Contact sales@traigent.ai."
             )
         return v
+
+    @field_validator("example_timeout", mode="before")
+    @classmethod
+    def _validate_example_timeout(cls, v: Any) -> float | None:
+        return _coerce_example_timeout(v)
 
     @field_validator("winner_stability_reps")
     @classmethod
@@ -582,7 +611,7 @@ def _revalidate_same_named_twin(
         # spelling of the same name (they are disjoint in every bundle today).
         payload.setdefault(key, legacy_value)
     try:
-        return cast(BundleModel, model_cls.model_validate(payload))
+        rebuilt = cast(BundleModel, model_cls.model_validate(payload))
     except PydanticValidationError as exc:
         raise TypeError(
             f"{parameter_name} was given an instance of "
@@ -590,6 +619,14 @@ def _revalidate_same_named_twin(
             f"{model_cls.__module__} (a reloaded module), and its values "
             f"do not validate against this one: {exc}"
         ) from exc
+    # The rebuild passed every field, so pydantic marked all of them as set.
+    # Restore the twin's own explicitness: ``_explicit_bundle_value`` relies on
+    # ``model_fields_set`` to tell a caller-set value from a default (#2540).
+    live_fields = set(model_cls.model_fields)
+    rebuilt.__pydantic_fields_set__ = {
+        name for name in value.model_fields_set if name in live_fields
+    }
+    return rebuilt
 
 
 def _coerce_bundle(
@@ -961,6 +998,9 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "agent_name": None,
     "run_title": None,
     "run_description": None,
+    "content_less": None,
+    "agent_ref": None,
+    "environment": None,
     "default_config": None,
     "warm_start_from": None,
     "constraints": None,
@@ -982,6 +1022,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "max_total_examples": None,
     "samples_include_pruned": True,
     "winner_stability_reps": 0,
+    "example_timeout": None,
     "smart_pruning": None,
     "custom_evaluator": None,
     "scoring_function": None,
@@ -1048,7 +1089,8 @@ _DIRECT_OPTION_KEYS = (
     frozenset(_OPTIMIZE_DEFAULTS.keys()) | _LEGACY_EXECUTION_OPTION_KEYS
 )
 _JS_BRIDGE_REMOVED_MESSAGE = (
-    "JS bridge removed. Use the traigent-js npm package for JavaScript optimization."
+    "JS bridge removed. The JavaScript SDK is not published to npm yet; "
+    "see https://github.com/Traigent/Traigent/blob/main/docs/guides/js-bridge.md"
 )
 _JS_BRIDGE_REMOVED_PARAMETERS = frozenset(
     (
@@ -1191,6 +1233,7 @@ class LegacyOptimizeArgs:
     max_total_examples: int | None = None
     samples_include_pruned: bool | None = None
     winner_stability_reps: int | None = None
+    example_timeout: float | None = None
     custom_evaluator: Callable[..., Any] | None = None
     scoring_function: Callable[..., Any] | None = None
     metric_functions: dict[str, Callable[..., Any]] | None = None
@@ -1283,6 +1326,7 @@ class LegacyOptimizeArgs:
             ("max_total_examples", self.max_total_examples),
             ("samples_include_pruned", self.samples_include_pruned),
             ("winner_stability_reps", self.winner_stability_reps),
+            ("example_timeout", self.example_timeout),
             ("custom_evaluator", self.custom_evaluator),
             ("scoring_function", self.scoring_function),
             ("metric_functions", self.metric_functions),
@@ -1307,6 +1351,17 @@ class LegacyOptimizeArgs:
             ("best_config_stale_ok_ttl_seconds", self.best_config_stale_ok_ttl_seconds),
             ("enable_auto_load_dev_logs", self.enable_auto_load_dev_logs),
         ]
+
+
+def _explicit_bundle_value(bundle: Any, field_name: str) -> Any:
+    """Return a bundle field only if the caller set it explicitly.
+
+    Pydantic defaults (e.g. ``ExecutionOptions.algorithm == "auto"``) must not
+    be mistaken for explicit values that conflict with direct arguments.
+    """
+    if field_name not in bundle.model_fields_set:
+        return None
+    return getattr(bundle, field_name)
 
 
 def _resolve_option(
@@ -1665,6 +1720,7 @@ class ResolvedExecutionOptions:
     samples_include_pruned: Any
     smart_pruning: Any
     winner_stability_reps: int = 0
+    example_timeout: float | None = None
     legacy_options: dict[str, Any] = field(default_factory=dict)
 
 
@@ -1714,61 +1770,67 @@ def _resolve_execution_bundle_options(
         algorithm=_resolve_option(
             "algorithm",
             base_options.algorithm,
-            execution_bundle.algorithm,
+            _explicit_bundle_value(execution_bundle, "algorithm"),
             defaults,
         ),
         offline=_resolve_option(
             "offline",
             base_options.offline,
-            execution_bundle.offline,
+            _explicit_bundle_value(execution_bundle, "offline"),
             defaults,
         ),
         evaluator=_resolve_option(
             "evaluator",
             base_options.evaluator,
-            execution_bundle.evaluator,
+            _explicit_bundle_value(execution_bundle, "evaluator"),
             defaults,
         ),
         local_storage_path=_resolve_option(
             "local_storage_path",
             base_options.local_storage_path,
-            execution_bundle.local_storage_path,
+            _explicit_bundle_value(execution_bundle, "local_storage_path"),
             defaults,
         ),
         minimal_logging=_resolve_option(
             "minimal_logging",
             base_options.minimal_logging,
-            execution_bundle.minimal_logging,
+            _explicit_bundle_value(execution_bundle, "minimal_logging"),
             defaults,
         ),
         parallel_config=_resolve_option(
             "parallel_config",
             base_options.parallel_config,
-            execution_bundle.parallel_config,
+            _explicit_bundle_value(execution_bundle, "parallel_config"),
             defaults,
         ),
         max_total_examples=_resolve_option(
             "max_total_examples",
             base_options.max_total_examples,
-            execution_bundle.max_total_examples,
+            _explicit_bundle_value(execution_bundle, "max_total_examples"),
             defaults,
         ),
         samples_include_pruned=_resolve_option(
             "samples_include_pruned",
             base_options.samples_include_pruned,
-            execution_bundle.samples_include_pruned,
+            _explicit_bundle_value(execution_bundle, "samples_include_pruned"),
             defaults,
         ),
         smart_pruning=_resolve_option(
             "smart_pruning",
             base_options.smart_pruning,
-            execution_bundle.smart_pruning,
+            _explicit_bundle_value(execution_bundle, "smart_pruning"),
             defaults,
         ),
         winner_stability_reps=_resolve_option(
             "winner_stability_reps",
             base_options.winner_stability_reps,
-            execution_bundle.winner_stability_reps,
+            _explicit_bundle_value(execution_bundle, "winner_stability_reps"),
+            defaults,
+        ),
+        example_timeout=_resolve_option(
+            "example_timeout",
+            base_options.example_timeout,
+            _explicit_bundle_value(execution_bundle, "example_timeout"),
             defaults,
         ),
         legacy_options=legacy_options,
@@ -2512,6 +2574,9 @@ def optimize(  # NOSONAR(S107)
     agent_name: str | None = None,
     run_title: str | None = None,
     run_description: str | None = None,
+    content_less: bool | None = None,
+    agent_ref: str | None = None,
+    environment: str | None = None,
     default_config: dict[str, Any] | None = None,
     warm_start_from: str | None = None,
     constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None = None,
@@ -2597,6 +2662,20 @@ def optimize(  # NOSONAR(S107)
         run_description: Optional description of what this run is testing and why —
             the hypothesis or intent, recorded before results are known. Trimmed to
             4000 characters. Like ``run_title`` it is a label only.
+        content_less: Opt in to content-less session create (default off; env
+            ``TRAIGENT_CONTENT_LESS=1`` does the same process-wide). The session
+            declares capability ``content_less_v1``, a closed ``environment`` and opaque
+            references instead of customer-chosen names; a Backend that does not
+            advertise the capability is refused locally with ``backend_upgrade_required``
+            (no plaintext fallback). ``agent_name`` is not sent in this mode.
+        agent_ref: Opaque agent reference (``agentref_<32 hex>``, copied from the portal)
+            that names the agent independent of code. Also read from
+            ``TRAIGENT_AGENT_REF``. Only used with ``content_less``; an invalid value is
+            refused locally. Without it the function-derived code identifier is used.
+        environment: Run environment for a content-less session, one of
+            ``production|staging|development|test|default``. Precedence: this argument >
+            ``TRAIGENT_ENVIRONMENT`` > OpenTelemetry ``deployment.environment.name`` >
+            ``ENVIRONMENT`` > ``TRAIGENT_ENV`` > ``default``. Production is never guessed.
         default_config: Baseline configuration materialized before the first trial.
             In seamless/attribute modes these override literal values during the
             initial run. In parameter mode the dict is converted to a TraigentConfig
@@ -2624,8 +2703,11 @@ def optimize(  # NOSONAR(S107)
             statistical bound accumulated across completed trials; once a
             constraint's ``min_samples`` evidence floor is reached and it is
             statistically violated, the run halts with
-            ``OptimizationResult.stop_reason == "safety_constraint"``. Below the
-            evidence floor, or when satisfied, the run continues normally. See
+            ``OptimizationResult.stop_reason == "safety_constraint"``. If the
+            observed compliance meets the required rate but the confidence bound
+            cannot yet prove it, the run still halts (fail closed) with
+            ``stop_reason == "safety_constraint_insufficient_evidence"``. Below
+            the evidence floor, or when satisfied, the run continues normally. See
             ``traigent.api.safety`` for the available metrics.
 
         TVL integration:
@@ -2697,6 +2779,10 @@ def optimize(  # NOSONAR(S107)
                 ``COST_UNMEASURED_TRIALS_RAN``; ``max_total_examples`` also
                 counts as consent but does not raise ``max_trials``.
                 ``max_trials=None`` does not count.
+                The limit is enforced between trials, not inside one: a
+                single expensive trial can overshoot it by roughly that
+                trial's cost (plus in-flight parallel trials) before the next
+                admission check stops new work.
             cost_approved: Skip cost approval prompt. Use with caution in production.
             estimated_calls_per_example: Expected LLM calls per evaluated
                 example (self-consistency voting, repair passes, model
@@ -2889,6 +2975,9 @@ def optimize(  # NOSONAR(S107)
         "agent_name": agent_name,
         "run_title": run_title,
         "run_description": run_description,
+        "content_less": content_less,
+        "agent_ref": agent_ref,
+        "environment": environment,
         "default_config": default_config,
         "warm_start_from": warm_start_from,
         "constraints": constraints,
@@ -3010,6 +3099,7 @@ def optimize(  # NOSONAR(S107)
     winner_stability_reps = _coerce_winner_stability_reps(
         combined_settings["winner_stability_reps"]
     )
+    example_timeout = _coerce_example_timeout(combined_settings["example_timeout"])
     smart_pruning_value = combined_settings["smart_pruning"]
     custom_evaluator = combined_settings["custom_evaluator"]
     scoring_function = combined_settings["scoring_function"]
@@ -3058,6 +3148,19 @@ def optimize(  # NOSONAR(S107)
     # fragments an agent's optimization history into one-run cohorts.
     run_title_value: str | None = combined_settings.get("run_title") or None
     run_description_value: str | None = combined_settings.get("run_description") or None
+    # Content-less session options: None unless the caller set one (legacy/env then).
+    content_less_value: Any = None
+    if any(
+        combined_settings.get(key) is not None
+        for key in ("content_less", "agent_ref", "environment")
+    ):
+        from traigent.cloud.content_less import ContentLessOptions
+
+        content_less_value = ContentLessOptions(
+            enabled=combined_settings.get("content_less"),
+            agent_ref=combined_settings.get("agent_ref"),
+            environment=combined_settings.get("environment"),
+        )
     # Warm-start: prior experiment id to seed this run (empty string -> None).
     warm_start_from_value: str | None = combined_settings.get("warm_start_from") or None
     # Tuned variable auto-detection
@@ -3159,6 +3262,7 @@ def optimize(  # NOSONAR(S107)
         samples_include_pruned=samples_include_pruned,
         smart_pruning=smart_pruning_value,
         winner_stability_reps=winner_stability_reps,
+        example_timeout=example_timeout,
         legacy_options=legacy_execution_options,
     )
     resolved_execution = _resolve_execution_bundle_options(
@@ -3178,6 +3282,7 @@ def optimize(  # NOSONAR(S107)
     samples_include_pruned = resolved_execution.samples_include_pruned
     smart_pruning_value = resolved_execution.smart_pruning
     winner_stability_reps_value = resolved_execution.winner_stability_reps
+    example_timeout_value = _coerce_example_timeout(resolved_execution.example_timeout)
     legacy_execution_options = resolved_execution.legacy_options
     # No direct @optimize(require_run_id=...) kwarg exists (execution-bundle-only
     # option), so this reads straight from the bundle rather than going through
@@ -3420,6 +3525,7 @@ def optimize(  # NOSONAR(S107)
             max_total_examples=max_total_examples,
             samples_include_pruned=samples_include_pruned,
             winner_stability_reps=winner_stability_reps_value,
+            example_timeout=example_timeout_value,
             require_run_id=require_run_id_value,
             smart_pruning=smart_pruning_config,
             parallel_config=combined_parallel_config,
@@ -3459,6 +3565,7 @@ def optimize(  # NOSONAR(S107)
             # Per-run narrative — labels only, never identity.
             run_title=run_title_value,
             run_description=run_description_value,
+            content_less=content_less_value,
             # Warm-start: seed this run from a prior experiment's learned configs.
             warm_start_from=warm_start_from_value,
             # Guided-generation defaults (consumed by optimize_with_guidance)

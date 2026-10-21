@@ -21,8 +21,53 @@ For best tracing support, install the plugin:
 
 from __future__ import annotations
 
+_MIN_PLUGIN_VERSION = (0, 1, 1)
+_PLUGIN_REJECTED = False
+
+
+def _plugin_version_ok() -> bool:
+    """Return True only when the traigent-tracing add-on is >= 0.1.1.
+
+    Older add-ons predate the span-attribute scrubbers, so they are ignored in
+    favour of the embedded scrubbed implementation. Fails closed: any error,
+    a missing version or an unparseable version means "not acceptable".
+    """
+    try:
+        import importlib
+        import importlib.metadata as _md
+        import re as _re
+
+        raw: object = None
+        try:
+            raw = _md.version("traigent-tracing")
+        except Exception:
+            raw = None
+        if not isinstance(raw, str):
+            raw = getattr(
+                importlib.import_module("traigent_tracing"), "__version__", None
+            )
+        if not isinstance(raw, str) or not _re.fullmatch(r"\d+(\.\d+)*", raw.strip()):
+            return False
+        parts = tuple(int(x) for x in raw.strip().split("."))
+        parts += (0,) * (len(_MIN_PLUGIN_VERSION) - len(parts))
+        return parts >= _MIN_PLUGIN_VERSION
+    except Exception:
+        return False
+
+
 # Try to import from the plugin first
 try:
+    import importlib.util as _ilu
+
+    try:
+        _plugin_present = _ilu.find_spec("traigent_tracing") is not None
+    except (ImportError, ValueError):
+        _plugin_present = True  # unreadable spec: treat as present, then verify
+
+    if _plugin_present and not _plugin_version_ok():
+        _PLUGIN_REJECTED = True
+        raise ImportError("traigent-tracing add-on rejected")
+
     from traigent_tracing import (
         OTEL_AVAILABLE,
         TRACING_ENABLED,
@@ -41,9 +86,57 @@ try:
 
     _PLUGIN_AVAILABLE = True
 
+    # Gate at the SDK boundary: the offline predicate must apply whichever
+    # implementation is imported, so the plugin's functions are wrapped rather
+    # than trusted. While offline (offline=True run or the offline env vars) no
+    # tracer is handed out, spans are no-ops and nothing is recorded.
+    import functools as _functools
+    from contextlib import contextmanager as _contextmanager
+    from typing import Any as _Any
+
+    from traigent.utils.env_config import is_backend_offline as _is_offline
+
+    def _gate_call(fn: _Any) -> _Any:
+        @_functools.wraps(fn)
+        def wrapper(*args: _Any, **kwargs: _Any) -> _Any:
+            if _is_offline():
+                return None
+            return fn(*args, **kwargs)
+
+        return wrapper
+
+    def _gate_span(fn: _Any) -> _Any:
+        @_functools.wraps(fn)
+        @_contextmanager
+        def wrapper(*args: _Any, **kwargs: _Any) -> _Any:
+            if _is_offline():
+                yield None
+                return
+            with fn(*args, **kwargs) as span:
+                yield span
+
+        return wrapper
+
+    get_tracer = _gate_call(get_tracer)
+    optimization_session_span = _gate_span(optimization_session_span)
+    trial_span = _gate_span(trial_span)
+    example_evaluation_span = _gate_span(example_evaluation_span)
+    record_example_result = _gate_call(record_example_result)
+    record_optimization_complete = _gate_call(record_optimization_complete)
+    record_trial_result = _gate_call(record_trial_result)
+
 except ImportError:
-    # Plugin not installed, use embedded implementation
+    # Plugin not installed or rejected, use embedded implementation
     _PLUGIN_AVAILABLE = False
+
+    if _PLUGIN_REJECTED:
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "Ignoring the traigent-tracing add-on: version is older than "
+            "0.1.1 or could not be determined. Using the built-in scrubbed "
+            "tracing; upgrade the add-on to use it."
+        )
 
     import json
     import os
@@ -53,6 +146,7 @@ except ImportError:
     from typing import TYPE_CHECKING, Any
 
     from traigent.core.trace_env import is_trace_enabled
+    from traigent.utils.env_config import is_backend_offline
 
     # Check if tracing is enabled and OpenTelemetry is available
     TRACING_ENABLED = is_trace_enabled()
@@ -260,7 +354,15 @@ except ImportError:
             return None
 
     def get_tracer() -> Tracer | None:
-        """Get the Traigent tracer, initializing if needed."""
+        """Get the Traigent tracer, initializing if needed.
+
+        Returns None while offline (``offline=True`` or the offline env vars):
+        OTLP export is an egress lane and must not ship span attributes,
+        including truncated example output. Checked per call, so a tracer
+        initialized by an earlier online run is not used by an offline one.
+        """
+        if is_backend_offline():
+            return None
         return _initialize_tracer()
 
     def _scrub_error_text(error: object) -> str:

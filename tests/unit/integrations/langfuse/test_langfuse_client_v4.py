@@ -22,7 +22,11 @@ from traigent.integrations.langfuse.client import (
     _V2Unavailable,
 )
 
-pytestmark = pytest.mark.skipif(not REQUESTS_AVAILABLE, reason="requests not installed")
+pytestmark = [
+    pytest.mark.skipif(not REQUESTS_AVAILABLE, reason="requests not installed"),
+    # SDK #2033/#2240: HTTP path is refused while offline; opt into connected paths.
+    pytest.mark.backend_online,
+]
 
 ROOT = {
     "id": "obs-root",

@@ -27,6 +27,23 @@ limited to the cost keys removed (``cost``, ``total_cost``, ``input_cost``,
 ``per_metric_coverage``, and ``total_example_cost`` in ``metadata_keys``) plus
 ``cost_unmeasured`` added. After #2615 merges, regenerate only from a develop
 commit again.
+
+Exception, 2026-10-20: SDK #1906 — ``backend_metadata`` input/output/total_tokens
+are now per-trial totals (sum over examples), not per-example means, matching the
+per-trial cost total the backend reads. Owner-approved via decision card
+product-2026-10-20-sdk-1906-token-totals-golden-v2.
+
+Exception, 2026-10-21 (SDK sweep PR #2692): regenerated from the sweep branch for
+three owner-approved cost/telemetry additions, none identity-related. Added keys
+only; no value or key was removed: (1) #2069 prompt-cache reporting --
+``cached_input_tokens`` and ``cache_hit_rate`` in ``metadata_keys`` (owner card
+cost-billing-2026-10-21-sdk-2069-prompt-cache-confound, A); (2) #2509 --
+``timed_out_examples`` in ``metadata_keys`` (card
+product-2026-10-21-sdk-2509-example-timeout, A); (3) #2444 honest cost -- a
+per-example/per-measure ``cost_unmeasured`` metric and its
+``per_metric_coverage`` entry, extending the trial-level flag from card
+cost-billing-2026-10-13-honest-cost-partial-unknown-cost (A). After the sweep
+merges, regenerate only from a develop commit again.
 """
 
 from __future__ import annotations

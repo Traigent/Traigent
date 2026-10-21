@@ -58,14 +58,12 @@ class ConfigurationError(TraigentError):
 class ProviderValidationError(ConfigurationError):
     """Error type for reporting failed provider API key validation.
 
-    ``@traigent.optimize`` does NOT call provider validation automatically
-    and has no ``validate_providers=`` parameter -- this exception is never
-    raised by the SDK on its own. Provider key validation is an opt-in,
-    standalone check: call :func:`traigent.providers.validate_providers`
-    yourself (typically once, before running your optimized functions) and
-    inspect the results; raise this exception from your own code if you want
-    a hard failure on invalid/missing keys, to fail fast before wasted API
-    costs.
+    Raised before the first trial of a paid run (a cost limit is set or cost
+    is approved, mock mode off) when a provider key the run will use is missing,
+    invalid or out of funds. The message names the provider and error type,
+    never key material. Set ``TRAIGENT_SKIP_PROVIDER_VALIDATION=true`` to skip
+    the check. You can also call :func:`traigent.providers.validate_providers`
+    yourself and raise this exception from your own code.
 
     Attributes:
         failed_providers: List of (provider, error_type) tuples that failed.
@@ -74,18 +72,12 @@ class ProviderValidationError(ConfigurationError):
     Example:
         >>> from traigent.providers import get_failed_providers, validate_providers
         >>> from traigent.utils.exceptions import ProviderValidationError
-        >>> results = validate_providers(["gpt-4o-mini", "claude-3-haiku-20240307"])
+        >>> results = validate_providers(["gpt-4o-mini", "claude-haiku-4-5-20251001"])
         >>> failed = get_failed_providers(results)
         >>> if failed:
         ...     raise ProviderValidationError(
         ...         f"Provider validation failed: {failed}", failed_providers=failed
         ...     )
-
-    If you wrap ``validate_providers`` in your own pre-run check, you can
-    make that check env-driven with
-    :func:`traigent.utils.env_config.skip_provider_validation` (True when
-    TRAIGENT_SKIP_PROVIDER_VALIDATION=true or mock mode is on) so users can
-    opt out without editing your code.
     """
 
     def __init__(

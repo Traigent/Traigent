@@ -239,7 +239,7 @@ def sql_evaluator(func, config, example):
     custom_evaluator=sql_evaluator,
     objectives=["accuracy"],
     configuration_space={
-        "model": ["claude-3-haiku-20240307"],
+        "model": ["claude-haiku-4-5-20251001"],
         "temperature": [0.0, 0.3],
     },
 )
@@ -269,7 +269,7 @@ matches (either via named parameters or `**kwargs`):
     eval_dataset="data/text2sql.jsonl",
     scoring_function=my_score,
     objectives=["accuracy"],
-    configuration_space={"model": ["claude-3-haiku-20240307"], "temperature": [0.0]},
+    configuration_space={"model": ["claude-haiku-4-5-20251001"], "temperature": [0.0]},
 )
 def text2sql_agent(question: str, schema: str) -> str:
     cfg = traigent.get_config()
@@ -302,5 +302,6 @@ from traigent.testing import enable_mock_mode_for_quickstart
 enable_mock_mode_for_quickstart()
 ```
 
-Mock mode avoids provider spend and skips model-pricing preflight, but it is not
-a production billing bypass.
+Mock mode intercepts supported calls but does not skip the cost-approval or
+model-pricing preflights, because raw provider calls can still be real. Use
+`cost_approved=True` or `TRAIGENT_COST_APPROVED=true` for keyless demos.

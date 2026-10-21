@@ -65,6 +65,11 @@ from traigent.evaluators.base import Dataset
 from traigent.metrics.content_features import SimhashFeatureExtractor
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.env_config import is_untracked_fallback_allowed
+from traigent.utils.example_id import (
+    LOCAL_MARKER_KEY,
+    TRIAL_ROW_INDICES_ATTR,
+    rows_from_indices,
+)
 from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.function_identity import FunctionDescriptor
 from traigent.utils.logging import get_logger
@@ -160,6 +165,22 @@ def _status_from_exception(exc: BaseException) -> int | None:
     )
     if match:
         return int(match.group(1))
+    return None
+
+
+def _log_safe_http_status(exc: BaseException) -> int | None:
+    """Numeric HTTP status from exception attributes only, never message text."""
+    response = getattr(exc, "response", None)
+    candidates = (
+        getattr(exc, "status", None),
+        getattr(exc, "status_code", None),
+        getattr(response, "status_code", None),
+        getattr(response, "status", None),
+    )
+    for value in candidates:
+        if isinstance(value, int) and not isinstance(value, bool):
+            if 100 <= value <= 599:
+                return value
     return None
 
 
@@ -1178,20 +1199,12 @@ class BackendSessionManager:
         works until the next never-submitted trial kind appears; comparing
         against the submissions themselves cannot go stale that way.
 
-        Deliberately STRICTER than the all-or-nothing test ``result_source``
-        uses (``trial_count > 0 and not self._acknowledged_trials``, i.e. "the
-        backend acknowledged *none*"). Partial acknowledgement is the reachable
-        middle: the ``submitted is None`` branch of ``submit_trial_result``
-        (transient BE#1194 session-not-found) does NOT flag the run degraded,
-        so trial 1 can be acknowledged while trial 2 is silently missing from
-        the backend — and that branch's own comment tells the user to "Recover
-        via ``traigent sync``", which needs this id. ``result_source``'s looser
-        test would call that run ``cloud_brain`` and withhold it.
-
-        That looseness in ``result_source`` is a separate, pre-existing
-        weakness in a public, documented provenance field (#1265); it is
-        recorded as follow-up work and deliberately NOT changed here, so this
-        fix does not silently restate what ``result.source`` means.
+        ``result_source`` shares this predicate (#2027), so a partially
+        acknowledged run is no longer labelled ``cloud_brain``: partial
+        acknowledgement is the reachable middle (the ``submitted is None``
+        branch of ``submit_trial_result``, transient BE#1194 session-not-found,
+        does NOT flag the run degraded), and that branch tells the user to
+        "Recover via ``traigent sync``", which needs this id.
         """
         acknowledged = getattr(self, "_acknowledged_trials", None) or set()
         return any(
@@ -1199,11 +1212,24 @@ class BackendSessionManager:
             for known, trial_id in self._attempted_trial_ids()
         )
 
+    def _backend_missing_any_trial(self, trial_count: int) -> bool:
+        """True when the backend does not hold every trial of this run (#2027).
+
+        Covers the all-or-nothing case (trials ran, none acknowledged) and the
+        partial case (some attempted submission, in any session, is still
+        unacknowledged) by reusing :meth:`_trials_not_fully_acknowledged`.
+        """
+        if trial_count > 0 and not self._acknowledged_trials:
+            return True
+        sessions = {sid for sid, _ in self._attempted_trial_ids()}
+        return any(self._trials_not_fully_acknowledged(sid) for sid in sessions)
+
     def result_source(self, trial_count: int) -> str:
         """Return the provenance of this run's result.
 
         Values are one of cloud_brain, local_fallback, explicit_local, or
-        offline.
+        offline. ``local_fallback`` means the backend is missing at least one
+        trial of this run (#2027), not only that it holds none.
         """
         configured_source = getattr(self._traigent_config, "result_source", None)
         policy = policy_from_config(self._traigent_config)
@@ -1213,8 +1239,7 @@ class BackendSessionManager:
             return cast(str, SOURCE_OFFLINE)
         if configured_source in RESULT_SOURCES:
             if configured_source == SOURCE_CLOUD_BRAIN and (
-                self._runtime_degraded
-                or (trial_count > 0 and not self._acknowledged_trials)
+                self._runtime_degraded or self._backend_missing_any_trial(trial_count)
             ):
                 return cast(str, SOURCE_LOCAL_FALLBACK)
             return str(configured_source)
@@ -1224,7 +1249,7 @@ class BackendSessionManager:
             return cast(str, SOURCE_OFFLINE)
         if not self._backend_tracking_enabled or self._runtime_degraded:
             return cast(str, SOURCE_LOCAL_FALLBACK)
-        if trial_count > 0 and not self._acknowledged_trials:
+        if self._backend_missing_any_trial(trial_count):
             return cast(str, SOURCE_LOCAL_FALLBACK)
         return cast(str, SOURCE_CLOUD_BRAIN)
 
@@ -1558,6 +1583,8 @@ class BackendSessionManager:
         dataset_id: str | None = None,
         content_identity: dict[str, Any] | None = None,
         head_environment: str | None = None,
+        head_environment_explicit: bool | None = None,
+        content_less: Any = None,
     ) -> SessionContext:
         """Create backend session and return context.
 
@@ -1576,6 +1603,11 @@ class BackendSessionManager:
             head_environment: Best-config environment whose agent-head
                 generation is captured (once, here, at the start of the step)
                 for a later promoting publish.
+            head_environment_explicit: Whether ``head_environment`` was set by the
+                user (argument, config or TRAIGENT_BEST_CONFIG_ENVIRONMENT) rather
+                than defaulted. An explicit value, ``"default"`` included, outranks
+                TRAIGENT_ENVIRONMENT; ``None`` keeps the older inference (any value
+                other than ``"default"`` counts as explicit).
 
         Returns:
             SessionContext with session_id (or None if backend disabled)
@@ -1604,6 +1636,13 @@ class BackendSessionManager:
             # them later. Best-effort — a storage failure yields session_id
             # None exactly like the legacy behavior.
             self._warn_if_dataset_unlinked(dataset, dataset_id)
+            from traigent.cloud import content_less as content_less_session
+
+            offline_content_less_kwargs: dict[str, Any] = (
+                {"content_less_active": True}
+                if content_less_session.is_enabled(content_less)
+                else {}
+            )
             local_session_id = self._create_offline_local_session(
                 function_identifier=function_identifier,
                 function_display_name=function_display_name,
@@ -1613,6 +1652,7 @@ class BackendSessionManager:
                 experiment_display_name=experiment_display_name,
                 function_slug=function_slug,
                 agent_key=agent_key,
+                **offline_content_less_kwargs,
             )
             return SessionContext(
                 session_id=local_session_id,
@@ -1624,6 +1664,9 @@ class BackendSessionManager:
 
         bound_agent_id: str | None = None
         head_generation: int | None = None
+        bound_agent_ref: str | None = None
+        session_content_less = False
+        head_capture_refusal: str | None = None
         if self._backend_client:
             evaluation_set_name = getattr(dataset, "name", None) or "default_evaluation"
             self._warn_if_dataset_unlinked(dataset, dataset_id)
@@ -1691,13 +1734,58 @@ class BackendSessionManager:
                 session_metadata["warm_start_from"] = warm_start_from
 
             # Build the portal display name (see compute_portal_name).
+            from traigent.cloud import content_less as content_less_session
+
+            content_less_active = content_less_session.is_enabled(content_less)
+            if content_less_active:
+                # One environment for the whole run: the session is created with the
+                # run's best-config environment (canonicalized once, here, before
+                # anything is sent; out-of-set refuses locally), and the head capture
+                # and the publish use that same session-bound value.
+                options = (
+                    content_less
+                    if isinstance(content_less, content_less_session.ContentLessOptions)
+                    else content_less_session.ContentLessOptions()
+                )
+                requested_environment = options.environment
+                # Order: explicit content-less option > explicitly set best-config
+                # environment > TRAIGENT_ENVIRONMENT and the other sources > "default".
+                best_config_explicit = (
+                    head_environment not in (None, "default")
+                    if head_environment_explicit is None
+                    else head_environment_explicit
+                )
+                if (
+                    requested_environment is None
+                    and head_environment is not None
+                    and best_config_explicit
+                ):
+                    requested_environment = head_environment
+                head_environment = content_less_session.resolve_environment(
+                    requested_environment
+                )
+                content_less = content_less_session.ContentLessOptions(
+                    enabled=options.enabled,
+                    agent_ref=options.agent_ref,
+                    environment=head_environment,
+                )
             portal_name = compute_portal_name(
-                experiment_display_name=experiment_display_name,
+                # Content-less: the agent is named by its code identifier, never by the
+                # customer-chosen display name, objectives or knobs (group 1).
+                experiment_display_name=(
+                    function_descriptor.display_name or function_identifier
+                    if content_less_active
+                    else experiment_display_name
+                ),
                 objectives=self._objectives,
                 knob_names=list(
                     (getattr(self._optimizer, "config_space", {}) or {}).keys()
                 ),
-                function_display_name=function_display_name,
+                function_display_name=(
+                    function_descriptor.display_name
+                    if content_less_active
+                    else function_display_name
+                ),
                 function_identifier=function_identifier,
                 function_slug=function_slug,
             )
@@ -1728,6 +1816,8 @@ class BackendSessionManager:
             # privacy-mode run has not agreed to. Only passed when present, so
             # clients (and fakes) predating the field keep their exact call shape.
             identity_kwargs = self._content_identity_kwargs(content_identity)
+            if content_less is not None:
+                identity_kwargs["content_less"] = content_less
             raw_result = self._backend_client.create_session(
                 function_name=portal_name,
                 agent_key=declared_agent_key,
@@ -1783,10 +1873,21 @@ class BackendSessionManager:
                 }
                 if owning_context:
                     self._session_owning_context[session_id] = owning_context
-                bound_agent_id = result.agent_id
-                head_generation = self._capture_agent_head_generation(
-                    bound_agent_id, head_environment
-                )
+                if getattr(result, "content_less", False) is True:
+                    # content_less_v1: the session is addressed by the opaque
+                    # agent_ref of the create 201; metadata.agent_id is never read.
+                    session_content_less = True
+                    bound_agent_ref = getattr(result, "agent_ref", None)
+                    head_generation, head_capture_refusal = (
+                        self._capture_agent_head_generation_by_ref(
+                            bound_agent_ref, head_environment
+                        )
+                    )
+                else:
+                    bound_agent_id = result.agent_id
+                    head_generation = self._capture_agent_head_generation(
+                        bound_agent_id, head_environment
+                    )
 
             # On success, upload dataset features via the session mapping
             if result.backend_connected:
@@ -1833,7 +1934,57 @@ class BackendSessionManager:
             agent_id=bound_agent_id,
             head_generation=head_generation,
             head_environment=head_environment if head_generation is not None else None,
+            agent_ref=bound_agent_ref,
+            content_less=session_content_less,
+            head_capture_refusal=head_capture_refusal,
         )
+
+    def _capture_agent_head_generation_by_ref(
+        self, agent_ref: str | None, environment: str | None
+    ) -> tuple[int | None, str | None]:
+        """Read a content-less agent's head generation once, at the start of the step.
+
+        Returns ``(generation, None)`` on success, else ``(None, closed_code)``. Unlike
+        the legacy capture there is NO silent fallback: the run continues, but a later
+        publish of its result is refused locally with this closed code instead of going
+        out unprotected. The code is a ``HeadRefusalCode`` value; no response text is
+        kept or logged.
+        """
+        from traigent.core.best_config_runtime import (
+            CloudBestConfigHeadRefusedError,
+            HeadRefusalCode,
+        )
+
+        if not agent_ref or not environment:
+            logger.warning(
+                "Content-less session has no agent_ref or environment; "
+                "promotion of this run's result will be refused"
+            )
+            return None, HeadRefusalCode.CAPTURE_MISSING.value
+        fetch = getattr(
+            self._backend_client, "fetch_agent_head_generation_by_ref_sync", None
+        )
+        if not callable(fetch):
+            return None, HeadRefusalCode.CAPTURE_MISSING.value
+        try:
+            generation = fetch(agent_ref, environment=environment)
+        except CloudBestConfigHeadRefusedError as exc:
+            logger.warning(
+                "Content-less agent head read refused (%s); promotion of this "
+                "run's result will be refused",
+                exc.code.value,
+            )
+            return None, exc.code.value
+        except Exception as exc:  # noqa: BLE001 - closed code only, never the text
+            logger.warning(
+                "Content-less agent head read failed (%s); promotion of this "
+                "run's result will be refused",
+                type(exc).__name__,
+            )
+            return None, HeadRefusalCode.CAPTURE_MISSING.value
+        if isinstance(generation, bool) or not isinstance(generation, int):
+            return None, HeadRefusalCode.CAPTURE_MISSING.value
+        return cast(int, generation), None
 
     def _capture_agent_head_generation(
         self, agent_id: str | None, environment: str | None
@@ -1872,6 +2023,7 @@ class BackendSessionManager:
         experiment_display_name: str | None = None,
         function_slug: str | None = None,
         agent_key: str | None = None,
+        content_less_active: bool = False,
     ) -> str | None:
         """Create the syncable LOCAL session for a no-egress run (#1939).
 
@@ -1928,6 +2080,10 @@ class BackendSessionManager:
             }
             if isinstance(agent_key, str) and agent_key.strip():
                 metadata["agent_key"] = agent_key.strip()
+            if content_less_active:
+                from traigent.cloud import content_less as content_less_session
+
+                metadata[content_less_session.RECORD_KEY] = True
             # Persist the identity the live create would have declared (explicit
             # id, else a real label, else none) so `traigent sync` sends it.
             from traigent.cloud.models import (  # local: traigent.cloud is optional
@@ -1961,8 +2117,15 @@ class BackendSessionManager:
         self,
         session_id: str | None,
         optimization_status: OptimizationStatus,
+        *,
+        best_config: dict[str, Any] | None = None,
+        best_score: float | None = None,
+        apply_best: bool = False,
     ) -> None:
         """Flip the LOCAL session record to a terminal status (#1939).
+
+        ``best_config`` / ``best_score`` carry the terminal selector's winner
+        onto the stored record so it agrees with the returned result (#2660).
 
         Connected, tracking-enabled runs finalize their local mirror through
         the backend client's own finalize path; this covers every run whose
@@ -1984,7 +2147,13 @@ class BackendSessionManager:
         if not session_id:
             return
         try:
-            self._finalize_local_session_unguarded(session_id, optimization_status)
+            self._finalize_local_session_unguarded(
+                session_id,
+                optimization_status,
+                best_config=best_config,
+                best_score=best_score,
+                apply_best=apply_best,
+            )
         except Exception as exc:
             # Only Exception: a KeyboardInterrupt/SystemExit raised through here
             # is the user or the interpreter asking to stop, and best-effort
@@ -2007,6 +2176,10 @@ class BackendSessionManager:
         self,
         session_id: str,
         optimization_status: OptimizationStatus,
+        *,
+        best_config: dict[str, Any] | None = None,
+        best_score: float | None = None,
+        apply_best: bool = False,
     ) -> None:
         """Body of :meth:`finalize_local_session`; may raise, and is guarded there."""
         remote_finalize_owns_mirror = (
@@ -2026,7 +2199,20 @@ class BackendSessionManager:
             local_status = OptimizationStatus.CANCELLED.value
         else:
             local_status = OptimizationStatus.FAILED.value
-        storage.finalize_session(session_id, local_status)
+        if apply_best and local_status in (
+            OptimizationStatus.COMPLETED.value,
+            OptimizationStatus.CANCELLED.value,
+        ):
+            # Final selection is authoritative, including "no winner".
+            storage.finalize_session(
+                session_id,
+                local_status,
+                best_config=best_config,
+                best_score=best_score,
+                apply_best=True,
+            )
+        else:
+            storage.finalize_session(session_id, local_status)
 
     def local_session_record_exists(self, session_id: str | None) -> bool:
         """Durability half of the #2020 predicate: does the local store the
@@ -2396,6 +2582,39 @@ class BackendSessionManager:
         metadata_payload = dict(metadata)
         if score is None:
             metadata_payload["primary_objective_missing"] = True
+        # LOCAL record only (never added to the remote payload), nested under one
+        # reserved key so it cannot collide with a flattened custom metric:
+        # * rows: which dataset rows the trial's results positions refer to --
+        #   the list a subset trial evaluated, else "full" (the whole dataset,
+        #   in order). Recorded for EVERY trial (every persisted trial passes
+        #   this one function, sequential or parallel, connected or offline), so
+        #   `report-example-map` can map position-based example ids back to rows
+        #   and can refuse trials recorded before this field existed;
+        # * privacy_mode: privacy-enabled runs never post per-example measures
+        #   (see _log_trial_to_backend), so a "connected" map would key ids the
+        #   portal does not have.
+        local_marker: dict[str, Any] = {}
+        if bool(getattr(self._traigent_config, "privacy_enabled", False)):
+            local_marker["privacy_mode"] = True
+        run_local = (trial_result.metadata or {}).get(LOCAL_MARKER_KEY)
+        subset = (
+            run_local.get("subset_indices") if isinstance(run_local, dict) else None
+        )
+        # Row provenance comes from the evaluator itself (the true dataset row it
+        # stamped on each result), composed with the subset; a trial whose
+        # evaluator produced none (custom evaluators, length mismatch) is
+        # "unordered". Id spelling and trial status prove nothing about rows.
+        results = (trial_result.metadata or {}).get("example_results")
+        if isinstance(results, list) and results:
+            row_indices = getattr(trial_result, TRIAL_ROW_INDICES_ATTR, None)
+            local_marker["rows"] = rows_from_indices(
+                row_indices, len(results), subset if isinstance(subset, list) else None
+            )
+        else:
+            local_marker["rows"] = list(subset) if isinstance(subset, list) else "full"
+        # A custom metric literally named like the reserved key keeps its value.
+        if LOCAL_MARKER_KEY not in metadata_payload:
+            metadata_payload[LOCAL_MARKER_KEY] = local_marker
 
         if self._backend_client is not None and not self._egress_disabled():
             try:
@@ -3240,14 +3459,17 @@ class BackendSessionManager:
                 delay = _FINALIZE_BACKOFF_SECONDS[
                     min(attempt - 1, len(_FINALIZE_BACKOFF_SECONDS) - 1)
                 ]
+                http_status = _log_safe_http_status(exc)
+                status_part = "" if http_status is None else f" (HTTP {http_status})"
                 logger.warning(
                     "Backend session finalize failed transiently for session %s "
-                    "(attempt %s/%s); retrying in %.1fs: %s",
+                    "(attempt %s/%s); retrying in %.1fs: %s%s",
                     session_id,
                     attempt,
                     _FINALIZE_MAX_ATTEMPTS,
                     delay,
-                    exc,
+                    type(exc).__name__,  # class + status only: never message text
+                    status_part,
                 )
                 time.sleep(delay)
 

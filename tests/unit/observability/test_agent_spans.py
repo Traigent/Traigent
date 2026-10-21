@@ -347,3 +347,48 @@ def test_span_result_is_publicly_exported() -> None:
 
     assert traigent.SpanResult is FromObservability
     assert "SpanResult" in traigent.observability.__all__
+
+
+def test_numeric_token_count_metadata_keys_are_kept_2057() -> None:
+    """A number under a ``*_tokens`` key is telemetry, never a credential (#2057)."""
+    from traigent.observability.agent_spans import _sanitize_metadata
+
+    kept, dropped = _sanitize_metadata(
+        {
+            "cache_read_tokens": 5,
+            "fresh_input_tokens": 3,
+            "total_tokens": 8,
+            "reasoning_tokens": 1.0,
+        }
+    )
+    assert kept == {
+        "cache_read_tokens": 5,
+        "fresh_input_tokens": 3,
+        "total_tokens": 8,
+        "reasoning_tokens": 1.0,
+    }
+    assert dropped == ()
+
+
+def test_credential_shaped_metadata_keys_still_dropped_2057() -> None:
+    from traigent.observability.agent_spans import _sanitize_metadata
+
+    kept, dropped = _sanitize_metadata(
+        {
+            "access_token": 7,
+            "api_key_tokens": 7,
+            "auth_tokens": 7,
+            "secret_tokens": 7,
+            "total_tokens": "abc",
+            "effort": "low",
+        }
+    )
+    assert kept == {}
+    assert set(dropped) == {
+        "access_token",
+        "api_key_tokens",
+        "auth_tokens",
+        "secret_tokens",
+        "total_tokens",
+        "effort",
+    }

@@ -35,7 +35,7 @@ if __doc__ is not None:
 
 EXPERIMENT_NAME = "Quickstart Publish and Verify"
 CONFIG_SPACE = {
-    "model": ["gpt-4o-mini", "gpt-4o"],
+    "model": ["gpt-4.1-mini", "gpt-4.1"],
     "temperature": [0.0, 0.7],
 }
 DATASET = [
@@ -63,7 +63,7 @@ def _demo_scorer(
         except Exception:
             cfg = {}
 
-    model_score = 0.85 if str(cfg.get("model")) == "gpt-4o" else 0.65
+    model_score = 0.85 if str(cfg.get("model")) == "gpt-4.1" else 0.65
     temperature_raw = cfg.get("temperature", 0.5)
     temperature = (
         float(temperature_raw)
@@ -81,8 +81,8 @@ def build_answer(litellm_module: Any) -> Any:
     # algorithm="grid" is the current local-search selector. The runtime mode for
     # that path is local, and backend tracking remains enabled unless the
     # no-key quickstart bootstrap forced offline mode. Avoid passing the deprecated
-    # execution_mode="edge_analytics" decorator option here: current policy maps
-    # that legacy selector to offline=True for backward-compatible no-egress runs.
+    # execution_mode="edge_analytics" decorator option here: it has been removed
+    # and now raises; use offline=True for no-egress local runs.
     @traigent.optimize(
         experiment_name=EXPERIMENT_NAME,
         configuration_space=CONFIG_SPACE,

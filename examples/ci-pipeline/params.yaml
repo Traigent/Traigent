@@ -17,7 +17,7 @@ optimize:
     - provider: "anthropic"
       model: "claude-3-5-haiku-latest"
     - provider: "openai"
-      model: "gpt-4o-mini"
+      model: "gpt-4.1-mini"
     - provider: "claude_code"
       model: "default"  # Zero cost for testing
 

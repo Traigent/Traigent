@@ -101,7 +101,6 @@ await optimizer.report_results(
     metrics: dict[str, float],
     duration: float,
     status: TrialStatus = TrialStatus.COMPLETED,
-    outputs_sample: list[Any] | None = None,
     error_message: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> None

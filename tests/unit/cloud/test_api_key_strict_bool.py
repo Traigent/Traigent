@@ -176,7 +176,6 @@ def _clear_backend_validation_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "TRAIGENT_ENVIRONMENT",
         "APP_ENV",
         "FLASK_ENV",
-        "TRAIGENT_ALLOW_INSECURE_BACKEND",
     ):
         monkeypatch.delenv(key, raising=False)
 

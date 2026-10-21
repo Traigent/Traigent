@@ -61,7 +61,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "multi_agent_eval.jsonl")
     max_trials=10,
 )
 def route(task: str) -> str:
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.0)
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
     prompt = (
         "Classify who should handle the task: planner or executor.\n"
         f"Task: {task}\nReturn one label only."

@@ -17,6 +17,7 @@ from importlib import import_module
 from typing import Any, NoReturn, cast
 from urllib.parse import urlparse
 
+from traigent.labels.transport_gate import client_origins, gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 
 # Capture the genuine, unpatched ClientSession class at module-load time — before
@@ -99,7 +100,7 @@ _CLIENT_SESSION_NOT_INITIALIZED = "Client session not initialized"
 _AGENT_SPEC_REQUIRED = "agent_spec is required"
 CLOUD_REMOTE_EXECUTION_UNAVAILABLE = (
     "Cloud remote execution is not available yet; use hybrid for "
-    "portal-tracked optimization. Supported modes are local/edge_analytics "
+    "portal-tracked optimization. Supported modes are local "
     "and hybrid."
 )
 
@@ -116,7 +117,7 @@ class CloudEgressBlockedError(OfflineModeError):
                 "Unset TRAIGENT_OFFLINE/TRAIGENT_OFFLINE_MODE or clear the "
                 "runtime no_egress policy before using backend communication."
             ),
-            docs_link="https://github.com/Traigent/Traigent#offline-mode",
+            docs_link="https://github.com/Traigent/Traigent#optimization-routing",
         )
 
 
@@ -556,7 +557,7 @@ class BaseTraigentClient(ABC):
         metrics: dict[str, float],
         duration: float,
         status: str = "completed",
-        outputs_sample: list[Any] | None = None,
+        *,
         error_message: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
@@ -568,7 +569,6 @@ class BaseTraigentClient(ABC):
             metrics: Evaluation metrics
             duration: Execution duration
             status: Trial status (completed, failed, skipped)
-            outputs_sample: Optional sample of outputs
             error_message: Error message if failed
             metadata: Additional metadata
 
@@ -862,14 +862,17 @@ class TraigentCloudClient(BaseTraigentClient):
             logger.warning("aiohttp not available, will use fallback optimization")
             return self
 
-        self._aio_session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=self.timeout),
-            # Session-default headers are long-lived: never freeze a
-            # traceparent/tracestate into them (it would stamp every later
-            # request with a stale span context). Trace context travels only
-            # on per-request headers (see _get_headers / _inject_trace_context).
-            headers=_strip_trace_context_headers(await self.auth.get_headers()),
-            trust_env=True,
+        self._aio_session = gate_session(
+            aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=self.timeout),
+                # Session-default headers are long-lived: never freeze a
+                # traceparent/tracestate into them (it would stamp every later
+                # request with a stale span context). Trace context travels only
+                # on per-request headers (see _get_headers / _inject_trace_context).
+                headers=_strip_trace_context_headers(await self.auth.get_headers()),
+                trust_env=True,
+            ),
+            origins=client_origins(self),
         )
         self._register_session_finalizer(self._aio_session)
         return self
@@ -916,12 +919,15 @@ class TraigentCloudClient(BaseTraigentClient):
                     "Client session not initialized and aiohttp not available"
                 )
 
-            self._aio_session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=self.timeout),
-                # Same rule as __aenter__: no stale trace context in
-                # long-lived session-default headers.
-                headers=_strip_trace_context_headers(headers),
-                trust_env=True,
+            self._aio_session = gate_session(
+                aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=self.timeout),
+                    # Same rule as __aenter__: no stale trace context in
+                    # long-lived session-default headers.
+                    headers=_strip_trace_context_headers(headers),
+                    trust_env=True,
+                ),
+                origins=client_origins(self),
             )
             self._register_session_finalizer(self._aio_session)
             return self._aio_session
@@ -1750,14 +1756,42 @@ class TraigentCloudClient(BaseTraigentClient):
         if self._aio_session is None:
             raise CloudServiceError(_CLIENT_SESSION_NOT_INITIALIZED)
         try:
+            from traigent.cloud import content_less as _content_less
+
             url = f"{self.api_base_url}/sessions"
             request_data = self._serialize_session_request(request)
+            content_less_ctx = None
+            if _content_less.is_enabled(_content_less.options_of(request)):
+                # Same content-less builder as the optimize() route: no legacy identity,
+                # capability required in the 201, never a legacy-shape retry.
+                try:
+                    preview = self.auth.get_api_key_preview()
+                except Exception:  # noqa: BLE001 - scope only
+                    preview = None
+                content_less_ctx = _content_less.prepare_payload(
+                    request_data,
+                    request,
+                    _content_less.RefCache.principal(
+                        self.api_base_url, preview if isinstance(preview, str) else None
+                    ),
+                )
 
             async with self._aio_session.post(
                 url, json=request_data, headers=await self._get_headers()
             ) as response:
                 if response.status == 201:
                     data = await response.json()
+                    if content_less_ctx is not None:
+                        issued = _content_less.accept_response(data, content_less_ctx)
+                        if issued:
+                            from traigent.labels.transport import send_session_labels
+
+                            await send_session_labels(
+                                _content_less.label_texts(request),
+                                issued,
+                                self.api_base_url,
+                                self._get_headers,
+                            )
                     result = self._deserialize_session_response(data)
                     self._remember_session_owner(
                         result.session_id,
@@ -1769,6 +1803,8 @@ class TraigentCloudClient(BaseTraigentClient):
                     )
                     return result
                 else:
+                    if content_less_ctx is not None and response.status == 404:
+                        _content_less.forget_refused(content_less_ctx)
                     error_text = await response.text()
                     detail = SessionCreationFailureDetail.from_http_response(
                         response.status, error_text
@@ -1852,7 +1888,7 @@ class TraigentCloudClient(BaseTraigentClient):
         metrics: dict[str, float],
         duration: float,
         status: str = "completed",
-        outputs_sample: list[Any] | None = None,
+        *,
         error_message: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
@@ -1864,7 +1900,6 @@ class TraigentCloudClient(BaseTraigentClient):
             metrics: Computed metrics
             duration: Execution duration in seconds
             status: Trial status (completed, failed, skipped)
-            outputs_sample: Optional sample of outputs
             error_message: Error message if failed
             metadata: Additional metadata
 
@@ -1887,7 +1922,6 @@ class TraigentCloudClient(BaseTraigentClient):
             metrics=metrics,
             duration=duration,
             status=trial_status,
-            outputs_sample=outputs_sample,
             error_message=error_message,
             metadata=metadata or {},
         )
@@ -2144,14 +2178,17 @@ class TraigentCloudClient(BaseTraigentClient):
         )
 
     def _serialize_trial_result(self, result: TrialResultSubmission) -> dict[str, Any]:
-        """Serialize trial result submission."""
+        """Serialize trial result submission.
+
+        Model outputs are customer content: the legacy ``outputs_sample`` field is
+        never serialized (#2239).
+        """
         return {
             "session_id": result.session_id,
             "trial_id": result.trial_id,
             "metrics": result.metrics,
             "duration": result.duration,
             "status": result.status.value,
-            "outputs_sample": result.outputs_sample,
             "error_message": result.error_message,
             "metadata": result.metadata,
         }
@@ -2204,7 +2241,6 @@ class TraigentCloudClient(BaseTraigentClient):
             status=_coerce_enum(
                 TrialStatus, data["status"], fallback=TrialStatus.UNKNOWN
             ),
-            outputs_sample=data.get("outputs_sample"),
             error_message=data.get("error_message"),
             metadata=data.get("metadata", {}),
         )

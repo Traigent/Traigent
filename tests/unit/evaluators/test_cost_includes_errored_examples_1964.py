@@ -302,7 +302,8 @@ def test_aggregate_metrics_tokens_and_response_time_include_errored_examples():
     # format_for_backend surfaces these as LIVE, user-facing values -- the
     # path an optimizer objective or the portal actually reads.
     formatted = tracker.format_for_backend()
-    assert formatted["input_tokens"] == pytest.approx(95.0)
+    # Per-trial TOTAL over both measured examples (#1906): 100 + 90.
+    assert formatted["input_tokens"] == pytest.approx(190.0)
     assert formatted["response_time_ms"] == pytest.approx(140.0)
     assert formatted["tokens_per_second"] == pytest.approx(19.0)
 
@@ -350,7 +351,8 @@ def test_aggregate_metrics_all_failed_trial_still_reports_real_cost_and_tokens()
     assert formatted["cost"] == pytest.approx(0.026)
     assert formatted["cost_per_example_mean"] == pytest.approx(0.013)
     assert formatted["cost_per_example_mean"] != pytest.approx(0.0)
-    assert formatted["input_tokens"] == pytest.approx(95.0)
+    # Per-trial TOTAL (#1906): 2 measured examples x 95.
+    assert formatted["input_tokens"] == pytest.approx(190.0)
     assert formatted["input_tokens"] != pytest.approx(0.0)
     assert formatted["response_time_ms"] == pytest.approx(140.0)
     assert formatted["response_time_ms"] != pytest.approx(0.0)

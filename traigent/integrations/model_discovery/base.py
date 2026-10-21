@@ -178,6 +178,31 @@ class ModelDiscovery(ABC):
 
         return False
 
+    def _fetch_live_model_ids(self) -> list[str]:
+        """Fetch the provider's live catalog (uncached, unfiltered).
+
+        Defaults to the SDK discovery path; providers whose discovery filters
+        the catalog override this so a liveness check never fails a model that
+        was merely filtered out.
+        """
+        return self._fetch_models_from_sdk()
+
+    def live_model_ids(self) -> list[str] | None:
+        """Return the provider's live model IDs, or None when unavailable.
+
+        None means no live signal (no credentials, SDK missing, network or
+        auth failure, or the provider has no usable catalog endpoint); callers
+        must then report a snapshot-only result, never a live one.
+        """
+        try:
+            ids = self._fetch_live_model_ids()
+        except Exception as e:
+            logger.debug(
+                f"Live model listing failed for {self.PROVIDER}: {type(e).__name__}"
+            )
+            return None
+        return sorted({str(i) for i in ids}) or None
+
     def refresh_cache(self) -> None:
         """Force refresh the model cache."""
         self._cache.invalidate(self._get_cache_key())

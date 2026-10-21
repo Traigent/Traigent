@@ -9,6 +9,7 @@ from typing import Any, cast
 
 import backoff
 
+from traigent.labels.transport_gate import gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.client import raise_if_cloud_egress_disabled
 from traigent.cloud.url_security import validate_cloud_base_url
@@ -98,13 +99,16 @@ class OptimizerDirectClient:
 
     async def __aenter__(self):
         """Async context manager entry."""
-        self.session = aiohttp.ClientSession(
-            headers={
-                "Authorization": f"Bearer {self.token}",
-                "Content-Type": "application/json",
-            },
-            timeout=aiohttp.ClientTimeout(total=30),
-            trust_env=True,
+        self.session = gate_session(
+            aiohttp.ClientSession(
+                headers={
+                    "Authorization": f"Bearer {self.token}",
+                    "Content-Type": "application/json",
+                },
+                timeout=aiohttp.ClientTimeout(total=30),
+                trust_env=True,
+            ),
+            origins=[self.endpoint],
         )
         # Start background flush task
         self._flush_task = asyncio.create_task(self._periodic_flush())

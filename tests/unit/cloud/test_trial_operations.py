@@ -1665,6 +1665,69 @@ class TestRequestTrialSlot:
         assert not slot
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("field", ["stop_reason", "reason"])
+    async def test_next_trial_stop_reason_is_closed_vocabulary(
+        self, field: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """#2555: server stop text never reaches logs, repr or the result."""
+        canary = "customer text here"
+        ops = TrialOperations(_mk_slot_client())
+
+        mock_response = Mock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(
+            return_value={"should_continue": False, field: canary}
+        )
+        mock_session_ctx, _ = _aiohttp_post_returning(mock_response)
+
+        with (
+            caplog.at_level(logging.DEBUG),
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            ops.client._ensure_session = AsyncMock(
+                return_value=mock_session_ctx.__aenter__.return_value
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+            slot = await ops.request_trial_slot("sess-1")
+
+        assert slot.optimization_complete
+        assert slot.reason == "unknown"
+        assert canary not in repr(slot)
+        assert canary not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_next_trial_known_stop_reason_is_preserved(self) -> None:
+        ops = TrialOperations(_mk_slot_client())
+
+        mock_response = Mock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(
+            return_value={"should_continue": False, "stop_reason": "cost_limit"}
+        )
+        mock_session_ctx, _ = _aiohttp_post_returning(mock_response)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            ops.client._ensure_session = AsyncMock(
+                return_value=mock_session_ctx.__aenter__.return_value
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+            slot = await ops.request_trial_slot("sess-1")
+
+        assert slot.reason == "cost_limit"
+
+    @pytest.mark.asyncio
     async def test_should_continue_true_without_id_returns_unavailable(self) -> None:
         """A malformed/empty continuation response is not terminal completion."""
         ops = TrialOperations(_mk_slot_client())

@@ -21,9 +21,16 @@
 # WHY A COMMIT PIN AND NOT A VERSION
 # ----------------------------------
 # traigent/economics/schema.py fingerprints the exact economics contract, so the
-# SDK needs one specific TraigentSchema build. This pin is 5.8.0-line (build
-# 93030ccef7f50acbd205078b7da3e701f5b1dcf4, TraigentSchema develop tip as of
-# 2026-09-07), not on PyPI (the newest published traigent-schema is 4.8.0).
+# SDK needs one specific TraigentSchema build. The pin is the exact commit on
+# the requirement line at the bottom of this file (the single source of truth).
+# Current compatibility target (checked against the requirement line when this
+# comment was last refreshed): TraigentSchema commit
+# d5d0cb6d1caf0cf0b90983afc312412e82b79a42. The same SHA is recorded in the
+# disposition dicts in traigent/cli/certify_commands.py; if you bump the pin,
+# change all three together. It is an intentional compatibility baseline
+# for the economics/certification contract, not a "latest major" target:
+# major-version age alone is not a reason to bump,
+# and a bump is an owner-selected, reviewed commit (#2494). It is not on PyPI.
 # Bumping the pin means recomputing EXPECTED_ECONOMICS_SCHEMA_FINGERPRINT in
 # traigent/economics/schema.py against the newly pinned build (see that
 # module's docstring) -- a byte-exact mismatch fails closed even when the
@@ -39,5 +46,7 @@
 # file directly. Do not reintroduce a token in the URL — pip echoes the
 # requirement string on failure and caches it, and Dependabot PRs never receive
 # org secrets, so a token here breaks them. This file is the single source of
-# truth for the pin — update it here only, and keep uv.lock in step.
-traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@91c9e5bb74479607677554b840e60ad78838c433
+# truth for the pin — update it here only. uv.lock does not reference
+# traigent-schema (the pin is not a declared dependency), so there is nothing
+# to keep in step there.
+traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@d5d0cb6d1caf0cf0b90983afc312412e82b79a42

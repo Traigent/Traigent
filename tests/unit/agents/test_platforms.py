@@ -12,6 +12,7 @@ from traigent.agents.platforms import (
     get_executor_for_platform,
 )
 from traigent.cloud.models import AgentSpecification
+from traigent.utils.exceptions import ValidationError as ValidationException
 
 
 @pytest.mark.asyncio
@@ -773,3 +774,33 @@ class TestPlatformRegistry:
             executor.platform_config["api_key"]
             == "test-key"  # pragma: allowlist secret
         )
+
+
+class TestOpenAIModelAllowList:
+    """Executor allow-list derives from the SDK's known models (#2650)."""
+
+    @staticmethod
+    def _spec(model: str) -> AgentSpecification:
+        return AgentSpecification(
+            id="t",
+            name="T",
+            agent_type="conversational",
+            agent_platform="openai",
+            prompt_template="T",
+            model_parameters={"model": model},
+        )
+
+    @pytest.mark.parametrize("model", ["gpt-4o-mini", "GPT-4O", "gpt-5.4-mini", "o3"])
+    def test_known_models_accepted_case_insensitive(self, model: str) -> None:
+        OpenAIAgentExecutor(platform_config={"api_key": "k"})._validate_platform_spec(
+            self._spec(model)
+        )
+
+    @pytest.mark.parametrize(
+        "model", ["gpt-3.5-turbo", "gpt-4.1-nano", "gpt-4-turbo", "not-a-model"]
+    )
+    def test_retired_or_unknown_models_rejected(self, model: str) -> None:
+        with pytest.raises(ValidationException):
+            OpenAIAgentExecutor(
+                platform_config={"api_key": "k"}
+            )._validate_platform_spec(self._spec(model))

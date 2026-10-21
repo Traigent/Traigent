@@ -480,7 +480,7 @@ class InteractiveOptimizer(BaseOptimizer):
         metrics: dict[str, float],
         duration: float,
         status: TrialStatusLike = SDKTrialStatus.COMPLETED,
-        outputs_sample: list[Any] | None = None,
+        *,
         error_message: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
@@ -491,7 +491,6 @@ class InteractiveOptimizer(BaseOptimizer):
             metrics: Computed metrics
             duration: Execution duration
             status: Trial status
-            outputs_sample: Optional sample of outputs
             error_message: Error message if failed
             metadata: Additional metadata
 
@@ -513,7 +512,6 @@ class InteractiveOptimizer(BaseOptimizer):
                 metrics=metrics,
                 duration=duration,
                 status=_coerce_trial_status(status),
-                outputs_sample=outputs_sample,
                 error_message=error_message,
                 metadata=result_metadata,
             )

@@ -13,6 +13,7 @@ import time
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 from urllib.parse import urlparse
 
+from traigent.labels.transport_gate import gate_session
 from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.client import (
     CloudEgressBlockedError,
@@ -21,6 +22,7 @@ from traigent.cloud.client import (
     SessionContractError,
     raise_if_cloud_egress_disabled,
 )
+from traigent.cloud import content_less as content_less_session
 from traigent.cloud.governance import promotion_policy_to_wire, tvl_governance_to_wire
 from traigent.cloud.models import (
     AgentExecutionRequest,
@@ -127,6 +129,8 @@ class TraigentSessionApiResult(tuple):
     tenant_id: str | None
     warm_start_transfer: dict[str, Any] | None
     agent_id: str | None
+    agent_ref: str | None
+    content_less: bool
 
     def __new__(
         cls,
@@ -138,9 +142,13 @@ class TraigentSessionApiResult(tuple):
         tenant_id: str | None = None,
         warm_start_transfer: dict[str, Any] | None = None,
         agent_id: str | None = None,
+        agent_ref: str | None = None,
+        content_less: bool = False,
     ):
         obj = super().__new__(cls, (session_id, experiment_id, experiment_run_id))
         obj.agent_id = agent_id
+        obj.agent_ref = agent_ref
+        obj.content_less = content_less
         obj.project_id = project_id
         obj.tenant_id = tenant_id
         obj.warm_start_transfer = warm_start_transfer
@@ -597,6 +605,7 @@ class ApiOperations:
                 remember_cost_budget_armed_session(
                     self.client, result[0], session_payload.get("budget")
                 )
+                await self._send_content_less_labels(session_request, result)
                 return result
             except CloudServiceError as typed_exc:
                 # auto-contract fallback: a failed TYPED create may retry the
@@ -604,9 +613,12 @@ class ApiOperations:
                 # (governed sessions must fail loudly; the legacy contract
                 # cannot carry strict mode and silently degrading would
                 # launder it — RFC 0001 P7).
-                if self._session_contract() != "auto" or self._is_governed_request(
-                    session_request
+                if (
+                    self._session_contract() != "auto"
+                    or self._is_governed_request(session_request)
+                    or "capabilities" in session_payload
                 ):
+                    # A content-less create never falls back to the legacy shape.
                     raise
                 # A quota/limit refusal is a definitive answer from a reachable
                 # backend: the legacy contract would be refused the same way, so
@@ -726,6 +738,16 @@ class ApiOperations:
         """
         contract = self._session_contract()
         optimization_strategy = self._session_optimization_strategy(session_request)
+        content_less_options = content_less_session.options_of(session_request)
+        if content_less_session.is_enabled(content_less_options):
+            if contract == "legacy":
+                raise SessionContractError(
+                    "Content-less sessions require the typed session contract; "
+                    "TRAIGENT_SESSION_CONTRACT=legacy cannot carry them."
+                )
+            return self._build_content_less_session_payload(
+                session_request, max_trials, content_less_options
+            )
         if contract == "legacy":
             if optimization_strategy:
                 raise SessionContractError(
@@ -748,6 +770,54 @@ class ApiOperations:
             )
             return self._build_legacy_session_payload(session_request, max_trials)
         return self._build_typed_session_payload(session_request, max_trials)
+
+    def _build_content_less_session_payload(
+        self,
+        session_request: SessionCreationRequest,
+        max_trials: int,
+        options: Any,
+    ) -> dict[str, Any]:
+        """The typed payload rewritten to the content-less identity shape (group 1).
+
+        Legacy identity fields are removed and capabilities / environment / refs added.
+        The cache context for the response is parked on ``self`` for
+        ``_post_session_creation`` (consumed once, then cleared).
+        """
+        payload = self._build_typed_session_payload(session_request, max_trials)
+        local_keys = content_less_session.local_keys_for(
+            session_request, payload.get("metadata") or {}
+        )
+        cache = content_less_session.RefCache()
+        principal = self._content_less_principal()
+        cached = cache.lookup(principal, local_keys)
+        used_cache = content_less_session.apply_to_payload(
+            payload, options=options, cached_refs=cached
+        )
+        self._content_less_ctx = (cache, principal, local_keys, used_cache)
+        return payload
+
+    def _gate_origins(self) -> list[str]:
+        """This client's own API base: the origin its gated sessions send to."""
+        api_base = (
+            self.client.backend_config.api_base_url
+            or BackendConfig.get_backend_api_url()
+        )
+        return [api_base] if isinstance(api_base, str) else []
+
+    def _content_less_principal(self) -> str:
+        """Digest of (backend URL, credential preview): scopes the local ref cache."""
+        try:
+            url = (
+                self.client.backend_config.api_base_url
+                or BackendConfig.get_backend_api_url()
+            )
+            preview = self.client.auth_manager.get_api_key_preview()
+        except Exception:  # noqa: BLE001 - scope only; an unknown scope finds no refs
+            url, preview = None, None
+        return content_less_session.RefCache.principal(
+            url if isinstance(url, str) else None,
+            preview if isinstance(preview, str) else None,
+        )
 
     @staticmethod
     def _session_optimization_strategy(
@@ -940,9 +1010,17 @@ class ApiOperations:
         """Send the session creation request and handle responses."""
 
         self._raise_if_backend_egress_disabled("create session")
-        async with cast(Any, aiohttp).ClientSession(
-            connector=connector,
-            trust_env=True,
+        content_less_ctx = None
+        if "capabilities" in payload:
+            content_less_ctx = getattr(self, "_content_less_ctx", None)
+            self._content_less_ctx = None
+        async with gate_session(
+            cast(Any, aiohttp).ClientSession(
+                connector=connector,
+                trust_env=True,
+            ),
+            origins=self._gate_origins(),
+            strict=content_less_ctx is not None,
         ) as session:
             api_base = (
                 self.client.backend_config.api_base_url
@@ -958,17 +1036,31 @@ class ApiOperations:
                 timeout=timeout,
             ) as response:
                 if response.status == 201:
+                    if content_less_ctx is not None:
+                        return await self._parse_session_response(
+                            response, content_less_ctx=content_less_ctx
+                        )
                     return await self._parse_session_response(response)
 
+                if content_less_ctx is not None and response.status == 404:
+                    # A cached reference was refused (foreign / unknown): forget the scope.
+                    cache, principal, _keys, used_cache = content_less_ctx
+                    if used_cache:
+                        cache.forget(principal)
                 error_msg = await response.text()
                 self._handle_session_error(response.status, error_msg)
 
         raise CloudServiceError("Unexpected session creation failure")
 
-    async def _parse_session_response(self, response: Any) -> TraigentSessionApiResult:
+    async def _parse_session_response(
+        self, response: Any, content_less_ctx: Any = None
+    ) -> TraigentSessionApiResult:
         """Parse the JSON success payload returned by the session endpoint."""
 
         result = await response.json()
+        issued_refs: dict[str, str] = {}
+        if content_less_ctx is not None:
+            issued_refs = self._accept_content_less_response(result, content_less_ctx)
         metadata = result.get("metadata", {})
         if not isinstance(metadata, dict):
             metadata = {}
@@ -1011,7 +1103,7 @@ class ApiOperations:
             f"✅ Created Traigent session: {session_id} "
             f"(exp: {experiment_id}, run: {experiment_run_id})"
         )
-        return TraigentSessionApiResult(
+        parsed = TraigentSessionApiResult(
             session_id,
             experiment_id,
             experiment_run_id,
@@ -1019,8 +1111,50 @@ class ApiOperations:
             tenant_id=tenant_id,
             warm_start_transfer=warm_start_transfer,
             # Disclosed by the backend for API-key callers; null/absent otherwise.
-            agent_id=self._optional_context_id(metadata.get("agent_id")),
+            # A content_less_v1 session never reads it: that session is addressed
+            # by the opaque ``agent_ref`` the 201 advertises.
+            agent_id=(
+                None
+                if content_less_ctx is not None
+                else self._optional_context_id(metadata.get("agent_id"))
+            ),
+            agent_ref=issued_refs.get("agent"),
+            content_less=content_less_ctx is not None,
         )
+        if issued_refs:
+            cast(Any, parsed).content_less_refs = issued_refs
+        return parsed
+
+    async def _send_content_less_labels(
+        self, session_request: SessionCreationRequest, result: Any
+    ) -> None:
+        """Human names go only through the label service writer (when configured)."""
+        refs = getattr(result, "content_less_refs", None)
+        if not isinstance(refs, dict) or not refs:
+            return
+        from traigent.labels.transport import send_session_labels
+
+        api_base = (
+            self.client.backend_config.api_base_url
+            or BackendConfig.get_backend_api_url()
+        )
+
+        async def _headers() -> dict[str, str]:
+            return cast(
+                dict[str, str],
+                await self.client.auth_manager.augment_headers(
+                    {"Content-Type": _JSON_CONTENT_TYPE}
+                ),
+            )
+
+        await send_session_labels(
+            content_less_session.label_texts(session_request), refs, api_base, _headers
+        )
+
+    @staticmethod
+    def _accept_content_less_response(result: Any, ctx: Any) -> dict[str, str]:
+        """Refuse a Backend without ``content_less_v1``; cache and return the refs it issued."""
+        return content_less_session.accept_response(result, ctx)
 
     @staticmethod
     def _optional_context_id(value: Any) -> str | None:
@@ -1055,9 +1189,12 @@ class ApiOperations:
             headers = await self.client.auth_manager.augment_headers(
                 {"Content-Type": _JSON_CONTENT_TYPE}
             )
-            async with cast(Any, aiohttp).ClientSession(
-                connector=self._build_connector(),
-                trust_env=True,
+            async with gate_session(
+                cast(Any, aiohttp).ClientSession(
+                    connector=self._build_connector(),
+                    trust_env=True,
+                ),
+                origins=self._gate_origins(),
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -1192,9 +1329,12 @@ class ApiOperations:
                 {"Content-Type": _JSON_CONTENT_TYPE}
             )
 
-            async with cast(Any, aiohttp).ClientSession(
-                connector=connector,
-                trust_env=True,
+            async with gate_session(
+                cast(Any, aiohttp).ClientSession(
+                    connector=connector,
+                    trust_env=True,
+                ),
+                origins=self._gate_origins(),
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -1379,9 +1519,12 @@ class ApiOperations:
                 {"Content-Type": _JSON_CONTENT_TYPE}
             )
 
-            async with cast(Any, aiohttp).ClientSession(
-                connector=connector,
-                trust_env=True,
+            async with gate_session(
+                cast(Any, aiohttp).ClientSession(
+                    connector=connector,
+                    trust_env=True,
+                ),
+                origins=self._gate_origins(),
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -1451,9 +1594,12 @@ class ApiOperations:
 
             connector = self._build_connector()
 
-            async with cast(Any, aiohttp).ClientSession(
-                connector=connector,
-                trust_env=True,
+            async with gate_session(
+                cast(Any, aiohttp).ClientSession(
+                    connector=connector,
+                    trust_env=True,
+                ),
+                origins=self._gate_origins(),
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url

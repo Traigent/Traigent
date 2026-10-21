@@ -1688,6 +1688,18 @@ class TestListResources:
                 assert "resources" in result.data
 
 
+def _mcp_error(code: int, message: str) -> Exception:
+    """Build an McpError across supported mcp majors (ErrorData vs code/message)."""
+    from traigent.cloud.production_mcp_client import McpError
+
+    try:
+        return McpError(code, message)
+    except TypeError:
+        from mcp.types import ErrorData
+
+        return McpError(ErrorData(code=code, message=message))
+
+
 class TestReadResource:
     """Test read_resource method."""
 
@@ -1724,6 +1736,85 @@ class TestReadResource:
                 result = await self.client.read_resource("test://uri")
                 assert result.success is False
                 assert "Unable to connect" in result.error_message
+
+    @pytest.mark.asyncio
+    async def test_read_resource_mcp_error_carries_code_not_server_text(self, caplog):
+        """#2555: a server McpError message never reaches logs or the response."""
+        import logging
+
+        canary = "customer text here"
+        self.client._connected = True
+        mock_session = AsyncMock()
+        mock_session.read_resource = AsyncMock(side_effect=_mcp_error(-32002, canary))
+        self.client._session = mock_session
+
+        with (
+            caplog.at_level(logging.DEBUG),
+            patch.object(
+                self.client, "is_connected", new_callable=AsyncMock
+            ) as mock_is_connected,
+        ):
+            mock_is_connected.return_value = True
+            result = await self.client.read_resource("test://uri")
+
+        assert result.success is False
+        assert result.data == {"error_code": -32002}
+        assert canary not in (result.error_message or "")
+        assert canary not in caplog.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["mcp_error", "generic", "connect"])
+    async def test_read_resource_failure_log_omits_resource_uri(self, caplog, failure):
+        """#2555: a customer-chosen tunable_id embedded in the URI is never logged."""
+        import logging
+
+        sentinel = "sentinel-private-tunable"
+        uri = f"traigent://config-space?tunable_id={sentinel}"
+        if failure == "connect":
+            self.client._connected = False
+            self.client._session = None
+        else:
+            self.client._connected = True
+            mock_session = AsyncMock()
+            error = (
+                _mcp_error(-32002, "server text")
+                if failure == "mcp_error"
+                else RuntimeError("boom")
+            )
+            mock_session.read_resource = AsyncMock(side_effect=error)
+            self.client._session = mock_session
+
+        with (
+            caplog.at_level(logging.DEBUG),
+            patch.object(
+                self.client, "is_connected", new_callable=AsyncMock
+            ) as mock_is_connected,
+            patch.object(
+                self.client, "connect", new_callable=AsyncMock
+            ) as mock_connect,
+        ):
+            mock_is_connected.return_value = failure != "connect"
+            mock_connect.return_value = False
+            result = await self.client.read_resource(uri)
+
+        assert result.success is False
+        assert sentinel not in caplog.text
+        assert sentinel not in (result.error_message or "")
+
+    @pytest.mark.asyncio
+    async def test_call_tool_mcp_error_carries_code_not_server_text(self):
+        """#2555: call_tool failure response omits the server McpError message."""
+        canary = "customer text here"
+        self.client.enable_fallback = False
+        self.client._retry_handler.execute_async = AsyncMock(
+            side_effect=_mcp_error(-32000, canary)
+        )
+
+        result = await self.client.call_tool("some_tool", {})
+
+        assert result.success is False
+        assert result.data == {"error_code": -32000}
+        assert canary not in (result.error_message or "")
 
     @pytest.mark.asyncio
     async def test_read_resource_success(self):

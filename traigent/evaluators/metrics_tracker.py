@@ -58,6 +58,12 @@ TOKENCOST_AVAILABLE = _TOKENCOST_AVAILABLE
 
 REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO = 0.5
 
+# Provenance tags for ``CostMetrics.cost_source`` (#2505).
+COST_SOURCE_PROVIDER_BILLED = "provider_billed"
+COST_SOURCE_SELF_REPORTED = "self_reported"
+COST_SOURCE_TABLE = "table"
+COST_SOURCE_MIXED = "mixed"
+
 #: Evaluator/tracker-computed metric keys that user-supplied per-example metrics
 #: (e.g. the ``(output, metrics_dict)`` tuple channel) MUST NEVER overwrite,
 #: at ANY merge or aggregation site, regardless of merge ordering or
@@ -102,6 +108,8 @@ RESERVED_METRIC_KEYS: frozenset[str] = frozenset(
         "cost_unmeasured",
         # Known-spend floor reported when ``cost_unmeasured`` (#2517).
         "cost_lower_bound",
+        # Fraction of cost-measured examples billed by the provider (#2505).
+        "cost_provider_billed_fraction",
         # True iff any measured example's token counts were fabricated from
         # character length rather than captured usage (#2263). Reserved so a
         # user tuple key can never overwrite it and it is never dropped under
@@ -492,6 +500,13 @@ class CostMetrics:
     # module documents (#2274). Carry this flag, not the magnitude, wherever
     # that question is asked.
     cost_explicit: bool = False
+    # Where ``total_cost`` came from (#2505): ``"provider_billed"`` (the
+    # provider's own ``usage.cost`` charge, exempt from the plausibility
+    # floor), ``"self_reported"`` (caller/response-injected cost: keeps the
+    # floor), ``"table"`` (price-table figure) or ``"mixed"`` (a row combined
+    # from calls with different sources). ``None`` means unknown and is treated
+    # like ``"self_reported"``: only ``"provider_billed"`` skips the floor.
+    cost_source: str | None = None
     # True when NO usage was captured for this example, so ``total_cost`` is the
     # absence of a measurement, not a measured $0 (Traigent#2517). A zero here is
     # a placeholder and must never be summed, averaged, ranked, displayed or
@@ -512,6 +527,58 @@ class CostMetrics:
         self.total_cost = self.input_cost + self.output_cost
 
 
+def is_cost_value_key(key: Any, *, sdk_evaluation_cost: bool = False) -> bool:
+    """Only SDK cost fields; arbitrary user metrics retain their ownership."""
+    return key in ("cost", "input_cost", "output_cost", "total_cost") or (
+        sdk_evaluation_cost and key == "evaluation_cost"
+    )
+
+
+def enforce_unknown_cost_invariant(
+    mapping: dict[Any, Any],
+    *,
+    unknown: bool | None = None,
+    floor: float | None = None,
+    nullify: bool = False,
+    sdk_evaluation_cost: bool = False,
+) -> bool:
+    """The one emit-boundary rule for unknown cost (#2444).
+
+    A row or aggregate whose cost is unknown (unmeasured OR unpriced) carries NO
+    numeric value in any cost field -- ``cost``, ``total_cost``, ``input_cost``,
+    ``output_cost`` and SDK-produced ``evaluation_cost`` -- only the
+    ``cost_unmeasured`` flag plus the exact known floor in ``cost_lower_bound``.
+    Unknown is not $0 and a partial sum is not the cost.
+
+    ``unknown`` defaults to the mapping's own ``cost_unmeasured`` flag.  Cost
+    fields are removed (or set to ``None`` with ``nullify=True``, for schemas that
+    require the key).  ``floor`` raises ``cost_lower_bound`` when larger.
+    Returns True when the invariant was applied.
+    """
+    if unknown is None:
+        unknown = bool(mapping.get("cost_unmeasured"))
+    if not unknown:
+        return False
+    for key in [
+        k
+        for k in mapping
+        if is_cost_value_key(k, sdk_evaluation_cost=sdk_evaluation_cost)
+    ]:
+        if nullify:
+            mapping[key] = None
+        else:
+            del mapping[key]
+    mapping["cost_unmeasured"] = 1.0
+    existing = mapping.get("cost_lower_bound")
+    best = max(
+        float(floor or 0.0),
+        float(existing) if isinstance(existing, (int, float)) else 0.0,
+    )
+    if best > 0:
+        mapping["cost_lower_bound"] = best
+    return True
+
+
 _COST_DESCRIBE_KEYS = ("input_cost", "output_cost", "total_cost")
 
 
@@ -525,6 +592,9 @@ class ExampleMetrics:
     success: bool = True
     error: str | None = None
     custom_metrics: dict[str, Any] = field(default_factory=dict)
+    # True only when the SDK inserted this row's evaluation_cost. User values
+    # win collisions and are never withdrawn by the unknown LLM-cost rule.
+    sdk_evaluation_cost: bool = field(default=False, kw_only=True)
     # ``LocalEvaluator`` sets this from the dataset's expected-output contract.
     # A false value means the built-in exact-match accuracy is not meaningful
     # for this row (for example, the expected output is blank), so formatter
@@ -532,6 +602,11 @@ class ExampleMetrics:
     # defaults to true for tracker callers that do not have dataset context;
     # that preserves their established success/error fallback semantics.
     accuracy_eligible: bool = True
+    # ``LocalEvaluator`` sets this when the row had a gold value but built-in
+    # accuracy could not be computed (e.g. no output to compare). The row is
+    # then UNMEASURED for accuracy: it is left out of the accuracy denominator
+    # and never gets the tracker-only "success means 1.0" fallback (#2495).
+    accuracy_unavailable: bool = False
     # True (the default) when ``tokens``/``cost``/``response`` were actually
     # extracted or estimated from a real provider response. False marks an
     # example whose zeros are the ABSENCE of a measurement, not a measured
@@ -566,6 +641,13 @@ class ExampleMetrics:
     # ``ExampleMetrics(...)`` calls elsewhere in the codebase) keeps its
     # current behavior unless it explicitly opts out.
     measured: bool = True
+    # Prompt-cache usage for this example (Traigent#2069). ``cache_read_tokens``
+    # is input tokens served from the provider cache; ``cache_total_input_tokens``
+    # is every input token the provider invoiced (fresh + cache read + cache
+    # write), i.e. the hit-rate denominator. ``None`` means the provider did not
+    # report cache usage -- UNKNOWN, never a measured zero.
+    cache_read_tokens: int | None = None
+    cache_total_input_tokens: int | None = None
     # Per-call/per-model token+cost attribution reported via
     # ``__traigent_meta__["calls"]`` (``with_usage(model_costs=...)``) for
     # multi-model / multi-step agents (Traigent#1598). Each entry is
@@ -602,6 +684,11 @@ class MetricsTracker:
         self.example_metrics: list[ExampleMetrics] = []
         self.start_time: float | None = None
         self.end_time: float | None = None
+        # Captured LLM spend no example row could own (a call made outside any
+        # example's capture scope, #2444): the trial's cost is then unmeasured,
+        # and the exact priced part is kept only in the known-spend floor.
+        self.unattributed_spend: bool = False
+        self.unattributed_known_cost: float = 0.0
 
     def start_tracking(self) -> None:
         """Start tracking metrics."""
@@ -668,6 +755,29 @@ class MetricsTracker:
                 entry["calls"] += 1
 
         return [totals[model] for model in sorted(totals)]
+
+    def aggregate_cache_usage(self) -> dict[str, Any]:
+        """Per-trial cached input tokens and cache-hit rate (Traigent#2069).
+
+        ``cached_input_tokens`` sums cache reads over the measured examples and
+        ``cache_hit_rate`` is cached / total input tokens. Both are ``None``
+        (unknown) when no example was measured, or when ANY measured example did
+        not report cache usage: a partial sum is a floor, not the trial's figure,
+        and unknown is never reported as zero.
+        """
+        rows = [m for m in self.example_metrics if m.measured]
+        unknown: dict[str, Any] = {"cached_input_tokens": None, "cache_hit_rate": None}
+        if not rows or any(
+            m.cache_read_tokens is None or m.cache_total_input_tokens is None
+            for m in rows
+        ):
+            return unknown
+        cached = sum(int(m.cache_read_tokens or 0) for m in rows)
+        total = sum(int(m.cache_total_input_tokens or 0) for m in rows)
+        return {
+            "cached_input_tokens": cached,
+            "cache_hit_rate": (cached / total) if total > 0 else None,
+        }
 
     def get_duration(self) -> float:
         """Get total duration in seconds."""
@@ -888,7 +998,11 @@ class MetricsTracker:
             # Fallback to success rate if no example metrics
             accuracy_value = safe_get(aggregated, "success_rate")
 
-        if accuracy_value is None and not strict_nulls:
+        accuracy_unmeasured = any(
+            m.accuracy_unavailable and m.custom_metrics.get("accuracy") is None
+            for m in self.example_metrics
+        )
+        if accuracy_value is None and not strict_nulls and not accuracy_unmeasured:
             accuracy_value = 0.0
 
         duration_value = safe_get(aggregated, "duration")
@@ -956,14 +1070,15 @@ class MetricsTracker:
         # ``traigent.cloud.dtos.MeasuresDict._validate_dict``) -- so this is
         # 1.0/0.0, never a Python ``bool``.
         cost_unpriced = 1.0 if any(m.cost.unpriced for m in measured_metrics) else 0.0
-        # 1.0 when some measured example has NO cost measurement; the trial's
-        # cost total then covers only the examples that did (or is absent when
-        # none did). Numeric, never bool, like ``cost_unpriced`` (#2517).
+        # Explicit unknown-cost state counts even on an unmeasured row (e.g.
+        # a live timed-out worker). A no-response failure with no such evidence
+        # retains the existing measured-only statistics contract (#2160).
         cost_unmeasured = (
             1.0
             if (
-                any(not m.cost_measured for m in measured_metrics)
+                any(m.cost.unmeasured or m.cost.unpriced for m in self.example_metrics)
                 or (self.example_metrics and not cost_measured_metrics)
+                or self.unattributed_spend
             )
             else 0.0
         )
@@ -980,6 +1095,7 @@ class MetricsTracker:
         cost_lower_bound = sum(
             float(m.cost.total_cost) for m in cost_measured_metrics
         ) + sum(float(m.cost.known_cost) for m in self.example_metrics)
+        cost_lower_bound += self.unattributed_known_cost
         # The priced part of an example that also had unpriced usage is spend.
         cost_lower_bound += sum(
             float(m.cost.total_cost)
@@ -987,10 +1103,21 @@ class MetricsTracker:
             if m.cost.unpriced and not m.cost.unmeasured
         )
 
+        provider_billed_fraction = (
+            sum(
+                1
+                for m in cost_measured_metrics
+                if m.cost.cost_source == COST_SOURCE_PROVIDER_BILLED
+            )
+            / len(cost_measured_metrics)
+            if cost_measured_metrics
+            else None
+        )
+
         # True when ANY measured example's token counts were fabricated from
         # character length (``LocalEvaluator._estimate_string_tokens``, #2263)
         # rather than captured from real usage. ``input_tokens``/
-        # ``output_tokens``/``total_tokens`` above are means over the SAME
+        # ``output_tokens``/``total_tokens`` below are totals over the SAME
         # measured rows, so this flag is the only signal that some of that
         # mean is a length-derived guess rather than measured usage --
         # without it a cost/token objective or the trial summary table
@@ -1003,6 +1130,26 @@ class MetricsTracker:
             1.0 if any(m.tokens.estimated for m in measured_metrics) else 0.0
         )
 
+        token_totals: dict[str, float | None]
+        if measured_metrics:
+            token_totals = {
+                "input_tokens": float(
+                    sum(m.tokens.input_tokens for m in measured_metrics)
+                ),
+                "output_tokens": float(
+                    sum(m.tokens.output_tokens for m in measured_metrics)
+                ),
+                "total_tokens": float(
+                    sum(m.tokens.total_tokens for m in measured_metrics)
+                ),
+            }
+        else:
+            # Nothing measured: mirror the mean's null/zero default.
+            token_totals = {
+                key: safe_get(aggregated, key, "mean")
+                for key in ("input_tokens", "output_tokens", "total_tokens")
+            }
+
         formatted = {
             # Core metrics (single values)
             "score": accuracy_value,  # Use actual accuracy for score
@@ -1013,10 +1160,12 @@ class MetricsTracker:
                 if isinstance(duration_value, (int, float))
                 else duration_value
             ),
-            # Use mean values as the primary metrics (without suffix)
-            "input_tokens": safe_get(aggregated, "input_tokens", "mean"),
-            "output_tokens": safe_get(aggregated, "output_tokens", "mean"),
-            "total_tokens": safe_get(aggregated, "total_tokens", "mean"),
+            # Per-trial TOTAL tokens over the same measured rows as ``cost``
+            # (#1906): totals beside a cost total, never per-example means.
+            # Per-example means remain in ``summary_stats``.
+            "input_tokens": token_totals["input_tokens"],
+            "output_tokens": token_totals["output_tokens"],
+            "total_tokens": token_totals["total_tokens"],
             "response_time_ms": safe_get(aggregated, "response_time_ms", "mean"),
             # Per-trial TOTAL cost (consistent scale across all three lanes).
             "cost": cost_total,
@@ -1031,6 +1180,11 @@ class MetricsTracker:
             "cost_lower_bound": (
                 cost_lower_bound if cost_unmeasured and cost_lower_bound > 0 else None
             ),
+            # Fraction (0.0-1.0) of cost-measured examples whose cost is the
+            # provider's own billed charge (#2505). Numeric because measures
+            # are numeric on the wire; the named per-trial source string is
+            # ``cost_source_label``.
+            "cost_provider_billed_fraction": provider_billed_fraction,
             # True iff any measured example's token counts are a length-derived
             # estimate, not captured usage (#2263). See comment above.
             "tokens_estimated": tokens_estimated,
@@ -1054,6 +1208,20 @@ class MetricsTracker:
         self._aggregate_user_custom_metrics(formatted, extra_reserved)
 
         return formatted
+
+    def cost_source_label(self) -> str | None:
+        """Per-trial cost source (#2505): one tag, ``"mixed"`` or ``None``.
+
+        ``None`` when no example carries a cost measurement; ``"mixed"`` when
+        measured examples disagree (an untagged example counts as unknown, so
+        it also yields ``"mixed"`` beside a tagged one).
+        """
+        sources = {m.cost.cost_source for m in self.example_metrics if m.cost_measured}
+        if not sources:
+            return None
+        if len(sources) == 1:
+            return next(iter(sources))
+        return COST_SOURCE_MIXED
 
     def _accuracy_values_for_formatters(
         self, *, user_supplied_accuracy: bool
@@ -1079,6 +1247,10 @@ class MetricsTracker:
                 continue
 
             if not metric.accuracy_eligible:
+                continue
+
+            if raw_accuracy is None and metric.accuracy_unavailable:
+                # Unmeasured, not a miss and not a hit (#2495).
                 continue
 
             if metric.success:
@@ -1113,10 +1285,35 @@ class MetricsTracker:
             return
         aggregate_user_custom_metrics(
             formatted,
-            [m.custom_metrics for m in self.example_metrics if m.success],
+            [
+                row
+                for m, row in zip(
+                    self.example_metrics, self._custom_metric_rows(), strict=True
+                )
+                if m.success
+            ],
             context="format_for_backend user metrics",
             extra_reserved=extra_reserved,
         )
+
+    @property
+    def sdk_evaluation_cost_only(self) -> bool:
+        """Whether evaluation_cost, if present, has no user producer."""
+        return not any(
+            "evaluation_cost" in m.custom_metrics and not m.sdk_evaluation_cost
+            for m in self.example_metrics
+        )
+
+    def _custom_metric_rows(self) -> list[dict[str, Any]]:
+        """Never average SDK judge costs into a user metric of the same name."""
+        if self.sdk_evaluation_cost_only:
+            return [m.custom_metrics for m in self.example_metrics]
+        return [
+            {k: v for k, v in m.custom_metrics.items() if k != "evaluation_cost"}
+            if m.sdk_evaluation_cost
+            else m.custom_metrics
+            for m in self.example_metrics
+        ]
 
     def _empty_backend_format(self) -> dict[str, Any]:
         """Return empty backend format structure when error occurs."""
@@ -1228,8 +1425,10 @@ class MetricsTracker:
         if self.example_metrics:
             # Find common custom metrics across all examples
             all_custom_keys: set[str] = set()
-            for m in self.example_metrics:
-                all_custom_keys.update(m.custom_metrics.keys())
+            custom_rows = self._custom_metric_rows()
+            user_evaluation_cost = not self.sdk_evaluation_cost_only
+            for row in custom_rows:
+                all_custom_keys.update(row.keys())
 
             # Add custom metrics that we haven't already handled
             for key in all_custom_keys:
@@ -1237,9 +1436,13 @@ class MetricsTracker:
                     key not in metrics_data and key != "accuracy"
                 ):  # Skip accuracy as we've already handled it
                     custom_values = []
-                    for m in self.example_metrics:
-                        if key in m.custom_metrics:
-                            custom_values.append(m.custom_metrics[key])
+                    for row in custom_rows:
+                        if key in row:
+                            custom_values.append(row[key])
+                        elif key == "evaluation_cost" and user_evaluation_cost:
+                            # An excluded SDK entry is not a user measurement
+                            # of zero. Use the same samples as the scalar mean.
+                            continue
                         else:
                             custom_values.append(
                                 0.0
@@ -1285,8 +1488,10 @@ class MetricsTracker:
             for cost_key in _COST_DESCRIBE_KEYS:
                 if cost_key in summary_metrics:
                     summary_metrics[cost_key] = None
-        if any(not m.cost_measured for m in measured_metrics) or not (
-            cost_measured_metrics
+        if (
+            any(m.cost.unmeasured or m.cost.unpriced for m in all_metrics)
+            or not cost_measured_metrics
+            or self.unattributed_spend
         ):
             # Scalars inside ``metrics``: the summary_stats schema allows a
             # number next to the describe() dicts, but no extra top-level keys.
@@ -1294,6 +1499,7 @@ class MetricsTracker:
             lower_bound = (
                 sum(float(m.cost.total_cost) for m in cost_measured_metrics)
                 + sum(float(m.cost.known_cost) for m in all_metrics)
+                + self.unattributed_known_cost
                 + sum(
                     float(m.cost.total_cost)
                     for m in measured_metrics
@@ -1466,6 +1672,7 @@ class ResponseHandler(ABC):
                 logger.debug(f"Failed to parse cost from response: {e}")
 
         if cost_metrics.total_cost > 0.0:
+            cost_metrics.cost_source = COST_SOURCE_SELF_REPORTED
             return cost_metrics
 
         # 2. LiteLLM Usage.cost field — an explicit provider-reported charge.
@@ -1505,6 +1712,7 @@ class ResponseHandler(ABC):
                     # survive to the ledger instead of being overwritten by a
                     # price-table guess (#2274).
                     cost_metrics.cost_explicit = True
+                    cost_metrics.cost_source = COST_SOURCE_PROVIDER_BILLED
                     logger.debug(
                         "Extracted cost $%.6f from usage.cost "
                         "(explicit provider-reported cost).",
@@ -1539,6 +1747,7 @@ class ResponseHandler(ABC):
                 if isinstance(response_cost, (int, float)) and response_cost > 0:
                     cost_metrics.total_cost = float(response_cost)
                     cost_metrics.cost_estimated = True
+                    cost_metrics.cost_source = COST_SOURCE_TABLE
                     logger.debug(
                         "Extracted cost $%.6f from _hidden_params.response_cost "
                         "(LiteLLM fallback estimate, no explicit provider charge found).",
@@ -1582,6 +1791,7 @@ class ResponseHandler(ABC):
                     metrics.cost.total_cost = float(cost)
                 except (TypeError, ValueError):
                     pass
+            metrics.cost.cost_source = COST_SOURCE_SELF_REPORTED
 
         # Extract response time
         if "response_time_ms" in metadata:
@@ -1589,6 +1799,19 @@ class ResponseHandler(ABC):
                 metrics.response.response_time_ms = float(metadata["response_time_ms"])
             except (TypeError, ValueError):
                 pass
+
+    @classmethod
+    def _extract_cache_counts(cls, response: Any) -> tuple[int | None, int | None]:
+        """Cached/total input tokens from the response usage; unknown -> Nones."""
+        from traigent.core.cache_usage import cache_counts_from_usage
+
+        usage = cls._safe_getattr(response, "usage")
+        if usage is None and isinstance(response, dict):
+            usage = response.get("usage")
+        try:
+            return cache_counts_from_usage(usage)
+        except Exception:  # noqa: BLE001 - never fail metrics on cache parsing
+            return None, None
 
     @staticmethod
     def _safe_getattr(obj: Any, name: str) -> Any:
@@ -1688,6 +1911,10 @@ class ResponseHandler(ABC):
         if self.can_handle(response):
             metrics = ExampleMetrics()
             metrics.tokens = self.extract_tokens(response)
+            (
+                metrics.cache_read_tokens,
+                metrics.cache_total_input_tokens,
+            ) = self._extract_cache_counts(response)
             metrics.response.response_time_ms = self.extract_response_time(response)
 
             # Extract cost from response if available
@@ -2067,39 +2294,9 @@ def _infer_model_name_from_response(response: Any) -> str | None:
     calculation entirely, instead of the intended "skip cost, log a
     warning" degradation.
     """
-    try:
-        # 1. Direct attributes (e.g. OpenAI ChatCompletion, Anthropic Message)
-        for attr in ("model", "model_name"):
-            val = getattr(response, attr, None)
-            if isinstance(val, str) and val:
-                return val
+    from traigent.utils.response_model import infer_response_model
 
-        # 2. Dict-shaped response
-        if isinstance(response, dict):
-            for key in ("model", "model_name"):
-                val = response.get(key)
-                if isinstance(val, str) and val:
-                    return val
-
-        # 3. LangChain response_metadata
-        response_metadata = getattr(response, "response_metadata", None)
-        if isinstance(response_metadata, dict):
-            for key in ("model", "model_name"):
-                val = response_metadata.get(key)
-                if isinstance(val, str) and val:
-                    return val
-
-        # 4. LangChain llm_output
-        llm_output = getattr(response, "llm_output", None)
-        if isinstance(llm_output, dict):
-            for key in ("model", "model_name"):
-                val = llm_output.get(key)
-                if isinstance(val, str) and val:
-                    return val
-
-        return None
-    except Exception:
-        return None
+    return infer_response_model(response)
 
 
 def _calculate_cost_for_metrics(
@@ -2279,7 +2476,15 @@ def _reconcile_reported_cost_with_tokens(
 
     input_cost, output_cost, derived_total = derived
     authoritative_total = metrics.cost.total_cost
-    if authoritative_total < (derived_total * REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO):
+    # The provider's own billed charge is not a self-report: it may sit well
+    # below a stale table price (OpenRouter routing to a cheaper upstream), and
+    # the floor would replace the real bill with the table figure (#2505). Only
+    # the exact ``provider_billed`` tag skips the floor; anything else,
+    # including an unknown source, keeps it.
+    provider_billed = metrics.cost.cost_source == COST_SOURCE_PROVIDER_BILLED
+    if not provider_billed and authoritative_total < (
+        derived_total * REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO
+    ):
         logger.warning(
             "Reported LLM cost $%.8f for model %r is implausibly below token-derived "
             "estimate $%.8f (tokens: in=%d, out=%d); using token-derived cost "
@@ -2293,6 +2498,7 @@ def _reconcile_reported_cost_with_tokens(
         metrics.cost.input_cost = input_cost
         metrics.cost.output_cost = output_cost
         metrics.cost.total_cost = derived_total
+        metrics.cost.cost_source = COST_SOURCE_TABLE
         return
 
     _backfill_cost_breakdown(metrics, input_cost, output_cost, derived_total)
@@ -2370,6 +2576,7 @@ def _compute_cost(
         metrics.cost.input_cost = input_cost
         metrics.cost.output_cost = output_cost
         metrics.cost.total_cost = input_cost + output_cost
+        metrics.cost.cost_source = COST_SOURCE_TABLE
         if metrics.cost.total_cost > 0:
             logger.debug(
                 "Cost calculated for %s: $%.6f via cost_from_tokens",
@@ -2501,6 +2708,28 @@ class MetricsCalculator:
             logger.debug(f"Failed to calculate tokens per second: {e}")
 
 
+def _is_in_response_billing_provider(response: Any) -> bool:
+    """True when the response comes from a provider that bills in-response.
+
+    Currently only OpenRouter (``usage.cost``). Identified by LiteLLM's
+    ``custom_llm_provider`` hidden param, an ``openrouter/`` model prefix, or
+    OpenRouter's own top-level ``provider`` field. Anything else, or any
+    lookup failure, is False (fail closed).
+    """
+    try:
+        hidden = getattr(response, "_hidden_params", None)
+        if isinstance(hidden, dict):
+            if str(hidden.get("custom_llm_provider", "")).lower() == "openrouter":
+                return True
+        model = getattr(response, "model", None)
+        if isinstance(model, str) and model.lower().startswith("openrouter/"):
+            return True
+        provider = getattr(response, "provider", None)
+        return isinstance(provider, str) and bool(provider)
+    except Exception:
+        return False
+
+
 def extract_llm_metrics(
     response: Any,
     model_name: str | None = None,
@@ -2508,6 +2737,7 @@ def extract_llm_metrics(
     response_text: str | None = None,
     prompt_length: int | None = None,
     response_length: int | None = None,
+    response_captured: bool = False,
 ) -> ExampleMetrics:
     """Extract metrics from LLM response objects with cost calculation.
 
@@ -2524,6 +2754,11 @@ def extract_llm_metrics(
         response_text: The response text from the LLM (for accurate cost calculation)
         prompt_length: Length of prompt in privacy mode (alternative to original_prompt)
         response_length: Length of response in privacy mode (alternative to response_text)
+        response_captured: True only when ``response`` is a response the SDK
+            itself captured from a provider call. A caller-supplied object
+            (e.g. a returned ``raw_response``) is never provider-billed: any
+            cost it carries is a self-report (#2505). Defaults to False
+            (fail closed).
 
     Returns:
         ExampleMetrics with extracted token, cost, and response metrics
@@ -2531,6 +2766,17 @@ def extract_llm_metrics(
     # Create handler chain and extract basic metrics
     handler_chain = ResponseHandlerFactory.create_handler_chain()
     metrics = handler_chain.handle(response)
+    if (
+        metrics is not None
+        and metrics.cost.cost_source == COST_SOURCE_PROVIDER_BILLED
+        and not (response_captured and _is_in_response_billing_provider(response))
+    ):
+        # Fail closed (#2505): only an SDK-captured response from a provider
+        # known to bill inside the response keeps the floor exemption.
+        metrics.cost.cost_source = COST_SOURCE_SELF_REPORTED
+        # An explicit $0 skips pricing only for a trusted provider-billed
+        # response; an untrusted zero is priced/floored like any under-report.
+        metrics.cost.cost_explicit = False
 
     if metrics is None:
         # No handler extracted anything real for this response -- mark it

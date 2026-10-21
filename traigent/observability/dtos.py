@@ -449,7 +449,7 @@ class TraceDTO:
 
     id: str
     name: str
-    status: str = "running"
+    status: str | None = None
     session_id: str | None = None
     user_id: str | None = None
     environment: str | None = None
@@ -470,7 +470,8 @@ class TraceDTO:
     def __post_init__(self) -> None:
         _validate_required_string("id", self.id, max_length=MAX_IDENTIFIER_LENGTH)
         _validate_required_string("name", self.name, max_length=MAX_NAME_LENGTH)
-        _validate_observability_status("status", self.status)
+        if self.status is not None:
+            _validate_observability_status("status", self.status)
         _validate_optional_string(
             "session_id", self.session_id, max_length=MAX_IDENTIFIER_LENGTH
         )

@@ -10,6 +10,7 @@ import secrets
 import warnings
 from collections.abc import Iterator
 from contextlib import contextmanager
+import threading
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast, overload
@@ -79,6 +80,20 @@ def _check_mock_llm_prod_guard() -> None:
             "ENVIRONMENT!=production. For programmatic mock activation "
             "use traigent.testing.enable_mock_mode_for_quickstart()."
         )
+    # The flag may only have landed now (a ``.env`` loaded after ``import
+    # traigent``): block raw provider HTTP from here on. Idempotent; a failed
+    # install raises so mock mode never runs unguarded (#2418).
+    from traigent.utils.mock_transport_guard import install_mock_transport_guard
+
+    install_mock_transport_guard()
+    # Raw openai/anthropic clients are not mocked on this path either (#2418);
+    # the helper is once-guarded and shared with the in-code activation path.
+    try:
+        from traigent.testing import log_raw_client_scope_caveat
+
+        log_raw_client_scope_caveat()
+    except Exception:  # noqa: BLE001 - a log line must never break import
+        pass
     # Suppress the user-facing deprecation warning when the env var was
     # written by the quickstart bootstrap in ``traigent/__init__.py``
     # (the user IS using the recommended in-code path; the env var is
@@ -212,6 +227,11 @@ def _load_dotenv_files() -> None:
 
 
 _load_dotenv_files()
+
+# Advisory: name (never value) any misspelt TRAIGENT_* variable (#2669).
+from .env_audit import warn_unknown_traigent_env_vars  # noqa: E402
+
+warn_unknown_traigent_env_vars()
 
 _MIN_JWT_SECRET_LENGTH = 32
 _PRODUCTION_ENV_NAMES = {"prod", "production"}
@@ -540,6 +560,28 @@ def is_mock_llm() -> bool:
     return is_truthy(os.environ.get("TRAIGENT_MOCK_LLM"))
 
 
+COST_PREFLIGHT_MOCK_EXEMPT_ENV = "TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT"
+
+
+def cost_preflight_mock_exempt() -> bool:
+    """Return True only when the pre-run cost preflights may be skipped.
+
+    Plain mock mode no longer skips the cost approval / model-price coverage
+    preflights (a mixed real/mock agent would otherwise run unchecked). The
+    skip requires ALL of: mock LLM mode is on, the explicit test/walkthrough
+    opt-in ``TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT`` is truthy, and the
+    environment is explicitly non-production (``ENVIRONMENT``/``TRAIGENT_ENV``/
+    ``TRAIGENT_ENVIRONMENT`` set to a known non-production name). Unset or
+    unknown environments count as production. Test and keyless-walkthrough
+    use only.
+    """
+    if treat_as_production_policy():
+        return False
+    if not is_truthy(os.environ.get(COST_PREFLIGHT_MOCK_EXEMPT_ENV)):
+        return False
+    return is_mock_llm()
+
+
 _STRICT_COST_ENV = "TRAIGENT_STRICT_COST_ACCOUNTING"
 
 # Run-scoped default for strict cost accounting. ``OptimizedFunction.optimize``
@@ -621,8 +663,41 @@ def should_show_cloud_notice(traigent_config: "TraigentConfig") -> bool:
     return not BackendConfig.get_api_key()
 
 
+# Process-wide count of in-flight optimization runs that asked for
+# ``offline=True``. A counter (not a ContextVar) on purpose: trial work runs in
+# worker threads that do not inherit the caller's context, and an egress lane
+# that misses the flag would leak. Fail closed: while any offline run is in
+# flight, every backend/telemetry lane in the process treats itself as offline.
+_OFFLINE_RUN_LOCK = threading.Lock()
+_OFFLINE_RUN_COUNT = 0
+
+
+@contextmanager
+def offline_run_scope(enabled: bool) -> Iterator[None]:
+    """Make ``offline=True`` on the decorator disable every egress lane.
+
+    While the block runs, :func:`is_backend_offline` returns True, so the
+    standalone API clients, OTLP trace export and the langfuse client refuse to
+    send without the user having to set ``TRAIGENT_OFFLINE_MODE`` as well.
+    """
+    global _OFFLINE_RUN_COUNT
+    if not enabled:
+        yield
+        return
+    with _OFFLINE_RUN_LOCK:
+        _OFFLINE_RUN_COUNT += 1
+    try:
+        yield
+    finally:
+        with _OFFLINE_RUN_LOCK:
+            _OFFLINE_RUN_COUNT -= 1
+
+
 def is_backend_offline() -> bool:
     """Check if Traigent backend calls should be skipped.
+
+    Also true while a run decorated with ``offline=True`` is in flight (see
+    :func:`offline_run_scope`).
 
     When TRAIGENT_OFFLINE_MODE=true or TRAIGENT_OFFLINE=true, all communication
     with the Traigent backend is skipped. This is useful for:
@@ -641,8 +716,10 @@ def is_backend_offline() -> bool:
     See also:
         - is_mock_llm(): Check if LLM API calls should be mocked
     """
-    return _is_truthy_env_value(get_env_var("TRAIGENT_OFFLINE_MODE", "false")) or (
-        _is_truthy_env_value(get_env_var("TRAIGENT_OFFLINE", "false"))
+    return (
+        _OFFLINE_RUN_COUNT > 0
+        or _is_truthy_env_value(get_env_var("TRAIGENT_OFFLINE_MODE", "false"))
+        or _is_truthy_env_value(get_env_var("TRAIGENT_OFFLINE", "false"))
     )
 
 
@@ -690,12 +767,11 @@ def is_development() -> bool:
 def skip_provider_validation() -> bool:
     """Check if provider validation should be skipped.
 
-    NOTE: there is no ``validate_providers`` parameter on
-    ``@traigent.optimize`` and the SDK never calls provider validation
-    automatically. This helper exists for callers who wrap
-    :func:`traigent.providers.validate_providers` in their own pre-run
-    check and want that check to honor the same skip signal the rest of
-    the SDK uses.
+    The optimizer runs :func:`traigent.providers.validate_providers`
+    automatically before cost approval for paid runs (a cost limit is set or
+    cost is approved) and uses this helper to decide whether to skip. Callers
+    who wrap ``validate_providers`` in their own pre-run check can use it to
+    honor the same skip signal.
 
     Skip is signaled when:
     - TRAIGENT_SKIP_PROVIDER_VALIDATION=true is set
@@ -713,8 +789,8 @@ def skip_provider_validation() -> bool:
 
     See also:
         - :func:`is_mock_llm`: Check if LLM API calls should be mocked
-        - :func:`traigent.providers.validate_providers`: the standalone,
-          opt-in provider validation function this flag is meant to gate
+        - :func:`traigent.providers.validate_providers`: the provider
+          validation function this flag gates (callable standalone too)
     """
     # Skip if mock mode is enabled (no real API calls anyway)
     if is_mock_llm():

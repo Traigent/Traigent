@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from traigent.labels.transport_gate import client_origins, gate_session
 from traigent._version import get_version
 from traigent.cloud.client import (
     CloudEgressBlockedError,
@@ -71,13 +72,34 @@ def resolve_privacy_enabled(client: Any) -> bool:
     return False
 
 
+def _closed_stop_reason(reason: Any) -> str | None:
+    """Map a backend-supplied stop reason onto the closed SDK vocabulary (#2555).
+
+    Falsy values stay ``None``; anything outside ``StopReason`` (including
+    non-strings) renders as ``"unknown"`` so server text never reaches logs,
+    warnings or reprs.
+    """
+    if not reason:
+        return None
+    from typing import get_args
+
+    from traigent.api.types import StopReason
+
+    if isinstance(reason, str) and reason in get_args(StopReason):
+        return reason
+    return "unknown"
+
+
 @dataclass(frozen=True)
 class TrialSlotResult:
     """Neutral result for a backend trial-slot request."""
 
     trial_id: str | None = None
     optimization_complete: bool = False
+    # Closed SDK vocabulary only (StopReason members or "unknown", #2555).
     reason: str | None = None
+    # Raw backend value: server-supplied, so never repr'd, compared or logged.
+    raw_reason: str | None = field(default=None, repr=False, compare=False)
 
     def __bool__(self) -> bool:
         return bool(self.trial_id)
@@ -267,17 +289,19 @@ class TrialOperations:
 
     @staticmethod
     def _contains_string(value: Any, depth: int = 0) -> bool:
-        """Return True when a config value contains free-text string content."""
+        """Return True when a config value contains free-text string content.
+
+        Strings, and the keys of any non-empty nested dict, count as content.
+        """
 
         if depth > 10:
             return True
         if isinstance(value, str):
             return True
         if isinstance(value, dict):
-            return any(
-                TrialOperations._contains_string(item, depth + 1)
-                for item in value.values()
-            )
+            # Nested dict keys are customer-authored text (content): any
+            # non-empty mapping is treated as string content (fail closed).
+            return bool(value)
         if isinstance(value, (list, tuple, set)):
             return any(
                 TrialOperations._contains_string(item, depth + 1) for item in value
@@ -345,7 +369,10 @@ class TrialOperations:
         if not _sync_registration_loop.get():
             yield await self.client._ensure_session()
             return
-        async with aiohttp.ClientSession(trust_env=True) as session:
+        async with gate_session(
+            aiohttp.ClientSession(trust_env=True),
+            origins=client_origins(self.client),
+        ) as session:
             yield session
 
     async def register_trial_start(
@@ -591,16 +618,19 @@ class TrialOperations:
                             isinstance(data, dict)
                             and data.get("should_continue") is False
                         ):
-                            reason = data.get("stop_reason") or data.get("reason")
+                            raw = data.get("stop_reason") or data.get("reason")
+                            slot = TrialSlotResult(
+                                optimization_complete=True,
+                                reason=_closed_stop_reason(raw),
+                                raw_reason=raw if isinstance(raw, str) else None,
+                            )
                             logger.info(
                                 "Backend next-trial completed optimization for session %s "
                                 "(reason=%s)",
                                 session_id,
-                                reason,
+                                slot.reason,
                             )
-                            return TrialSlotResult.complete(
-                                str(reason) if reason else None
-                            )
+                            return slot
                         logger.info(
                             "Backend next-trial returned no slot for session %s "
                             "(should_continue=%s)",

@@ -405,7 +405,8 @@ def test_an_older_artifact_still_loads_after_a_new_field_is_added(
 
     # The log says what happened, and says it accurately.
     assert "best_config_margin" in caplog.text
-    assert "written-last-release.json" in caplog.text
+    # the artifact label is a caller-chosen name: never logged (F1m)
+    assert "written-last-release.json" not in caplog.text
     assert "corrupt" not in caplog.text.lower()
 
 
@@ -522,7 +523,8 @@ def test_unrecognized_status_member_decodes_to_unknown(caplog) -> None:
         restored = decode_result(encoded, trials=[])
 
     assert restored.status is OptimizationStatus.UNKNOWN
-    assert "quantum_superposition" in caplog.text
+    assert "quantum_superposition" not in caplog.text  # artifact content stays out
+    assert "UNKNOWN" in caplog.text
 
 
 def test_schema_version_is_stamped_into_the_encoded_payload() -> None:
@@ -777,7 +779,7 @@ def test_legacy_artifact_defaults_missing_fields_and_says_so(caplog) -> None:
     assert restored.warning_codes == []
     for name in ("total_cost", "total_tokens", "warnings", "warning_codes"):
         assert name in caplog.text
-    assert "old.json" in caplog.text
+    assert "old.json" not in caplog.text  # artifact names stay out of logs
 
 
 def test_legacy_source_is_unknown_never_the_backend_default() -> None:
@@ -926,8 +928,9 @@ def test_an_unwritable_timestamp_fails_the_save_and_leaves_no_artifact(
     result.timestamp = "not-a-date"  # type: ignore[assignment]
 
     persistence = PersistenceManager(base_dir=tmp_path)
-    with pytest.raises(ValueError, match="not-a-date"):
+    with pytest.raises(ValueError, match="'timestamp'") as raised:
         persistence.save_result(result, "unreadable-timestamp")
+    assert "not-a-date" not in str(raised.value)  # the rejected value is not quoted
 
     # No half-written result_fields payload: whatever landed on disk must not be
     # loadable-looking. (The directory itself may exist; metadata.json must not
@@ -979,8 +982,9 @@ def test_every_encoder_branch_is_at_least_as_strict_as_its_decoder() -> None:
     assert not hasattr(OptimizationResult, "__post_init__")
 
     # status: encoder rejects, decoder would have accepted (as UNKNOWN).
-    with pytest.raises(ValueError, match="quantum_superposition"):
+    with pytest.raises(ValueError, match="'status'") as raised:
         manifest._encode_value("status", "quantum_superposition")
+    assert "quantum_superposition" not in str(raised.value)
     assert manifest._decode_value("status", "quantum_superposition") is (
         OptimizationStatus.UNKNOWN
     )
@@ -1081,8 +1085,9 @@ def test_the_whole_dump_encoder_refuses_an_unwritable_status() -> None:
     result = _sentinel_result()
     result.status = "bogus"  # type: ignore[assignment]
 
-    with pytest.raises(ValueError, match="bogus"):
+    with pytest.raises(ValueError, match="'status'") as raised:
         manifest.encode_whole_result_dump(result)
+    assert "bogus" not in str(raised.value)
 
 
 def test_encoder_never_writes_a_reset_field() -> None:

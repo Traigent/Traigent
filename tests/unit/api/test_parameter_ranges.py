@@ -871,3 +871,20 @@ class TestChoicesModelFallback:
         for tier in ("fast", "balanced", "quality"):
             models = Choices.model(provider="openai", tier=tier).to_list()
             assert "o1-preview" not in models
+
+
+class TestChoicesModelUnknownProvider:
+    """Unknown providers get no default, never an OpenAI model (#2650)."""
+
+    def test_unknown_provider_raises_instead_of_openai_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("TRAIGENT_MODELS_ACME_BALANCED", raising=False)
+        with pytest.raises(ValueError, match="TRAIGENT_MODELS_ACME_BALANCED"):
+            Choices.model(provider="acme", tier="balanced")
+
+    def test_unknown_provider_honours_env_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TRAIGENT_MODELS_ACME_BALANCED", "acme-1")
+        assert Choices.model(provider="acme").to_list() == ["acme-1"]

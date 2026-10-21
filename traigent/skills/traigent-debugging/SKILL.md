@@ -191,11 +191,12 @@ export OPENAI_API_KEY="sk-..."  # pragma: allowlist secret
 export ANTHROPIC_API_KEY="sk-ant-..."  # pragma: allowlist secret
 ```
 
-If your own pre-run check should be skippable, gate it on
-`traigent.utils.env_config.skip_provider_validation()` (true when
-`TRAIGENT_SKIP_PROVIDER_VALIDATION=true` or mock mode is on) rather than
-building a bespoke skip flag -- `@traigent.optimize` itself has no
-provider-validation skip parameter.
+For paid runs (a cost limit is set or cost is approved, mock mode off) the SDK
+runs this check itself before cost approval and raises
+`ProviderValidationError` on a bad key. Skip it with
+`TRAIGENT_SKIP_PROVIDER_VALIDATION=true` (also what
+`traigent.utils.env_config.skip_provider_validation()` reads). Bedrock is
+reported as skipped (no key or balance check).
 
 The `failed_providers` attribute contains a list of `(provider, error_type)` tuples.
 

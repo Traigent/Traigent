@@ -20,6 +20,7 @@ from random import SystemRandom
 from typing import Any, cast
 from urllib.parse import urlparse
 
+from traigent.labels.transport_gate import gate_session
 from traigent.cloud.client import raise_if_cloud_egress_disabled
 from traigent.config.backend_config import DEFAULT_CLOUD_URL
 
@@ -168,9 +169,12 @@ class DatasetConverter:
     async def __aenter__(self):
         """Async context manager entry."""
         if AIOHTTP_AVAILABLE:
-            self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=60),
-                trust_env=True,
+            self._session = gate_session(
+                aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=60),
+                    trust_env=True,
+                ),
+                origins=[self.backend_base_url],
             )
         return self
 

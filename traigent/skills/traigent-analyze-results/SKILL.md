@@ -159,6 +159,15 @@ print(f"Best metrics: {results.best_metrics}")
 # {"accuracy": 0.92, "latency": 0.8}
 ```
 
+## Mock Provenance
+
+`results.metadata["mock_llm_run"]` is `True` when any LLM response was simulated
+(mock mode) and `False` for a real run; `results.metadata["mock_llm_mixed"]` is
+`True` when mock and real calls were both observed. A result saved before these
+keys existed has neither key: treat `results.metadata.get("mock_llm_run")` being
+`None` as **unknown**, never as a real run. Scores and costs of a mock run are
+simulated and not meaningful.
+
 ## Stop Reasons
 
 The `stop_reason` field tells you why optimization ended. This is critical for deciding whether to run more trials:

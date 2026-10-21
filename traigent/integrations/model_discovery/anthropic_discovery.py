@@ -7,6 +7,7 @@ released Claude IDs are not rejected before the snapshot is refreshed.
 # Traceability: CONC-Layer-Integration FUNC-INTEGRATIONS REQ-INT-008
 
 import logging
+import os
 
 from traigent.integrations.model_discovery.base import ModelDiscovery
 from traigent.integrations.utils import Framework
@@ -21,9 +22,16 @@ ANTHROPIC_MODEL_PATTERN = (
     r"(?:opus|sonnet|haiku)-4(?:-[a-z0-9]+)+)$"
 )
 
-# Known Anthropic models (shipped snapshot: 2026-07-05).
+# Known Anthropic models (shipped snapshot: 2026-10-21).
 # Keep this in sync with traigent/config/models.yaml.
 KNOWN_ANTHROPIC_MODELS = [
+    # Claude 5.5 family (#2689): current Anthropic ids, priced in the upstream
+    # litellm price map but NOT in the bundled 1.103.5 table (see
+    # traigent/providers/validation.py); offline/bundled pricing reports their
+    # cost as unmeasured (strict mode stops), never $0.
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
+    "claude-haiku-5-5",
     # Claude 4 family
     "claude-opus-4-8",
     "claude-opus-4-7",
@@ -35,8 +43,7 @@ KNOWN_ANTHROPIC_MODELS = [
     "claude-sonnet-4-5-20250929",
     "claude-sonnet-4-20250514",
     "claude-haiku-4-5-20251001",
-    # Claude 3.7/3.5 family
-    "claude-3-7-sonnet-20250219",
+    # Claude 3.5 family (3.7 Sonnet and 3 Haiku retired, #2646)
     "claude-3-5-sonnet-20241022",
     "claude-3-5-sonnet-latest",
     "claude-3-5-haiku-20241022",
@@ -45,7 +52,6 @@ KNOWN_ANTHROPIC_MODELS = [
     # track (#1936/#1937) and swept from this served snapshot; see
     # traigent.config.retired_models.
     "claude-3-sonnet-20240229",
-    "claude-3-haiku-20240307",
     # Claude 2 family (legacy)
     "claude-2.1",
     "claude-2.0",
@@ -66,6 +72,16 @@ class AnthropicDiscovery(ModelDiscovery):
 
     PROVIDER = "anthropic"
     FRAMEWORK = Framework.ANTHROPIC
+
+    def _fetch_live_model_ids(self) -> list[str]:
+        """List model IDs via the Anthropic models endpoint (no model is invoked)."""
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            return []
+        import anthropic
+
+        client = anthropic.Anthropic(api_key=api_key)
+        return [m.id for m in client.models.list(limit=1000)]
 
     def _fetch_models_from_sdk(self) -> list[str]:
         """Live Anthropic model listing is not wired into this discovery path.

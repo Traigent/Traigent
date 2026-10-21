@@ -116,6 +116,9 @@ class SmartPruningEvaluator(BaseEvaluator):
 class MockOrchestrator:
     """Mock orchestrator for TrialLifecycle testing."""
 
+    def record_trial_mock_state(self) -> None:
+        self.mock_state_records += 1
+
     def __init__(self):
         self.optimizer = MockOptimizer()
         self.evaluator = MockEvaluator()
@@ -138,6 +141,7 @@ class MockOrchestrator:
         self.objective_schema = None  # For band-based pruning support
         self.objectives = ["accuracy"]
         self.backend_session_manager = None
+        self.mock_state_records = 0
 
     def _apply_knob_resolution(self, config):
         """Mirror of OptimizationOrchestrator._apply_knob_resolution (RFC 0001):
@@ -1485,3 +1489,23 @@ class TestCancelledErrorPropagation:
                 trial_number=0,
                 session_id=None,
             )
+
+
+@pytest.mark.asyncio
+async def test_run_trial_records_mock_state_at_dispatch_2516() -> None:
+    """#2516: every dispatched trial samples mock provenance exactly once."""
+    from traigent.core.trial_lifecycle import TrialLifecycle
+
+    orchestrator = MockOrchestrator()
+    lifecycle = TrialLifecycle(orchestrator)
+    lifecycle._execute_trial_with_tracing = AsyncMock(return_value="sentinel")
+    lifecycle._generate_trial_id = MagicMock(return_value="t1")
+    lifecycle._create_progress_tracking = MagicMock(return_value=(None, None))
+    lifecycle._setup_trial_budget_lease = MagicMock(return_value=None)
+
+    out = await lifecycle.run_trial(
+        func=lambda: None, config={"x": 1}, dataset=MagicMock(), trial_number=0
+    )
+
+    assert out == "sentinel"
+    assert orchestrator.mock_state_records == 1

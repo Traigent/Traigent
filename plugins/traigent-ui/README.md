@@ -15,12 +15,6 @@ Streamlit-based UI and playground for Traigent SDK.
 pip install traigent-ui
 ```
 
-Or with the UI bundle:
-
-```bash
-pip install traigent[ui]
-```
-
 ## Usage
 
 ### Launch the UI

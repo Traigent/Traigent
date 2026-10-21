@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "traigent-tracing"
-version = "0.1.0"
+version = "0.1.1"
 description = "OpenTelemetry tracing plugin for Traigent SDK"
 readme = "README.md"
 license = {text = "MIT"}

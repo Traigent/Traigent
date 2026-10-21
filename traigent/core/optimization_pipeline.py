@@ -29,6 +29,7 @@ from traigent.config.types import (
 from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
 from traigent.core.execution_policy_runtime import backend_egress_disabled
 from traigent.core.trace_env import is_trace_enabled
+from traigent.core.objective_preflight import warn_unproducible_objectives
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.evaluators.local import LocalEvaluator
 from traigent.utils.env_config import is_mock_llm
@@ -39,6 +40,9 @@ if TYPE_CHECKING:
     from traigent.config.parallel import ParallelConfig
 
 logger = get_logger(__name__)
+
+# Default per-example evaluation limit (seconds); independent of run timeout.
+DEFAULT_EXAMPLE_TIMEOUT_SECONDS = 60.0
 
 
 # ---------------------------------------------------------------------------
@@ -485,6 +489,75 @@ def build_metric_functions(
     return effective_metric_functions
 
 
+def _edit_distance(a: str, b: str) -> int:
+    """Plain Levenshtein distance (inputs are short metric names)."""
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+def _is_derived_name(key: str, objective: str) -> bool:
+    """True for ``objective_suffix`` / ``suffix_objective`` style distinct names."""
+    for sep in ("_", "-", "."):
+        if key.startswith(objective + sep) or objective.startswith(key + sep):
+            return True
+        if key.endswith(sep + objective) or objective.endswith(sep + key):
+            return True
+    return False
+
+
+def validate_metric_function_keys(
+    metric_functions: dict[str, Callable[..., Any]] | None,
+    objectives: Sequence[str],
+    scoring_function: Callable[..., Any] | None = None,
+) -> None:
+    """Warn when a ``metric_functions`` key looks like a typo of an objective.
+
+    A key naming no objective is legitimate for an auxiliary metric, so it is
+    only rejected when it is a true typo of an objective that would otherwise
+    have no user scorer: a case-only difference, or edit distance <= 2 without a
+    ``name_suffix`` style relationship (``latency_ms`` next to ``latency`` is a
+    distinct auxiliary metric). Objectives covered by ``scoring_function`` count
+    as covered (Traigent#2659).
+
+    This is a name heuristic, so it only logs a warning (key and suggested
+    objective, never values) and never rejects a configuration: a mapping-returning
+    scorer such as ``{"scores": fn}`` is valid.
+    """
+    if not metric_functions:
+        return
+
+    objective_names = [str(o) for o in objectives]
+    covered = build_metric_functions(metric_functions, scoring_function, objectives)
+    uncovered = [o for o in objective_names if o not in covered]
+    for key in metric_functions:
+        key_s = str(key)
+        if key_s in objective_names:
+            continue
+        close = [
+            o
+            for o in uncovered
+            if o.lower() == key_s.lower()
+            or (
+                _edit_distance(key_s.lower(), o.lower()) <= 2
+                and not _is_derived_name(key_s.lower(), o.lower())
+            )
+        ]
+        if close:
+            logger.warning(
+                "metric_functions key '%s' matches no objective; if it is a typo "
+                "your scorer is ignored and the built-in scorer is used for "
+                "'%s'. Did you mean '%s'?",
+                key,
+                close[0],
+                close[0],
+            )
+
+
 def validate_metric_function_bindability(
     effective_metric_functions: dict[str, Callable[..., Any]],
     objectives: Sequence[str],
@@ -641,14 +714,14 @@ def _create_wrapped_custom_evaluator(
     effective_evaluator: Callable[..., Any],
     *,
     objectives: Sequence[str],
-    timeout: float | None,
+    example_timeout: float | None,
 ) -> tuple[BaseEvaluator, None]:
     """Wrap a user-supplied evaluator with the SDK adapter."""
     return (
         CustomEvaluatorWrapper(
             custom_evaluator=effective_evaluator,
             metrics=list(objectives),
-            timeout=timeout or 60.0,
+            timeout=example_timeout or DEFAULT_EXAMPLE_TIMEOUT_SECONDS,
             capture_llm_metrics=True,
         ),
         None,
@@ -705,7 +778,7 @@ def _create_hybrid_api_evaluator(
 
 
 def _create_local_evaluator(
-    timeout: float | None,
+    example_timeout: float | None,
     effective_batch_size: int | None,
     effective_thread_workers: int | None,
     *,
@@ -715,17 +788,19 @@ def _create_local_evaluator(
     scoring_function: Callable[..., Any] | None,
 ) -> tuple[BaseEvaluator, None]:
     """Create the default local evaluator."""
+    validate_metric_function_keys(metric_functions, objectives, scoring_function)
     effective_metric_fns = build_metric_functions(
         metric_functions, scoring_function, objectives
     )
     validate_metric_function_bindability(effective_metric_fns, objectives)
+    warn_unproducible_objectives(metric_functions, objectives, scoring_function)
     effective_workers = resolve_effective_workers(
         effective_batch_size, effective_thread_workers
     )
     return (
         LocalEvaluator(
             metrics=list(objectives),
-            timeout=timeout or 60.0,
+            timeout=example_timeout or DEFAULT_EXAMPLE_TIMEOUT_SECONDS,
             max_workers=effective_workers,
             detailed=True,
             execution_mode=execution_mode,
@@ -752,11 +827,14 @@ def create_effective_evaluator(
     surrogate_evaluator_name: str | None = None,
     decorator_surrogate_evaluator_name: str | None = None,
     hybrid_api_options: HybridAPIEvaluatorOptions | None = None,
+    example_timeout: float | None = None,
 ) -> tuple[BaseEvaluator, Any]:
     """Create the appropriate evaluator for the optimization run.
 
     Args:
-        timeout: Evaluation timeout
+        timeout: Run timeout; used only for Hybrid API request timeouts, never
+            as the per-example limit
+        example_timeout: Per-example limit in seconds (None = 60 s default)
         custom_evaluator: Custom evaluator from optimize() call
         effective_batch_size: Example concurrency batch size
         effective_thread_workers: Thread worker limit
@@ -801,7 +879,7 @@ def create_effective_evaluator(
         evaluator_result = _create_wrapped_custom_evaluator(
             effective_evaluator,
             objectives=objectives,
-            timeout=timeout,
+            example_timeout=example_timeout,
         )
     else:
         execution_mode_enum = resolve_execution_mode(execution_mode)
@@ -813,7 +891,7 @@ def create_effective_evaluator(
             )
         else:
             evaluator_result = _create_local_evaluator(
-                timeout,
+                example_timeout,
                 effective_batch_size,
                 effective_thread_workers,
                 objectives=objectives,
@@ -898,6 +976,7 @@ def collect_orchestrator_kwargs(
     warm_start_from: str | None = None,
     run_title: str | None = None,
     run_description: str | None = None,
+    content_less: Any = None,
 ) -> dict[str, Any]:
     """Collect optional kwargs for orchestrator from algorithm_kwargs and attrs.
 
@@ -915,6 +994,7 @@ def collect_orchestrator_kwargs(
         invocations_per_example: Number of invocations per example (default: 1)
         run_title: Optional author-supplied title for this run (label only)
         run_description: Optional author-supplied run description (label only)
+        content_less: Optional ``ContentLessOptions`` (content-less session create)
 
     Returns:
         Dict of orchestrator keyword arguments.
@@ -965,6 +1045,7 @@ def collect_orchestrator_kwargs(
         ("warm_start_from", warm_start_from, None),
         ("run_title", run_title, None),
         ("run_description", run_description, None),
+        ("content_less", content_less, None),
     ]
     for attr_name, value, transform in optional_attrs:
         if value is not None:

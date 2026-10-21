@@ -72,7 +72,8 @@ _FINGERPRINT_FILES = (
 )
 
 #: Expected content fingerprint of the accepted economics contract
-#: (TraigentSchema 321d98133645d343297545a155b9549650e3152d). Content-identical to
+#: (history: first computed at TraigentSchema 321d98133645d343297545a155b9549650e3152d;
+#: the installed pin is in scripts/ci/schema-pin.txt). Content-identical to
 #: the prior pin (4b3373925cee6bd57071980285c58044165c90a4) — the digest was
 #: recomputed and did not change. See module docstring for how to recompute when
 #: the exact Git pin changes.

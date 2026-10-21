@@ -208,12 +208,8 @@ class OptimizationSession:
         """
         recorded_trials = len(self.trials or [])
         if self.total_trials != recorded_trials:
-            logger.debug(
-                "Reconciled total_trials for session %s: %s -> %s (#2032)",
-                label,
-                self.total_trials,
-                recorded_trials,
-            )
+            # the session label is a (possibly externally supplied) session id: never logged
+            logger.debug("Reconciled total_trials of a session (#2032)")
             self.total_trials = recorded_trials
 
 
@@ -266,11 +262,12 @@ class LocalStorageManager:
             (self.storage_path / "cache" / "model_responses").mkdir(
                 parents=True, exist_ok=True
             )
-            logger.debug(f"Initialized storage directories at {self.storage_path}")
-        except Exception as e:
+            logger.debug("Initialized storage directories")
+        except Exception as exc:
+            # OS error text quotes the (customer-chosen) storage path
             raise TraigentStorageError(
-                f"Failed to create storage directories: {e}"
-            ) from e
+                f"Failed to create storage directories ({type(exc).__name__})"
+            ) from None
 
     def _is_process_alive(self, pid: int) -> bool:
         """Best-effort check whether a process is alive."""
@@ -303,9 +300,8 @@ class LocalStorageManager:
 
         try:
             os.unlink(str(lock_path))
-            logger.warning(
-                "Removed stale lock '%s' owned by dead pid %s", lock_name, owner_pid
-            )
+            # lock names can embed a session id (sync_manager: "sync_<id>"): not logged
+            logger.warning("Removed a stale lock owned by a dead process")
             return True
         except FileNotFoundError:
             # Another process removed it before us.
@@ -345,14 +341,14 @@ class LocalStorageManager:
                 # Atomic file creation works on all platforms
                 fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
                 os.write(fd, str(os.getpid()).encode("utf-8"))
-                logger.debug(f"Acquired lock: {lock_name}")
+                logger.debug("Acquired lock")
                 try:
                     yield  # Lock acquired
                 finally:
                     os.close(fd)
                     try:
                         os.unlink(str(lock_path))  # Clean up lock file
-                        logger.debug(f"Released lock: {lock_name}")
+                        logger.debug("Released lock")
                     except OSError:
                         pass  # Another process may have cleaned it
                 break
@@ -361,8 +357,9 @@ class LocalStorageManager:
                 if self._try_cleanup_stale_lock(lock_path, lock_name):
                     continue
                 if time.time() - start_time > timeout:
+                    # the lock name can embed a session id: kept off the message
                     raise TimeoutError(
-                        f"Could not acquire lock '{lock_name}' after {timeout}s"
+                        "Could not acquire lock before the timeout"
                     ) from None
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 0.5)  # Exponential backoff with cap
@@ -413,7 +410,7 @@ class LocalStorageManager:
         )
 
         self._save_session(session)
-        logger.info(f"Created optimization session: {session_id}")
+        logger.info("Created optimization session")
         return session_id
 
     def update_session_status(self, session_id: str, status: str) -> None:
@@ -423,7 +420,7 @@ class LocalStorageManager:
             session.status = status
             session.updated_at = datetime.now(UTC).isoformat()
             self._save_session(session)
-            logger.debug(f"Updated session {session_id} status to {status}")
+            logger.debug("Updated session status")
 
     def add_trial_result(
         self,
@@ -453,7 +450,9 @@ class LocalStorageManager:
         """
         session = self.load_session(session_id)
         if not session:
-            raise TraigentStorageError(f"Session {session_id} not found") from None
+            raise TraigentStorageError(
+                "Session <id> not found", details={"session_id": session_id}
+            ) from None
 
         if session.trials is None:
             session.trials = []
@@ -537,7 +536,7 @@ class LocalStorageManager:
                 session.best_config = config.copy()
 
         self._save_session(session)
-        logger.debug(f"Added trial result to session {session_id}: score={score}")
+        logger.debug("Added trial result to session")
 
     @staticmethod
     def _extract_objective_name_candidate(candidate: Any) -> str | None:
@@ -649,12 +648,17 @@ class LocalStorageManager:
                                 and low <= high
                             ):
                                 return float(low), float(high)
-        raise ValueError(
-            f"Banded objective '{primary_objective}' requires a complete target band"
-        )
+        # the objective name is stored caller config: not quoted
+        raise ValueError("Banded objective requires a complete target band")
 
     def finalize_session(
-        self, session_id: str, status: str | None = None
+        self,
+        session_id: str,
+        status: str | None = None,
+        *,
+        best_config: dict[str, Any] | None = None,
+        best_score: float | None = None,
+        apply_best: bool = False,
     ) -> OptimizationSession | None:
         """
         Finalize an optimization session.
@@ -662,16 +666,31 @@ class LocalStorageManager:
         Args:
             session_id: Session identifier
             status: Final status (completed, failed, cancelled)
+            best_config: The terminal selector's winner. When given, it
+                replaces the incrementally tracked best so the stored session
+                names the same best as the returned result (tie-break and
+                eligibility rules are applied once, by the selector;
+                Traigent#2660).
+            best_score: Score of ``best_config``.
+            apply_best: When True the stored best is REPLACED by
+                ``best_config``/``best_score`` even if they are empty, i.e. a
+                final selection with no winner clears a stale incremental best.
 
         Returns:
             The finalized session data or None if not found
         """
         session = self.load_session(session_id)
         if not session:
-            logger.error(f"Session {session_id} not found")
+            logger.error("Session to finalize not found")
             return None
 
         session.status = status or OptimizationStatus.COMPLETED.value
+        if apply_best:
+            session.best_config = dict(best_config) if best_config else None
+            session.best_score = best_score if best_config else None
+        elif best_config is not None:
+            session.best_config = dict(best_config)
+            session.best_score = best_score
         # Re-assert the recorded-trial invariant at the end of the run: an
         # early-stopped run records fewer trials than it planned, and the count
         # that persists is the one that actually happened (#2032).
@@ -679,7 +698,7 @@ class LocalStorageManager:
         session.updated_at = datetime.now(UTC).isoformat()
         self._save_session(session)
 
-        logger.info(f"Finalized session {session_id} with status {status}")
+        logger.info("Finalized session")
         return session
 
     def update_sync_state(
@@ -699,7 +718,7 @@ class LocalStorageManager:
         """
         session = self.load_session(session_id)
         if not session:
-            logger.warning("Cannot update sync_state: session %s not found", session_id)
+            logger.warning("Cannot update sync_state: session not found")
             return None
 
         state: dict[str, Any] = dict(session.sync_state or {})
@@ -763,7 +782,8 @@ class LocalStorageManager:
             return session
 
         except Exception as e:
-            logger.error(f"Failed to load session {session_id}: {e}")
+            # the exception text can quote the session file's full path
+            logger.error("Failed to load session (%s)", type(e).__name__)
             return None
 
     def list_sessions(self, status: str | None = None) -> list[OptimizationSession]:
@@ -882,7 +902,9 @@ class LocalStorageManager:
                 finally:
                     tmp_path.unlink(missing_ok=True)
             except (PathTraversalError, OSError) as e:
-                logger.debug(f"Failed to write session summary index: {e}")
+                logger.debug(
+                    "Failed to write session summary index (%s)", type(e).__name__
+                )
 
         return [
             SessionSummary(status=entry[2], completed_trials=entry[3])
@@ -900,10 +922,10 @@ class LocalStorageManager:
         if session_file.exists():
             try:
                 session_file.unlink()
-                logger.info(f"Deleted session {session_id}")
+                logger.info("Deleted session")
                 return True
             except Exception as e:
-                logger.error(f"Failed to delete session {session_id}: {e}")
+                logger.error("Failed to delete session (%s)", type(e).__name__)
                 return False
 
         return False
@@ -924,12 +946,14 @@ class LocalStorageManager:
             Success status
         """
         if format != "json":
-            logger.error(f"Unsupported export format: {format}")
+            logger.error("Unsupported export format")
             return False
 
         session = self.load_session(session_id)
         if not session:
-            raise TraigentStorageError(f"Session {session_id} not found") from None
+            raise TraigentStorageError(
+                "Session <id> not found", details={"session_id": session_id}
+            ) from None
 
         try:
             path_obj = Path(export_path).expanduser()
@@ -956,11 +980,11 @@ class LocalStorageManager:
                 if temp_path.exists():
                     temp_path.unlink()
 
-            logger.info(f"Exported session {session_id} to {path_obj}")
+            logger.info("Exported session")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to export session {session_id}: {e}")
+            logger.error("Failed to export session (%s)", type(e).__name__)
             return False
 
     def get_session_summary(self, session_id: str) -> dict[str, Any | None] | None:
@@ -1053,9 +1077,11 @@ class LocalStorageManager:
                     temp_path.unlink()
 
         except Exception as e:
+            # the exception text can quote the session file's full path
             raise TraigentStorageError(
-                f"Failed to save session {session.session_id}: {e}"
-            ) from e
+                f"Failed to save session ({type(e).__name__})",
+                details={"session_id": session.session_id},
+            ) from None
 
     def _make_json_serializable(self, value: Any) -> Any:
         """Recursively convert a value to something JSON can encode."""
@@ -1092,7 +1118,7 @@ class LocalStorageManager:
                 if self.delete_session(session.session_id):
                     deleted_count += 1
 
-        logger.info(f"Cleaned up {deleted_count} old sessions (older than {days} days)")
+        logger.info("Cleaned up %d old sessions", deleted_count)
         return deleted_count
 
     def find_cached_result(
@@ -1119,15 +1145,13 @@ class LocalStorageManager:
                     if trial.error is None and self.compute_config_hash(
                         trial.config
                     ) == self.compute_config_hash(config):
-                        logger.info(
-                            f"🎯 Cache hit! Found cached result for config: {config}"
-                        )
+                        logger.info("🎯 Cache hit! Found cached result for config")
                         return trial
 
             return None
 
         except Exception as e:
-            logger.error(f"Error checking cache: {e}")
+            logger.error("Error checking cache (%s)", type(e).__name__)
             return None
 
     def get_storage_info(self) -> dict[str, Any]:
@@ -1307,7 +1331,9 @@ class LocalStorageManager:
                                 return True
 
         except Exception as e:
-            logger.warning(f"Error during config deduplication check: {e}")
+            logger.warning(
+                "Error during config deduplication check (%s)", type(e).__name__
+            )
             # Best effort - don't fail optimization due to dedup errors
 
         return False
@@ -1369,6 +1395,8 @@ class LocalStorageManager:
                     return cached
 
         except Exception as exc:  # pragma: no cover - defensive logging only
-            logger.warning("Error during cross-session cache lookup: %s", exc)
+            logger.warning(
+                "Error during cross-session cache lookup (%s)", type(exc).__name__
+            )
 
         return None

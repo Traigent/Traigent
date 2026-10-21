@@ -41,3 +41,10 @@ tree does not block you.
 
 `git push --no-verify` skips the pre-push hook. Use it only when you have
 verified the change another way.
+
+## Which interpreter the gate uses
+
+`scripts/local_gate.sh` prefers the repo's `.venv` (`.venv/bin/pytest`, `.venv/bin/ruff`) over any
+`pytest`/`ruff` on `PATH`, because the pre-push hook does not activate the venv and `pyproject.toml`
+`addopts` needs `pytest-xdist` from the `dev` extra. The gate prints the resolved tools in its header
+and fails with an install hint if that interpreter cannot import `xdist`.

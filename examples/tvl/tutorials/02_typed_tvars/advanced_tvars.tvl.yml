@@ -28,8 +28,8 @@ tvars:
   # ==========================================================
   - name: model
     type: enum[str]
-    domain: ["gpt-4o", "gpt-4o-mini", "claude-3-sonnet", "claude-3-haiku"]
-    default: "gpt-4o-mini"
+    domain: ["gpt-4.1", "gpt-4.1-mini", "claude-3-sonnet", "claude-3-haiku"]
+    default: "gpt-4.1-mini"
 
   - name: embedding_model
     type: enum[str]
@@ -120,7 +120,7 @@ objectives:
 constraints:
   structural:
     # If using GPT-4o, limit tokens to save cost
-    - when: "params.model == 'gpt-4o'"
+    - when: "params.model == 'gpt-4.1'"
       then: "params.max_tokens <= 2048"
 
     # Reranker requires more retrieved documents

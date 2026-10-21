@@ -171,9 +171,9 @@ def _cost_objective_names() -> frozenset[str]:
 
 
 def _cost_flagged(metrics: Any) -> bool:
-    from traigent.utils.trial_costs import is_cost_unmeasured  # noqa: PLC0415
+    from traigent.utils.trial_costs import is_cost_unranked  # noqa: PLC0415
 
-    return is_cost_unmeasured(metrics)
+    return is_cost_unranked(metrics)
 
 
 def _ranking_metrics(metrics: dict[str, Any] | None) -> dict[str, Any]:

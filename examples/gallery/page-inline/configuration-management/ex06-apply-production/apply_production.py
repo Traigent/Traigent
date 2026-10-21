@@ -121,7 +121,7 @@ class OptimizedChatService:
 
         # Default configuration if no saved config exists
         return {
-            "model": "gpt-3.5-turbo",
+            "model": "gpt-4.1-mini",
             "temperature": 0.7,
             "max_tokens": 200,
             "response_style": "professional",
@@ -133,7 +133,7 @@ class OptimizedChatService:
         # Define the optimized greeting function
         @traigent.optimize(
             configuration_space={
-                "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+                "model": ["gpt-4.1-mini", "gpt-4.1"],
                 "temperature": [0.1, 0.3, 0.5],
                 "max_tokens": [50, 100, 150],
                 "response_style": ["friendly", "professional", "casual"],
@@ -155,7 +155,7 @@ class OptimizedChatService:
             }.get(config.get("response_style", "professional"))
 
             llm = ChatOpenAI(
-                model=config.get("model", "gpt-3.5-turbo"),
+                model=config.get("model", "gpt-4.1-mini"),
                 temperature=config.get("temperature", 0.3),
                 max_tokens=config.get("max_tokens", 100),
             )
@@ -167,7 +167,7 @@ class OptimizedChatService:
         # Define the optimized response function
         @traigent.optimize(
             configuration_space={
-                "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+                "model": ["gpt-4.1-mini", "gpt-4.1"],
                 "temperature": [0.3, 0.5, 0.7, 0.9],
                 "max_tokens": [200, 300, 500],
                 "creativity_mode": ["low", "medium", "high"],
@@ -189,7 +189,7 @@ class OptimizedChatService:
             creativity_map = {"low": 0.1, "medium": 0.5, "high": 0.9}
 
             llm = ChatOpenAI(
-                model=config.get("model", "gpt-3.5-turbo"),
+                model=config.get("model", "gpt-4.1-mini"),
                 temperature=creativity_map.get(
                     config.get("creativity_mode", "medium"),
                     config.get("temperature", 0.5),
@@ -311,7 +311,7 @@ def demo_production_usage():
     # they live inside the same allowed root the loader resolves against.
     print("\n2. Using Saved Configuration:")
     saved_config = {
-        "model": "gpt-4o-mini",
+        "model": "gpt-4.1-mini",
         "temperature": 0.3,
         "max_tokens": 250,
         "response_style": "professional",
@@ -332,7 +332,7 @@ def demo_production_usage():
     # Example 3: Hot-swap configuration
     print("\n3. Hot-Swap Configuration:")
     new_config = {
-        "model": "gpt-3.5-turbo",
+        "model": "gpt-4.1-mini",
         "temperature": 0.5,
         "max_tokens": 200,
         "response_style": "friendly",

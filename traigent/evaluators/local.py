@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
+import copy
 import inspect
 import math
 import time
 from collections.abc import Callable, Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -22,32 +24,50 @@ from traigent.evaluators.base import (
     EvaluationResult,
     _accuracy_matches_after_unwrap,
     _accuracy_value_for_example,
+    coercion_log_scope,
     _example_correlation_key,
     _is_empty_expected_output,
 )
 from traigent.evaluators.metrics_tracker import (
+    COST_SOURCE_MIXED,
+    COST_SOURCE_SELF_REPORTED,
     EMPTY_OUTPUT_RATE_WARNING_THRESHOLD,
     ExampleMetrics,
     MetricsCalculator,
     MetricsTracker,
+    ResponseHandlerFactory,
     compute_empty_output_rate,
     compute_truncated_output_rate,
     enforce_user_metric_ceiling,
+    enforce_unknown_cost_invariant,
     extract_llm_metrics,
 )
 from traigent.utils.exceptions import EvaluationError
 from traigent.utils.langchain_interceptor import (
     capture_scope,
-    clear_captured_responses,
-    get_all_captured_responses,
     get_captured_response_by_key,
+    drain_captured_responses,
+    seal_captured_responses,
+    finish_captured_responses,
+    snapshot_captured_responses,
     patch_langchain_for_metadata_capture,
 )
 from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
 from traigent.utils.logging import get_logger
+from traigent.utils.response_model import infer_response_model
 
 logger = get_logger(__name__)
 _METADATA_PATCHES_ATTEMPTED = False
+
+_PREVIEW_COST_KEYS = (
+    "cost",
+    "input_cost",
+    "output_cost",
+    "total_cost",
+    "cost_unmeasured",
+    "cost_unpriced",
+    "cost_lower_bound",
+)
 
 _OUTPUT_METRIC_PARAM_NAMES = {
     "actual",
@@ -278,6 +298,136 @@ class PromptInfo:
     original_prompt: list[dict[str, str]] | None
     prompt_length: int | None
     response_length: int | None
+
+
+class _CaptureOwnership:
+    """Captured responses grouped by the example that made the calls (#2444).
+
+    Ownership is recorded when a response is captured (the capturing context
+    carries its example index), so attribution never depends on how many calls
+    each example made or on the order concurrent examples finished in.
+
+    Consumption is tracked per individual captured call (by position in the
+    capture list), never per example: ``taken`` holds the calls whose spend a
+    metrics row already includes, and everything else -- unowned calls, calls of
+    an example that produced no row, siblings of a returned response -- is
+    reported exactly once through :meth:`leftover`.
+    """
+
+    def __init__(
+        self,
+        responses: list[Any],
+        owners: list[int | None],
+        requested: list[str | None] | None = None,
+    ) -> None:
+        self.responses = responses
+        self.requested: list[str | None] = (
+            list(requested)
+            if requested is not None and len(requested) == len(responses)
+            else [None] * len(responses)
+        )
+        self.by_example: dict[int, list[int]] = {}
+        self.unowned: list[int] = []
+        for position, owner in enumerate(owners):
+            if owner is None:
+                self.unowned.append(position)
+            else:
+                self.by_example.setdefault(owner, []).append(position)
+        self.taken: set[int] = set()
+        # Identity of every captured response and of every returned object
+        # already priced, across ALL owners: a returned object that is
+        # already accounted is never charged a second time (#2444).
+        self.captured_ids: set[int] = {id(r) for r in responses}
+        self.returned_seen: set[int] = set()
+        # Model that priced an example's SINGLE call (response model first);
+        # absent for multi-call rows, so metadata reconciliation never reprices
+        # them as one configured model.
+        self.reconcile_model: dict[int, str | None] = {}
+
+    @classmethod
+    def build(
+        cls,
+        responses: list[Any],
+        owners: list[int | None] | None,
+        requested: list[str | None] | None = None,
+    ) -> _CaptureOwnership | None:
+        """Ownership view of a drained capture batch.
+
+        ``None`` (legacy path) only outside a capture scope, where no owners
+        exist.  Inside a scope, owners that do not align one-to-one with the
+        responses fail CLOSED: every response is treated as unowned, so the
+        whole batch is reported as unknown spend with its exact priceable
+        floor rather than being guessed onto examples.
+        """
+        if owners is None:
+            return None
+        if len(owners) != len(responses):
+            owners = [None] * len(responses)
+        return cls(responses, owners, requested)
+
+    def owned_untaken(self, example_index: int) -> list[int]:
+        return [
+            p for p in self.by_example.get(example_index, []) if p not in self.taken
+        ]
+
+    def find(self, obj: Any, example_index: int) -> int | None:
+        """Position of the untaken capture that IS ``obj`` (identity).
+
+        Looks at the example's own calls first, then at unowned ones.
+        """
+        if obj is None:
+            return None
+        for position in self.owned_untaken(example_index) + [
+            p for p in self.unowned if p not in self.taken
+        ]:
+            if self.responses[position] is obj:
+                return position
+        return None
+
+    def example_responses(self, example_index: int) -> list[Any]:
+        return [self.responses[p] for p in self.by_example.get(example_index, [])]
+
+    def add_late(self, response: Any, requested: str | None) -> None:
+        """A call that surfaced after the main drain and belongs to no judge."""
+        self.responses.append(response)
+        self.requested.append(requested)
+        self.unowned.append(len(self.responses) - 1)
+        self.captured_ids.add(id(response))
+
+    def absorb_late(
+        self,
+        drained: tuple[list[Any], list[int | None] | None, list[str | None] | None],
+    ) -> None:
+        """Route everything a final drain returned into :meth:`leftover`.
+
+        Whatever its recorded owner, a call that surfaced after the per-example
+        accounting finished belongs to no row: unknown spend with its floor.
+        """
+        responses, _owners, requested = drained
+        for position, response in enumerate(responses):
+            self.add_late(
+                response,
+                requested[position]
+                if requested is not None and position < len(requested)
+                else None,
+            )
+
+    def leftover(self) -> list[tuple[Any, str | None]]:
+        """Captured calls no row has included, with their requested model."""
+        return [
+            (r, self.requested[p])
+            for p, r in enumerate(self.responses)
+            if p not in self.taken
+        ]
+
+
+# Progress has its own cursor over evaluation-scoped identity history. Preview
+# extraction may advance this cursor, but never consumes final accounting's
+# returned_seen/taken sets. Context isolation also covers a shared evaluator
+# serving concurrent evaluate() calls.
+_progress_capture_history: ContextVar[_CaptureOwnership | None] = ContextVar(
+    "traigent_progress_capture_history", default=None
+)
 
 
 class _AggregatedResponses:
@@ -611,6 +761,25 @@ class LocalEvaluator(BaseEvaluator):
 
         return None
 
+    @staticmethod
+    def _model_inference_pool(
+        index: int,
+        all_captured_responses: list[Any],
+        captures: _CaptureOwnership | None,
+    ) -> tuple[int, list[Any]]:
+        """(index, responses) ``_infer_model_name_from_output`` should read.
+
+        With capture ownership there is NO sibling pool: a call's reported model
+        is never provenance for another call, so only the output's own identity
+        applies.  The positional guess over all captures is the legacy path
+        (no capture scope) only.
+        """
+        if captures is None:
+            return index, all_captured_responses
+        # Ownership mode: a sibling call's reported model is never provenance
+        # for another call (#2444); only the output's own identity applies.
+        return 0, []
+
     def _extract_response_text(self, output: Any) -> str | None:
         """Extract text content from various output types.
 
@@ -710,6 +879,19 @@ class LocalEvaluator(BaseEvaluator):
 
         return output
 
+    @staticmethod
+    def _is_sdk_captured(source: Any, all_captured_responses: list[Any]) -> bool:
+        """True when ``source`` is a response the SDK captured (by identity).
+
+        A caller-built ``raw_response`` or the function output itself is not.
+        Unclear provenance is False (fail closed, #2505).
+        """
+        if isinstance(source, _AggregatedResponses):
+            return True
+        if any(source is r for r in all_captured_responses):
+            return True
+        return False
+
     def _estimate_string_tokens(
         self,
         example_metric: ExampleMetrics,
@@ -732,6 +914,12 @@ class LocalEvaluator(BaseEvaluator):
         this same approximation -- the flag does not disable it, it only
         stops the estimate from being silently indistinguishable from a
         real one once it lands on a trial.
+
+        Input tokens come from the dataset input or the configured prompt
+        template only; a system message written inside the user's function is
+        not visible here, so the estimate can be well below the provider's
+        count (#2517). Owner ruling: the estimate is kept and always carried
+        with the ``estimated`` label; it is never priced as cost.
 
         Args:
             example_metric: Metrics object to update
@@ -791,9 +979,16 @@ class LocalEvaluator(BaseEvaluator):
         example_result.metrics["input_tokens"] = example_metric.tokens.input_tokens
         example_result.metrics["output_tokens"] = example_metric.tokens.output_tokens
         example_result.metrics["total_tokens"] = example_metric.tokens.total_tokens
-        if example_metric.cost.unmeasured:
-            # No captured usage: leave the cost keys out. Unknown is not $0 and
-            # a downstream sum over example costs must not see a zero (#2517).
+        if not example_metric.cost_measured:
+            # Unknown cost (no usage, or usage no price covers): leave the cost
+            # keys out. Unknown is not $0 and a downstream sum over example
+            # costs must not see a zero (#2517); carry the flag and the exact
+            # known floor instead (#2444).
+            enforce_unknown_cost_invariant(
+                example_result.metrics,
+                unknown=True,
+                floor=self._example_cost_floor(example_metric),
+            )
             return
         example_result.metrics["input_cost"] = example_metric.cost.input_cost
         example_result.metrics["output_cost"] = example_metric.cost.output_cost
@@ -917,6 +1112,7 @@ class LocalEvaluator(BaseEvaluator):
         example_index: int,
         *,
         metric_errors: list[dict[str, Any]] | None = None,
+        captures: _CaptureOwnership | None = None,
     ) -> list[str]:
         """Apply user-defined metric functions for a single example.
 
@@ -943,14 +1139,21 @@ class LocalEvaluator(BaseEvaluator):
             (a mapping-returning function never populates ``custom_metrics``
             under its own name).
         """
+        cost_known = example_metric.cost_measured
         llm_payload = {
             "total_tokens": example_metric.tokens.total_tokens,
             "prompt_tokens": example_metric.tokens.input_tokens,
             "completion_tokens": example_metric.tokens.output_tokens,
-            "total_cost": example_metric.cost.total_cost,
-            "input_cost": example_metric.cost.input_cost,
-            "output_cost": example_metric.cost.output_cost,
+            # Unknown cost is None for a metric function, never a placeholder
+            # or partial figure that reads as spend (#2444).
+            "total_cost": example_metric.cost.total_cost if cost_known else None,
+            "input_cost": example_metric.cost.input_cost if cost_known else None,
+            "output_cost": example_metric.cost.output_cost if cost_known else None,
             "response_time_ms": example_metric.response.response_time_ms,
+            "cost_unmeasured": 0.0 if cost_known else 1.0,
+            "cost_lower_bound": self._example_cost_floor(example_metric)
+            if not cost_known
+            else example_metric.cost.total_cost,
         }
 
         example_id = (
@@ -1162,11 +1365,14 @@ class LocalEvaluator(BaseEvaluator):
         payload_metrics = dict(example_metric.custom_metrics)
         total_cost_value = example_metric.cost.total_cost
 
-        if example_metric.cost.unmeasured:
+        if not example_metric.cost_measured:
             # Unknown cost: no $0 in the progress payload (#2517).
-            payload_metrics.pop("total_cost", None)
-            payload_metrics.pop("cost", None)
+            for cost_key in ("input_cost", "output_cost", "total_cost", "cost"):
+                payload_metrics.pop(cost_key, None)
             payload_metrics["cost_unmeasured"] = 1.0
+            floor = LocalEvaluator._example_cost_floor(example_metric)
+            if floor > 0:
+                payload_metrics["cost_lower_bound"] = floor
         elif total_cost_value is not None:
             payload_metrics.setdefault("total_cost", float(total_cost_value))
             payload_metrics.setdefault("cost", float(total_cost_value))
@@ -1175,7 +1381,21 @@ class LocalEvaluator(BaseEvaluator):
             for key, value in example_result.metrics.items():
                 if key in {"cost", "total_cost"} and key in payload_metrics:
                     continue
+                if not example_metric.cost_measured and key in {
+                    "input_cost",
+                    "output_cost",
+                    "total_cost",
+                    "cost",
+                }:
+                    continue
                 payload_metrics.setdefault(key, value)
+
+        if not example_metric.cost_measured:
+            enforce_unknown_cost_invariant(
+                payload_metrics,
+                unknown=True,
+                floor=LocalEvaluator._example_cost_floor(example_metric),
+            )
 
         return {
             "success": example_metric.success,
@@ -1184,6 +1404,66 @@ class LocalEvaluator(BaseEvaluator):
             "output": output,
         }
 
+    def _extract_response_metrics(
+        self,
+        example_id: str,
+        example: Any,
+        result: Any,
+        config: dict[str, Any],
+        *,
+        dataset: Dataset | None = None,
+        example_index: int = 0,
+    ) -> tuple[dict[str, float], Any]:
+        """Remember which row cost values the tentative progress pass changed."""
+        before = {
+            k: result.metrics[k] for k in _PREVIEW_COST_KEYS if k in result.metrics
+        }
+        extracted = super()._extract_response_metrics(
+            example_id,
+            example,
+            result,
+            config,
+            dataset=dataset,
+            example_index=example_index,
+        )
+        after = {
+            k: result.metrics[k] for k in _PREVIEW_COST_KEYS if k in result.metrics
+        }
+        result._sdk_preview_cost_evidence = (before, after)
+        return extracted
+
+    def _extract_progress_call_metrics(
+        self,
+        example_id: str,
+        example: Any,
+        result: Any,
+        config: dict[str, Any],
+        dataset: Dataset | None,
+        example_index: int,
+    ) -> ExampleMetrics | None:
+        """Preview the same per-call accounting the final pass will consume.
+
+        Snapshot under the capture lock, retain every sibling and its owner,
+        and consume only this temporary ownership view, never the live bucket.
+        """
+        responses, owners, requested = snapshot_captured_responses()
+        captures = _CaptureOwnership.build(responses, owners, requested)
+        if captures is None or dataset is None:
+            return super()._extract_progress_call_metrics(
+                example_id, example, result, config, dataset, example_index
+            )
+        history = _progress_capture_history.get()
+        if history is not None:
+            captures.returned_seen = history.returned_seen.copy()
+            captures.captured_ids.update(history.captured_ids)
+        metrics = self._extract_llm_metrics_for_output(
+            result.actual_output, example_index, config, dataset, responses, captures
+        )
+        if history is not None:
+            history.returned_seen.update(captures.returned_seen)
+            history.captured_ids.update(captures.captured_ids)
+        return metrics
+
     def _extract_llm_metrics_for_output(
         self,
         output: Any,
@@ -1191,6 +1471,7 @@ class LocalEvaluator(BaseEvaluator):
         config: dict[str, Any],
         dataset: Dataset,
         all_captured_responses: list[Any],
+        captures: _CaptureOwnership | None = None,
     ) -> ExampleMetrics:
         """Extract LLM metrics for a single output.
 
@@ -1222,12 +1503,14 @@ class LocalEvaluator(BaseEvaluator):
             return example_metric
 
         model_name = config.get("model") or config.get("model_name")
+        configured_model = model_name if isinstance(model_name, str) else None
 
         # Fallback: try to extract model name from the output or captured responses
         # when the optimization config does not include "model" as a parameter.
         if not model_name:
             model_name = self._infer_model_name_from_output(
-                output, index, all_captured_responses
+                output,
+                *self._model_inference_pool(index, all_captured_responses, captures),
             )
 
         logger.debug(
@@ -1254,25 +1537,45 @@ class LocalEvaluator(BaseEvaluator):
         if response_text is not None and response_length is None:
             response_length = len(response_text)
 
-        # Get best metrics source using helper
-        metrics_source = self._get_metrics_source(
-            output, index, dataset, all_captured_responses
-        )
+        if captures is not None:
+            extracted_metrics = self._extract_owned_call_metrics(
+                output,
+                index,
+                dataset,
+                captures,
+                model_name=model_name,
+                configured_model=configured_model,
+                original_prompt=original_prompt,
+                prompt_length=prompt_length,
+                response_length=response_length,
+            )
+        else:
+            # Get best metrics source using helper
+            metrics_source = self._get_metrics_source(
+                output, index, dataset, all_captured_responses
+            )
 
-        # Pass lengths to extract_llm_metrics for privacy mode
-        extracted_metrics = extract_llm_metrics(
-            response=metrics_source,
-            model_name=model_name,
-            original_prompt=original_prompt,
-            response_text=None,
-            prompt_length=prompt_length,
-            response_length=response_length,
-        )
+            # Pass lengths to extract_llm_metrics for privacy mode
+            extracted_metrics = extract_llm_metrics(
+                response=metrics_source,
+                model_name=model_name,
+                original_prompt=original_prompt,
+                response_text=None,
+                prompt_length=prompt_length,
+                response_length=response_length,
+                response_captured=self._is_sdk_captured(
+                    metrics_source, all_captured_responses
+                ),
+            )
 
         logger.debug(
             f"Extracted metrics for model {model_name}: "
             f"tokens={extracted_metrics.tokens.total_tokens}, "
-            f"cost=${extracted_metrics.cost.total_cost:.8f}"
+            + (
+                f"cost=${extracted_metrics.cost.total_cost:.8f}"
+                if extracted_metrics.cost_measured
+                else "cost=unknown"
+            )
         )
 
         example_metric = extracted_metrics
@@ -1289,6 +1592,285 @@ class LocalEvaluator(BaseEvaluator):
             )
 
         return example_metric
+
+    @staticmethod
+    def _looks_like_usage_response(obj: Any) -> bool:
+        """True when the tracker's own handler chain finds usage on ``obj``.
+
+        Derived from ``ResponseHandlerFactory`` rather than a second hand-kept
+        list of shapes, so every usage shape ``extract_llm_metrics`` supports
+        (OpenAI/Anthropic/LangChain objects, usage dicts, generic
+        ``metadata["usage"|"token_usage"]``) takes the same per-call path.
+        """
+        if obj is None or isinstance(obj, (str, bytes, list, tuple, int, float)):
+            return False
+        try:
+            extracted = ResponseHandlerFactory.create_handler_chain().handle(obj)
+            return bool(
+                extracted is not None
+                and (
+                    extracted.tokens.input_tokens > 0
+                    or extracted.tokens.output_tokens > 0
+                    or extracted.cost.total_cost > 0
+                )
+            )
+        except Exception:  # noqa: BLE001 - recognition must never raise
+            return False
+
+    @staticmethod
+    def _example_cost_floor(metric: ExampleMetrics) -> float:
+        """Exact known spend of a row whose total is unknown (a floor only)."""
+        priced = 0.0 if metric.cost.unmeasured else float(metric.cost.total_cost)
+        return priced + float(metric.cost.known_cost)
+
+    @staticmethod
+    def _call_cost_floor(call: ExampleMetrics) -> float:
+        """Exact known spend of one extracted call (priced part, never a guess)."""
+        if call.cost.unmeasured:
+            return float(call.cost.known_cost)
+        return float(call.cost.total_cost) + float(call.cost.known_cost)
+
+    @staticmethod
+    def _resolve_call_model(
+        response: Any,
+        requested_model: str | None,
+        agent_model: str | None,
+        is_agent_call: bool,
+    ) -> str | None:
+        """Model identity of one call: response, then its request, then config."""
+        return (
+            infer_response_model(response)
+            or requested_model
+            or (agent_model if is_agent_call else None)
+        )
+
+    @staticmethod
+    def _price_one_call(
+        response: Any,
+        *,
+        agent_model: str | None,
+        is_agent_call: bool,
+        requested_model: str | None = None,
+        response_captured: bool = True,
+        **prompt_kwargs: Any,
+    ) -> ExampleMetrics:
+        """Extract ONE captured call on its own (own model, charge, usage).
+
+        Model identity, strongest first: the model the response reports, then
+        the model THAT call requested (recorded at interception), then -- only
+        for the call established as the agent's -- the configured model.  A call
+        with none of these has an unknown cost: never $0 and never the agent's
+        price (#2444).
+        """
+        model = LocalEvaluator._resolve_call_model(
+            response, requested_model, agent_model, is_agent_call
+        )
+        metrics = extract_llm_metrics(
+            response=response,
+            model_name=model,
+            response_text=None,
+            response_captured=response_captured,
+            **(prompt_kwargs if is_agent_call else {}),
+        )
+        if (
+            model is None
+            and metrics.tokens.total_tokens > 0
+            and not metrics.cost.cost_explicit
+            and not metrics.cost.unmeasured
+            and not metrics.cost.total_cost
+        ):
+            metrics.cost.unpriced = True
+        return metrics
+
+    @staticmethod
+    def _combine_call_metrics(calls: list[ExampleMetrics]) -> ExampleMetrics:
+        """Sum separately-extracted calls (first is the primary) into one row.
+
+        Costs and tokens add; unknown-cost state is preserved rather than
+        merged away: any call without usage makes the row unmeasured and any
+        unpriceable call makes it unpriced, with the priced part kept as the
+        known-spend floor.
+        """
+        if len(calls) == 1:
+            return calls[0]
+        out = copy.deepcopy(calls[0])
+        out.tokens.input_tokens = sum(c.tokens.input_tokens for c in calls)
+        out.tokens.output_tokens = sum(c.tokens.output_tokens for c in calls)
+        out.tokens.total_tokens = sum(c.tokens.total_tokens for c in calls)
+        out.tokens.estimated = any(c.tokens.estimated for c in calls)
+        out.cost.input_cost = sum(c.cost.input_cost for c in calls)
+        out.cost.output_cost = sum(c.cost.output_cost for c in calls)
+        out.cost.total_cost = sum(c.cost.total_cost for c in calls)
+        out.cost.unpriced = any(c.cost.unpriced for c in calls)
+        out.cost.unmeasured = any(c.cost.unmeasured for c in calls)
+        out.cost.cost_estimated = any(c.cost.cost_estimated for c in calls)
+        out.cost.cost_explicit = all(c.cost.cost_explicit for c in calls)
+        sources = {c.cost.cost_source for c in calls}
+        out.cost.cost_source = (
+            next(iter(sources)) if len(sources) == 1 else COST_SOURCE_MIXED
+        )
+        out.cost.known_cost = sum(c.cost.known_cost for c in calls)
+        if out.cost.unmeasured:
+            out.cost.known_cost += sum(
+                c.cost.total_cost for c in calls if not c.cost.unmeasured
+            )
+        out.measured = any(c.measured for c in calls)
+        # Cache usage is summed only when EVERY call reported it; one unknown
+        # call makes the row unknown, never a partial sum or a zero (#2069).
+        if all(
+            c.cache_read_tokens is not None and c.cache_total_input_tokens is not None
+            for c in calls
+        ):
+            out.cache_read_tokens = sum(int(c.cache_read_tokens or 0) for c in calls)
+            out.cache_total_input_tokens = sum(
+                int(c.cache_total_input_tokens or 0) for c in calls
+            )
+        else:
+            out.cache_read_tokens = None
+            out.cache_total_input_tokens = None
+        out.call_breakdown = [b for c in calls for b in c.call_breakdown]
+        return out
+
+    def _extract_owned_call_metrics(
+        self,
+        output: Any,
+        index: int,
+        dataset: Dataset,
+        captures: _CaptureOwnership,
+        *,
+        model_name: str | None,
+        configured_model: str | None,
+        original_prompt: Any,
+        prompt_length: int | None,
+        response_length: int | None,
+    ) -> ExampleMetrics:
+        """Price exactly the calls this example made, each on its own (#2444).
+
+        A returned ``raw_response`` / response object consumes only the
+        captured call that IS that object (identity); the example's other
+        calls still count, each at its own model.  Consumption is recorded per
+        call so nothing is dropped or counted twice.
+        """
+        if isinstance(output, dict) and output.get("raw_response") is not None:
+            returned: Any = output["raw_response"]
+        elif self._looks_like_usage_response(output):
+            returned = output
+        else:
+            returned = None
+        prompt_kwargs = {
+            "original_prompt": original_prompt,
+            "prompt_length": prompt_length,
+            "response_length": response_length,
+        }
+        returned_pos = captures.find(
+            returned if returned is not None else output, index
+        )
+        # Already accounted elsewhere (another owner's capture, a consumed
+        # entry, or a returned object priced for an earlier example): this
+        # example made no new call with it, so it is never charged again.
+        already_accounted = (
+            returned is not None
+            and returned_pos is None
+            and (
+                id(returned) in captures.captured_ids
+                or id(returned) in captures.returned_seen
+            )
+        )
+        if already_accounted:
+            returned = None
+        owned = [p for p in captures.owned_untaken(index) if p != returned_pos]
+        uncaptured = returned if returned_pos is None else None
+        primary: Any = None
+        primary_requested: str | None = None
+        if returned_pos is not None:
+            captures.taken.add(returned_pos)
+            primary = captures.responses[returned_pos]
+            primary_requested = captures.requested[returned_pos]
+        elif returned is not None and not owned:
+            primary = returned  # no other call of this example: it IS the agent's
+        sole_call = primary is None and uncaptured is None and len(owned) == 1
+
+        if uncaptured is not None:
+            captures.returned_seen.add(id(uncaptured))
+        resolved_models: list[str | None] = []
+        calls: list[ExampleMetrics] = []
+        if primary is not None:
+            resolved_models.append(
+                self._resolve_call_model(
+                    primary, primary_requested, configured_model, True
+                )
+            )
+            calls.append(
+                self._price_one_call(
+                    primary,
+                    agent_model=configured_model,
+                    is_agent_call=True,
+                    requested_model=primary_requested,
+                    response_captured=returned_pos is not None,
+                    **prompt_kwargs,
+                )
+            )
+        for position in owned:
+            captures.taken.add(position)
+            resolved_models.append(
+                self._resolve_call_model(
+                    captures.responses[position],
+                    captures.requested[position],
+                    configured_model,
+                    sole_call,
+                )
+            )
+            calls.append(
+                self._price_one_call(
+                    captures.responses[position],
+                    agent_model=configured_model,
+                    is_agent_call=sole_call,
+                    requested_model=captures.requested[position],
+                    **prompt_kwargs,
+                )
+            )
+        if uncaptured is not None and owned:
+            # A returned response whose relationship to this example's captured
+            # calls cannot be established (the same call, or another one): its
+            # usage is never ignored and never added blindly.  The row is
+            # unknown, with the largest spend both readings agree on.
+            returned_call = self._price_one_call(
+                uncaptured,
+                agent_model=configured_model,
+                is_agent_call=False,
+                response_captured=False,
+                **{},
+            )
+            combined = self._combine_call_metrics(calls)
+            floor = max(
+                sum(self._call_cost_floor(c) for c in calls),
+                self._call_cost_floor(returned_call),
+            )
+            combined.cost.unmeasured = True
+            combined.cost.known_cost = floor
+            return combined
+        captures.reconcile_model[index] = (
+            resolved_models[0] if len(calls) == 1 and uncaptured is None else None
+        )
+        if not calls and already_accounted:
+            # Its only usage is a response some other row already accounts for:
+            # no new spend evidence here, so this row's cost is unknown.
+            unaccounted = ExampleMetrics()
+            unaccounted.cost.unmeasured = True
+            return unaccounted
+        if not calls:
+            # No call of this example was captured: the output itself is the
+            # only source (never another example's call).
+            return extract_llm_metrics(
+                response=output,
+                model_name=model_name,
+                original_prompt=original_prompt,
+                response_text=None,
+                prompt_length=prompt_length,
+                response_length=response_length,
+                response_captured=False,
+            )
+        return self._combine_call_metrics(calls)
 
     def _update_example_metric_from_result(
         self,
@@ -1314,7 +1896,35 @@ class LocalEvaluator(BaseEvaluator):
 
         # Transfer computed metrics (like accuracy) to custom_metrics
         if hasattr(example_result, "metrics") and example_result.metrics:
+            # Final dataset-order ownership can differ from completion-order
+            # previews. Undo only preview changes still present on this row;
+            # preserve authoritative evidence supplied before or after them.
+            preview = getattr(example_result, "_sdk_preview_cost_evidence", None)
+            if preview is not None:
+                before, after = preview
+                missing = object()
+                for key in before.keys() | after.keys():
+                    previous = before.get(key, missing)
+                    written = after.get(key, missing)
+                    if (
+                        previous == written
+                        or example_result.metrics.get(key, missing) != written
+                    ):
+                        continue
+                    if key in before:
+                        example_result.metrics[key] = previous
+                    else:
+                        example_result.metrics.pop(key, None)
+                del example_result._sdk_preview_cost_evidence
             example_metric.custom_metrics.update(example_result.metrics)
+            if example_result.metrics.get("cost_unmeasured"):
+                # The evaluator's floor may overlap captured spend: their
+                # relationship is unknown, so take max, never add them.
+                example_metric.cost.known_cost = max(
+                    self._example_cost_floor(example_metric),
+                    float(example_result.metrics.get("cost_lower_bound") or 0.0),
+                )
+                example_metric.cost.unmeasured = True
 
         # Transfer token/cost metrics to example_results if in detailed mode
         if self.detailed:
@@ -1337,7 +1947,7 @@ class LocalEvaluator(BaseEvaluator):
         example_metric.custom_metrics["total_tokens"] = (
             example_metric.tokens.total_tokens
         )
-        if example_metric.cost.unmeasured:
+        if not example_metric.cost_measured:
             return
         example_metric.custom_metrics["input_cost"] = example_metric.cost.input_cost
         example_metric.custom_metrics["output_cost"] = example_metric.cost.output_cost
@@ -1389,6 +1999,38 @@ class LocalEvaluator(BaseEvaluator):
             metrics.response.response_time_ms = max(0.0, float(response_time))
         except Exception as e:
             logger.error(f"Failed to inject response_time_ms: {e}")
+
+    @staticmethod
+    def _inject_cache_usage_from_meta(
+        meta: dict[str, Any], metrics: ExampleMetrics
+    ) -> None:
+        """Record cached input tokens from ``meta["cache_usage"]`` (#2069).
+
+        Left unknown (None) unless the cache read count AND the input count are
+        both reported as real integers; absent is never recorded as zero.
+        """
+        cache = meta.get("cache_usage")
+        usage = meta.get("usage")
+        if not isinstance(cache, dict) or not isinstance(usage, dict):
+            return
+        read = cache.get("cache_read_tokens")
+        fresh = usage.get("input_tokens")
+        creation = cache.get("cache_creation_tokens")
+        for value in (read, fresh):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                return
+        if creation is not None and (
+            isinstance(creation, bool) or not isinstance(creation, int) or creation < 0
+        ):
+            creation = None
+        from traigent.core.cache_usage import cache_total_is_measurable
+
+        if not cache_total_is_measurable(cache.get("provider_shape"), creation):
+            # A write-reporting provider (Anthropic/Bedrock) without a write
+            # count: the total is a lower bound, so the rate is unknown.
+            return
+        metrics.cache_read_tokens = read
+        metrics.cache_total_input_tokens = fresh + read + (creation or 0)
 
     def _inject_call_breakdown_from_meta(
         self, calls: list[Any], metrics: ExampleMetrics
@@ -1509,6 +2151,9 @@ class LocalEvaluator(BaseEvaluator):
         if "usage" in meta:
             self._inject_usage_from_meta(cast(dict, meta["usage"]), metrics)
 
+        # Prompt-cache usage reported by with_usage(provider_usage=...) (#2069).
+        self._inject_cache_usage_from_meta(cast(dict, meta), metrics)
+
         # Inject per-call/per-model cost breakdown for multi-model agents (#1598)
         if "calls" in meta:
             self._inject_call_breakdown_from_meta(cast(list, meta["calls"]), metrics)
@@ -1527,8 +2172,16 @@ class LocalEvaluator(BaseEvaluator):
             if total_cost < 0:
                 logger.warning(f"Negative total_cost clamped: {total_cost} → 0.0")
             metrics.cost.total_cost = max(0.0, float(total_cost))
+            # Injected by the agent itself: a self-report, so the plausibility
+            # floor applies (#2505).
+            metrics.cost.cost_source = COST_SOURCE_SELF_REPORTED
             # The agent reported its own spend: a measurement, even if $0 (#2517).
             metrics.cost.unmeasured = False
+            # The authoritative total covers every call of this row, so any
+            # floor/unpriced state accumulated for them is now included in it:
+            # keeping it would count the same spend twice in the tracker.
+            metrics.cost.known_cost = 0.0
+            metrics.cost.unpriced = False
             if model_name:
                 from traigent.evaluators.metrics_tracker import (
                     _reconcile_reported_cost_with_tokens,
@@ -1566,6 +2219,7 @@ class LocalEvaluator(BaseEvaluator):
         progress_callback: Callable[[int, dict[str, Any]], Any] | None,
         *,
         metric_errors: list[dict[str, Any]] | None = None,
+        captures: _CaptureOwnership | None = None,
     ) -> ExampleMetrics:
         """Process metrics for a single output.
 
@@ -1609,14 +2263,24 @@ class LocalEvaluator(BaseEvaluator):
 
         # Extract LLM metrics
         example_metric = self._extract_llm_metrics_for_output(
-            output, index, config, dataset, all_captured_responses
+            output, index, config, dataset, all_captured_responses, captures
         )
 
-        model_name = config.get("model") or config.get("model_name")
-        if not model_name:
-            model_name = self._infer_model_name_from_output(
-                output, index, all_captured_responses
-            )
+        if captures is not None:
+            # Reconcile reported cost only against the model that actually
+            # priced this example's single call (response model first); a
+            # multi-call row has no single model, so it is never repriced as one
+            # configured model (#2444).
+            model_name = captures.reconcile_model.get(index)
+        else:
+            model_name = config.get("model") or config.get("model_name")
+            if not model_name:
+                model_name = self._infer_model_name_from_output(
+                    output,
+                    *self._model_inference_pool(
+                        index, all_captured_responses, captures
+                    ),
+                )
 
         # META-EXTRACTION-POINT: Extract and inject __traigent_meta__ if present.
         # This happens after extract_llm_metrics so honest reported costs can
@@ -1648,6 +2312,10 @@ class LocalEvaluator(BaseEvaluator):
         accuracy_value = self._calculate_example_accuracy(output, expected_output)
         if accuracy_value is not None:
             example_metric.custom_metrics.setdefault("accuracy", accuracy_value)
+        elif example_metric.accuracy_eligible:
+            # Gold exists but nothing could be compared: unmeasured, never the
+            # tracker's success-implies-1.0 fallback (#2495).
+            example_metric.accuracy_unavailable = True
 
         # Merge per-example user metrics into custom_metrics, never overriding
         # an evaluator-computed key (e.g. accuracy stays the computed value).
@@ -1674,6 +2342,7 @@ class LocalEvaluator(BaseEvaluator):
                 config,
                 index,
                 metric_errors=metric_errors,
+                captures=captures,
             )
 
             # Fold LLM spend made *inside* a metric function / judge (e.g. an
@@ -1696,7 +2365,7 @@ class LocalEvaluator(BaseEvaluator):
                 else None
             )
             self._fold_metric_function_llm_cost(
-                example_metric, example_result=target_result
+                example_metric, example_result=target_result, captures=captures
             )
 
             # Transfer custom metrics to example_results if in detailed mode.
@@ -1726,6 +2395,15 @@ class LocalEvaluator(BaseEvaluator):
                         metric_key
                     ]
 
+        # Emit boundary for this row: an unknown-cost row leaves with no numeric
+        # cost in any channel (row metrics, custom metrics), only flag + floor.
+        self._enforce_row_cost_invariant(
+            example_metric,
+            example_results[index]
+            if example_results and index < len(example_results)
+            else None,
+        )
+
         # Send progress callback
         if progress_callback:
             example_result_for_progress = (
@@ -1745,6 +2423,7 @@ class LocalEvaluator(BaseEvaluator):
         example_metric: ExampleMetrics,
         *,
         example_result: Any = None,
+        captures: _CaptureOwnership | None = None,
     ) -> None:
         """Attribute LLM spend made by a metric function to this example.
 
@@ -1760,17 +2439,11 @@ class LocalEvaluator(BaseEvaluator):
         buffer now is this example's judge/evaluator spend, and nothing
         else's (Traigent#2297).
 
-        CAVEAT -- this guarantee does NOT extend across concurrent trials.
-        The capture buffer (`LangChainMetadataCapture._all_responses` in
-        `utils/langchain_interceptor.py`) is a single process-global list
-        with no per-trial or per-task isolation (no `ContextVar`), and
-        `optimize(..., parallel_trials>1)` gathers multiple trial coroutines
-        on one event loop. An async judge call from one trial can therefore
-        drain (or be drained by) another concurrently-running trial's
-        buffer, misattributing judge cost between trials even though the
-        run-level total stays correct. Per-trial buffer isolation
-        (ContextVar-keyed capture) is a tracked follow-up, not implemented
-        here -- see the PR body.
+        Isolation: each trial runs in its own capture scope and every capture
+        records the example that made it, so a concurrent trial's calls are never
+        in this buffer.  The fold takes the buffer with ONE atomic drain; a call
+        owned by an example (e.g. a worker that outlived its timeout) is not this
+        judge's and is routed to the trial-level unknown-spend floor instead.
 
         Folds that spend into `example_metric.cost`/`.tokens` so it enters
         the trial's actual cost and the permit-based cost-enforcement ledger
@@ -1779,20 +2452,13 @@ class LocalEvaluator(BaseEvaluator):
         a new public field -- so a judge's share is reported alongside the
         agent's cost rather than silently merged into it.
 
-        CAVEAT on that visibility: `evaluation_cost` is NOT in
-        `metrics_tracker.RESERVED_METRIC_KEYS`, so it travels on the USER
-        metric channel. `enforce_user_metric_ceiling`
-        (`metrics_tracker.py:307`) drops only NON-reserved keys, in sorted
-        order, to fit the backend `MeasuresDict` ceiling of
-        `TOTAL_MEASURES_CEILING` total keys (`metrics_tracker.py:18`). So on a
-        run whose metric keys exceed that ceiling, `evaluation_cost` CAN be
-        dropped from the submitted measures -- the folded spend still lands in
-        `cost`/`tokens` (those keys ARE reserved), only the judge's separate
-        breakdown line is lost. Reserving the key would make it unconditional,
-        but that also changes user-key collision semantics on the measures
-        channel (a user metric of the same name would then be skipped with a
-        warning) and is deliberately left to a follow-up rather than widened
-        into this cost-attribution fix.
+        ``evaluation_cost`` shares the user channel: an existing user value
+        wins the name collision. SDK insertions carry ``sdk_evaluation_cost``
+        provenance on the row, so unknown-cost sanitization withdraws only SDK
+        values. If a trial contains both producers, tracker aggregation uses
+        only the user values for that name. Like other non-reserved metrics,
+        this optional breakdown may be dropped by the user-metric key ceiling;
+        folded spend remains in the standard cost accounting.
 
         Does not touch the pre-run cost estimator (`check_and_approve`);
         that estimator has no view of metric-function calls at all and is
@@ -1815,10 +2481,15 @@ class LocalEvaluator(BaseEvaluator):
                 ``metrics`` dict earlier in ``_process_single_output``; when
                 given, this refreshes that copy so it doesn't go stale.
         """
-        eval_responses = get_all_captured_responses()
-        if not eval_responses:
+        # One atomic take of the buffer (a late call from a timed-out worker
+        # can never fall between a snapshot and a clear).
+        drained, drained_owners, drained_requested = drain_captured_responses()
+        if not drained:
             return
-        clear_captured_responses()
+        if drained_owners is None or len(drained_owners) != len(drained):
+            drained_owners = [None] * len(drained)
+        if drained_requested is None or len(drained_requested) != len(drained):
+            drained_requested = [None] * len(drained)
 
         eval_input_cost = 0.0
         eval_output_cost = 0.0
@@ -1827,13 +2498,30 @@ class LocalEvaluator(BaseEvaluator):
         eval_output_tokens = 0
         eval_tokens = 0
         judge_unmeasured = False
-        for response in eval_responses:
-            metrics = extract_llm_metrics(response=response, model_name=None)
-            # A judge call whose usage was not captured is an unknown spend,
-            # not a free one: it makes this example's cost unmeasured (#2517).
+        for response, owner, requested in zip(
+            drained, drained_owners, drained_requested, strict=True
+        ):
+            if owner is not None:
+                # Made by an example's own evaluation (e.g. a worker that outlived
+                # its timeout), not by this judge: never charge it here. It stays
+                # unknown spend with its exact priceable floor, reported once at
+                # trial level (#2444).
+                if captures is not None:
+                    captures.add_late(response, requested)
+                continue
+            metrics = self._price_one_call(
+                response,
+                agent_model=None,
+                is_agent_call=False,
+                requested_model=requested,
+            )
+            # A judge call with unknown cost (no usage, or no identifiable
+            # model/price) is an unknown spend, not a free one: it makes this
+            # example's cost unmeasured (#2517).
             judge_unmeasured = judge_unmeasured or not (
                 metrics.measured
                 and not metrics.cost.unmeasured
+                and not metrics.cost.unpriced
                 and (
                     metrics.tokens.total_tokens
                     or metrics.cost.total_cost
@@ -1900,13 +2588,11 @@ class LocalEvaluator(BaseEvaluator):
         # Keep the standard cost/token custom_metrics (written earlier in
         # `_process_single_output`, before metric functions ran) consistent
         # with the now-updated totals, and surface the judge's own share.
-        example_metric.custom_metrics["evaluation_cost"] = eval_total_cost
-        if not agent_cost_unmeasured:
-            example_metric.custom_metrics["input_cost"] = example_metric.cost.input_cost
-            example_metric.custom_metrics["output_cost"] = (
-                example_metric.cost.output_cost
-            )
-            example_metric.custom_metrics["total_cost"] = example_metric.cost.total_cost
+        # This name remains on the user channel. A pre-existing user value
+        # wins; otherwise record SDK provenance for row/aggregate withdrawal.
+        if "evaluation_cost" not in example_metric.custom_metrics:
+            example_metric.custom_metrics["evaluation_cost"] = eval_total_cost
+            example_metric.sdk_evaluation_cost = True
         example_metric.custom_metrics["input_tokens"] = (
             example_metric.tokens.input_tokens
         )
@@ -1916,18 +2602,58 @@ class LocalEvaluator(BaseEvaluator):
         example_metric.custom_metrics["total_tokens"] = (
             example_metric.tokens.total_tokens
         )
-
         if example_result is not None:
-            if not agent_cost_unmeasured:
-                example_result.metrics["input_cost"] = example_metric.cost.input_cost
-                example_result.metrics["output_cost"] = example_metric.cost.output_cost
-                example_result.metrics["total_cost"] = example_metric.cost.total_cost
             example_result.metrics["input_tokens"] = example_metric.tokens.input_tokens
             example_result.metrics["output_tokens"] = (
                 example_metric.tokens.output_tokens
             )
             example_result.metrics["total_tokens"] = example_metric.tokens.total_tokens
-            example_result.metrics["evaluation_cost"] = eval_total_cost
+            if example_metric.sdk_evaluation_cost:
+                example_result.metrics["evaluation_cost"] = eval_total_cost
+
+        # One notion of "known cost" on every channel: a measured row shows its
+        # refreshed numeric cost; an unknown row (unmeasured OR unpriced) has
+        # every numeric cost withdrawn and carries the flag and exact floor.
+        if example_metric.cost_measured:
+            example_metric.custom_metrics["input_cost"] = example_metric.cost.input_cost
+            example_metric.custom_metrics["output_cost"] = (
+                example_metric.cost.output_cost
+            )
+            example_metric.custom_metrics["total_cost"] = example_metric.cost.total_cost
+            if example_result is not None:
+                example_result.metrics["input_cost"] = example_metric.cost.input_cost
+                example_result.metrics["output_cost"] = example_metric.cost.output_cost
+                example_result.metrics["total_cost"] = example_metric.cost.total_cost
+        else:
+            self._withdraw_numeric_cost(example_metric, example_result)
+
+    @classmethod
+    def _withdraw_numeric_cost(
+        cls, example_metric: ExampleMetrics, example_result: Any
+    ) -> None:
+        """Remove numeric costs from an unknown-cost row; emit flag + floor."""
+        floor = cls._example_cost_floor(example_metric)
+        enforce_unknown_cost_invariant(
+            example_metric.custom_metrics,
+            unknown=True,
+            floor=floor,
+            sdk_evaluation_cost=example_metric.sdk_evaluation_cost,
+        )
+        if example_result is not None:
+            enforce_unknown_cost_invariant(
+                example_result.metrics,
+                unknown=True,
+                floor=floor,
+                sdk_evaluation_cost=example_metric.sdk_evaluation_cost,
+            )
+
+    @classmethod
+    def _enforce_row_cost_invariant(
+        cls, example_metric: ExampleMetrics, example_result: Any
+    ) -> None:
+        """Apply the unknown-cost emit rule to one finished row's channels."""
+        if not example_metric.cost_measured:
+            cls._withdraw_numeric_cost(example_metric, example_result)
 
     @staticmethod
     def _mark_example_cost_unmeasured_by_judge(
@@ -1943,16 +2669,7 @@ class LocalEvaluator(BaseEvaluator):
         if not example_metric.cost.unmeasured:
             example_metric.cost.known_cost += example_metric.cost.total_cost
             example_metric.cost.unmeasured = True
-        floor = float(example_metric.cost.known_cost)
-        cost_keys = ("input_cost", "output_cost", "total_cost", "cost")
-        for key in cost_keys:
-            example_metric.custom_metrics.pop(key, None)
-        if example_result is not None:
-            for key in cost_keys:
-                example_result.metrics.pop(key, None)
-            example_result.metrics["cost_unmeasured"] = 1.0
-            if floor > 0:
-                example_result.metrics["cost_lower_bound"] = floor
+        LocalEvaluator._withdraw_numeric_cost(example_metric, example_result)
 
     def _log_dual_scorer_notice_once(self) -> None:
         """Emit a single run-level notice when both scorers appear (issue #1845).
@@ -2258,15 +2975,20 @@ class LocalEvaluator(BaseEvaluator):
         lifecycle opens an outer scope per trial; this inner one keeps a DIRECT
         concurrent caller of ``evaluate()`` correct too, and nesting is safe.
         """
-        async with capture_scope():
-            return await self._evaluate_within_capture_scope(
-                func,
-                config,
-                dataset,
-                sample_lease=sample_lease,
-                progress_callback=progress_callback,
-                budget=budget,
-            )
+        with coercion_log_scope():
+            async with capture_scope():
+                history_token = _progress_capture_history.set(_CaptureOwnership([], []))
+                try:
+                    return await self._evaluate_within_capture_scope(
+                        func,
+                        config,
+                        dataset,
+                        sample_lease=sample_lease,
+                        progress_callback=progress_callback,
+                        budget=budget,
+                    )
+                finally:
+                    _progress_capture_history.reset(history_token)
 
     async def _evaluate_within_capture_scope(
         self,
@@ -2370,13 +3092,17 @@ class LocalEvaluator(BaseEvaluator):
                     ex_result.metrics.update(example_metrics)
 
         # Get all captured LangChain responses before clearing
-        all_captured_responses = get_all_captured_responses()
+        # One atomic take of responses + owners + requested models (a late call
+        # from a timed-out worker can never be cleared unaccounted or misalign).
+        all_captured_responses, drained_owners, drained_requested = (
+            drain_captured_responses()
+        )
+        captures = _CaptureOwnership.build(
+            all_captured_responses, drained_owners, drained_requested
+        )
         logger.debug(
             f"Got {len(all_captured_responses)} captured LangChain responses for {len(outputs)} outputs"
         )
-
-        # Clear captured responses now that we have them
-        clear_captured_responses()
 
         # Structured degradation records for non-objective metric failures,
         # accumulated across this evaluate() call and surfaced on the
@@ -2399,6 +3125,7 @@ class LocalEvaluator(BaseEvaluator):
                     all_captured_responses=all_captured_responses,
                     progress_callback=progress_callback,
                     metric_errors=metric_errors,
+                    captures=captures,
                 ),
                 sample_lease,
                 execution_budget_lease,
@@ -2481,6 +3208,38 @@ class LocalEvaluator(BaseEvaluator):
             if accuracy_is_custom_objective and "accuracy" in aggregated_metrics:
                 aggregated_metrics["score"] = aggregated_metrics["accuracy"]
 
+        # Seal normal accounting before draining. Late captures have a separate
+        # buffer folded at the final handoff below. Workers still live here
+        # leave eventual spend unknown even without a response yet (#2444).
+        if seal_captured_responses():
+            metrics_tracker.unattributed_spend = True
+            for metric in metrics_tracker.example_metrics:
+                if not metric.measured:
+                    metric.cost.unmeasured = True
+        if captures is not None:
+            captures.absorb_late(drain_captured_responses())
+            # Spend no example row consumed (a call with no owner, or an
+            # example that produced no row): its cost cannot be attributed, so
+            # the trial total becomes unmeasured and the exact priced part is
+            # kept as the known-spend floor -- never dropped, never guessed.
+            leftover = captures.leftover()
+            if leftover:
+                # Each leftover is priced by its OWN response model; the agent
+                # model is never assumed for a call not established as the
+                # agent's.  A call that cannot be priced adds nothing to the
+                # floor (its cost is unknown, and the trial is unmeasured).
+                floor = 0.0
+                for r, requested in leftover:
+                    priced = self._price_one_call(
+                        r,
+                        agent_model=None,
+                        is_agent_call=False,
+                        requested_model=requested,
+                    )
+                    floor += self._call_cost_floor(priced)
+                metrics_tracker.unattributed_spend = True
+                metrics_tracker.unattributed_known_cost = floor
+
         # Add comprehensive metrics from tracker using helper. Thread the
         # evaluator's runtime-only computable names (registry + RAGAS) so a
         # user tuple key cannot overwrite an evaluator-computed value during the
@@ -2496,6 +3255,15 @@ class LocalEvaluator(BaseEvaluator):
         )
 
         aggregated_metrics.setdefault("examples_attempted", len(outputs))
+
+        # Emit boundary for the trial: when the authoritative tracker declares
+        # the cost unknown, WITHDRAW every earlier numeric cost value (e.g. a
+        # base-evaluator ``cost`` computed from a placeholder zero) and keep only
+        # the flag plus the exact known floor (#2444).
+        enforce_unknown_cost_invariant(
+            aggregated_metrics,
+            sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
+        )
 
         # Empty/whitespace-output guard (issue #1851): compute the fraction of
         # this config's outputs that are empty on EVERY trial and expose it as a
@@ -2540,6 +3308,12 @@ class LocalEvaluator(BaseEvaluator):
             summary_stats = metrics_tracker.format_as_summary_stats(
                 user_supplied_accuracy=accuracy_is_user_metric
             )
+            if isinstance(summary_stats.get("metrics"), dict):
+                enforce_unknown_cost_invariant(
+                    summary_stats["metrics"],
+                    nullify=True,
+                    sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
+                )
             logger.debug(f"Generated summary_stats for {self.execution_mode} mode")
 
         # Calculate success statistics
@@ -2569,6 +3343,7 @@ class LocalEvaluator(BaseEvaluator):
         # __traigent_meta__["calls"] reported this trial. Empty when no
         # example reported a breakdown.
         model_costs = metrics_tracker.aggregate_call_breakdown()
+        cache_usage_totals = metrics_tracker.aggregate_cache_usage()
 
         result = EvaluationResult(
             config=config,
@@ -2583,6 +3358,7 @@ class LocalEvaluator(BaseEvaluator):
             errors=errors,
             metric_errors=metric_errors,
             model_costs=model_costs,
+            cache_usage=cache_usage_totals,
         )
 
         # Attach summary_stats if generated
@@ -2590,14 +3366,59 @@ class LocalEvaluator(BaseEvaluator):
             summary_stats.setdefault("metadata", {})
             summary_stats["metadata"]["sample_budget_exhausted"] = budget_exhausted
             summary_stats["metadata"]["examples_consumed"] = total_count
+            # Per-trial cost provenance (#2505): a named source, or "mixed".
+            summary_stats["metadata"]["cost_source"] = (
+                metrics_tracker.cost_source_label()
+            )
             result.summary_stats = summary_stats
 
         result.sample_budget_exhausted = budget_exhausted
         result.examples_consumed = consumed_examples
 
-        return self._finalize_execution_budget_evaluation(
-            budget, result, execution_budget_lease
-        )
+        # Last handoff before return: include known spend produced while
+        # summary/result generation ran. After this boundary a still-live
+        # timed-out worker cannot update the returned result; the trial remains
+        # unmeasured, never a claim that its remaining work costs $0.
+        try:
+            floor = float(
+                comprehensive_metrics.get("cost_lower_bound")
+                or comprehensive_metrics.get("cost")
+                or 0.0
+            )
+            while late := finish_captured_responses():
+                for response, requested in late:
+                    floor += self._call_cost_floor(
+                        self._price_one_call(
+                            response,
+                            agent_model=None,
+                            is_agent_call=False,
+                            requested_model=requested,
+                        )
+                    )
+                    # Commit each priced contribution before the next call can
+                    # raise: the finally-block budget debit reads this result.
+                    enforce_unknown_cost_invariant(
+                        result.aggregated_metrics,
+                        unknown=True,
+                        floor=floor,
+                        sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
+                    )
+                    if result.summary_stats and isinstance(
+                        result.summary_stats.get("metrics"), dict
+                    ):
+                        enforce_unknown_cost_invariant(
+                            result.summary_stats["metrics"],
+                            unknown=True,
+                            floor=floor,
+                            nullify=True,
+                            sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
+                        )
+        finally:
+            # Debit once and close the lease even if strict late pricing raises.
+            self._finalize_execution_budget_evaluation(
+                budget, result, execution_budget_lease
+            )
+        return result
 
     def _compute_real_accuracy(self, actual_output: Any, expected_output: Any) -> float:
         """Compute real accuracy by comparing actual vs expected output.

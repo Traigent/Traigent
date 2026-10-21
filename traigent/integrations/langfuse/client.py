@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from traigent.labels.transport_gate import gate_session, preflight_requests
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -372,8 +373,16 @@ class LangfuseClient:
                 logger.warning(f"Failed to initialize Langfuse SDK: {e}")
                 self._sdk_client = None
 
+    @staticmethod
+    def _raise_if_offline() -> None:
+        """Fail closed: no request leaves the machine while offline."""
+        from traigent.utils.env_config import raise_if_backend_offline
+
+        raise_if_backend_offline("Langfuse request")
+
     def _get_auth_header(self) -> dict[str, str]:
         """Get HTTP Basic Auth header for direct API calls."""
+        self._raise_if_offline()
         if not self.public_key or not self.secret_key:
             raise ValueError("Langfuse public_key and secret_key are required")
 
@@ -455,6 +464,7 @@ class LangfuseClient:
         Returns:
             Trace data dict or None if not found
         """
+        self._raise_if_offline()
         # The Langfuse SDK's read helpers (get_trace/get_observations) were
         # removed in SDK v3+ and the endpoints they call are removed in Langfuse
         # v4, so reads always go through the HTTP API (v2 with v1 fallback).
@@ -495,6 +505,7 @@ class LangfuseClient:
     ) -> dict[str, Any] | None:
         """Legacy v1 ``GET /api/public/traces/{id}`` (Langfuse v3 self-hosted only)."""
         try:
+            preflight_requests("GET", f"{self.host}/api/public/traces/{trace_id}")
             response = requests.get(
                 f"{self.host}/api/public/traces/{trace_id}",
                 headers=self._get_auth_header(),
@@ -621,6 +632,11 @@ class LangfuseClient:
         cursor: str | None = None
         for page_no in range(max_pages):
             try:
+                preflight_requests(
+                    "GET",
+                    f"{self.host}{_V2_OBSERVATIONS_PATH}",
+                    params=self._v2_params(trace_id, cursor, window, include_io),
+                )
                 response = requests.get(
                     f"{self.host}{_V2_OBSERVATIONS_PATH}",
                     params=self._v2_params(trace_id, cursor, window, include_io),
@@ -665,7 +681,7 @@ class LangfuseClient:
         window = self._v2_window()
         invalid = 0
         cursor: str | None = None
-        async with aiohttp.ClientSession(trust_env=True) as session:
+        async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
             for page_no in range(max_pages):
                 try:
                     async with session.get(
@@ -796,6 +812,7 @@ class LangfuseClient:
         Returns:
             List of LangfuseObservation objects
         """
+        self._raise_if_offline()
         return self._get_observations_http(trace_id)
 
     def _get_observations_http(
@@ -840,6 +857,15 @@ class LangfuseClient:
 
         try:
             while page <= max_pages:
+                preflight_requests(
+                    "GET",
+                    f"{self.host}/api/public/observations",
+                    params={
+                        "traceId": trace_id,
+                        "limit": str(_LEGACY_PAGE_LIMIT),
+                        "page": str(page),
+                    },
+                )
                 response = requests.get(
                     f"{self.host}/api/public/observations",
                     params={
@@ -924,6 +950,7 @@ class LangfuseClient:
         self, trace_id: str, *, include_io: bool = True
     ) -> dict[str, Any] | None:
         """Async version of get_trace."""
+        self._raise_if_offline()
         if not AIOHTTP_AVAILABLE:
             raise ImportError(
                 "aiohttp is required for async. Install with: pip install aiohttp"
@@ -953,7 +980,7 @@ class LangfuseClient:
     ) -> dict[str, Any] | None:
         """Legacy v1 trace endpoint (Langfuse v3 self-hosted only)."""
         try:
-            async with aiohttp.ClientSession(trust_env=True) as session:
+            async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
                 async with session.get(
                     f"{self.host}/api/public/traces/{trace_id}",
                     headers=self._get_auth_header(),
@@ -990,6 +1017,7 @@ class LangfuseClient:
         Returns:
             List of all observations for the trace
         """
+        self._raise_if_offline()
         if not AIOHTTP_AVAILABLE:
             raise ImportError("aiohttp is required for async")
 
@@ -1022,7 +1050,7 @@ class LangfuseClient:
         self._observations_partial_by_trace[trace_id] = False
 
         try:
-            async with aiohttp.ClientSession(trust_env=True) as session:
+            async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
                 while page <= max_pages:
                     async with session.get(
                         f"{self.host}/api/public/observations",

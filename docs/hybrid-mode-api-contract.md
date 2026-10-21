@@ -296,7 +296,7 @@ Returns tunable variable definitions. Traigent uses these to understand what par
 | `default` | any | No | Default value |
 | `agent` | string | No | Agent name for multi-agent grouping |
 | `is_tool` | boolean | No | True if this tunable configures an MCP tool |
-| `constraints` | array | No | Conditional constraints (e.g., `"requires model == gpt-4"`) |
+| `constraints` | array | No | Conditional constraints (e.g., `"requires model == gpt-4.1"`) |
 
 #### Tunable Types
 

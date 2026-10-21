@@ -15,6 +15,7 @@ from collections.abc import Coroutine
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NoReturn, TypeVar, cast
 
+from traigent.labels.transport_gate import client_origins, gate_session
 from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.backend_bridges import SessionExperimentMapping
 from traigent.cloud.client import (
@@ -510,6 +511,7 @@ class SessionOperations:
         dataset_id: str | None = None,
         evaluator_id_source: EvaluatorIdSource | None = None,
         content_identity: dict[str, Any] | None = None,
+        content_less: Any = None,
     ) -> SessionCreationResult:
         """Create a session with backend metadata submission.
 
@@ -537,6 +539,14 @@ class SessionOperations:
         # the declared dataset identity the live create would send, so a later
         # `traigent sync` can send the same identity instead of none.
         local_record_metadata = _with_declared_dataset_identity(metadata, dataset_id)
+        from traigent.cloud import content_less as _content_less
+
+        if _content_less.is_enabled(content_less):
+            # Replay (`traigent sync`) of this record is refused: it would post a legacy body.
+            local_record_metadata = {
+                **(local_record_metadata or {}),
+                _content_less.RECORD_KEY: True,
+            }
 
         # Phase 8 (review round 2): the local-availability fallback is for
         # NON-governed sessions only. A governed/strict session that cannot
@@ -693,6 +703,7 @@ class SessionOperations:
                 content_identity=content_identity,
                 task_type=task_type,
                 dataset_id=dataset_id,
+                content_less=content_less,
             )
 
             try:
@@ -707,6 +718,12 @@ class SessionOperations:
                 bound_agent_id = getattr(session_api_result, "agent_id", None)
                 if not isinstance(bound_agent_id, str) or not bound_agent_id.strip():
                     bound_agent_id = None
+                bound_agent_ref = getattr(session_api_result, "agent_ref", None)
+                if not isinstance(bound_agent_ref, str) or not bound_agent_ref:
+                    bound_agent_ref = None
+                session_content_less = (
+                    getattr(session_api_result, "content_less", False) is True
+                )
                 # #1683 Bug B: the backend sends the warm-start decision block
                 # in the CREATE response (it is not resent at finalize).
                 # Retain it verbatim so finalize can surface it in result
@@ -835,6 +852,8 @@ class SessionOperations:
                     project_id=owning_context.get("project_id"),
                     tenant_id=owning_context.get("tenant_id"),
                     agent_id=bound_agent_id,
+                    agent_ref=bound_agent_ref,
+                    content_less=session_content_less,
                 )
 
             except ValidationException:
@@ -1553,8 +1572,9 @@ class SessionOperations:
         Returns:
             Parsed backend response payload (may be ``{}`` if the backend
             returned 2xx with an empty body) when finalization succeeded;
-            ``None`` when the endpoint was unavailable, returned a non-2xx
-            status, or failed locally. Per the tracked fix, callers use this
+            ``None`` when the endpoint was unavailable, returned a non-auth
+            non-2xx status, or failed at the transport level. Ownership (403)
+            and auth (401) failures raise ``CloudServiceError`` instead. Per the tracked fix, callers use this
             return shape to distinguish "backend gave us a summary" from
             "backend just accepted the finalize call with no payload".
         """
@@ -1571,9 +1591,12 @@ class SessionOperations:
 
             connector = None
 
-            async with aiohttp.ClientSession(
-                connector=connector,
-                trust_env=True,
+            async with gate_session(
+                aiohttp.ClientSession(
+                    connector=connector,
+                    trust_env=True,
+                ),
+                origins=client_origins(self.client),
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -1647,14 +1670,25 @@ class SessionOperations:
                         raise AssertionError(
                             "unreachable"
                         )  # _raise_ownership_error never returns
+                    elif response.status == 401:
+                        # Auth failure is never "endpoint unavailable": fail closed.
+                        raise CloudServiceError(
+                            f"Finalizing session '{session_id}' via backend API "
+                            "failed: HTTP 401 Unauthorized. Re-authenticate and retry."
+                        )
                     else:
                         error_text = await response.text()
                         logger.debug(
                             f"Backend finalization endpoint returned {safe_http_error_summary(response.status, error_text)}"
                         )
                         return None
-        except Exception as e:
-            logger.debug(f"Error calling backend finalization API: {e}")
+        except CloudServiceError:
+            # Ownership (403) / auth (401) failures must reach the caller's
+            # explicit rethrow; they are not "endpoint unavailable" (#2510).
+            raise
+        except Exception as e:  # silent-ok: transport-level failure or non-auth HTTP status means the finalize endpoint is unavailable; None is the documented fallback signal, caller logs it and backend auto-finalizes (#890)
+            # Class name only: the exception text can echo server/client content.
+            logger.debug("Error calling backend finalization API: %s", type(e).__name__)
             return None
 
     async def delete_session(self, session_id: str, cascade: bool = True) -> bool:

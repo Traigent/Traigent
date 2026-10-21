@@ -536,6 +536,21 @@ class TestSafetyValidator:
         assert result_above.satisfied is True
         assert result_below.satisfied is False
 
+    @pytest.mark.parametrize("value", [0.1, 0.5, 0.9])
+    def test_required_rate_is_derived_from_operator_at_same_threshold(
+        self, value: float
+    ) -> None:
+        """GH #2204 (owner: derived): above(x) -> x, below(x) -> 1 - x."""
+        from traigent.api.safety import _required_compliance_rate
+
+        metric = MetricKeyMetric(name="m", metric_key="m")
+        assert _required_compliance_rate(metric.above(value).threshold) == value
+        assert _required_compliance_rate(
+            metric.below(value).threshold
+        ) == pytest.approx(1.0 - value)
+        # Out of [0, 1] a complement is meaningless: fail closed.
+        assert _required_compliance_rate(metric.below(100).threshold) == 1.0
+
 
 class TestNonRAGASPresets:
     """Tests for non-RAGAS metric factory functions."""
@@ -899,6 +914,38 @@ class TestDecoratorIntegration:
             orchestrator._constraints_post_eval,
             stage="post",
         )  # must not raise
+
+    def test_weak_evidence_halts_with_insufficient_evidence_reason_2481(
+        self,
+    ) -> None:
+        """Issue #2481: all-compliant but unproven evidence still halts (fail
+        closed) yet reports a distinct reason from a real violation."""
+        from datetime import UTC, datetime
+
+        from traigent.api.types import TrialResult, TrialStatus
+        from traigent.core.stop_conditions import SafetyConstraintStopCondition
+
+        constraint = custom_safety(
+            "must_pass", lambda config, metrics: metrics.get("safety_score", 0.0)
+        ).above(0.5, min_samples=2, confidence=0.95)
+
+        def completed(i: int, score: float) -> TrialResult:
+            return TrialResult(
+                trial_id=str(i),
+                config={"p": i},
+                metrics={"safety_score": score},
+                status=TrialStatus.COMPLETED,
+                duration=0.0,
+                timestamp=datetime.now(UTC),
+            )
+
+        weak = SafetyConstraintStopCondition([constraint])
+        assert weak.should_stop([completed(i, 1.0) for i in range(2)]) is True
+        assert weak.reason == "safety_constraint_insufficient_evidence"
+
+        violated = SafetyConstraintStopCondition([constraint])
+        assert violated.should_stop([completed(i, 0.0) for i in range(2)]) is True
+        assert violated.reason == "safety_constraint"
 
     def test_violated_safety_constraint_halts_with_stop_reason(self) -> None:
         """Issue #1532 acceptance: a deterministically violated chance

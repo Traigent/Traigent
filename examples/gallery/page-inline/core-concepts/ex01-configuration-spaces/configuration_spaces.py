@@ -110,7 +110,7 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
 @traigent.optimize(
     configuration_space={
         # Keep space small (<=8 combos) for quick runs in examples
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.1, 0.5],
         "max_tokens": [100, 200],
         "response_style": ["concise", "balanced"],
@@ -150,7 +150,7 @@ def intelligent_assistant(query: str) -> str:
 
     # Create LLM with optimized parameters
     llm = ChatOpenAI(
-        model=config.get("model", "gpt-3.5-turbo"),
+        model=config.get("model", "gpt-4.1-mini"),
         temperature=config.get("temperature", 0.7),
         max_tokens=config.get("max_tokens", 200),
         top_p=config.get("top_p", 0.9),
@@ -169,7 +169,7 @@ def demonstrate_configuration_types() -> None:
 
     # Example 1: Discrete choices (categorical)
     discrete_config = {
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "output_format": ["json", "text", "markdown"],
         "language": ["en", "es", "fr", "de"],
     }

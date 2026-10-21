@@ -159,15 +159,15 @@ validation:
 # User code
 client = OpenAI()
 response = client.chat.completions.create(
-    model="gpt-3.5-turbo",
+    model="gpt-4.1-mini",
     messages=[{"role": "user", "content": "Hello"}]
 )
 
-# Behind the scenes with TraigentConfig(model="gpt-4", temperature=0.5)
+# Behind the scenes with TraigentConfig(model="gpt-4.1", temperature=0.5)
 # 1. OpenAIPlugin intercepts the call
-# 2. Maps: model="gpt-4", temperature=0.5
+# 2. Maps: model="gpt-4.1", temperature=0.5
 # 3. Validates: model is in allowed list, temperature in range
-# 4. Calls original with: model="gpt-4", temperature=0.5, messages=[...]
+# 4. Calls original with: model="gpt-4.1", temperature=0.5, messages=[...]
 ```
 
 ## Built-in Plugins
@@ -191,9 +191,9 @@ The `ParameterNormalizer` class in `utils/parameter_normalizer.py` provides cros
 from traigent.integrations.utils import Framework, normalize_params, get_normalizer
 
 # Direct conversion between frameworks
-params = {"model_name": "gpt-4", "streaming": True, "max_tokens": 100}
+params = {"model_name": "gpt-4.1", "streaming": True, "max_tokens": 100}
 normalized = normalize_params(params, "langchain", "openai")
-# Result: {"model": "gpt-4", "stream": True, "max_tokens": 100}
+# Result: {"model": "gpt-4.1", "stream": True, "max_tokens": 100}
 
 # Or use the normalizer instance for more control
 normalizer = get_normalizer()

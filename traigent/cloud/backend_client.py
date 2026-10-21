@@ -9,6 +9,8 @@ for better maintainability and adherence to software engineering principles.
 import asyncio
 import concurrent.futures
 import json
+import logging
+import math
 import os
 import re
 import secrets
@@ -24,6 +26,7 @@ from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, unquote, urlparse, urlunparse
 
 # Import and re-export BackendClientConfig for backward compatibility
+from traigent.labels.transport_gate import client_origins, gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.api_operations import ApiOperations, TraigentSessionApiResult
 from traigent.cloud.auth import (
@@ -75,6 +78,8 @@ from traigent.cloud.privacy_operations import PrivacyOperations
 from traigent.cloud.session_operations import SessionOperations
 from traigent.cloud.session_types import SessionCreationResult
 from traigent.core.session_types import safe_http_error_summary
+from traigent.core import best_config_diagnostics as diag
+from traigent.core.best_config_diagnostics import transport_failed_message
 from traigent.cloud.subset_selection import SmartSubsetSelector
 from traigent.cloud.trial_operations import (
     TrialOperations,
@@ -89,6 +94,7 @@ from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.config.backend_config import BackendConfig
 from traigent.config.project import read_optional_project_env
 from traigent.evaluators.base import Dataset
+from traigent.labels.transport_gate import TransportGateRefusal, preflight_requests
 from traigent.security.session_manager import SessionManager as SecuritySessionManager
 from traigent.utils.exceptions import RetryableError
 from traigent.utils.logging import get_logger
@@ -138,7 +144,132 @@ _JSON_CONTENT_TYPE = "application/json"
 _SDK_USER_AGENT = get_sdk_user_agent()
 _AGENT_ID_HEADER = "X-Traigent-Agent-Id"
 _EXPECTED_HEAD_GENERATION_HEADER = "X-Traigent-Expected-Head-Generation"
+_AGENT_REF_HEADER = "X-Traigent-Agent-Ref"
+_MAX_HEAD_GENERATION = 9007199254740991
+
+# Closed request contract of POST /api/v1/optimization/token-refs (TraigentSchema
+# optimization/token_refs_schema.json). Enforced in the send method itself so no caller,
+# whatever it passes, can put a name or any other content on this route.
+_TOKEN_REFS_AGENT_REF = re.compile(r"agentref_[0-9a-f]{32}")
+_TOKEN_REFS_OPERATION_KEY = re.compile(r"[0-9a-f]{32}")
+_TOKEN_REFS_PARENT_REF = re.compile(r"knobref_[0-9a-f]{32}")
+_TOKEN_REFS_KINDS = frozenset({"knob", "choice", "metric", "template"})
+_TOKEN_REFS_MAX_ITEMS = 200
+
+
+_NOT_PLAIN: Any = object()
+_PLAIN_SCALARS = (str, int, bool, type(None))
+
+
+def _plain_snapshot(value: Any, _depth: int = 0) -> Any:
+    """Deep plain-data copy (exact ``dict``/``list``/``str``/``int``/``bool``/``None`` only).
+
+    Anything else (subclasses, floats, non-string keys, cycles past a small depth) yields
+    ``_NOT_PLAIN``. The copy shares no object with the caller, so validating it and sending
+    it cannot be split by a concurrent mutation of the caller's body.
+    """
+    if _depth > 8:
+        return _NOT_PLAIN
+    kind = type(value)
+    if kind in _PLAIN_SCALARS:
+        return value
+    if kind is list:
+        out_list = [_plain_snapshot(v, _depth + 1) for v in list(value)]
+        return _NOT_PLAIN if any(v is _NOT_PLAIN for v in out_list) else out_list
+    if kind is dict:
+        out: dict[str, Any] = {}
+        for k, v in list(value.items()):
+            if type(k) is not str:
+                return _NOT_PLAIN
+            copied = _plain_snapshot(v, _depth + 1)
+            if copied is _NOT_PLAIN:
+                return _NOT_PLAIN
+            out[k] = copied
+        return out
+    return _NOT_PLAIN
+
+
+def _token_refs_body_is_closed(body: Any) -> bool:
+    """True only for a body that is exactly the Schema's closed request shape."""
+    if not isinstance(body, dict) or set(body) != {
+        "schema_version",
+        "agent_ref",
+        "operation_key",
+        "items",
+    }:
+        return False
+    version = body["schema_version"]
+    agent_ref, key, items = body["agent_ref"], body["operation_key"], body["items"]
+    if (
+        isinstance(version, bool)
+        or not isinstance(version, int)
+        or version != 1
+        or not isinstance(agent_ref, str)
+        or not _TOKEN_REFS_AGENT_REF.fullmatch(agent_ref)
+        or not isinstance(key, str)
+        or not _TOKEN_REFS_OPERATION_KEY.fullmatch(key)
+        or not isinstance(items, list)
+        or not 1 <= len(items) <= _TOKEN_REFS_MAX_ITEMS
+    ):
+        return False
+    for item in items:
+        if not isinstance(item, dict) or not set(item) <= {"kind", "parent_ref"}:
+            return False
+        kind = item.get("kind")
+        if not isinstance(kind, str) or kind not in _TOKEN_REFS_KINDS:
+            return False
+        parent = item.get("parent_ref")
+        if kind == "choice":
+            if not isinstance(parent, str) or not _TOKEN_REFS_PARENT_REF.fullmatch(
+                parent
+            ):
+                return False
+        elif "parent_ref" in item:
+            return False
+    return True
+
+
 _STALE_HEAD_ERROR_CODE = "STALE_HEAD_GENERATION"
+#: Closed refusal envelope of best_config_head_refusal_schema.json:
+#: error_code -> (HTTP status the Schema pairs with it, fixed ``error``, fixed ``message``).
+_HEAD_REFUSAL_ENVELOPE: dict[str, tuple[int, str, str]] = {
+    "reference_not_found": (404, "reference_not_found", "Reference not found."),
+    "head_capture_invalid": (
+        400,
+        "invalid_request",
+        "Head capture is missing or malformed.",
+    ),
+    "head_environment_mismatch": (
+        409,
+        "head_precondition_refused",
+        "Environment does not match the session.",
+    ),
+    "head_agent_mismatch": (
+        409,
+        "head_precondition_refused",
+        "Agent does not match the session.",
+    ),
+    "head_generation_stale": (
+        409,
+        "head_precondition_refused",
+        "Agent head moved since the capture.",
+    ),
+    "head_write_unauthorized": (
+        403,
+        "head_precondition_refused",
+        "Not authorized to promote this agent.",
+    ),
+    "head_body_invalid": (400, "invalid_request", "Publish body is invalid."),
+    "head_publish_conflict": (
+        409,
+        "head_precondition_refused",
+        "Publish conflicts with the current configuration.",
+    ),
+    "unauthenticated": (401, "unauthenticated", "Authentication required."),
+    "forbidden": (403, "forbidden", "Forbidden."),
+    "internal_error": (500, "internal_error", "Internal error."),
+}
+_HEAD_ENVELOPE_KEYS = frozenset({"success", "error", "error_code", "message"})
 _SYNC_BACKEND_TRANSIENT_STATUSES = frozenset({408, 429, *range(500, 600)})
 _INTERACTION_POLICY_REQUIRED_KEYS = frozenset(
     {
@@ -275,6 +406,34 @@ def _parse_retry_after(headers: Any) -> float | None:
     return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
 
 
+_RETRY_AFTER_DECIMAL_RE = re.compile(r"[0-9]+(?:\.[0-9]+)?")
+
+
+def _retry_after_seconds(headers: Any) -> float | None:
+    """``Retry-After`` as delta-seconds in ``[0, 3600]``; ``None`` for anything else.
+
+    A date, a negative, a non-finite or a non-numeric value is ``None`` (the caller's own
+    pacing applies); the header text itself never leaves.
+    """
+    if not headers or not callable(getattr(headers, "get", None)):
+        return None
+    value = headers.get("Retry-After")
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not _RETRY_AFTER_DECIMAL_RE.fullmatch(text):
+            return None
+        seconds = float(text)
+    elif isinstance(value, int | float):
+        seconds = float(value)
+    else:
+        return None
+    if not math.isfinite(seconds) or seconds < 0:
+        return None
+    return min(seconds, 3600.0)
+
+
 def _raise_for_transient_backend_response(response: Any, operation: str) -> None:
     status_code = getattr(response, "status_code", None)
     if status_code not in _SYNC_BACKEND_TRANSIENT_STATUSES:
@@ -300,7 +459,17 @@ def _run_sync_backend_request_with_retry(
     error = result.error
     if isinstance(error, AuthenticationError):
         raise error
-    raise CloudServiceError(f"{operation} failed: {error}") from error
+    # Fixed text only: the transient errors above carry a pre-sanitized message; any
+    # other failure (e.g. a ``requests`` InvalidHeader quoting a header value) is named
+    # by its type, never its text, and never chained.
+    if isinstance(error, _SyncBackendTransientError):
+        raise CloudServiceError(f"{operation} failed: {error}") from None
+    if isinstance(error, TransportGateRefusal):
+        # The gate's own refusal carries counts only (never values); callers key on it.
+        raise CloudServiceError(
+            f"{operation} failed ({type(error).__name__})"
+        ) from error
+    raise CloudServiceError(f"{operation} failed ({type(error).__name__})") from None
 
 
 def _session_is_closed(session: Any) -> bool:
@@ -919,12 +1088,16 @@ class BackendIntegratedClient:
                 self.local_storage = LocalStorageBackendManager(
                     str(self._local_storage_root)
                 )
-                logger.info(
-                    "Local storage fallback initialized at %s",
-                    self._local_storage_root,
+                logger.info("Local storage fallback initialized")
+            except Exception as exc:
+                # the storage root and the OS error text carry customer-chosen paths
+                diag.log(
+                    logger,
+                    logging.WARNING,
+                    "Failed to initialize local storage fallback",
+                    category=diag.Category.FILESYSTEM_FAILED,
+                    exc=exc,
                 )
-            except Exception as e:
-                logger.warning(f"Failed to initialize local storage fallback: {e}")
 
         # Session management
         self._session = None
@@ -1234,7 +1407,7 @@ class BackendIntegratedClient:
             ).rstrip("/")
             url = f"{backend_origin}/api/v1/auth/me/interaction-policy"
 
-            async with aiohttp.ClientSession(trust_env=True) as session:
+            async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
                 async with session.get(
                     url,
                     headers=headers,
@@ -1452,13 +1625,16 @@ class BackendIntegratedClient:
                 # Keep the running loop's pool: in-flight requests may be using it.
                 return self
             await self._retire_primary_pool()
-            self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=self.timeout),
-                # Session-default headers are long-lived: never freeze a
-                # traceparent/tracestate into them (stale span context).
-                # Trace context travels only on per-request headers.
-                headers=_strip_trace_context_headers(headers),
-                trust_env=True,
+            self._session = gate_session(
+                aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=self.timeout),
+                    # Session-default headers are long-lived: never freeze a
+                    # traceparent/tracestate into them (stale span context).
+                    # Trace context travels only on per-request headers.
+                    headers=_strip_trace_context_headers(headers),
+                    trust_env=True,
+                ),
+                origins=client_origins(self),
             )
             self._register_session_finalizer(self._session)
         return self
@@ -1496,19 +1672,25 @@ class BackendIntegratedClient:
             # silently emits a rejected key.
             raise
         except Exception as exc:
-            logger.warning("Could not get auth headers: %s", exc)
+            logger.warning(
+                "Could not get auth headers (%s)",
+                type(exc).__name__,
+            )
             raise CloudServiceError(
-                f"Failed to build authenticated session: {exc}"
-            ) from exc
+                f"Failed to build authenticated session ({type(exc).__name__})"
+            ) from None
         headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
         headers.setdefault("User-Agent", _SDK_USER_AGENT)
 
-        return aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=self.timeout),
-            # Same rule as __aenter__: no stale trace context in
-            # long-lived session-default headers.
-            headers=_strip_trace_context_headers(headers),
-            trust_env=True,
+        return gate_session(
+            aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=self.timeout),
+                # Same rule as __aenter__: no stale trace context in
+                # long-lived session-default headers.
+                headers=_strip_trace_context_headers(headers),
+                trust_env=True,
+            ),
+            origins=client_origins(self),
         )
 
     def _loop_pools(self) -> dict[int, tuple[weakref.ref[Any], Any]]:
@@ -1827,6 +2009,7 @@ class BackendIntegratedClient:
         dataset_id: str | None = None,
         evaluator_id_source: EvaluatorIdSource | None = None,
         content_identity: dict[str, Any] | None = None,
+        content_less: Any = None,
     ) -> SessionCreationResult:
         """Synchronous wrapper for creating a session.
         Delegates to session_operations module. Phase 8: objectives are
@@ -1856,6 +2039,7 @@ class BackendIntegratedClient:
             dataset_id=dataset_id,
             evaluator_id_source=evaluator_id_source,
             content_identity=content_identity,
+            content_less=content_less,
         )
 
     async def create_hybrid_session(
@@ -2026,12 +2210,12 @@ class BackendIntegratedClient:
             # ``CloudServiceError`` rather than swallow into default headers.
             logger.warning(
                 "Sync auth header generation failed; refusing to send "
-                "unauthenticated request: %s",
-                exc,
+                "unauthenticated request (%s)",
+                type(exc).__name__,
             )
             raise CloudServiceError(
-                f"Failed to build sync auth headers: {exc}"
-            ) from exc
+                f"Failed to build sync auth headers ({type(exc).__name__})"
+            ) from None
 
         merged_headers = dict(headers or {})
         merged_headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
@@ -2174,6 +2358,7 @@ class BackendIntegratedClient:
 
         def _get_head() -> Any:
             try:
+                preflight_requests("GET", url, params=params)
                 response = requests.get(  # nosec B113 - timeout is provided
                     url,
                     params=params,
@@ -2187,8 +2372,8 @@ class BackendIntegratedClient:
                 TimeoutError,
             ) as exc:
                 raise _SyncBackendTransientError(
-                    f"Agent-head fetch transport failed: {exc}"
-                ) from exc
+                    transport_failed_message("Agent-head fetch", exc)
+                ) from None
             _raise_for_transient_backend_response(response, "Agent-head fetch")
             return response
 
@@ -2205,6 +2390,302 @@ class BackendIntegratedClient:
             raise CloudServiceError("Agent-head response carried a negative generation")
         return generation
 
+    @staticmethod
+    def _head_refusal_from_response(
+        response: Any,
+        *,
+        best_config: dict[str, Any] | None = None,
+    ) -> Exception:
+        """Map a protected-path error response to a typed, content-free exception.
+
+        Only the closed ``error_code`` of the Schema refusal envelope is read, and only
+        when it is one of the closed codes; nothing else of the body is kept or echoed.
+        A body outside the closed envelope maps to ``UNRECOGNIZED`` (status only).
+        ``head_generation_stale`` maps to its own type and is never retried here.
+        """
+        from traigent.core.best_config_runtime import (
+            CloudBestConfigHeadRefusedError,
+            CloudBestConfigHeadStaleError,
+            HeadRefusalCode,
+        )
+
+        status = getattr(response, "status_code", None)
+        status = (
+            status if isinstance(status, int) and not isinstance(status, bool) else None
+        )
+        code = HeadRefusalCode.UNRECOGNIZED
+        try:
+            body = response.json()
+        except Exception:  # noqa: BLE001  # silent-ok: unreadable body is the UNRECOGNIZED refusal below
+            body = None
+        # Full closed envelope (best_config_head_refusal_schema.json + the 409/500
+        # branch schemas): exactly the four members, the fixed error/message text of
+        # the code, and the HTTP status the Schema pairs with that code. Anything else
+        # is UNRECOGNIZED, so a malformed body can never claim a typed refusal.
+        if isinstance(body, dict) and set(body) == _HEAD_ENVELOPE_KEYS:
+            raw = body.get("error_code")
+            spec = _HEAD_REFUSAL_ENVELOPE.get(raw) if isinstance(raw, str) else None
+            if (
+                spec is not None
+                and body.get("success") is False
+                and body.get("error") == spec[1]
+                and body.get("message") == spec[2]
+                and status == spec[0]
+            ):
+                code = HeadRefusalCode(raw)
+        if code is HeadRefusalCode.HEAD_GENERATION_STALE:
+            return CloudBestConfigHeadStaleError(
+                status_code=status, best_config=best_config
+            )
+        return CloudBestConfigHeadRefusedError(
+            code, status_code=status, best_config=best_config
+        )
+
+    def _protected_request(
+        self, method: str, url: str, *, operation: str, **kwargs: Any
+    ) -> Any:
+        """One request of the content-less protected path, on a strict gated session.
+
+        The session accepts only this URL's origin and refuses every redirect, so the
+        ref and credentials cannot travel anywhere else. Transport failures surface as
+        fixed text (no URL, no exception text).
+
+        This helper is itself the send site, so it fails closed on its own: ``no_egress``
+        and offline mode are checked here, before any session is built, whoever calls it.
+        """
+        self._raise_if_backend_egress_disabled(operation)
+        try:
+            import requests
+        except ImportError as exc:  # pragma: no cover - requests is required
+            raise CloudServiceError("requests is unavailable") from exc
+
+        session = gate_session(requests.Session(), origins=[url], strict=True)
+        try:
+            return session.request(
+                method,
+                url,
+                allow_redirects=False,
+                timeout=min(self.timeout, 30.0),
+                **kwargs,
+            )
+        except (requests.exceptions.RequestException, ConnectionError, TimeoutError):
+            # RequestException also covers InvalidHeader / InvalidURL / MissingSchema,
+            # whose text quotes the offending header or URL.
+            raise CloudServiceError(f"{operation} transport failed") from None
+        finally:
+            session.close()
+
+    def fetch_agent_head_generation_by_ref_sync(
+        self, agent_ref: str, *, environment: str
+    ) -> int:
+        """Read a content-less agent's head generation by its opaque ``agent_ref``.
+
+        Contract: TraigentSchema ``optimization/best_config_head_endpoints.json``
+        (``GET /api/v1/best-configs/agent-heads/by-ref/{agent_ref}?environment=``).
+        Returns the generation (0 when never promoted). Any closed refusal raises
+        ``CloudBestConfigHeadRefusedError``; any other failure raises
+        ``CloudServiceError`` with fixed text. The caller captures this ONCE, at the
+        start of the run.
+        """
+        from traigent.cloud import content_less as content_less_session
+        from traigent.core.best_config_runtime import (
+            CloudBestConfigHeadRefusedError,
+            HeadRefusalCode,
+        )
+
+        self._raise_if_backend_egress_disabled("fetch agent head")
+        if not content_less_session.is_well_formed_ref("agent", agent_ref):
+            raise CloudBestConfigHeadRefusedError(HeadRefusalCode.HEAD_CAPTURE_INVALID)
+        if environment not in content_less_session.ENVIRONMENTS:
+            raise CloudBestConfigHeadRefusedError(HeadRefusalCode.HEAD_CAPTURE_INVALID)
+        base = self._build_best_config_url()
+        if not base:
+            raise CloudServiceError("Backend agent-head URL is invalid")
+        url = f"{base}/agent-heads/by-ref/{quote(agent_ref, safe='')}"
+        headers = self._get_sync_auth_headers(target="backend")
+
+        def _get_head() -> Any:
+            response = self._protected_request(
+                "GET",
+                url,
+                operation="Agent-head fetch",
+                params={"environment": environment},
+                headers=headers,
+            )
+            if (
+                getattr(response, "status_code", None)
+                in _SYNC_BACKEND_TRANSIENT_STATUSES
+            ):
+                raise _SyncBackendTransientError(
+                    "Agent-head fetch returned a transient error",
+                    status_code=response.status_code,
+                    retry_after=_parse_retry_after(getattr(response, "headers", None)),
+                )
+            return response
+
+        response = _run_sync_backend_request_with_retry("Agent-head fetch", _get_head)
+        if response.status_code >= 400:
+            raise self._head_refusal_from_response(response)
+        try:
+            body = response.json()
+        except Exception as exc:  # noqa: BLE001
+            raise CloudServiceError("Agent-head response was not valid JSON") from exc
+        data = body.get("data", body) if isinstance(body, dict) else None
+        generation = data.get("generation") if isinstance(data, dict) else None
+        if (
+            not isinstance(data, dict)
+            or data.get("agent_ref") != agent_ref
+            or data.get("environment") != environment
+            or isinstance(generation, bool)
+            or not isinstance(generation, int)
+            or not 0 <= generation <= _MAX_HEAD_GENERATION
+            or data.get("exists") is not (generation >= 1)
+        ):
+            raise CloudServiceError("Agent-head response did not match its contract")
+        return generation
+
+    def _build_token_refs_url(self) -> str | None:
+        """Sanitized ``<api base>/optimization/token-refs`` URL, or None if the base is unusable."""
+        parsed = urlparse(self.api_base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return None
+        if (
+            parsed.username
+            or parsed.password
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        path = f"{parsed.path.rstrip('/')}/optimization/token-refs"
+        return cast(
+            str,
+            urlunparse(parsed._replace(path=path, params="", query="", fragment="")),
+        )
+
+    def issue_token_refs_sync(self, body: dict[str, Any]) -> tuple[int, Any]:
+        """``POST /api/v1/optimization/token-refs``: one attempt; ``(status, parsed JSON | None)``.
+
+        Same call as :meth:`issue_token_refs_with_retry_after_sync` without the retry hint.
+
+        Contract: TraigentSchema ``optimization/token_refs_endpoints.json``. The body carries
+        kinds and parent refs only (never a name); the caller (``traigent.labels.token_store``)
+        interprets the status and body into closed codes, so nothing of the response is
+        raised here. Idempotent by ``operation_key``, so a retry after any failure is safe.
+        Transport failures surface as fixed text (``_protected_request``).
+
+        Closed boundary: every failure leaves with fixed text as one of the three families
+        the method could always raise: ``CloudEgressBlockedError`` (egress off),
+        ``AuthenticationError`` (a backend-rejected key; subclasses collapse to the base)
+        or ``CloudServiceError`` (everything else), with NO ``__cause__`` / ``__context__`` (also when this is called inside the caller's own
+        ``except`` that holds a customer name). The body is snapshotted first and only the
+        validated snapshot is sent.
+        """
+        status, payload, _retry_after = self.issue_token_refs_with_retry_after_sync(
+            body
+        )
+        return status, payload
+
+    def issue_token_refs_with_retry_after_sync(
+        self, body: dict[str, Any]
+    ) -> tuple[int, Any, float | None]:
+        """One issuance attempt: ``(status, parsed JSON | None, retry_after_seconds | None)``.
+
+        ``retry_after_seconds`` is the response's ``Retry-After`` header read as a finite
+        number of seconds in ``[0, 3600]`` (``None`` when absent or unreadable); it is the
+        only header value that leaves this method. The closed-boundary guarantees of
+        :meth:`issue_token_refs_sync` are the same.
+        """
+        error: Exception
+        try:
+            return self._issue_token_refs_checked(body)
+        except (CloudServiceError, CloudEgressBlockedError) as exc:
+            error = exc  # this module's own fixed-text types keep their type
+        except AuthenticationError:
+            # ``_get_sync_auth_headers`` documents that a backend-rejected key propagates as
+            # ``AuthenticationError`` so callers can ask for credentials; keep that family
+            # (fixed text: the original may quote a header or key fragment).
+            error = AuthenticationError("Token-refs issuance authentication failed")
+        except Exception:  # noqa: BLE001 - closed boundary: nothing else may escape
+            error = CloudServiceError("Token-refs issuance failed")
+        # Raised outside the ``except`` block, then cleared AFTER the raise has chained (the
+        # interpreter attaches the caller's handled exception as __context__ during the
+        # raise); bare re-raise last (same pattern as token_store / fs_guard).
+        try:
+            raise error from None
+        except Exception as raised:
+            raised.__cause__ = None
+            raised.__context__ = None
+            raised.__suppress_context__ = True
+            raise
+
+    def _issue_token_refs_checked(
+        self, body: dict[str, Any]
+    ) -> tuple[int, Any, float | None]:
+        snapshot = _plain_snapshot(body)
+        if snapshot is _NOT_PLAIN or not _token_refs_body_is_closed(snapshot):
+            # fixed text: the offending value (it may be a customer name) is never quoted
+            raise CloudServiceError(
+                "Token-refs request is not the closed contract shape"
+            )
+        self._raise_if_backend_egress_disabled("issue token refs")
+        url = self._build_token_refs_url()
+        if not url:
+            raise CloudServiceError("Backend token-refs URL is invalid")
+        headers = self._get_sync_auth_headers(target="backend")
+        response = self._protected_request(
+            "POST",
+            url,
+            operation="Token-refs issuance",
+            json=snapshot,  # the validated private copy, never the caller's mutable dict
+            headers=headers,
+        )
+        status = getattr(response, "status_code", None)
+        try:
+            payload = response.json()
+        except Exception:  # noqa: BLE001  # silent-ok: an unreadable body is classified by status alone
+            payload = None
+        retry_after = _retry_after_seconds(getattr(response, "headers", None))
+        return (status if isinstance(status, int) else 0), payload, retry_after
+
+    def _publish_best_config_protected_sync(
+        self,
+        spec: dict[str, Any],
+        *,
+        environment: str | None,
+        if_match: str | None,
+        agent_ref: str,
+        expected_head_generation: int,
+    ) -> dict[str, Any]:
+        """Protected (content-less) publish: both headers, one attempt, closed refusals.
+
+        Never retried: a ``head_generation_stale`` refusal means the run's result is
+        stale, and re-sending after an ambiguous failure could misreport the head this
+        very call moved as someone else's write.
+        """
+        self._raise_if_backend_egress_disabled("publish best config")
+        url = self._build_best_config_url()
+        if not url:
+            raise CloudServiceError("Backend best-config URL is invalid")
+        headers = self._get_sync_auth_headers(target="backend")
+        if if_match:
+            headers["If-Match"] = if_match
+        headers[_AGENT_REF_HEADER] = agent_ref
+        headers[_EXPECTED_HEAD_GENERATION_HEADER] = str(int(expected_head_generation))
+        payload: dict[str, Any] = {"spec": spec}
+        if environment:
+            payload["environment"] = environment
+        response = self._protected_request(
+            "POST",
+            url,
+            operation="Best-config publish",
+            json=payload,
+            headers=headers,
+        )
+        if response.status_code >= 400:
+            raise self._head_refusal_from_response(response)
+        return self._extract_backend_data(response)
+
     def publish_best_config_sync(
         self,
         spec: dict[str, Any],
@@ -2213,8 +2694,16 @@ class BackendIntegratedClient:
         if_match: str | None = None,
         agent_id: str | None = None,
         expected_head_generation: int | None = None,
+        agent_ref: str | None = None,
     ) -> dict[str, Any]:
         """Publish a canonical best-config spec to the backend.
+
+        With ``agent_ref`` (a content-less session's opaque ref) the publish is the
+        PROTECTED path: it sends ``X-Traigent-Agent-Ref`` and
+        ``X-Traigent-Expected-Head-Generation``, is never retried, and every closed
+        refusal raises ``CloudBestConfigHeadRefusedError`` (``head_generation_stale``
+        raises ``CloudBestConfigHeadStaleError``). ``agent_ref`` and ``agent_id`` are
+        mutually exclusive.
 
         When both ``agent_id`` and ``expected_head_generation`` are given the
         publish is also a promotion to that agent's head, conditional on the
@@ -2222,6 +2711,37 @@ class BackendIntegratedClient:
         ``CloudBestConfigStaleHeadError`` and nothing is written. Supplying only
         one of the two is a caller bug and is rejected before any request.
         """
+        from traigent.core.best_config_runtime import check_publishable_spec
+
+        # Object keys equal after NFC are refused by the Backend for a NEW publish;
+        # fail before any request (ConfigurationError, no key echoed).
+        check_publishable_spec(spec)
+        if agent_ref is not None:
+            from traigent.cloud import content_less as content_less_session
+
+            if agent_id is not None or expected_head_generation is None:
+                raise CloudServiceError(
+                    "agent_ref requires expected_head_generation and excludes agent_id"
+                )
+            if not content_less_session.is_well_formed_ref("agent", agent_ref):
+                raise CloudServiceError("agent_ref is not a valid agent reference")
+            if (
+                isinstance(expected_head_generation, bool)
+                or not isinstance(expected_head_generation, int)
+                or not 0 <= expected_head_generation <= _MAX_HEAD_GENERATION
+            ):
+                raise CloudServiceError("expected_head_generation is out of range")
+            protected = self._publish_best_config_protected_sync(
+                spec,
+                environment=environment,
+                if_match=if_match,
+                agent_ref=agent_ref,
+                expected_head_generation=expected_head_generation,
+            )
+            self._verify_published_best_config_identity(
+                protected, spec, environment=environment
+            )
+            return protected
         if (agent_id is None) != (expected_head_generation is None):
             raise CloudServiceError(
                 "agent_id and expected_head_generation must be provided together"
@@ -2250,6 +2770,7 @@ class BackendIntegratedClient:
 
         def _post_best_config() -> Any:
             try:
+                preflight_requests("POST", url, json=payload)
                 response = requests.post(  # nosec B113 - timeout is provided
                     url,
                     json=payload,
@@ -2263,8 +2784,8 @@ class BackendIntegratedClient:
                 TimeoutError,
             ) as exc:
                 raise _SyncBackendTransientError(
-                    f"Best-config publish transport failed: {exc}"
-                ) from exc
+                    transport_failed_message("Best-config publish", exc)
+                ) from None
             _raise_for_transient_backend_response(response, "Best-config publish")
             return response
 
@@ -2287,7 +2808,38 @@ class BackendIntegratedClient:
                 f"Best-config publish rejected: "
                 f"{safe_http_error_summary(response.status_code, response.text)}"
             )
-        return self._extract_backend_data(response)
+        published = self._extract_backend_data(response)
+        self._verify_published_best_config_identity(
+            published, spec, environment=environment
+        )
+        return published
+
+    @staticmethod
+    def _verify_published_best_config_identity(
+        data: Any, sent_spec: dict[str, Any], *, environment: str | None
+    ) -> None:
+        """A publish answer must be for the spec that was sent (config, function, environment).
+
+        The effective environment is the sent spec's own, else the request envelope's,
+        else ``"default"`` (the documented precedence). Raises
+        ``CloudBestConfigIntegrityError``; the manager's stricter hash checks still run
+        on top of this (defence in depth).
+        """
+        from traigent.core.config_state_manager import ConfigStateManager
+
+        sent_id = sent_spec.get("config_id")
+        sent_ref = sent_spec.get("function_ref")
+        sent_env = sent_spec.get("environment")
+        ConfigStateManager._verify_returned_identity(
+            data,
+            config_id=sent_id if isinstance(sent_id, str) else "",
+            function_ref=sent_ref if isinstance(sent_ref, str) else None,
+            environment=(
+                sent_env
+                if isinstance(sent_env, str) and sent_env.strip()
+                else environment
+            ),
+        )
 
     def fetch_best_config_sync(
         self,
@@ -2322,6 +2874,7 @@ class BackendIntegratedClient:
 
         def _get_best_config() -> Any:
             try:
+                preflight_requests("GET", url, params=params or None)
                 response = requests.get(  # nosec B113 - timeout is provided
                     url,
                     params=params or None,
@@ -2335,8 +2888,8 @@ class BackendIntegratedClient:
                 TimeoutError,
             ) as exc:
                 raise _SyncBackendTransientError(
-                    f"Best-config fetch transport failed: {exc}"
-                ) from exc
+                    transport_failed_message("Best-config fetch", exc)
+                ) from None
             _raise_for_transient_backend_response(response, "Best-config fetch")
             return response
 
@@ -2352,7 +2905,19 @@ class BackendIntegratedClient:
                 f"Best-config fetch rejected: "
                 f"{safe_http_error_summary(response.status_code, response.text)}"
             )
-        return self._extract_backend_data(response)
+        fetched = self._extract_backend_data(response)
+        # The answer must be for the requested config / function / environment: a direct
+        # caller gets the same guarantee the runtime manager enforces (never another
+        # environment's or function's config).
+        from traigent.core.config_state_manager import ConfigStateManager
+
+        ConfigStateManager._verify_returned_identity(
+            fetched,
+            config_id=config_id,
+            function_ref=function_ref,
+            environment=environment,
+        )
+        return fetched
 
     def _build_purpose_keys_url(self) -> str | None:
         """Return the purpose-key grant URL for the configured backend API."""
@@ -2401,6 +2966,7 @@ class BackendIntegratedClient:
         # host and accept key material from it. A (connect, read) timeout pair
         # bounds a stalled Backend; the body is a few hundred bytes, so the
         # read limit effectively bounds the whole answer.
+        preflight_requests("POST", url)
         response = requests.post(  # nosec B113 - timeout is provided
             url,
             headers=headers,
@@ -2418,6 +2984,97 @@ class BackendIntegratedClient:
         if not isinstance(grant, dict):
             raise PurposeKeyGrantFetchError(200, "non_object_body")
         return grant
+
+    def _process_records_url(self, suffix: str) -> str | None:
+        """URL under ``<api base>/certification/process-records``, or ``None`` if unusable."""
+        parsed = urlparse(self.api_base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return None
+        if (
+            parsed.username
+            or parsed.password
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        path = f"{parsed.path.rstrip('/')}/certification/process-records{suffix}"
+        return cast(
+            str,
+            urlunparse(parsed._replace(path=path, params="", query="", fragment="")),
+        )
+
+    def _process_records_request_sync(
+        self, method: str, suffix: str, body: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        """One un-retried process-record call; raises a content-free error on any refusal.
+
+        The request body may carry commitment openings, so it is never logged
+        and no response body is ever put in an exception: only the HTTP status
+        and the envelope's plain ``error_code`` token survive.
+        """
+        from traigent.cloud.process_record_linkage import ProcessRecordRequestError
+
+        self._raise_if_backend_egress_disabled("call the process-record service")
+        import requests
+
+        url = self._process_records_url(suffix)
+        if not url:
+            raise ProcessRecordRequestError(None, "invalid_backend_url")
+        headers = self._get_sync_auth_headers(target="backend")
+        headers["Cache-Control"] = "no-store"
+        # Every failure below is re-raised as a closed ProcessRecordRequestError
+        # OUTSIDE the except blocks: a requests/urllib3 exception carries the
+        # prepared request (body with openings, X-API-Key header) and a JSON
+        # decode error carries the response body; none may stay as
+        # __cause__/__context__.
+        failure: str | None = None
+        response: Any = None
+        payload: Any = None
+        status = 0
+        code: str | None = None
+        try:
+            preflight_requests(method, url, json=body)
+            response = requests.request(  # nosec B113 - timeout is provided
+                method,
+                url,
+                headers=headers,
+                json=body,
+                timeout=(min(self.timeout, 5.0), self.timeout),
+                allow_redirects=False,
+            )
+            status = int(response.status_code)
+            if status not in (200, 201):
+                code = _envelope_error_code(response)
+            else:
+                payload = response.json()
+        except TransportGateRefusal:
+            # Counts-only refusal (route + counts + cause type name): safe to
+            # propagate, and must not be masked as a transport error.
+            raise
+        except Exception:  # noqa: BLE001 - closed re-raise below
+            failure = "TRANSPORT_ERROR"
+        if failure is not None:
+            raise ProcessRecordRequestError(None, failure)
+        if status not in (200, 201):
+            raise ProcessRecordRequestError(status, code)
+        if not isinstance(payload, dict):
+            raise ProcessRecordRequestError(status, None)
+        return payload
+
+    def finalize_process_record_sync(
+        self, build_session_row_id: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """``POST /certification/process-records/<id>/finalize``; returns the full envelope."""
+        return self._process_records_request_sync(
+            "POST", f"/{build_session_row_id}/finalize", payload
+        )
+
+    def get_process_record_sync(self, build_session_row_id: str) -> dict[str, Any]:
+        """``GET /certification/process-records/<id>``; returns the full envelope."""
+        return self._process_records_request_sync(
+            "GET", f"/{build_session_row_id}", None
+        )
 
     def upload_example_features(
         self,
@@ -2473,6 +3130,7 @@ class BackendIntegratedClient:
 
         def _post_example_features() -> Any:
             try:
+                preflight_requests("POST", url, json=payload)
                 response = requests.post(  # nosec B113 - timeout is provided
                     url,
                     json=payload,
@@ -2486,8 +3144,8 @@ class BackendIntegratedClient:
                 TimeoutError,
             ) as exc:
                 raise _SyncBackendTransientError(
-                    f"Example feature upload transport failed: {exc}"
-                ) from exc
+                    transport_failed_message("Example feature upload", exc)
+                ) from None
             _raise_for_transient_backend_response(response, "Example feature upload")
             return response
 
@@ -2671,7 +3329,7 @@ class BackendIntegratedClient:
     ) -> None:
         """Compatibility shim for legacy synchronous result submission."""
 
-        logger.debug("submit_result called for session=%s score=%s", session_id, score)
+        logger.debug("submit_result called")
 
         if self.enable_fallback and self.local_storage:
             try:
@@ -2684,10 +3342,12 @@ class BackendIntegratedClient:
             except Exception as exc:
                 # #1279: do not silently drop the local record — on connected
                 # runs this is the only durable trace if the remote submit fails.
-                logger.warning(
-                    "Local storage trial result persistence failed for session %s: %s",
-                    session_id,
-                    exc,
+                diag.log(
+                    logger,
+                    logging.WARNING,
+                    "Local storage trial result persistence failed",
+                    category=diag.Category.FILESYSTEM_FAILED,
+                    exc=exc,
                 )
 
         session = self._active_sessions.get(session_id)

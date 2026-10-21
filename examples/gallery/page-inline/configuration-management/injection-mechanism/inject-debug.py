@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -14,7 +15,9 @@ else:
     for _depth in range(1, 7):
         try:
             _repo_root = _module_path.parents[_depth]
-            if (_repo_root / "traigent").is_dir() and (_repo_root / "examples").is_dir():
+            if (_repo_root / "traigent").is_dir() and (
+                _repo_root / "examples"
+            ).is_dir():
                 if str(_repo_root) not in sys.path:
                     sys.path.insert(0, str(_repo_root))
                 break
@@ -44,22 +47,22 @@ except ImportError:  # pragma: no cover - support IDE execution paths
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.1, 0.5, 0.9],
     },
     debug=True,  # Enable debug mode
 )
 def debug_example(prompt: str) -> str:
     print("Original parameters in code:")
-    print("- model: gpt-3.5-turbo")
+    print("- model: gpt-4.1-mini")
     print("- temperature: 0.7")
 
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.7)
 
     # Debug output will show:
     # [Traigent] Intercepted ChatOpenAI constructor
-    # [Traigent] Original: model=gpt-3.5-turbo, temperature=0.7
-    # [Traigent] Optimized: model=gpt-4o-mini, temperature=0.1
+    # [Traigent] Original: model=gpt-4.1-mini, temperature=0.7
+    # [Traigent] Optimized: model=gpt-4.1-mini, temperature=0.1
     # [Traigent] Injecting optimized parameters
 
     response = llm.invoke(prompt)

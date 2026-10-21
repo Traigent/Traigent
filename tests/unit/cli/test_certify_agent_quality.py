@@ -176,6 +176,7 @@ def test_unchecked_golden_bundle_is_verified_but_not_eligible() -> None:
     assert payload["primary_objective_id"] == "obj.accuracy.exact_match.v1"
     assert payload["nominal_coverage_ppm"] == 950000
     assert payload["holdout_item_count"] == 200
+    assert payload["holdout_item_count_source"] == "client_reported"
     assert payload["interval_verification_level"] == "construction_recomputed_v1"
     assert payload["split_verification_level"] == "issuer_attested_v1"
 
@@ -186,8 +187,13 @@ def test_unchecked_golden_bundle_human_output() -> None:
     assert result.exit_code == 3, result.output
     lines = result.output.splitlines()
     assert lines[0] == "AGENT_QUALITY_VERIFIED"
+    assert lines[1].startswith("verified_scope=signature_and_arithmetic")
+    assert "reported by the customer" in lines[1]
+    assert "checked their arithmetic consistency" in lines[1]
+    assert "has not independently measured the quality" in lines[1]
     assert "process_record_base_status=not_checked" in lines
     assert "certification_eligible=false" in lines
+    assert "holdout_item_count_source=client_reported" in lines
 
 
 @requires_schema
@@ -611,3 +617,31 @@ def test_verify_help_documents_agent_quality_exit_codes() -> None:
     result = CliRunner().invoke(certify, ["verify", "--help"])
     assert result.exit_code == 0, result.output
     assert "agent-quality" in result.output
+
+
+@requires_schema
+def test_agent_quality_human_output_labels_numbers_as_customer_reported() -> None:
+    result = _invoke(_base_args(kind="agent-quality", as_json=False))
+    assert "reported by the customer" in result.output
+    assert "has not independently measured the quality" in result.output
+
+
+@requires_schema
+def test_abstained_human_output_scopes_to_signature_only(tmp_path: Path) -> None:
+    context = _load("agent_quality_context_unchecked.json")
+    context["accept_abstained_bundle"] = True
+    context_path = _write(tmp_path, "context.json", context)
+    result = _invoke(
+        _base_args(
+            bundle=FIXTURES / "agent_quality_abstained_bundle.json",
+            context=context_path,
+            kind="agent-quality",
+            as_json=False,
+        )
+    )
+    assert result.exit_code == 3, result.output
+    lines = result.output.splitlines()
+    assert lines[0] == "AGENT_QUALITY_CLAIM_ABSTAINED"
+    assert lines[1].startswith("verified_scope=signature_only")
+    assert "interval arithmetic not applicable" in lines[1]
+    assert "signature_and_arithmetic" not in result.output

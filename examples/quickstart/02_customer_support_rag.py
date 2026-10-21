@@ -86,7 +86,7 @@ def simple_retriever(query: str, k: int = 3) -> list[str]:
 # Valid model names: https://models.litellm.ai/
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.1, 0.5, 0.9],
         "k": [2, 3, 5],  # RAG retrieval depth
     },
@@ -112,7 +112,7 @@ def customer_support_agent(query: str) -> str:
 
     # In real usage with LangChain:
     # from langchain_openai import ChatOpenAI
-    # llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
+    # llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.7)
     # response = llm.invoke(f"Context: {context}\nQuestion: {query}\nAnswer:")
     # return response.content
 

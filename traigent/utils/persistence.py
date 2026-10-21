@@ -20,6 +20,10 @@ from ..api.types import (
     OptimizationResult,
     TrialResult,
 )
+from ..utils.file_versioning import (
+    verify_integrity_manifest,
+    write_integrity_manifest,
+)
 from ..utils.function_identity import sanitize_identifier
 
 # Imported by full dotted path, never via `traigent.utils` — that barrel is
@@ -39,6 +43,7 @@ from ..utils.secure_path import safe_open, validate_path
 logger = logging.getLogger(__name__)
 
 # File name constants
+_INTEGRITY_FILES = ("metadata.json", "trials.json.gz")
 METADATA_FILE = "metadata.json"
 TRIALS_JSON_FILE = "trials.json.gz"
 TRIALS_PKL_FILE = "trials.pkl.gz"
@@ -276,6 +281,130 @@ def _rehydrate_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     return {key: _rehydrate_value(key, value) for key, value in metadata.items()}
 
 
+def _is_number(x: Any) -> bool:
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
+def _value_in_domain(value: Any, domain: Any, legacy: bool = False) -> bool | None:
+    """True/False when ``domain`` is a recognised shape, None when it is not.
+
+    Follows the SDK's own config-space representation (see
+    ``discrete_domains``): a plain ``list`` is a set of choices, a
+    ``{"low", "high"}`` dict is a range, ``{"choices"|"values": [...]}`` is a
+    choice set. A list is never read as an interval, whatever its length.
+    """
+    if isinstance(domain, dict):
+        if "low" in domain and "high" in domain:
+            lo, hi = domain["low"], domain["high"]
+            if not (_is_number(lo) and _is_number(hi)):
+                return None
+            if not _is_number(value):
+                return False  # type mismatch against numeric bounds
+            return bool(lo <= value <= hi)
+        for key in ("choices", "values"):
+            if isinstance(domain.get(key), list):
+                return value in domain[key]
+        return None
+    if isinstance(domain, list):
+        if value in domain:
+            return True
+        # Saves without a manifest predate tuple ranges being written as
+        # {"low","high"}: a range (0.0, 1.0) was stored as the list [0.0, 1.0],
+        # indistinguishable from two choices. Never reject a valid legacy
+        # load: also accept anything inside the two-number span.
+        if legacy and len(domain) == 2 and all(_is_number(x) for x in (*domain, value)):
+            return bool(min(domain) <= value <= max(domain))
+        return False
+    return None
+
+
+def _serialize_configuration_space(space: Any) -> Any:
+    """JSON-safe config space; a two-number tuple range stays a range.
+
+    JSON has no tuple, so ``(0.0, 1.0)`` would otherwise round-trip as the
+    list ``[0.0, 1.0]`` - which the SDK reads as two choices.
+    """
+    if isinstance(space, dict):
+        return {k: _serialize_configuration_space(v) for k, v in space.items()}
+    if (
+        isinstance(space, tuple)
+        and len(space) == 2
+        and all(_is_number(x) for x in space)
+    ):
+        return {"low": space[0], "high": space[1]}
+    return _safe_json_value(space)
+
+
+def _restore_tuple_ranges(result: Any, curated_space: Any) -> None:
+    """Turn flattened ranges in the decoded config space back into tuples.
+
+    The curated copy keeps a tuple range as ``{"low", "high"}`` while the
+    encoded copy inside ``result_fields`` flattens it to ``[low, high]``. Left
+    as a list it would be saved again as two choices and reject a winner
+    inside the range on the next load (#1961).
+    """
+    meta = getattr(result, "metadata", None)
+    if not isinstance(meta, dict) or not isinstance(curated_space, dict):
+        return
+    space = meta.get("configuration_space")
+    if not isinstance(space, dict):
+        return
+    for key, domain in curated_space.items():
+        if (
+            isinstance(domain, dict)
+            and set(domain) == {"low", "high"}
+            and _is_number(domain["low"])
+            and _is_number(domain["high"])
+            and space.get(key) == [domain["low"], domain["high"]]
+        ):
+            space[key] = (domain["low"], domain["high"])
+
+
+def _check_best_config_in_space(
+    name: str, best_config: Any, space: Any, legacy: bool = False
+) -> None:
+    """Raise a value-free ValueError when best_config leaves the saved space.
+
+    Only keys present in both are compared. Unrecognised domain shapes are
+    skipped (and logged), never guessed (#1961).
+    """
+    if not isinstance(best_config, dict) or not isinstance(space, dict) or not space:
+        return
+    for key, value in best_config.items():
+        if key not in space:
+            continue
+        verdict = _value_in_domain(value, space[key], legacy)
+        if verdict is False:
+            raise ValueError(
+                f"Corrupted metadata for result '{name}': best_config is "
+                "outside the saved configuration space"
+            )
+        if verdict is None:
+            logger.warning(
+                "best_config membership check skipped for a parameter of result "
+                "'%s': unrecognised configuration-space shape",
+                name,
+            )
+
+
+def _check_returned_best_config(
+    name: str, result: Any, metadata: dict, legacy: bool = False
+) -> None:
+    """Validate the best_config actually returned (the decoded one)."""
+    returned = getattr(result, "best_config", None)
+    outer = metadata.get("best_config")
+    if isinstance(outer, dict) and isinstance(returned, dict) and outer != returned:
+        raise ValueError(
+            f"Corrupted metadata for result '{name}': best_config copies disagree"
+        )
+    # Only the curated space is judged: it is the one written by
+    # _serialize_configuration_space (tuple ranges kept as ranges); the encoded
+    # copy inside result_fields flattens tuples to lists.
+    _check_best_config_in_space(
+        name, returned, metadata.get("configuration_space"), legacy
+    )
+
+
 class PersistenceManager:
     """Manages saving and loading optimization results to/from disk."""
 
@@ -383,7 +512,7 @@ class PersistenceManager:
             ),
             "algorithm": result.algorithm,
             "objectives": _safe_json_value(result.objectives),
-            "configuration_space": _safe_json_value(
+            "configuration_space": _serialize_configuration_space(
                 result.metadata.get("configuration_space", {})
             ),
             "best_score": _safe_json_value(result.best_score),
@@ -446,7 +575,7 @@ class PersistenceManager:
                 "summary artifact only. Fields such as optimization_id, status, "
                 "source and total_cost will not survive load_result.",
                 type(result).__name__,
-                exc,
+                type(exc).__name__,
             )
         else:
             # Sanitizing is a *separate* failure class from encoding, and it is
@@ -475,7 +604,7 @@ class PersistenceManager:
                     "optimization_id, status, source and total_cost will not "
                     "survive load_result.",
                     type(result).__name__,
-                    exc,
+                    type(exc).__name__,
                 )
             else:
                 metadata[SCHEMA_VERSION_KEY] = RESULT_SCHEMA_VERSION
@@ -543,6 +672,9 @@ class PersistenceManager:
 
         self._atomic_write_gzip_json(result_dir / TRIALS_JSON_FILE, trials_data)
 
+        # #1961: record sha256 digests of the two files load_result trusts.
+        write_integrity_manifest(result_dir, list(_INTEGRITY_FILES))
+
         # Also save as pickle for backward compatibility (will be deprecated)
         # The pickle carries whole trial objects, so redact copies rather than
         # the caller's in-memory result.
@@ -580,13 +712,31 @@ class PersistenceManager:
 
         Raises:
             FileNotFoundError: If result doesn't exist
-            ValueError: If result data is corrupted
+            ValueError: If result data is corrupted, fails its sha256
+                integrity check, or its best_config lies outside the saved
+                configuration space
+
+        Integrity (#1961): ``save_result`` writes ``integrity.sha256.json``
+        with digests of ``metadata.json`` and ``trials.json.gz``; they are
+        verified here. Results saved before that change have no manifest and
+        load with one warning. This detects corruption and casual edits only;
+        it is not tamper-proof, because someone who can rewrite the files can
+        rewrite the manifest as well.
         """
         result_dir = self._resolve_path(self.base_dir / name)
 
         if not result_dir.exists():
             raise FileNotFoundError(
                 f"Optimization result '{name}' not found in {self.base_dir}"
+            )
+
+        has_manifest = verify_integrity_manifest(result_dir, list(_INTEGRITY_FILES))
+        if not has_manifest:
+            logger.warning(
+                "Result '%s' has no integrity manifest (saved by an older "
+                "version); loading without integrity verification. Re-save it "
+                "to add one.",
+                name,
             )
 
         # Load metadata
@@ -674,6 +824,9 @@ class PersistenceManager:
                     f"Corrupted metadata for result '{name}': missing '{key}'"
                 )
 
+        legacy_best = metadata.get("best_config")
+        legacy_space = metadata.get("configuration_space")
+
         # Reconstruct optimization result through the #2031 manifest. The old
         # hand-written constructor named 11 of the dataclass's 27 fields and
         # fabricated three of them (a "loaded_<name>" id, a COMPLETED status,
@@ -694,11 +847,15 @@ class PersistenceManager:
             # placeholder override the authoritative persisted field, and would
             # break the verbatim metadata round trip pinned by #2026: a result
             # saved with `metadata == {}` would come back non-empty.
-            return decode_result(result_fields, trials=trials, artifact_name=name)
+            decoded = decode_result(result_fields, trials=trials, artifact_name=name)
+            _restore_tuple_ranges(decoded, metadata.get("configuration_space"))
+            _check_returned_best_config(name, decoded, metadata, not has_manifest)
+            return decoded
 
         # Pre-#2031 artifact: the curated keys are all there ever was, so the
         # loader rebuilds `metadata` from them (see `_legacy_view`) — there is
         # no authoritative inner record to defer to.
+        _check_best_config_in_space(name, legacy_best, legacy_space, True)
         return decode_result(
             metadata,
             trials=trials,
@@ -725,7 +882,14 @@ class PersistenceManager:
                     try:
                         with safe_open(metadata_file, self.base_dir, mode="r") as f:
                             metadata = json.load(f)
-                        metadata.pop("result_fields", None)
+                        # #2666: surface the run outcome for the CLI list
+                        # from the full field set; absent on legacy results
+                        # (never guessed), so renderers show "unknown".
+                        fields = metadata.pop("result_fields", None)
+                        if isinstance(fields, dict) and isinstance(
+                            fields.get("status"), str
+                        ):
+                            metadata["status"] = fields["status"]
                         # … and the version stamp that describes it: it says
                         # nothing about the curated summary keys, and a renderer
                         # that dumps every key of a listing entry would show it

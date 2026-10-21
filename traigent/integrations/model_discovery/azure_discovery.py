@@ -11,6 +11,7 @@ import os
 
 from traigent.integrations.model_discovery.base import ModelDiscovery
 from traigent.integrations.utils import Framework
+from traigent.labels.transport_gate import preflight_requests
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,10 @@ class AzureOpenAIDiscovery(ModelDiscovery):
             return None
         return self._fingerprint(endpoint, api_key)
 
+    def live_model_ids(self) -> list[str] | None:
+        """Azure names are user-defined deployments; there is no global catalog."""
+        return None
+
     def _fetch_models_from_sdk(self) -> list[str]:
         """Attempt to fetch deployments from Azure.
 
@@ -93,6 +98,7 @@ class AzureOpenAIDiscovery(ModelDiscovery):
             params = {"api-version": "2024-02-01"}
             headers = {"api-key": api_key}
 
+            preflight_requests("GET", url, params=params)
             response = httpx.get(url, params=params, headers=headers, timeout=10)
             response.raise_for_status()
 

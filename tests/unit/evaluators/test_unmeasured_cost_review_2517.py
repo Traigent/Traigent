@@ -183,9 +183,10 @@ def test_judge_spend_on_an_unmeasured_example_is_kept_as_a_lower_bound(
     from traigent.evaluators import local as local_module
 
     monkeypatch.setattr(
-        local_module, "get_all_captured_responses", lambda: [_JudgeResponse()]
+        local_module,
+        "drain_captured_responses",
+        lambda: ([_JudgeResponse()], None, None),
     )
-    monkeypatch.setattr(local_module, "clear_captured_responses", lambda: None)
     row = ExampleMetrics(
         tokens=TokenMetrics(input_tokens=7, output_tokens=2, total_tokens=9),
         cost=CostMetrics(unmeasured=True),

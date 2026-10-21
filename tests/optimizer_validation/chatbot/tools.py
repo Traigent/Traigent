@@ -9,6 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from traigent.config.types import ExecutionMode
+
 # Default paths
 DEFAULT_GRAPH_PATH = Path(__file__).parent.parent / "viewer" / "graph_data.json"
 
@@ -34,7 +36,7 @@ def query_knowledge_graph(
       params: algorithm (random|grid|optuna_tpe|optuna_cmaes|bayesian)
     - tests_by_injection_execution: Find tests by injection + execution mode
       params: injection (context|seamless|parameter|attribute),
-              execution (edge_analytics|privacy|hybrid|cloud|standard)
+              execution (local|hybrid|hybrid_api)
     - failed_tests: List all failed tests (no params)
     - tests_with_constraints: Find tests using constraints (no params)
     - multi_objective_tests: Find multi-objective optimization tests (no params)
@@ -185,13 +187,7 @@ def list_dimensions() -> dict[str, list[str]]:
     """
     return {
         "InjectionMode": ["context", "seamless", "parameter"],
-        "ExecutionMode": [
-            "edge_analytics",
-            "privacy",
-            "hybrid",
-            "cloud",
-            "standard",
-        ],
+        "ExecutionMode": [mode.value for mode in ExecutionMode],
         "Algorithm": [
             "random",
             "grid",

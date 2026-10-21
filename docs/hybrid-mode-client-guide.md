@@ -144,7 +144,7 @@ app = TraigentService(tunable_id="my_agent")
 @app.tunables
 def config_space():
     return {
-        "model": {"type": "enum", "values": ["gpt-4", "claude-3"]},
+        "model": {"type": "enum", "values": ["gpt-4.1", "claude-3"]},
         "temperature": {"type": "float", "range": [0.0, 1.0]},
     }
 
@@ -177,7 +177,7 @@ async def score_output(
 ) -> dict:
     accuracy = compute_accuracy(output, target)
     if kwargs.get("strict_mode") and context.execution_config:
-        if context.execution_config.get("model") == "gpt-4":
+        if context.execution_config.get("model") == "gpt-4.1":
             accuracy = min(accuracy, 0.95)
     return {
         "accuracy": accuracy,
@@ -631,7 +631,7 @@ To ensure runs appear in Traigent backend UI:
 
 1. Leave `offline=False` and do not set `TRAIGENT_OFFLINE=1`.
 2. Set a reachable backend (`TRAIGENT_BACKEND_URL` or `TRAIGENT_API_URL`).
-3. Set `TRAIGENT_API_KEY` (or `TRAIGENT_ACCESS_TOKEN`).
+3. Set `TRAIGENT_API_KEY`.
 4. Ensure network/DNS reachability to the backend from the runtime environment.
 
 If these are missing, optimization may still run locally but backend sync can be skipped.

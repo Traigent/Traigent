@@ -316,6 +316,7 @@ traigent = [
     "playbook/schemas/*.json",
     "observability/otel/*.json",
     "connectors/schemas/*.json",
+    "labels/content_class_table.json",
 ]
 traigent_validation = ["py.typed"]
 

@@ -433,6 +433,15 @@ def _find_best_trial_index(
     best_trial_id = metadata.get("best_trial_id") or getattr(
         results, "best_trial_id", None
     )
+    # The terminal selector found no ranking-eligible trial: the result has no
+    # winner, so the table must not star one (Traigent#2664).
+    if (
+        best_trial_id is None
+        and getattr(results, "best_config", None) is None
+        and str(getattr(results, "reason_code", None) or "")
+        == "NO_RANKING_ELIGIBLE_TRIALS"
+    ):
+        return None
     best_index = _find_trial_index_by_id(trials, best_trial_id)
     if best_index is not None and _trial_rankable(trials[best_index], metric_names):
         return best_index
@@ -477,6 +486,48 @@ def _find_best_trial_index(
         ):
             return index
     return None
+
+
+def _mock_run_notice(results: Any) -> str | None:
+    """Mock-provenance line for a result, from what the run recorded (#2516).
+
+    A recorded ``mock_llm_run`` flag is authoritative in both directions. A
+    result with no recorded flag (hand-built, loaded from a legacy save, or an
+    empty result) is unknown, never asserted real: it gets a hedged note only
+    while mock mode is on in this process, and nothing otherwise.
+    """
+    metadata = getattr(results, "metadata", None)
+    recorded = metadata.get("mock_llm_run") if isinstance(metadata, dict) else None
+    if recorded is True:
+        if metadata.get("mock_llm_mixed") is True:
+            return (
+                "Some trials used simulated LLM calls; scores and costs mix "
+                "simulated and real results."
+            )
+        return (
+            "MOCK RUN — LLM calls were simulated. Output-based scores "
+            "are not meaningful and any cost shown is a synthetic estimate, "
+            "not real spend."
+        )
+    if recorded is False:
+        return None
+    if _mock_run_active():
+        return (
+            "Mock mode is on in this process and this result does not record "
+            "whether it was produced under it; its scores and costs may be "
+            "simulated."
+        )
+    return None
+
+
+def _mock_run_active() -> bool:
+    """Whether LLM calls are being mocked (never raises; production is False)."""
+    try:
+        from traigent.utils.env_config import is_mock_llm
+
+        return bool(is_mock_llm())
+    except Exception:  # pragma: no cover - display must never break a run
+        return False
 
 
 def _local_fallback_notice(results: OptimizationResult) -> str | None:
@@ -728,6 +779,14 @@ def print_results_table(
     stop_detail = (getattr(results, "metadata", None) or {}).get("stop_detail")
     if isinstance(stop_detail, str) and stop_detail:
         _safe_table_print(f"{C.YELLOW}⚠ {stop_detail}{C.RESET}")
+
+    # A mock run says so next to the numbers it produced (issue #2516): the
+    # calls never reached a provider, so scores are canned and any cost is a
+    # synthetic estimate, not spend. The notice comes from provenance recorded
+    # on the result when the run was built, never from current process state.
+    mock_notice = _mock_run_notice(results)
+    if mock_notice:
+        _safe_table_print(f"{C.YELLOW}⚠ {mock_notice}{C.RESET}")
 
     # Provenance caveat (issue #2024): a local-fallback run must say so next to
     # the number it produced, not only in a startup log line.

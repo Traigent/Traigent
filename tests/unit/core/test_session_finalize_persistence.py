@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import traceback
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -17,8 +18,8 @@ from traigent.core.orchestrator import OptimizationOrchestrator
 
 
 class _HTTPError(RuntimeError):
-    def __init__(self, status_code: int) -> None:
-        super().__init__(f"HTTP {status_code}")
+    def __init__(self, status_code: int, detail: str = "") -> None:
+        super().__init__(f"HTTP {status_code} {detail}".strip())
         self.status_code = status_code
 
 
@@ -366,4 +367,129 @@ async def test_finalize_terminal_failure_is_loud_but_result_remains_usable(
     assert result.persistence_failed is True
     assert "HTTP 500" in result.metadata["persistence_error"]
     assert "backend session left RUNNING" in caplog.text
-    assert "Run `traigent local sync` or check portal" in caplog.text
+    assert "Run `traigent local sync`" not in caplog.text
+    assert "Check the portal for this session id" in caplog.text
+    assert "can duplicate the run" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_required_cloud_finalize_failure_fails_closed_with_closed_message(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#2510: with TRAIGENT_REQUIRE_CLOUD a failed backend finalize must not
+    return a normal result, and the error must not carry server text."""
+    from traigent.core.execution_policy_runtime import CloudBrainUnavailableError
+
+    monkeypatch.setattr(
+        "traigent.core.backend_session_manager.time.sleep", lambda _delay: None
+    )
+    monkeypatch.setenv("TRAIGENT_REQUIRE_CLOUD", "1")
+    config = _config(monkeypatch)
+    sentinel = "sentinel-server-text"
+
+    def _boom(*_args, **_kwargs):
+        raise _HTTPError(503, sentinel)
+
+    client = _backend_client(_boom)
+    manager = _manager(config, client)
+    orchestrator = _orchestrator(config, manager)
+    result = _result()
+
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(CloudBrainUnavailableError) as excinfo:
+            await OptimizationOrchestrator._finalize_optimization(
+                orchestrator, result, "session-finalize", None
+            )
+
+    assert sentinel not in str(excinfo.value)
+    assert sentinel not in repr(excinfo.value.reason)
+    assert sentinel not in repr(result.metadata)
+    assert sentinel not in caplog.text
+    assert sentinel not in "".join(traceback.format_exception(excinfo.value))
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__suppress_context__
+
+
+@pytest.mark.asyncio
+async def test_required_cloud_finalize_failure_not_swallowed_on_user_interrupt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2510: the user-interrupt handler must not turn a required-cloud
+    finalize failure into a returned partial result."""
+    from traigent.core.execution_policy_runtime import CloudBrainUnavailableError
+
+    monkeypatch.setattr(
+        "traigent.core.backend_session_manager.time.sleep", lambda _delay: None
+    )
+    monkeypatch.setenv("TRAIGENT_REQUIRE_CLOUD", "1")
+    config = _config(monkeypatch)
+    client = _backend_client(lambda *a, **k: (_ for _ in ()).throw(_HTTPError(503)))
+    orchestrator = _orchestrator(config, _manager(config, client))
+    orchestrator._create_optimization_result = Mock(return_value=_result())
+    orchestrator._add_winner_stability_cost_to_result = Mock()
+    orchestrator._winner_stability_accounted_cost = 0.0
+
+    with pytest.raises(CloudBrainUnavailableError):
+        await OptimizationOrchestrator._finalize_user_cancelled_optimization(
+            orchestrator, "session-finalize", None, KeyboardInterrupt()
+        )
+
+
+@pytest.mark.asyncio
+async def test_optional_cloud_finalize_failure_still_returns_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "traigent.core.backend_session_manager.time.sleep", lambda _delay: None
+    )
+    monkeypatch.delenv("TRAIGENT_REQUIRE_CLOUD", raising=False)
+    config = _config(monkeypatch)
+    client = _backend_client(
+        lambda *args, **kwargs: (_ for _ in ()).throw(_HTTPError(503))
+    )
+    manager = _manager(config, client)
+    orchestrator = _orchestrator(config, manager)
+    result = _result()
+
+    await OptimizationOrchestrator._finalize_optimization(
+        orchestrator, result, "session-finalize", None
+    )
+    assert result.metadata["persistence_status"] == "failed"
+
+
+def test_finalize_retry_warning_carries_status_never_message_text(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A 429 retry warning logs class and HTTP status, never the message text."""
+    sentinel = "SECRET_SERVER_TEXT_429"
+    calls = 0
+
+    def finalize(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise _HTTPError(429, sentinel)
+        return {"status": "completed", "metadata": {"finalized_via_api": True}}
+
+    monkeypatch.setattr(
+        "traigent.core.backend_session_manager.time.sleep", lambda _delay: None
+    )
+    config = _config(monkeypatch)
+    client = _backend_client(finalize)
+    manager = _manager(config, client)
+
+    caplog.set_level(logging.DEBUG)
+    manager.finalize_session("session-finalize", OptimizationStatus.COMPLETED)
+
+    assert calls == 2
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING and "retrying" in record.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert "429" in warnings[0]
+    assert "_HTTPError" in warnings[0]
+    assert sentinel not in caplog.text

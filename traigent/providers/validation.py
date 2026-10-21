@@ -95,15 +95,31 @@ _LITELLM_PREFIX_PATTERN = re.compile(r"^([a-z][a-z0-9_]*)[:/](.+)$")
 _KNOWN_MODELS: dict[str, frozenset[str]] = {
     "openai": frozenset(
         {
+            # Ids come from the bundled litellm price table; ids whose
+            # deprecation_date has passed are dropped (#2651).
             "gpt-3.5-turbo",
             "gpt-4",
             "gpt-4-turbo",
             "gpt-4o",
             "gpt-4o-mini",
+            "gpt-4.1",
+            "gpt-4.1-mini",
             "gpt-4.1-nano",
+            "gpt-5",
+            "gpt-5-mini",
             "gpt-5-nano",
             "gpt-5.1",
             "gpt-5.2",
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "gpt-5.4-nano",
+            "gpt-5.5",
+            "gpt-5.6",
+            "gpt-5.6-luna",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-6-astra",
+            "o3",
             # Retired o1-preview / o1-mini pruned (#1936/#1937).
             "o3-mini",
         }
@@ -116,22 +132,39 @@ _KNOWN_MODELS: dict[str, frozenset[str]] = {
             "claude-opus-4-8",
             "claude-sonnet-4-6",
             "claude-haiku-4-5-20251001",
-            # Claude 4 series (2025)
-            "claude-sonnet-4-20250514",
-            "claude-opus-4-20250514",
-            # Claude 3.7 series (2025)
-            "claude-3-7-sonnet-20250219",
-            # Claude 3.5 series (2024)
-            "claude-3-5-sonnet-20241022",
-            "claude-3-5-haiku-20241022",
-            # Claude 3 series (2024). Retired claude-3-opus-20240229 pruned
-            # (#1936/#1937).
-            "claude-3-sonnet-20240229",
-            "claude-3-haiku-20240307",
+            # Ids from the bundled litellm price table with no past
+            # deprecation_date (#2651). Retired claude-sonnet-4-20250514,
+            # claude-opus-4-20250514 (2026-06-15), claude-opus-4-1 (2026-08-05),
+            # claude-3-7-sonnet, claude-3-opus, claude-3-haiku are dropped.
+            "claude-haiku-4-5",
+            "claude-sonnet-4-5",
+            "claude-sonnet-4-5-20250929",
+            "claude-sonnet-5",
+            "claude-opus-4-5",
+            "claude-opus-4-5-20251101",
+            "claude-opus-4-6",
+            "claude-opus-4-6-20260205",
+            "claude-opus-4-7",
+            "claude-opus-4-7-20260416",
+            "claude-opus-5",
+            "claude-fable-5",
+            "claude-fable-5-1",
+            "claude-mythos-5",
+            "claude-mythos-5-1",
+            # Claude 5.5 family: current Anthropic model ids that are not yet
+            # in the bundled litellm price table, so they are listed
+            # explicitly (review r2). claude-fable-5-1 is listed above.
+            "claude-opus-5-5",
+            "claude-sonnet-5-5",
+            "claude-haiku-5-5",
+            # Retired claude-3* ids (3.5 Sonnet/Haiku, 3 Sonnet) were removed
+            # from this list per Anthropic's deprecations page (#2646).
         }
     ),
     "google": frozenset(
         {
+            "gemini-3.8-flash",
+            "gemini-3.5-flash-lite",
             "gemini-2.0-flash",
             # Retired gemini-1.5 family, gemini-2.0-flash-exp preview, and
             # gemini-1.0-pro / gemini-pro pruned (#1936/#1937).
@@ -159,6 +192,9 @@ _KNOWN_MODELS: dict[str, frozenset[str]] = {
 
 # Default validation timeout in seconds
 _DEFAULT_VALIDATION_TIMEOUT = 5.0
+
+# OpenRouter's key-info endpoint: 200 for a valid key, 401 otherwise. Free.
+_OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
 
 # Authentication error types that indicate invalid keys (vs transient errors)
 # These are checked by exception class name to avoid importing all SDKs
@@ -306,6 +342,44 @@ def validate_model_names(
     return valid, unknown
 
 
+# What a status says about the account's funds. "not_checked": the provider has
+# no balance API, so nothing was verified. "unknown": a check ran but could not
+# tell. "available": a reported limit has headroom. "depleted": a reported limit
+# is exhausted. Only "available" is a claim that funds exist, and then only for
+# the key's own spending limit, never the account balance.
+_FUNDS_NOT_CHECKED = "not_checked"
+_FUNDS_UNKNOWN = "unknown"
+_FUNDS_AVAILABLE = "available"
+_FUNDS_DEPLETED = "depleted"
+
+
+def _openrouter_funds(response: object) -> str:
+    """Funds state from an OpenRouter ``/api/v1/key`` response, never raising."""
+    try:
+        body = response.json()  # type: ignore[attr-defined]
+        data = body.get("data") if isinstance(body, dict) else None
+    except Exception:  # noqa: BLE001 - unreadable body is an unknown, not a pass
+        return _FUNDS_UNKNOWN
+    if not isinstance(data, dict):
+        return _FUNDS_UNKNOWN
+
+    def _number(value: object) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return float(value) if value == value else None  # NaN is not a number
+
+    limit = _number(data.get("limit"))
+    if limit is None:
+        return _FUNDS_UNKNOWN  # no per-key limit: balance is not visible here
+    remaining = _number(data.get("limit_remaining"))
+    if remaining is None:
+        usage = _number(data.get("usage"))
+        remaining = None if usage is None else limit - usage
+    if remaining is None:
+        return _FUNDS_UNKNOWN
+    return _FUNDS_DEPLETED if remaining <= 0 else _FUNDS_AVAILABLE
+
+
 @dataclass
 class ProviderStatus:
     """Status of a provider validation check.
@@ -317,6 +391,13 @@ class ProviderStatus:
         models: List of valid models associated with this provider (optional).
         unknown_models: List of models not in known list (may still work).
         error_type: Type of error if validation failed (optional).
+        skipped: True when the provider was deliberately not checked (for
+            example Bedrock, which has no key/balance probe). A skipped
+            provider is never a pass (``valid`` is False) and never counts as
+            a failure in :func:`get_failed_providers`.
+        funds: ``"not_checked"`` (default; the provider has no balance API),
+            ``"unknown"``, ``"available"`` or ``"depleted"``. Never claims
+            funds were verified unless a balance/limit was actually read.
     """
 
     provider: str
@@ -325,6 +406,8 @@ class ProviderStatus:
     models: list[str] | None = None
     unknown_models: list[str] | None = None
     error_type: str | None = None
+    skipped: bool = False
+    funds: str = _FUNDS_NOT_CHECKED
 
 
 @dataclass
@@ -333,9 +416,10 @@ class ProviderValidator:
 
     This validator performs lightweight API calls to verify that provider
     keys are valid before starting potentially expensive optimization runs.
-    It is a standalone, opt-in check -- nothing calls it automatically, and
-    it never raises ``ProviderValidationError`` itself; it only reports
-    status. Callers decide whether/when to raise based on the results (see
+    It can be called standalone; the optimizer also runs it automatically
+    before cost approval for paid runs (a cost limit is set or cost is
+    approved), honouring ``TRAIGENT_SKIP_PROVIDER_VALIDATION``. It never raises
+    ``ProviderValidationError`` itself; it only reports status (see
     :func:`validate_providers` and :func:`get_failed_providers`).
 
     Validation behavior:
@@ -389,7 +473,7 @@ class ProviderValidator:
         unknown: list[str] = []
 
         for model in models:
-            provider = get_provider_for_model(model)
+            provider = get_run_provider_for_model(model)
             if provider:
                 providers.setdefault(provider, []).append(model)
             else:
@@ -457,6 +541,31 @@ class ProviderValidator:
         Returns:
             ProviderStatus with validation result.
         """
+        if provider == "bedrock":
+            return ProviderStatus(
+                provider="bedrock",
+                valid=False,
+                message=(
+                    "Skipped: Bedrock authenticates with AWS credentials and "
+                    "has no key or balance check; its key is not "
+                    "preflight-checked."
+                ),
+                error_type="NotValidated",
+                skipped=True,
+            )
+        if provider == "vertex_ai":
+            return ProviderStatus(
+                provider="vertex_ai",
+                valid=False,
+                message=(
+                    "Skipped: Vertex AI authenticates with application default "
+                    "credentials, not an API key; credentials not checked."
+                ),
+                error_type="NotValidated",
+                skipped=True,
+            )
+        if provider == "openrouter":
+            return self._check_openrouter()
         validate_method = getattr(self, f"_validate_{provider}", None)
         if validate_method is None:
             # Distinguish a provider that is *recognized* by the SDK but
@@ -489,6 +598,97 @@ class ProviderValidator:
 
         result: ProviderStatus = validate_method()
         return result
+
+    def _check_openrouter(self) -> ProviderStatus:
+        """Validate an OpenRouter API key via its key-info endpoint.
+
+        Not a ``_validate_<provider>`` method on purpose: OpenRouter is routed
+        through the OpenAI-compatible client and is not in the provider-support
+        table, so it must not look like a first-class validated provider.
+        """
+        key = os.getenv("OPENROUTER_API_KEY")
+        if not key:
+            return ProviderStatus(
+                provider="openrouter",
+                valid=False,
+                message="Set OPENROUTER_API_KEY",
+                error_type="MissingKey",
+            )
+
+        if self._is_cached("openrouter", key):
+            return ProviderStatus(
+                provider="openrouter",
+                valid=True,
+                message=_MSG_AVAILABLE_CACHED,
+                funds=_FUNDS_UNKNOWN,
+            )
+
+        try:
+            import requests
+
+            from traigent.labels.transport_gate import preflight_requests
+
+            preflight_requests("GET", _OPENROUTER_KEY_URL)
+            response = requests.get(
+                _OPENROUTER_KEY_URL,
+                headers={"Authorization": f"Bearer {key}"},
+                timeout=self.timeout,
+            )
+            code = response.status_code
+        except Exception as exc:
+            # Never include the exception text: it can echo the request.
+            error_type = type(exc).__name__
+            logger.warning(_MSG_TRANSIENT_WARNING, "OpenRouter", error_type)
+            return ProviderStatus(
+                provider="openrouter",
+                valid=True,
+                message=_MSG_AVAILABLE_UNVERIFIED.format(error_type=error_type),
+                error_type=error_type,
+            )
+
+        if 200 <= code < 300:
+            funds = _openrouter_funds(response)
+            if funds == _FUNDS_DEPLETED:
+                return ProviderStatus(
+                    provider="openrouter",
+                    valid=False,
+                    message=_MSG_INSUFFICIENT_FUNDS.format(provider="OpenRouter"),
+                    error_type="InsufficientFunds",
+                    funds=_FUNDS_DEPLETED,
+                )
+            self._cache_success("openrouter", key)
+            return ProviderStatus(
+                provider="openrouter", valid=True, message="Available", funds=funds
+            )
+        if code in (401, 403):
+            return ProviderStatus(
+                provider="openrouter",
+                valid=False,
+                message=_MSG_INVALID_KEY.format(error_type=f"HTTP{code}"),
+                error_type="AuthenticationError",
+            )
+        if code == 402:
+            return ProviderStatus(
+                provider="openrouter",
+                valid=False,
+                message=_MSG_INSUFFICIENT_FUNDS.format(provider="OpenRouter"),
+                error_type="InsufficientFunds",
+            )
+        if code == 429 or code >= 500:
+            error_type = f"HTTP{code}"
+            logger.warning(_MSG_TRANSIENT_WARNING, "OpenRouter", error_type)
+            return ProviderStatus(
+                provider="openrouter",
+                valid=True,
+                message=_MSG_AVAILABLE_UNVERIFIED.format(error_type=error_type),
+                error_type=error_type,
+            )
+        return ProviderStatus(
+            provider="openrouter",
+            valid=False,
+            message=_MSG_VALIDATION_FAILED.format(error_type=f"HTTP{code}"),
+            error_type=f"HTTP{code}",
+        )
 
     def _validate_openai(self) -> ProviderStatus:
         """Validate OpenAI API key."""
@@ -587,7 +787,7 @@ class ProviderValidator:
             client = Anthropic(api_key=key, timeout=self.timeout)
             # Use count_tokens - zero cost, validates auth
             client.messages.count_tokens(
-                model="claude-3-haiku-20240307",
+                model="claude-haiku-4-5-20251001",
                 messages=[{"role": "user", "content": "ping"}],
             )
             self._cache_success("anthropic", key)
@@ -938,7 +1138,7 @@ def get_provider_for_model(model_name: str) -> str | None:
     """Detect provider from model name.
 
     Args:
-        model_name: Model name (e.g., "gpt-4o-mini", "claude-3-haiku-20240307").
+        model_name: Model name (e.g., "gpt-4o-mini", "claude-haiku-4-5-20251001").
 
     Returns:
         Provider name if detected, None otherwise.
@@ -946,7 +1146,7 @@ def get_provider_for_model(model_name: str) -> str | None:
     Examples:
         >>> get_provider_for_model("gpt-4o-mini")
         'openai'
-        >>> get_provider_for_model("claude-3-haiku-20240307")
+        >>> get_provider_for_model("claude-haiku-4-5-20251001")
         'anthropic'
         >>> get_provider_for_model("gemini-1.5-flash")
         'google'
@@ -1017,6 +1217,21 @@ def get_provider_for_model(model_name: str) -> str | None:
     return None
 
 
+def get_run_provider_for_model(model_name: str) -> str | None:
+    """Like :func:`get_provider_for_model`, but also names OpenRouter/Bedrock/Vertex AI.
+
+    Those two have no first-class validator mapping in
+    :func:`get_provider_for_model` (it returns ``None`` for them), yet a run
+    that uses them still spends money, so the pre-run check needs to see them.
+    """
+    prefix_match = _LITELLM_PREFIX_PATTERN.match(model_name)
+    if prefix_match:
+        prefix = prefix_match.group(1).lower()
+        if prefix in ("openrouter", "bedrock", "vertex_ai"):
+            return prefix
+    return get_provider_for_model(model_name)
+
+
 def validate_providers(
     models: Sequence[str],
     *,
@@ -1056,8 +1271,11 @@ def print_provider_status(results: dict[str, ProviderStatus]) -> None:
     unknown_all: list[str] = []
 
     for provider, status in sorted(results.items()):
-        symbol = "[OK]" if status.valid else "[--]"
-        print(f"  {symbol} {provider.capitalize()}: {status.message}")
+        symbol = "[OK]" if status.valid else ("[SK]" if status.skipped else "[--]")
+        funds_note = ""
+        if status.valid and status.funds in (_FUNDS_NOT_CHECKED, _FUNDS_UNKNOWN):
+            funds_note = " (funds not checked)"
+        print(f"  {symbol} {provider.capitalize()}: {status.message}{funds_note}")
         if status.valid and status.models:
             models_str = ", ".join(status.models)
             print(f"       Models: {models_str}")
@@ -1084,5 +1302,71 @@ def get_failed_providers(
     return [
         (provider, status.error_type or "Unknown")
         for provider, status in results.items()
-        if not status.valid
+        if not status.valid and not status.skipped
     ]
+
+
+# Error types that mean "could not check", not "the key is bad": the run's own
+# call will surface a real problem, so the pre-run gate must not block on them.
+_NON_BLOCKING_ERROR_TYPES = frozenset(
+    {"NotValidated", "UnsupportedProvider", "ModuleNotFoundError", "Skipped"}
+)
+
+
+def preflight_run_providers(
+    models: Sequence[str],
+    *,
+    timeout: float | None = None,
+) -> dict[str, ProviderStatus]:
+    """Check the keys of the providers a paid run will use, failing closed.
+
+    Called once per run by the optimizer, before cost approval, for paid runs.
+    Raises :class:`~traigent.utils.exceptions.ProviderValidationError` when a
+    provider's key is missing, invalid or out of funds. The message names the
+    provider and the error type only -- never key material or server text.
+    Providers that cannot be checked (Bedrock, mapping-only providers, an SDK
+    that is not installed) are reported in the result but never block.
+
+    Returns:
+        Dict mapping provider name to ProviderStatus (skipped ones included).
+    """
+    from traigent.utils.env_config import get_validation_timeout
+    from traigent.utils.exceptions import ProviderValidationError
+
+    results = validate_providers(
+        models,
+        timeout=get_validation_timeout() if timeout is None else timeout,
+    )
+    failed = [
+        (provider, status.error_type or "Unknown")
+        for provider, status in results.items()
+        if not status.valid
+        and not status.skipped
+        and (status.error_type or "Unknown") not in _NON_BLOCKING_ERROR_TYPES
+    ]
+    for provider, status in results.items():
+        if status.skipped:
+            logger.info(
+                "Provider '%s' not preflight-checked: %s", provider, status.message
+            )
+    if not failed:
+        unverified = sorted(
+            provider
+            for provider, status in results.items()
+            if status.funds in (_FUNDS_NOT_CHECKED, _FUNDS_UNKNOWN)
+        )
+        if unverified:
+            logger.warning(
+                "Funds not verified for: %s - the run may fail on the first call "
+                "if the account has no credit.",
+                ", ".join(unverified),
+            )
+    if failed:
+        listing = ", ".join(f"{provider} ({error})" for provider, error in failed)
+        raise ProviderValidationError(
+            "Provider key check failed before the paid run started: "
+            f"{listing}. Fix the key (or set TRAIGENT_SKIP_PROVIDER_VALIDATION=true "
+            "to skip this check).",
+            failed_providers=failed,
+        )
+    return results

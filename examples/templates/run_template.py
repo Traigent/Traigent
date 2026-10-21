@@ -484,7 +484,7 @@ def _define_target(
         async def openai_target(question: str) -> str:
             prompt = _build_prompt(question, retrieve_context(question))
             response = await client.responses.create(
-                model="gpt-4o-mini",
+                model="gpt-4.1-mini",
                 input=prompt,
                 max_output_tokens=256,
             )

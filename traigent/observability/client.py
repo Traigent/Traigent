@@ -7,6 +7,7 @@ import copy
 import hashlib
 import io
 import json
+import sys
 import threading
 import time
 import uuid
@@ -26,6 +27,7 @@ from traigent.observability.config import (
     INGEST_MAX_OBSERVATIONS_PER_REQUEST,
     INGEST_MAX_TRACES_PER_REQUEST,
     NOT_SUPPLIED,
+    OBSERVABILITY_CONTENT_MODES,
     ObservabilityConfig,
     apply_content_mode,
     apply_content_mode_to_text,
@@ -113,6 +115,22 @@ class _NoRedirectHandler(request.HTTPRedirectHandler):
         newurl: str,
     ) -> None:
         return None
+
+
+def _is_client_timeout(exc: BaseException) -> bool:
+    """True when ``exc`` is, or was caused by, a client-side socket timeout."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, TimeoutError):
+            return True
+        if isinstance(current, error.URLError) and isinstance(
+            current.reason, TimeoutError
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def _new_trace_id() -> str:
@@ -440,9 +458,13 @@ def _safe_allowlisted_snapshot(
     safe: dict[str, Any] = {
         "id": safe_id if isinstance(safe_id, str) and safe_id else _new_trace_id(),
         "name": "[REDACTED]",
-        "status": _safe_scalar(payload.get("status")) or "failed",
         "metadata": {},
     }
+    # #2588: keep an explicitly supplied status; never fabricate one for a
+    # trace that carried none (downstream would otherwise record "failed").
+    safe_status = _safe_scalar(payload.get("status"))
+    if isinstance(safe_status, str) and safe_status:
+        safe["status"] = safe_status
     if payload.get("user_id") is not None:
         safe["user_id"] = "[REDACTED]"
     for field_name in _SAFE_SNAPSHOT_ID_FIELDS:
@@ -488,10 +510,11 @@ def _safe_allowlisted_snapshot_or_static_fallback(
                 "a static minimal snapshot instead of the caller's payload.",
                 exc_info=True,
             )
+    # #2588: no "status" here -- it is trace status, and a snapshot-builder
+    # failure says nothing about whether the traced operation failed.
     return {
         "id": _new_trace_id(),
         "name": "[REDACTED]",
-        "status": "failed",
         "metadata": {},
     }
 
@@ -630,6 +653,12 @@ class _TraceState:
     # Agent scopes seen inside this trace; decides the scope-derived agent_id
     # that only the final (end_trace) snapshot may carry. Never on the wire.
     scope_ledger: ScopeLedger = field(default_factory=ScopeLedger)
+    # Set by `end_trace`; only an ended trace can be evicted from the client's
+    # state map (#2604). Reset by a restart (`start_trace` builds a new state).
+    ended: bool = False
+    # True while an entry for this state sits in the client's eviction queue,
+    # so repeated `end_trace` calls cannot enqueue it twice.
+    eviction_scheduled: bool = False
 
     def mark_content_history(self, entity_key: str, field_name: str) -> None:
         self.content_history.setdefault(entity_key, set()).add(field_name)
@@ -850,9 +879,13 @@ def _capture_trace_snapshot(
         return (
             _safe_allowlisted_snapshot_or_static_fallback(
                 {
-                    "id": state.trace.id,
-                    "name": state.trace.name,
-                    "status": state.trace.status,
+                    key: value
+                    for key, value in (
+                        ("id", state.trace.id),
+                        ("name", state.trace.name),
+                        ("status", state.trace.status),
+                    )
+                    if value is not None
                 },
                 state=descriptor,
             ),
@@ -938,8 +971,15 @@ class _SyncBatchTransport:
                 raise ValueError(f"{name} must be greater than 0 or None")
         self.max_traces_per_request = max_traces_per_request
         self.max_observations_per_request = max_observations_per_request
+        # A client-side timeout against a slow-but-working server must not count
+        # toward the breaker (#2599): ingest upserts by trace id, so the retry is
+        # safe, and a timeout alone does not show the server is down.
         self._retry_handler = RetryHandler(
-            replace(CLOUD_API_RETRY_CONFIG, callback_on_retry=self._record_retry)
+            replace(
+                CLOUD_API_RETRY_CONFIG,
+                callback_on_retry=self._record_retry,
+                circuit_breaker_ignore_failure=_is_client_timeout,
+            )
         )
         self._buffer: OrderedDict[str, _BufferedPayload] = OrderedDict()
         self._lock = threading.RLock()
@@ -970,6 +1010,13 @@ class _SyncBatchTransport:
         # in-flight snapshot of a lower generation (#2609).
         self._inflight_generations: dict[str, int] = {}
         self._delivered_digests: OrderedDict[str, bytes] = OrderedDict()
+        # Items whose latest snapshot the backend accepted (#2604). Unlike
+        # `_delivered_digests` it survives a response with warnings, so the
+        # client can tell "confirmed" from "pending". Not an LRU: an entry
+        # leaves when a newer snapshot is buffered or the client releases it
+        # (`release_settled`, on eviction), so settlement can never expire
+        # under sustained traffic and strand an evictable trace.
+        self._settled_items: set[str] = set()
         self._oldest_inflight_started_at: float | None = None
         self._active_send_completion: threading.Event | None = None
         self._stats: dict[str, int] = {
@@ -1111,6 +1158,7 @@ class _SyncBatchTransport:
                 self._ensure_timer_locked()
             else:
                 self._buffer.pop(item_id, None)
+                self._settled_items.discard(item_id)
                 self._buffer[item_id] = replace(
                     buffered_payload,
                     generation=self._resolve_generation_locked(
@@ -1138,6 +1186,22 @@ class _SyncBatchTransport:
             return False
 
         return True
+
+    def is_settled(self, item_id: str) -> bool:
+        """True iff the backend accepted this item and nothing newer for it is
+        queued or in flight. A failed send leaves the item buffered, so a
+        failed or unconfirmed item is never settled (#2604)."""
+        with self._lock:
+            return (
+                item_id in self._settled_items
+                and item_id not in self._buffer
+                and item_id not in self._inflight_digests
+            )
+
+    def release_settled(self, item_id: str) -> None:
+        """Forget an item's settled mark once the client has evicted it."""
+        with self._lock:
+            self._settled_items.discard(item_id)
 
     def flush(
         self,
@@ -1582,6 +1646,8 @@ class _SyncBatchTransport:
                 self._stats["sent_items"] += len(payloads)
                 for item_id, _ in batch_items:
                     digest = self._inflight_digests.pop(item_id, None)
+                    if item_id not in self._buffer:
+                        self._settled_items.add(item_id)
                     if digest is None or response_warnings:
                         # A response with warnings (e.g. an unresolved prompt
                         # link) may be resolved by a later re-send, so it does
@@ -1912,6 +1978,29 @@ class _SyncBatchTransport:
         )
 
 
+DEFAULT_TRACE_STATE_GRACE_SECONDS = 300.0
+_MAX_EVICTION_STEPS_PER_PASS = 256
+_MAX_EVICTED_TRACE_TOMBSTONES = 4096
+
+
+@dataclass(frozen=True)
+class _EvictedTrace:
+    """What a later update needs to restart an evicted trace id (#2604).
+
+    Carries only the trace's identity, its content policy and per-field
+    "content was delivered" flags, never its content, so memory per entry is
+    small and bounded by the tombstone cap.
+    """
+
+    name: str
+    environment: str | None
+    release: str | None
+    snapshot_sequence: int
+    resolved_content_mode: str
+    content_mode_locked: bool
+    content_history: dict[str, frozenset[str]]
+
+
 class ObservabilityClient:
     """Client for capturing and shipping generic application traces.
 
@@ -1919,6 +2008,13 @@ class ObservabilityClient:
     will trigger a best-effort atexit flush, but abrupt termination (for example
     `SIGKILL` or `os._exit()`) can still drop buffered payloads. Short-lived or
     serverless processes should call `flush()` or `close()` explicitly.
+
+    Ended, delivered traces are evicted after `trace_state_grace_seconds` (#2604).
+    A late update to an evicted trace revives it from a tombstone that keeps its
+    content policy and delivered-content flags. Only the last 4096 evictions are
+    remembered: an update to a trace evicted longer ago than that raises
+    `ValueError("Unknown trace_id ...")`. Use a longer grace window if late
+    updates are expected.
     """
 
     def __init__(
@@ -1929,11 +2025,22 @@ class ObservabilityClient:
         request_sender: (
             Callable[[str, str, dict[str, Any] | None], dict[str, Any]] | None
         ) = None,
+        trace_state_grace_seconds: float = DEFAULT_TRACE_STATE_GRACE_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        if trace_state_grace_seconds < 0:
+            raise ValueError("trace_state_grace_seconds must be >= 0")
         self.config = config or ObservabilityConfig()
         self._sender_override = sender
         self._request_sender_override = request_sender
         self._trace_states: dict[str, _TraceState] = {}
+        # Ended traces awaiting eviction (#2604): (eligible_at, trace_id), in
+        # eligible-time order (the clock is monotonic and every entry is
+        # appended with now + grace), so a pass only ever looks at the head.
+        self._trace_state_grace = float(trace_state_grace_seconds)
+        self._clock = clock
+        self._eviction_queue: deque[tuple[float, str]] = deque()
+        self._evicted_traces: OrderedDict[str, _EvictedTrace] = OrderedDict()
         self._lock = threading.RLock()
         self._snapshot_submission_complete = threading.Event()
         self._snapshot_submission_complete.set()
@@ -2026,14 +2133,25 @@ class ObservabilityClient:
         normalized = validate_content_mode_override(content_mode)
         with self._lock:
             state = self._trace_states.get(trace_id)
-        if state is None:
+            tombstone = self._evicted_traces.get(trace_id) if state is None else None
+        if state is not None:
+            base_mode = state.resolved_content_mode
+            locked = state.content_mode_locked
+        elif tombstone is not None:
+            # #2604: an evicted trace keeps its own content policy -- the
+            # revival that follows restores it, so resolve against it now
+            # instead of the (possibly looser) client default. A malformed
+            # tombstone fails closed to the strictest mode.
+            base_mode = tombstone.resolved_content_mode
+            locked = tombstone.content_mode_locked
+            if base_mode not in OBSERVABILITY_CONTENT_MODES:
+                base_mode, locked = "metadata", True
+        else:
             return self._resolve_against_client_default(normalized)
         if normalized is None:
-            return state.resolved_content_mode
-        if state.content_mode_locked:
-            return most_restrictive_content_mode(
-                normalized, state.resolved_content_mode
-            )
+            return base_mode
+        if locked:
+            return most_restrictive_content_mode(normalized, base_mode)
         return normalized
 
     def start_trace(
@@ -2116,15 +2234,19 @@ class ObservabilityClient:
         )
         with self._lock:
             previous = self._trace_states.get(trace_id)
+            tombstone = self._evicted_traces.pop(trace_id, None)
+            previous_sequence = (
+                previous.snapshot_sequence
+                if previous is not None
+                else (tombstone.snapshot_sequence if tombstone is not None else 0)
+            )
             self._trace_states[trace_id] = _TraceState(
                 trace=trace,
                 resolved_content_mode=effective_content_mode,
                 content_mode_locked=content_mode_locked,
                 # Restarting a trace id keeps its capture order monotonic: the
                 # transport may still hold a snapshot of the earlier state.
-                snapshot_sequence=(
-                    previous.snapshot_sequence if previous is not None else 0
-                ),
+                snapshot_sequence=previous_sequence,
                 scope_ledger=scope_ledger,
             )
 
@@ -2228,7 +2350,7 @@ class ObservabilityClient:
 
         observation_id = observation_id or _new_observation_id()
         with self._lock:
-            state = self._trace_states.get(trace_id)
+            state = self._state_or_revive_locked(trace_id)
             if state is None:
                 raise ValueError(f"Unknown trace_id '{trace_id}'")
             existing = state.observations.get(observation_id)
@@ -2269,6 +2391,31 @@ class ObservabilityClient:
             )
 
             if existing is None:
+                # A revived trace (#2604) holds no observations, but its
+                # tombstone remembers which fields were delivered: send the
+                # clearing marker for those exactly as a live update would.
+                if input_supplied and state.had_prior_content(
+                    observation_id, "input_data"
+                ):
+                    gated_input_data = wire_value_for_tightened_update(
+                        gated_input_data,
+                        effective_content_mode=effective_content_mode,
+                        existing_value=redacted_content_marker(),
+                    )
+                if output_supplied and state.had_prior_content(
+                    observation_id, "output_data"
+                ):
+                    gated_output_data = wire_value_for_tightened_update(
+                        gated_output_data,
+                        effective_content_mode=effective_content_mode,
+                        existing_value=redacted_content_marker(),
+                    )
+                if (
+                    error_supplied
+                    and gated_error_message is None
+                    and state.had_prior_content(observation_id, "error_message")
+                ):
+                    metadata["error_message"] = "[REDACTED]"
                 observation = ObservationDTO(
                     id=observation_id,
                     type=effective_type,
@@ -2311,7 +2458,10 @@ class ObservabilityClient:
                 if (
                     error_supplied
                     and gated_error_message is None
-                    and "error_message" in existing.metadata
+                    and (
+                        "error_message" in existing.metadata
+                        or state.had_prior_content(observation_id, "error_message")
+                    )
                 ):
                     merged_metadata["error_message"] = "[REDACTED]"
                 observation = ObservationDTO(
@@ -2362,7 +2512,14 @@ class ObservabilityClient:
                         wire_value_for_tightened_update(
                             gated_input_data,
                             effective_content_mode=effective_content_mode,
-                            existing_value=existing.input_data,
+                            existing_value=(
+                                existing.input_data
+                                if existing.input_data is not None
+                                or not state.had_prior_content(
+                                    observation_id, "input_data"
+                                )
+                                else redacted_content_marker()
+                            ),
                         )
                         if input_supplied
                         else existing.input_data
@@ -2371,7 +2528,14 @@ class ObservabilityClient:
                         wire_value_for_tightened_update(
                             gated_output_data,
                             effective_content_mode=effective_content_mode,
-                            existing_value=existing.output_data,
+                            existing_value=(
+                                existing.output_data
+                                if existing.output_data is not None
+                                or not state.had_prior_content(
+                                    observation_id, "output_data"
+                                )
+                                else redacted_content_marker()
+                            ),
                         )
                         if output_supplied
                         else existing.output_data
@@ -2445,7 +2609,7 @@ class ObservabilityClient:
             else None
         )
         with self._lock:
-            state = self._trace_states.get(trace_id)
+            state = self._state_or_revive_locked(trace_id)
             if state is None:
                 raise ValueError(f"Unknown trace_id '{trace_id}'")
             state.trace.status = status
@@ -2467,7 +2631,14 @@ class ObservabilityClient:
                 state.trace.output_data = wire_value_for_tightened_update(
                     gated_output_data,
                     effective_content_mode=effective_content_mode,
-                    existing_value=state.trace.output_data,
+                    existing_value=(
+                        state.trace.output_data
+                        if state.trace.output_data is not None
+                        or not state.had_prior_content(
+                            _TRACE_CONTENT_KEY, "output_data"
+                        )
+                        else redacted_content_marker()
+                    ),
                 )
             if metadata:
                 # A8: detach (deep copy) the caller's metadata before merging
@@ -2477,6 +2648,121 @@ class ObservabilityClient:
                 state.trace.metadata = merged
 
         self._queue_trace_snapshot(trace_id)
+        self._schedule_trace_state_eviction(trace_id)
+        self._evict_expired_trace_states()
+
+    def _schedule_trace_state_eviction(self, trace_id: str) -> None:
+        with self._lock:
+            state = self._trace_states.get(trace_id)
+            if state is None:
+                return
+            state.ended = True
+            if not state.eviction_scheduled:
+                state.eviction_scheduled = True
+                self._eviction_queue.append(
+                    (self._clock() + self._trace_state_grace, trace_id)
+                )
+
+    @staticmethod
+    def _delivered_content_history(state: _TraceState) -> dict[str, frozenset[str]]:
+        """Per-field "content was delivered" flags to carry on a tombstone.
+
+        The history recorded so far, plus every content field the evicted
+        state still holds (a delivered value, or an earlier clearing marker),
+        so a revived trace sends the clearing marker exactly as a live one.
+        """
+        history = {key: set(fields) for key, fields in state.content_history.items()}
+        for field_name in _SAFE_SNAPSHOT_CONTENT_FIELDS:
+            if getattr(state.trace, field_name, None) is not None:
+                history.setdefault(_TRACE_CONTENT_KEY, set()).add(field_name)
+        for observation_id, observation in state.observations.items():
+            for field_name in _SAFE_SNAPSHOT_CONTENT_FIELDS:
+                if getattr(observation, field_name, None) is not None:
+                    history.setdefault(observation_id, set()).add(field_name)
+            if observation.metadata.get("error_message") is not None:
+                history.setdefault(observation_id, set()).add("error_message")
+        return {key: frozenset(fields) for key, fields in history.items()}
+
+    def _remember_evicted_locked(self, trace_id: str, state: _TraceState) -> None:
+        self._evicted_traces[trace_id] = _EvictedTrace(
+            name=state.trace.name,
+            environment=state.trace.environment,
+            release=state.trace.release,
+            snapshot_sequence=state.snapshot_sequence,
+            resolved_content_mode=state.resolved_content_mode,
+            content_mode_locked=state.content_mode_locked,
+            content_history=self._delivered_content_history(state),
+        )
+        self._evicted_traces.move_to_end(trace_id)
+        while len(self._evicted_traces) > _MAX_EVICTED_TRACE_TOMBSTONES:
+            self._evicted_traces.popitem(last=False)
+
+    def _state_or_revive_locked(self, trace_id: str) -> _TraceState | None:
+        """The live state, or a minimal fresh one for a recently evicted id.
+
+        An update to an evicted trace starts a fresh snapshot under the same
+        id (#2604); an id this client never held (or whose tombstone aged out
+        of the bounded set) still returns None.
+        """
+        state = self._trace_states.get(trace_id)
+        if state is not None:
+            return state
+        tombstone = self._evicted_traces.pop(trace_id, None)
+        if tombstone is None:
+            return None
+        state = _TraceState(
+            trace=TraceDTO(
+                id=trace_id,
+                name=tombstone.name,
+                environment=tombstone.environment,
+                release=tombstone.release,
+                started_at=utc_now(),
+            ),
+            resolved_content_mode=tombstone.resolved_content_mode,
+            content_mode_locked=tombstone.content_mode_locked,
+            content_history={
+                key: set(fields) for key, fields in tombstone.content_history.items()
+            },
+            snapshot_sequence=tombstone.snapshot_sequence,
+        )
+        self._trace_states[trace_id] = state
+        return state
+
+    def _evict_expired_trace_states(self) -> int:
+        """Drop ended, delivered traces whose grace window has passed (#2604).
+
+        Bounded work: only the head of the time-ordered queue is examined, at
+        most `_MAX_EVICTION_STEPS_PER_PASS` entries per call. A trace that is
+        not ended, or whose latest snapshot is queued, in flight, failed or
+        otherwise unconfirmed, is kept and rechecked one grace window later.
+        A later update to an evicted trace id starts a fresh snapshot.
+        """
+        evicted = 0
+        with self._lock:
+            now = self._clock()
+            steps = 0
+            while (
+                self._eviction_queue
+                and self._eviction_queue[0][0] <= now
+                and steps < _MAX_EVICTION_STEPS_PER_PASS
+            ):
+                steps += 1
+                _, trace_id = self._eviction_queue.popleft()
+                state = self._trace_states.get(trace_id)
+                if state is None or not state.ended:
+                    if state is not None:
+                        state.eviction_scheduled = False
+                    continue
+                if self._ingest_suppressed or self._transport.is_settled(trace_id):
+                    del self._trace_states[trace_id]
+                    self._transport.release_settled(trace_id)
+                    self._remember_evicted_locked(trace_id, state)
+                    evicted += 1
+                else:
+                    self._eviction_queue.append(
+                        (now + self._trace_state_grace, trace_id)
+                    )
+        return evicted
 
     def scope_ledger(self, trace_id: str) -> ScopeLedger | None:
         """The agent-scope ledger of a live trace (None for an unknown trace)."""
@@ -2523,7 +2809,9 @@ class ObservabilityClient:
             self._submit_trace_snapshot(
                 trace_id, payload, deadline=deadline, state=descriptor
             )
-        return self._flush_transport_until(deadline)
+        result = self._flush_transport_until(deadline)
+        self._evict_expired_trace_states()
+        return result
 
     def get_stats(self) -> dict[str, Any]:
         """Return a snapshot of transport delivery and local-drop health.
@@ -3209,7 +3497,10 @@ class ObservabilityClient:
             method="POST",
         )
         try:
-            with self._open_http_request(http_request) as response:
+            with self._open_http_request(
+                http_request,
+                timeout=self.config.effective_request_timeout(len(traces)),
+            ) as response:
                 status_code = getattr(response, "status", 200)
                 body = response.read().decode("utf-8") if response else ""
                 if status_code >= 400:
@@ -3344,10 +3635,12 @@ class ObservabilityClient:
             raise ClientError(f"Unexpected response structure for {label}")
         return data
 
-    def _open_http_request(self, http_request: request.Request) -> Any:
+    def _open_http_request(
+        self, http_request: request.Request, timeout: float | None = None
+    ) -> Any:
         return self._http_opener.open(
             http_request,
-            timeout=self.config.request_timeout,
+            timeout=self.config.request_timeout if timeout is None else timeout,
         )
 
     @staticmethod
@@ -3712,9 +4005,25 @@ class ObservabilityClient:
             if self._closed:
                 return
         try:
-            self.close(timeout=self.config.flush_timeout)
+            result = self.close(timeout=self.config.flush_timeout)
         except Exception as exc:
             logger.warning("Observability atexit flush failed: %s", exc)
+            return
+        pending = getattr(result, "items_pending", 0)
+        if (
+            self.config.warn_on_undelivered_at_exit
+            and pending > 0
+            and not getattr(self, "_exit_warning_written", False)
+        ):
+            self._exit_warning_written = True
+            try:
+                sys.stderr.write(
+                    f"traigent: {pending} observability trace(s) were not "
+                    "delivered before exit; call flush() before exit or raise "
+                    "ObservabilityConfig.flush_timeout.\n"
+                )
+            except Exception:  # noqa: BLE001 - stderr may be closed at exit
+                pass
 
     def _flush_deadline(self, timeout: float | None) -> float | None:
         if timeout is None:

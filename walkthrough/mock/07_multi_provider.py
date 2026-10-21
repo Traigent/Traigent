@@ -73,7 +73,7 @@ def _lookup_provider(model_name: str) -> str:
     """Return the provider name for a given model from the local mapping.
 
     Args:
-        model_name: The model identifier (e.g., 'gpt-4o-mini', 'claude-3-haiku')
+        model_name: The model identifier (e.g., 'gpt-4.1-mini', 'claude-3-haiku')
 
     Returns:
         Provider name: 'openai', 'anthropic', 'google', or 'groq'

@@ -9,7 +9,7 @@ import json
 import math
 from abc import ABC, abstractmethod
 from collections import deque
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -1147,7 +1147,10 @@ class SafetyConstraintStopCondition(StopCondition):
     unsatisfied lower bound is treated as a genuine violation and halts the run
     with ``stop_reason="safety_constraint"`` (see
     ``StopConditionManager``/``OptimizationOrchestrator._should_stop`` reason
-    mapping). A non-violated constraint never halts the run.
+    mapping). A non-violated constraint never halts the run. When the observed
+    compliance already meets the required rate but the confidence lower bound
+    does not yet prove it, the run still halts (fail closed) but reports
+    ``stop_reason="safety_constraint_insufficient_evidence"`` (issue #2481).
 
     Trials only ever reach here as evidence if they stayed ``COMPLETED``: a
     safety constraint's ``mode == "soft"`` excludes it from
@@ -1171,6 +1174,7 @@ class SafetyConstraintStopCondition(StopCondition):
     def reset(self) -> None:
         self._validator.reset()
         self._last_index = 0
+        self.reason = "safety_constraint"
 
     def should_stop(self, trials: Iterable[TrialResult]) -> bool:
         if not self._constraints:
@@ -1194,6 +1198,16 @@ class SafetyConstraintStopCondition(StopCondition):
                 # Not enough evidence yet for this constraint - never a violation.
                 continue
             if not result.satisfied:
+                # Issue #2481: tell a real violation (observed compliance is
+                # already below the required rate) from missing evidence
+                # (observed compliance meets it, but the confidence lower bound
+                # cannot yet prove it). The halt itself is unchanged
+                # (fail closed); only the reported reason differs.
+                self.reason = (
+                    "safety_constraint"
+                    if result.observed_rate < result.required_compliance_rate
+                    else "safety_constraint_insufficient_evidence"
+                )
                 return True
 
         return False
@@ -1522,3 +1536,45 @@ __all__ = [
     "SemanticSaturationStopCondition",
     "StopCondition",
 ]
+
+
+class NoUsageCapturedStopCondition(StopCondition):
+    """Stop a strict cost-objective run after its first successful no-usage trial.
+
+    A run that declares a cost objective under strict cost accounting (and is
+    not in mock LLM mode) fails with ``UnknownModelError`` when it captured no
+    LLM usage at all. Waiting for every trial to finish before failing bills
+    the whole run for a result nobody can use (Traigent#2421), so this fires as
+    soon as one trial has completed successfully with no measured usage.
+
+    The "captured usage" definition is injected (``usage_captured``) so the
+    post-run guard and this stop rule share one predicate. ``enabled`` is
+    evaluated at every check because strict accounting is a per-run scope that
+    is only active while the run executes. Failed trials never trigger it.
+    The check runs between trial dispatches, so trials already in flight under
+    parallel execution may still complete; no new ones are scheduled.
+    """
+
+    reason = "no_usage_captured"
+
+    def __init__(
+        self,
+        usage_captured: Callable[[Sequence[TrialResult]], bool],
+        enabled: Callable[[], bool],
+    ) -> None:
+        self._usage_captured = usage_captured
+        self._enabled = enabled
+
+    def reset(self) -> None:
+        """Stateless: the predicate reads live run state."""
+
+    def should_stop(self, trials: Iterable[TrialResult]) -> bool:
+        trial_seq = trials if isinstance(trials, Sequence) else list(trials)
+        if not any(trial.is_successful for trial in trial_seq):
+            return False
+        if not self._enabled():
+            return False
+        return not self._usage_captured(trial_seq)
+
+    def get_reason(self) -> str:
+        return "No LLM usage captured on a successful trial under a cost objective"

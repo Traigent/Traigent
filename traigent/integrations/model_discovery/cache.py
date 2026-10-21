@@ -5,12 +5,14 @@ Provides TTL-based caching with file persistence and manual refresh support.
 
 # Traceability: CONC-Layer-Integration FUNC-INTEGRATIONS REQ-INT-008
 
+import hashlib
 import json
 import logging
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +22,27 @@ logger = logging.getLogger(__name__)
 
 # Default cache directory (user's cache dir or temp)
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "traigent" / "models"
+
+
+@lru_cache(maxsize=1)
+def shipped_snapshot_marker() -> str:
+    """Digest of the model data shipped with this install.
+
+    Covers config/models.yaml and the discovery modules (which hold the
+    per-provider snapshots), so any snapshot change invalidates cached lists
+    written by an older install (#2689).
+    """
+    package_dir = Path(__file__).resolve().parent
+    files = sorted(package_dir.glob("*.py"))
+    files.append(package_dir.parent.parent / "config" / "models.yaml")
+    digest = hashlib.sha256()
+    for path in files:
+        try:
+            digest.update(path.name.encode("utf-8"))
+            digest.update(path.read_bytes())
+        except OSError:
+            digest.update(b"<unreadable>")
+    return digest.hexdigest()[:16]
 
 
 @dataclass
@@ -37,6 +60,7 @@ class CacheEntry:
     timestamp: float
     ttl_seconds: int = 86400  # 24 hours default
     provider: str = ""
+    snapshot: str = ""
 
     def is_expired(self) -> bool:
         """Check if this cache entry has expired."""
@@ -53,6 +77,7 @@ class CacheEntry:
             "timestamp": self.timestamp,
             "ttl_seconds": self.ttl_seconds,
             "provider": self.provider,
+            "snapshot": self.snapshot,
         }
 
     @classmethod
@@ -63,6 +88,7 @@ class CacheEntry:
             timestamp=data.get("timestamp", 0.0),
             ttl_seconds=data.get("ttl_seconds", 86400),
             provider=data.get("provider", ""),
+            snapshot=data.get("snapshot", ""),
         )
 
 
@@ -115,7 +141,10 @@ class ModelCache:
             # Try in-memory cache first
             if key in self._cache:
                 entry = self._cache[key]
-                if not entry.is_expired():
+                if (
+                    not entry.is_expired()
+                    and entry.snapshot == shipped_snapshot_marker()
+                ):
                     logger.debug(
                         f"Cache hit for {key} (age: {entry.age_seconds():.0f}s)"
                     )
@@ -127,7 +156,11 @@ class ModelCache:
             # Try file cache
             if self._enable_file_cache:
                 file_entry = self._load_from_file(key)
-                if file_entry and not file_entry.is_expired():
+                if (
+                    file_entry
+                    and not file_entry.is_expired()
+                    and file_entry.snapshot == shipped_snapshot_marker()
+                ):
                     entry = file_entry
                     self._cache[key] = entry
                     logger.debug(
@@ -156,6 +189,7 @@ class ModelCache:
             timestamp=time.time(),
             ttl_seconds=ttl,
             provider=key,
+            snapshot=shipped_snapshot_marker(),
         )
 
         with self._lock:

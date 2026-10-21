@@ -566,3 +566,128 @@ async def test_trace_search_sends_single_comma_tag_as_one_key() -> None:
     assert len(requests) == 1
     assert requests[0].url.params.get_list("tags") == ["support,billing"]
     assert requests[0].url.query.decode().count("tags=") == 1
+
+
+# --- #2588: read side accepts the optional ``unknown`` trace status ---------
+
+
+def _variant_payload(status_counts: dict[str, int]) -> dict[str, object]:
+    digest = "a" * 64
+    return {
+        "id": "variant-1",
+        "project_id": "project-1",
+        "display_label": "Variant ABCDEF12",
+        "fingerprint": {
+            "value": digest,
+            "algorithm": "sha256",
+            "fingerprint_spec_version": "v1",
+            "canonical_event_count": 3,
+            "root_count": 1,
+        },
+        "trace_count": 4,
+        "first_seen_at": "2026-07-01T00:00:00Z",
+        "last_seen_at": "2026-07-02T00:00:00Z",
+        "representative_trace_id": "trace-1",
+        "boundary_trace_ids": ["trace-1"],
+        "status_counts": status_counts,
+        "derivation": {
+            "derivation_run_id": "run-1",
+            "deriver": "variant_assignment",
+            "deriver_version": "v1",
+            "input_revision": 1,
+            "input_digest": digest,
+            "derived_at": "2026-07-02T00:00:00Z",
+        },
+    }
+
+
+_BASE_COUNTS = {"running": 0, "completed": 3, "failed": 1, "rejected": 0}
+
+
+def test_variant_status_counts_unknown_is_optional() -> None:
+    from traigent.cloud.analytics_client import _project_observability_variant
+
+    without = _project_observability_variant(
+        _variant_payload(dict(_BASE_COUNTS)), what="variant"
+    )
+    with_unknown = _project_observability_variant(
+        _variant_payload({**_BASE_COUNTS, "unknown": 2}), what="variant"
+    )
+
+    assert "unknown" not in without["status_counts"]
+    assert with_unknown["status_counts"]["unknown"] == 2
+
+
+def test_variant_status_counts_still_require_write_side_keys() -> None:
+    from traigent.cloud.analytics_client import (
+        AnalyticsClientError,
+        _project_observability_variant,
+    )
+
+    counts = {k: v for k, v in _BASE_COUNTS.items() if k != "failed"}
+    with pytest.raises(AnalyticsClientError):
+        _project_observability_variant(
+            _variant_payload({**counts, "unknown": 1}), what="variant"
+        )
+
+
+@pytest.mark.asyncio
+async def test_trace_search_accepts_unknown_status_row() -> None:
+    client = _client()
+    _install_get(
+        client,
+        {
+            "items": [{"id": "trace-1", "status": "unknown"}],
+            "pagination": {"page": 1, "per_page": 10, "total": 1, "has_next": False},
+        },
+    )
+
+    result = await client.search_observability_traces(
+        "project-1",
+        start_time="2026-07-01T00:00:00Z",
+        end_time="2026-07-02T00:00:00Z",
+    )
+
+    assert result["items"][0]["status"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_trace_search_still_rejects_unlisted_status_row() -> None:
+    from traigent.cloud.analytics_client import AnalyticsClientError
+
+    client = _client()
+    _install_get(
+        client,
+        {
+            "items": [{"id": "trace-1", "status": "bogus"}],
+            "pagination": {"page": 1, "per_page": 10, "total": 1, "has_next": False},
+        },
+    )
+
+    with pytest.raises(AnalyticsClientError):
+        await client.search_observability_traces(
+            "project-1",
+            start_time="2026-07-01T00:00:00Z",
+            end_time="2026-07-02T00:00:00Z",
+        )
+
+
+def test_cohort_trace_statuses_accepts_unknown_and_keeps_cap() -> None:
+    from traigent.cloud.analytics_client import _validate_observability_cohort
+
+    cohort = {
+        "start_time": "2026-07-01T00:00:00Z",
+        "end_time": "2026-07-02T00:00:00Z",
+        "trace_statuses": ["unknown", "failed"],
+        "sample_limit": 100,
+    }
+    assert _validate_observability_cohort(cohort, field="reference")[
+        "trace_statuses"
+    ] == ["unknown", "failed"]
+
+    over_cap = {
+        **cohort,
+        "trace_statuses": ["running", "completed", "failed", "rejected", "unknown"],
+    }
+    with pytest.raises(ValueError, match="trace_statuses"):
+        _validate_observability_cohort(over_cap, field="reference")

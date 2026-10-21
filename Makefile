@@ -94,9 +94,9 @@ lint:  ## Run all linters (ruff, mypy, bandit)
 	@echo "Running Bandit..."
 	$(BANDIT) -r $(SRC_DIR) $(VALIDATION_SRC_DIR) -ll --skip B101,B601 -x $(SRC_DIR)/generated
 
-format:  ## Format code with black and isort
-	@echo "Formatting with Black..."
-	$(BLACK) $(SRC_DIR) $(VALIDATION_SRC_DIR) $(TEST_DIR)
+format:  ## Format code with ruff format (as CI preflight) and isort
+	@echo "Formatting with ruff format..."
+	$(RUFF) format $(SRC_DIR) $(VALIDATION_SRC_DIR) $(TEST_DIR)
 	@echo "Sorting imports with isort..."
 	$(PYTHON) -m isort $(SRC_DIR) $(VALIDATION_SRC_DIR) $(TEST_DIR) --profile black
 
@@ -128,7 +128,7 @@ optuna-benchmarks:  ## Run Optuna vs baseline benchmark suite
 quality-check:  ## Run all quality checks (lint, format check, tests)
 	@echo "Running quality checks..."
 	$(MAKE) lint
-	$(BLACK) --check $(SRC_DIR) $(VALIDATION_SRC_DIR) $(TEST_DIR)
+	$(RUFF) format --check $(SRC_DIR) $(VALIDATION_SRC_DIR) $(TEST_DIR)
 	$(MAKE) test-coverage
 	$(MAKE) security
 

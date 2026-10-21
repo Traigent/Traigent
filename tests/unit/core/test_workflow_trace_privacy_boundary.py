@@ -27,6 +27,11 @@ async def test_privacy_trial_span_sending_boundary_excludes_config_and_error_can
     failed: bool,
     privacy_enabled: bool,
 ) -> None:
+    # This test asserts what crosses the HTTP send boundary, so it must run
+    # online: offline mode (the suite default) stops all trace export (#2240).
+    # Both spellings are OR-ed by is_backend_offline().
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
     config = TraigentConfig()
     object.__setattr__(config, "privacy_enabled", privacy_enabled)
     spans = []

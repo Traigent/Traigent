@@ -41,6 +41,7 @@ from traigent.observability.otel.transport import (
     TransportError,
     TransportResponse,
 )
+from traigent.utils.env_config import is_backend_offline
 
 RETRYABLE_STATUS = frozenset({429, 502, 503, 504})
 
@@ -55,6 +56,7 @@ class ExportOutcome:
     dropped_retry_exhausted: int = 0
     dropped_non_retryable: int = 0
     dropped_deadline: int = 0
+    dropped_offline: int = 0
     retries: int = 0
     stripped_attrs: int = 0
     protocol_failures: int = 0
@@ -129,6 +131,11 @@ class TraigentOTLPExporter(SpanExporter):
         outcome = ExportOutcome()
         if not spans:
             return outcome
+        if is_backend_offline():
+            # Send-time recheck, fail closed: spans queued while online are
+            # dropped (not held for later) if offline became true since.
+            outcome.dropped_offline += len(spans)
+            return outcome
         sanitized = [self.policy.sanitize(s) for s in spans]
         for span in sanitized:
             outcome.stripped_attrs += int(
@@ -193,6 +200,9 @@ class TraigentOTLPExporter(SpanExporter):
         for attempt in range(self._max_attempts):
             if self._stop.is_set():  # shut down: no further POST, ever
                 outcome.dropped_deadline += count
+                return
+            if is_backend_offline():  # recheck before every POST, incl. retries
+                outcome.dropped_offline += count
                 return
             remaining = self._remaining(deadline)
             if remaining is not None and remaining <= 0:

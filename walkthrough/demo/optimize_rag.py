@@ -29,6 +29,9 @@ OBJECTIVES = ObjectiveSchema.from_objectives(
     ]
 )
 
+# recorded-historical-begin: this block replays a past real API run and keeps
+# the model ids it was measured on. A measurement is never relabeled to a
+# different model. This script only displays it and never calls these models.
 CONFIG_SPACE = {
     "model": [
         "gpt-3.5-turbo",
@@ -69,6 +72,7 @@ TRIALS_DATA = [
 ]
 
 BEST_IDX = 7  # trial 8: gpt-3.5-turbo, 87.4%
+# recorded-historical-end
 
 
 @dataclass

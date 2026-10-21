@@ -3,7 +3,7 @@ set -euo pipefail
 
 python -m pip install --upgrade pip
 
-# traigent-schema 5.0.0 is not on PyPI (newest published is 4.8.0), so this must
+# The pinned traigent-schema build is not on PyPI, so this must
 # be the exact Git pin, not a version specifier. The pin lives in
 # scripts/ci/schema-pin.txt — the single source of truth shared with pr-gate.yml
 # and publish.yml — and deliberately NOT in pyproject.toml, because PyPI rejects
@@ -32,6 +32,18 @@ if [ "$install_schema" = "1" ]; then
   fi
 fi
 
+# Opt-in (TRAIGENT_INSTALL_LOCKED=1): constrain every package to the versions in
+# uv.lock, so CI tests the same dependency set `uv sync` developers get instead
+# of floating to the newest release each range allows (issue #2475). Left off by
+# default so jobs that must resolve fresh (e.g. install-smoke) keep doing so.
+constraint_args=()
+if [ "${TRAIGENT_INSTALL_LOCKED:-}" = "1" ]; then
+  python -m pip install uv
+  constraints_file="$(mktemp)"
+  uv export --frozen --no-hashes --no-emit-project --all-extras -o "$constraints_file" >/dev/null
+  constraint_args=(-c "$constraints_file")
+fi
+
 if [ "$#" -gt 0 ]; then
-  python -m pip install "$@"
+  python -m pip install "${constraint_args[@]}" "$@"
 fi

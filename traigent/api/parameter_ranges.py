@@ -783,6 +783,10 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
         Returns:
             Choices instance with model names
 
+        Raises:
+            ValueError: If no default exists for the provider/tier (unknown
+                providers never fall back to an OpenAI model).
+
         Example:
             >>> model = Choices.model()  # Default balanced models
             >>> model_fast = Choices.model(provider="openai", tier="fast")
@@ -796,6 +800,12 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
             if models:
                 return Choices(models, name="model")
 
+        # Provider names are case-insensitive; "google" is the canonical name
+        # for the registry key "gemini" (#2650).
+        provider_key = provider.lower() if provider else None
+        if provider_key == "google":
+            provider_key = "gemini"
+
         # Fallback defaults
         fallbacks: dict[tuple[str | None, str], list[str]] = {
             ("openai", "fast"): ["gpt-4o-mini"],
@@ -806,18 +816,23 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
             ("anthropic", "fast"): ["claude-haiku-4-5-20251001"],
             ("anthropic", "balanced"): ["claude-sonnet-4-6"],
             ("anthropic", "quality"): ["claude-opus-4-8"],
+            # gemini-2.0-flash was shut down 2026-06-01 (#2650).
+            ("gemini", "fast"): ["gemini-3.5-flash-lite"],
+            ("gemini", "balanced"): ["gemini-3.8-flash"],
+            ("gemini", "quality"): ["gemini-3.8-flash"],
             (None, "fast"): ["gpt-4o-mini", "claude-haiku-4-5-20251001"],
             (None, "balanced"): ["gpt-4o-mini", "gpt-4o", "claude-sonnet-4-6"],
             (None, "quality"): ["gpt-4o", "claude-opus-4-8"],
         }
 
-        models_found = fallbacks.get((provider, tier))
+        models_found = fallbacks.get((provider_key, tier))
         if not models_found:
-            logger.warning(
-                f"No model list found for provider={provider}, tier={tier}. "
-                f"Using default models. Set {env_key} for explicit control."
+            # Never substitute an OpenAI model for an unknown provider or
+            # tier (#2650); the caller must choose explicitly.
+            raise ValueError(
+                "No default models for the requested provider/tier. "
+                f"Set {env_key} to provide an explicit model list."
             )
-            models_found = ["gpt-4o-mini"]
 
         return Choices(models_found, name="model")
 

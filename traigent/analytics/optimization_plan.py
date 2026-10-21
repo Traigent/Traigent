@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, cast
 
+from traigent.labels.transport_gate import gate_session
 from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.config.backend_config import DEFAULT_LOCAL_URL
 from traigent.utils.logging import get_logger
@@ -112,10 +113,12 @@ class OptimizationPlanClient:
             if self.api_key:
                 headers.update(_build_auth_headers(self.api_key))
 
-            self._client = httpx.AsyncClient(
-                base_url=self.backend_url,
-                headers=headers,
-                timeout=self.timeout,
+            self._client = gate_session(
+                httpx.AsyncClient(
+                    base_url=self.backend_url,
+                    headers=headers,
+                    timeout=self.timeout,
+                )
             )
 
         return self._client

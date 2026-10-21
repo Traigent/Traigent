@@ -46,7 +46,7 @@ class TestPromotionGate:
 
     def test_creation(self) -> None:
         """PromotionGate can be created."""
-        policy = PromotionPolicy()
+        policy = PromotionPolicy(min_effect={"accuracy": 0.0, "latency": 0.0})
         objectives = [
             ObjectiveSpec("accuracy", "maximize"),
             ObjectiveSpec("latency", "minimize"),
@@ -283,7 +283,9 @@ class TestPromotionGate:
 
     def test_unsupported_adjust_value_reaching_gate_raises(self) -> None:
         """The gate fails closed if an unsupported adjust value reaches it."""
-        policy = PromotionPolicy(alpha=0.05, adjust="none")
+        policy = PromotionPolicy(
+            alpha=0.05, adjust="none", min_effect={"accuracy": 0.0}
+        )
         policy.adjust = "sidak"  # type: ignore[assignment]
         gate = PromotionGate(policy, [ObjectiveSpec("accuracy", "maximize")])
 
@@ -295,7 +297,7 @@ class TestPromotionGate:
 
     def test_missing_objectives_no_decision(self) -> None:
         """No decision when objective data is missing."""
-        policy = PromotionPolicy()
+        policy = PromotionPolicy(min_effect={"accuracy": 0.0})
         objectives = [ObjectiveSpec("accuracy", "maximize")]
         gate = PromotionGate(policy, objectives)
 
@@ -320,9 +322,10 @@ class TestChanceConstraints:
         threshold. 2/100 violations -> upper bound ~0.06 <= 0.10.
         """
         policy = PromotionPolicy(
+            min_effect={"accuracy": 0.0},
             chance_constraints=[
                 ChanceConstraint(name="error_rate", threshold=0.10, confidence=0.95)
-            ]
+            ],
         )
         objectives = [ObjectiveSpec("accuracy", "maximize")]
         gate = PromotionGate(policy, objectives)
@@ -343,9 +346,10 @@ class TestChanceConstraints:
         Axis C: 30/100 violations -> upper bound ~0.38 > 0.10 threshold.
         """
         policy = PromotionPolicy(
+            min_effect={"accuracy": 0.0},
             chance_constraints=[
                 ChanceConstraint(name="error_rate", threshold=0.10, confidence=0.95)
-            ]
+            ],
         )
         objectives = [ObjectiveSpec("accuracy", "maximize")]
         gate = PromotionGate(policy, objectives)
@@ -368,9 +372,10 @@ class TestChanceConstraints:
         PASS. This asserts the verdict has flipped to the canonical one.
         """
         policy = PromotionPolicy(
+            min_effect={"accuracy": 0.0},
             chance_constraints=[
                 ChanceConstraint(name="error_rate", threshold=0.20, confidence=0.95)
-            ]
+            ],
         )
         gate = PromotionGate(policy, [ObjectiveSpec("accuracy", "maximize")])
 
@@ -396,9 +401,10 @@ class TestChanceConstraints:
     def test_missing_constraint_data(self) -> None:
         """Missing constraint data is treated as not satisfied."""
         policy = PromotionPolicy(
+            min_effect={"accuracy": 0.0},
             chance_constraints=[
                 ChanceConstraint(name="safety", threshold=0.90, confidence=0.95)
-            ]
+            ],
         )
         objectives = [ObjectiveSpec("accuracy", "maximize")]
         gate = PromotionGate(policy, objectives)
@@ -424,7 +430,7 @@ class TestBandedObjectives:
         yields NoDecision (the old SDK gate promoted on the band alone).
         """
         band = BandTarget(low=0.85, high=0.95)
-        policy = PromotionPolicy()
+        policy = PromotionPolicy(min_effect={"consistency": 0.0})
         objectives = [ObjectiveSpec("consistency", "band", band=band, band_alpha=0.05)]
         gate = PromotionGate(policy, objectives)
 
@@ -498,9 +504,10 @@ class TestChanceConstraintsEdgeCases:
     def test_zero_trials_constraint(self) -> None:
         """Zero trials in constraint data is treated as not satisfied."""
         policy = PromotionPolicy(
+            min_effect={"accuracy": 0.0},
             chance_constraints=[
                 ChanceConstraint(name="safety", threshold=0.90, confidence=0.95)
-            ]
+            ],
         )
         objectives = [ObjectiveSpec("accuracy", "maximize")]
         gate = PromotionGate(policy, objectives)
@@ -523,7 +530,7 @@ class TestBandedObjectivesEdgeCases:
     def test_both_not_equivalent_compare_by_distance(self) -> None:
         """When both fail TOST, compare by distance to band center."""
         band = BandTarget(low=0.85, high=0.95)
-        policy = PromotionPolicy()
+        policy = PromotionPolicy(min_effect={"consistency": 0.0})
         objectives = [ObjectiveSpec("consistency", "band", band=band, band_alpha=0.05)]
         gate = PromotionGate(policy, objectives)
 
@@ -543,7 +550,7 @@ class TestBandedObjectivesEdgeCases:
     def test_both_equivalent_compare_by_center_distance(self) -> None:
         """When both pass TOST, compare by distance from band center."""
         band = BandTarget(low=0.80, high=1.00)  # Wide band
-        policy = PromotionPolicy()
+        policy = PromotionPolicy(min_effect={"consistency": 0.0})
         objectives = [ObjectiveSpec("consistency", "band", band=band, band_alpha=0.05)]
         gate = PromotionGate(policy, objectives)
 
@@ -562,7 +569,7 @@ class TestBandedObjectivesEdgeCases:
     def test_band_with_center_tolerance(self) -> None:
         """Band specified with center and tolerance."""
         band = BandTarget(center=0.90, tol=0.05)  # Band is [0.85, 0.95]
-        policy = PromotionPolicy()
+        policy = PromotionPolicy(min_effect={"consistency": 0.0})
         objectives = [ObjectiveSpec("consistency", "band", band=band, band_alpha=0.05)]
         gate = PromotionGate(policy, objectives)
 
@@ -592,7 +599,7 @@ class TestFromSpecArtifact:
         )
 
         gate = PromotionGate.from_policy(
-            promotion_policy=PromotionPolicy(alpha=0.05),
+            promotion_policy=PromotionPolicy(alpha=0.05, min_effect={"accuracy": 0.0}),
             objective_schema=schema,
         )
 
@@ -649,7 +656,7 @@ class TestFromSpecArtifact:
         from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
         class MockArtifact:
-            promotion_policy = PromotionPolicy()
+            promotion_policy = PromotionPolicy(min_effect={"consistency": 0.0})
             objective_schema = ObjectiveSchema.from_objectives(
                 [
                     ObjectiveDefinition(
@@ -673,7 +680,9 @@ class TestFromSpecArtifact:
         from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
         class MockArtifact:
-            promotion_policy = PromotionPolicy(alpha=0.05)
+            promotion_policy = PromotionPolicy(
+                alpha=0.05, min_effect={"accuracy": 0.0, "latency": 0.0}
+            )
             objective_schema = ObjectiveSchema.from_objectives(
                 [
                     ObjectiveDefinition(
@@ -696,7 +705,7 @@ class TestFromSpecArtifact:
         from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
         class MockArtifact:
-            promotion_policy = PromotionPolicy()
+            promotion_policy = PromotionPolicy(min_effect={"consistency": 0.0})
             objective_schema = ObjectiveSchema.from_objectives(
                 [
                     ObjectiveDefinition(
@@ -724,7 +733,7 @@ class TestFromSpecArtifact:
         from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
         class MockArtifact:
-            promotion_policy = PromotionPolicy()
+            promotion_policy = PromotionPolicy(min_effect={"cost": 0.0})
             objective_schema = ObjectiveSchema.from_objectives(
                 [
                     ObjectiveDefinition(
@@ -835,9 +844,10 @@ class TestExactBetaClopperPearsonUpperBound:
         assert abs(upper - 0.0295130) < 1e-4
 
         policy = PromotionPolicy(
+            min_effect={"accuracy": 0.0},
             chance_constraints=[
                 ChanceConstraint(name="error_rate", threshold=0.028, confidence=0.95)
-            ]
+            ],
         )
         gate = PromotionGate(policy, [ObjectiveSpec("accuracy", "maximize")])
         decision = gate.evaluate(
@@ -938,9 +948,10 @@ class TestChanceConstraintFailsClosedWithoutScipy:
         """
         monkeypatch.setattr(promotion_gate, "_scipy_stats", None)
         policy = PromotionPolicy(
+            min_effect={"accuracy": 0.0},
             chance_constraints=[
                 ChanceConstraint(name="error_rate", threshold=0.20, confidence=0.99)
-            ]
+            ],
         )
         gate = PromotionGate(policy, [ObjectiveSpec("accuracy", "maximize")])
         with pytest.raises(ImportError, match=r"traigent\[bayesian\]"):
@@ -960,7 +971,7 @@ class TestChanceConstraintFailsClosedWithoutScipy:
         working without scipy.
         """
         monkeypatch.setattr(promotion_gate, "_scipy_stats", None)
-        policy = PromotionPolicy()  # no chance constraints
+        policy = PromotionPolicy(min_effect={"accuracy": 0.0})  # no chance constraints
         gate = PromotionGate(policy, [ObjectiveSpec("accuracy", "maximize")])
         decision = gate.evaluate(
             incumbent_metrics={"accuracy": [0.80] * 8},
@@ -987,9 +998,10 @@ class TestChanceConstraintFailsClosedWithoutScipy:
         assert abs(upper - 0.9870311) < 1e-4
 
         policy = PromotionPolicy(
+            min_effect={"accuracy": 0.0},
             chance_constraints=[
                 ChanceConstraint(name="error_rate", threshold=0.20, confidence=0.99)
-            ]
+            ],
         )
         gate = PromotionGate(policy, [ObjectiveSpec("accuracy", "maximize")])
         decision = gate.evaluate(

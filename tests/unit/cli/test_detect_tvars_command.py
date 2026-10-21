@@ -119,9 +119,9 @@ class TestTableOutput:
         result = runner.invoke(
             detect_tvars, [str(agent_file), "--function", "nonexistent"]
         )
-        # Should succeed but find nothing
-        assert result.exit_code == 0
-        assert "No tunable variable candidates" in result.output
+        # A function that does not exist is an error, not "nothing to tune" (#2648)
+        assert result.exit_code != 0
+        assert "not found" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +217,10 @@ class TestEdgeCases:
         p = tmp_path / "bad.py"
         p.write_text(SYNTAX_ERROR_SOURCE)
         result = runner.invoke(detect_tvars, [str(p)])
-        assert result.exit_code == 0
+        # An unparseable file is not "nothing to tune" (#2648).
+        assert result.exit_code != 0
+        assert "parse" in result.output.lower()
+        assert "traceback" not in result.output.lower()
 
     def test_no_candidates_message(self, runner: CliRunner, tmp_path: Path) -> None:
         p = tmp_path / "boring.py"
