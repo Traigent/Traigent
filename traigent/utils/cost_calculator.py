@@ -63,6 +63,20 @@ except (ImportError, KeyError):
 # ``openrouter/`` entries, the bundled one ~500). Those entries are filled in from
 # litellm's bundled backup file, never over an entry litellm already holds.
 _BUNDLED_FALLBACK_PRICE_PREFIXES: tuple[str, ...] = ("openrouter/",)
+
+# Claude 5.5 / Fable 5.1 first-party rates (USD per 1M tokens), used only for
+# ids litellm does not price (issue #2701). Source: Anthropic model pricing
+# table, cached 2026-10-06. Claude Haiku 5.5 is $0.50 input / $2.50 output for
+# prompts above 100K tokens; that tier is NOT modelled (litellm's tier keys
+# use 128K/200K thresholds only). Cache-write prices are not listed by
+# Anthropic for these ids and are intentionally omitted.
+_BUNDLED_FIRST_PARTY_PRICES_PER_MTOK: dict[str, tuple[float, float, float | None]] = {
+    # model: (input, output, cache_read) per 1M tokens
+    "claude-opus-5-5": (4.00, 20.00, 0.20),
+    "claude-sonnet-5-5": (2.00, 10.00, 0.20),
+    "claude-haiku-5-5": (0.10, 0.50, None),
+    "claude-fable-5-1": (10.00, 50.00, 0.25),
+}
 _bundled_price_merge_lock = threading.Lock()
 
 
@@ -95,6 +109,23 @@ def ensure_bundled_provider_prices() -> int:
                 ):
                     current[key] = value
                     added += 1
+            for model, (
+                input_mtok,
+                output_mtok,
+                cache_mtok,
+            ) in _BUNDLED_FIRST_PARTY_PRICES_PER_MTOK.items():
+                if model in current:
+                    continue
+                entry: dict[str, Any] = {
+                    "input_cost_per_token": input_mtok / 1_000_000,
+                    "output_cost_per_token": output_mtok / 1_000_000,
+                    "litellm_provider": "anthropic",
+                    "mode": "chat",
+                }
+                if cache_mtok is not None:
+                    entry["cache_read_input_token_cost"] = cache_mtok / 1_000_000
+                current[model] = entry
+                added += 1
             return added
     except Exception as exc:  # silent-ok: pricing stays "unknown", never $0
         logger.debug("bundled provider price merge skipped: %s", type(exc).__name__)
