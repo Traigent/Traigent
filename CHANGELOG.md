@@ -43,9 +43,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `metrics["total_cost"]` are now unknown (`None` / absent) instead of a partial
   sum; `metrics["cost_floor_usd"]` (known costs plus the floors of unmeasured
   trials) and `metrics["cost_unmeasured_trials"]` report the exact lower bound
-  and count. On budget-armed sessions an unmeasured trial is submitted with
-  `cost_unmeasured = 1.0` and its floor under `cost_floor_usd`;
-  `metrics["cost"]` is no longer set to the floor. `SimpleScoringEvaluator`
+  and count. Unmeasured trials are submitted with `cost_unmeasured = 1.0` and
+  their floor as top-level `cost_floor_usd` in the results body; budget-armed
+  sessions additionally keep `metrics.cost = floor` as a temporary bridge until
+  the backend reads `cost_floor_usd`; other sessions send no `metrics.cost`.
+  `SimpleScoringEvaluator`
   no longer hands placeholder `$0` costs (unmeasured or unpriced usage) to the
   scoring function, progress callback or trial metrics.
 

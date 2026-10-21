@@ -26,7 +26,7 @@ def _client() -> SimpleNamespace:
 def test_flagged_trial_without_number_carries_zero_floor_and_flag() -> None:
     metrics = {"accuracy": 1.0, "cost_unmeasured": 1.0}
     ensure(client=_client(), session_id="s1", metrics=metrics, status="COMPLETED")
-    assert "cost" not in metrics
+    assert metrics["cost"] == metrics[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
     assert metrics[COST_FLOOR_WIRE_KEY] == 0.0
     assert metrics["cost_unmeasured"] == 1.0
 
@@ -40,7 +40,7 @@ def test_flagged_trial_sends_reported_spend_as_floor_field_with_flag() -> None:
         status="COMPLETED",
         telemetry_sources=({"total_cost": 0.4},),
     )
-    assert "cost" not in metrics
+    assert metrics["cost"] == metrics[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
     assert metrics[COST_FLOOR_WIRE_KEY] == pytest.approx(0.4)
     assert metrics["cost_unmeasured"] == 1.0
 
@@ -48,7 +48,8 @@ def test_flagged_trial_sends_reported_spend_as_floor_field_with_flag() -> None:
 def test_flagged_trial_moves_existing_cost_into_floor_field() -> None:
     metrics = {"cost": 0.3, "cost_unmeasured": 1.0}
     ensure(client=_client(), session_id="s1", metrics=metrics, status="COMPLETED")
-    assert metrics == {COST_FLOOR_WIRE_KEY: 0.3, "cost_unmeasured": 1.0}
+    # Armed session: floor in its own field plus the TEMPORARY cost bridge.
+    assert metrics == {COST_FLOOR_WIRE_KEY: 0.3, "cost": 0.3, "cost_unmeasured": 1.0}
 
 
 def test_floor_never_lowers_reported_spend_budget_counts_floor() -> None:
@@ -60,7 +61,7 @@ def test_floor_never_lowers_reported_spend_budget_counts_floor() -> None:
         status="COMPLETED",
         telemetry_sources=({"total_cost": 0.4},),
     )
-    assert "cost" not in metrics
+    assert metrics["cost"] == metrics[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
     assert metrics[COST_FLOOR_WIRE_KEY] == pytest.approx(0.7)
 
 
@@ -92,6 +93,8 @@ def test_flagged_trial_on_unarmed_session_omits_cost() -> None:
         status="COMPLETED",
     )
     assert "cost" not in metrics
+    assert metrics[COST_FLOOR_WIRE_KEY] == 0.0
+    assert metrics["cost_unmeasured"] == 1.0
 
 
 def test_known_spend_lower_bound_defaults_to_zero() -> None:
@@ -119,7 +122,7 @@ def test_session_manager_flagged_trial_armed_sends_floor_field_and_flag() -> Non
         metrics_payload=payload,
         metadata={},
     )
-    assert "cost" not in payload
+    assert payload["cost"] == payload[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
     assert payload[COST_FLOOR_WIRE_KEY] == 0.0
     assert payload["cost_unmeasured"] == 1.0
 
@@ -133,3 +136,4 @@ def test_session_manager_flagged_trial_unarmed_omits_cost() -> None:
         metadata={},
     )
     assert "cost" not in payload
+    assert payload[COST_FLOOR_WIRE_KEY] == 0.0

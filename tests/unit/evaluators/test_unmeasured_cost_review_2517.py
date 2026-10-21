@@ -48,7 +48,7 @@ def test_budgeted_submission_does_not_backfill_zero_for_unmeasured_cost() -> Non
     )
 
     assert mutated is True
-    assert "cost" not in metrics
+    assert metrics["cost"] == metrics[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
     assert metrics[COST_FLOOR_WIRE_KEY] == 0.0 and metrics["cost_unmeasured"] == 1.0
 
 
@@ -62,7 +62,7 @@ def test_budgeted_submission_flags_instead_of_backfilling_zero_when_not_flagged(
     ensure_cost_metric_for_budgeted_completed_submission(
         client=client, session_id="s1", metrics=metrics, status="COMPLETED"
     )
-    assert "cost" not in metrics
+    assert metrics["cost"] == metrics[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
     assert metrics[COST_FLOOR_WIRE_KEY] == 0.0 and metrics["cost_unmeasured"] == 1.0
     assert metrics["cost_unmeasured"] == 1.0
 
@@ -85,7 +85,7 @@ def test_backend_session_manager_does_not_backfill_zero_for_unmeasured_cost() ->
         session_id="s1", trial_result=trial, metrics_payload=payload, metadata={}
     )
 
-    assert "cost" not in payload
+    assert payload["cost"] == payload[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
     assert payload[COST_FLOOR_WIRE_KEY] == 0.0 and payload["cost_unmeasured"] == 1.0
 
 
@@ -357,7 +357,7 @@ def test_budget_guard_ignores_telemetry_zero_when_flagged() -> None:
     )
 
     assert mutated is True
-    assert "cost" not in metrics
+    assert metrics["cost"] == metrics[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
     assert metrics[COST_FLOOR_WIRE_KEY] == 0.0 and metrics["cost_unmeasured"] == 1.0
 
 
@@ -383,7 +383,7 @@ def test_backend_session_manager_ignores_metadata_zero_when_flagged() -> None:
         metadata={"total_cost": 0.0, "cost": 0.0},
     )
 
-    assert "cost" not in payload
+    assert payload["cost"] == payload[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
     assert payload[COST_FLOOR_WIRE_KEY] == 0.0 and payload["cost_unmeasured"] == 1.0
 
 

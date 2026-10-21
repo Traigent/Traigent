@@ -168,7 +168,7 @@ async def test_budget_submission_does_not_backfill_zero_for_uncaptured_wrapper_r
     ensure_cost_metric_for_budgeted_completed_submission(
         client=client, session_id="s1", metrics=metrics, status="COMPLETED"
     )
-    assert "cost" not in metrics
+    assert metrics["cost"] == metrics[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
     assert metrics[COST_FLOOR_WIRE_KEY] == 0.0 and metrics["cost_unmeasured"] == 1.0
 
     manager = BackendSessionManager.__new__(BackendSessionManager)
@@ -186,7 +186,7 @@ async def test_budget_submission_does_not_backfill_zero_for_uncaptured_wrapper_r
     manager._ensure_budget_cost_metric(
         session_id="s1", trial_result=trial, metrics_payload=payload, metadata={}
     )
-    assert "cost" not in payload
+    assert payload["cost"] == payload[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
     assert payload[COST_FLOOR_WIRE_KEY] == 0.0 and payload["cost_unmeasured"] == 1.0
 
 

@@ -68,7 +68,7 @@ def test_b1_custom_evaluation_keeps_reported_floor_with_flag() -> None:
     client = SimpleNamespace(_cost_budget_armed_sessions={"s1"})
     metrics = dict(aggregated)
     ensure(client=client, session_id="s1", metrics=metrics, status="COMPLETED")
-    assert "cost" not in metrics
+    assert metrics["cost"] == metrics[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
     assert metrics[COST_FLOOR_WIRE_KEY] == pytest.approx(0.40)
     assert metrics["cost_unmeasured"] == 1.0
 
@@ -86,7 +86,7 @@ def test_b2_flagged_zero_cost_is_lifted_to_the_reported_floor() -> None:
     client = SimpleNamespace(_cost_budget_armed_sessions={"s1"})
     metrics = {"cost": 0, "cost_lower_bound": 0.4, "cost_unmeasured": 1}
     ensure(client=client, session_id="s1", metrics=metrics, status="COMPLETED")
-    assert "cost" not in metrics
+    assert metrics["cost"] == metrics[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
     assert metrics[COST_FLOOR_WIRE_KEY] == pytest.approx(0.4)
     assert metrics["cost_unmeasured"] == 1
 
@@ -101,7 +101,7 @@ def test_b2_session_manager_lifts_flagged_zero_too() -> None:
     manager._ensure_budget_cost_metric(
         session_id="s1", trial_result=trial, metrics_payload=payload, metadata={}
     )
-    assert "cost" not in payload
+    assert payload["cost"] == payload[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
     assert payload[COST_FLOOR_WIRE_KEY] == pytest.approx(0.4)
     assert payload["cost_unmeasured"] == 1.0
 

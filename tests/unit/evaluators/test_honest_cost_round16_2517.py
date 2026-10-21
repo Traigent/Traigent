@@ -87,7 +87,7 @@ def test_marker_absent_with_real_client(monkeypatch: pytest.MonkeyPatch) -> None
 def test_lift_replaces_numeric_string_cost_with_floor() -> None:
     metrics = {"cost": "0.4", "cost_lower_bound": 0.4, "cost_unmeasured": 1}
     assert move_flagged_cost_to_floor_field(metrics) is True
-    assert "cost" not in metrics
+    assert "cost" not in metrics  # no bridge unless the session is budget-armed
     assert metrics[COST_FLOOR_WIRE_KEY] == pytest.approx(0.4)
 
 
@@ -95,7 +95,7 @@ def test_budget_writer_cloud_lifts_numeric_string_cost() -> None:
     client = SimpleNamespace(_cost_budget_armed_sessions={"s1"})
     metrics = {"cost": "0.4", "cost_lower_bound": 0.4, "cost_unmeasured": 1}
     ensure(client=client, session_id="s1", metrics=metrics, status="COMPLETED")
-    assert "cost" not in metrics
+    assert metrics["cost"] == metrics[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
     assert metrics[COST_FLOOR_WIRE_KEY] == pytest.approx(0.4)
 
 
@@ -112,14 +112,14 @@ def test_budget_writer_session_manager_lifts_numeric_string_cost() -> None:
     manager._ensure_budget_cost_metric(
         session_id="s1", trial_result=trial, metrics_payload=payload, metadata={}
     )
-    assert "cost" not in payload
+    assert payload["cost"] == payload[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
     assert payload[COST_FLOOR_WIRE_KEY] == pytest.approx(0.4)
 
 
 def test_floor_field_keeps_numeric_original_above_floor() -> None:
     metrics = {"cost": 0.9, "cost_lower_bound": 0.4, "cost_unmeasured": 1}
     assert move_flagged_cost_to_floor_field(metrics) is True
-    assert "cost" not in metrics
+    assert "cost" not in metrics  # no bridge unless the session is budget-armed
     assert metrics[COST_FLOOR_WIRE_KEY] == 0.9
 
 

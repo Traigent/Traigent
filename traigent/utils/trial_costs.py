@@ -17,6 +17,7 @@ __all__ = [
     "is_cost_unmeasured",
     "is_finite_numeric_cost",
     "known_spend_lower_bound",
+    "lift_cost_floor_to_body",
     "move_flagged_cost_to_floor_field",
     "row_has_measured_cost",
     "row_reports_zero_provider_attempts",
@@ -24,11 +25,9 @@ __all__ = [
     "unmeasured_example_ids",
 ]
 
-#: Wire/metric key carrying the exact known spend floor of an unmeasured-cost
-#: trial or run. It is NOT a cost: ``metrics["cost"]`` stays absent for such a
-#: trial. TODO(TraigentSchema): the final field name and contract are pending a
-#: TraigentSchema change (owner card product-2026-10-21-sdk-2688-unknown-cost,
-#: answer A); rename here only, logic reads this constant.
+#: Key carrying the exact known spend floor of an unmeasured-cost trial or run
+#: (top-level of the ``POST /sessions/{id}/results`` body; TraigentSchema field
+#: ``cost_floor_usd``). It is NOT a cost.
 COST_FLOOR_WIRE_KEY = "cost_floor_usd"
 
 # Keys under which a per-example result row may carry a measured cost.
@@ -285,22 +284,38 @@ def known_spend_lower_bound(*sources: Any) -> float:
     return max(candidates) if candidates else 0.0
 
 
-def move_flagged_cost_to_floor_field(metrics: dict[str, Any], *sources: Any) -> bool:
-    """Report a flagged-unmeasured trial's floor in its own field, never as cost.
+def move_flagged_cost_to_floor_field(
+    metrics: dict[str, Any], *sources: Any, bridge_cost: bool = False
+) -> bool:
+    """Report a flagged-unmeasured trial's floor in its own field, not as cost.
 
-    A trial flagged ``cost_unmeasured`` has no measured cost, so
     ``metrics["cost"]`` is removed (a flagged placeholder ``0`` or a reported
     floor must not read as a measured number) and the exact known floor, the
     largest of ``metrics["cost"]`` and every reported bound
     (:func:`known_spend_lower_bound`), is written under
-    :data:`COST_FLOOR_WIRE_KEY`. The floor never lowers reported spend. Returns
-    True when ``metrics`` changed.
+    :data:`COST_FLOOR_WIRE_KEY`. The floor never lowers reported spend.
+
+    ``bridge_cost=True`` (budget-armed sessions only) also writes the floor
+    back as ``metrics["cost"]``: the backend still requires a numeric
+    ``metrics.cost`` on every completed trial of a budget-armed session.
+    Returns True when ``metrics`` changed.
     """
 
     floor = known_spend_lower_bound(metrics, *sources)
-    changed = metrics.pop("cost", None) is not None
+    before = dict(metrics)
+    metrics.pop("cost", None)
     existing = coerce_finite_cost(metrics.get(COST_FLOOR_WIRE_KEY))
-    if existing is not None and existing >= floor:
-        return changed
-    metrics[COST_FLOOR_WIRE_KEY] = floor
-    return True
+    if existing is None or existing < floor:
+        metrics[COST_FLOOR_WIRE_KEY] = floor
+    if bridge_cost:
+        # TEMPORARY bridge until backend reads cost_floor_usd (Traigent#2688)
+        metrics["cost"] = metrics[COST_FLOOR_WIRE_KEY]
+    return metrics != before
+
+
+def lift_cost_floor_to_body(body: dict[str, Any]) -> None:
+    """Move the floor from ``body["metrics"]`` to the top level of the body."""
+
+    metrics = body.get("metrics")
+    if isinstance(metrics, dict) and COST_FLOOR_WIRE_KEY in metrics:
+        body[COST_FLOOR_WIRE_KEY] = metrics.pop(COST_FLOOR_WIRE_KEY)

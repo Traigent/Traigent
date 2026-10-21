@@ -1069,18 +1069,17 @@ class BackendSessionManager:
         if is_cost_unmeasured(metrics_payload) or is_cost_unmeasured(
             getattr(trial_result, "metrics", None)
         ):
-            # Flagged unknown. On a budget-armed session send the reported
-            # floor in its own field WITH the flag; ``cost`` stays absent so an
-            # unknown is never a measured number (#2688). Elsewhere cost stays
-            # omitted.
-            if session_id in self._session_cost_budget_armed:
-                metrics_payload["cost_unmeasured"] = 1.0
-                move_flagged_cost_to_floor_field(
-                    metrics_payload,
-                    getattr(trial_result, "metrics", None),
-                    getattr(trial_result, "metadata", None),
-                    metadata,
-                )
+            # Flagged unknown: send the reported floor in its own field WITH
+            # the flag. Only a budget-armed session also gets the TEMPORARY
+            # metrics.cost bridge (Traigent#2688); elsewhere cost stays absent.
+            metrics_payload["cost_unmeasured"] = 1.0
+            move_flagged_cost_to_floor_field(
+                metrics_payload,
+                getattr(trial_result, "metrics", None),
+                getattr(trial_result, "metadata", None),
+                metadata,
+                bridge_cost=session_id in self._session_cost_budget_armed,
+            )
             return
 
         if is_finite_numeric_cost(metrics_payload.get("cost")):
@@ -1109,6 +1108,8 @@ class BackendSessionManager:
         # as ``cost``.
         metrics_payload.pop("cost", None)
         metrics_payload[COST_FLOOR_WIRE_KEY] = 0.0
+        # TEMPORARY bridge until backend reads cost_floor_usd (Traigent#2688)
+        metrics_payload["cost"] = 0.0
         if not self._cost_budget_zero_backfill_logged:
             logger.debug(
                 "no cost telemetry; submitting budgeted trial as "

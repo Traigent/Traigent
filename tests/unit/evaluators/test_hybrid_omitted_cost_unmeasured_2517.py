@@ -257,7 +257,7 @@ async def test_omitted_cost_is_not_backfilled_at_budget_submission() -> None:
     )
 
     assert mutated is True
-    assert "cost" not in metrics
+    assert metrics["cost"] == metrics[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
     assert metrics[COST_FLOOR_WIRE_KEY] == 0.0 and metrics["cost_unmeasured"] == 1.0
 
 
