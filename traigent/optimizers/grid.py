@@ -302,6 +302,15 @@ class GridSearchOptimizer(BaseOptimizer):
 
         return config
 
+    def mark_config_evaluated(self, config: dict[str, Any]) -> None:
+        """Drop an already-evaluated point from the not-yet-suggested grid (#1697)."""
+        super().mark_config_evaluated(config)
+        keep = list(self._grid_points[: self._current_index])
+        for point in self._grid_points[self._current_index :]:
+            if any(k not in config or config[k] != v for k, v in point.items()):
+                keep.append(point)
+        self._grid_points = keep
+
     def should_stop(self, history: list[TrialResult]) -> bool:
         """Determine if optimization should stop.
 

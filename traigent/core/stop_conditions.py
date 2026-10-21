@@ -560,6 +560,15 @@ class MaxSamplesStopCondition(StopCondition):
                 trial, default=None, check_example_results=True
             )
             if attempted is not None:
+                # Work reused from a prior run (resume_from, #1697/#2541) ran no
+                # new examples: only newly evaluated examples use this budget.
+                meta = getattr(trial, "metadata", None) or {}
+                if meta.get("resumed_from_prior_run"):
+                    attempted = 0
+                else:
+                    reused = meta.get("resumed_examples_reused")
+                    if isinstance(reused, int) and reused > 0:
+                        attempted = max(0, attempted - reused)
                 self._total_attempted += attempted
 
             if self._total_attempted >= self._max_samples:

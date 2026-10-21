@@ -162,6 +162,13 @@ class ParallelBatchOptimizer(BaseOptimizer):
             max_batch_size=batch_config.batch_size * 2,
         )
 
+    def mark_config_evaluated(self, config: dict[str, Any]) -> None:
+        """Forward to the inner optimizer that actually produces suggestions (#1697)."""
+        super().mark_config_evaluated(config)
+        inner = getattr(self, "base_optimizer", None)
+        if inner is not None:
+            inner.mark_config_evaluated(config)
+
     def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Suggest next configuration to evaluate."""
         return cast(dict[str, Any], self.base_optimizer.suggest_next_trial(history))
@@ -511,6 +518,13 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
             max_trials=requested_max_trials,
             objective_orientations=self.objective_orientations,
         )
+
+    def mark_config_evaluated(self, config: dict[str, Any]) -> None:
+        """Forward to the inner optimizer that actually produces suggestions (#1697)."""
+        super().mark_config_evaluated(config)
+        inner = getattr(self, "_base_optimizer", None)
+        if inner is not None:
+            inner.mark_config_evaluated(config)
 
     def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Suggest next configuration to evaluate."""
@@ -954,6 +968,13 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
             target_memory_mb=batch_config.memory_limit_mb,
         )
         self.performance_history: list[Any] = []
+
+    def mark_config_evaluated(self, config: dict[str, Any]) -> None:
+        """Forward to the inner optimizer that actually produces suggestions (#1697)."""
+        super().mark_config_evaluated(config)
+        inner = getattr(self, "base_optimizer", None)
+        if inner is not None:
+            inner.mark_config_evaluated(config)
 
     def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Suggest next configuration to evaluate."""
