@@ -53,6 +53,7 @@ except ImportError:
     from typing import TYPE_CHECKING, Any
 
     from traigent.core.trace_env import is_trace_enabled
+    from traigent.utils.env_config import is_backend_offline
 
     # Check if tracing is enabled and OpenTelemetry is available
     TRACING_ENABLED = is_trace_enabled()
@@ -260,7 +261,15 @@ except ImportError:
             return None
 
     def get_tracer() -> Tracer | None:
-        """Get the Traigent tracer, initializing if needed."""
+        """Get the Traigent tracer, initializing if needed.
+
+        Returns None while offline (``offline=True`` or the offline env vars):
+        OTLP export is an egress lane and must not ship span attributes,
+        including truncated example output. Checked per call, so a tracer
+        initialized by an earlier online run is not used by an offline one.
+        """
+        if is_backend_offline():
+            return None
         return _initialize_tracer()
 
     def _scrub_error_text(error: object) -> str:

@@ -130,6 +130,7 @@ from traigent.utils.env_config import (
     is_mock_llm,
     is_strict_cost_accounting,
     strict_cost_accounting_origin,
+    offline_run_scope,
     strict_cost_accounting_run_default,
 )
 from traigent.utils.exceptions import (
@@ -2483,8 +2484,13 @@ class OptimizedFunction(Generic[_P, _R]):
             # recorded as free: the optimizer would rank it cheapest. Make
             # runtime cost accounting strict for this run unless the user set
             # TRAIGENT_STRICT_COST_ACCOUNTING explicitly (``false`` opts out).
-            with strict_cost_accounting_run_default(
-                _objectives_include_cost(self.objectives)
+            with (
+                offline_run_scope(
+                    is_offline_requested(getattr(self, "execution_policy", None))
+                ),
+                strict_cost_accounting_run_default(
+                    _objectives_include_cost(self.objectives)
+                ),
             ):
                 strict_origin = strict_cost_accounting_origin()
                 strict_effective = is_strict_cost_accounting()

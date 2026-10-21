@@ -39,15 +39,13 @@ Direct metric submission for hybrid mode, where the SDK executes trials locally 
 DTOs null out some identifier fields by default. This is a payload-shaping default,
 not a privacy guarantee: Traigent observability is not privacy-preserving, and
 the `privacy_mode` metadata flag is a legacy marker, not a data-protection control.
-`offline=True` stops submission to the Traigent backend. It does not by itself keep
-everything on the machine: model-provider calls use your own provider credentials and
-are not gated by it, and OpenTelemetry export has its own controls
-(`OTEL_EXPORTER_OTLP_ENDPOINT` with `TRAIGENT_TRACE_ENABLED` in
-`traigent/core/tracing.py:58`/`:240`; the observability module reads the
-`TRAIGENT_OFFLINE`/`TRAIGENT_OFFLINE_MODE`/`TRAIGENT_DISABLE_TELEMETRY` environment
-variables at `traigent/observability/otel/api.py:225`, not the in-code `offline=True`
-setting). Whether `offline=True` should also gate telemetry is an open owner decision
-(issue #2240):
+`offline=True` stops submission to the Traigent backend and, for the duration of the
+run, also switches off OpenTelemetry trace export, the langfuse client, workflow-trace
+ingestion and the standalone API clients (they refuse with `OfflineModeError`, or
+return a failed result for trace ingestion). It does not keep everything on the
+machine: model-provider calls your own function makes use your own provider
+credentials and are not gated by it. Traigent observability is not privacy-preserving.
+The switch is process-wide while any `offline=True` run is in flight (issue #2240):
 
 ```python
 # Example: Creating a Edge Analytics experiment

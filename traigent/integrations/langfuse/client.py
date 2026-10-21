@@ -373,8 +373,16 @@ class LangfuseClient:
                 logger.warning(f"Failed to initialize Langfuse SDK: {e}")
                 self._sdk_client = None
 
+    @staticmethod
+    def _raise_if_offline() -> None:
+        """Fail closed: no request leaves the machine while offline."""
+        from traigent.utils.env_config import raise_if_backend_offline
+
+        raise_if_backend_offline("Langfuse request")
+
     def _get_auth_header(self) -> dict[str, str]:
         """Get HTTP Basic Auth header for direct API calls."""
+        self._raise_if_offline()
         if not self.public_key or not self.secret_key:
             raise ValueError("Langfuse public_key and secret_key are required")
 
@@ -456,6 +464,7 @@ class LangfuseClient:
         Returns:
             Trace data dict or None if not found
         """
+        self._raise_if_offline()
         # The Langfuse SDK's read helpers (get_trace/get_observations) were
         # removed in SDK v3+ and the endpoints they call are removed in Langfuse
         # v4, so reads always go through the HTTP API (v2 with v1 fallback).
@@ -803,6 +812,7 @@ class LangfuseClient:
         Returns:
             List of LangfuseObservation objects
         """
+        self._raise_if_offline()
         return self._get_observations_http(trace_id)
 
     def _get_observations_http(
@@ -940,6 +950,7 @@ class LangfuseClient:
         self, trace_id: str, *, include_io: bool = True
     ) -> dict[str, Any] | None:
         """Async version of get_trace."""
+        self._raise_if_offline()
         if not AIOHTTP_AVAILABLE:
             raise ImportError(
                 "aiohttp is required for async. Install with: pip install aiohttp"
@@ -1006,6 +1017,7 @@ class LangfuseClient:
         Returns:
             List of all observations for the trace
         """
+        self._raise_if_offline()
         if not AIOHTTP_AVAILABLE:
             raise ImportError("aiohttp is required for async")
 

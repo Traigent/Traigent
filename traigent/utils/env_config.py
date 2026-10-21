@@ -10,6 +10,7 @@ import secrets
 import warnings
 from collections.abc import Iterator
 from contextlib import contextmanager
+import threading
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast, overload
@@ -662,8 +663,41 @@ def should_show_cloud_notice(traigent_config: "TraigentConfig") -> bool:
     return not BackendConfig.get_api_key()
 
 
+# Process-wide count of in-flight optimization runs that asked for
+# ``offline=True``. A counter (not a ContextVar) on purpose: trial work runs in
+# worker threads that do not inherit the caller's context, and an egress lane
+# that misses the flag would leak. Fail closed: while any offline run is in
+# flight, every backend/telemetry lane in the process treats itself as offline.
+_OFFLINE_RUN_LOCK = threading.Lock()
+_OFFLINE_RUN_COUNT = 0
+
+
+@contextmanager
+def offline_run_scope(enabled: bool) -> Iterator[None]:
+    """Make ``offline=True`` on the decorator disable every egress lane.
+
+    While the block runs, :func:`is_backend_offline` returns True, so the
+    standalone API clients, OTLP trace export and the langfuse client refuse to
+    send without the user having to set ``TRAIGENT_OFFLINE_MODE`` as well.
+    """
+    global _OFFLINE_RUN_COUNT
+    if not enabled:
+        yield
+        return
+    with _OFFLINE_RUN_LOCK:
+        _OFFLINE_RUN_COUNT += 1
+    try:
+        yield
+    finally:
+        with _OFFLINE_RUN_LOCK:
+            _OFFLINE_RUN_COUNT -= 1
+
+
 def is_backend_offline() -> bool:
     """Check if Traigent backend calls should be skipped.
+
+    Also true while a run decorated with ``offline=True`` is in flight (see
+    :func:`offline_run_scope`).
 
     When TRAIGENT_OFFLINE_MODE=true or TRAIGENT_OFFLINE=true, all communication
     with the Traigent backend is skipped. This is useful for:
@@ -682,8 +716,10 @@ def is_backend_offline() -> bool:
     See also:
         - is_mock_llm(): Check if LLM API calls should be mocked
     """
-    return _is_truthy_env_value(get_env_var("TRAIGENT_OFFLINE_MODE", "false")) or (
-        _is_truthy_env_value(get_env_var("TRAIGENT_OFFLINE", "false"))
+    return (
+        _OFFLINE_RUN_COUNT > 0
+        or _is_truthy_env_value(get_env_var("TRAIGENT_OFFLINE_MODE", "false"))
+        or _is_truthy_env_value(get_env_var("TRAIGENT_OFFLINE", "false"))
     )
 
 
