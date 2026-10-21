@@ -9,6 +9,7 @@ pre-commit hook installation, uninstallation, and status checking.
 
 from __future__ import annotations
 
+import os
 import stat
 import tempfile
 from collections.abc import Generator
@@ -17,6 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import traigent.hooks.installer as installer_module
 from traigent.hooks.installer import (
     HOOK_MARKER,
     PRE_COMMIT_HOOK_SCRIPT,
@@ -731,3 +733,125 @@ class TestHookScripts:
         """Test HOOK_MARKER contains descriptive text."""
         assert "Traigent" in HOOK_MARKER
         assert "pre-push" in HOOK_MARKER
+
+
+class TestHooksLockAndSymlinkRefusal:
+    """Review r81 findings 1 and 2: serialized hook changes; symlinked hooks refused."""
+
+    CUSTOMER_PRE_PUSH = b"#!/bin/sh\n# customer pre-push\n./run-tests.sh\n"
+    CUSTOMER_SHARED = b"#!/bin/sh\nnpm run lint\n"
+
+    @pytest.fixture
+    def installer(self) -> Generator[HooksInstaller, None, None]:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir)
+            (repo_path / ".git" / "hooks").mkdir(parents=True)
+            yield HooksInstaller(repo_path)
+
+    @staticmethod
+    def _lock_modes() -> list[bool]:
+        return [True, False] if installer_module._fcntl is not None else [False]
+
+    def test_install_and_uninstall_hold_the_hooks_lock(
+        self, installer: HooksInstaller, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The lock is taken by install and uninstall, and still held while a hook is replaced."""
+        acquired: list[Path] = []
+        real_lock = installer_module._hooks_lock
+        probe_results: list[str] = []
+        real_install_hook = HooksInstaller._install_hook
+
+        def spy_lock(hooks_dir: Path, timeout: float | None = None):  # type: ignore[no-untyped-def]
+            acquired.append(hooks_dir)
+            return real_lock(hooks_dir, timeout)
+
+        def probing_install_hook(self, hook_path, content, force):  # type: ignore[no-untyped-def]
+            # A second holder must time out while the first is mid-replacement.
+            try:
+                with real_lock(self.hooks_dir, timeout=0.2):
+                    probe_results.append("acquired")
+            except RuntimeError:
+                probe_results.append("timed out")
+            return real_install_hook(self, hook_path, content, force)
+
+        monkeypatch.setattr(installer_module, "_hooks_lock", spy_lock)
+        monkeypatch.setattr(HooksInstaller, "_install_hook", probing_install_hook)
+
+        installer.install(force=False)
+        installer.uninstall()
+
+        assert acquired == [installer.hooks_dir, installer.hooks_dir]
+        assert probe_results == ["timed out", "timed out"]
+
+    @pytest.mark.parametrize("use_fcntl", [True, False])
+    def test_second_holder_times_out_cleanly(
+        self,
+        installer: HooksInstaller,
+        monkeypatch: pytest.MonkeyPatch,
+        use_fcntl: bool,
+    ) -> None:
+        """A held lock makes a second holder fail with a value-free timeout, then release."""
+        if use_fcntl and installer_module._fcntl is None:
+            pytest.skip("fcntl is not available on this platform")
+        monkeypatch.setattr(
+            installer_module, "_fcntl", installer_module._fcntl if use_fcntl else None
+        )
+        hooks_dir = installer.hooks_dir
+
+        with installer_module._hooks_lock(hooks_dir):
+            with pytest.raises(RuntimeError) as exc_info:
+                with installer_module._hooks_lock(hooks_dir, timeout=0.2):
+                    pass
+
+        message = str(exc_info.value)
+        assert "Timed out waiting for another Traigent hook operation" in message
+        assert str(hooks_dir) not in message
+
+        # Released: the same lock can be taken again.
+        with installer_module._hooks_lock(hooks_dir, timeout=0.2):
+            pass
+        if not use_fcntl:
+            assert not (hooks_dir / installer_module.HOOKS_LOCK_NAME).exists()
+
+    def test_force_install_refuses_symlinked_hook_and_touches_nothing(
+        self, installer: HooksInstaller
+    ) -> None:
+        """pre-commit -> shared-hook: install --force refuses, leaves the link and target alone."""
+        shared = installer.hooks_dir / "shared-hook"
+        shared.write_bytes(self.CUSTOMER_SHARED)
+        link = installer.hooks_dir / "pre-commit"
+        link.symlink_to("shared-hook")
+        (installer.hooks_dir / "pre-push").write_bytes(self.CUSTOMER_PRE_PUSH)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            installer.install(force=True)
+
+        message = str(exc_info.value)
+        assert "symbolic link" in message
+        assert "shared-hook" not in message
+        assert link.is_symlink()
+        assert os.readlink(link) == "shared-hook"
+        assert shared.read_bytes() == self.CUSTOMER_SHARED
+        assert not (installer.hooks_dir / "shared-hook.backup").exists()
+        assert not (installer.hooks_dir / "pre-push.backup").exists()
+        assert (installer.hooks_dir / "pre-push").read_bytes() == self.CUSTOMER_PRE_PUSH
+
+    def test_uninstall_refuses_symlinked_hook_and_touches_nothing(
+        self, installer: HooksInstaller
+    ) -> None:
+        """A Traigent hook behind a pre-commit symlink is neither removed nor restored over."""
+        shared = installer.hooks_dir / "shared-hook"
+        shared.write_text(PRE_COMMIT_HOOK_SCRIPT)
+        link = installer.hooks_dir / "pre-commit"
+        link.symlink_to("shared-hook")
+        installer.install(force=False)  # pre-push becomes a regular Traigent hook
+        pre_push = installer.hooks_dir / "pre-push"
+        pre_push_bytes = pre_push.read_bytes()
+
+        with pytest.raises(RuntimeError) as exc_info:
+            installer.uninstall()
+
+        assert "symbolic link" in str(exc_info.value)
+        assert link.is_symlink()
+        assert shared.read_text() == PRE_COMMIT_HOOK_SCRIPT
+        assert pre_push.read_bytes() == pre_push_bytes

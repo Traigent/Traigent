@@ -12,6 +12,7 @@ import asyncio
 import pytest
 
 from traigent.api.decorators import optimize
+from traigent.core.optimized_function import OptimizedFunction
 
 REMOVED_ALIASES = {
     "budget_limit": (
@@ -64,3 +65,72 @@ def test_runtime_optimize_refuses_removed_alias_naming_replacement(name: str) ->
     assert fragment in message
     assert replacement in message
     assert "Unknown keyword" not in message
+
+
+NONE_VALUED_ALIASES = sorted(REMOVED_ALIASES)
+
+
+@pytest.mark.parametrize("name", NONE_VALUED_ALIASES)
+def test_decorator_treats_none_valued_removed_alias_as_absent(name: str) -> None:
+    """``@optimize(<alias>=None)`` builds the decorator like an absent alias."""
+
+    def fn(x: int) -> int:
+        return x
+
+    wrapped = optimize(configuration_space={"a": [1, 2]}, **{name: None})(fn)
+
+    assert hasattr(wrapped, "optimize")
+    assert hasattr(wrapped, "optimize_sync")
+
+
+@pytest.mark.parametrize("name", NONE_VALUED_ALIASES)
+def test_runtime_optimize_treats_none_valued_removed_alias_as_absent(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``.optimize(<alias>=None)`` must not reach the removed-alias or unknown-key checks.
+
+    The spy wraps the real ``_prepare_algorithm_kwargs`` so the real checks run;
+    a regression raises ``TypeError`` from them, which fails the test.
+    """
+    seen: dict[str, object] = {}
+    real_prepare = OptimizedFunction._prepare_algorithm_kwargs
+
+    def spy_prepare(self: OptimizedFunction, kwargs: dict[str, object]) -> object:
+        seen.update(kwargs)
+        return real_prepare(self, kwargs)
+
+    monkeypatch.setattr(OptimizedFunction, "_prepare_algorithm_kwargs", spy_prepare)
+    target = _target()
+
+    try:
+        asyncio.run(target.optimize(**{name: None}))
+    except TypeError as exc:  # the regression: a removed-alias or unknown-key refusal
+        pytest.fail(f"None-valued {name} was refused: {exc}")
+    except Exception:  # noqa: BLE001 - later, unrelated validation may stop the run
+        pass
+
+    assert name not in seen
+
+
+@pytest.mark.parametrize("name", NONE_VALUED_ALIASES)
+def test_optimize_sync_treats_none_valued_removed_alias_as_absent(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: dict[str, object] = {}
+    real_prepare = OptimizedFunction._prepare_algorithm_kwargs
+
+    def spy_prepare(self: OptimizedFunction, kwargs: dict[str, object]) -> object:
+        seen.update(kwargs)
+        return real_prepare(self, kwargs)
+
+    monkeypatch.setattr(OptimizedFunction, "_prepare_algorithm_kwargs", spy_prepare)
+    target = _target()
+
+    try:
+        target.optimize_sync(**{name: None})
+    except TypeError as exc:  # the regression: a removed-alias or unknown-key refusal
+        pytest.fail(f"None-valued {name} was refused: {exc}")
+    except Exception:  # noqa: BLE001 - later, unrelated validation may stop the run
+        pass
+
+    assert name not in seen

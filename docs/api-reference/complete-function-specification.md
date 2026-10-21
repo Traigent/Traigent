@@ -33,7 +33,6 @@ def optimize(
     injection: InjectionOptions | dict[str, Any] | None = None,
     effectuation: bool = False,
     execution: ExecutionOptions | dict[str, Any] | None = None,
-    strategy: str | None = None,
     strategy_params: Mapping[str, Any] | None = None,
     # Multi-agent configuration
     agents: dict[str, AgentDefinition] | None = None,
@@ -205,7 +204,6 @@ async def optimize(
     tvl_spec: str | Path | None = None,
     tvl_environment: str | None = None,
     tvl: TVLOptions | dict[str, Any] | None = None,
-    strategy: str | None = None,
     strategy_params: Mapping[str, Any] | None = None,
     progress_bar: bool | None = None,
     **algorithm_kwargs: Any,

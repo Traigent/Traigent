@@ -43,6 +43,7 @@ Examples:
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import inspect
 import os
@@ -108,6 +109,7 @@ from traigent.core.optimized_function import (
     _reject_removed_strategy_preset,
     _removed_alias_message,
     _removed_mock_parameter_message,
+    _without_none_removed_aliases,
 )
 from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -2940,6 +2942,16 @@ def optimize(  # NOSONAR(S107)
         Set TRAIGENT_DISABLED=1 environment variable to disable all optimization.
         The decorator becomes a pass-through that returns the original function.
     """
+    # A removed alias passed as None means "not passed": strip it before any
+    # check, so @optimize(strategy=None) behaves as if the key were absent.
+    runtime_overrides = _without_none_removed_aliases(runtime_overrides)
+    if isinstance(legacy, dict):
+        legacy = _without_none_removed_aliases(legacy)
+    elif isinstance(legacy, LegacyOptimizeArgs):
+        legacy = dataclasses.replace(
+            legacy, extra=_without_none_removed_aliases(legacy.extra)
+        )
+
     # Explicitly supplied removed parameters are rejected before any shortcut
     # (including the TRAIGENT_DISABLED pass-through below).
     _reject_removed_names_early(runtime_overrides, legacy)

@@ -261,6 +261,21 @@ def _reject_removed_aliases(arguments: Mapping[str, Any]) -> None:
         raise TypeError(_removed_alias_message(name))
 
 
+def _without_none_removed_aliases(arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """Return ``arguments`` without removed-alias keys whose value is ``None``.
+
+    ``None`` means "not passed", so ``strategy=None`` or ``budget_limit=None``
+    must behave exactly as if the key were absent. Stripping happens before any
+    downstream check, because the unknown-keyword check would otherwise refuse
+    the key on its name alone.
+    """
+    return {
+        name: value
+        for name, value in arguments.items()
+        if not (value is None and name in _REMOVED_ALIAS_MESSAGES)
+    }
+
+
 def _reject_removed_strategy_constructor_kwargs(kwargs: Mapping[str, Any]) -> None:
     """Refuse the retired preset arguments passed to ``OptimizedFunction(...)``.
 
@@ -2421,6 +2436,7 @@ class OptimizedFunction(Generic[_P, _R]):
         """
         if not apply:
             raise ConfigurationError(_APPLY_FALSE_WITHDRAWN_MESSAGE)
+        algorithm_kwargs = _without_none_removed_aliases(algorithm_kwargs)
         run_kwargs: dict[str, Any] = {
             "algorithm": algorithm,
             "max_trials": max_trials,
@@ -2667,6 +2683,7 @@ class OptimizedFunction(Generic[_P, _R]):
         """
         if not apply:
             raise ConfigurationError(_APPLY_FALSE_WITHDRAWN_MESSAGE)
+        algorithm_kwargs = _without_none_removed_aliases(algorithm_kwargs)
 
         try:
             loop = asyncio.get_running_loop()
