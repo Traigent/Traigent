@@ -3746,17 +3746,32 @@ Remediation:
         if grid_size is not None and grid_size > max_trials:
             # Issue #2058: the implicit cap silently truncates an exhaustive
             # grid. Counts only; no user content is echoed.
-            logger.warning(
-                "max_trials was not set, so the SDK default cap of %d applies: "
-                "only %d of %d grid combinations will be evaluated and the "
-                "reported best configuration is the best of those, not of the "
-                "whole space. Pass max_trials=%d (or higher) to evaluate the "
-                "full grid.",
-                max_trials,
-                max_trials,
-                grid_size,
-                grid_size,
-            )
+            if grid_size >= _GRID_SIZE_COUNT_CAP:
+                # Counting saturated: the true size is unknown beyond the cap,
+                # so never present it as exact or recommend it as max_trials.
+                logger.warning(
+                    "max_trials was not set, so the SDK default cap of %d applies: "
+                    "only %d of at least %d grid combinations will be evaluated "
+                    "and the reported best configuration is the best of those, "
+                    "not of the whole space. The grid is too large to evaluate "
+                    "exhaustively; narrow the configuration space or set "
+                    "max_trials explicitly.",
+                    max_trials,
+                    max_trials,
+                    grid_size,
+                )
+            else:
+                logger.warning(
+                    "max_trials was not set, so the SDK default cap of %d applies: "
+                    "only %d of %d grid combinations will be evaluated and the "
+                    "reported best configuration is the best of those, not of the "
+                    "whole space. Pass max_trials=%d (or higher) to evaluate the "
+                    "full grid.",
+                    max_trials,
+                    max_trials,
+                    grid_size,
+                    grid_size,
+                )
             self._max_trials_default_notice_logged = True
         elif (
             used_implicit_default_max_trials

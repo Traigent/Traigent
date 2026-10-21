@@ -750,6 +750,43 @@ class TestOptimizedFunction:
                 "max_trials was not set" in r.getMessage() for r in caplog.records
             )
 
+    @pytest.mark.asyncio
+    async def test_implicit_cap_warning_when_grid_count_saturated_2058(
+        self, caplog, mock_function, sample_objectives, sample_dataset, monkeypatch
+    ):
+        """A saturated grid count is worded 'at least N' and not recommended."""
+        import traigent.core.optimized_function as of_mod
+
+        monkeypatch.setattr(of_mod, "_GRID_SIZE_COUNT_CAP", 20)
+        space = {"a": [1, 2, 3, 4], "b": [1, 2, 3], "c": [True, False]}
+        opt_func = OptimizedFunction(
+            func=mock_function,
+            configuration_space=space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+        )
+        with (
+            patch("traigent.core.optimized_function.get_optimizer"),
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator"
+            ) as mock_orch_cls,
+            caplog.at_level("WARNING", logger="traigent.core.optimized_function"),
+        ):
+            mock_orch_cls.return_value.optimize = AsyncMock(
+                side_effect=RuntimeError("stop")
+            )
+            with pytest.raises(Exception, match="stop"):  # noqa: B017
+                await opt_func.optimize(algorithm="grid")
+        warnings = [
+            r.getMessage()
+            for r in caplog.records
+            if r.levelname == "WARNING" and "max_trials was not set" in r.getMessage()
+        ]
+        assert len(warnings) == 1
+        assert "of at least 20 grid combinations" in warnings[0]
+        assert "max_trials=20" not in warnings[0]
+        assert "Pass max_trials=" not in warnings[0]
+
     def test_finite_grid_size_counts_dict_domains_2058(self):
         """Stepped-range and categorical dict axes are counted like grid.py."""
         from traigent.api.parameter_ranges import IntRange
