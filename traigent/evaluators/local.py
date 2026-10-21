@@ -1871,6 +1871,14 @@ class LocalEvaluator(BaseEvaluator):
                         example_result.metrics.pop(key, None)
                 del example_result._sdk_preview_cost_evidence
             example_metric.custom_metrics.update(example_result.metrics)
+            if example_result.metrics.get("cost_unmeasured"):
+                # The evaluator's floor may overlap captured spend: their
+                # relationship is unknown, so take max, never add them.
+                example_metric.cost.known_cost = max(
+                    self._example_cost_floor(example_metric),
+                    float(example_result.metrics.get("cost_lower_bound") or 0.0),
+                )
+                example_metric.cost.unmeasured = True
 
         # Transfer token/cost metrics to example_results if in detailed mode
         if self.detailed:
@@ -3288,8 +3296,8 @@ class LocalEvaluator(BaseEvaluator):
                 or 0.0
             )
             while late := finish_captured_responses():
-                floor += sum(
-                    self._call_cost_floor(
+                for response, requested in late:
+                    floor += self._call_cost_floor(
                         self._price_one_call(
                             response,
                             agent_model=None,
@@ -3297,24 +3305,24 @@ class LocalEvaluator(BaseEvaluator):
                             requested_model=requested,
                         )
                     )
-                    for response, requested in late
-                )
-                enforce_unknown_cost_invariant(
-                    result.aggregated_metrics,
-                    unknown=True,
-                    floor=floor,
-                    sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
-                )
-                if result.summary_stats and isinstance(
-                    result.summary_stats.get("metrics"), dict
-                ):
+                    # Commit each priced contribution before the next call can
+                    # raise: the finally-block budget debit reads this result.
                     enforce_unknown_cost_invariant(
-                        result.summary_stats["metrics"],
+                        result.aggregated_metrics,
                         unknown=True,
                         floor=floor,
-                        nullify=True,
                         sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
                     )
+                    if result.summary_stats and isinstance(
+                        result.summary_stats.get("metrics"), dict
+                    ):
+                        enforce_unknown_cost_invariant(
+                            result.summary_stats["metrics"],
+                            unknown=True,
+                            floor=floor,
+                            nullify=True,
+                            sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
+                        )
         finally:
             # Debit once and close the lease even if strict late pricing raises.
             self._finalize_execution_budget_evaluation(
