@@ -626,6 +626,9 @@ class ProviderValidator:
         try:
             import requests
 
+            from traigent.labels.transport_gate import preflight_requests
+
+            preflight_requests("GET", _OPENROUTER_KEY_URL)
             response = requests.get(
                 _OPENROUTER_KEY_URL,
                 headers={"Authorization": f"Bearer {key}"},
