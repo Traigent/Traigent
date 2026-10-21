@@ -25,7 +25,10 @@ ANTHROPIC_MODEL_PATTERN = (
 # Known Anthropic models (shipped snapshot: 2026-10-21).
 # Keep this in sync with traigent/config/models.yaml.
 KNOWN_ANTHROPIC_MODELS = [
-    # Claude 5.5 family (priced in the litellm table; Anthropic lists as Active, #2689)
+    # Claude 5.5 family (#2689): current Anthropic ids, priced in the upstream
+    # litellm price map but NOT in the bundled 1.103.5 table (see
+    # traigent/providers/validation.py); offline/bundled pricing reports their
+    # cost as unmeasured (strict mode stops), never $0.
     "claude-opus-5-5",
     "claude-sonnet-5-5",
     "claude-haiku-5-5",
