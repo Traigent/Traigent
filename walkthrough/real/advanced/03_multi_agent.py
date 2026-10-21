@@ -79,7 +79,7 @@ generator_agent = AgentDefinition(
     search_type=Choices(["similarity", "mmr"], name="search_type"),
     # Generator parameters
     temperature=Range.temperature(),
-    model=Choices(["gpt-4o-mini", "gpt-4o"], name="model"),
+    model=Choices(["gpt-4.1-mini", "gpt-4.1"], name="model"),
     # Agent configuration
     agents={
         "retriever": retriever_agent,

@@ -60,7 +60,7 @@ def test_simple_qa_mock_varies_by_config() -> None:
     )
     strong_answer = module._mock_answer_for_config(
         hard_question,
-        {"model": "gpt-4o", "temperature": 0.1},
+        {"model": "gpt-4.1", "temperature": 0.1},
     )
 
     assert cheap_answer == "I don't know"
@@ -75,7 +75,7 @@ def test_simple_qa_mock_branch_reads_config_context(monkeypatch) -> None:
     with ConfigurationContext({"model": "gpt-3.5-turbo", "temperature": 0.9}):
         assert module.simple_qa_agent.func(question) == "I don't know"
 
-    with ConfigurationContext({"model": "gpt-4o", "temperature": 0.1}):
+    with ConfigurationContext({"model": "gpt-4.1", "temperature": 0.1}):
         assert module.simple_qa_agent.func(question) == "H2O"
 
 
@@ -89,7 +89,7 @@ def test_custom_objectives_mock_varies_by_config() -> None:
     )
     strong_answer = module._mock_answer_for_config(
         hard_question,
-        {"model": "gpt-4o-mini", "temperature": 0.1, "top_p": 0.9},
+        {"model": "gpt-4.1-mini", "temperature": 0.1, "top_p": 0.9},
     )
 
     assert weak_answer == "I don't know"
@@ -107,6 +107,6 @@ def test_custom_objectives_function_reads_config_context(monkeypatch) -> None:
         assert module.weighted_agent.func(question) == "I don't know"
 
     with ConfigurationContext(
-        {"model": "gpt-4o-mini", "temperature": 0.1, "top_p": 0.9}
+        {"model": "gpt-4.1-mini", "temperature": 0.1, "top_p": 0.9}
     ):
         assert module.weighted_agent.func(question) == "Jupiter"

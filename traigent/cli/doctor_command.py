@@ -226,6 +226,10 @@ def _run_model_checks(
 
         import litellm
 
+        from traigent.utils.cost_calculator import ensure_bundled_provider_prices
+
+        ensure_bundled_provider_prices()
+
         # Exact match only. The previous test was bidirectional substring
         # (`model_id in key or key in model_id`), so an invented id that merely
         # CONTAINS a priced name -- "gpt-4o-of-my-own" -- reported PASS and the

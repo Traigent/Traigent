@@ -578,7 +578,10 @@ objectives:
                 "gpt-3.5",
                 "claude-3",
             ]
-            assert artifact.configuration_space["temperature"] == (0.0, 2.0)
+            # Declared resolution 0.1 makes the range a grid (#1612).
+            assert artifact.configuration_space["temperature"] == [
+                round(i * 0.1, 12) for i in range(21)
+            ]
             assert artifact.configuration_space["use_cot"] == [True, False]
 
     def test_tvars_and_configuration_space_conflict_raises(self) -> None:

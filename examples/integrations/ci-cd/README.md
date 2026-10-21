@@ -130,7 +130,7 @@ This file stores your current production configuration:
 
 ```json
 {
-  "model": "gpt-3.5-turbo",
+  "model": "gpt-4.1-mini",
   "temperature": 0.1,
   "prompt_style": "direct",
   "max_tokens": 50

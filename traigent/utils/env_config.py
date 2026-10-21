@@ -79,6 +79,20 @@ def _check_mock_llm_prod_guard() -> None:
             "ENVIRONMENT!=production. For programmatic mock activation "
             "use traigent.testing.enable_mock_mode_for_quickstart()."
         )
+    # The flag may only have landed now (a ``.env`` loaded after ``import
+    # traigent``): block raw provider HTTP from here on. Idempotent; a failed
+    # install raises so mock mode never runs unguarded (#2418).
+    from traigent.utils.mock_transport_guard import install_mock_transport_guard
+
+    install_mock_transport_guard()
+    # Raw openai/anthropic clients are not mocked on this path either (#2418);
+    # the helper is once-guarded and shared with the in-code activation path.
+    try:
+        from traigent.testing import log_raw_client_scope_caveat
+
+        log_raw_client_scope_caveat()
+    except Exception:  # noqa: BLE001 - a log line must never break import
+        pass
     # Suppress the user-facing deprecation warning when the env var was
     # written by the quickstart bootstrap in ``traigent/__init__.py``
     # (the user IS using the recommended in-code path; the env var is
@@ -212,6 +226,11 @@ def _load_dotenv_files() -> None:
 
 
 _load_dotenv_files()
+
+# Advisory: name (never value) any misspelt TRAIGENT_* variable (#2669).
+from .env_audit import warn_unknown_traigent_env_vars  # noqa: E402
+
+warn_unknown_traigent_env_vars()
 
 _MIN_JWT_SECRET_LENGTH = 32
 _PRODUCTION_ENV_NAMES = {"prod", "production"}

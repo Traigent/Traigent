@@ -8,6 +8,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Failed custom-evaluator rows are now visible (#2422).** When a
+  `custom_evaluator` raises on some but not all rows of a trial, the trial
+  metadata records `custom_evaluator_failed_rows` and
+  `custom_evaluator_total_rows`, and `result.warning_codes` contains
+  `CUSTOM_EVALUATOR_ROWS_FAILED` (per-trial counts in
+  `result.metadata["session_summary"]["custom_evaluator_failed_rows_by_trial"]`).
+  Counts only. Scoring is unchanged: a raising row still scores 0.0 on quality
+  metrics.
 - **`TraceRecord` and `SessionRecord` expose `tenant_id` and `project_id`
   (#2605).** Both are optional and filled from the backend's trace and session
   read responses, so a caller can confirm which project its traces landed in
@@ -140,6 +148,49 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   even when the value is `None`, instead of storing it in `evaluator.config`.
 
 ### Fixed
+
+- **TVL float ranges that declare `resolution` are now a grid (#1612).** A
+  float `range` with a positive `resolution` loads as the discrete values
+  `min, min+resolution, ...` (never above `max`); without `resolution` it stays
+  continuous (unlike the official TVL default step of 0.001). Grids over 10,000
+  points are rejected.
+- **TVL registry domains without a `registry_resolver` fail at load on purpose
+  (#1616).** The docs now say so: it avoids starting an optimisation with a
+  missing setting and differs from the official TVL lazy placeholders.
+- **A strict cost-objective run now stops after its first successful trial
+  that captured no usage, and keeps its result (#2421).** Previously the run
+  billed every trial before raising `UnknownModelError`, and the raise
+  discarded the result. The run now stops with `stop_reason="no_usage_captured"`
+  (scheduling of new trials stops; trials already in flight may finish), and
+  the `UnknownModelError` carries the finished trials as `err.result`. Mock
+  LLM mode and `TRAIGENT_STRICT_COST_ACCOUNTING=false` keep the warning
+  behaviour; failed trials never trigger the stop.
+- **Mock mode now blocks real requests to known LLM provider hosts (#2418).**
+  Raw `openai` / `anthropic` clients inside an optimised function, and LiteLLM
+  calls that supply their own `litellm_logging_obj`, used to reach the real
+  provider (billed if a key was set) while `TRAIGENT_MOCK_LLM=true` or
+  `enable_mock_mode_for_quickstart()` was on. While mock mode is on, any
+  httpx (including `httpx2`), aiohttp or `requests` request to a fixed list of
+  provider hosts now raises `MockModeTransportBlockedError` before connecting.
+  The error names only the host, never the path, query, headers or body. The
+  guard is inert when mock mode is off, and enabling mock mode fails closed if
+  it cannot be installed.
+
+- **`auto_override_frameworks=True` was a silent no-op for sync functions on
+  0.27.0 and earlier (#2420).** The override gate is a `ContextVar`, and the
+  sync evaluator lane ran the function in a worker thread without the caller's
+  context, so the patched framework constructor built the hard-coded model for
+  every trial while the results table showed distinct configs. The sync lane now
+  runs the function inside `copy_context()` of the caller (commit 02413c33,
+  first in the v0.28.0 tag). Async functions were never affected. A regression
+  test runs `optimize_sync()` on a sync function and asserts each trial's
+  constructor values
+  (`tests/unit/evaluators/test_sync_auto_override_context_2420.py`).
+
+  | traigent | auto-override (sync fn) |
+  |---|---|
+  | 0.27.0 and earlier (checked: no context hand-off in the 0.23.0 to 0.27.0 sources) | no-op, silent |
+  | next release containing 02413c33 (the v0.28.0 tag does) | applied |
 
 - **A real `publish_best_config()` no longer raises `CloudBestConfigIntegrityError` after the
   Backend has already committed the publish.** The SDK hashed `provenance` and the unfiltered
@@ -502,7 +553,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Remove the argument at the call site; there is no replacement, because it never had an
   effect.
 
-- **A model with no price is no longer scored as free when you optimize for cost.**
+- **Breaking: a model with no price is no longer scored as free when you optimize for cost.**
   Previously a call whose model had no price table entry and no provider-reported cost
   was recorded as `$0.00`, and because the optimizer minimizes cost it ranked that
   configuration cheapest: an unpriced model won `best_config` over a priced one of
@@ -524,6 +575,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `cost_per_1k` now counts as a cost objective. The LangChain and Pydantic AI callback
   handlers read the setting when constructed, so set
   `TRAIGENT_STRICT_COST_ACCOUNTING=true` explicitly when optimizing through them.
+  Upgrade note (#2421): 0.27.x only warned for both this case and an objective
+  orientation defaulted to `maximize`; from 0.28.0 both are errors.
 
 ### Fixed
 

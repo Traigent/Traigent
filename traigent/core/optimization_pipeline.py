@@ -29,6 +29,7 @@ from traigent.config.types import (
 from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
 from traigent.core.execution_policy_runtime import backend_egress_disabled
 from traigent.core.trace_env import is_trace_enabled
+from traigent.core.objective_preflight import warn_unproducible_objectives
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.evaluators.local import LocalEvaluator
 from traigent.utils.env_config import is_mock_llm
@@ -485,6 +486,75 @@ def build_metric_functions(
     return effective_metric_functions
 
 
+def _edit_distance(a: str, b: str) -> int:
+    """Plain Levenshtein distance (inputs are short metric names)."""
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+def _is_derived_name(key: str, objective: str) -> bool:
+    """True for ``objective_suffix`` / ``suffix_objective`` style distinct names."""
+    for sep in ("_", "-", "."):
+        if key.startswith(objective + sep) or objective.startswith(key + sep):
+            return True
+        if key.endswith(sep + objective) or objective.endswith(sep + key):
+            return True
+    return False
+
+
+def validate_metric_function_keys(
+    metric_functions: dict[str, Callable[..., Any]] | None,
+    objectives: Sequence[str],
+    scoring_function: Callable[..., Any] | None = None,
+) -> None:
+    """Warn when a ``metric_functions`` key looks like a typo of an objective.
+
+    A key naming no objective is legitimate for an auxiliary metric, so it is
+    only rejected when it is a true typo of an objective that would otherwise
+    have no user scorer: a case-only difference, or edit distance <= 2 without a
+    ``name_suffix`` style relationship (``latency_ms`` next to ``latency`` is a
+    distinct auxiliary metric). Objectives covered by ``scoring_function`` count
+    as covered (Traigent#2659).
+
+    This is a name heuristic, so it only logs a warning (key and suggested
+    objective, never values) and never rejects a configuration: a mapping-returning
+    scorer such as ``{"scores": fn}`` is valid.
+    """
+    if not metric_functions:
+        return
+
+    objective_names = [str(o) for o in objectives]
+    covered = build_metric_functions(metric_functions, scoring_function, objectives)
+    uncovered = [o for o in objective_names if o not in covered]
+    for key in metric_functions:
+        key_s = str(key)
+        if key_s in objective_names:
+            continue
+        close = [
+            o
+            for o in uncovered
+            if o.lower() == key_s.lower()
+            or (
+                _edit_distance(key_s.lower(), o.lower()) <= 2
+                and not _is_derived_name(key_s.lower(), o.lower())
+            )
+        ]
+        if close:
+            logger.warning(
+                "metric_functions key '%s' matches no objective; if it is a typo "
+                "your scorer is ignored and the built-in scorer is used for "
+                "'%s'. Did you mean '%s'?",
+                key,
+                close[0],
+                close[0],
+            )
+
+
 def validate_metric_function_bindability(
     effective_metric_functions: dict[str, Callable[..., Any]],
     objectives: Sequence[str],
@@ -715,10 +785,12 @@ def _create_local_evaluator(
     scoring_function: Callable[..., Any] | None,
 ) -> tuple[BaseEvaluator, None]:
     """Create the default local evaluator."""
+    validate_metric_function_keys(metric_functions, objectives, scoring_function)
     effective_metric_fns = build_metric_functions(
         metric_functions, scoring_function, objectives
     )
     validate_metric_function_bindability(effective_metric_fns, objectives)
+    warn_unproducible_objectives(metric_functions, objectives, scoring_function)
     effective_workers = resolve_effective_workers(
         effective_batch_size, effective_thread_workers
     )

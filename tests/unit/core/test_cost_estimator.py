@@ -362,19 +362,13 @@ class TestEstimateOptimizationCost:
 
 
 class TestCheckCostApproval:
-    def test_skips_optimized_function_preflight_in_mock_mode(self) -> None:
-        """Mock provider calls spend $0, so dry-runs skip the pre-run estimate gate."""
+    def test_mock_mode_does_not_skip_approval_preflight_2681(self) -> None:
+        """Raw provider calls can still be real under mock, so approval stays on."""
         enforcer = MagicMock()
         enforcer.check_and_approve.return_value = True
         estimator = CostEstimator(enforcer, max_trials=5, max_total_examples=None)
         with (
-            patch.dict(
-                os.environ,
-                {
-                    "TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT": "true",
-                    "ENVIRONMENT": "development",
-                },
-            ),
+            patch.dict(os.environ, {"ENVIRONMENT": "development"}),
             patch("traigent.utils.env_config.is_mock_llm", return_value=True),
             patch.object(
                 estimator,
@@ -382,9 +376,10 @@ class TestCheckCostApproval:
                 return_value=999.0,
             ) as estimate_cost,
         ):
+            os.environ.pop("TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT", None)
             estimator.check_cost_approval(_FakeDataset())
-        estimate_cost.assert_not_called()
-        enforcer.check_and_approve.assert_not_called()
+        estimate_cost.assert_called_once()
+        enforcer.check_and_approve.assert_called_once()
 
     def test_plain_mock_without_exemption_still_runs_preflight(self) -> None:
         """Mock on but no explicit exemption: the approval preflight must run."""

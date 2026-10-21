@@ -427,7 +427,7 @@ class Validators:
             ):
                 result.add_error(
                     field_name,
-                    f"Path {resolved_path} escapes the allowed directories",
+                    "Path escapes the allowed directories",
                     error_code="SECURITY_ERROR",
                     suggestions=[
                         "Provide a path located within the project workspace "
@@ -451,7 +451,7 @@ class Validators:
             if must_exist and not resolved_path.exists():
                 result.add_error(
                     field_name,
-                    f"Path does not exist: {value}",
+                    "Path does not exist",
                     error_code="NOT_FOUND",
                     suggestions=["Check the file path and ensure the file exists"],
                 )
@@ -459,13 +459,13 @@ class Validators:
             # Type checks
             if must_be_file and resolved_path.exists() and not resolved_path.is_file():
                 result.add_error(
-                    field_name, f"Path is not a file: {value}", error_code="WRONG_TYPE"
+                    field_name, "Path is not a file", error_code="WRONG_TYPE"
                 )
 
             if must_be_dir and resolved_path.exists() and not resolved_path.is_dir():
                 result.add_error(
                     field_name,
-                    f"Path is not a directory: {value}",
+                    "Path is not a directory",
                     error_code="WRONG_TYPE",
                 )
 

@@ -72,8 +72,8 @@ def call_llm(
 
     Supports any model that LiteLLM supports:
     - Groq: "groq/llama-3.3-70b-versatile", "groq/llama-3.1-8b-instant"
-    - OpenAI: "gpt-4o", "gpt-4o-mini"
-    - Anthropic: "claude-3-5-sonnet-latest", "claude-3-haiku-20240307"
+    - OpenAI: "gpt-4.1", "gpt-4.1-mini"
+    - Anthropic: "claude-3-5-sonnet-latest", "claude-haiku-4-5-20251001"
 
     Args:
         messages: List of message dicts with "role" and "content" keys.

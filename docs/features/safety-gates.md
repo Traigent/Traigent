@@ -27,8 +27,9 @@ your provider may still bill you, use one explicit approval:
 - or create the XDG cost approval token (`approved` or `approved:<limit>`).
 
 Approved runs still emit the unpriced-model warning. Mock LLM quickstart mode
-skips this model-pricing preflight, but it is a test/demo mode, not a production
-billing bypass.
+does not skip this model-pricing preflight (raw provider calls can still be real
+under the mock flag); pass `cost_approved=True` or set `TRAIGENT_COST_APPROVED=true`
+for a keyless demo that uses unpriced model names.
 
 To fail before any trial starts, enable strict cost accounting:
 
@@ -81,11 +82,10 @@ trusted root.
 ## Backend Validation Loopback Gate
 
 Loopback backend validation is default-closed. For local backend development,
-use an explicit non-production environment and opt in:
+use an explicit non-production environment:
 
 ```bash
 export ENVIRONMENT=development
-export TRAIGENT_ALLOW_INSECURE_BACKEND=true
 ```
 
 Do not use this override for production.

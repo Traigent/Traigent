@@ -19,16 +19,16 @@ The DSL supports **three equivalent syntax styles**, allowing developers to choo
 from traigent import Range, Choices, implies, when
 
 temperature = Range(0.0, 2.0)
-model = Choices(["gpt-4", "gpt-3.5-turbo"])
+model = Choices(["gpt-4.1", "gpt-4.1-mini"])
 
 # 1. Functional style (canonical, explicit)
-implies(model.equals("gpt-4"), temperature.lte(0.7))
+implies(model.equals("gpt-4.1"), temperature.lte(0.7))
 
 # 2. Operator style (concise, formula-like)
-model.equals("gpt-4") >> temperature.lte(0.7)
+model.equals("gpt-4.1") >> temperature.lte(0.7)
 
 # 3. Fluent style (readable)
-when(model.equals("gpt-4")).then(temperature.lte(0.7))
+when(model.equals("gpt-4.1")).then(temperature.lte(0.7))
 ```
 
 All three produce semantically identical `Constraint` objects.
@@ -59,14 +59,14 @@ All three produce semantically identical `Constraint` objects.
 The original constraint API used a functional style:
 
 ```python
-implies(model.equals("gpt-4"), temp.lte(0.7))
+implies(model.equals("gpt-4.1"), temp.lte(0.7))
 ```
 
 While explicit, this becomes cumbersome for complex constraints:
 
 ```python
 implies(
-    and_(model.equals("gpt-4"), temp.lte(0.5)),
+    and_(model.equals("gpt-4.1"), temp.lte(0.5)),
     or_(max_tokens.gte(1000), top_p.equals(1.0))
 )
 ```
@@ -76,7 +76,7 @@ implies(
 A formula-style DSL using Python operators:
 
 ```python
-(model.equals("gpt-4") & temp.lte(0.5)) >> (max_tokens.gte(1000) | top_p.equals(1.0))
+(model.equals("gpt-4.1") & temp.lte(0.5)) >> (max_tokens.gte(1000) | top_p.equals(1.0))
 ```
 
 This is:
@@ -102,14 +102,14 @@ This is:
 
 | Method | Meaning | Example |
 |--------|---------|---------|
-| `.equals(v)` | Equal to | `model.equals("gpt-4")` |
-| `.not_equals(v)` | Not equal to | `model.not_equals("gpt-4")` |
+| `.equals(v)` | Equal to | `model.equals("gpt-4.1")` |
+| `.not_equals(v)` | Not equal to | `model.not_equals("gpt-4.1")` |
 | `.gt(v)` | Greater than | `temp.gt(0.5)` |
 | `.gte(v)` | Greater than or equal | `temp.gte(0.5)` |
 | `.lt(v)` | Less than | `temp.lt(1.0)` |
 | `.lte(v)` | Less than or equal | `temp.lte(1.0)` |
-| `.is_in([...])` | In set of values (Choices only) | `model.is_in(["gpt-4", "gpt-4o"])` |
-| `.not_in([...])` | Not in set (Choices only) | `model.not_in(["gpt-3.5"])` |
+| `.is_in([...])` | In set of values (Choices only) | `model.is_in(["gpt-4.1", "gpt-4o"])` |
+| `.not_in([...])` | Not in set (Choices only) | `model.not_in(["gpt-4.1-mini"])` |
 | `.in_range(lo, hi)` | Within range (numeric ranges) | `temp.in_range(0.3, 0.7)` |
 
 ### Constraint Builders
@@ -205,8 +205,8 @@ The original, explicit API:
 ```python
 from traigent import implies, require
 
-# Implication: if model is gpt-4, then temperature must be <= 0.7
-implies(model.equals("gpt-4"), temperature.lte(0.7))
+# Implication: if model is gpt-4.1, then temperature must be <= 0.7
+implies(model.equals("gpt-4.1"), temperature.lte(0.7))
 
 # Requirement: temperature must always be <= 1.5
 require(temperature.lte(1.5))
@@ -223,16 +223,16 @@ Concise notation using Python operators:
 
 ```python
 # Implication using >>
-model.equals("gpt-4") >> temperature.lte(0.7)
+model.equals("gpt-4.1") >> temperature.lte(0.7)
 
 # Combined conditions
-(model.equals("gpt-4") & temperature.lte(0.5)) >> max_tokens.gte(1000)
+(model.equals("gpt-4.1") & temperature.lte(0.5)) >> max_tokens.gte(1000)
 
 # Negation
-~model.equals("gpt-4") >> temperature.gte(0.8)
+~model.equals("gpt-4.1") >> temperature.gte(0.8)
 
 # Disjunction
-model.equals("gpt-4") >> (top_p.equals(1.0) | temperature.lte(0.5))
+model.equals("gpt-4.1") >> (top_p.equals(1.0) | temperature.lte(0.5))
 ```
 
 **When to use**:
@@ -247,10 +247,10 @@ Natural-language-like API using `when().then()`:
 ```python
 from traigent import when
 
-when(model.equals("gpt-4")).then(temperature.lte(0.7))
+when(model.equals("gpt-4.1")).then(temperature.lte(0.7))
 
 # Also supports .implies() method
-model.equals("gpt-4").implies(temperature.lte(0.7))
+model.equals("gpt-4.1").implies(temperature.lte(0.7))
 ```
 
 **When to use**:
@@ -267,8 +267,8 @@ model.equals("gpt-4").implies(temperature.lte(0.7))
 "If A then B" - when A is true, B must also be true:
 
 ```python
-model.equals("gpt-4") >> temperature.lte(0.7)
-# Semantics: not(model == "gpt-4") or (temperature <= 0.7)
+model.equals("gpt-4.1") >> temperature.lte(0.7)
+# Semantics: not(model == "gpt-4.1") or (temperature <= 0.7)
 ```
 
 ### Conjunction (`&`)
@@ -276,7 +276,7 @@ model.equals("gpt-4") >> temperature.lte(0.7)
 "A and B" - both must be true:
 
 ```python
-model.equals("gpt-4") & temperature.lte(0.7)
+model.equals("gpt-4.1") & temperature.lte(0.7)
 # Creates AndCondition, can be used in larger expressions
 ```
 
@@ -285,7 +285,7 @@ model.equals("gpt-4") & temperature.lte(0.7)
 "A or B" - at least one must be true:
 
 ```python
-model.equals("gpt-4") | model.equals("gpt-4o")
+model.equals("gpt-4.1") | model.equals("gpt-4o")
 # Creates OrCondition
 ```
 
@@ -294,7 +294,7 @@ model.equals("gpt-4") | model.equals("gpt-4o")
 "not A" - A must be false:
 
 ```python
-~model.equals("gpt-4")
+~model.equals("gpt-4.1")
 # Creates NotCondition
 ```
 
@@ -303,14 +303,14 @@ model.equals("gpt-4") | model.equals("gpt-4o")
 Build complex constraints by combining operators:
 
 ```python
-# If using gpt-4 AND low temperature, then require high max_tokens
-(model.equals("gpt-4") & temperature.lte(0.5)) >> max_tokens.gte(1000)
+# If using gpt-4.1 AND low temperature, then require high max_tokens
+(model.equals("gpt-4.1") & temperature.lte(0.5)) >> max_tokens.gte(1000)
 
-# If NOT using gpt-4, allow any temperature
-~model.equals("gpt-4") >> temperature.in_range(0.0, 2.0)
+# If NOT using gpt-4.1, allow any temperature
+~model.equals("gpt-4.1") >> temperature.in_range(0.0, 2.0)
 
-# Model must be either gpt-4 or gpt-4o when temperature is high
-temperature.gt(1.0) >> (model.equals("gpt-4") | model.equals("gpt-4o"))
+# Model must be either gpt-4.1 or gpt-4o when temperature is high
+temperature.gt(1.0) >> (model.equals("gpt-4.1") | model.equals("gpt-4o"))
 ```
 
 ---
@@ -337,10 +337,10 @@ Worse: since `b >> c` returns a `Constraint` (not a `BoolExpr`), the expression 
 ```python
 # WRONG: This raises TypeError because (temp.lte(0.5) >> max_tokens.gte(1000))
 # returns a Constraint, and Condition & Constraint is not supported.
-model.equals("gpt-4") & temp.lte(0.5) >> max_tokens.gte(1000)
+model.equals("gpt-4.1") & temp.lte(0.5) >> max_tokens.gte(1000)
 
 # CORRECT: Use parentheses
-(model.equals("gpt-4") & temp.lte(0.5)) >> max_tokens.gte(1000)
+(model.equals("gpt-4.1") & temp.lte(0.5)) >> max_tokens.gte(1000)
 ```
 
 ### Rule of Thumb
@@ -371,7 +371,7 @@ A >> (B | C)
 Create an implication constraint.
 
 ```python
-implies(model.equals("gpt-4"), temp.lte(0.7))
+implies(model.equals("gpt-4.1"), temp.lte(0.7))
 ```
 
 #### `require(expr: BoolExpr) -> Constraint`
@@ -387,7 +387,7 @@ require(temp.lte(1.5))  # Always enforced
 Start a fluent constraint builder.
 
 ```python
-when(model.equals("gpt-4")).then(temp.lte(0.7))
+when(model.equals("gpt-4.1")).then(temp.lte(0.7))
 ```
 
 #### `normalize_constraints(constraints: list, var_names: dict[int, str] | None = None) -> list[Callable]`
@@ -412,11 +412,11 @@ Convert a list of `Constraint` objects into callables for the decorator.
 ```python
 from traigent import Choices, Range, constraints_to_callables, implies
 
-model = Choices(["gpt-4", "gpt-3.5"], name="model")
+model = Choices(["gpt-4.1", "gpt-4.1-mini"], name="model")
 temp = Range(0.0, 2.0, name="temperature")
 
 constraint_fns = constraints_to_callables([
-    implies(model.equals("gpt-4"), temp.lte(0.7)),
+    implies(model.equals("gpt-4.1"), temp.lte(0.7)),
 ])
 ```
 
@@ -517,7 +517,7 @@ Compound expressions (`AndCondition`, `OrCondition`, `NotCondition`) need to sha
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      User Code                              │
-│  model.equals("gpt-4") >> temp.lte(0.7)                    │
+│  model.equals("gpt-4.1") >> temp.lte(0.7)                    │
 └───────────────────────────┬─────────────────────────────────┘
                             │
                             ▼
@@ -568,19 +568,19 @@ from traigent import Range, IntRange, Choices, implies, require, when
 # Define parameter ranges
 temperature = Range(0.0, 2.0)
 max_tokens = IntRange(100, 4096)
-model = Choices(["gpt-4", "gpt-4o", "gpt-3.5-turbo"])
+model = Choices(["gpt-4.1", "gpt-4o", "gpt-4.1-mini"])
 top_p = Range(0.0, 1.0)
 
 # Define constraints
 constraints = [
     # GPT-4 requires lower temperature
-    model.equals("gpt-4") >> temperature.lte(0.7),
+    model.equals("gpt-4.1") >> temperature.lte(0.7),
 
     # High temperature requires top_p = 1.0
     temperature.gt(1.0) >> top_p.equals(1.0),
 
     # GPT-3.5 with low temp needs more tokens
-    (model.equals("gpt-3.5-turbo") & temperature.lte(0.3)) >> max_tokens.gte(2000),
+    (model.equals("gpt-4.1-mini") & temperature.lte(0.3)) >> max_tokens.gte(2000),
 
     # Global requirement
     require(max_tokens.gte(100)),
@@ -592,7 +592,7 @@ constraints = [
 ```python
 # Premium models with conservative settings need high token limits
 (
-    (model.equals("gpt-4") | model.equals("gpt-4o"))
+    (model.equals("gpt-4.1") | model.equals("gpt-4o"))
     & temperature.lte(0.5)
     & top_p.lte(0.9)
 ) >> max_tokens.gte(2000)
@@ -600,8 +600,8 @@ constraints = [
 # Either use high temperature OR high top_p, not both
 ~(temperature.gt(1.0) & top_p.gt(0.9))
 
-# If NOT using gpt-4, then allow creative settings
-~model.equals("gpt-4") >> (temperature.gt(1.0) | top_p.gt(0.9))
+# If NOT using gpt-4.1, then allow creative settings
+~model.equals("gpt-4.1") >> (temperature.gt(1.0) | top_p.gt(0.9))
 ```
 
 ### In Decorator
@@ -610,7 +610,7 @@ constraints = [
 from traigent import optimize, Range, Choices, get_config
 
 temperature = Range(0.0, 2.0)
-model = Choices(["gpt-4", "gpt-3.5-turbo"])
+model = Choices(["gpt-4.1", "gpt-4.1-mini"])
 
 @optimize(
     configuration_space={
@@ -618,7 +618,7 @@ model = Choices(["gpt-4", "gpt-3.5-turbo"])
         "model": model,
     },
     constraints=[
-        model.equals("gpt-4") >> temperature.lte(0.7),
+        model.equals("gpt-4.1") >> temperature.lte(0.7),
     ],
 )
 def my_llm_call(prompt: str):
@@ -718,7 +718,7 @@ Every `BoolExpr` and `Constraint` has an `explain()` method that returns a human
 ```python
 from traigent import Range, Choices, implies, require
 
-model = Choices(["gpt-4", "gpt-3.5"], name="model")
+model = Choices(["gpt-4.1", "gpt-4.1-mini"], name="model")
 temp = Range(0.0, 2.0, name="temperature")
 
 # Explain a condition
@@ -727,14 +727,14 @@ print(cond.explain())
 # Output: "temperature is at most 0.7"
 
 # Explain a compound condition
-compound = model.equals("gpt-4") & temp.lte(0.5)
+compound = model.equals("gpt-4.1") & temp.lte(0.5)
 print(compound.explain())
-# Output: "model equals 'gpt-4' AND temperature is at most 0.5"
+# Output: "model equals 'gpt-4.1' AND temperature is at most 0.5"
 
 # Explain a full constraint
-c = implies(model.equals("gpt-4"), temp.lte(0.7))
+c = implies(model.equals("gpt-4.1"), temp.lte(0.7))
 print(c.explain())
-# Output: "IF model equals 'gpt-4' THEN temperature is at most 0.7"
+# Output: "IF model equals 'gpt-4.1' THEN temperature is at most 0.7"
 
 # Explain a requirement
 r = require(temp.lte(1.5))

@@ -109,7 +109,7 @@ def _json_accuracy(
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.0, 0.3],
         "format_hint": ["json", "plain"],
     },
@@ -123,7 +123,7 @@ def extract_json(text: str) -> str:
     cfg = traigent.get_config()
     hint = cfg.get("format_hint", "json")
     llm = ChatOpenAI(
-        model=cfg.get("model", "gpt-3.5-turbo"), temperature=cfg.get("temperature", 0.0)
+        model=cfg.get("model", "gpt-4.1-mini"), temperature=cfg.get("temperature", 0.0)
     )
     instr = "Return a JSON object with keys: name, email, amount."
     if hint == "json":

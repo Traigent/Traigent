@@ -182,7 +182,7 @@ they were declared in `@optimize`.
 # Context injection (default)
 @traigent.optimize(
     eval_dataset="math.jsonl",
-    configuration_space={"model": ["openai/gpt-4.1-nano", "openai/gpt-4.1"]},
+    configuration_space={"model": ["openai/gpt-4.1-mini", "openai/gpt-4.1"]},
     plateau_window=5,
     plateau_epsilon=1e-5,
     cost_limit=0.5,

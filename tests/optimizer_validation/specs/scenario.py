@@ -178,9 +178,11 @@ class TestScenario:
 
     # Core configuration
     injection_mode: Literal["context", "parameter", "seamless"] = "context"
-    execution_mode: Literal[
-        "edge_analytics", "privacy", "hybrid", "standard", "cloud"
-    ] = "edge_analytics"
+    # Real modes come from traigent.config.types.ExecutionMode (local, hybrid,
+    # hybrid_api). Removed/legacy selectors (edge_analytics, privacy, cloud,
+    # standard) may still be passed as a plain string, but only by explicit
+    # fail-closed negative tests.
+    execution_mode: str = "local"
 
     # Configuration space
     config_space: dict[str, Any] = field(default_factory=dict)

@@ -89,7 +89,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Evaluate RAG agent with given config."
     )
-    parser.add_argument("--model", default="gpt-4o-mini")
+    parser.add_argument("--model", default="gpt-4.1-mini")
     parser.add_argument("--temperature", type=float, default=0.3)
     parser.add_argument("--max-tokens", type=int, default=200)
     parser.add_argument("--instructions", choices=["direct", "CoT"], default="direct")

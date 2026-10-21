@@ -134,7 +134,7 @@ from litellm import completion
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4o-mini", "claude-3-haiku-20240307", "gemini/gemini-pro"],
+        "model": ["gpt-4o-mini", "claude-haiku-4-5-20251001", "gemini/gemini-pro"],
     },
     objectives=["accuracy"],
     eval_dataset="data/qa_samples.jsonl",

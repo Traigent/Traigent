@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -14,7 +15,9 @@ else:
     for _depth in range(1, 7):
         try:
             _repo_root = _module_path.parents[_depth]
-            if (_repo_root / "traigent").is_dir() and (_repo_root / "examples").is_dir():
+            if (_repo_root / "traigent").is_dir() and (
+                _repo_root / "examples"
+            ).is_dir():
                 if str(_repo_root) not in sys.path:
                     sys.path.insert(0, str(_repo_root))
                 break
@@ -44,7 +47,7 @@ except ImportError:  # pragma: no cover - support IDE execution paths
 
 # Your original code:
 def original_function():
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.7)
     response = llm.invoke("Hello")
     return getattr(response, "content", str(response))
 
@@ -65,11 +68,11 @@ def my_function():
 
     optimal_config = traigent.get_config()
     if not isinstance(optimal_config, dict):
-        optimal_config = {"model": "gpt-4o-mini", "temperature": 0.3}
+        optimal_config = {"model": "gpt-4.1-mini", "temperature": 0.3}
 
     # Your code sees this, but Traigent modified the parameters:
     llm = ChatOpenAI(
-        model=optimal_config["model"],  # Was "gpt-3.5-turbo", now "gpt-4o-mini"
+        model=optimal_config["model"],  # Was "gpt-4.1-mini", now "gpt-4.1"
         temperature=optimal_config["temperature"],  # Was 0.7, now 0.3
     )
     response = llm.invoke("Hello")

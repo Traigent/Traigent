@@ -206,12 +206,18 @@ class TestPromotionPolicy:
             PromotionPolicy(min_effect={"accuracy": -0.01})
 
     def test_get_epsilon(self) -> None:
-        """get_epsilon returns configured or default value."""
+        """get_epsilon returns the configured value or the explicit default."""
         policy = PromotionPolicy(min_effect={"accuracy": 0.01, "latency": 5.0})
         assert policy.get_epsilon("accuracy") == 0.01
         assert policy.get_epsilon("latency") == 5.0
-        assert policy.get_epsilon("unknown") == 0.0
+        assert policy.get_epsilon("unknown", default=0.0) == 0.0
         assert policy.get_epsilon("unknown", default=0.1) == 0.1
+
+    def test_get_epsilon_missing_without_default_raises(self) -> None:
+        """A missing min_effect entry is never silently treated as 0.0."""
+        policy = PromotionPolicy(min_effect={"accuracy": 0.01})
+        with pytest.raises(ValueError, match="unknown"):
+            policy.get_epsilon("unknown")
 
     def test_from_dict(self) -> None:
         """PromotionPolicy.from_dict works correctly."""

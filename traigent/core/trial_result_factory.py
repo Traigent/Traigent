@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -199,8 +200,17 @@ def _build_warning_codes(
     return []
 
 
-def _build_fallback_comparability(eval_result: Any) -> dict[str, Any]:
-    """Build comparability metadata when evaluator did not provide one."""
+def _build_fallback_comparability(
+    eval_result: Any, run_primary_objective: str | None = None
+) -> dict[str, Any]:
+    """Build comparability metadata when evaluator did not provide one.
+
+    ``run_primary_objective`` is the run's real primary objective. When given,
+    coverage and eligibility are reported for IT, not for a metric guessed from
+    whatever happens to be present (which reported ``ranking_eligible=True`` for
+    an unrelated token metric while the selector excluded the trial for partial
+    coverage of the real objective; Traigent#2664).
+    """
     total_examples, example_results, has_detailed_example_results = (
         _infer_total_examples(eval_result)
     )
@@ -220,7 +230,10 @@ def _build_fallback_comparability(eval_result: Any) -> dict[str, Any]:
         for metric_name, count in per_metric_counts.items()
     }
 
-    primary_objective = _select_primary_objective(per_metric_counts)
+    if run_primary_objective and run_primary_objective != "unknown":
+        primary_objective = run_primary_objective
+    else:
+        primary_objective = _select_primary_objective(per_metric_counts)
     evaluation_mode = _infer_evaluation_mode(
         has_detailed_example_results,
         per_metric_counts,
@@ -320,6 +333,13 @@ def _build_success_trial_metadata(
     model_costs = getattr(eval_result, "model_costs", None)
     if isinstance(model_costs, list) and model_costs:
         trial_metadata["model_costs"] = model_costs
+
+    summary_stats = getattr(eval_result, "summary_stats", None)
+    if isinstance(summary_stats, dict):
+        for key in ("custom_evaluator_failed_rows", "custom_evaluator_total_rows"):
+            value = summary_stats.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                trial_metadata[key] = value
 
     provider_summary = _provider_failure_summary(eval_result, examples_attempted)
     if provider_summary is not None:
@@ -478,7 +498,9 @@ def _reconcile_cost_with_total_cost(metrics: dict[str, Any], trial_id: str) -> N
     )
 
 
-def _extract_success_comparability(eval_result: Any) -> dict[str, Any]:
+def _extract_success_comparability(
+    eval_result: Any, run_primary_objective: str | None = None
+) -> dict[str, Any]:
     """Resolve comparability metadata from evaluator output or fallback synthesis."""
     comparability_payload = _validated_comparability_payload(
         getattr(eval_result, "comparability", None)
@@ -496,7 +518,7 @@ def _extract_success_comparability(eval_result: Any) -> dict[str, Any]:
             if summary_comp is not None:
                 return summary_comp
 
-    return _build_fallback_comparability(eval_result)
+    return _build_fallback_comparability(eval_result, run_primary_objective)
 
 
 def _validated_comparability_payload(
@@ -650,7 +672,9 @@ def build_success_result(
             eval_result.summary_stats
         )
 
-    trial_result.metadata["comparability"] = _extract_success_comparability(eval_result)
+    trial_result.metadata["comparability"] = _extract_success_comparability(
+        eval_result, primary_objective
+    )
 
     # Populate the optimization signal on the trial (issue #1845). Prefer the
     # primary objective's value (what best_config argmaxes); fall back to the
@@ -668,6 +692,25 @@ def build_success_result(
     )
 
     return trial_result
+
+
+_CONSTRAINT_REJECTION_PREFIX = "trial_rejected_by_constraint"
+_PRUNED_WITHOUT_RESULTS_COUNT = 0
+
+
+def _warn_pruned_without_example_results(trial_id: str, step: Any) -> None:
+    """WARNING for the first unexpected result-less prune, DEBUG after that."""
+    global _PRUNED_WITHOUT_RESULTS_COUNT
+    _PRUNED_WITHOUT_RESULTS_COUNT += 1
+    level = logging.WARNING if _PRUNED_WITHOUT_RESULTS_COUNT == 1 else logging.DEBUG
+    logger.log(
+        level,
+        "⚠️ No example_results in TrialPrunedError for pruned trial %s "
+        "(step=%s, occurrence %d; later occurrences are logged at DEBUG)",
+        trial_id,
+        step,
+        _PRUNED_WITHOUT_RESULTS_COUNT,
+    )
 
 
 def build_pruned_result(
@@ -722,12 +765,12 @@ def build_pruned_result(
             len(prune_error.example_results),
             trial_id,
         )
+    elif str(prune_error).startswith(_CONSTRAINT_REJECTION_PREFIX):
+        # The user's own constraints= excluded this config: an intended
+        # exclusion that never carries example results, not a failure.
+        logger.info("Trial %s skipped by constraint", trial_id)
     else:
-        logger.warning(
-            "⚠️ No example_results in TrialPrunedError for pruned trial %s (step=%s)",
-            trial_id,
-            prune_error.step,
-        )
+        _warn_pruned_without_example_results(trial_id, prune_error.step)
 
     metrics: dict[str, float] = {}
     if progress_state:

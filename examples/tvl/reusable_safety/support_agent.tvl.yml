@@ -41,11 +41,10 @@ tvars:
   - name: model
     type: enum[str]
     domain:
-      - "gpt-4o-mini"          # Cost-efficient
-      - "gpt-3.5-turbo"        # Very cost-efficient
-      - "claude-3-haiku-20240307"  # Fast and cheap
+      - "gpt-4.1-mini"          # Cost-efficient
+      - "claude-haiku-4-5-20251001"  # Fast and cheap
       - "claude-3-5-sonnet-latest"  # Higher quality fallback
-    default: "gpt-4o-mini"
+    default: "gpt-4.1-mini"
 
   - name: temperature
     type: float

@@ -11,14 +11,18 @@ stages:
       - data/prepared
 
   optimize:
-    cmd: >-
-      python -m traigent.cli optimize
-      --config configs/auto_tune_config.yaml
-      --output optimization_results/latest.json
+    cmd:
+      - >-
+        python -m traigent optimize optimize_target.py
+        --algorithm ${optimize.strategy}
+        --max-trials ${optimize.max_trials}
+        --timeout ${optimize.timeout}
+        --output-dir optimization_results
+      - python export_results.py optimization_results
     deps:
-      - traigent/
+      - optimize_target.py
+      - export_results.py
       - data/prepared
-      - configs/auto_tune_config.yaml
     params:
       - optimize.max_trials
       - optimize.strategy

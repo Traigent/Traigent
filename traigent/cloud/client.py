@@ -100,7 +100,7 @@ _CLIENT_SESSION_NOT_INITIALIZED = "Client session not initialized"
 _AGENT_SPEC_REQUIRED = "agent_spec is required"
 CLOUD_REMOTE_EXECUTION_UNAVAILABLE = (
     "Cloud remote execution is not available yet; use hybrid for "
-    "portal-tracked optimization. Supported modes are local/edge_analytics "
+    "portal-tracked optimization. Supported modes are local "
     "and hybrid."
 )
 
@@ -117,7 +117,7 @@ class CloudEgressBlockedError(OfflineModeError):
                 "Unset TRAIGENT_OFFLINE/TRAIGENT_OFFLINE_MODE or clear the "
                 "runtime no_egress policy before using backend communication."
             ),
-            docs_link="https://github.com/Traigent/Traigent#offline-mode",
+            docs_link="https://github.com/Traigent/Traigent#optimization-routing",
         )
 
 

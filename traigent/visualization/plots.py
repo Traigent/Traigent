@@ -571,7 +571,10 @@ class PlotGenerator:
         lines.append(f"Function: {getattr(result, 'function_name', 'unknown')}")
         lines.append(f"Algorithm: {result.algorithm}")
         lines.append(f"Objectives: {', '.join(result.objectives)}")
-        lines.append(f"Duration: {result.duration:.1f}s")
+        duration = getattr(result, "duration", None)
+        lines.append(
+            f"Duration: {duration:.1f}s" if duration is not None else "Duration: N/A"
+        )
         lines.append(f"Total trials: {len(result.trials)}")
         lines.append(f"Successful trials: {len(result.successful_trials)}")
         lines.append(f"Success rate: {result.success_rate:.1%}")

@@ -131,6 +131,12 @@ def generate_config(
     except FileNotFoundError:
         click.echo(f"File not found: {path}", err=True)
         raise SystemExit(1) from None
+    except SyntaxError as exc:
+        click.echo(
+            f"Error: could not parse {path.name}: syntax error at line {exc.lineno}",
+            err=True,
+        )
+        raise SystemExit(1) from None
     except Exception as exc:
         click.echo(f"Error: {exc}", err=True)
         raise SystemExit(1) from None

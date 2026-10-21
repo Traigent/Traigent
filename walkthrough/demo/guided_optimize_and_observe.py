@@ -37,7 +37,7 @@ from traigent.observability import (
 )
 
 DEFAULT_BASELINE_CONFIG: dict[str, Any] = {
-    "model": "gpt-4o-mini",
+    "model": "gpt-4.1-mini",
     "temperature": 0.7,
     "response_style": "bullet",
 }

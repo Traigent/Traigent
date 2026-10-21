@@ -211,7 +211,9 @@ class AutoConfigResult:
         )
 
         spec: dict[str, Any] = config_space.to_tvl_spec()
-        spec["header"] = {"module": module_name}
+        # The loader reads the module header from the ``tvl`` section; a
+        # ``header`` section is rejected as an unknown top-level key (#2647).
+        spec["tvl"] = {"module": module_name}
 
         # Append structural constraints from the pipeline (stored as code
         # strings, not live Constraint objects, so we add them directly).
@@ -237,7 +239,7 @@ class AutoConfigResult:
             ]
 
         if self.safety_constraints:
-            spec["safety"] = [
+            spec["safety_constraints"] = [
                 {
                     "metric": sc.metric_name,
                     "operator": sc.operator,

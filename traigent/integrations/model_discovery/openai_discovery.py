@@ -41,6 +41,16 @@ class OpenAIDiscovery(ModelDiscovery):
             return None
         return self._fingerprint(api_key, base_url, organization, project)
 
+    def _fetch_live_model_ids(self) -> list[str]:
+        """List every model ID the API key can see (no prefix filtering)."""
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            return []
+        from openai import OpenAI
+
+        client = OpenAI(api_key=api_key)
+        return [m.id for m in client.models.list().data]
+
     def _fetch_models_from_sdk(self) -> list[str]:
         """Fetch models from OpenAI SDK.
 

@@ -50,7 +50,7 @@ RESULTS_DIR = os.getenv("TRAIGENT_RESULTS_FOLDER", "./local_results")
 OBJECTIVES = ["accuracy"]
 # Valid model names: https://models.litellm.ai/
 CONFIG_SPACE = {
-    "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+    "model": ["gpt-4.1-mini", "gpt-4.1"],
     "temperature": [0.1, 0.5],
 }
 

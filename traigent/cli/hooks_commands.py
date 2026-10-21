@@ -224,6 +224,7 @@ def validate(target: str, config: str | None, exit_code: bool, verbose: bool) ->
     console.print(f"Found {len(results)} decorated function(s)\n")
 
     has_failures = False
+    has_warnings = False
 
     for result in results:
         # Function header
@@ -253,6 +254,8 @@ def validate(target: str, config: str | None, exit_code: bool, verbose: bool) ->
                 console.print(f"    [dim]Suggestion: {issue.suggestion}[/dim]")
 
         # Warnings
+        if result.warnings:
+            has_warnings = True
         for warning in result.warnings:
             console.print(f"  [yellow]WARNING[/yellow]: {warning.message}")
 
@@ -265,6 +268,10 @@ def validate(target: str, config: str | None, exit_code: bool, verbose: bool) ->
     console.print("[bold]Summary:[/bold]")
     console.print(f"  [green]Passed[/green]: {passed}")
     console.print(f"  [red]Failed[/red]: {failed}")
+
+    if not has_failures and has_warnings and hooks_config.fail_on_warning:
+        has_failures = True
+        console.print("\n[red]Warnings present and fail_on_warning is enabled.[/red]")
 
     if has_failures:
         console.print("\n[red]Validation failed![/red]")
@@ -281,15 +288,30 @@ def check(quick: bool) -> None:
 
     Performs a lightweight check suitable for pre-commit hooks.
     """
-    from traigent.hooks.config import find_config_file, load_hooks_config
+    from traigent.hooks.config import (
+        find_config_file,
+        find_unknown_config_keys,
+        load_hooks_config,
+    )
 
     # Just verify config can be loaded
     config_path = find_config_file()
 
     if config_path:
         try:
-            load_hooks_config(config_path)
+            loaded = load_hooks_config(config_path)
+            unknown = find_unknown_config_keys(loaded.raw_config)
+            for key, hint in unknown:
+                msg = f"Unknown config key '{key}' would be ignored"
+                if hint:
+                    msg += f" (did you mean '{hint}'?)"
+                console.print(f"[red]Error: {msg}[/red]", markup=True)
+            if unknown:
+                console.print("[red]Configuration invalid[/red]")
+                raise SystemExit(1)
             console.print("[green]Configuration valid[/green]")
+        except SystemExit:
+            raise
         except Exception as e:
             console.print(f"[red]Configuration error: {e}[/red]")
             raise SystemExit(1) from e

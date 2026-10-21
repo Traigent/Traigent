@@ -357,3 +357,22 @@ def test_quickstart_command_wraps_packaged_main(
 
     assert result.exit_code == 0
     assert called == [True]
+
+
+def test_mcp_offer_is_gated_on_the_register_subcommand(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The offer must probe the same subcommand it runs (#2628)."""
+    seen: list[list[str]] = []
+
+    def fake_run(argv: list[str], **_: object) -> types.SimpleNamespace:
+        seen.append(argv)
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(onboard_commands.shutil, "which", lambda _: "/bin/traigent")
+    monkeypatch.setattr(onboard_commands.subprocess, "run", fake_run)
+
+    assert onboard_commands._mcp_help_succeeds() is True
+    assert seen == [["/bin/traigent", "mcp", "register", "--help"]]
+    offered = onboard_commands._mcp_registration_command("claude")
+    assert offered[:3] == ["traigent", "mcp", "register"]

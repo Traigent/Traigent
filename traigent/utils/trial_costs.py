@@ -65,6 +65,27 @@ def is_cost_unmeasured(metrics: Any) -> bool:
     )
 
 
+def is_cost_unranked(metrics: Any) -> bool:
+    """True when a trial's cost must not take part in cost ranking (Traigent#2539).
+
+    Covers ``cost_unmeasured`` (unknown spend) and ``cost_unpriced`` (some call
+    could not be priced, so a non-strict run recorded a placeholder ``$0``).
+    Either way the number is a floor or a stray zero, never a ranking value.
+    Ranking surfaces use this; upload/budget paths keep ``is_cost_unmeasured``.
+    """
+    if is_cost_unmeasured(metrics):
+        return True
+    if not isinstance(metrics, Mapping):
+        return False
+    flag = metrics.get("cost_unpriced")
+    return (
+        isinstance(flag, (int, float))
+        and not isinstance(flag, bool)
+        and math.isfinite(flag)
+        and flag > 0
+    )
+
+
 def is_finite_numeric_cost(value: Any) -> TypeGuard[int | float]:
     """Return True only for finite JSON numeric cost values."""
 

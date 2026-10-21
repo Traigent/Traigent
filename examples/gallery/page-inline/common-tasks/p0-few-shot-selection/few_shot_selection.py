@@ -98,7 +98,7 @@ def _exact_match(output: str | None, expected: str | None, llm_metrics=None) -> 
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.0, 0.3],
         "shots": [0, 1, 2],
         "selection_strategy": ["random", "semantic"],
@@ -118,7 +118,7 @@ def classify_sentiment(text: str) -> str:
         examples.append("Example: 'I hate it' -> negative")
     strategy_note = f"Selection: {cfg.get('selection_strategy', 'random')}"
     llm = ChatOpenAI(
-        model=cfg.get("model", "gpt-3.5-turbo"), temperature=cfg.get("temperature", 0.0)
+        model=cfg.get("model", "gpt-4.1-mini"), temperature=cfg.get("temperature", 0.0)
     )
     prompt = (
         f"{strategy_note}\n"

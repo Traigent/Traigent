@@ -203,9 +203,9 @@ max_retries -> max_retries
 ```
 
 **Supported Models**:
-- gpt-4 (all variants: 0314, 0613, 32k, turbo, 1106)
-- gpt-3.5-turbo (all variants)
-- gpt-4o, gpt-4o-mini
+- gpt-4.1 (all variants: 0314, 0613, 32k, turbo, 1106)
+- gpt-4.1, gpt-4.1-mini
+- gpt-4o, gpt-4o-mini (legacy)
 - text-davinci-003, text-davinci-002
 
 **Methods Overridden**:
@@ -241,9 +241,9 @@ anthropic_api_url -> base_url
 ```
 
 **Supported Models**:
-- claude-3-opus-20240229
+- claude-opus-4-5-20251101
 - claude-3-sonnet-20240229
-- claude-3-haiku-20240307
+- claude-haiku-4-5-20251001
 - claude-2.1, claude-2.0
 - claude-instant-1.2, claude-instant-1.1
 

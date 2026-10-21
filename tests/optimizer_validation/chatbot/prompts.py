@@ -32,11 +32,12 @@ How parameters are injected into the optimized function:
 
 ### 2. ExecutionMode
 Where and how optimization runs:
-- `edge_analytics`: Local execution with analytics (default)
-- `privacy`: Local execution, no data transmission
-- `hybrid`: Local with cloud fallback capability
-- `cloud`: Full cloud-based execution
-- `standard`: Default/unspecified mode
+- `local`: Local-only execution (default)
+- `hybrid`: Local execution with portal-tracked backend integration
+- `hybrid_api`: Hybrid execution through the API
+
+Removed selectors (`edge_analytics`, `privacy`, `cloud`) and the deprecated
+`standard` alias are only covered by fail-closed negative tests.
 
 ### 3. Algorithm
 The optimization algorithm used:

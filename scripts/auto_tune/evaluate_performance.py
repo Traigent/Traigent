@@ -5,17 +5,18 @@ Compares current results with baseline and generates metrics.
 """
 
 import json
+import math
 import os
 import statistics
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import yaml
 
 from traigent.utils.secure_path import safe_read_text, safe_write_text, validate_path
 
 
-def load_params() -> Dict[str, Any]:
+def load_params() -> dict[str, Any]:
     """Load parameters from params.yaml."""
     base_dir = Path.cwd()
     params_path = validate_path("params.yaml", base_dir, must_exist=True)
@@ -24,7 +25,7 @@ def load_params() -> Dict[str, Any]:
 
 def load_optimization_results(
     path: str = "optimization_results/latest.json",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Load optimization results from Traigent."""
     if not Path(path).exists():
         print(f"⚠️  No optimization results found at {path}")
@@ -35,7 +36,7 @@ def load_optimization_results(
     return json.loads(safe_read_text(results_path, base_dir))
 
 
-def load_baseline(baseline_path: str) -> Optional[Dict[str, Any]]:
+def load_baseline(baseline_path: str) -> dict[str, Any] | None:
     """Load baseline metrics for comparison."""
     path = Path(baseline_path)
     if not path.exists():
@@ -46,14 +47,86 @@ def load_baseline(baseline_path: str) -> Optional[Dict[str, Any]]:
     return json.loads(safe_read_text(validated_path, path.parent))
 
 
-def calculate_metrics(results: Dict[str, Any]) -> Dict[str, float]:
+def measured_cost(trial: dict[str, Any]) -> float | None:
+    """A trial's cost only when it was measured; unknown cost is never 0."""
+    status = trial.get("cost_status")
+    cost = trial.get("cost")
+    if status not in (None, "measured"):
+        return None
+    if isinstance(cost, bool) or not isinstance(cost, (int, float)):
+        return None
+    return float(cost)
+
+
+def known_cost_floor(trial: dict[str, Any]) -> float | None:
+    """A positive, finite exported ``cost_lower_bound`` for an unmeasured trial."""
+    floor = trial.get("cost_lower_bound")
+    if isinstance(floor, bool) or not isinstance(floor, (int, float)):
+        return None
+    if not math.isfinite(floor) or floor <= 0:
+        return None
+    return float(floor)
+
+
+def aggregate_costs(trials: list[Any]) -> dict[str, Any]:
+    """Exact total only when every trial is measured; else a lower bound.
+
+    ``total_cost`` is None when any trial is unmeasured. ``cost_lower_bound_total``
+    is measured spend plus the known floors of unmeasured trials, or None when
+    nothing is known. ``cost_trials_unbounded`` counts unmeasured trials with no
+    floor (spend we cannot bound at all).
+    """
+    measured: list[float] = []
+    floors: list[float] = []
+    unbounded = 0
+    for trial in trials:
+        if not isinstance(trial, dict):
+            # A malformed entry has unknown cost: unmeasured and unbounded.
+            unbounded += 1
+            continue
+        cost = measured_cost(trial)
+        if cost is not None:
+            measured.append(cost)
+            continue
+        floor = known_cost_floor(trial)
+        if floor is None:
+            unbounded += 1
+        else:
+            floors.append(floor)
+    unmeasured = len(floors) + unbounded
+    known = measured + floors
+    return {
+        "total_cost": sum(measured) if measured and not unmeasured else None,
+        "cost_lower_bound_total": sum(known) if known else None,
+        "cost_trials_measured": len(measured),
+        "cost_trials_unmeasured": unmeasured,
+        "cost_trials_unbounded": unbounded,
+    }
+
+
+def budget_status(metrics: dict[str, Any], max_budget: float) -> str:
+    """``exceeded`` / ``within`` / ``unverifiable``; never passes on unknown spend."""
+    total = metrics.get("total_cost")
+    if isinstance(total, (int, float)):
+        return "exceeded" if total > max_budget else "within"
+    floor = metrics.get("cost_lower_bound_total")
+    if isinstance(floor, (int, float)) and floor > max_budget:
+        return "exceeded"
+    return "unverifiable"
+
+
+def calculate_metrics(results: dict[str, Any]) -> dict[str, float]:
     """
     Calculate performance metrics from optimization results.
     """
     metrics = {
         "accuracy": 0.0,
         "avg_latency": 0.0,
-        "total_cost": 0.0,
+        "total_cost": None,  # None = unmeasured, never 0
+        "cost_lower_bound_total": None,  # measured + known floors
+        "cost_trials_measured": 0,
+        "cost_trials_unmeasured": 0,
+        "cost_trials_unbounded": 0,
         "tokens_used": 0,
         "trials_completed": 0,
         "best_score": 0.0,
@@ -70,16 +143,15 @@ def calculate_metrics(results: Dict[str, Any]) -> Dict[str, float]:
     # Calculate metrics
     scores = []
     latencies = []
-    costs = []
     tokens = []
 
     for trial in trials:
-        if "score" in trial:
+        if not isinstance(trial, dict):
+            continue
+        if isinstance(trial.get("score"), (int, float)):
             scores.append(trial["score"])
-        if "latency" in trial:
+        if isinstance(trial.get("latency"), (int, float)):
             latencies.append(trial["latency"])
-        if "cost" in trial:
-            costs.append(trial["cost"])
         if "tokens" in trial:
             tokens.append(trial["tokens"])
 
@@ -90,8 +162,7 @@ def calculate_metrics(results: Dict[str, Any]) -> Dict[str, float]:
     if latencies:
         metrics["avg_latency"] = statistics.mean(latencies)
 
-    if costs:
-        metrics["total_cost"] = sum(costs)
+    metrics.update(aggregate_costs(trials))
 
     if tokens:
         metrics["tokens_used"] = sum(tokens)
@@ -107,8 +178,8 @@ def calculate_metrics(results: Dict[str, Any]) -> Dict[str, float]:
 
 
 def compare_with_baseline(
-    current: Dict[str, float], baseline: Dict[str, float], threshold: float
-) -> Dict[str, Any]:
+    current: dict[str, float], baseline: dict[str, float], threshold: float
+) -> dict[str, Any]:
     """
     Compare current metrics with baseline.
 
@@ -128,6 +199,19 @@ def compare_with_baseline(
 
         current_val = current[metric]
         baseline_val = baseline[metric]
+
+        if current_val is None or baseline_val is None:
+            comparison["summary"].append(f"❔ {metric}: unmeasured, not compared")
+            continue
+        if metric == "total_cost" and (
+            current.get("cost_trials_unmeasured")
+            or baseline.get("cost_trials_unmeasured")
+        ):
+            # A partial sum is a floor, not a total: do not compare it.
+            comparison["summary"].append(
+                f"❔ {metric}: some trials unmeasured, not compared"
+            )
+            continue
 
         if baseline_val == 0:
             change_pct = 0
@@ -169,7 +253,7 @@ def compare_with_baseline(
     return comparison
 
 
-def generate_plots_data(results: Dict[str, Any]) -> Dict[str, Any]:
+def generate_plots_data(results: dict[str, Any]) -> dict[str, Any]:
     """Generate data for performance plots."""
     plots_data = {"trials": [], "scores": [], "latencies": [], "costs": []}
 
@@ -178,7 +262,7 @@ def generate_plots_data(results: Dict[str, Any]) -> Dict[str, Any]:
         plots_data["trials"].append(i + 1)
         plots_data["scores"].append(trial.get("score", 0))
         plots_data["latencies"].append(trial.get("latency", 0))
-        plots_data["costs"].append(trial.get("cost", 0))
+        plots_data["costs"].append(measured_cost(trial))
 
     return plots_data
 

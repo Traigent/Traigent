@@ -622,7 +622,9 @@ class TestOptimization:
             "constraints": [],
             "default_config": {},
             "runtime_overrides": {},
-            "promotion_policy": PromotionPolicy(alpha=0.05),
+            "promotion_policy": PromotionPolicy(
+                alpha=0.05, min_effect={"accuracy": 0.0}
+            ),
             "measures": [],
         }
         mock_evaluator.metrics = ["accuracy"]

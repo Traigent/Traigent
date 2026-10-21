@@ -41,6 +41,9 @@ except Exception as exc:  # pragma: no cover - executed only when ragas missing
     ragas_evaluate = EvaluationDataset = SingleTurnSample = None
 
 from traigent.api.types import ExampleResult
+from traigent.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 POPULAR_RAGAS_METRICS: tuple[str, ...] = (
     "answer_relevancy",
@@ -323,15 +326,23 @@ def _prepare_samples(
         if response is None:
             continue
 
-        reference = result.expected_output
+        # A mapped ``reference`` column wins; expected_output is the fallback
+        # (and the only source when the column is unmapped). A missing reference
+        # drops the row only when the selected metrics require it (#2472).
+        reference = None
+        if config.column_map and "reference" in config.column_map:
+            reference_keys = _determine_column_keys(config.column_map, "reference")
+            reference = _extract_candidate(
+                [*metadata_sources, *input_sources], reference_keys
+            )
         if reference is None:
-            continue
+            reference = result.expected_output
 
         user_input_keys = _determine_column_keys(config.column_map, "user_input")
         user_input = _extract_candidate(input_sources, user_input_keys)
         if user_input is None and hasattr(result, "input_data"):
             user_input = str(result.input_data)
-        if user_input is None:
+        if user_input is None and reference is not None:
             user_input = str(reference)
 
         contexts_keys = _determine_column_keys(config.column_map, "retrieved_contexts")
@@ -374,6 +385,33 @@ def _prepare_samples(
     return samples
 
 
+def layer_over_global_defaults(config: RagasConfig | None) -> RagasConfig:
+    """Return ``config`` with unset fields filled from the global defaults.
+
+    A field set on ``config`` (not ``None``) wins; any field left unset takes the
+    value registered through :func:`configure_ragas_defaults` (Traigent#2473).
+    """
+    with _RAGAS_CONFIG_LOCK:
+        global_map = (
+            dict(_GLOBAL_RAGAS_CONFIG.column_map)
+            if _GLOBAL_RAGAS_CONFIG.column_map
+            else None
+        )
+        global_llm = _GLOBAL_RAGAS_CONFIG.llm
+        global_embeddings = _GLOBAL_RAGAS_CONFIG.embeddings
+    if config is None:
+        return RagasConfig(
+            column_map=global_map, llm=global_llm, embeddings=global_embeddings
+        )
+    return RagasConfig(
+        column_map=config.column_map if config.column_map else global_map,
+        llm=config.llm if config.llm is not None else global_llm,
+        embeddings=(
+            config.embeddings if config.embeddings is not None else global_embeddings
+        ),
+    )
+
+
 def compute_ragas_metrics(
     example_results: Sequence[ExampleResult],
     metric_names: Sequence[str],
@@ -404,17 +442,7 @@ def compute_ragas_metrics(
 
     _ensure_ragas_available()
 
-    if config is None:
-        with _RAGAS_CONFIG_LOCK:
-            config = RagasConfig(
-                column_map=(
-                    dict(_GLOBAL_RAGAS_CONFIG.column_map)
-                    if _GLOBAL_RAGAS_CONFIG.column_map
-                    else None
-                ),
-                llm=_GLOBAL_RAGAS_CONFIG.llm,
-                embeddings=_GLOBAL_RAGAS_CONFIG.embeddings,
-            )
+    config = layer_over_global_defaults(config)
 
     example_results = list(example_results)
     if (not example_results) and dataset_examples is not None:
@@ -461,6 +489,16 @@ def compute_ragas_metrics(
             "the required fields (user_input/response/reference/contexts)."
         )
 
+    # Rows the agent never answered (but that have a reference) are failures
+    # of the configuration under test, not rows to drop from the mean (#2677).
+    failed_rows = 0
+    for index, result in enumerate(example_results):
+        response = result.actual_output
+        if response is None and outputs is not None and index < len(outputs):
+            response = outputs[index]
+        if response is None and result.expected_output is not None:
+            failed_rows += 1
+
     dataset = EvaluationDataset(samples)
 
     # RAGAS uses asyncio under the hood; allow nested loops so evaluators can call
@@ -472,12 +510,33 @@ def compute_ragas_metrics(
         embeddings=config.embeddings,
         show_progress=False,
         allow_nest_asyncio=True,
+        # A judge call that raises must fail the metric, not come back as a
+        # NaN that the mean silently drops (#2677).
+        raise_exceptions=True,
     )
 
     aggregated: dict[str, float] = {}
     for metric in metrics:
-        values = result[metric.name]
-        aggregated[metric.name] = float(np.nanmean(values)) if len(values) else 0.0
+        values = np.asarray(result[metric.name], dtype=float)
+        defined = values[~np.isnan(values)]
+        denominator = len(defined) + failed_rows
+        if len(defined) == 0:
+            raise RagasConfigurationError(
+                f"ragas metric '{metric.name}' has no defined judge score on any answered row; "
+                "refusing to report NaN as an objective value."
+            )
+        if len(defined) < len(values) or failed_rows:
+            logger.warning(
+                "ragas metric %r: %d of %d rows scored (%d undefined, %d agent "
+                "failures counted as 0.0)",
+                metric.name,
+                len(defined),
+                denominator,
+                len(values) - len(defined),
+                failed_rows,
+            )
+        # Agent-failed rows contribute 0.0 over the full denominator.
+        aggregated[metric.name] = float(defined.sum() / denominator)
 
     return aggregated
 

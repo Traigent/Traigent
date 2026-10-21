@@ -22,7 +22,7 @@ def basic_scenario(
     name: str,
     *,
     injection_mode: str = "context",
-    execution_mode: str = "edge_analytics",
+    execution_mode: str = "local",
     config_space: dict[str, Any] | None = None,
     max_trials: int = 3,
     **overrides: Any,

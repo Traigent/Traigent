@@ -95,15 +95,31 @@ _LITELLM_PREFIX_PATTERN = re.compile(r"^([a-z][a-z0-9_]*)[:/](.+)$")
 _KNOWN_MODELS: dict[str, frozenset[str]] = {
     "openai": frozenset(
         {
+            # Ids come from the bundled litellm price table; ids whose
+            # deprecation_date has passed are dropped (#2651).
             "gpt-3.5-turbo",
             "gpt-4",
             "gpt-4-turbo",
             "gpt-4o",
             "gpt-4o-mini",
+            "gpt-4.1",
+            "gpt-4.1-mini",
             "gpt-4.1-nano",
+            "gpt-5",
+            "gpt-5-mini",
             "gpt-5-nano",
             "gpt-5.1",
             "gpt-5.2",
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "gpt-5.4-nano",
+            "gpt-5.5",
+            "gpt-5.6",
+            "gpt-5.6-luna",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-6-astra",
+            "o3",
             # Retired o1-preview / o1-mini pruned (#1936/#1937).
             "o3-mini",
         }
@@ -116,22 +132,39 @@ _KNOWN_MODELS: dict[str, frozenset[str]] = {
             "claude-opus-4-8",
             "claude-sonnet-4-6",
             "claude-haiku-4-5-20251001",
-            # Claude 4 series (2025)
-            "claude-sonnet-4-20250514",
-            "claude-opus-4-20250514",
-            # Claude 3.7 series (2025)
-            "claude-3-7-sonnet-20250219",
-            # Claude 3.5 series (2024)
-            "claude-3-5-sonnet-20241022",
-            "claude-3-5-haiku-20241022",
-            # Claude 3 series (2024). Retired claude-3-opus-20240229 pruned
-            # (#1936/#1937).
-            "claude-3-sonnet-20240229",
-            "claude-3-haiku-20240307",
+            # Ids from the bundled litellm price table with no past
+            # deprecation_date (#2651). Retired claude-sonnet-4-20250514,
+            # claude-opus-4-20250514 (2026-06-15), claude-opus-4-1 (2026-08-05),
+            # claude-3-7-sonnet, claude-3-opus, claude-3-haiku are dropped.
+            "claude-haiku-4-5",
+            "claude-sonnet-4-5",
+            "claude-sonnet-4-5-20250929",
+            "claude-sonnet-5",
+            "claude-opus-4-5",
+            "claude-opus-4-5-20251101",
+            "claude-opus-4-6",
+            "claude-opus-4-6-20260205",
+            "claude-opus-4-7",
+            "claude-opus-4-7-20260416",
+            "claude-opus-5",
+            "claude-fable-5",
+            "claude-fable-5-1",
+            "claude-mythos-5",
+            "claude-mythos-5-1",
+            # Claude 5.5 family: current Anthropic model ids that are not yet
+            # in the bundled litellm price table, so they are listed
+            # explicitly (review r2). claude-fable-5-1 is listed above.
+            "claude-opus-5-5",
+            "claude-sonnet-5-5",
+            "claude-haiku-5-5",
+            # Retired claude-3* ids (3.5 Sonnet/Haiku, 3 Sonnet) were removed
+            # from this list per Anthropic's deprecations page (#2646).
         }
     ),
     "google": frozenset(
         {
+            "gemini-3.8-flash",
+            "gemini-3.5-flash-lite",
             "gemini-2.0-flash",
             # Retired gemini-1.5 family, gemini-2.0-flash-exp preview, and
             # gemini-1.0-pro / gemini-pro pruned (#1936/#1937).
@@ -587,7 +620,7 @@ class ProviderValidator:
             client = Anthropic(api_key=key, timeout=self.timeout)
             # Use count_tokens - zero cost, validates auth
             client.messages.count_tokens(
-                model="claude-3-haiku-20240307",
+                model="claude-haiku-4-5-20251001",
                 messages=[{"role": "user", "content": "ping"}],
             )
             self._cache_success("anthropic", key)
@@ -938,7 +971,7 @@ def get_provider_for_model(model_name: str) -> str | None:
     """Detect provider from model name.
 
     Args:
-        model_name: Model name (e.g., "gpt-4o-mini", "claude-3-haiku-20240307").
+        model_name: Model name (e.g., "gpt-4o-mini", "claude-haiku-4-5-20251001").
 
     Returns:
         Provider name if detected, None otherwise.
@@ -946,7 +979,7 @@ def get_provider_for_model(model_name: str) -> str | None:
     Examples:
         >>> get_provider_for_model("gpt-4o-mini")
         'openai'
-        >>> get_provider_for_model("claude-3-haiku-20240307")
+        >>> get_provider_for_model("claude-haiku-4-5-20251001")
         'anthropic'
         >>> get_provider_for_model("gemini-1.5-flash")
         'google'

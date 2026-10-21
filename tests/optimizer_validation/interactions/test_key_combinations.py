@@ -25,19 +25,19 @@ class TestKeyInjectionExecutionCombinations:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_context_edge_analytics_default(
+    async def test_context_local_default(
         self,
         scenario_runner,
         result_validator,
     ) -> None:
-        """Test most common default: context injection + edge_analytics.
+        """Test most common default: context injection + local.
 
         This is the default configuration for most users.
         """
         scenario = basic_scenario(
-            name="context_edge_analytics",
+            name="context_local",
             injection_mode="context",
-            execution_mode="edge_analytics",
+            execution_mode="local",
             max_trials=3,
             gist_template="context+edge -> {trial_count()} | {status()}",
         )
@@ -270,7 +270,7 @@ class TestComplexWorkflows:
             name="full_featured_workflow",
             description="Complete workflow with all features",
             injection_mode="context",
-            execution_mode="edge_analytics",
+            execution_mode="local",
             objectives=objectives,
             constraints=constraints,
             config_space={
@@ -307,7 +307,7 @@ class TestComplexWorkflows:
         scenario = basic_scenario(
             name="apply_best_config",
             injection_mode="context",
-            execution_mode="edge_analytics",
+            execution_mode="local",
             max_trials=3,
             gist_template="apply-best -> {trial_count()} | {status()}",
         )

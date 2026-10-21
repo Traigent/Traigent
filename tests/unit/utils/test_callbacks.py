@@ -422,7 +422,21 @@ class TestManagedProgressCallback:
         captured = capsys.readouterr()
         lines = [line for line in captured.out.splitlines() if line]
         assert len(lines) == 2
-        assert "config 5/10 OK best=0.8500" in lines[0]
+        assert "config 5/10 OK best_single=0.8500" in lines[0]
+
+    def test_progress_line_labels_best_as_single_trial_2512(
+        self,
+        callback: ManagedProgressCallback,
+        trial_result: TrialResult,
+        progress_info: ProgressInfo,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The per-trial line is the best SINGLE trial; the final best_score is
+        an aggregate, so the two must not share the bare ``best=`` label."""
+        callback.on_trial_complete(trial_result, progress_info)
+        line = capsys.readouterr().out
+        assert "best_single=" in line
+        assert " best=" not in line
 
     def test_on_trial_complete_reports_failure_status(
         self,

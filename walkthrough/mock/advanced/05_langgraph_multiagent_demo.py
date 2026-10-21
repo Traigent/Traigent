@@ -5,7 +5,7 @@ Demonstrates a multi-agent RAG workflow with:
 - Multiple agents (retriever, grader, generator, web_search)
 - Conditional branching (grade_documents -> generate OR web_search)
 - Workflow trace visualization in the frontend
-- Real LLM mode with OpenAI (gpt-4o-mini) OR mock mode for testing
+- Real LLM mode with OpenAI (gpt-4.1-mini) OR mock mode for testing
 
 Optional dependencies for real LLM mode:
     pip install langchain-core langchain-openai langgraph opentelemetry-api
@@ -85,7 +85,7 @@ SCRIPT_DIR = Path(__file__).parent  # Current directory (advanced/)
 MOCK_MODE = os.environ.get("TRAIGENT_MOCK_LLM", "false").lower() == "true"
 
 # Model configuration
-DEFAULT_MODEL = "gpt-4o-mini"
+DEFAULT_MODEL = "gpt-4.1-mini"
 
 # NOTE: LangGraphAdapter will auto-instrument workflows when available.
 # This demo shows MANUAL workarounds until LangGraphAdapter is implemented.
@@ -461,7 +461,7 @@ def cost_metric(output: str, expected: str) -> float:
     In mock mode, simulates realistic LLM costs based on output length.
     In real mode, returns 0.0 (actual costs are tracked by the SDK).
 
-    The simulated costs are based on realistic gpt-4o-mini pricing:
+    The simulated costs are based on realistic gpt-4.1-mini pricing:
     - ~$0.15 per 1M input tokens
     - ~$0.60 per 1M output tokens
 
@@ -478,7 +478,7 @@ def cost_metric(output: str, expected: str) -> float:
         output_tokens = max(len(output) // 4, 10)
         input_tokens = 150  # Approximate prompt size for RAG workflow
 
-        # Pricing: gpt-4o-mini rates (per 1M tokens)
+        # Pricing: gpt-4.1-mini rates (per 1M tokens)
         input_cost_per_1m = 0.15
         output_cost_per_1m = 0.60
 
@@ -511,7 +511,7 @@ def cost_metric(output: str, expected: str) -> float:
     },
     configuration_space={
         # Generator Agent parameters (namespaced)
-        # Note: In real mode, we use gpt-4o-mini for speed and low cost
+        # Note: In real mode, we use gpt-4.1-mini for speed and low cost
         # These params demonstrate what Traigent CAN optimize
         "generate.model": [DEFAULT_MODEL],  # Fast and cheap model
         "generate.temperature": [0.3, 0.7],  # Reduced options to minimize API calls

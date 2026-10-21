@@ -100,7 +100,7 @@ def support_agent(
     customer_query: str,
     customer_id: str = "anonymous",
     *,
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-4.1-mini",
     temperature: float = 0.3,
     max_tokens: int = 512,
     use_streaming: bool = True,
@@ -145,7 +145,7 @@ def support_agent(
         else:
             response = f"Thank you for reaching out! {CANNED_RESPONSES['general']} [Mock response for: {customer_query[:50]}...]"
         latency_ms = 80.0 if use_streaming else 150.0
-        cost_usd = 0.002 if model == "gpt-4o-mini" else 0.008
+        cost_usd = 0.002 if model == "gpt-4.1-mini" else 0.008
     else:
         # In production: call LLM API with appropriate model
         response = "Thank you for reaching out. I'm here to help with your concern..."

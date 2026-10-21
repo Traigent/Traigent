@@ -8,6 +8,8 @@ experiment indexing.
 from __future__ import annotations
 
 import json
+import re
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -393,11 +395,11 @@ class TestOptimizationLoggerInit:
 
     def test_run_id_format(self, tmp_path: Path) -> None:
         log = _make_logger(tmp_path, session_id="abcdefghijklmnop")
-        assert log.run_id.endswith("_abcdefgh")
+        assert re.search(r"_abcdefgh_[0-9a-f]{6}$", log.run_id)
 
     def test_short_session_id(self, tmp_path: Path) -> None:
         log = _make_logger(tmp_path, session_id="abc")
-        assert log.run_id.endswith("_abc")
+        assert re.search(r"_abc_[0-9a-f]{6}$", log.run_id)
 
     def test_execution_mode_resolved(self, tmp_path: Path) -> None:
         log = _make_logger(tmp_path)
@@ -416,7 +418,11 @@ class TestOptimizationLoggerInit:
     ) -> None:
         fixed_time = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
         run_path = (
-            tmp_path / "experiments" / "test_exp" / "runs" / "20260102_030405_sess1234"
+            tmp_path
+            / "experiments"
+            / "test_exp"
+            / "runs"
+            / "20260102_030405_sess1234_abcdef"
         )
         run_path.mkdir(parents=True)
         outside = tmp_path / f"outside-{child_name}"
@@ -428,9 +434,11 @@ class TestOptimizationLoggerInit:
 
         with (
             patch("traigent.utils.optimization_logger.datetime") as mock_datetime,
+            patch("traigent.utils.optimization_logger.uuid.uuid4") as mock_uuid,
             pytest.raises(PathTraversalError),
         ):
             mock_datetime.now.return_value = fixed_time
+            mock_uuid.return_value = uuid.UUID("abcdef00-0000-0000-0000-000000000000")
             _make_logger(tmp_path)
 
 
@@ -1087,3 +1095,25 @@ class TestSerializeExampleResult:
         out = _serialize_example_result(ex)
         assert out["error"] is None
         assert out["response"] == "hello"
+
+
+class TestRunDirectoryUniqueness:
+    """Regression for #2670: same-name runs in one second must not share a dir."""
+
+    def test_same_second_same_session_prefix_get_distinct_run_dirs(
+        self, tmp_path: Path
+    ) -> None:
+        fixed = datetime(2026, 10, 20, 7, 0, 0, tzinfo=UTC)
+        with patch("traigent.utils.optimization_logger.datetime") as mock_dt:
+            mock_dt.now.return_value = fixed
+            first = _make_logger(tmp_path, session_id="local-session")
+            second = _make_logger(tmp_path, session_id="local-session")
+
+        assert first.run_id != second.run_id
+        assert first.run_path != second.run_path
+        assert first.run_path.is_dir() and second.run_path.is_dir()
+        # Format stays compatible with retention pruning's name pattern.
+        from traigent.utils.optimization_logger import _RUN_DIR_NAME_PATTERN
+
+        assert _RUN_DIR_NAME_PATTERN.match(first.run_id)
+        assert _RUN_DIR_NAME_PATTERN.match(second.run_id)

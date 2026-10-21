@@ -29,7 +29,7 @@ agent_spec = AgentSpecification(
     agent_platform="openai",      # or "langchain", "custom"
     prompt_template="Your prompt with {variables}",
     model_parameters={
-        "model": "o4-mini",
+        "model": "gpt-4.1-mini",
         "temperature": 0.7,
         "max_tokens": 150
     },
@@ -48,7 +48,7 @@ Define which parameters to optimize:
 ```python
 configuration_space = {
     # Categorical parameters
-    "model": ["o4-mini", "GPT-4o"],
+    "model": ["gpt-4.1-mini", "GPT-4o"],
 
     # Continuous parameters
     "temperature": (0.0, 1.0),
@@ -99,7 +99,7 @@ agent_spec = AgentSpecification(
     agent_type="conversational",
     agent_platform="openai",
     prompt_template="Answer the question: {question}",
-    model_parameters={"model": "o4-mini", "temperature": 0.7}
+    model_parameters={"model": "gpt-4.1-mini", "temperature": 0.7}
 )
 
 # Create evaluation dataset
@@ -362,7 +362,7 @@ agent_spec = generator.from_optimized_function(
 
 ### OpenAI Platform
 
-- Supports models: o4-mini, gpt-4, etc.
+- Supports models: gpt-4.1-mini, gpt-4.1, etc.
 - Key parameters: temperature, max_tokens, top_p, frequency_penalty
 - Cost calculation based on token usage
 
@@ -494,7 +494,7 @@ response = await client.optimize_agent(
         "warm_start": True,
         "initial_configs": [
             {"model": "GPT-4o", "temperature": 0.3},
-            {"model": "o4-mini", "temperature": 0.7}
+            {"model": "gpt-4.1-mini", "temperature": 0.7}
         ]
     }
 )

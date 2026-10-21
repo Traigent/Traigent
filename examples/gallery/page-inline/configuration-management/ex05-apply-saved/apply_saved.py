@@ -56,7 +56,7 @@ except ImportError:  # pragma: no cover - support IDE execution paths
 @traigent.optimize(
     configuration_space={
         # Keep grid size small so total trials stay reasonable (<=10)
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.1, 0.5],
         "max_tokens": [100, 200],
     },
@@ -70,7 +70,7 @@ def customer_support_agent(question: str, choices: list[str]) -> int:
 
     Returns a 0-based index corresponding to the best choice.
     """
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.3, max_tokens=120)
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.3, max_tokens=120)
 
     labeled_choices = "\n".join(
         f"{chr(65 + i)}. {opt}" for i, opt in enumerate(choices)
@@ -151,7 +151,7 @@ def load_and_apply_saved_config():
         # Create a new function instance with the saved config
         @traigent.optimize(
             configuration_space={
-                "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+                "model": ["gpt-4.1-mini", "gpt-4.1"],
                 "temperature": [0.1, 0.3, 0.5, 0.7],
                 "max_tokens": [100, 200, 300],
             },
@@ -162,7 +162,7 @@ def load_and_apply_saved_config():
         def production_support_agent(question: str, choices: list[str]) -> int:
             """Production MCQ selector using saved config."""
             llm = ChatOpenAI(
-                model="gpt-3.5-turbo",  # Overridden by saved config
+                model="gpt-4.1-mini",  # Overridden by saved config
                 temperature=0.3,  # Overridden by saved config
                 max_tokens=120,  # Overridden by saved config
             )

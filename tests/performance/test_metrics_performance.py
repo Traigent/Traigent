@@ -21,13 +21,39 @@ try:
 except ImportError:  # pragma: no cover - archive removed during cleanup
     from tests.integration.test_mock_mode_metrics import estimate_tokens
 
-from tests.conftest import MockLLMResponse, validate_example_metrics
+from tests.conftest import MockLLMResponse
 from traigent import TraigentConfig
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.evaluators.local import LocalEvaluator
 from traigent.optimizers.grid import GridSearchOptimizer
 from traigent.optimizers.random import RandomSearchOptimizer
+
+
+def validate_example_metrics(example_result) -> bool:
+    """Check token/accuracy metrics; cost keys are only present when measured.
+
+    The evaluator no longer reports cost for functions that make no priced LLM
+    call (honest-cost policy), so cost keys are validated only when present.
+    """
+    metrics = example_result.metrics
+    required = ["input_tokens", "output_tokens", "total_tokens", "accuracy"]
+    if any(key not in metrics for key in required):
+        return False
+    if any(
+        not isinstance(metrics[key], (int, float)) or metrics[key] < 0
+        for key in ("input_tokens", "output_tokens", "total_tokens")
+    ):
+        return False
+    if not 0.0 <= metrics["accuracy"] <= 1.0:
+        return False
+    if any(
+        key in metrics
+        and (not isinstance(metrics[key], (int, float)) or metrics[key] < 0)
+        for key in ("input_cost", "output_cost", "total_cost")
+    ):
+        return False
+    return metrics["total_tokens"] == metrics["input_tokens"] + metrics["output_tokens"]
 
 
 class TestTokenEstimationPerformance:
@@ -149,7 +175,7 @@ class TestMetricsCollectionPerformance:
         for size in sizes:
             dataset = self.create_large_dataset(size)
             evaluator = LocalEvaluator(
-                metrics=["accuracy"], detailed=True, execution_mode="edge_analytics"
+                metrics=["accuracy"], detailed=True, execution_mode="local"
             )
 
             start_time = time.time()
@@ -195,7 +221,7 @@ class TestMetricsCollectionPerformance:
         # Run evaluation with moderately large dataset
         dataset = self.create_large_dataset(100)
         evaluator = LocalEvaluator(
-            metrics=["accuracy"], detailed=True, execution_mode="edge_analytics"
+            metrics=["accuracy"], detailed=True, execution_mode="local"
         )
 
         result = await evaluator.evaluate(memory_test_function, {}, dataset)
@@ -231,7 +257,7 @@ class TestMetricsCollectionPerformance:
 
         dataset = self.create_large_dataset(200)  # Larger dataset for stats
         evaluator = LocalEvaluator(
-            metrics=["accuracy"], detailed=True, execution_mode="edge_analytics"
+            metrics=["accuracy"], detailed=True, execution_mode="local"
         )
 
         # Time the full evaluation including summary stats
@@ -354,10 +380,10 @@ class TestOptimizationPerformance:
         )
 
         evaluator = LocalEvaluator(
-            metrics=["accuracy"], detailed=True, execution_mode="edge_analytics"
+            metrics=["accuracy"], detailed=True, execution_mode="local"
         )
 
-        config = TraigentConfig(execution_mode="edge_analytics")
+        config = TraigentConfig(execution_mode="local")
 
         orchestrator = OptimizationOrchestrator(
             optimizer=optimizer,
@@ -441,10 +467,10 @@ class TestOptimizationPerformance:
         )
 
         evaluator = LocalEvaluator(
-            metrics=["accuracy"], detailed=True, execution_mode="edge_analytics"
+            metrics=["accuracy"], detailed=True, execution_mode="local"
         )
 
-        config = TraigentConfig(execution_mode="edge_analytics")
+        config = TraigentConfig(execution_mode="local")
 
         orchestrator = OptimizationOrchestrator(
             optimizer=optimizer,
@@ -511,7 +537,7 @@ class TestOptimizationPerformance:
 
         for delay in delays:
             evaluator = LocalEvaluator(
-                metrics=["accuracy"], detailed=True, execution_mode="edge_analytics"
+                metrics=["accuracy"], detailed=True, execution_mode="local"
             )
 
             start_time = time.time()
@@ -564,7 +590,7 @@ class TestResourceUsageMonitoring:
         )
 
         evaluator = LocalEvaluator(
-            metrics=["accuracy"], detailed=True, execution_mode="edge_analytics"
+            metrics=["accuracy"], detailed=True, execution_mode="local"
         )
 
         # Monitor CPU usage
@@ -668,7 +694,7 @@ class TestResourceUsageMonitoring:
         evaluator = LocalEvaluator(
             metrics=["accuracy"],
             detailed=True,
-            execution_mode="edge_analytics",
+            execution_mode="local",
             max_workers=5,
         )
 
@@ -719,7 +745,7 @@ class TestLargeScalePerformance:
         )
 
         evaluator = LocalEvaluator(
-            metrics=["accuracy"], detailed=True, execution_mode="edge_analytics"
+            metrics=["accuracy"], detailed=True, execution_mode="local"
         )
 
         start_time = time.time()

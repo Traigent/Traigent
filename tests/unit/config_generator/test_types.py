@@ -312,7 +312,8 @@ class TestAutoConfigResult:
             ),
         )
         spec = result.to_tvl_spec(module_name="test_agent")
-        assert spec["header"]["module"] == "test_agent"
+        assert spec["tvl"]["module"] == "test_agent"  # loader key, not "header" (#2647)
+        assert "header" not in spec
         assert "tvars" in spec
         assert "objectives" in spec
         assert spec["objectives"][0]["name"] == "accuracy"
@@ -332,9 +333,9 @@ class TestAutoConfigResult:
             ),
         )
         spec = result.to_tvl_spec()
-        assert "safety" in spec
-        assert spec["safety"][0]["metric"] == "faithfulness"
-        assert spec["safety"][0]["threshold"] == pytest.approx(0.85)
+        assert "safety" not in spec  # loader section is safety_constraints (#2647)
+        assert spec["safety_constraints"][0]["metric"] == "faithfulness"
+        assert spec["safety_constraints"][0]["threshold"] == pytest.approx(0.85)
 
     def test_to_tvl_spec_with_structural_constraints(self) -> None:
         result = AutoConfigResult(
@@ -517,3 +518,32 @@ class TestAutoConfigResult:
         code = result.to_python_code()
         assert "# Recommended additional TVars:" in code
         assert "prompting_strategy" in code
+
+
+class TestTvlExportLoads:
+    """The exported TVL spec must be accepted by the SDK's own loader (#2647)."""
+
+    def test_exported_spec_loads_with_schema_validation(self, tmp_path) -> None:
+        import yaml
+
+        from traigent.tvl.spec_loader import load_tvl_spec
+
+        result = AutoConfigResult(
+            tvars=(
+                TVarSpec(
+                    name="temperature",
+                    range_type="Range",
+                    range_kwargs={"low": 0.0, "high": 1.0},
+                ),
+            ),
+            objectives=(
+                ObjectiveSpec(name="accuracy", orientation="maximize", weight=1.0),
+            ),
+            safety_constraints=(
+                SafetySpec(metric_name="faithfulness", operator=">=", threshold=0.85),
+            ),
+        )
+        path = tmp_path / "agent.tvl.yml"
+        path.write_text(yaml.dump(result.to_tvl_spec(module_name="agent")))
+        artifact = load_tvl_spec(spec_path=path)
+        assert artifact is not None

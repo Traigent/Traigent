@@ -141,9 +141,10 @@ def test_activation_is_idempotent_and_logs_once(
         and "anthropic.messages.create" in r.getMessage()
     ]
     assert len(scope_notes) == 1, (
-        f"Expected exactly one mock interception scope INFO note, got "
-        f"{len(scope_notes)}"
+        f"Expected exactly one mock interception scope note, got {len(scope_notes)}"
     )
+    # #2418: INFO is hidden by default, so the caveat must be a WARNING.
+    assert scope_notes[0].levelno == logging.WARNING
 
 
 def test_in_code_api_is_blocked_in_production(
@@ -214,3 +215,50 @@ def test_reset_for_tests_clears_state(monkeypatch: pytest.MonkeyPatch) -> None:
     assert traigent_testing.is_mock_mode_enabled() is False
     for provider in ("openai", "anthropic", "litellm"):
         assert MockAdapter.is_mock_enabled(provider) is False
+
+
+def test_enable_installs_litellm_and_langchain_interceptors() -> None:
+    """#2416: calls made right after enabling (before any optimize run) must
+    already be intercepted, so enabling installs both interceptors."""
+    from unittest.mock import patch
+
+    with (
+        patch(
+            "traigent.utils.litellm_interceptor.patch_litellm_for_metadata_capture"
+        ) as litellm_patch,
+        patch(
+            "traigent.utils.langchain_interceptor.patch_langchain_for_metadata_capture"
+        ) as langchain_patch,
+    ):
+        traigent_testing.enable_mock_mode_for_quickstart()
+
+    litellm_patch.assert_called_once()
+    langchain_patch.assert_called_once()
+
+
+def test_env_var_path_warns_raw_clients_not_intercepted_once(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#2418: TRAIGENT_MOCK_LLM=true gets the same once-only WARNING, and it
+    does not double-emit when the in-code path also runs."""
+    import logging
+
+    from traigent.utils import env_config
+
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    monkeypatch.setenv("_TRAIGENT_QUICKSTART_BOOTSTRAP", "1")
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    with caplog.at_level(logging.WARNING, logger="traigent.testing"):
+        env_config._check_mock_llm_prod_guard()
+        env_config._check_mock_llm_prod_guard()
+
+        def notes() -> list[logging.LogRecord]:
+            return [
+                r
+                for r in caplog.records
+                if "NOT intercepted" in r.getMessage() and r.levelno == logging.WARNING
+            ]
+
+        assert len(notes()) == 1  # emitted by the env-var path alone
+        traigent_testing.enable_mock_mode_for_quickstart()
+        assert len(notes()) == 1  # in-code path does not double-emit

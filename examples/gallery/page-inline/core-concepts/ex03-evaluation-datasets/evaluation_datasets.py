@@ -111,7 +111,7 @@ def _records_to_dataset(records: list[dict[str, Any]], name: str) -> Dataset:
 # Example 1: Using JSONL file dataset
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.1, 0.5, 0.9],
     },
     eval_dataset=DATASET_FILE,  # JSONL file
@@ -121,7 +121,7 @@ def _records_to_dataset(records: list[dict[str, Any]], name: str) -> Dataset:
 )
 def classifier_with_jsonl(text: str) -> str:
     """Classifier using JSONL dataset for evaluation."""
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.3)
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.3)
 
     prompt = (
         "Classify the text into one of these categories: complaint, feedback, inquiry.\n"
@@ -149,7 +149,7 @@ def create_python_dataset() -> Dataset:
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.1, 0.3, 0.5],
         "prompt_style": ["direct", "detailed", "structured"],
     },
@@ -173,7 +173,7 @@ def classifier_with_python_list(text: str) -> str:
     }
 
     llm = ChatOpenAI(
-        model=config.get("model", "gpt-3.5-turbo"),
+        model=config.get("model", "gpt-4.1-mini"),
         temperature=config.get("temperature", 0.3),
     )
 
@@ -245,7 +245,7 @@ class DynamicDatasetGenerator:
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+        "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.0, 0.1, 0.2],  # Low temp for math
         "reasoning_steps": [True, False],
     },
@@ -265,7 +265,7 @@ def math_solver(problem: str) -> str:
         prompt = f"Solve: {problem}"
 
     llm = ChatOpenAI(
-        model=config.get("model", "gpt-3.5-turbo"),
+        model=config.get("model", "gpt-4.1-mini"),
         temperature=config.get("temperature", 0.1),
     )
 

@@ -170,7 +170,7 @@ class IncentiveManager:
                 "   • Team collaboration and sharing features",
                 "   • Unlimited optimization trials",
                 f"   \n   Your {completed_count} sessions can be synced instantly!",
-                "   Run 'traigent login' to get started",
+                "   Run 'traigent auth login' to get started",
             ],
             "storage_growing": [
                 f"📈 Your optimization library is growing! ({completed_count} sessions, {total_trials} trials)",
@@ -408,7 +408,7 @@ class IncentiveManager:
             "   traigent local show <id>     # View detailed results",
             "   traigent local info          # Storage information",
             "",
-            "🚀 Ready for more? Run 'traigent login' to unlock cloud features!",
+            "🚀 Ready for more? Run 'traigent auth login' to unlock cloud features!",
         ]
         return tips
 

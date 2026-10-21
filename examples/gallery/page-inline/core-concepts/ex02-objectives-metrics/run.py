@@ -74,9 +74,13 @@ async def main() -> None:
         },
         "tradeoff_analysis": {
             "cost_vs_quality": {
-                "cheap": {"model": "gpt-3.5-turbo", "cost": "$0.002", "quality": "70%"},
-                "balanced": {"model": "gpt-4o-mini", "cost": "$0.01", "quality": "85%"},
-                "premium": {"model": "gpt-4o", "cost": "$0.03", "quality": "95%"},
+                "cheap": {"model": "gpt-4.1-mini", "cost": "$0.002", "quality": "70%"},
+                "balanced": {
+                    "model": "gpt-4.1-mini",
+                    "cost": "$0.01",
+                    "quality": "85%",
+                },
+                "premium": {"model": "gpt-4.1", "cost": "$0.03", "quality": "95%"},
             },
             "speed_vs_accuracy": {
                 "fast": {"tokens": 100, "time": "1s", "accuracy": "75%"},

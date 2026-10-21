@@ -63,6 +63,8 @@ def mock_result():
     mock.algorithm = "tpe"
     mock.function_name = "test_func"
     mock.preset_selection = None
+    mock.objectives = ["accuracy"]
+    mock.metadata = {}
     return mock
 
 
@@ -254,7 +256,7 @@ class TestResultsShow:
 
             result = runner.invoke(cli, ["results", "show", "nonexistent"])
 
-            assert result.exit_code == 0  # CLI handles error gracefully
+            assert result.exit_code != 0  # not found fails non-zero (#2507)
             assert "not found" in result.output.lower()
 
 
