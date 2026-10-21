@@ -145,9 +145,10 @@ class CredentialResolver:
         # always beats the cached login, matching CredentialManager. The cache
         # is only consulted when the environment does not supply the credential.
         if self._env_supplies_credential(target_mode):
-            await self._log_if_cache_disagrees(target_mode)
             env_creds = await self.load_from_env(target_mode)
             if env_creds is not None:
+                # Env wins; the cache mismatch note is best effort only.
+                await self._log_if_cache_disagrees(target_mode)
                 return env_creds
 
         # Try to load from cache next
@@ -180,7 +181,20 @@ class CredentialResolver:
         return False
 
     async def _log_if_cache_disagrees(self, mode: AuthMode) -> None:
-        """Log (without values) when a cached login differs from the environment."""
+        """Log (without values) when a cached login differs from the environment.
+
+        Best effort: never raises, so an unreadable cache cannot break auth.
+        """
+        try:
+            await self._warn_on_cache_mismatch(mode)
+        except Exception as exc:
+            logger.warning(
+                "Could not compare cached login with environment credential "
+                "(%s); using the environment credential.",
+                type(exc).__name__,
+            )
+
+    async def _warn_on_cache_mismatch(self, mode: AuthMode) -> None:
         if not (self.config.cache_credentials and self.config.credentials_file):
             return
         cached = await self.load_cached()

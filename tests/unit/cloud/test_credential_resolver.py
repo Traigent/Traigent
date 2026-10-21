@@ -610,6 +610,36 @@ class TestEnvironmentFirstPrecedence:
         assert env_key not in caplog.text and cached_key not in caplog.text
 
     @pytest.mark.asyncio
+    async def test_unreadable_cache_does_not_break_env_auth(
+        self,
+        resolver: CredentialResolver,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """#2227: a cache whose decrypt raises ValueError must not block env auth."""
+        env_key = "tg_" + "e" * 61
+        monkeypatch.setenv("TRAIGENT_API_KEY", env_key)
+        env_creds = self._cached(AuthMode.API_KEY, api_key=env_key)
+        with (
+            patch.object(
+                resolver,
+                "load_cached",
+                new_callable=AsyncMock,
+                side_effect=ValueError("unsupported encryption version"),
+            ),
+            patch.object(
+                resolver,
+                "load_from_env",
+                new_callable=AsyncMock,
+                return_value=env_creds,
+            ),
+            caplog.at_level("WARNING"),
+        ):
+            result = await resolver.load_credentials(AuthMode.API_KEY)
+        assert result is env_creds
+        assert env_key not in caplog.text
+
+    @pytest.mark.asyncio
     async def test_matching_env_and_cache_do_not_warn(
         self,
         resolver: CredentialResolver,
