@@ -686,3 +686,13 @@ def test_1975_post_without_key_still_retried_on_429() -> None:
     with pytest.raises(RetryableError):
         _run_counting_request("POST", 429, counter, max_retries=1)
     assert counter[0] == 2
+
+
+@pytest.mark.parametrize("blank", ["", "   ", "\t"])
+def test_1975_blank_idempotency_key_counts_as_absent(blank: str) -> None:
+    from traigent.utils.exceptions import NonRetryableError
+
+    counter = [0]
+    with pytest.raises(NonRetryableError):
+        _run_counting_request("POST", 503, counter, headers={"Idempotency-Key": blank})
+    assert counter[0] == 1, "blank Idempotency-Key must not enable replay"

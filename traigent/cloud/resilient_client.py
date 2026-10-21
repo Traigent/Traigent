@@ -437,8 +437,10 @@ async def resilient_backend_request(
 
     raise_if_cloud_egress_disabled("resilient backend request", no_egress=no_egress)
 
+    # An empty or whitespace-only value is no key: the server cannot dedupe on it.
     unsafe_unkeyed = method.upper() in _NON_IDEMPOTENT_METHODS and not any(
-        str(name).lower() == "idempotency-key" for name in (headers or {})
+        str(name).lower() == "idempotency-key" and str(value).strip()
+        for name, value in (headers or {}).items()
     )
 
     async def make_request() -> dict[str, Any]:
