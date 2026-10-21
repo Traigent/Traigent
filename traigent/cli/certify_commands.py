@@ -690,7 +690,12 @@ def verify(
     if not result.valid:
         click.echo(result.code)
         raise click.exceptions.Exit(1)
-    click.echo("VERIFIED")
+    # "VERIFIED" alone could be read as "quality verified": it covers signature and structure
+    # only, and any quality numbers in the certificate are reported by the customer.
+    click.echo(
+        "signature_and_structure=VERIFIED "
+        "(quality numbers are customer-reported; see the certificate non-claims)"
+    )
     if hasattr(result, "trust_status_evidence"):
         click.echo(f"trust_status_evidence={result.trust_status_evidence}")
         click.echo(f"trust_status_effective_time={result.trust_status_effective_time}")
@@ -1054,6 +1059,7 @@ def _verify_agent_quality(
         "primary_objective_id": result.primary_objective_id,
         "nominal_coverage_ppm": result.nominal_coverage_ppm,
         "holdout_item_count": result.holdout_item_count,
+        "holdout_item_count_source": "client_reported",
         "interval_verification_level": result.interval_verification_level,
         "split_verification_level": result.split_verification_level,
         "dataset_condition_code": result.dataset_condition_code,
@@ -1067,6 +1073,7 @@ def _verify_agent_quality(
         f"primary_objective_id={result.primary_objective_id}",
         f"nominal_coverage_ppm={result.nominal_coverage_ppm}",
         f"holdout_item_count={result.holdout_item_count}",
+        "holdout_item_count_source=client_reported",
         f"interval_verification_level={result.interval_verification_level}",
         f"split_verification_level={result.split_verification_level}",
         f"dataset_condition_code={result.dataset_condition_code}",

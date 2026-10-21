@@ -176,6 +176,7 @@ def test_unchecked_golden_bundle_is_verified_but_not_eligible() -> None:
     assert payload["primary_objective_id"] == "obj.accuracy.exact_match.v1"
     assert payload["nominal_coverage_ppm"] == 950000
     assert payload["holdout_item_count"] == 200
+    assert payload["holdout_item_count_source"] == "client_reported"
     assert payload["interval_verification_level"] == "construction_recomputed_v1"
     assert payload["split_verification_level"] == "issuer_attested_v1"
 
@@ -188,6 +189,7 @@ def test_unchecked_golden_bundle_human_output() -> None:
     assert lines[0] == "AGENT_QUALITY_VERIFIED"
     assert "process_record_base_status=not_checked" in lines
     assert "certification_eligible=false" in lines
+    assert "holdout_item_count_source=client_reported" in lines
 
 
 @requires_schema
