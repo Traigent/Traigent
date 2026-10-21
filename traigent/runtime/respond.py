@@ -143,10 +143,12 @@ def _fresh_checks(
         raise RuntimeRequirementError(E_NOT_RESTORE)
     ref = _step_breach_ref(payload)
     if ref is not None:
-        # The RESTORE step must be for the breach this call will fix.
-        if ref != candidates[0]["breach_id"]:
-            raise RuntimeRequirementError(E_HOLD, "breach")
-    elif len(candidates) != 1:
+        # The RESTORE step must be for the breach this call will fix: the candidate it names.
+        for candidate in candidates:
+            if candidate["breach_id"] == ref:
+                return candidate
+        raise RuntimeRequirementError(E_HOLD, "breach")
+    if len(candidates) != 1:
         raise RuntimeRequirementError(E_AMBIGUOUS_BREACH)
     return candidates[0]
 
@@ -304,21 +306,65 @@ async def respond(
     heartbeat = asyncio.create_task(
         _heartbeat(state, agent_id, key, attempt, clock, occurrence_lease)
     )
+    run: asyncio.Future[Any] | None = None
+    lost = False
     try:
         try:
-            result = await fn.optimize(cost_limit=float(ceiling))
+            run = asyncio.ensure_future(fn.optimize(cost_limit=float(ceiling)))
+            # A heartbeat the ledger refuses ends that task: this controller no longer
+            # owns the occurrence, so the run is cancelled and nothing is finished.
+            await asyncio.wait({run, heartbeat}, return_when=asyncio.FIRST_COMPLETED)
+            if not run.done():
+                lost = True
+            else:
+                # A synchronous run can block the loop past the lease with no beat
+                # having run: check ownership once more before reporting it finished.
+                lost = not _beat(state, agent_id, key, attempt, clock, occurrence_lease)
         finally:
-            # Also on cancellation: no heartbeat may outlive the run.
+            # Also on cancellation: neither task may outlive this call.
             await _stop(heartbeat)
-    except Exception:  # noqa: BLE001 - user code; its text is never surfaced
+            if run is not None and not run.done():
+                await _stop(run)
+        if lost:
+            raise _LeaseLost
+        result = run.result() if run is not None else None
+    except _LeaseLost:
+        raise RuntimeRequirementError(E_HOLD, "lease") from None
+    except BaseException as exc:  # noqa: BLE001 - user code; its text is never surfaced
         # Spend may have occurred and is never undone.  The occurrence is marked
         # failed (kept in the ledger with its attempt count) so that an explicit
-        # retry is possible, but only through a NEW human approval.
+        # retry is possible, but only through a NEW human approval.  Cancellation
+        # and interrupts mark it too, then propagate natively.
         record({"status": manifest.STATUS_FAILED, "run_id": None})
-        raise RuntimeRequirementError(E_OPTIMIZE_FAILED) from None
+        if isinstance(exc, Exception):
+            raise RuntimeRequirementError(E_OPTIMIZE_FAILED) from None
+        raise
     run_id = _run_id(result)
     record({"run_id": run_id, "finished": True})
     return RespondResult(breach_id, rule_id, OCCURRENCE, run_id, float(ceiling))
+
+
+def _beat(
+    state: Path,
+    agent_id: str,
+    key: str,
+    attempt: int,
+    clock: Callable[[], datetime],
+    lease: timedelta,
+) -> bool:
+    """One heartbeat write; ``False`` when the ledger refuses it (lease lost)."""
+    try:
+        return manifest.update_occurrence(
+            state,
+            agent_id,
+            key,
+            {"heartbeat_at": clock().isoformat()},
+            attempt=attempt,
+            lease=lease,
+            now=clock(),
+        )
+    except (OSError, RuntimeRequirementError):
+        return True  # a missed beat only shortens the lease; the next one retries
 
 
 async def _heartbeat(
@@ -329,25 +375,19 @@ async def _heartbeat(
     clock: Callable[[], datetime],
     lease: timedelta,
 ) -> None:
-    """Renew the reservation's heartbeat every lease/4 while the run is awaited."""
+    """Renew the heartbeat every lease/4; RETURNS (ending the task) once the lease is lost."""
     interval = max(lease.total_seconds() / 4, 0.001)
     while True:
         await asyncio.sleep(interval)
-        try:
-            fenced_in = manifest.update_occurrence(
-                state,
-                agent_id,
-                key,
-                {"heartbeat_at": clock().isoformat()},
-                attempt=attempt,
-            )
-        except (OSError, RuntimeRequirementError):
-            continue  # a missed beat only shortens the lease; the next one retries
-        if not fenced_in:
+        if not _beat(state, agent_id, key, attempt, clock, lease):
             return
 
 
-async def _stop(task: asyncio.Task[None]) -> None:
+class _LeaseLost(Exception):
+    """Internal signal: this controller no longer owns the occurrence."""
+
+
+async def _stop(task: asyncio.Future[Any]) -> None:
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task

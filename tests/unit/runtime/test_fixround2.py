@@ -115,8 +115,10 @@ async def test_respond_drops_a_fenced_out_outcome(
         return type("R", (), {"optimization_id": "r"})()
 
     fn.optimize = superseded
-    await respond(fn, req, **_kw(state_dir))
-    assert "stale_outcome_dropped" in caplog.text
+    # Fenced out mid-run means the lease is lost: the run is stopped, never reported finished.
+    with pytest.raises(RuntimeRequirementError) as err:
+        await respond(fn, req, **_kw(state_dir))
+    assert (err.value.code, err.value.path) == ("hold", "lease")
     assert not manifest.read_occurrence(state_dir, AGENT, "b1|fix|0").get("finished")
 
 

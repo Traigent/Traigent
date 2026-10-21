@@ -494,8 +494,13 @@ def update_occurrence(
     run_info: Mapping[str, Any],
     *,
     attempt: int,
+    lease: timedelta | None = None,
+    now: datetime | None = None,
 ) -> bool:
     """Merge ``run_info`` into the record only if it still belongs to ``attempt``.
+
+    A heartbeat passes ``lease``: an expired lease is read as failed (INV-33) and a
+    beat never resurrects it.  Outcome writes pass none and keep the attempt fence.
 
     A writer whose reservation was superseded (its lease expired and a newer
     approved attempt took over) is fenced out: nothing is written, ``False``.
@@ -513,6 +518,10 @@ def update_occurrence(
             or record.get("finished")
         ):
             return False
+        if lease is not None:
+            resolved = effective_record(record, now=now, lease=lease)
+            if resolved is None or resolved.get("status") != STATUS_STARTED:
+                return False
         record.update(run_info)
         _write_json(path, doc)
     return True

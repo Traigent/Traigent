@@ -63,6 +63,13 @@ def _closed_code(status: int, body: Any) -> str:
     return E_BACKEND
 
 
+def _rows_only(items: list[Any]) -> list[dict[str, Any]]:
+    """Every item must be an object: one malformed item fails the whole response closed."""
+    if not all(isinstance(i, dict) for i in items):
+        raise RuntimeRequirementError(E_BACKEND, "response")
+    return items
+
+
 class RuntimeClient:
     """Project-scoped calls used by ``apply``, ``watch`` and ``respond``."""
 
@@ -155,7 +162,7 @@ class RuntimeClient:
         items = self._expect(status, parsed, (200,)).get("items")
         if not isinstance(items, list):
             raise RuntimeRequirementError(E_BACKEND, "response")
-        return [i for i in items if isinstance(i, dict)]
+        return _rows_only(items)
 
     def list_breaches(self, agent_id: str) -> tuple[list[dict[str, Any]], bool | None]:
         """Breach rows plus ``has_more`` (``None`` when the backend does not report it)."""
@@ -167,9 +174,7 @@ class RuntimeClient:
         if not isinstance(items, list):
             raise RuntimeRequirementError(E_BACKEND, "response")
         has_more = body.get("has_more")
-        return [i for i in items if isinstance(i, dict)], (
-            has_more if isinstance(has_more, bool) else None
-        )
+        return _rows_only(items), (has_more if isinstance(has_more, bool) else None)
 
     def get_next_step(self, agent_id: str) -> dict[str, Any]:
         status, parsed = self.request(
