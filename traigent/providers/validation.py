@@ -342,6 +342,44 @@ def validate_model_names(
     return valid, unknown
 
 
+# What a status says about the account's funds. "not_checked": the provider has
+# no balance API, so nothing was verified. "unknown": a check ran but could not
+# tell. "available": a reported limit has headroom. "depleted": a reported limit
+# is exhausted. Only "available" is a claim that funds exist, and then only for
+# the key's own spending limit, never the account balance.
+_FUNDS_NOT_CHECKED = "not_checked"
+_FUNDS_UNKNOWN = "unknown"
+_FUNDS_AVAILABLE = "available"
+_FUNDS_DEPLETED = "depleted"
+
+
+def _openrouter_funds(response: object) -> str:
+    """Funds state from an OpenRouter ``/api/v1/key`` response, never raising."""
+    try:
+        body = response.json()  # type: ignore[attr-defined]
+        data = body.get("data") if isinstance(body, dict) else None
+    except Exception:  # noqa: BLE001 - unreadable body is an unknown, not a pass
+        return _FUNDS_UNKNOWN
+    if not isinstance(data, dict):
+        return _FUNDS_UNKNOWN
+
+    def _number(value: object) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return float(value) if value == value else None  # NaN is not a number
+
+    limit = _number(data.get("limit"))
+    if limit is None:
+        return _FUNDS_UNKNOWN  # no per-key limit: balance is not visible here
+    remaining = _number(data.get("limit_remaining"))
+    if remaining is None:
+        usage = _number(data.get("usage"))
+        remaining = None if usage is None else limit - usage
+    if remaining is None:
+        return _FUNDS_UNKNOWN
+    return _FUNDS_DEPLETED if remaining <= 0 else _FUNDS_AVAILABLE
+
+
 @dataclass
 class ProviderStatus:
     """Status of a provider validation check.
@@ -357,6 +395,9 @@ class ProviderStatus:
             example Bedrock, which has no key/balance probe). A skipped
             provider is never a pass (``valid`` is False) and never counts as
             a failure in :func:`get_failed_providers`.
+        funds: ``"not_checked"`` (default; the provider has no balance API),
+            ``"unknown"``, ``"available"`` or ``"depleted"``. Never claims
+            funds were verified unless a balance/limit was actually read.
     """
 
     provider: str
@@ -366,6 +407,7 @@ class ProviderStatus:
     unknown_models: list[str] | None = None
     error_type: str | None = None
     skipped: bool = False
+    funds: str = _FUNDS_NOT_CHECKED
 
 
 @dataclass
@@ -511,6 +553,17 @@ class ProviderValidator:
                 error_type="NotValidated",
                 skipped=True,
             )
+        if provider == "vertex_ai":
+            return ProviderStatus(
+                provider="vertex_ai",
+                valid=False,
+                message=(
+                    "Skipped: Vertex AI authenticates with application default "
+                    "credentials, not an API key; credentials not checked."
+                ),
+                error_type="NotValidated",
+                skipped=True,
+            )
         if provider == "openrouter":
             return self._check_openrouter()
         validate_method = getattr(self, f"_validate_{provider}", None)
@@ -567,6 +620,7 @@ class ProviderValidator:
                 provider="openrouter",
                 valid=True,
                 message=_MSG_AVAILABLE_CACHED,
+                funds=_FUNDS_UNKNOWN,
             )
 
         try:
@@ -590,9 +644,18 @@ class ProviderValidator:
             )
 
         if 200 <= code < 300:
+            funds = _openrouter_funds(response)
+            if funds == _FUNDS_DEPLETED:
+                return ProviderStatus(
+                    provider="openrouter",
+                    valid=False,
+                    message=_MSG_INSUFFICIENT_FUNDS.format(provider="OpenRouter"),
+                    error_type="InsufficientFunds",
+                    funds=_FUNDS_DEPLETED,
+                )
             self._cache_success("openrouter", key)
             return ProviderStatus(
-                provider="openrouter", valid=True, message="Available"
+                provider="openrouter", valid=True, message="Available", funds=funds
             )
         if code in (401, 403):
             return ProviderStatus(
@@ -1152,7 +1215,7 @@ def get_provider_for_model(model_name: str) -> str | None:
 
 
 def get_run_provider_for_model(model_name: str) -> str | None:
-    """Like :func:`get_provider_for_model`, but also names OpenRouter/Bedrock.
+    """Like :func:`get_provider_for_model`, but also names OpenRouter/Bedrock/Vertex AI.
 
     Those two have no first-class validator mapping in
     :func:`get_provider_for_model` (it returns ``None`` for them), yet a run
@@ -1161,7 +1224,7 @@ def get_run_provider_for_model(model_name: str) -> str | None:
     prefix_match = _LITELLM_PREFIX_PATTERN.match(model_name)
     if prefix_match:
         prefix = prefix_match.group(1).lower()
-        if prefix in ("openrouter", "bedrock"):
+        if prefix in ("openrouter", "bedrock", "vertex_ai"):
             return prefix
     return get_provider_for_model(model_name)
 
@@ -1206,7 +1269,10 @@ def print_provider_status(results: dict[str, ProviderStatus]) -> None:
 
     for provider, status in sorted(results.items()):
         symbol = "[OK]" if status.valid else ("[SK]" if status.skipped else "[--]")
-        print(f"  {symbol} {provider.capitalize()}: {status.message}")
+        funds_note = ""
+        if status.valid and status.funds in (_FUNDS_NOT_CHECKED, _FUNDS_UNKNOWN):
+            funds_note = " (funds not checked)"
+        print(f"  {symbol} {provider.capitalize()}: {status.message}{funds_note}")
         if status.valid and status.models:
             models_str = ", ".join(status.models)
             print(f"       Models: {models_str}")

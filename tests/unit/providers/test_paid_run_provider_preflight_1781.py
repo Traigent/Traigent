@@ -168,3 +168,92 @@ class TestOpenRouter:
                 preflight_run_providers(["openrouter/openai/gpt-4o"])
         assert "openrouter" in str(exc.value)
         assert _SECRET not in str(exc.value)
+
+
+class TestVertexAndFunds:
+    def test_vertex_is_skipped_not_failed_even_without_google_key(self, monkeypatch):
+        for name in ("GOOGLE_API_KEY", "GEMINI_API_KEY"):
+            monkeypatch.delenv(name, raising=False)
+        results = validate_providers(["vertex_ai/gemini-2.5-flash"])
+        status = results["vertex_ai"]
+        assert status.skipped is True and status.valid is False
+        assert "credentials not checked" in status.message
+        assert get_failed_providers(results) == []
+        assert "google" not in results
+        # The paid-run gate must not block on it.
+        preflight_run_providers(["vertex_ai/gemini-2.5-flash"])
+
+    def _openrouter(self, monkeypatch, body):
+        monkeypatch.setenv("OPENROUTER_API_KEY", _SECRET)
+        response = SimpleNamespace(status_code=200, json=lambda: body)
+        with patch("requests.get", return_value=response):
+            return ProviderValidator()._check_openrouter()
+
+    def test_openrouter_depleted_limit_fails_closed(self, monkeypatch):
+        status = self._openrouter(
+            monkeypatch,
+            {"data": {"limit": 10.0, "limit_remaining": 0, "usage": 10.0}},
+        )
+        assert status.valid is False
+        assert status.error_type == "InsufficientFunds"
+        assert status.funds == "depleted"
+        assert _SECRET not in status.message
+
+    def test_openrouter_depleted_via_usage_when_remaining_absent(self, monkeypatch):
+        status = self._openrouter(monkeypatch, {"data": {"limit": 5, "usage": 6}})
+        assert status.valid is False and status.funds == "depleted"
+
+    def test_openrouter_depleted_run_blocks_preflight(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", _SECRET)
+        body = {"data": {"limit": 1, "limit_remaining": -0.5}}
+        response = SimpleNamespace(status_code=200, json=lambda: body)
+        with patch("requests.get", return_value=response):
+            with pytest.raises(ProviderValidationError) as exc:
+                preflight_run_providers(["openrouter/openai/gpt-4o"])
+        assert "InsufficientFunds" in str(exc.value)
+        assert _SECRET not in str(exc.value)
+
+    def test_openrouter_with_headroom_is_available(self, monkeypatch):
+        status = self._openrouter(
+            monkeypatch, {"data": {"limit": 10, "limit_remaining": 4.2}}
+        )
+        assert status.valid is True and status.funds == "available"
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"data": {"limit": None, "limit_remaining": None, "usage": 3}},
+            {"data": {}},
+            {"unexpected": True},
+            None,
+        ],
+    )
+    def test_openrouter_without_limit_passes_with_funds_unknown(
+        self, monkeypatch, body
+    ):
+        status = self._openrouter(monkeypatch, body)
+        assert status.valid is True
+        assert status.funds == "unknown"
+
+    def test_openrouter_unreadable_body_is_unknown_not_a_failure(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", _SECRET)
+
+        def boom():
+            raise ValueError("bad json")
+
+        response = SimpleNamespace(status_code=200, json=boom)
+        with patch("requests.get", return_value=response):
+            status = ProviderValidator()._check_openrouter()
+        assert status.valid is True and status.funds == "unknown"
+
+    def test_openai_status_says_funds_not_checked(self, monkeypatch, capsys):
+        from traigent.providers.validation import print_provider_status
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")  # pragma: allowlist secret
+        fake_client = MagicMock()
+        with patch("openai.OpenAI", return_value=fake_client):
+            status = ProviderValidator()._validate_openai()
+        assert status.valid is True
+        assert status.funds == "not_checked"
+        print_provider_status({"openai": status})
+        assert "funds not checked" in capsys.readouterr().out
