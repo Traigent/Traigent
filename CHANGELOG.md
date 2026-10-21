@@ -244,6 +244,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   memory after a grace window (`trace_state_grace_seconds`, default 300 s).
   Traces that are still running, queued, in flight or failed stay for retry.
   Restarting an evicted trace id starts a fresh snapshot.
+  Eviction depends on a per-item settled mark kept until the trace is evicted
+  (not a bounded delivery cache), and a later update to an evicted trace id
+  (`record_observation`, `end_trace`) starts a fresh snapshot instead of raising;
+  only ids the client never held still raise `Unknown trace_id`.
 
 - **TVL float ranges that declare `resolution` are now a grid (#1612).** A
   float `range` with a positive `resolution` loads as the discrete values

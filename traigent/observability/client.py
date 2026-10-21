@@ -1009,10 +1009,13 @@ class _SyncBatchTransport:
         # in-flight snapshot of a lower generation (#2609).
         self._inflight_generations: dict[str, int] = {}
         self._delivered_digests: OrderedDict[str, bytes] = OrderedDict()
-        # Items the backend has accepted at least once (LRU, bounded by
-        # max_queue_size). Unlike `_delivered_digests` it survives a response
-        # with warnings, so the client can tell "confirmed" from "pending" (#2604).
-        self._acked_items: OrderedDict[str, None] = OrderedDict()
+        # Items whose latest snapshot the backend accepted (#2604). Unlike
+        # `_delivered_digests` it survives a response with warnings, so the
+        # client can tell "confirmed" from "pending". Not an LRU: an entry
+        # leaves when a newer snapshot is buffered or the client releases it
+        # (`release_settled`, on eviction), so settlement can never expire
+        # under sustained traffic and strand an evictable trace.
+        self._settled_items: set[str] = set()
         self._oldest_inflight_started_at: float | None = None
         self._active_send_completion: threading.Event | None = None
         self._stats: dict[str, int] = {
@@ -1154,6 +1157,7 @@ class _SyncBatchTransport:
                 self._ensure_timer_locked()
             else:
                 self._buffer.pop(item_id, None)
+                self._settled_items.discard(item_id)
                 self._buffer[item_id] = replace(
                     buffered_payload,
                     generation=self._resolve_generation_locked(
@@ -1188,10 +1192,15 @@ class _SyncBatchTransport:
         failed or unconfirmed item is never settled (#2604)."""
         with self._lock:
             return (
-                item_id in self._acked_items
+                item_id in self._settled_items
                 and item_id not in self._buffer
                 and item_id not in self._inflight_digests
             )
+
+    def release_settled(self, item_id: str) -> None:
+        """Forget an item's settled mark once the client has evicted it."""
+        with self._lock:
+            self._settled_items.discard(item_id)
 
     def flush(
         self,
@@ -1636,8 +1645,8 @@ class _SyncBatchTransport:
                 self._stats["sent_items"] += len(payloads)
                 for item_id, _ in batch_items:
                     digest = self._inflight_digests.pop(item_id, None)
-                    self._acked_items[item_id] = None
-                    self._acked_items.move_to_end(item_id)
+                    if item_id not in self._buffer:
+                        self._settled_items.add(item_id)
                     if digest is None or response_warnings:
                         # A response with warnings (e.g. an unresolved prompt
                         # link) may be resolved by a later re-send, so it does
@@ -1648,8 +1657,6 @@ class _SyncBatchTransport:
                     self._delivered_digests.move_to_end(item_id)
                 while len(self._delivered_digests) > self.max_queue_size:
                     self._delivered_digests.popitem(last=False)
-                while len(self._acked_items) > self.max_queue_size:
-                    self._acked_items.popitem(last=False)
             return True, events
 
         with self._lock:
@@ -1972,6 +1979,24 @@ class _SyncBatchTransport:
 
 DEFAULT_TRACE_STATE_GRACE_SECONDS = 300.0
 _MAX_EVICTION_STEPS_PER_PASS = 256
+_MAX_EVICTED_TRACE_TOMBSTONES = 4096
+
+
+@dataclass(frozen=True)
+class _EvictedTrace:
+    """What a later update needs to restart an evicted trace id (#2604).
+
+    Carries only the trace's identity and its content policy, never its
+    content, so memory per entry is small and bounded by the tombstone cap.
+    """
+
+    name: str
+    environment: str | None
+    release: str | None
+    snapshot_sequence: int
+    resolved_content_mode: str
+    content_mode_locked: bool
+    content_history: dict[str, frozenset[str]]
 
 
 class ObservabilityClient:
@@ -2006,6 +2031,7 @@ class ObservabilityClient:
         self._trace_state_grace = float(trace_state_grace_seconds)
         self._clock = clock
         self._eviction_queue: deque[tuple[float, str]] = deque()
+        self._evicted_traces: OrderedDict[str, _EvictedTrace] = OrderedDict()
         self._lock = threading.RLock()
         self._snapshot_submission_complete = threading.Event()
         self._snapshot_submission_complete.set()
@@ -2188,15 +2214,19 @@ class ObservabilityClient:
         )
         with self._lock:
             previous = self._trace_states.get(trace_id)
+            tombstone = self._evicted_traces.pop(trace_id, None)
+            previous_sequence = (
+                previous.snapshot_sequence
+                if previous is not None
+                else (tombstone.snapshot_sequence if tombstone is not None else 0)
+            )
             self._trace_states[trace_id] = _TraceState(
                 trace=trace,
                 resolved_content_mode=effective_content_mode,
                 content_mode_locked=content_mode_locked,
                 # Restarting a trace id keeps its capture order monotonic: the
                 # transport may still hold a snapshot of the earlier state.
-                snapshot_sequence=(
-                    previous.snapshot_sequence if previous is not None else 0
-                ),
+                snapshot_sequence=previous_sequence,
                 scope_ledger=scope_ledger,
             )
 
@@ -2300,7 +2330,7 @@ class ObservabilityClient:
 
         observation_id = observation_id or _new_observation_id()
         with self._lock:
-            state = self._trace_states.get(trace_id)
+            state = self._state_or_revive_locked(trace_id)
             if state is None:
                 raise ValueError(f"Unknown trace_id '{trace_id}'")
             existing = state.observations.get(observation_id)
@@ -2517,7 +2547,7 @@ class ObservabilityClient:
             else None
         )
         with self._lock:
-            state = self._trace_states.get(trace_id)
+            state = self._state_or_revive_locked(trace_id)
             if state is None:
                 raise ValueError(f"Unknown trace_id '{trace_id}'")
             state.trace.status = status
@@ -2564,6 +2594,53 @@ class ObservabilityClient:
                     (self._clock() + self._trace_state_grace, trace_id)
                 )
 
+    def _remember_evicted_locked(self, trace_id: str, state: _TraceState) -> None:
+        self._evicted_traces[trace_id] = _EvictedTrace(
+            name=state.trace.name,
+            environment=state.trace.environment,
+            release=state.trace.release,
+            snapshot_sequence=state.snapshot_sequence,
+            resolved_content_mode=state.resolved_content_mode,
+            content_mode_locked=state.content_mode_locked,
+            content_history={
+                key: frozenset(fields) for key, fields in state.content_history.items()
+            },
+        )
+        self._evicted_traces.move_to_end(trace_id)
+        while len(self._evicted_traces) > _MAX_EVICTED_TRACE_TOMBSTONES:
+            self._evicted_traces.popitem(last=False)
+
+    def _state_or_revive_locked(self, trace_id: str) -> _TraceState | None:
+        """The live state, or a minimal fresh one for a recently evicted id.
+
+        An update to an evicted trace starts a fresh snapshot under the same
+        id (#2604); an id this client never held (or whose tombstone aged out
+        of the bounded set) still returns None.
+        """
+        state = self._trace_states.get(trace_id)
+        if state is not None:
+            return state
+        tombstone = self._evicted_traces.pop(trace_id, None)
+        if tombstone is None:
+            return None
+        state = _TraceState(
+            trace=TraceDTO(
+                id=trace_id,
+                name=tombstone.name,
+                environment=tombstone.environment,
+                release=tombstone.release,
+                started_at=utc_now(),
+            ),
+            resolved_content_mode=tombstone.resolved_content_mode,
+            content_mode_locked=tombstone.content_mode_locked,
+            content_history={
+                key: set(fields) for key, fields in tombstone.content_history.items()
+            },
+            snapshot_sequence=tombstone.snapshot_sequence,
+        )
+        self._trace_states[trace_id] = state
+        return state
+
     def _evict_expired_trace_states(self) -> int:
         """Drop ended, delivered traces whose grace window has passed (#2604).
 
@@ -2591,6 +2668,8 @@ class ObservabilityClient:
                     continue
                 if self._ingest_suppressed or self._transport.is_settled(trace_id):
                     del self._trace_states[trace_id]
+                    self._transport.release_settled(trace_id)
+                    self._remember_evicted_locked(trace_id, state)
                     evicted += 1
                 else:
                     self._eviction_queue.append(

@@ -186,3 +186,85 @@ def test_eviction_pass_work_is_bounded():
         client._evict_expired_trace_states()
         <= client_module._MAX_EVICTION_STEPS_PER_PASS
     )
+
+
+def _small_queue_client(sender, clock, max_queue_size: int) -> ObservabilityClient:
+    return ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=1000,
+            max_queue_size=max_queue_size,
+            max_buffer_age=999.0,
+            enable_atexit_flush=False,
+        ),
+        sender=sender,
+        trace_state_grace_seconds=GRACE,
+        clock=clock,
+    )
+
+
+def test_eviction_does_not_depend_on_a_bounded_delivery_lru():
+    clock = FakeClock()
+    cap = 8
+    client = _small_queue_client(lambda batch: None, clock, cap)
+    total = cap * 5
+    for i in range(total):
+        client.end_trace(client.start_trace("t", trace_id=f"w-{i}"))
+        if i % cap == cap - 1:
+            assert client.flush().success  # all within one grace window
+    assert client.flush().success
+    assert len(client._trace_states) == total
+    clock.advance(GRACE + 1)
+    assert client._evict_expired_trace_states() == total
+    assert client._trace_states == {}
+    assert client._transport._settled_items == set()
+
+
+def test_late_update_to_evicted_trace_starts_a_fresh_delivered_snapshot():
+    clock = FakeClock()
+    requests: list[list[dict]] = []
+    client = _client(requests.append, clock)
+    client.end_trace(client.start_trace("keep-name", trace_id="late"))
+    client.flush()
+    clock.advance(GRACE + 1)
+    client._evict_expired_trace_states()
+    assert "late" not in client._trace_states
+
+    client.record_observation("late", name="obs")
+    client.end_trace("late")
+    assert client.flush().success
+    sent = [t for r in requests for t in r if t["id"] == "late"]
+    assert len(sent) == 2
+    assert sent[1]["name"] == "keep-name"
+    assert len(sent[1]["observations"]) == 1
+
+    clock.advance(GRACE + 1)
+    client._evict_expired_trace_states()
+    client.end_trace("late")  # end_trace on a tombstoned id also restarts it
+    assert "late" in client._trace_states
+
+
+def test_never_seen_trace_id_still_raises():
+    client = _client(lambda batch: None, FakeClock())
+    with pytest.raises(ValueError, match="Unknown trace_id"):
+        client.record_observation("ghost", name="obs")
+    with pytest.raises(ValueError, match="Unknown trace_id"):
+        client.end_trace("ghost")
+
+
+def test_tombstones_are_bounded_fifo(monkeypatch):
+    from traigent.observability import client as client_module
+
+    monkeypatch.setattr(client_module, "_MAX_EVICTED_TRACE_TOMBSTONES", 3)
+    clock = FakeClock()
+    client = _client(lambda batch: None, clock)
+    for i in range(6):
+        client.end_trace(client.start_trace("t", trace_id=f"f-{i}"))
+    client.flush()
+    clock.advance(GRACE + 1)
+    client._evict_expired_trace_states()
+    assert len(client._evicted_traces) == 3
+    with pytest.raises(ValueError, match="Unknown trace_id"):
+        client.end_trace("f-0")  # aged out of the bounded tombstone set
+    client.end_trace("f-5")  # still tombstoned
