@@ -147,3 +147,58 @@ class TestDisplay:
         cb = ProgressBarCallback(update_interval=0)
         cb.on_trial_complete(SimpleNamespace(metadata={}), self._progress())
         assert "timed out" not in capsys.readouterr().out
+
+
+class TestCustomEvaluatorContainment:
+    def test_sync_timeouts_do_not_hang_following_examples(self):
+        import threading
+        import time
+
+        release = threading.Event()
+
+        def blocking_custom(func, config, example):
+            release.wait(10)
+
+        dataset = Dataset(
+            examples=[
+                EvaluationExample(input_data={"text": str(i)}, expected_output="x")
+                for i in range(2)
+            ],
+            name="t2",
+        )
+        evaluator = _make(None, 0.2, custom=blocking_custom)
+
+        def fn(text: str) -> str:
+            return text
+
+        start = time.monotonic()
+        try:
+            result = asyncio.run(
+                asyncio.wait_for(evaluator.evaluate(fn, {}, dataset), timeout=8)
+            )
+        finally:
+            release.set()
+        assert time.monotonic() - start < 4
+        # Example 0 times out; example 1 is bounded at lane admission, not hung.
+        assert result.timed_out_examples >= 1
+        assert result.successful_examples == 0
+        assert len(result.example_results) == 2
+
+    def test_async_keyboard_interrupt_is_contained_in_caller_frame(self):
+        async def interrupting(func, config, example):
+            raise KeyboardInterrupt
+
+        evaluator = _make(None, 5.0, custom=interrupting)
+
+        async def fn(text: str) -> str:
+            return text
+
+        async def main():
+            try:
+                await evaluator.evaluate(fn, {}, _dataset())
+            except KeyboardInterrupt:
+                return "contained"
+            return "swallowed"
+
+        # Uncontained, the interrupt unwinds the loop and escapes asyncio.run.
+        assert asyncio.run(main()) == "contained"

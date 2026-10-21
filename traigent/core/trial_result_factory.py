@@ -306,7 +306,8 @@ def _build_success_trial_metadata(
     example_results = getattr(eval_result, "example_results", None)
     if isinstance(example_results, list) and example_results:
         # Examples that hit the per-example limit (``example_timeout``); they
-        # score None, so surface the count rather than hiding it in the mean.
+        # are failed rows (quality 0.0, cost unknown), so surface the count
+        # rather than hiding it in the mean.
         trial_metadata["timed_out_examples"] = count_timed_out_examples(example_results)
         trial_metadata["example_results"] = _redact_example_results_with_signals(
             example_results

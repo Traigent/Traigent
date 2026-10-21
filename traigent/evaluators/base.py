@@ -104,7 +104,8 @@ record_example_result = None  # type: ignore
 logger = get_logger(__name__)
 
 #: Error-message prefix recorded for an example that exceeded the per-example
-#: limit (``example_timeout``). Such an example scores ``None`` (unmeasured).
+#: limit (``example_timeout``). Such an example is recorded as a failed row
+#: (quality 0.0, cost unknown), not as a ``None`` score.
 EXAMPLE_TIMEOUT_ERROR_PREFIX = "Function call timed out after"
 
 

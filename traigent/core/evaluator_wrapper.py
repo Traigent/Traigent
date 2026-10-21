@@ -754,9 +754,14 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                                 try:
                                     # Per-example limit (``example_timeout``), not
                                     # the run-level timeout.
-                                    example_result = await asyncio.wait_for(
-                                        self.custom_evaluator(func, config, example),
-                                        timeout=self.timeout or None,
+                                    # Shared helper keeps KeyboardInterrupt /
+                                    # SystemExit contained at the task boundary.
+                                    example_result = (
+                                        await self._execute_async_with_timeout(
+                                            self.custom_evaluator,
+                                            (func, config, example),
+                                            {},
+                                        )
                                     )
                                 except asyncio.CancelledError:
                                     cleanup_boundary.cancel()
@@ -787,6 +792,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                                     worker_started_callback=cleanup_boundary.worker_started,
                                     worker_done_callback=cleanup_boundary.worker_done,
                                     apply_timeout=True,
+                                    bound_lane_wait=True,
                                 )
                                 if execution_error is not None:
                                     raise RuntimeError(execution_error)
