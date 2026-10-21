@@ -715,6 +715,7 @@ class TrialLifecycle:
             )
             self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_effectuation_metadata(result, func)
+            self._apply_vendor_attempts(result, capture_bucket)
             self._apply_content_identity(
                 result,
                 evaluation_config,
@@ -739,6 +740,7 @@ class TrialLifecycle:
             )
             self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_effectuation_metadata(result, func)
+            self._apply_vendor_attempts(result, capture_bucket)
             self._apply_content_identity(
                 result, evaluation_config, identity_run, None, capture_bucket
             )
@@ -768,6 +770,7 @@ class TrialLifecycle:
             from traigent.core.exception_handler import classify_vendor_error
 
             category = classify_vendor_error(vendor_exc)
+            self._note_abandoned_vendor_attempts(trial_id, capture_bucket)
             raise VendorPauseError(
                 str(vendor_exc),
                 original_error=vendor_exc,
@@ -859,19 +862,47 @@ class TrialLifecycle:
 
     @staticmethod
     def _apply_vendor_attempts(result: TrialResult, capture_bucket: Any) -> None:
-        """Record per-trial provider-call attempts (SDK-41); no-op when none."""
+        """Record per-trial provider-call attempts (SDK-41); no-op when none.
+
+        A failed attempt that was retried reports no cost telemetry, so the
+        trial's spend is a lower bound: it is flagged ``cost_unmeasured`` (known
+        spend kept as the floor) and flows through the existing honest-cost
+        machinery, including strict-mode ``CostTrackingRequiredError``.
+        """
         if capture_bucket is None:
             return
         try:
-            from traigent.utils.vendor_retry import summarize_attempts
+            from traigent.utils.trial_costs import lift_flagged_cost_to_floor
+            from traigent.utils.vendor_retry import summarize_bucket
 
-            with capture_bucket.lock:
-                attempts = list(capture_bucket.vendor_attempts)
-            summary = summarize_attempts(attempts)
-            if summary:
-                result.metadata = {**(result.metadata or {}), **summary}
+            summary = summarize_bucket(capture_bucket)
+            if not summary:
+                return
+            result.metadata = {**(result.metadata or {}), **summary}
+            if summary["vendor_call_retries"] > 0:
+                metrics = result.metrics
+                if isinstance(metrics, dict):
+                    metrics["cost_unmeasured"] = 1.0
+                    lift_flagged_cost_to_floor(metrics, metrics)
         except Exception:  # noqa: BLE001 - accounting must never fail a trial
             logger.debug("Vendor attempt metadata omitted", exc_info=True)
+
+    def _note_abandoned_vendor_attempts(
+        self, trial_id: str, capture_bucket: Any
+    ) -> None:
+        """Keep attempts of a trial that ended in a vendor pause in run totals."""
+        if capture_bucket is None:
+            return
+        try:
+            from traigent.utils.vendor_retry import summarize_bucket
+
+            summary = summarize_bucket(capture_bucket)
+            if summary:
+                self._orchestrator._abandoned_vendor_attempts.append(
+                    {"trial_id": trial_id, **summary}
+                )
+        except Exception:  # noqa: BLE001
+            logger.debug("Abandoned vendor attempts omitted", exc_info=True)
 
     def _apply_effectuation_metadata(
         self,

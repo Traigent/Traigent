@@ -22,7 +22,7 @@ from traigent.utils.langchain_interceptor import (
 from traigent.utils.vendor_retry import (
     classify_retryable,
     resolve_vendor_retry_settings,
-    summarize_attempts,
+    summarize_bucket,
 )
 
 RETRIES = "TRAIGENT_VENDOR_MAX_RETRIES"
@@ -154,7 +154,7 @@ def test_sync_retry_then_success(mock_off, monkeypatch):
             out = mod.completion(model="gpt-4o")
         assert out.model == "gpt-4o"
         assert mod.calls["n"] == 3
-        s = summarize_attempts(bucket.vendor_attempts)
+        s = summarize_bucket(bucket)
         assert s["vendor_call_attempts"] == 3
         assert s["vendor_call_retries"] == 2
         assert s["vendor_call_unknown_usage_attempts"] == 2
@@ -258,7 +258,7 @@ def test_ten_calls_one_injected_failure_reports_eleven_attempts(monkeypatch):
                 for _ in range(10):
                     mod.completion(model="gpt-4o-mini")
         assert mod.calls["n"] == 0  # mock mode: provider never reached
-        s = summarize_attempts(bucket.vendor_attempts)
+        s = summarize_bucket(bucket)
         assert s["vendor_call_attempts"] == 11
         assert s["vendor_call_retries"] == 1
         assert len(s["vendor_call_attempt_records"]) == 11
@@ -358,3 +358,499 @@ def test_orchestrator_aggregates_attempt_totals():
         )
         == {}
     )
+
+
+# ------------------------------------------------- other trial exit paths
+
+
+def _lifecycle_with(side_effect):
+    from unittest.mock import AsyncMock
+
+    orch = MagicMock()
+    orch._abandoned_vendor_attempts = []
+    orch._content_identity_run = None
+    orch._constraints_post_eval = []
+    orch.evaluator.evaluate = AsyncMock(side_effect=side_effect)
+    return TrialLifecycle(orch), orch
+
+
+async def _run_exit_path(exc):
+    from unittest.mock import AsyncMock
+    from traigent.utils.langchain_interceptor import record_vendor_attempt
+
+    async def evaluate(*a, **k):
+        # Two attempts (one failed+retried) made inside the evaluator's own
+        # nested scope, like the real LocalEvaluator.
+        with capture_scope():
+            record_vendor_attempt(
+                {"retried": True, "usage_known": False, "outcome": "error"}
+            )
+            record_vendor_attempt({"usage_known": True, "outcome": "success"})
+        raise exc
+
+    lifecycle, orch = _lifecycle_with(evaluate)
+    lifecycle._collect_workflow_span = MagicMock()
+    lifecycle._build_evaluate_kwargs = MagicMock(return_value={})
+    lifecycle._finalize_budget_lease = MagicMock(return_value=None)
+    lifecycle._score_surrogate = AsyncMock(return_value=None)
+    coro = lifecycle._execute_trial_with_tracing(
+        func=lambda: None,
+        dataset=MagicMock(),
+        trial_id="t1",
+        backend_trial_id=None,
+        evaluation_config={},
+        start_time=0.0,
+        optuna_trial_id=None,
+        progress_callback=None,
+        progress_state={},
+        lease=None,
+        span=MagicMock(),
+    )
+    return lifecycle, orch, coro
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("which", ["pruned", "constraint", "generic"])
+async def test_attempts_attached_on_non_success_exits(which):
+    from traigent.utils.exceptions import TrialPrunedError, TVLConstraintError
+
+    exc = {
+        "pruned": TrialPrunedError("p", step=1),
+        "constraint": TVLConstraintError("c"),
+        "generic": RuntimeError("boom"),
+    }[which]
+    _, _, coro = await _run_exit_path(exc)
+    result = await coro
+    assert result.metadata["vendor_call_attempts"] == 2
+    assert result.metadata["vendor_call_retries"] == 1
+
+
+@pytest.mark.asyncio
+async def test_vendor_pause_path_keeps_attempts_in_run_totals():
+    from traigent.core.orchestrator import OptimizationOrchestrator
+    from traigent.utils.exceptions import VendorPauseError
+
+    _, orch, coro = await _run_exit_path(RateLimitError("429"))
+    with pytest.raises(VendorPauseError):
+        await coro
+    (entry,) = orch._abandoned_vendor_attempts
+    assert entry["trial_id"] == "t1" and entry["vendor_call_attempts"] == 2
+    probe = types.SimpleNamespace(_trials=[], _abandoned_vendor_attempts=[entry])
+    totals = OptimizationOrchestrator._vendor_attempt_totals(probe)
+    assert totals["vendor_call_attempts"] == 2
+
+
+# ----------------------------------------------------------- hook policy
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"TRAIGENT_ENV": "production"},
+        {"TRAIGENT_ENVIRONMENT": "prod"},
+        {},  # nothing set: fail closed
+        {"ENVIRONMENT": "banana"},  # unknown label: fail closed
+    ],
+)
+def test_hook_refused_by_central_policy(monkeypatch, env):
+    for key in ("ENVIRONMENT", "TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    with pytest.raises(RuntimeError, match="refused"):
+        with inject_vendor_failures(1):
+            pass
+
+
+def test_hook_allowed_for_test_environment(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    with inject_vendor_failures(1):
+        pass
+
+
+def test_hook_refuses_at_firing_if_environment_turns_production(monkeypatch):
+    from traigent.testing.vendor_faults import maybe_raise_injected_failure
+
+    with inject_vendor_failures(1):
+        monkeypatch.setenv("ENVIRONMENT", "production")
+        with pytest.raises(RuntimeError, match="refused"):
+            maybe_raise_injected_failure(0)
+
+
+@pytest.mark.asyncio
+async def test_hook_is_context_local():
+    import asyncio
+
+    from traigent.testing.vendor_faults import maybe_raise_injected_failure
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    seen = {}
+
+    async def unrelated():  # created OUTSIDE the with-block's context
+        started.set()
+        await release.wait()
+        try:
+            maybe_raise_injected_failure(0)
+            seen["raised"] = False
+        except Exception:
+            seen["raised"] = True
+
+    task = asyncio.create_task(unrelated())
+    await started.wait()
+    with inject_vendor_failures(1):
+        release.set()
+        await task
+        with pytest.raises(RateLimitError):
+            maybe_raise_injected_failure(0)
+    assert seen["raised"] is False
+
+
+def test_hook_not_visible_to_plain_thread():
+    import threading
+
+    from traigent.testing.vendor_faults import maybe_raise_injected_failure
+
+    out = []
+
+    def worker():
+        try:
+            maybe_raise_injected_failure(0)
+            out.append("ok")
+        except Exception:
+            out.append("raised")
+
+    with inject_vendor_failures(1):
+        t = threading.Thread(target=worker)
+        t.start()
+        t.join()
+    assert out == ["ok"]
+
+
+# --------------------------------------------------------- classification
+
+
+class _Http(Exception):
+    def __init__(self, msg, status=None, headers=None, **kw):
+        super().__init__(msg)
+        self.status_code = status
+        self.headers = headers
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+
+def test_status_has_precedence_over_message():
+    assert classify_retryable(_Http("server_error: overloaded", 500)) is None
+    assert classify_retryable(_Http("400 rate limit exceeded quoted", 400)) is None
+    assert classify_retryable(_Http("anything", 429)) is not None
+    assert classify_retryable(_Http("anything", 503)) is not None
+    # no status: message classification still applies
+    assert classify_retryable(Exception("Rate limit reached")) is not None
+
+
+def test_error_type_is_closed():
+    from traigent.utils.vendor_retry import ERROR_TYPES, _error_type
+
+    for exc in (_Http("x", 500), RateLimitError("r"), ValueError("v"), _Http("y", 429)):
+        assert _error_type(exc) in ERROR_TYPES
+    assert _error_type(ValueError("v")) == "other"
+
+
+# ---------------------------------------------------------------- waiting
+
+
+def test_vendor_wait_forms():
+    from email.utils import format_datetime
+    from datetime import UTC, datetime, timedelta
+
+    from traigent.utils.vendor_retry import vendor_wait_seconds
+
+    assert vendor_wait_seconds(_Http("x", 429, {"retry-after": "7"})) == 7.0
+    assert vendor_wait_seconds(_Http("x", 429, {"Retry-After-Ms": "1500"})) == 1.5
+    assert vendor_wait_seconds(_Http("x", 429, retry_after=3)) == 3.0
+    resp = types.SimpleNamespace(headers={"retry-after": "4"})
+    assert vendor_wait_seconds(_Http("x", 429, response=resp)) == 4.0
+    lit = _Http("x", 429, litellm_response_headers={"retry-after": "5"})
+    assert vendor_wait_seconds(lit) == 5.0
+    when = format_datetime(datetime.now(UTC) + timedelta(seconds=30), usegmt=True)
+    got = vendor_wait_seconds(_Http("x", 429, {"retry-after": when}))
+    assert 20 <= got <= 31
+    assert vendor_wait_seconds(_Http("x", 429, {"retry-after": "junk"})) is None
+    assert vendor_wait_seconds(_Http("x", 429)) is None
+
+
+def test_wait_over_cap_stops_instead_of_retrying(mock_off, monkeypatch):
+    monkeypatch.setenv(RETRIES, "3")
+    exc = _Http("429", 429, {"retry-after": "500"})
+    mod, p = _patched([exc])
+    try:
+        with patch("time.sleep") as sleep, capture_scope() as bucket:
+            with pytest.raises(_Http):
+                mod.completion(model="gpt-4o")
+        sleep.assert_not_called()
+        assert mod.calls["n"] == 1
+        assert bucket.vendor_attempts[0]["retried"] is False
+    finally:
+        p.stop()
+
+
+def test_retry_after_ms_header_used_for_sleep(mock_off, monkeypatch):
+    monkeypatch.setenv(RETRIES, "1")
+    mod, p = _patched([_Http("429", 429, {"retry-after-ms": "250"})])
+    try:
+        with patch("time.sleep") as sleep:
+            mod.completion(model="gpt-4o")
+        sleep.assert_called_once_with(0.25)
+    finally:
+        p.stop()
+
+
+def test_http_500_not_retried(mock_off, monkeypatch):
+    monkeypatch.setenv(RETRIES, "3")
+    mod, p = _patched([_Http("server_error", 500)])
+    try:
+        with pytest.raises(_Http):
+            mod.completion(model="gpt-4o")
+        assert mod.calls["n"] == 1
+    finally:
+        p.stop()
+
+
+# ----------------------------------------------------------------- streams
+
+
+class _Chunk:
+    def __init__(self, usage=None):
+        self.usage = usage
+
+
+class _SyncStream:
+    def __init__(self, fail_after=None):
+        self.n = 0
+        self.fail_after = fail_after
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        self.n += 1
+        if self.fail_after is not None and self.n > self.fail_after:
+            raise RateLimitError("429 mid stream")
+        if self.n > 3:
+            raise StopIteration
+        return _Chunk(
+            MagicMock(prompt_tokens=1, completion_tokens=2, total_tokens=3)
+            if self.n == 3
+            else None
+        )
+
+
+class _AsyncStream:
+    def __init__(self, fail_after=None):
+        self.inner = _SyncStream(fail_after)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self.inner)
+        except StopIteration:
+            raise StopAsyncIteration from None
+
+
+def test_stream_success_recorded_only_on_exhaustion(mock_off, monkeypatch):
+    monkeypatch.setenv(RETRIES, "1")
+    mod, p = _patched([_SyncStream()])
+    try:
+        with capture_scope() as bucket:
+            stream = mod.completion(model="gpt-4o", stream=True)
+            assert bucket.vendor_attempts == []  # not yet consumed
+            assert len(list(stream)) == 3
+        assert len(bucket.vendor_attempts) == 1
+        rec = bucket.vendor_attempts[0]
+        assert rec["outcome"] == "success" and rec["usage"]["total_tokens"] == 3
+    finally:
+        p.stop()
+
+
+def test_stream_failure_mid_consumption_recorded_not_retried(mock_off, monkeypatch):
+    monkeypatch.setenv(RETRIES, "3")
+    mod, p = _patched([_SyncStream(fail_after=1)])
+    try:
+        with capture_scope() as bucket:
+            stream = mod.completion(model="gpt-4o", stream=True)
+            with pytest.raises(RateLimitError):
+                list(stream)
+        assert mod.calls["n"] == 1
+        (rec,) = bucket.vendor_attempts
+        assert rec["outcome"] == "error" and rec["retried"] is False
+        assert rec["usage_known"] is False
+    finally:
+        p.stop()
+
+
+@pytest.mark.asyncio
+async def test_async_stream_failure_recorded_not_retried(mock_off, monkeypatch):
+    monkeypatch.setenv(RETRIES, "3")
+    mod, p = _patched([_AsyncStream(fail_after=1)])
+    try:
+        with capture_scope() as bucket:
+            stream = await mod.acompletion(model="gpt-4o", stream=True)
+            with pytest.raises(RateLimitError):
+                async for _ in stream:
+                    pass
+        assert mod.calls["n"] == 1
+        (rec,) = bucket.vendor_attempts
+        assert rec["outcome"] == "error"
+    finally:
+        p.stop()
+
+
+def test_stream_open_failure_is_retried(mock_off, monkeypatch):
+    monkeypatch.setenv(RETRIES, "1")
+    mod, p = _patched([RateLimitError("429"), _SyncStream()])
+    try:
+        with capture_scope() as bucket:
+            list(mod.completion(model="gpt-4o", stream=True))
+        assert mod.calls["n"] == 2
+        assert [a["outcome"] for a in bucket.vendor_attempts] == ["error", "success"]
+    finally:
+        p.stop()
+
+
+# -------------------------------------------------------------- truncation
+
+
+def test_totals_survive_record_truncation(monkeypatch):
+    import traigent.utils.langchain_interceptor as li
+
+    monkeypatch.setattr(li, "_MAX_VENDOR_ATTEMPT_RECORDS", 3)
+    with capture_scope() as bucket:
+        for i in range(10):
+            li.record_vendor_attempt(
+                {"retried": i % 2 == 0, "usage_known": i % 2 == 1, "outcome": "x"}
+            )
+    s = summarize_bucket(bucket)
+    assert s["vendor_call_attempts"] == 10
+    assert s["vendor_call_retries"] == 5
+    assert s["vendor_call_unknown_usage_attempts"] == 5
+    assert len(s["vendor_call_attempt_records"]) == 3
+    assert s["vendor_call_attempt_records_truncated"] is True
+
+
+def test_nested_scope_merges_into_parent():
+    from traigent.utils.langchain_interceptor import record_vendor_attempt
+
+    with capture_scope() as outer:
+        with capture_scope():
+            record_vendor_attempt({"retried": True, "usage_known": False})
+        record_vendor_attempt({"usage_known": True})
+    assert outer.vendor_attempt_total == 2 and outer.vendor_retry_total == 1
+
+
+# -------------------------------------------------- honest cost / e2e run
+
+
+def test_retried_failure_marks_trial_cost_unmeasured_keeping_floor():
+    from traigent.utils.langchain_interceptor import record_vendor_attempt
+    from traigent.utils.trial_costs import is_cost_unmeasured
+
+    with capture_scope() as bucket:
+        record_vendor_attempt({"retried": True, "usage_known": False})
+        record_vendor_attempt({"usage_known": True})
+    result = types.SimpleNamespace(metadata={}, metrics={"cost": 0.25})
+    TrialLifecycle._apply_vendor_attempts(result, bucket)
+    assert is_cost_unmeasured(result.metrics)
+    assert result.metrics["cost"] == 0.25  # known spend kept as the floor
+
+    with capture_scope() as clean:
+        record_vendor_attempt({"usage_known": True})
+    result2 = types.SimpleNamespace(metadata={}, metrics={"cost": 0.25})
+    TrialLifecycle._apply_vendor_attempts(result2, clean)
+    assert not is_cost_unmeasured(result2.metrics)
+
+
+def _run_real_optimize(tmp_path, monkeypatch, *, strict, inject=True):
+    import asyncio
+    import json
+
+    import litellm  # noqa: F401  (installed in dev env)
+
+    import traigent
+
+    root = tmp_path / "ds"
+    root.mkdir()
+    ds = root / "d.jsonl"
+    ds.write_text(
+        "\n".join(
+            json.dumps({"input": {"q": f"q{i}"}, "output": "mock"}) for i in range(10)
+        )
+    )
+    monkeypatch.chdir(root)
+    for k, v in {
+        "TRAIGENT_MOCK_LLM": "true",
+        "TRAIGENT_OFFLINE_MODE": "true",
+        "TRAIGENT_DATASET_ROOT": str(root),
+        "TRAIGENT_RESULTS_FOLDER": str(tmp_path / "results"),
+        "TRAIGENT_VENDOR_MAX_RETRIES": "1",
+        "TRAIGENT_STRICT_COST_ACCOUNTING": "true" if strict else "false",
+    }.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("TRAIGENT_REQUIRE_COST_TRACKING", raising=False)
+
+    @traigent.optimize(
+        eval_dataset=str(ds),
+        objectives=["accuracy", "cost"],
+        configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+        injection_mode="parameter",
+    )
+    def agent(q, config=None):
+        import litellm as ll
+
+        r = ll.completion(
+            model=config["model"], messages=[{"role": "user", "content": q}]
+        )
+        return r.choices[0].message.content
+
+    async def go():
+        if inject:
+            with inject_vendor_failures(1, per_call=False):
+                return await agent.optimize(max_trials=1, algorithm="grid")
+        return await agent.optimize(max_trials=1, algorithm="grid")
+
+    return asyncio.run(go())
+
+
+def test_e2e_optimize_mock_mode_one_injected_failure_non_strict(tmp_path, monkeypatch):
+    from traigent.utils.trial_costs import is_cost_unmeasured
+
+    result = _run_real_optimize(tmp_path, monkeypatch, strict=False)
+    assert result.metadata["vendor_call_attempts"] == 11
+    assert result.metadata["vendor_call_retries"] == 1
+    assert len(result.metadata["vendor_call_attempt_records"]) == 11
+    trial = result.trials[0]
+    assert trial.metadata["vendor_call_attempts"] == 11
+    assert is_cost_unmeasured(trial.metrics)
+
+
+def test_e2e_optimize_strict_cost_raises(tmp_path, monkeypatch):
+    from traigent.core.cost_enforcement import CostTrackingRequiredError
+
+    with pytest.raises(Exception) as info:
+        _run_real_optimize(tmp_path, monkeypatch, strict=True)
+    chain = []
+    exc = info.value
+    while exc is not None and exc not in chain:
+        chain.append(exc)
+        exc = exc.__cause__ or exc.__context__
+    assert any(isinstance(e, CostTrackingRequiredError) for e in chain)
+
+
+def test_e2e_without_injection_is_unchanged(tmp_path, monkeypatch):
+    from traigent.utils.trial_costs import is_cost_unmeasured
+
+    result = _run_real_optimize(tmp_path, monkeypatch, strict=True, inject=False)
+    assert result.metadata["vendor_call_attempts"] == 10
+    assert result.metadata["vendor_call_retries"] == 0
+    assert not is_cost_unmeasured(result.trials[0].metrics)

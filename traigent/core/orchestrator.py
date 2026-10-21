@@ -1262,6 +1262,9 @@ class OptimizationOrchestrator:
         # before the run loop gives up. Cumulative per category so the run always
         # terminates. Opt-in via TRAIGENT_VENDOR_MAX_RETRIES (default 0 = off).
         self._vendor_retry_counts: dict[VendorErrorCategory, int] = {}
+        # SDK-41: attempt ledgers of trials that ended in a vendor pause (no
+        # TrialResult exists for them), kept so run totals include them.
+        self._abandoned_vendor_attempts: list[dict[str, Any]] = []
         self._provider_call_attempts = 0
         self._provider_call_failures = 0
         self._provider_consecutive_call_failures = 0
@@ -3378,6 +3381,7 @@ class OptimizationOrchestrator:
         # SDK-41: validate the vendor-retry env at run start so a typo fails
         # here with a clear message instead of silently disabling retries.
         self._vendor_retry_settings()
+        self._abandoned_vendor_attempts = []
 
         descriptor = resolve_function_descriptor(func)
         self._function_descriptor = descriptor
@@ -6210,17 +6214,28 @@ class OptimizationOrchestrator:
     def _vendor_attempt_totals(self) -> dict[str, Any]:
         """Run-level provider-call attempt totals (SDK-41); empty when none."""
         attempts = retries = unknown = 0
+        truncated = False
         records: list[dict[str, Any]] = []
-        for trial in self._trials:
-            meta = getattr(trial, "metadata", None) or {}
+        sources = [
+            (getattr(trial, "trial_id", None), getattr(trial, "metadata", None) or {})
+            for trial in self._trials
+        ]
+        sources += [
+            (entry.get("trial_id"), entry)
+            for entry in getattr(self, "_abandoned_vendor_attempts", [])
+        ]
+        for trial_id, meta in sources:
             trial_attempts = meta.get("vendor_call_attempts")
             if not isinstance(trial_attempts, int):
                 continue
             attempts += trial_attempts
             retries += int(meta.get("vendor_call_retries") or 0)
             unknown += int(meta.get("vendor_call_unknown_usage_attempts") or 0)
+            truncated = truncated or bool(
+                meta.get("vendor_call_attempt_records_truncated")
+            )
             for record in meta.get("vendor_call_attempt_records") or []:
-                records.append({"trial_id": getattr(trial, "trial_id", None), **record})
+                records.append({"trial_id": trial_id, **record})
         if not attempts:
             return {}
         return {
@@ -6228,6 +6243,7 @@ class OptimizationOrchestrator:
             "vendor_call_retries": retries,
             "vendor_call_unknown_usage_attempts": unknown,
             "vendor_call_attempt_records": records,
+            "vendor_call_attempt_records_truncated": truncated,
         }
 
     def _create_optimization_result(self) -> OptimizationResult:

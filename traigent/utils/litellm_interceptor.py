@@ -159,6 +159,15 @@ def _rebind_imported_names(original: Any, wrapper: Any) -> int:
     return rebound
 
 
+def _is_real_stream(kwargs: dict[str, Any]) -> bool:
+    """True for a streaming call that will reach the provider (not mock mode)."""
+    if not kwargs.get("stream", False):
+        return False
+    from traigent.integrations.utils.mock_adapter import MockAdapter
+
+    return not MockAdapter.is_mock_enabled("litellm")
+
+
 def _completion_once(
     original: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> Any:
@@ -311,7 +320,8 @@ def patch_litellm_for_metadata_capture(
 
                 # Per-call retry (SDK-41; default budget 0 = single attempt).
                 return run_with_vendor_retry(
-                    lambda: _completion_once(original_completion, args, kwargs)
+                    lambda: _completion_once(original_completion, args, kwargs),
+                    stream=_is_real_stream(kwargs),
                 )
 
             completion_with_capture._traigent_original = original_completion  # type: ignore[attr-defined]
@@ -334,7 +344,8 @@ def patch_litellm_for_metadata_capture(
                 from traigent.utils.vendor_retry import run_with_vendor_retry_async
 
                 return await run_with_vendor_retry_async(
-                    lambda: _acompletion_once(original_acompletion, args, kwargs)
+                    lambda: _acompletion_once(original_acompletion, args, kwargs),
+                    stream=_is_real_stream(kwargs),
                 )
 
             acompletion_with_capture._traigent_original = original_acompletion  # type: ignore[attr-defined]
