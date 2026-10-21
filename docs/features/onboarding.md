@@ -67,8 +67,11 @@ files.
 traigent quickstart
 ```
 
-`quickstart` runs the bundled mock-mode demo. It does not require provider API
-keys and does not make LLM provider calls. LiteLLM may still try an import-time
+`quickstart` runs the bundled mock-mode demo as a plumbing check: it verifies
+the install and the optimize loop using a mock LLM and simulated scores. It is
+not a model comparison and does not report a winner; for a real optimization,
+set a provider API key (see `walkthrough/real/01_tuning_qa.py`). It does not
+require provider API keys and does not make LLM provider calls. LiteLLM may still try an import-time
 model-cost-map fetch and fall back to bundled pricing data when offline; the
 guarantee is no provider spend, not zero outbound packets.
 
