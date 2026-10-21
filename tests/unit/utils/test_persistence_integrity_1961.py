@@ -118,3 +118,60 @@ def test_best_config_range_checks(mgr):
     )
     with pytest.raises(ValueError, match="outside"):
         mgr.load_result("bad")
+
+
+def _tamper(tmp_path, name, inner):
+    """Edit the inner best_config in metadata.json and drop the manifest."""
+    f = tmp_path / name / "metadata.json"
+    meta = json.loads(f.read_text())
+    meta["result_fields"]["best_config"] = inner
+    f.write_text(json.dumps(meta))
+    (tmp_path / name / MANIFEST).unlink()
+
+
+def test_invalid_inner_best_config_rejected_even_if_outer_valid(mgr, tmp_path):
+    mgr.save_result(_result(), name="r")
+    _tamper(tmp_path, "r", {"model": "SECRET-INNER"})
+    with pytest.raises(ValueError) as e:
+        mgr.load_result("r")
+    assert "SECRET-INNER" not in str(e.value)
+
+
+def test_outer_inner_best_config_disagree_rejected_value_free(mgr, tmp_path):
+    mgr.save_result(_result(), name="r")
+    _tamper(tmp_path, "r", {"model": "smart"})  # valid but differs
+    with pytest.raises(ValueError, match="disagree") as e:
+        mgr.load_result("r")
+    assert "smart" not in str(e.value)
+
+
+def test_numeric_list_is_choices_not_interval(mgr):
+    mgr.save_result(_result(best_config={"n": 5}, space={"n": [1, 10]}), name="r")
+    with pytest.raises(ValueError, match="outside"):
+        mgr.load_result("r")
+    mgr.save_result(_result(best_config={"n": 10}, space={"n": [1, 10]}), name="ok")
+    assert mgr.load_result("ok").best_config == {"n": 10}
+
+
+def test_tuple_range_survives_save_as_range(mgr):
+    mgr.save_result(_result(best_config={"t": 0.5}, space={"t": (0.0, 1.0)}), name="r")
+    assert mgr.load_result("r").best_config == {"t": 0.5}
+    mgr.save_result(_result(best_config={"t": 2.0}, space={"t": (0.0, 1.0)}), name="b")
+    with pytest.raises(ValueError, match="outside"):
+        mgr.load_result("b")
+
+
+def test_string_against_numeric_bounds_rejected(mgr):
+    mgr.save_result(
+        _result(best_config={"t": "0.5"}, space={"t": {"low": 0.0, "high": 1.0}}),
+        name="r",
+    )
+    with pytest.raises(ValueError, match="outside"):
+        mgr.load_result("r")
+
+
+def test_unrecognised_space_shape_skips_and_logs(mgr, caplog):
+    mgr.save_result(_result(best_config={"t": 1}, space={"t": {"weird": 1}}), name="r")
+    with caplog.at_level(logging.WARNING):
+        assert mgr.load_result("r").best_config == {"t": 1}
+    assert any("check skipped" in r.getMessage() for r in caplog.records)

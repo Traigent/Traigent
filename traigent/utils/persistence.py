@@ -281,48 +281,89 @@ def _rehydrate_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     return {key: _rehydrate_value(key, value) for key, value in metadata.items()}
 
 
+def _is_number(x: Any) -> bool:
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
 def _value_in_domain(value: Any, domain: Any) -> bool | None:
-    """True/False when ``domain`` is a recognised shape, None when it is not."""
+    """True/False when ``domain`` is a recognised shape, None when it is not.
+
+    Follows the SDK's own config-space representation (see
+    ``discrete_domains``): a plain ``list`` is a set of choices, a
+    ``{"low", "high"}`` dict is a range, ``{"choices"|"values": [...]}`` is a
+    choice set. A list is never read as an interval, whatever its length.
+    """
     if isinstance(domain, dict):
         if "low" in domain and "high" in domain:
             lo, hi = domain["low"], domain["high"]
-            if all(
-                isinstance(x, (int, float)) and not isinstance(x, bool)
-                for x in (value, lo, hi)
-            ):
-                return bool(lo <= value <= hi)
-            return False if isinstance(value, (int, float)) else None
+            if not (_is_number(lo) and _is_number(hi)):
+                return None
+            if not _is_number(value):
+                return False  # type mismatch against numeric bounds
+            return bool(lo <= value <= hi)
         for key in ("choices", "values"):
             if isinstance(domain.get(key), list):
                 return value in domain[key]
         return None
-    if isinstance(domain, (list, tuple)):
-        if value in domain:
-            return True
-        # A two-number list can also be a (low, high) range.
-        if len(domain) == 2 and all(
-            isinstance(x, (int, float)) and not isinstance(x, bool)
-            for x in (*domain, value)
-        ):
-            return bool(min(domain) <= value <= max(domain))
-        return False
+    if isinstance(domain, list):
+        return value in domain
     return None
+
+
+def _serialize_configuration_space(space: Any) -> Any:
+    """JSON-safe config space; a two-number tuple range stays a range.
+
+    JSON has no tuple, so ``(0.0, 1.0)`` would otherwise round-trip as the
+    list ``[0.0, 1.0]`` - which the SDK reads as two choices.
+    """
+    if isinstance(space, dict):
+        return {k: _serialize_configuration_space(v) for k, v in space.items()}
+    if (
+        isinstance(space, tuple)
+        and len(space) == 2
+        and all(_is_number(x) for x in space)
+    ):
+        return {"low": space[0], "high": space[1]}
+    return _safe_json_value(space)
 
 
 def _check_best_config_in_space(name: str, best_config: Any, space: Any) -> None:
     """Raise a value-free ValueError when best_config leaves the saved space.
 
-    Only keys present in both are compared and only recognised domain shapes
-    are judged; anything else is skipped rather than guessed (#1961).
+    Only keys present in both are compared. Unrecognised domain shapes are
+    skipped (and logged), never guessed (#1961).
     """
     if not isinstance(best_config, dict) or not isinstance(space, dict) or not space:
         return
     for key, value in best_config.items():
-        if key in space and _value_in_domain(value, space[key]) is False:
+        if key not in space:
+            continue
+        verdict = _value_in_domain(value, space[key])
+        if verdict is False:
             raise ValueError(
                 f"Corrupted metadata for result '{name}': best_config is "
                 "outside the saved configuration space"
             )
+        if verdict is None:
+            logger.warning(
+                "best_config membership check skipped for a parameter of result "
+                "'%s': unrecognised configuration-space shape",
+                name,
+            )
+
+
+def _check_returned_best_config(name: str, result: Any, metadata: dict) -> None:
+    """Validate the best_config actually returned (the decoded one)."""
+    returned = getattr(result, "best_config", None)
+    outer = metadata.get("best_config")
+    if isinstance(outer, dict) and isinstance(returned, dict) and outer != returned:
+        raise ValueError(
+            f"Corrupted metadata for result '{name}': best_config copies disagree"
+        )
+    # Only the curated space is judged: it is the one written by
+    # _serialize_configuration_space (tuple ranges kept as ranges); the encoded
+    # copy inside result_fields flattens tuples to lists.
+    _check_best_config_in_space(name, returned, metadata.get("configuration_space"))
 
 
 class PersistenceManager:
@@ -432,7 +473,7 @@ class PersistenceManager:
             ),
             "algorithm": result.algorithm,
             "objectives": _safe_json_value(result.objectives),
-            "configuration_space": _safe_json_value(
+            "configuration_space": _serialize_configuration_space(
                 result.metadata.get("configuration_space", {})
             ),
             "best_score": _safe_json_value(result.best_score),
@@ -743,9 +784,8 @@ class PersistenceManager:
                     f"Corrupted metadata for result '{name}': missing '{key}'"
                 )
 
-        _check_best_config_in_space(
-            name, metadata.get("best_config"), metadata.get("configuration_space")
-        )
+        legacy_best = metadata.get("best_config")
+        legacy_space = metadata.get("configuration_space")
 
         # Reconstruct optimization result through the #2031 manifest. The old
         # hand-written constructor named 11 of the dataclass's 27 fields and
@@ -767,11 +807,14 @@ class PersistenceManager:
             # placeholder override the authoritative persisted field, and would
             # break the verbatim metadata round trip pinned by #2026: a result
             # saved with `metadata == {}` would come back non-empty.
-            return decode_result(result_fields, trials=trials, artifact_name=name)
+            decoded = decode_result(result_fields, trials=trials, artifact_name=name)
+            _check_returned_best_config(name, decoded, metadata)
+            return decoded
 
         # Pre-#2031 artifact: the curated keys are all there ever was, so the
         # loader rebuilds `metadata` from them (see `_legacy_view`) — there is
         # no authoritative inner record to defer to.
+        _check_best_config_in_space(name, legacy_best, legacy_space)
         return decode_result(
             metadata,
             trials=trials,

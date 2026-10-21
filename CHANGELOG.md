@@ -37,6 +37,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `ValueError` when `best_config` lies outside the saved configuration space.
   This detects corruption and casual edits only; it is not tamper-proof,
   since anyone who can rewrite the files can rewrite the manifest too.
+  The membership check judges the `best_config` actually returned (a
+  disagreeing outer copy raises), reads a plain list as a set of choices (not
+  an interval), and rejects a value of the wrong type against numeric bounds;
+  two-number tuple ranges are now saved as `{"low", "high"}` in the curated
+  `configuration_space`.
 - **Old `traigent-tracing` add-ons are ignored (#1894).** An installed
   `traigent-tracing` older than 0.1.1 (or with an unreadable version) lacks the
   span-attribute scrubbers, so the SDK now logs one warning and uses the
