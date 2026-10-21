@@ -1194,20 +1194,12 @@ class BackendSessionManager:
         works until the next never-submitted trial kind appears; comparing
         against the submissions themselves cannot go stale that way.
 
-        Deliberately STRICTER than the all-or-nothing test ``result_source``
-        uses (``trial_count > 0 and not self._acknowledged_trials``, i.e. "the
-        backend acknowledged *none*"). Partial acknowledgement is the reachable
-        middle: the ``submitted is None`` branch of ``submit_trial_result``
-        (transient BE#1194 session-not-found) does NOT flag the run degraded,
-        so trial 1 can be acknowledged while trial 2 is silently missing from
-        the backend — and that branch's own comment tells the user to "Recover
-        via ``traigent sync``", which needs this id. ``result_source``'s looser
-        test would call that run ``cloud_brain`` and withhold it.
-
-        That looseness in ``result_source`` is a separate, pre-existing
-        weakness in a public, documented provenance field (#1265); it is
-        recorded as follow-up work and deliberately NOT changed here, so this
-        fix does not silently restate what ``result.source`` means.
+        ``result_source`` shares this predicate (#2027), so a partially
+        acknowledged run is no longer labelled ``cloud_brain``: partial
+        acknowledgement is the reachable middle (the ``submitted is None``
+        branch of ``submit_trial_result``, transient BE#1194 session-not-found,
+        does NOT flag the run degraded), and that branch tells the user to
+        "Recover via ``traigent sync``", which needs this id.
         """
         acknowledged = getattr(self, "_acknowledged_trials", None) or set()
         return any(
@@ -1215,11 +1207,24 @@ class BackendSessionManager:
             for known, trial_id in self._attempted_trial_ids()
         )
 
+    def _backend_missing_any_trial(self, trial_count: int) -> bool:
+        """True when the backend does not hold every trial of this run (#2027).
+
+        Covers the all-or-nothing case (trials ran, none acknowledged) and the
+        partial case (some attempted submission, in any session, is still
+        unacknowledged) by reusing :meth:`_trials_not_fully_acknowledged`.
+        """
+        if trial_count > 0 and not self._acknowledged_trials:
+            return True
+        sessions = {sid for sid, _ in self._attempted_trial_ids()}
+        return any(self._trials_not_fully_acknowledged(sid) for sid in sessions)
+
     def result_source(self, trial_count: int) -> str:
         """Return the provenance of this run's result.
 
         Values are one of cloud_brain, local_fallback, explicit_local, or
-        offline.
+        offline. ``local_fallback`` means the backend is missing at least one
+        trial of this run (#2027), not only that it holds none.
         """
         configured_source = getattr(self._traigent_config, "result_source", None)
         policy = policy_from_config(self._traigent_config)
@@ -1229,8 +1234,7 @@ class BackendSessionManager:
             return cast(str, SOURCE_OFFLINE)
         if configured_source in RESULT_SOURCES:
             if configured_source == SOURCE_CLOUD_BRAIN and (
-                self._runtime_degraded
-                or (trial_count > 0 and not self._acknowledged_trials)
+                self._runtime_degraded or self._backend_missing_any_trial(trial_count)
             ):
                 return cast(str, SOURCE_LOCAL_FALLBACK)
             return str(configured_source)
@@ -1240,7 +1244,7 @@ class BackendSessionManager:
             return cast(str, SOURCE_OFFLINE)
         if not self._backend_tracking_enabled or self._runtime_degraded:
             return cast(str, SOURCE_LOCAL_FALLBACK)
-        if trial_count > 0 and not self._acknowledged_trials:
+        if self._backend_missing_any_trial(trial_count):
             return cast(str, SOURCE_LOCAL_FALLBACK)
         return cast(str, SOURCE_CLOUD_BRAIN)
 
