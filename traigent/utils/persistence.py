@@ -725,7 +725,14 @@ class PersistenceManager:
                     try:
                         with safe_open(metadata_file, self.base_dir, mode="r") as f:
                             metadata = json.load(f)
-                        metadata.pop("result_fields", None)
+                        # #2666: surface the run outcome for the CLI list
+                        # from the full field set; absent on legacy results
+                        # (never guessed), so renderers show "unknown".
+                        fields = metadata.pop("result_fields", None)
+                        if isinstance(fields, dict) and isinstance(
+                            fields.get("status"), str
+                        ):
+                            metadata["status"] = fields["status"]
                         # … and the version stamp that describes it: it says
                         # nothing about the curated summary keys, and a renderer
                         # that dumps every key of a listing entry would show it

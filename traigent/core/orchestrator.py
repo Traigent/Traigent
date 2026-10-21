@@ -4926,12 +4926,19 @@ class OptimizationOrchestrator:
         """Finalize completed trials after a user interrupt."""
         self._stop_reason = "user_cancelled"
         self._status = OptimizationStatus.CANCELLED
+        finished = len(self._trials)
+        planned = self._max_trials
+        progress = (
+            f"{finished} of {planned} trials finished"
+            if isinstance(planned, int) and planned > 0
+            else f"{finished} trial(s) finished"
+        )
         logger.warning(
-            "Optimization %s interrupted by user (%s); stopping and finalizing "
-            "with %d completed trial(s).",
+            "Optimization %s was cancelled by the user (%s): %s; the result is "
+            "partial (status=cancelled, stop_reason=user_cancelled).",
             self._optimization_id,
             type(interrupt).__name__,
-            len(self._trials),
+            progress,
         )
         result = self._create_optimization_result()
         self._add_winner_stability_cost_to_result(

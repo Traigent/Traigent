@@ -1387,6 +1387,46 @@ class TestOptimizationOrchestrator:
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)
+    async def test_user_cancel_warns_with_counts_only_2666(
+        self, mock_optimizer, mock_function, sample_dataset, caplog
+    ):
+        """A user cancel logs one clear partial-result warning (#2666)."""
+
+        class InterruptAfterOneCompletedTrialEvaluator(MockEvaluator):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+
+            async def evaluate(self, *args, **kwargs) -> EvaluationResult:
+                self.calls += 1
+                if self.calls > 1:
+                    raise KeyboardInterrupt
+                return await super().evaluate(*args, **kwargs)
+
+        mock_optimizer.set_max_suggestions(5)
+        orchestrator = OptimizationOrchestrator(
+            optimizer=mock_optimizer,
+            evaluator=InterruptAfterOneCompletedTrialEvaluator(),
+            max_trials=5,
+            config=TraigentConfig.edge_analytics_mode(),
+        )
+
+        with caplog.at_level("WARNING"):
+            result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert result.status == OptimizationStatus.CANCELLED
+        assert result.stop_reason == "user_cancelled"
+        messages = [
+            r.getMessage()
+            for r in caplog.records
+            if "cancelled by the user" in r.getMessage()
+        ]
+        assert len(messages) == 1
+        assert "1 of 5 trials finished" in messages[0]
+        assert "partial" in messages[0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(5)
     async def test_cancelled_error_returns_completed_partial_trials(
         self, mock_optimizer, mock_function, sample_dataset
     ):

@@ -1419,6 +1419,7 @@ def _local_session_to_result_info(session: OptimizationSession) -> dict[str, Any
         "total_trials": total_trials,
         "success_rate": _local_session_success_rate(session),
         "created_at": session.created_at,
+        "status": session.status,
         "_source": "local_session",
     }
 
@@ -1556,6 +1557,13 @@ def results() -> None:
     pass
 
 
+def _result_status_label(status: Any) -> str:
+    """Status text for the results list; never guesses for legacy results."""
+    if isinstance(status, str) and status.strip():
+        return status.strip().lower()
+    return "unknown"
+
+
 @results.command("list")
 @click.option("--storage-dir", "-d", default=None, help="Traigent storage directory")
 def results_list(storage_dir: str | None) -> None:
@@ -1582,6 +1590,7 @@ def results_list(storage_dir: str | None) -> None:
     table.add_column(_MSG_BEST_SCORE, justify="right")
     table.add_column("Trials", justify="right")
     table.add_column(_MSG_SUCCESS_RATE, justify="right")
+    table.add_column("Status")
     table.add_column("Date", style="dim")
 
     for result_info in all_results:
@@ -1593,6 +1602,7 @@ def results_list(storage_dir: str | None) -> None:
             (f"{best_score:.3f}" if isinstance(best_score, (int, float)) else "N/A"),
             str(result_info["total_trials"]),
             f"{result_info.get('success_rate', 0):.1%}",
+            _result_status_label(result_info.get("status")),
             result_info.get("created_at", "").split("T")[0],  # Just date part
         )
 
