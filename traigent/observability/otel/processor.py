@@ -65,6 +65,9 @@ _STAT_KEYS = (
 )
 
 
+_MAX_OFFLINE_TRACKED = 65_536
+
+
 def _estimate_bytes(span: ReadableSpan) -> int:
     return 200 + len(span.name or "") + 48 * len(span.attributes or {})
 
@@ -116,6 +119,11 @@ class TraigentSpanProcessor(SpanProcessor):
     def _init_state(self) -> None:
         self._cond = threading.Condition(threading.Lock())
         self._queue: deque[ReadableSpan] = deque()
+        # Spans that STARTED while offline (private, never exported).
+        # Keyed by (trace_id, span_id): on_end may receive a different object
+        # than on_start. Bounded; on overflow we fail closed (see on_end).
+        self._started_offline: set[tuple[int, int]] = set()
+        self._offline_overflow = False
         self._queued_bytes = 0
         self._first_queued_at: float | None = None
         self._in_flight = False
@@ -132,6 +140,15 @@ class TraigentSpanProcessor(SpanProcessor):
     # -- SpanProcessor API ---------------------------------------------
     def on_start(self, span: Span, parent_context: Context | None = None) -> None:
         try:
+            if is_backend_offline():
+                ctx = span.get_span_context()
+                if len(self._started_offline) >= _MAX_OFFLINE_TRACKED:
+                    self._offline_overflow = True
+                else:
+                    self._started_offline.add((ctx.trace_id, ctx.span_id))
+        except Exception:
+            logger.debug("offline provenance tracking failed", exc_info=True)
+        try:
             stamp_span(span, metadata_mode=self._exporter.content_mode)
         except Exception:  # never let stamping break the application
             logger.debug("lineage stamping failed", exc_info=True)
@@ -139,7 +156,16 @@ class TraigentSpanProcessor(SpanProcessor):
     def on_end(self, span: ReadableSpan) -> None:
         if self._shutdown:
             return
-        if is_backend_offline():
+        started_offline = self._offline_overflow
+        ctx0 = span.context
+        if ctx0 is not None:
+            key = (ctx0.trace_id, ctx0.span_id)
+            if key in self._started_offline:
+                self._started_offline.discard(key)
+                started_offline = True
+        if self._offline_overflow and not self._started_offline:
+            self._offline_overflow = False
+        if started_offline or is_backend_offline():
             # Offline (offline=True run or the offline env vars) is checked at
             # record time, not only at init: a pipeline initialised online must
             # not queue spans recorded while offline. Dropped, never queued.

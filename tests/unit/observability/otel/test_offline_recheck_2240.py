@@ -78,3 +78,21 @@ def test_online_spans_still_export() -> None:
         assert len(transport.posts) == 1
     finally:
         provider.shutdown()
+
+
+def test_span_started_offline_but_ended_online_is_dropped() -> None:
+    provider, proc, transport = _pipeline()
+    tracer = provider.get_tracer("t")
+    try:
+        with offline_run_scope(True):
+            span = tracer.start_span("op")
+            span.set_attribute("traigent.canary", CANARY)
+        # Scope exited: the span ends while online.
+        span.end()
+        proc.flush(2.0)
+        assert transport.posts == []
+        stats = proc.stats()
+        assert stats["dropped_offline"] == 1
+        assert stats["queued"] == 0
+    finally:
+        provider.shutdown()
