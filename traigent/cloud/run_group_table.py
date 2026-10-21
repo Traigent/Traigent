@@ -28,7 +28,6 @@ _NON_METRIC_KEYS = frozenset(
         "output_cost",
         "cost_unmeasured",
         "cost_unpriced",
-        "cost_lower_bound",
     }
 )
 _COLUMNS = (
@@ -59,7 +58,7 @@ class RunGroupRow:
     #: Measured cost; ``None`` when unmeasured or unpriced (never ``0``).
     cost: float | None
     cost_unmeasured: bool
-    #: Known spend when the cost is unmeasured (a floor, not the cost).
+    #: Known-spend floor; always ``None`` until the backend emits one.
     cost_floor: float | None
     status: str | None
     created_at: str | None

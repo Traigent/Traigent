@@ -180,7 +180,7 @@ class TestExperimentGroupClient:
         mock_http.get.assert_called_once_with(
             "/api/v1/experiment-groups",
             headers={"X-Project-Id": "proj_abc"},
-            params={"page": "2", "page_size": "10"},
+            params={"page": "2", "per_page": "10"},
         )
         mock_http.post.assert_not_called()
 
@@ -204,7 +204,7 @@ class TestExperimentGroupClient:
                 "agent_id": "agent_1",
                 "dataset_id": "dataset_1",
                 "page": "1",
-                "page_size": "50",
+                "per_page": "50",
             },
         )
 
@@ -350,7 +350,7 @@ class TestExperimentGroupClient:
         mock_http.get.assert_called_once_with(
             "/api/v1/experiment-groups/grp%201/configuration-runs",
             headers={"X-Project-Id": "proj_abc"},
-            params={"page": "3", "page_size": "25"},
+            params={"page": "3", "per_page": "25"},
         )
         mock_http.post.assert_not_called()
 

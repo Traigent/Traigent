@@ -64,6 +64,7 @@ from traigent.labels.transport_gate import gate_session
 from traigent.cloud.dtos import (
     ExperimentGroupDetailDTO,
     ExperimentGroupsPageDTO,
+    GroupedConfigurationRunRowDTO,
     GroupedConfigurationRunsPageDTO,
 )
 from traigent.cloud.url_security import validate_cloud_base_url
@@ -3045,7 +3046,7 @@ class BackendAnalyticsClient:
                     "agent_id": str(agent_id) if agent_id is not None else None,
                     "dataset_id": str(dataset_id) if dataset_id is not None else None,
                     "page": str(page),
-                    "page_size": str(page_size),
+                    "per_page": str(page_size),
                 }
             ),
         )
@@ -3082,9 +3083,53 @@ class BackendAnalyticsClient:
             path,
             what="experiment group configuration runs",
             headers=self._project_headers(project_id),
-            params={"page": str(page), "page_size": str(page_size)},
+            # The backend reads ``per_page`` (base_route.get_pagination_params);
+            # ``page_size`` was silently ignored and the default 20 applied.
+            params={"page": str(page), "per_page": str(page_size)},
         )
         return GroupedConfigurationRunsPageDTO.from_dict(payload)
+
+    async def browse_experiment_group_configuration_runs(
+        self,
+        group_id: str,
+        project_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> tuple[list[GroupedConfigurationRunRowDTO], str | None]:
+        """Return one cursor window of browse rows (with ``measures``).
+
+        Uses the backend's cursor mode (``cursor``/``limit`` query params; limit
+        1..200). The legacy page mode rows carry no measures. Returns the rows
+        and the next cursor (``None`` on the last window).
+        """
+        path = (
+            "/api/v1/experiment-groups/"
+            f"{_quote_segment(group_id, field='group_id')}/configuration-runs"
+        )
+        payload = await self._get_json(
+            path,
+            what="experiment group configuration runs",
+            headers=self._project_headers(project_id),
+            params=_without_none({"cursor": cursor, "limit": str(limit)}),
+        )
+        items = payload.get("items")
+        if not isinstance(items, list):
+            raise AnalyticsClientError(
+                "experiment group configuration runs: malformed response"
+            )
+        cursor_meta = payload.get("cursor")
+        next_cursor = None
+        if isinstance(cursor_meta, dict) and cursor_meta.get("has_more") is True:
+            raw = cursor_meta.get("next_cursor")
+            if isinstance(raw, str) and raw:
+                next_cursor = raw
+        rows = [
+            GroupedConfigurationRunRowDTO.from_dict(item)
+            for item in items
+            if isinstance(item, dict)
+        ]
+        return rows, next_cursor
 
     # === Director (advisory-only) ===
 

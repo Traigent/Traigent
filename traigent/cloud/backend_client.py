@@ -886,12 +886,12 @@ class ExperimentGroupsNamespace:
     ) -> Any:
         """Return one table across all runs in a run group (Traigent#1711).
 
-        Pages through the group's configuration-run rows (read-only) and
-        returns a :class:`~traigent.cloud.run_group_table.RunGroupTable`.
-        Cost is ``None`` when unmeasured, never ``0``. Fetching stops after
-        ``max_rows`` rows and sets ``truncated``. Backend errors surface as
-        :class:`~traigent.cloud.analytics_client.AnalyticsClientError` that
-        carries only the HTTP status, never request or response content.
+        Follows the backend's cursor mode (rows with ``measures``) and returns
+        a :class:`~traigent.cloud.run_group_table.RunGroupTable`. Cost is
+        ``None`` when unmeasured, never ``0``. Fetching stops after
+        ``max_rows`` rows and sets ``truncated``. Backend and transport errors
+        surface as :class:`~traigent.cloud.analytics_client.AnalyticsClientError`
+        carrying only the HTTP status, never request or response content.
         """
         from traigent.cloud.analytics_client import AnalyticsClientError
         from traigent.cloud.run_group_table import RunGroupTable, build_run_group_row
@@ -899,32 +899,35 @@ class ExperimentGroupsNamespace:
         project_id = _require_project_id(project_id)
         if not isinstance(group_id, str) or not group_id.strip():
             raise ValueError("group_id must be a non-empty string")
-        if page_size < 1 or max_rows < 1:
-            raise ValueError("page_size and max_rows must be positive")
+        if not 1 <= page_size <= 200 or max_rows < 1:
+            raise ValueError("page_size must be 1..200 and max_rows positive")
         rows: list[Any] = []
         truncated = False
-        page = 1
+        cursor: str | None = None
         try:
             async with await self._new_read_client() as reader:
                 while True:
-                    result = await reader.list_experiment_group_configuration_runs(
-                        group_id, project_id, page=page, page_size=page_size
+                    (
+                        window,
+                        cursor,
+                    ) = await reader.browse_experiment_group_configuration_runs(
+                        group_id, project_id, cursor=cursor, limit=page_size
                     )
-                    rows.extend(build_run_group_row(r) for r in result.items)
+                    rows.extend(build_run_group_row(r) for r in window)
                     if len(rows) >= max_rows:
-                        truncated = bool(result.has_next) or len(rows) > max_rows
+                        truncated = cursor is not None or len(rows) > max_rows
                         rows = rows[:max_rows]
                         break
-                    if not result.has_next or not result.items:
+                    if cursor is None:
                         break
-                    page += 1
+        except AnalyticsClientError:
+            raise
         except Exception as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
-            if isinstance(status, int):
-                raise AnalyticsClientError(
-                    f"run group table request failed (HTTP {status})"
-                ) from None
-            raise
+            detail = f"HTTP {status}" if isinstance(status, int) else "transport error"
+            raise AnalyticsClientError(
+                f"run group table request failed ({detail})"
+            ) from None
         return RunGroupTable(group_id=group_id, rows=rows, truncated=truncated)
 
 

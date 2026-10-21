@@ -18,8 +18,8 @@ Each `RunGroupRow` has `run_id`, `run_name`, `configuration_run_id`, `experiment
 `cost_floor`, `status` and `created_at`.
 
 - **Cost is never invented.** If a run's cost was not measured (or not priced),
-  `cost` is `None` and `cost_unmeasured` is `True`. `cost_floor` is the known spend so
-  far when the backend reports one; it is a floor, not the cost.
+  `cost` is `None` and `cost_unmeasured` is `True`. `cost_floor` stays `None` until the
+  backend reports a known-spend floor.
 - **Rows are source runs.** Nothing is merged or deduplicated by configuration.
 - **Limits.** Rows are fetched `page_size` (default 100) at a time, up to `max_rows`
   (default 10,000). `table.truncated` is `True` when the limit stopped the fetch.
