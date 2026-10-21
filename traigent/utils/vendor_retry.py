@@ -513,13 +513,40 @@ def summarize_bucket(bucket: Any) -> dict[str, Any]:
             if out.get("outcome") == "in_progress":
                 out["outcome"] = "incomplete"
             records.append(out)
+        unknown = total - root.vendor_known_usage_total
+        # Attempts inside an example whose agent explicitly reported its total
+        # cost are covered by that report (same rule as the evaluator).
+        covered = sum(
+            root.vendor_slot_attempts.get(slot, 0) - root.vendor_slot_known.get(slot, 0)
+            for slot in root.vendor_reported_slots
+        )
         return {
             "vendor_call_attempts": total,
             "vendor_call_retries": root.vendor_retry_total,
-            "vendor_call_unknown_usage_attempts": total - root.vendor_known_usage_total,
+            "vendor_call_unknown_usage_attempts": unknown,
+            "vendor_call_cost_reported_attempts": covered,
+            "vendor_call_unmeasured_attempts": unknown - covered,
             "vendor_call_incomplete_attempts": total - root.vendor_done_total,
             "vendor_call_attempt_records": records,
             "vendor_call_attempt_records_truncated": bool(
                 root.vendor_records_truncated
             ),
         }
+
+
+def mark_if_agent_reported_cost(slot: int | None, output: Any) -> None:
+    """Mark ``slot`` covered when ``output`` carries a valid reported total cost.
+
+    Mirrors the evaluator, which treats a valid ``__traigent_meta__`` total as
+    the example's measured spend and clears its ``unmeasured`` flag.
+    """
+    from traigent.core.meta_types import is_traigent_metadata
+    from traigent.utils.langchain_interceptor import mark_example_cost_reported
+
+    if slot is None or not isinstance(output, dict):
+        return
+    meta = output.get("__traigent_meta__")
+    if isinstance(meta, dict) and "calls" in meta:
+        meta = {k: v for k, v in meta.items() if k != "calls"}
+    if meta is not None and is_traigent_metadata(meta):
+        mark_example_cost_reported(slot)

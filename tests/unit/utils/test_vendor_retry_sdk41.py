@@ -772,7 +772,9 @@ def test_retried_failure_marks_trial_cost_unmeasured_keeping_floor():
     assert not is_cost_unmeasured(result2.metrics)
 
 
-def _run_real_optimize(tmp_path, monkeypatch, *, strict, inject=True):
+def _run_real_optimize(
+    tmp_path, monkeypatch, *, strict, inject=True, reported_cost=None
+):
     import asyncio
     import json
 
@@ -812,7 +814,10 @@ def _run_real_optimize(tmp_path, monkeypatch, *, strict, inject=True):
         r = ll.completion(
             model=config["model"], messages=[{"role": "user", "content": q}]
         )
-        return r.choices[0].message.content
+        text = r.choices[0].message.content
+        if reported_cost is not None:
+            return traigent.with_usage(text, total_cost=reported_cost)
+        return text
 
     async def go():
         if inject:
@@ -1199,3 +1204,116 @@ def test_clean_calls_are_not_flagged_real_and_mock(mock_off, monkeypatch):
             assert not _flagged(bucket)[0]
         finally:
             p.stop()
+
+
+# ------------------------------------------------------------ review round 6
+
+
+def _slot_run(mod, *, reported, fn):
+    """One 'example' run in its own slot; return the trial-level result."""
+    from traigent.utils.langchain_interceptor import example_slot
+    from traigent.utils.vendor_retry import mark_if_agent_reported_cost
+
+    with capture_scope(ledger_owner=True) as bucket:
+        with example_slot() as slot:
+            fn()
+            out = (
+                {"text": "x", "__traigent_meta__": {"total_cost": 0.002}}
+                if reported
+                else "x"
+            )
+            mark_if_agent_reported_cost(slot, out)
+    return bucket
+
+
+def test_reported_total_cost_covers_stream_without_usage(mock_off):
+    mod, p = _patched([_SyncStream()])
+    try:
+        bucket = _slot_run(
+            mod,
+            reported=True,
+            fn=lambda: list(mod.completion(model="gpt-4o", stream=True)),
+        )
+        s = summarize_bucket(bucket)
+        assert s["vendor_call_unknown_usage_attempts"] == 0  # chunk had usage
+    finally:
+        p.stop()
+
+    # a stream whose chunks carry no usage at all
+    class _NoUsage(_SyncStream):
+        def __next__(self):
+            self.n += 1
+            if self.n > 2:
+                raise StopIteration
+            return _Chunk(None)
+
+    mod, p = _patched([_NoUsage(), _NoUsage()])
+    try:
+        covered = _slot_run(
+            mod,
+            reported=True,
+            fn=lambda: list(mod.completion(model="gpt-4o", stream=True)),
+        )
+        s = summarize_bucket(covered)
+        assert s["vendor_call_unknown_usage_attempts"] == 1
+        assert s["vendor_call_unmeasured_attempts"] == 0
+        assert not _flagged(covered)[0]
+
+        bare = _slot_run(
+            mod,
+            reported=False,
+            fn=lambda: list(mod.completion(model="gpt-4o", stream=True)),
+        )
+        assert summarize_bucket(bare)["vendor_call_unmeasured_attempts"] == 1
+        assert _flagged(bare)[0]
+    finally:
+        p.stop()
+
+
+def test_other_examples_still_count_when_one_example_reports(mock_off):
+    from traigent.utils.langchain_interceptor import example_slot
+    from traigent.utils.vendor_retry import mark_if_agent_reported_cost
+
+    mod, p = _patched(
+        [RateLimitError("429"), _response(), RateLimitError("429"), _response()]
+    )
+    try:
+        import os
+
+        os.environ[RETRIES] = "1"
+        with capture_scope(ledger_owner=True) as bucket:
+            with example_slot() as a:
+                mod.completion(model="gpt-4o")
+                mark_if_agent_reported_cost(
+                    a, {"__traigent_meta__": {"total_cost": 0.1}}
+                )
+            with example_slot():
+                mod.completion(model="gpt-4o")  # retried failure, nothing reported
+        s = summarize_bucket(bucket)
+        assert s["vendor_call_retries"] == 2
+        assert s["vendor_call_cost_reported_attempts"] == 1
+        assert s["vendor_call_unmeasured_attempts"] == 1
+        assert _flagged(bucket)[0]
+    finally:
+        os.environ.pop(RETRIES, None)
+        p.stop()
+
+
+def test_e2e_retried_failure_with_reported_cost_strict_passes(tmp_path, monkeypatch):
+    from traigent.utils.trial_costs import is_cost_unmeasured
+
+    result = _run_real_optimize(tmp_path, monkeypatch, strict=True, reported_cost=0.002)
+    assert result.metadata["vendor_call_attempts"] == 11
+    assert result.metadata["vendor_call_retries"] == 1
+    trial = result.trials[0]
+    assert not is_cost_unmeasured(trial.metrics)
+    assert trial.metrics["cost"] == pytest.approx(0.002 * 10)
+
+
+def test_e2e_retried_failure_without_reported_cost_still_strict_raises(
+    tmp_path, monkeypatch
+):
+    from traigent.utils.exceptions import OptimizationError
+
+    with pytest.raises(OptimizationError):
+        _run_real_optimize(tmp_path, monkeypatch, strict=True)
