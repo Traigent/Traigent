@@ -8,6 +8,7 @@ before pushes.
 
 from __future__ import annotations
 
+import os
 import stat
 from pathlib import Path
 
@@ -82,6 +83,22 @@ $TRAIGENT_CMD hooks check --quick
 
 # Hook marker to identify Traigent-installed hooks
 HOOK_MARKER = "# Traigent pre-push hook - validates agent configurations"
+
+# The pre-commit script carries no HOOK_MARKER line, so it has its own marker.
+PRE_COMMIT_HOOK_MARKER = "# Traigent pre-commit hook - quick config check"
+
+
+def _is_traigent_hook(content: str) -> bool:
+    """Return True when hook text was written by Traigent's installer."""
+    return HOOK_MARKER in content or PRE_COMMIT_HOOK_MARKER in content
+
+
+def _read_hook_text(path: Path, base_dir: Path) -> str:
+    """Read hook text for ownership checks; undecodable bytes count as foreign."""
+    try:
+        return safe_read_text(path, base_dir)
+    except UnicodeDecodeError:
+        return ""
 
 
 class HooksInstaller:
@@ -173,10 +190,20 @@ class HooksInstaller:
                     )
                     return False
 
-            # Backup existing hook
-            backup_path = hook_path.with_suffix(".backup")
-            hook_path.rename(backup_path)
-            logger.info(f"Backed up existing hook to {backup_path}")
+            # A Traigent hook is replaced without a backup. A foreign hook is
+            # backed up without clobbering: os.link fails if the backup exists.
+            if not _is_traigent_hook(_read_hook_text(hook_path, hooks_dir)):
+                backup_path = hook_path.with_suffix(".backup")
+                try:
+                    os.link(hook_path, backup_path, follow_symlinks=False)
+                except FileExistsError as exc:
+                    raise RuntimeError(
+                        f"Refusing to replace the existing {hook_path.name} hook: "
+                        "a .backup file from an earlier install is already present. "
+                        "Move or delete that .backup file, then re-run."
+                    ) from exc
+                logger.info(f"Backed up existing hook to {backup_path.name}")
+            hook_path.unlink()
 
         # Write hook script
         safe_write_text(hook_path, content, hooks_dir)
@@ -226,11 +253,18 @@ class HooksInstaller:
         hook_path.unlink()
         logger.info(f"Removed hook at {hook_path}")
 
-        # Restore backup if exists
+        # Restore backup if exists, unless it is itself a Traigent hook
         backup_path = hook_path.with_suffix(".backup")
         if backup_path.exists():
-            backup_path.rename(hook_path)
-            logger.info(f"Restored backup from {backup_path}")
+            if _is_traigent_hook(_read_hook_text(backup_path, self.hooks_dir)):
+                backup_path.unlink()
+                logger.warning(
+                    f"Removed {backup_path.name}: it held a Traigent hook, "
+                    "not an original hook, so nothing was restored"
+                )
+            else:
+                backup_path.rename(hook_path)
+                logger.info(f"Restored backup from {backup_path.name}")
 
         return True
 

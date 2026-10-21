@@ -28,6 +28,84 @@ from traigent.hooks.installer import (
 )
 
 
+class TestForceInstallBackupOwnership:
+    """Regression tests for #2707: repeated install --force must not lose the customer's hook."""
+
+    CUSTOMER_PRE_PUSH = b"#!/bin/sh\n# customer pre-push \xff\n./run-tests.sh\n"
+    CUSTOMER_PRE_COMMIT = b"#!/bin/sh\nnpm run lint\n"
+
+    @pytest.fixture
+    def installer(self) -> Generator[HooksInstaller, None, None]:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir)
+            (repo_path / ".git" / "hooks").mkdir(parents=True)
+            yield HooksInstaller(repo_path)
+
+    def _write_customer_hooks(self, installer: HooksInstaller) -> None:
+        (installer.hooks_dir / "pre-push").write_bytes(self.CUSTOMER_PRE_PUSH)
+        (installer.hooks_dir / "pre-commit").write_bytes(self.CUSTOMER_PRE_COMMIT)
+
+    def test_repeated_force_install_then_uninstall_restores_customer_bytes(
+        self, installer: HooksInstaller
+    ) -> None:
+        """install --force twice, then uninstall, gives back the exact original bytes."""
+        self._write_customer_hooks(installer)
+
+        installer.install(force=True)
+        installer.install(force=True)
+        installer.uninstall()
+
+        pre_push = installer.hooks_dir / "pre-push"
+        assert pre_push.read_bytes() == self.CUSTOMER_PRE_PUSH
+        assert not (installer.hooks_dir / "pre-push.backup").exists()
+        # pre-commit uninstall skips it (no HOOK_MARKER), so the customer's
+        # original must still be intact in the backup, never overwritten.
+        assert (
+            installer.hooks_dir / "pre-commit.backup"
+        ).read_bytes() == self.CUSTOMER_PRE_COMMIT
+
+    def test_existing_foreign_backup_is_never_overwritten(
+        self, installer: HooksInstaller
+    ) -> None:
+        """A second force install with a foreign hook and an existing backup fails closed."""
+        earlier_backup = b"#!/bin/sh\n# earlier backup\n"
+        (installer.hooks_dir / "pre-push").write_bytes(self.CUSTOMER_PRE_PUSH)
+        (installer.hooks_dir / "pre-push.backup").write_bytes(earlier_backup)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            installer.install(force=True)
+
+        assert "earlier backup" not in str(exc_info.value)
+        assert (installer.hooks_dir / "pre-push").read_bytes() == self.CUSTOMER_PRE_PUSH
+        assert (installer.hooks_dir / "pre-push.backup").read_bytes() == earlier_backup
+
+    def test_uninstall_does_not_restore_traigent_backup(
+        self, installer: HooksInstaller
+    ) -> None:
+        """A backup that holds a Traigent hook is removed, not restored as the user's hook."""
+        installer.install()
+        (installer.hooks_dir / "pre-push.backup").write_text(PRE_PUSH_HOOK_SCRIPT)
+
+        results = installer.uninstall()
+
+        assert results["pre-push"] is True
+        assert not (installer.hooks_dir / "pre-push").exists()
+        assert not (installer.hooks_dir / "pre-push.backup").exists()
+
+    def test_single_force_install_uninstall_round_trip_unchanged(
+        self, installer: HooksInstaller
+    ) -> None:
+        """One install --force then uninstall restores the customer's exact bytes."""
+        self._write_customer_hooks(installer)
+
+        results = installer.install(force=True)
+        assert results == {"pre-push": True, "pre-commit": True}
+        installer.uninstall()
+
+        assert (installer.hooks_dir / "pre-push").read_bytes() == self.CUSTOMER_PRE_PUSH
+        assert not (installer.hooks_dir / "pre-push.backup").exists()
+
+
 class TestHooksInstaller:
     """Tests for HooksInstaller class."""
 
