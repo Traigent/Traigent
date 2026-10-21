@@ -116,6 +116,22 @@ class _NoRedirectHandler(request.HTTPRedirectHandler):
         return None
 
 
+def _is_client_timeout(exc: BaseException) -> bool:
+    """True when ``exc`` is, or was caused by, a client-side socket timeout."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, TimeoutError):
+            return True
+        if isinstance(current, error.URLError) and isinstance(
+            current.reason, TimeoutError
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def _new_trace_id() -> str:
     return f"trace_{uuid.uuid4().hex}"
 
@@ -948,8 +964,15 @@ class _SyncBatchTransport:
                 raise ValueError(f"{name} must be greater than 0 or None")
         self.max_traces_per_request = max_traces_per_request
         self.max_observations_per_request = max_observations_per_request
+        # A client-side timeout against a slow-but-working server must not count
+        # toward the breaker (#2599): ingest upserts by trace id, so the retry is
+        # safe, and a timeout alone does not show the server is down.
         self._retry_handler = RetryHandler(
-            replace(CLOUD_API_RETRY_CONFIG, callback_on_retry=self._record_retry)
+            replace(
+                CLOUD_API_RETRY_CONFIG,
+                callback_on_retry=self._record_retry,
+                circuit_breaker_ignore_failure=_is_client_timeout,
+            )
         )
         self._buffer: OrderedDict[str, _BufferedPayload] = OrderedDict()
         self._lock = threading.RLock()
