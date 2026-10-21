@@ -1387,6 +1387,46 @@ class TestOptimizationOrchestrator:
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)
+    async def test_user_cancel_warns_with_counts_only_2666(
+        self, mock_optimizer, mock_function, sample_dataset, caplog
+    ):
+        """A user cancel logs one clear partial-result warning (#2666)."""
+
+        class InterruptAfterOneCompletedTrialEvaluator(MockEvaluator):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+
+            async def evaluate(self, *args, **kwargs) -> EvaluationResult:
+                self.calls += 1
+                if self.calls > 1:
+                    raise KeyboardInterrupt
+                return await super().evaluate(*args, **kwargs)
+
+        mock_optimizer.set_max_suggestions(5)
+        orchestrator = OptimizationOrchestrator(
+            optimizer=mock_optimizer,
+            evaluator=InterruptAfterOneCompletedTrialEvaluator(),
+            max_trials=5,
+            config=TraigentConfig.edge_analytics_mode(),
+        )
+
+        with caplog.at_level("WARNING"):
+            result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert result.status == OptimizationStatus.CANCELLED
+        assert result.stop_reason == "user_cancelled"
+        messages = [
+            r.getMessage()
+            for r in caplog.records
+            if "cancelled by the user" in r.getMessage()
+        ]
+        assert len(messages) == 1
+        assert "1 of 5 trials finished" in messages[0]
+        assert "partial" in messages[0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(5)
     async def test_cancelled_error_returns_completed_partial_trials(
         self, mock_optimizer, mock_function, sample_dataset
     ):
@@ -1547,9 +1587,13 @@ class TestOptimizationOrchestrator:
         result = await orchestrator.optimize(mock_function, sample_dataset)
 
         # All trials should fail
-        assert (
-            result.status == OptimizationStatus.COMPLETED
-        )  # Optimization completes even if all fail
+        # #2477: a run where every trial failed is FAILED, not COMPLETED, and
+        # carries the ALL_TRIALS_FAILED warning code (no exception is raised).
+        assert result.status == OptimizationStatus.FAILED
+        assert "ALL_TRIALS_FAILED" in (
+            getattr(result, "warning_codes", None)
+            or result.metadata.get("warning_codes", [])
+        )
         assert len(result.trials) == 3  # All trials are recorded, even if failed
         assert result.best_config is None  # No successful config
         assert result.best_score is None
@@ -1640,6 +1684,31 @@ class TestOptimizationOrchestrator:
         assert ranking["total_successful_trials"] == 1
         assert ranking["non_successful_count"] == 1
         assert ranking["eligible_count"] == 1
+
+    @pytest.mark.parametrize("stop_reason", ["execution_budget", "cost_limit"])
+    def test_all_failed_wins_over_budget_stop_reason(self, orchestrator, stop_reason):
+        """#2477: all trials failed + budget stop -> FAILED + ALL_TRIALS_FAILED."""
+        orchestrator._trials = [
+            TrialResult(
+                trial_id=f"failed_{i}",
+                config={"param1": i},
+                metrics={},
+                status=TrialStatus.FAILED,
+                duration=0.1,
+                timestamp=datetime.now(UTC),
+                error_message="boom",
+                metadata={},
+            )
+            for i in range(2)
+        ]
+        orchestrator._status = OptimizationStatus.COMPLETED
+        orchestrator._stop_reason = stop_reason
+
+        result = orchestrator._create_optimization_result()
+
+        assert result.status == OptimizationStatus.FAILED
+        assert "ALL_TRIALS_FAILED" in result.warning_codes
+        assert orchestrator._stop_reason == stop_reason
 
     def test_create_optimization_result_success_rate_excludes_all_errored_trials(
         self, orchestrator

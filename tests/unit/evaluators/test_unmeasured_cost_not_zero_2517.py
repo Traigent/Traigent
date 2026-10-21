@@ -300,3 +300,45 @@ def test_default_max_trials_stop_is_named_as_the_sdk_default(
     assert explicit_run.stop_reason == "max_trials_reached"
     assert "max_trials=3 reached" in explicit_run.metadata["stop_detail"]
     assert "default" not in explicit_run.metadata["stop_detail"]
+
+
+# --------------------------------------------------------------------------- #
+# Rule-based agents: a no-model-call path records a measured $0 (#2449)       #
+# --------------------------------------------------------------------------- #
+def _rule_based(dataset: Path, *, wrapped: bool) -> Any:
+    @optimize(
+        configuration_space={"threshold": [0.2, 0.8]},
+        objectives=["accuracy", "cost"],
+        eval_dataset=str(dataset),
+    )
+    def answer(question: str) -> Any:
+        traigent.get_config()  # the rule's threshold would be read here
+        value = "ok"  # rule-based: no provider call on this path
+        return traigent.with_usage(value, total_cost=0) if wrapped else value
+
+    return answer
+
+
+def test_wrapped_no_call_example_counts_as_measured_zero_cost(
+    real_run_env: Path,
+) -> None:
+    answer = _rule_based(real_run_env, wrapped=True)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = answer.optimize_sync(algorithm="grid", max_trials=2)
+
+    assert len(result.trials) == 2
+    for trial in result.trials:
+        assert trial.metrics.get("cost_unmeasured", 0.0) == 0.0, trial.metrics
+        assert trial.metrics["cost"] == 0.0, trial.metrics
+
+
+def test_unwrapped_no_call_example_stays_unknown(real_run_env: Path) -> None:
+    answer = _rule_based(real_run_env, wrapped=False)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = answer.optimize_sync(algorithm="grid", max_trials=2)
+
+    for trial in result.trials:
+        assert "cost" not in trial.metrics, trial.metrics
+        assert trial.metrics["cost_unmeasured"] == 1.0

@@ -17,6 +17,8 @@ from traigent.observability.otel.exporter import TraigentOTLPExporter
 from traigent.observability.otel.processor import TraigentSpanProcessor
 from traigent.observability.otel.transport import TransportError, TransportResponse
 
+pytestmark = pytest.mark.backend_online
+
 
 def _count(body: bytes) -> int:
     req = ExportTraceServiceRequest()

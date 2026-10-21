@@ -144,7 +144,6 @@ class TestCompleteOptimizationFlow:
                 metrics=simulated_metrics,
                 duration=2.5,
                 status=TrialStatus.COMPLETED,
-                outputs_sample=["Sample output 1", "Sample output 2"],
             )
 
             trial_results.append({"trial": suggestion, "results": result_submission})

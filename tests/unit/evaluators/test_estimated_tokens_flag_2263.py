@@ -58,6 +58,22 @@ class TestEstimateStringTokensSetsFlag:
             metric.tokens.input_tokens + metric.tokens.output_tokens
         )
 
+    def test_uncaptured_estimate_is_kept_labelled_and_input_only_2517(self):
+        """#2517 owner ruling: the estimate stays (non-zero) and is labelled; the
+        input side counts only the dataset input, not text inside the function."""
+        evaluator = LocalEvaluator(metrics=["accuracy"])
+        metric = ExampleMetrics()
+        example_input = {"text": "x" * 40}
+
+        evaluator._estimate_string_tokens(metric, "y" * 8, example_input, config={})
+
+        assert metric.tokens.estimated is True
+        assert metric.tokens.output_tokens == 2
+        assert metric.tokens.input_tokens >= 1
+        assert metric.tokens.total_tokens == (
+            metric.tokens.input_tokens + metric.tokens.output_tokens
+        )
+
     def test_a_real_captured_response_never_sets_the_flag(self):
         """Sanity check on the negative case: a normal ``ExampleMetrics``
         built from a real handler-extracted response defaults to

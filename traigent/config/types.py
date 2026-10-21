@@ -408,9 +408,9 @@ def _warn_deprecated_config_privacy_enabled(*, stacklevel: int = 4) -> None:
         "in per-trial submissions and withholds some trial metadata from the "
         "backend; it does not stop session creation from sending the tuned "
         "config space. Use offline=True to stop the optimizer's own submissions "
-        "to the Traigent backend (it does not control the OpenTelemetry exporter; "
-        "that one is disabled by TRAIGENT_OFFLINE_MODE=true). This "
-        "compatibility flag will be removed in a future major release.",
+        "to the Traigent backend; it also disables OpenTelemetry export, "
+        "langfuse and the standalone API clients while the run is in flight. "
+        "This compatibility flag will be removed in a future major release.",
         stacklevel=stacklevel,
     )
 

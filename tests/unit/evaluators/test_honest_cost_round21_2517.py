@@ -48,8 +48,9 @@ class _UsagelessJudge:
 # 1. Judge uncertainty is independent of the agent's measured state            #
 # --------------------------------------------------------------------------- #
 def _fold(monkeypatch, responses, row, result=None) -> None:
-    monkeypatch.setattr(local_module, "get_all_captured_responses", lambda: responses)
-    monkeypatch.setattr(local_module, "clear_captured_responses", lambda: None)
+    monkeypatch.setattr(
+        local_module, "drain_captured_responses", lambda: (responses, None, None)
+    )
     LocalEvaluator(metrics=["cost"])._fold_metric_function_llm_cost(
         row, example_result=result
     )
@@ -89,9 +90,10 @@ async def test_detailed_results_survive_a_cost_named_metric_and_unmeasured_judge
 ) -> None:
     monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
     monkeypatch.setattr(
-        local_module, "get_all_captured_responses", lambda: [_UsagelessJudge()]
+        local_module,
+        "drain_captured_responses",
+        lambda: ([_UsagelessJudge()], None, None),
     )
-    monkeypatch.setattr(local_module, "clear_captured_responses", lambda: None)
 
     def judge(output, expected, llm_metrics=None) -> float:
         return 0.1

@@ -90,15 +90,41 @@ class RagasConfig:
             canonical names are used as-is.
         llm: Optional RAGAS-compatible LLM wrapper used by metrics that require model judgements.
         embeddings: Optional embedding model used by similarity-based metrics.
+        min_scored_share: Minimum share (0.0-1.0) of rows that must receive a
+            defined judge score for a metric. Below it the trial fails closed
+            (#2677). ``None`` means the default, ``DEFAULT_MIN_SCORED_SHARE``;
+            ``0.0`` disables the floor.
     """
 
     column_map: Mapping[str, str] | None = None
     llm: Any | None = None
     embeddings: Any | None = None
+    min_scored_share: float | None = None
+
+
+DEFAULT_MIN_SCORED_SHARE = 0.5
 
 
 class RagasConfigurationError(RuntimeError):
     """Raised when ragas metrics are requested but cannot be computed."""
+
+
+class RagasCoverageError(RagasConfigurationError):
+    """Raised when too few rows received a defined RAGAS score (#2677)."""
+
+
+def ragas_coverage_keys(metric_name: str) -> tuple[str, str]:
+    """Return the ``(rows_scored, rows_total)`` metric keys for a RAGAS metric."""
+    return f"ragas_{metric_name}_rows_scored", f"ragas_{metric_name}_rows_total"
+
+
+def _validate_min_scored_share(value: Any) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise RagasConfigurationError("min_scored_share must be a number in [0, 1].")
+    share = float(value)
+    if not 0.0 <= share <= 1.0:  # also rejects NaN
+        raise RagasConfigurationError("min_scored_share must be a number in [0, 1].")
+    return share
 
 
 _GLOBAL_RAGAS_CONFIG = RagasConfig()
@@ -115,6 +141,7 @@ def configure_ragas_defaults(
     column_map: Mapping[str, str] | None | object = _UNSET,
     llm: Any | object = _UNSET,
     embeddings: Any | object = _UNSET,
+    min_scored_share: float | None | object = _UNSET,
 ) -> None:
     """Set default RAGAS configuration used by evaluators.
 
@@ -129,6 +156,8 @@ def configure_ragas_defaults(
         llm: RAGAS-compatible LLM wrapper (e.g. ``ragas.llms.LangchainLLM``) required for faithfulness
             or answer relevancy metrics. Pass ``None`` to clear.
         embeddings: Optional embedding model used by similarity metrics. Pass ``None`` to clear.
+        min_scored_share: Minimum share of rows that must get a defined judge
+            score (default 0.5; 0.0 disables). Pass ``None`` to reset to default.
 
     Raises:
         RagasConfigurationError: If ``column_map`` is not a mapping of strings to strings.
@@ -170,12 +199,20 @@ def configure_ragas_defaults(
 
     new_llm = current.llm if llm is _UNSET else llm
     new_embeddings = current.embeddings if embeddings is _UNSET else embeddings
+    new_share: float | None
+    if min_scored_share is _UNSET:
+        new_share = current.min_scored_share
+    elif min_scored_share is None:
+        new_share = None
+    else:
+        new_share = _validate_min_scored_share(min_scored_share)
 
     with _RAGAS_CONFIG_LOCK:
         _GLOBAL_RAGAS_CONFIG = RagasConfig(
             column_map=new_column_map,
             llm=new_llm,
             embeddings=new_embeddings,
+            min_scored_share=new_share,
         )
 
 
@@ -399,15 +436,24 @@ def layer_over_global_defaults(config: RagasConfig | None) -> RagasConfig:
         )
         global_llm = _GLOBAL_RAGAS_CONFIG.llm
         global_embeddings = _GLOBAL_RAGAS_CONFIG.embeddings
+        global_share = _GLOBAL_RAGAS_CONFIG.min_scored_share
     if config is None:
         return RagasConfig(
-            column_map=global_map, llm=global_llm, embeddings=global_embeddings
+            column_map=global_map,
+            llm=global_llm,
+            embeddings=global_embeddings,
+            min_scored_share=global_share,
         )
     return RagasConfig(
         column_map=config.column_map if config.column_map else global_map,
         llm=config.llm if config.llm is not None else global_llm,
         embeddings=(
             config.embeddings if config.embeddings is not None else global_embeddings
+        ),
+        min_scored_share=(
+            config.min_scored_share
+            if config.min_scored_share is not None
+            else global_share
         ),
     )
 
@@ -515,28 +561,47 @@ def compute_ragas_metrics(
         raise_exceptions=True,
     )
 
+    floor = (
+        DEFAULT_MIN_SCORED_SHARE
+        if config.min_scored_share is None
+        else _validate_min_scored_share(config.min_scored_share)
+    )
     aggregated: dict[str, float] = {}
     for metric in metrics:
         values = np.asarray(result[metric.name], dtype=float)
         defined = values[~np.isnan(values)]
-        denominator = len(defined) + failed_rows
+        # Agent-failed rows already contribute a defined 0.0, so they are
+        # scored; only rows RAGAS left undefined are unscored (#2677).
+        rows_total = len(values) + failed_rows
+        rows_scored = len(defined) + failed_rows
         if len(defined) == 0:
             raise RagasConfigurationError(
                 f"ragas metric '{metric.name}' has no defined judge score on any answered row; "
                 "refusing to report NaN as an objective value."
             )
-        if len(defined) < len(values) or failed_rows:
+        if rows_scored < rows_total:
             logger.warning(
                 "ragas metric %r: %d of %d rows scored (%d undefined, %d agent "
                 "failures counted as 0.0)",
                 metric.name,
-                len(defined),
-                denominator,
+                rows_scored,
+                rows_total,
                 len(values) - len(defined),
                 failed_rows,
             )
-        # Agent-failed rows contribute 0.0 over the full denominator.
-        aggregated[metric.name] = float(defined.sum() / denominator)
+        if rows_total and rows_scored / rows_total < floor:
+            raise RagasCoverageError(
+                f"ragas metric '{metric.name}' scored {rows_scored} of "
+                f"{rows_total} rows, below the minimum scored share of {floor:g}; "
+                "failing the trial instead of averaging the remaining rows."
+            )
+        # Scoring is unchanged (#2677): agent-failed rows contribute 0.0 and
+        # rows RAGAS left undefined are excluded from the mean; the coverage
+        # keys and the floor below are what make the exclusion visible.
+        aggregated[metric.name] = float(defined.sum() / rows_scored)
+        scored_key, total_key = ragas_coverage_keys(metric.name)
+        aggregated[scored_key] = int(rows_scored)  # type: ignore[assignment]
+        aggregated[total_key] = int(rows_total)  # type: ignore[assignment]
 
     return aggregated
 
@@ -544,7 +609,10 @@ def compute_ragas_metrics(
 __all__ = [
     "POPULAR_RAGAS_METRICS",
     "RAGAS_AVAILABLE",
+    "DEFAULT_MIN_SCORED_SHARE",
     "RagasConfigurationError",
+    "RagasCoverageError",
     "RagasConfig",
+    "ragas_coverage_keys",
     "compute_ragas_metrics",
 ]

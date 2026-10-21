@@ -90,7 +90,6 @@ class TraigentCloudRemoteGuidanceAdapter:
             metrics=result.metrics,
             duration=result.duration,
             status=status_value,
-            outputs_sample=result.outputs_sample,
             error_message=result.error_message,
             metadata=result.metadata,
         )

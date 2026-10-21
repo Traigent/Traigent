@@ -214,7 +214,6 @@ class TrialResultSubmission:
     metrics: dict[str, float]
     duration: float
     status: TrialStatus
-    outputs_sample: list[Any] | None = None
     error_message: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 

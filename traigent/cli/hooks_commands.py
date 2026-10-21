@@ -169,8 +169,23 @@ def status(path: str | None) -> None:
     "--config", "-c", type=click.Path(exists=True), help="Path to traigent.yml"
 )
 @click.option("--exit-code", is_flag=True, help="Exit with non-zero code on failure")
+@click.option(
+    "--allow-empty",
+    is_flag=True,
+    default=False,
+    help=(
+        "With --exit-code, exit 0 when an explicitly given TARGET contains no "
+        "decorated functions, instead of the default nonzero exit."
+    ),
+)
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed output")
-def validate(target: str, config: str | None, exit_code: bool, verbose: bool) -> None:
+def validate(
+    target: str,
+    config: str | None,
+    exit_code: bool,
+    allow_empty: bool,
+    verbose: bool,
+) -> None:
     """Validate agent configurations against constraints.
 
     Scans TARGET (file or directory) for @traigent.optimize decorated
@@ -180,11 +195,21 @@ def validate(target: str, config: str | None, exit_code: bool, verbose: bool) ->
         traigent hooks validate              # Validate current directory
         traigent hooks validate my_agent.py  # Validate specific file
         traigent hooks validate --exit-code  # For use in CI/CD
+
+    With --exit-code, an explicitly given TARGET that contains no decorated
+    functions exits non-zero (use --allow-empty to opt out). With no TARGET
+    (the default current directory, as the installed pre-push hook runs it)
+    an empty scan still exits 0.
     """
     from traigent.hooks.config import load_hooks_config
     from traigent.hooks.validator import AgentValidator
 
     target_path = Path(target)
+    # An explicit TARGET (even ".") counts; only the omitted default does not.
+    target_explicit = (
+        click.get_current_context().get_parameter_source("target")
+        != click.core.ParameterSource.DEFAULT
+    )
 
     console.print("\n[bold blue]Traigent Agent Validation[/bold blue]")
     console.print(f"Target: {target_path}\n")
@@ -218,6 +243,8 @@ def validate(target: str, config: str | None, exit_code: bool, verbose: bool) ->
         console.print(
             "[yellow]No @traigent.optimize decorated functions found[/yellow]"
         )
+        if exit_code and target_explicit and not allow_empty:
+            raise SystemExit(1)
         return
 
     # Display results

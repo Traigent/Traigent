@@ -11,6 +11,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Iterator
+from concurrent.futures import Future
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -36,8 +37,24 @@ class _CaptureBucket:
     """
 
     responses: list[Any] = field(default_factory=list)
+    #: Owner (example index) of each entry in ``responses``, same order and
+    #: length; ``None`` when the response was captured outside any example
+    #: ownership scope (:func:`capture_owner`).  Ownership is recorded at
+    #: capture time from the capturing context, never inferred from counts.
+    owners: list[int | None] = field(default_factory=list)
+    #: Model the capturing call REQUESTED (client configuration at the call
+    #: site), same order/length as ``responses``; ``None`` when unknown.
+    #: Provenance for pricing a response that reports no model of its own.
+    requested: list[str | None] = field(default_factory=list)
     by_key: dict[str, Any] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
+    sealed: bool = False
+    # Futures remain observable after timeout; completion before sealing clears
+    # uncertainty about workers still able to incur spend.
+    timed_out_workers: list[Future[Any]] = field(default_factory=list)
+    incomplete: bool = False
+    late: list[tuple[Any, str | None]] = field(default_factory=list)
+    finished: bool = False
     #: Provider/model versions observed from REAL provider responses in this
     #: trial (content identity v1, ``ObservedProviderVersionV1``), keyed by
     #: ``(provider, requested_model, response_model, system_fingerprint)``.
@@ -158,6 +175,8 @@ class capture_scope:
         return bucket
 
     def __exit__(self, *exc_info: Any) -> None:
+        seal_captured_responses()
+        finish_captured_responses(discard=True)
         _capture_scope.reset(self._token)
 
     async def __aenter__(self) -> _CaptureBucket:
@@ -165,6 +184,30 @@ class capture_scope:
 
     async def __aexit__(self, *exc_info: Any) -> None:
         self.__exit__(*exc_info)
+
+
+#: The example (by index) whose evaluation is running in this context, or
+#: ``None``.  A ContextVar, so concurrent example tasks on one event loop and
+#: sync agent functions run via ``copy_context().run`` (worker threads) each
+#: see their own owner.
+_capture_owner: ContextVar[int | None] = ContextVar(
+    "traigent_capture_owner", default=None
+)
+
+
+@contextmanager
+def capture_owner(owner: int) -> Iterator[None]:
+    """Attribute every response captured in this context to ``owner`` (#2444).
+
+    Wrap one example's evaluation in this so its LLM calls are recorded as
+    owned by that example, whatever the number of calls and whatever order
+    concurrent examples complete in.
+    """
+    token = _capture_owner.set(owner)
+    try:
+        yield
+    finally:
+        _capture_owner.reset(token)
 
 
 # Cap on the per-thread "last response" stack (see set_last_response).
@@ -186,8 +229,12 @@ class LangChainMetadataCapture:
         # Current correlation key in thread local
         self._key_local = threading.local()
 
-    def set_last_response(self, response: Any) -> None:
-        """Store the last LangChain response."""
+    def set_last_response(self, response: Any, *, requested_model: Any = None) -> None:
+        """Store the last LangChain response.
+
+        ``requested_model`` is the model THIS call asked for, when the call
+        site knows it; it is recorded next to the response in the active scope.
+        """
         with self._lock:
             if not hasattr(self._storage, "responses"):
                 # Bounded: this per-thread stack only serves get_last_response()
@@ -206,7 +253,27 @@ class LangChainMetadataCapture:
         bucket = _capture_scope.get()
         if bucket is not None:
             with bucket.lock:
+                if bucket.sealed:
+                    if not bucket.finished:
+                        bucket.late.append(
+                            (
+                                response,
+                                requested_model
+                                if isinstance(requested_model, str)
+                                else None,
+                            )
+                        )
+                    # Captures after evaluate's final handoff cannot update its
+                    # returned result. Live timed-out workers already make that
+                    # trial unmeasured; never assume their remaining spend is $0.
+                    return
                 bucket.responses.append(response)
+                bucket.owners.append(_capture_owner.get())
+                bucket.requested.append(
+                    requested_model
+                    if isinstance(requested_model, str) and requested_model
+                    else None
+                )
                 if key is not None:
                     bucket.by_key[key] = response
             return
@@ -240,6 +307,64 @@ class LangChainMetadataCapture:
         with self._response_lock:
             return self._all_responses.copy()
 
+    def get_response_owners(self) -> list[int | None] | None:
+        """Owner of each response ``get_all_responses`` returns, same order.
+
+        ``None`` outside a capture scope (the process-global list records no
+        ownership).
+        """
+        bucket = _capture_scope.get()
+        if bucket is None:
+            return None
+        with bucket.lock:
+            return bucket.owners.copy()
+
+    def drain(
+        self,
+    ) -> tuple[list[Any], list[int | None] | None, list[str | None] | None]:
+        """Take every response with its owner and requested model, atomically.
+
+        Snapshot and clear happen under ONE lock, so a call that lands while
+        the evaluator folds spend is either in this drain or left for the next,
+        never cleared unaccounted and never misaligned with its owner.  Owners
+        and requested models are ``None`` outside a capture scope.
+        """
+        with self._lock:
+            if hasattr(self._storage, "responses"):
+                self._storage.responses.clear()
+        bucket = _capture_scope.get()
+        if bucket is not None:
+            with bucket.lock:
+                taken = (
+                    bucket.responses.copy(),
+                    bucket.owners.copy(),
+                    bucket.requested.copy(),
+                )
+                bucket.responses.clear()
+                bucket.owners.clear()
+                bucket.requested.clear()
+                bucket.by_key.clear()
+            return taken
+        with self._response_lock:
+            responses = self._all_responses.copy()
+            self._all_responses.clear()
+        return responses, None, None
+
+    def snapshot(
+        self,
+    ) -> tuple[list[Any], list[int | None] | None, list[str | None] | None]:
+        """Atomic non-consuming view for ownership-aware early progress."""
+        bucket = _capture_scope.get()
+        if bucket is not None:
+            with bucket.lock:
+                return (
+                    bucket.responses.copy(),
+                    bucket.owners.copy(),
+                    bucket.requested.copy(),
+                )
+        with self._response_lock:
+            return self._all_responses.copy(), None, None
+
     def clear(self) -> None:
         """Clear stored responses for the active scope (or globally).
 
@@ -254,6 +379,8 @@ class LangChainMetadataCapture:
         if bucket is not None:
             with bucket.lock:
                 bucket.responses.clear()
+                bucket.owners.clear()
+                bucket.requested.clear()
                 bucket.by_key.clear()
         else:
             with self._response_lock:
@@ -321,7 +448,8 @@ def capture_observed_response(
                         bucket.observed[key] = bucket.observed.get(key, 0) + 1
         except Exception:  # noqa: BLE001 - observation is best-effort metadata
             logger.debug("Could not record an observed provider version")
-    return capture_langchain_response(response)
+    _metadata_capture.set_last_response(response, requested_model=requested_model)
+    return response
 
 
 def requested_model_of(client: Any) -> Any:
@@ -349,6 +477,65 @@ def get_all_captured_responses() -> list[Any]:
 def get_captured_response_by_key(key: Any) -> Any | None:
     """Get captured response by correlation key (e.g., example_id)."""
     return _metadata_capture.get_by_key(key)
+
+
+def get_captured_response_owners() -> list[int | None] | None:
+    """Owners (example indexes) of ``get_all_captured_responses()``, in order."""
+    return _metadata_capture.get_response_owners()
+
+
+def drain_captured_responses() -> tuple[
+    list[Any], list[int | None] | None, list[str | None] | None
+]:
+    """Atomically take ``(responses, owners, requested_models)`` and clear them."""
+    return _metadata_capture.drain()
+
+
+def snapshot_captured_responses() -> tuple[
+    list[Any], list[int | None] | None, list[str | None] | None
+]:
+    """Read calls and provenance together without consuming final accounting."""
+    return _metadata_capture.snapshot()
+
+
+def mark_capture_incomplete(worker: Future[Any]) -> None:
+    """A timed-out live worker leaves this trial's eventual spend unknown."""
+    bucket = _capture_scope.get()
+    if bucket is not None:
+        with bucket.lock:
+            bucket.timed_out_workers.append(worker)
+            bucket.incomplete = True
+
+
+def seal_captured_responses() -> bool:
+    """Close appends before the final drain; return unresolved-spend state."""
+    bucket = _capture_scope.get()
+    if bucket is None:
+        return False
+    with bucket.lock:
+        if not bucket.sealed:
+            bucket.incomplete = any(
+                not worker.done() for worker in bucket.timed_out_workers
+            )
+        bucket.sealed = True
+        return bucket.incomplete
+
+
+def finish_captured_responses(*, discard: bool = False) -> list[tuple[Any, str | None]]:
+    """Take late captures; close only at an empty final handoff.
+
+    Pricing a drained batch may let another worker capture, so callers fold
+    batches until an empty take atomically closes appends. Scope exit discards
+    any remaining batch when unwinding without a result.
+    """
+    bucket = _capture_scope.get()
+    if bucket is None:
+        return []
+    with bucket.lock:
+        late, bucket.late = bucket.late, []
+        if discard or not late:
+            bucket.finished = True
+        return late
 
 
 def clear_captured_responses() -> None:

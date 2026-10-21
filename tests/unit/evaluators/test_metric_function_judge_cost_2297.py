@@ -196,9 +196,8 @@ def _fold_with_captured(
     from traigent.evaluators import local as local_module
 
     monkeypatch.setattr(
-        local_module, "get_all_captured_responses", lambda: list(responses)
+        local_module, "drain_captured_responses", lambda: (list(responses), None, None)
     )
-    monkeypatch.setattr(local_module, "clear_captured_responses", lambda: None)
 
     evaluator = LocalEvaluator(metrics=["cost"])
     evaluator._fold_metric_function_llm_cost(example_metric)

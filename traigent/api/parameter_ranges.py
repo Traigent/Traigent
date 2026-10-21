@@ -783,6 +783,10 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
         Returns:
             Choices instance with model names
 
+        Raises:
+            ValueError: If no default exists for the provider/tier (unknown
+                providers never fall back to an OpenAI model).
+
         Example:
             >>> model = Choices.model()  # Default balanced models
             >>> model_fast = Choices.model(provider="openai", tier="fast")
@@ -823,11 +827,12 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
 
         models_found = fallbacks.get((provider_key, tier))
         if not models_found:
-            logger.warning(
-                f"No model list found for provider={provider}, tier={tier}. "
-                f"Using default models. Set {env_key} for explicit control."
+            # Never substitute an OpenAI model for an unknown provider or
+            # tier (#2650); the caller must choose explicitly.
+            raise ValueError(
+                "No default models for the requested provider/tier. "
+                f"Set {env_key} to provide an explicit model list."
             )
-            models_found = ["gpt-4o-mini"]
 
         return Choices(models_found, name="model")
 

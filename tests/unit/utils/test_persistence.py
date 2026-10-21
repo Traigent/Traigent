@@ -40,6 +40,11 @@ from traigent.utils.persistence import (
 )
 
 
+def _drop_manifest(result_dir: Path) -> None:
+    """Simulate an artifact saved before the #1961 integrity manifest existed."""
+    (result_dir / "integrity.sha256.json").unlink(missing_ok=True)
+
+
 def _make_optimization_result() -> OptimizationResult:
     """Helper to build a minimal optimization result."""
     timestamp = datetime.now(UTC)
@@ -261,6 +266,7 @@ def test_legacy_pickle_fallback_roundtrips_real_trial_result(tmp_path) -> None:
 
     result_dir = Path(persistence.save_result(result, "legacy-only"))
     (result_dir / "trials.json.gz").unlink()
+    _drop_manifest(result_dir)  # legacy shape
 
     loaded = persistence.load_result("legacy-only")
 
@@ -310,6 +316,7 @@ def test_load_result_does_not_restore_sync_session_id(tmp_path) -> None:
     # future/forked SDK) must not resurrect it on the way in.
     saved_metadata["sync_session_id"] = "local-abc"
     metadata_path.write_text(json.dumps(saved_metadata))
+    _drop_manifest(metadata_path.parent)  # hand-edited: legacy shape
 
     loaded = persistence.load_result("sync-handle")
 
@@ -426,6 +433,7 @@ def test_load_result_ignores_a_sync_session_id_planted_in_result_fields(
     assert "sync_session_id" not in metadata["result_fields"]
     metadata["result_fields"]["sync_session_id"] = "local-abc"
     metadata_path.write_text(json.dumps(metadata))
+    _drop_manifest(metadata_path.parent)  # hand-edited: legacy shape
 
     assert persistence.load_result("planted").sync_session_id is None
 
@@ -549,6 +557,7 @@ def test_versioned_metadata_is_not_overwritten_by_the_outer_summary(
     metadata["function_name"] = "a_different_name_from_the_summary"
     metadata["configuration_space"] = {"model": ["cheap", "smart"]}
     metadata_path.write_text(json.dumps(metadata))
+    _drop_manifest(metadata_path.parent)  # hand-edited: legacy shape
 
     loaded = persistence.load_result("authoritative")
 
@@ -676,6 +685,7 @@ def test_legacy_artifact_carrying_strategy_preset_still_loads(tmp_path) -> None:
         "selection_grade": "advisory",
     }
     metadata_path.write_text(json.dumps(metadata))
+    _drop_manifest(metadata_path.parent)  # hand-edited: legacy shape
 
     persistence = PersistenceManager(base_dir=tmp_path)
 
@@ -712,6 +722,7 @@ def test_an_artifact_written_by_an_older_schema_version_still_loads(
     # … a field the release that wrote this artifact did not have yet.
     del metadata["result_fields"]["best_config_margin"]
     metadata_path.write_text(json.dumps(metadata))
+    _drop_manifest(metadata_path.parent)  # hand-edited: legacy shape
 
     # The next release: version bumped, the new field recorded at that bumped
     # version, every other field left at its real introduction version (the
@@ -760,6 +771,7 @@ def test_truncated_versioned_artifact_is_corruption_not_a_legacy_fallback(
     metadata = json.loads(metadata_path.read_text())
     del metadata["result_fields"]["stop_reason"]
     metadata_path.write_text(json.dumps(metadata))
+    _drop_manifest(metadata_path.parent)  # hand-edited: legacy shape
 
     with pytest.raises(ValueError, match="stop_reason"):
         persistence.load_result("truncated")
@@ -776,6 +788,7 @@ def test_unsupported_result_schema_version_fails_explicitly(tmp_path) -> None:
     metadata[SCHEMA_VERSION_KEY] = 999
     metadata["result_fields"][SCHEMA_VERSION_KEY] = 999
     metadata_path.write_text(json.dumps(metadata))
+    _drop_manifest(metadata_path.parent)  # hand-edited: legacy shape
 
     with pytest.raises(ValueError, match="999"):
         persistence.load_result("from-the-future")
@@ -802,6 +815,7 @@ def test_a_future_version_envelope_cannot_be_decoded_via_an_older_payload(
     metadata["result_fields"]["billing_currency"] = "EUR"  # a v999 field
     assert metadata["result_fields"][SCHEMA_VERSION_KEY] == RESULT_SCHEMA_VERSION
     metadata_path.write_text(json.dumps(metadata))
+    _drop_manifest(metadata_path.parent)  # hand-edited: legacy shape
 
     with pytest.raises(ValueError) as excinfo:
         persistence.load_result("two-faced")
@@ -822,6 +836,7 @@ def test_a_version_stamped_on_only_one_half_of_the_artifact_is_rejected(
     metadata = json.loads(metadata_path.read_text())
     del metadata[SCHEMA_VERSION_KEY]
     metadata_path.write_text(json.dumps(metadata))
+    _drop_manifest(metadata_path.parent)  # hand-edited: legacy shape
 
     with pytest.raises(ValueError, match="envelope"):
         persistence.load_result("half-stamped")

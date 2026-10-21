@@ -41,6 +41,9 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# Default per-example evaluation limit (seconds); independent of run timeout.
+DEFAULT_EXAMPLE_TIMEOUT_SECONDS = 60.0
+
 
 # ---------------------------------------------------------------------------
 # Phase 1: Parameter resolution
@@ -711,14 +714,14 @@ def _create_wrapped_custom_evaluator(
     effective_evaluator: Callable[..., Any],
     *,
     objectives: Sequence[str],
-    timeout: float | None,
+    example_timeout: float | None,
 ) -> tuple[BaseEvaluator, None]:
     """Wrap a user-supplied evaluator with the SDK adapter."""
     return (
         CustomEvaluatorWrapper(
             custom_evaluator=effective_evaluator,
             metrics=list(objectives),
-            timeout=timeout or 60.0,
+            timeout=example_timeout or DEFAULT_EXAMPLE_TIMEOUT_SECONDS,
             capture_llm_metrics=True,
         ),
         None,
@@ -775,7 +778,7 @@ def _create_hybrid_api_evaluator(
 
 
 def _create_local_evaluator(
-    timeout: float | None,
+    example_timeout: float | None,
     effective_batch_size: int | None,
     effective_thread_workers: int | None,
     *,
@@ -797,7 +800,7 @@ def _create_local_evaluator(
     return (
         LocalEvaluator(
             metrics=list(objectives),
-            timeout=timeout or 60.0,
+            timeout=example_timeout or DEFAULT_EXAMPLE_TIMEOUT_SECONDS,
             max_workers=effective_workers,
             detailed=True,
             execution_mode=execution_mode,
@@ -824,11 +827,14 @@ def create_effective_evaluator(
     surrogate_evaluator_name: str | None = None,
     decorator_surrogate_evaluator_name: str | None = None,
     hybrid_api_options: HybridAPIEvaluatorOptions | None = None,
+    example_timeout: float | None = None,
 ) -> tuple[BaseEvaluator, Any]:
     """Create the appropriate evaluator for the optimization run.
 
     Args:
-        timeout: Evaluation timeout
+        timeout: Run timeout; used only for Hybrid API request timeouts, never
+            as the per-example limit
+        example_timeout: Per-example limit in seconds (None = 60 s default)
         custom_evaluator: Custom evaluator from optimize() call
         effective_batch_size: Example concurrency batch size
         effective_thread_workers: Thread worker limit
@@ -873,7 +879,7 @@ def create_effective_evaluator(
         evaluator_result = _create_wrapped_custom_evaluator(
             effective_evaluator,
             objectives=objectives,
-            timeout=timeout,
+            example_timeout=example_timeout,
         )
     else:
         execution_mode_enum = resolve_execution_mode(execution_mode)
@@ -885,7 +891,7 @@ def create_effective_evaluator(
             )
         else:
             evaluator_result = _create_local_evaluator(
-                timeout,
+                example_timeout,
                 effective_batch_size,
                 effective_thread_workers,
                 objectives=objectives,

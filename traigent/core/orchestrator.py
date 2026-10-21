@@ -85,6 +85,7 @@ from traigent.core.execution_policy_runtime import (
     policy_from_config,
     policy_is_cloud_brain,
     policy_is_cloud_required,
+    policy_requires_cloud,
     unsupported_backend_smart_algorithm_message,
 )
 from traigent.core.logger_facade import LoggerFacade
@@ -140,6 +141,8 @@ from traigent.utils.callbacks import CallbackManager, OptimizationCallback, Prog
 from traigent.utils.env_config import (  # noqa: F401
     is_backend_offline as is_backend_offline,
 )
+from traigent.utils.env_config import is_mock_llm, skip_provider_validation
+from traigent.utils.mock_provenance import MockProvenanceRecorder
 from traigent.utils.exceptions import (
     ConfigurationError,
     OptimizationError,
@@ -184,6 +187,8 @@ _EMPTY_SMART_RUN_OWNED_STOP_REASONS = frozenset(
     }
 )
 _OBJECTIVE_UNMATCHED_WARNING_CODE = "OBJECTIVE_UNMATCHED"
+# Issue #2477: every executed trial failed (none succeeded).
+_ALL_TRIALS_FAILED_WARNING_CODE = "ALL_TRIALS_FAILED"
 # Issue #1832: a declared, weighted, matched objective whose value is uniformly
 # constant across the ranking-eligible trials cannot influence ``best_config`` —
 # its weight is a silent no-op (e.g. cost/latency = 0 on a no-LLM-scored or
@@ -644,6 +649,11 @@ class OptimizationOrchestrator:
             estimated_input_tokens_per_example=estimated_input_tokens,
             estimated_output_tokens_per_example=estimated_output_tokens,
             estimated_calls_per_example=self._estimated_calls_per_example,
+            configured_max_output_tokens=(
+                self._extract_max_output_tokens_from_config_space(
+                    getattr(self.optimizer, "config_space", None)
+                )
+            ),
         )
 
         self._trial_lifecycle = TrialLifecycle(self)
@@ -705,6 +715,27 @@ class OptimizationOrchestrator:
                 return normalized_candidates
 
         return ()
+
+    @staticmethod
+    def _extract_max_output_tokens_from_config_space(
+        config_space: dict[str, Any] | None,
+    ) -> int | None:
+        """Largest ``max_tokens`` value in the config space, used as output cap."""
+        if not isinstance(config_space, dict):
+            return None
+        definition = config_space.get("max_tokens")
+        if isinstance(definition, dict):
+            definition = definition.get("values", definition.get("high"))
+        raw = (
+            definition
+            if isinstance(definition, Sequence)
+            and not isinstance(definition, (str, bytes, bytearray))
+            else (definition,)
+        )
+        values = [
+            v for v in raw if isinstance(v, int) and not isinstance(v, bool) and v > 0
+        ]
+        return max(values) if values else None
 
     @staticmethod
     def _extract_estimated_tokens_per_example(
@@ -3301,6 +3332,11 @@ class OptimizationOrchestrator:
                 experiment_display_name=experiment_display_name,
             )
 
+        example_limit = getattr(self.evaluator, "timeout", None)
+        if isinstance(example_limit, (int, float)) and not isinstance(
+            example_limit, bool
+        ):
+            self.callback_manager.on_run_settings({"example_timeout": example_limit})
         self.callback_manager.on_optimization_start(
             config_space=self.optimizer.config_space,
             objectives=self.optimizer.objectives,
@@ -3596,6 +3632,7 @@ class OptimizationOrchestrator:
         sigterm_scope = sigterm_as_cancellation()  # #2667
         sigterm_scope.__enter__()
         try:
+            self._reset_mock_provenance()
             # Content identity v1: one snapshot per run, taken from the rows' and
             # the agent's CURRENT state before the session is created. None without
             # a Backend purpose-key grant -- then nothing new is emitted anywhere.
@@ -3627,6 +3664,9 @@ class OptimizationOrchestrator:
                     session_span=session_span,
                 )
         finally:
+            recorder = getattr(self, "_mock_recorder", None)
+            if recorder is not None:
+                recorder.deactivate()
             sigterm_scope.__exit__(None, None, None)
             reset_run_content_identity_keys(identity_keys_token)
 
@@ -3638,7 +3678,39 @@ class OptimizationOrchestrator:
         cost limits are handled separately as graceful ``stop_reason="cost_limit"``
         results.
         """
+        self._preflight_provider_keys()
         self._cost_estimator.check_cost_approval(dataset)
+
+    def _preflight_provider_keys(self) -> None:
+        """Check provider keys once, before cost approval, for paid runs.
+
+        A run is paid when a cost limit is set or cost is approved (the cost
+        enforcer is configured) and mock mode is off. Only providers named by
+        the run's model(s) are checked. Honours
+        ``TRAIGENT_SKIP_PROVIDER_VALIDATION``. Raises ``ProviderValidationError``
+        on a bad key.
+        """
+        cost_limit = self.config.get("cost_limit")
+        cost_approved = normalize_cost_approved(self.config.get("cost_approved", False))
+        paid_run = (
+            cost_limit is not None or cost_approved or run_cost_limit_env_is_set()
+        )
+        if not paid_run or skip_provider_validation():
+            return
+        models = list(
+            self._extract_model_candidates_from_config_space(
+                getattr(self.optimizer, "config_space", None)
+            )
+        )
+        fixed_model = getattr(self.traigent_config, "model", None)
+        if isinstance(fixed_model, str) and fixed_model.strip():
+            models.append(fixed_model.strip())
+        models = list(dict.fromkeys(models))
+        if not models:
+            return
+        from traigent.providers.validation import preflight_run_providers
+
+        preflight_run_providers(models)
 
     def _is_cost_limit_reached(self) -> bool:
         """Return whether the shared cost enforcer has hit its run limit."""
@@ -3806,18 +3878,28 @@ class OptimizationOrchestrator:
             # per-trial sample ceilings), so a batch cannot overshoot
             # ``max_examples`` the way an unbounded-per-trial cost can.
             est_per_trial = 0.0
+            first_batch = False
             if self.cost_enforcer is not None:
-                est_per_trial = float(
-                    self.cost_enforcer.get_status().estimated_cost_per_trial
-                )
+                status = self.cost_enforcer.get_status()
+                est_per_trial = float(status.estimated_cost_per_trial)
+                # Issue #2203: before ANY trial has completed there is no measured
+                # cost, so the estimate is only the configured default guess. A
+                # small cap (e.g. $0.01) must not refuse the whole run on that
+                # guess: admit the first batch, then enforce on what it really
+                # spent (the exhausted-dimension check above) and on the observed
+                # mean. The first batch may overshoot a tiny cap; its spend is
+                # still debited and nothing is guessed as $0.
+                first_batch = status.trial_count == 0 and snapshot.consumed_cost <= 0
             est_next_batch = est_per_trial * self._effective_batch_size(
                 remaining_trials
             )
             # Tolerate float rounding so a budget that exactly funds the next
             # batch (e.g. 0.30 - 0.20 = 0.0999... vs a 0.10 mean cost) is not
             # blocked by representation error.
-            if not math.isinf(snapshot.remaining_cost) and (
-                snapshot.remaining_cost < est_next_batch - 1e-9
+            if (
+                not first_batch
+                and not math.isinf(snapshot.remaining_cost)
+                and snapshot.remaining_cost < est_next_batch - 1e-9
             ):
                 blocked_dimension = "cost"
 
@@ -4597,6 +4679,7 @@ class OptimizationOrchestrator:
             result.metadata["local_session_id"] = syncable_id
 
         persistence_status = "skipped"
+        required_cloud_finalize_failed = False
         if (
             self.backend_session_manager.backend_tracking_enabled
             and not backend_egress_disabled(self.traigent_config)
@@ -4665,18 +4748,39 @@ class OptimizationOrchestrator:
                     persistence_status = "succeeded"
             except Exception as exc:
                 persistence_status = "failed"
-                result.metadata["persistence_error"] = str(exc)
-                logger.error(
-                    "Backend persistence failed after optimization; backend session "
-                    "left RUNNING. Check the portal for this session id to confirm "
-                    "whether it was finalized; do not run whole-store "
-                    "`traigent sync` to repair it (an offline sync creates a NEW "
-                    "backend session and can duplicate the run). Keeping result source=%s, "
-                    "session_id=%s, and marking persistence_status=failed: %s",
-                    result.source,
-                    session_id,
-                    exc,
-                )
+                if policy_requires_cloud(policy_from_config(self.traigent_config)):
+                    # Required cloud forbids finishing without the backend
+                    # record (#2510). The backend error can echo customer
+                    # content, so metadata and logs carry the class name only.
+                    required_cloud_finalize_failed = True
+                    result.metadata["persistence_error"] = type(exc).__name__
+                    logger.error(
+                        "Backend persistence failed after optimization under "
+                        "required cloud tracking (%s); backend session left "
+                        "RUNNING.",
+                        type(exc).__name__,
+                    )
+                else:
+                    result.metadata["persistence_error"] = str(exc)
+                    logger.error(
+                        "Backend persistence failed after optimization; backend "
+                        "session left RUNNING. Check the portal for this session "
+                        "id to confirm whether it was finalized; do not run "
+                        "whole-store `traigent sync` to repair it (an offline "
+                        "sync creates a NEW backend session and can duplicate "
+                        "the run). Keeping result source=%s, session_id=%s, and "
+                        "marking persistence_status=failed: %s",
+                        result.source,
+                        session_id,
+                        exc,
+                    )
+            if required_cloud_finalize_failed:
+                # Raised outside the except block with no chaining so the
+                # backend text is unreachable from a formatted traceback.
+                raise CloudBrainUnavailableError(
+                    "session finalization",
+                    "required cloud tracking could not persist the run",
+                ) from None
 
             # Populate experiment_id and cloud_url from session metadata
             self._populate_experiment_cloud_url(result)
@@ -4923,12 +5027,19 @@ class OptimizationOrchestrator:
         """Finalize completed trials after a user interrupt."""
         self._stop_reason = "user_cancelled"
         self._status = OptimizationStatus.CANCELLED
+        finished = len(getattr(self, "_trials", None) or ())
+        planned = getattr(self, "_max_trials", None)
+        progress = (
+            f"{finished} of {planned} trials finished"
+            if isinstance(planned, int) and planned > 0
+            else f"{finished} trial(s) finished"
+        )
         logger.warning(
-            "Optimization %s interrupted by user (%s); stopping and finalizing "
-            "with %d completed trial(s).",
+            "Optimization %s was cancelled by the user (%s): %s; the result is "
+            "partial (status=cancelled, stop_reason=user_cancelled).",
             self._optimization_id,
             type(interrupt).__name__,
-            len(self._trials),
+            progress,
         )
         result = self._create_optimization_result()
         self._add_winner_stability_cost_to_result(
@@ -4937,6 +5048,11 @@ class OptimizationOrchestrator:
         )
         try:
             await self._finalize_optimization(result, session_id, session_span)
+        except CloudBrainUnavailableError:
+            # Required cloud forbids returning a partial result without the
+            # backend record (#2510); the best-effort handler below is for
+            # optional tracking only.
+            raise
         except Exception as finalize_error:
             logger.warning(
                 "Finalization failed after user interrupt; returning partial "
@@ -5111,6 +5227,8 @@ class OptimizationOrchestrator:
             # cancellation, timeout, or failure — and before finalize so the
             # recorded block rides the same persistence pass as the result.
             await self._maybe_run_winner_stability(result, func, dataset, session_id)
+            # Reruns serve LLM calls too: provenance is final only now (#2516).
+            self._refresh_mock_provenance(result)
             await self._finalize_optimization(result, session_id, session_span)
             return result
 
@@ -5509,6 +5627,9 @@ class OptimizationOrchestrator:
                 "convergence": "convergence",
                 "semantic_saturation": "semantic_saturation",
                 "safety_constraint": "safety_constraint",
+                "safety_constraint_insufficient_evidence": (
+                    "safety_constraint_insufficient_evidence"
+                ),
                 "no_usage_captured": "no_usage_captured",
             }
             mapped_reason = reason_mapping.get(reason, "condition")
@@ -5662,6 +5783,60 @@ class OptimizationOrchestrator:
             "generation": generation,
         }
 
+    def _reset_mock_provenance(self) -> None:
+        """Start a run's mock provenance: the state now, and no trials seen (#2516)."""
+        self._mock_states_seen: set[bool] = set()
+        self._mock_state_at_run_start = bool(is_mock_llm())
+        recorder = getattr(self, "_mock_recorder", None)
+        if recorder is not None:
+            recorder.deactivate()
+        self._mock_recorder = MockProvenanceRecorder()
+        self._mock_recorder.activate()
+
+    def record_trial_mock_state(self) -> None:
+        """Record whether mock mode is on as a trial is dispatched (#2516)."""
+        if not hasattr(self, "_mock_states_seen"):
+            self._mock_states_seen = set()
+            self._mock_state_at_run_start = bool(is_mock_llm())
+        self._mock_states_seen.add(bool(is_mock_llm()))
+
+    def _mock_provenance_metadata(self) -> dict[str, bool]:
+        """Per-run mock provenance, from where responses were actually served.
+
+        The run's recorder counts mock responses served (every MockAdapter
+        interception) and non-mock LLM calls observed (LiteLLM wrappers).
+        ``mock_llm_run`` is True if any mock response was served; both kinds
+        observed also set ``mock_llm_mixed``. Only when no call was observed at
+        all does it fall back to the per-trial dispatch record, and then to the
+        state at run start for a run with no trials (fail closed: any mocked
+        trial counts).
+        """
+        recorder = getattr(self, "_mock_recorder", None)
+        served = recorder.mock_responses_served if recorder is not None else 0
+        real = recorder.real_calls_observed if recorder is not None else 0
+        if served or real:
+            meta = {"mock_llm_run": served > 0}
+            if served and real:
+                meta["mock_llm_mixed"] = True
+            return meta
+        seen = getattr(self, "_mock_states_seen", None)
+        if not seen:
+            start = getattr(self, "_mock_state_at_run_start", None)
+            return {"mock_llm_run": bool(is_mock_llm() if start is None else start)}
+        meta = {"mock_llm_run": True in seen}
+        if len(seen) > 1:
+            meta["mock_llm_mixed"] = True
+        return meta
+
+    def _refresh_mock_provenance(self, result: OptimizationResult) -> None:
+        """Re-derive mock provenance after winner verification (#2516)."""
+        metadata = getattr(result, "metadata", None)
+        if not isinstance(metadata, dict):
+            return
+        metadata.pop("mock_llm_run", None)
+        metadata.pop("mock_llm_mixed", None)
+        metadata.update(self._mock_provenance_metadata())
+
     def _build_result_metadata(
         self,
         session_summary: dict[str, Any] | None,
@@ -5670,6 +5845,10 @@ class OptimizationOrchestrator:
         metadata: dict[str, Any] = {
             **({} if session_summary is None else {"session_summary": session_summary}),
             "safeguards": safeguards_telemetry,
+            # Mock provenance is what each trial executed under, not process
+            # state at build time (#2516). It says LLM mocking was enabled,
+            # not that every call was mocked.
+            **OptimizationOrchestrator._mock_provenance_metadata(self),
         }
 
         if self._function_descriptor is not None:
@@ -5693,6 +5872,21 @@ class OptimizationOrchestrator:
         # Only present for warm-started runs; absent otherwise.
         if self._warm_start_from:
             metadata["warm_start_from"] = self._warm_start_from
+
+        # Per-example timeouts across the run (``example_timeout``): count only
+        # what trials recorded; absent when no example timed out.
+        timed_out_total = 0
+        for trial in getattr(self, "_trials", None) or ():
+            trial_meta = getattr(trial, "metadata", None)
+            value = (
+                trial_meta.get("timed_out_examples")
+                if isinstance(trial_meta, dict)
+                else None
+            )
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                timed_out_total += value
+        if timed_out_total:
+            metadata["timed_out_examples"] = timed_out_total
 
         describe_stop = getattr(self, "_describe_stop", None)
         stop_detail = describe_stop() if callable(describe_stop) else None
@@ -5832,6 +6026,29 @@ class OptimizationOrchestrator:
             session_summary["available_metrics"] = list(available_metric_names)
             if suggestion:
                 session_summary["did_you_mean"] = suggestion
+            if result_status == OptimizationStatus.COMPLETED:
+                result_status = OptimizationStatus.FAILED
+                self._status = result_status
+
+        # Issue #2477 (mirrors the #1691 downgrade above): a run that executed
+        # trials where none succeeded is not COMPLETED, whatever the stop reason
+        # (budget stops included; the stop_reason value itself is unchanged).
+        # Statuses already set by a stop cause (e.g. CANCELLED) are kept; no
+        # exception is raised.
+        if (
+            self._trials
+            and not any(t.is_successful for t in self._trials)
+            and any(t.status == TrialStatus.FAILED for t in self._trials)
+        ):
+            failed_count = sum(
+                1 for t in self._trials if t.status == TrialStatus.FAILED
+            )
+            result_warnings.append(
+                f"All trials failed: {failed_count} of {len(self._trials)} trial(s) "
+                "failed and none succeeded; no best_config was selected. See "
+                "per-trial error messages."
+            )
+            result_warning_codes.append(_ALL_TRIALS_FAILED_WARNING_CODE)
             if result_status == OptimizationStatus.COMPLETED:
                 result_status = OptimizationStatus.FAILED
                 self._status = result_status

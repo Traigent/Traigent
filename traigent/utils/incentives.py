@@ -16,6 +16,7 @@ from ..config.types import TraigentConfig
 from ..storage.local_storage import LocalStorageManager
 from ..utils.logging import get_logger
 from .local_analytics import LocalAnalytics, collect_and_submit_analytics
+from .env_config import is_mock_llm
 
 logger = get_logger(__name__)
 
@@ -256,6 +257,9 @@ class IncentiveManager:
         persisted ``dismiss_upgrade_hints`` flag and ``TRAIGENT_DISABLE_HINTS``.
         """
         if _hints_disabled_by_env():
+            return True
+        # A mock run is not a real optimization: no celebration (#2516).
+        if is_mock_llm():
             return True
         if self._state.get("upgrade_dismissed", False):
             return True

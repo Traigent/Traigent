@@ -115,7 +115,7 @@ async def _hybrid_session_and_optimizer() -> None:
 
 
 async def _direct_serializer() -> None:
-    """``client.py`` direct serializer sends ``outputs_sample``/``error_message``."""
+    """``client.py`` direct serializer sends ``error_message`` (never model outputs)."""
 
     import aiohttp
 
@@ -131,7 +131,6 @@ async def _direct_serializer() -> None:
             metrics={c["metric_name"]: 0.5},
             duration=0.1,
             status=TrialStatus.FAILED,
-            outputs_sample=[c["model_output"]],
             error_message=f"boom {c['exception_message']}",
             metadata={c["metadata_key"]: c["metadata_value"]},
         )

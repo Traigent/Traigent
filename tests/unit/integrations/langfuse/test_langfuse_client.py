@@ -20,6 +20,10 @@ from traigent.integrations.langfuse.client import (
     LangfuseTraceMetrics,
 )
 
+# SDK #2033/#2240: these tests exercise the HTTP path, which is refused while
+# offline; opt into the connected code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 class TestLangfuseObservation:
     """Test LangfuseObservation data class."""

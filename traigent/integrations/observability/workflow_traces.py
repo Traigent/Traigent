@@ -861,6 +861,11 @@ class WorkflowTracesClient:
         Returns:
             TraceIngestionResponse with ingestion results
         """
+        from traigent.utils.env_config import is_backend_offline
+
+        if is_backend_offline():
+            return TraceIngestionResponse(success=False, error="offline")
+
         if not REQUESTS_AVAILABLE:
             raise ImportError(
                 "requests is required for sync operations. "
@@ -930,6 +935,11 @@ class WorkflowTracesClient:
         Returns:
             TraceIngestionResponse with ingestion results
         """
+        from traigent.utils.env_config import is_backend_offline
+
+        if is_backend_offline():
+            return TraceIngestionResponse(success=False, error="offline")
+
         if not AIOHTTP_AVAILABLE:
             raise ImportError(
                 "aiohttp is required for async operations. "

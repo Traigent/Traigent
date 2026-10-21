@@ -186,6 +186,11 @@
        "ratio": 1.0,
        "total": 3
       },
+      "cost_unmeasured": {
+       "present": 3,
+       "ratio": 1.0,
+       "total": 3
+      },
       "input_tokens": {
        "present": 3,
        "ratio": 1.0,
@@ -221,6 +226,7 @@
       "example_id": "ex_ffd55dee_0",
       "metrics": {
        "accuracy": 1.0,
+       "cost_unmeasured": 1.0,
        "execution_time_ms": "<volatile>",
        "input_tokens": 1,
        "output_tokens": 1,
@@ -237,6 +243,7 @@
       "example_id": "ex_df67fdfd_1",
       "metrics": {
        "accuracy": 1.0,
+       "cost_unmeasured": 1.0,
        "execution_time_ms": "<volatile>",
        "input_tokens": 1,
        "output_tokens": 1,
@@ -253,6 +260,7 @@
       "example_id": "ex_18f3e157_2",
       "metrics": {
        "accuracy": 1.0,
+       "cost_unmeasured": 1.0,
        "execution_time_ms": "<volatile>",
        "input_tokens": 1,
        "output_tokens": 1,
@@ -291,6 +299,7 @@
      },
      "metrics": {
       "accuracy": 1.0,
+      "cost_unmeasured": 1.0,
       "input_tokens": 1,
       "output_tokens": 1,
       "total_tokens": 2
@@ -315,6 +324,7 @@
      },
      "metrics": {
       "accuracy": 1.0,
+      "cost_unmeasured": 1.0,
       "input_tokens": 1,
       "output_tokens": 1,
       "total_tokens": 2
@@ -339,6 +349,7 @@
      },
      "metrics": {
       "accuracy": 1.0,
+      "cost_unmeasured": 1.0,
       "input_tokens": 1,
       "output_tokens": 1,
       "total_tokens": 2
@@ -350,6 +361,8 @@
     }
    ],
    "metadata_keys": [
+    "cache_hit_rate",
+    "cached_input_tokens",
     "comparability",
     "evaluation_result",
     "example_results",
@@ -359,7 +372,8 @@
     "output_count",
     "sample_budget_exhausted",
     "success_rate",
-    "successful_examples"
+    "successful_examples",
+    "timed_out_examples"
    ]
   },
   {
@@ -376,6 +390,11 @@
        "ratio": 1.0,
        "total": 3
       },
+      "cost_unmeasured": {
+       "present": 3,
+       "ratio": 1.0,
+       "total": 3
+      },
       "input_tokens": {
        "present": 3,
        "ratio": 1.0,
@@ -411,6 +430,7 @@
       "example_id": "ex_ffd55dee_0",
       "metrics": {
        "accuracy": 1.0,
+       "cost_unmeasured": 1.0,
        "execution_time_ms": "<volatile>",
        "input_tokens": 1,
        "output_tokens": 1,
@@ -427,6 +447,7 @@
       "example_id": "ex_df67fdfd_1",
       "metrics": {
        "accuracy": 1.0,
+       "cost_unmeasured": 1.0,
        "execution_time_ms": "<volatile>",
        "input_tokens": 1,
        "output_tokens": 1,
@@ -443,6 +464,7 @@
       "example_id": "ex_18f3e157_2",
       "metrics": {
        "accuracy": 1.0,
+       "cost_unmeasured": 1.0,
        "execution_time_ms": "<volatile>",
        "input_tokens": 1,
        "output_tokens": 1,
@@ -481,6 +503,7 @@
      },
      "metrics": {
       "accuracy": 1.0,
+      "cost_unmeasured": 1.0,
       "input_tokens": 1,
       "output_tokens": 1,
       "total_tokens": 2
@@ -505,6 +528,7 @@
      },
      "metrics": {
       "accuracy": 1.0,
+      "cost_unmeasured": 1.0,
       "input_tokens": 1,
       "output_tokens": 1,
       "total_tokens": 2
@@ -529,6 +553,7 @@
      },
      "metrics": {
       "accuracy": 1.0,
+      "cost_unmeasured": 1.0,
       "input_tokens": 1,
       "output_tokens": 1,
       "total_tokens": 2
@@ -540,6 +565,8 @@
     }
    ],
    "metadata_keys": [
+    "cache_hit_rate",
+    "cached_input_tokens",
     "comparability",
     "evaluation_result",
     "example_results",
@@ -549,7 +576,8 @@
     "output_count",
     "sample_budget_exhausted",
     "success_rate",
-    "successful_examples"
+    "successful_examples",
+    "timed_out_examples"
    ]
   }
  ]

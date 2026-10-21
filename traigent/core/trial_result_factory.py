@@ -18,6 +18,7 @@ from traigent.api.types import (
     TrialStatus,
 )
 from traigent.core.exception_handler import classify_systematic_provider_failure
+from traigent.evaluators.base import count_timed_out_examples
 from traigent.evaluators.metrics_tracker import enforce_user_metric_ceiling
 from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
 from traigent.utils.exceptions import TrialPrunedError
@@ -321,6 +322,10 @@ def _build_success_trial_metadata(
 
     example_results = getattr(eval_result, "example_results", None)
     if isinstance(example_results, list) and example_results:
+        # Examples that hit the per-example limit (``example_timeout``); they
+        # are failed rows (quality 0.0, cost unknown), so surface the count
+        # rather than hiding it in the mean.
+        trial_metadata["timed_out_examples"] = count_timed_out_examples(example_results)
         trial_metadata["example_results"] = _redact_example_results_with_signals(
             example_results
         )
@@ -350,6 +355,13 @@ def _build_success_trial_metadata(
     model_costs = getattr(eval_result, "model_costs", None)
     if isinstance(model_costs, list) and model_costs:
         trial_metadata["model_costs"] = model_costs
+
+    # Prompt-cache usage (Traigent#2069): local trial metadata only. Unknown
+    # stays None -- never zero. ``isinstance`` guards a Mock eval_result.
+    cache_usage = getattr(eval_result, "cache_usage", None)
+    if isinstance(cache_usage, dict) and cache_usage:
+        trial_metadata["cached_input_tokens"] = cache_usage.get("cached_input_tokens")
+        trial_metadata["cache_hit_rate"] = cache_usage.get("cache_hit_rate")
 
     summary_stats = getattr(eval_result, "summary_stats", None)
     if isinstance(summary_stats, dict):

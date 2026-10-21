@@ -106,6 +106,32 @@ def _is_structured_not_found(data: Any) -> bool:
     return False
 
 
+def _safe_error_data(data: Any) -> dict[str, Any] | None:
+    """Reduce an MCP failure payload to its closed structured code (#2555).
+
+    Server-supplied payloads and messages may carry customer text, so only the
+    JSON-RPC/HTTP-style error code is kept; nothing else is echoed.
+    """
+    if not isinstance(data, dict):
+        return None
+    code = data.get("error_code")
+    if isinstance(code, bool) or not isinstance(code, (int, str)):
+        return None
+    if isinstance(code, str):
+        code = code.strip()[:64]
+        if not code.replace("_", "").replace("-", "").isalnum():
+            return None
+    return {"error_code": code}
+
+
+def _failure_message(operation: str, data: Any) -> str:
+    """Fixed SDK message plus the closed error code, never server text."""
+    safe = _safe_error_data(data)
+    if safe is None:
+        return f"{operation} failed"
+    return f"{operation} failed (error_code={safe['error_code']})"
+
+
 class MCPTransport:
     """MCP transport using existing ProductionMCPClient infrastructure.
 
@@ -183,32 +209,32 @@ class MCPTransport:
             response = await client.read_resource(uri)
 
             if not response.success:
-                message = f"MCP read_resource failed: {response.error_message}"
+                message = _failure_message("MCP read_resource", response.data)
+                body = _safe_error_data(response.data)
+                response_body = str(body) if body is not None else None
                 if _is_structured_not_found(response.data):
-                    raise TransportNotFoundError(
-                        message, response_body=str(response.data)
-                    )
-                raise TransportError(message, response_body=str(response.data))
+                    raise TransportNotFoundError(message, response_body=response_body)
+                raise TransportError(message, response_body=response_body)
 
             content = response.data.get("content") if response.data else None
             if content is None:
-                raise TransportError(f"No content returned for resource: {uri}")
+                raise TransportError("No content returned for MCP resource")
 
             result: dict[str, Any] = json.loads(content)
             return result
 
         except json.JSONDecodeError as e:
             raise TransportError(
-                f"Invalid JSON in resource {uri}: {e}",
+                f"Invalid JSON in MCP resource: {type(e).__name__}",
                 cause=e,
-            ) from e
+            ) from None
         except Exception as e:
             if isinstance(e, TransportError):
                 raise
             raise TransportConnectionError(
-                f"MCP read_resource failed: {e}",
+                f"MCP read_resource failed: {type(e).__name__}",
                 cause=e,
-            ) from e
+            ) from None
 
     async def _call_tool(
         self,
@@ -234,12 +260,12 @@ class MCPTransport:
             response = await client.call_tool(tool_name, arguments, operation_id)
 
             if not response.success:
-                message = f"MCP call_tool({tool_name}) failed: {response.error_message}"
+                message = _failure_message(f"MCP call_tool({tool_name})", response.data)
+                body = _safe_error_data(response.data)
+                response_body = str(body) if body is not None else None
                 if _is_structured_not_found(response.data):
-                    raise TransportNotFoundError(
-                        message, response_body=str(response.data)
-                    )
-                raise TransportError(message, response_body=str(response.data))
+                    raise TransportNotFoundError(message, response_body=response_body)
+                raise TransportError(message, response_body=response_body)
 
             return response.data or {}
 
@@ -247,9 +273,9 @@ class MCPTransport:
             if isinstance(e, TransportError):
                 raise
             raise TransportConnectionError(
-                f"MCP call_tool({tool_name}) failed: {e}",
+                f"MCP call_tool({tool_name}) failed: {type(e).__name__}",
                 cause=e,
-            ) from e
+            ) from None
 
     async def capabilities(self) -> ServiceCapabilities:
         """Fetch service capabilities via MCP resource.
