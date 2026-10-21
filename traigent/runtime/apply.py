@@ -18,6 +18,7 @@ from typing import Any
 from traigent.runtime import manifest
 from traigent.runtime.client import RuntimeClient
 from traigent.runtime.model import (
+    _canonical_number,
     E_EXISTS,
     PROFILE_FIELDS,
     Receipt,
@@ -58,7 +59,12 @@ class ApplyResult:
 
 def _equal(a: Any, b: Any) -> bool:
     if isinstance(a, (int, float)) and isinstance(b, (int, float)):
-        return math.isclose(float(a), float(b), rel_tol=1e-9, abs_tol=1e-12)
+        if isinstance(a, bool) or isinstance(b, bool):
+            return bool(a == b)
+        if not (math.isfinite(a) and math.isfinite(b)):
+            return False
+        # Exact, after the shared digest's canonical number encoding (1 == 1.0).
+        return _canonical_number(a) == _canonical_number(b)
     return bool(a == b)
 
 

@@ -101,6 +101,7 @@ E_STATE_OWNER = "state_owned_by_other_sdk"
 E_WATCH_REENTRY = "watch_reentry"
 E_EPISODE_FIX_RUNNING = "episode_fix_running"
 E_LOCK_TIMEOUT = "state_lock_timeout"
+E_LOCK_UNAVAILABLE = "state_lock_unavailable"
 
 
 class RuntimeRequirementError(Exception):

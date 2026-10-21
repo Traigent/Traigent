@@ -25,6 +25,7 @@ from traigent.runtime.model import (
     E_EPISODE_FIX_RUNNING,
     E_HOLD,
     E_LOCK_TIMEOUT,
+    E_LOCK_UNAVAILABLE,
     E_STATE,
     E_STATE_OWNER,
     E_STATE_VERSION,
@@ -32,7 +33,7 @@ from traigent.runtime.model import (
     RuntimeRequirementError,
 )
 
-try:  # POSIX only; elsewhere the lock degrades to a no-op
+try:  # POSIX only; elsewhere every locked section fails closed (never runs unlocked)
     import fcntl
 except ImportError:  # pragma: no cover
     fcntl = None  # type: ignore[assignment]
@@ -178,6 +179,16 @@ def ensure_tokens(
     """
     check_state_dir(state_dir, create=persist)
     path = state_dir / "tvl-token-map.json"
+    if not persist:
+        return _mint_tokens(path, wanted, persist=False)
+    # Read-mint-replace is one critical section: atomic replace alone loses updates.
+    with _ledger_lock(state_dir, path, reentry_code=E_STATE):
+        return _mint_tokens(path, wanted, persist=True)
+
+
+def _mint_tokens(
+    path: Path, wanted: Iterable[tuple[str, str]], *, persist: bool
+) -> dict[str, Any]:
     doc = _read_json(path, {"format": TOKEN_MAP_FORMAT, "tokens": []})
     if (
         not isinstance(doc, dict)
@@ -325,6 +336,9 @@ def _ledger_lock(
     this thread already holds would self-deadlock; with ``reentry_code`` it
     raises that code at once instead.
     """
+    if fcntl is None:
+        # No exclusive lock on this platform: refuse before entering the protected section.
+        raise RuntimeRequirementError(E_LOCK_UNAVAILABLE, path.name)
     check_state_dir(state_dir, create=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     held: set[str] = _HELD.__dict__.setdefault("paths", set())
@@ -332,27 +346,23 @@ def _ledger_lock(
     if ident in held:
         raise RuntimeRequirementError(reentry_code or E_STATE, path.name)
     with open(str(path) + ".lock", "a", encoding="utf-8") as handle:
-        if fcntl is not None:
-            deadline = time.monotonic() + (
-                LOCK_TIMEOUT_S if timeout is None else timeout
-            )
-            while True:
-                try:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except OSError:
-                    if time.monotonic() >= deadline:
-                        raise RuntimeRequirementError(
-                            E_LOCK_TIMEOUT, str(path) + ".lock"
-                        ) from None
-                    time.sleep(0.01)
+        deadline = time.monotonic() + (LOCK_TIMEOUT_S if timeout is None else timeout)
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeRequirementError(
+                        E_LOCK_TIMEOUT, str(path) + ".lock"
+                    ) from None
+                time.sleep(0.01)
         held.add(ident)
         try:
             yield
         finally:
             held.discard(ident)
-            if fcntl is not None:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 STATUS_STARTED = "started"

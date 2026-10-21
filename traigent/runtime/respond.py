@@ -195,6 +195,9 @@ async def respond(
     if errors:
         raise RuntimeRequirementError(errors[0].code, errors[0].path)
     rule_id = _optimize_rule(requirement)
+    # Before any approval or reservation: a function without .optimize() consumes nothing.
+    if not callable(getattr(fn, "optimize", None)):
+        raise RuntimeRequirementError("function_not_optimizable")
     ceiling = (
         max_fix_cost_usd
         if max_fix_cost_usd is not None
