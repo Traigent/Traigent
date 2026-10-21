@@ -379,8 +379,8 @@ class ProgressBarCallback(OptimizationCallback):
             f"✅ {progress.successful_trials} "
             f"❌ {progress.failed_trials} "
             f"{self._timeout_segment()}"
-            f"⏱️  {elapsed} "
-            f"🏆 {best_score_str}",
+            f"⏱️  {elapsed}"
+            + (f" 🏆 {best_score_str}" if self._table_show_best else ""),
             end="",
             flush=True,
         )
@@ -406,8 +406,8 @@ class ProgressBarCallback(OptimizationCallback):
                 f"✅ {self._last_progress.successful_trials} "
                 f"❌ {self._last_progress.failed_trials} "
                 f"{self._timeout_segment()}"
-                f"⏱️  {elapsed} "
-                f"🏆 {best_score_str}",
+                f"⏱️  {elapsed}"
+                + (f" 🏆 {best_score_str}" if self._table_show_best else ""),
                 flush=True,
             )
 

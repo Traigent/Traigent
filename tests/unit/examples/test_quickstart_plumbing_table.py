@@ -36,3 +36,4 @@ def test_keyless_quickstart_table_has_no_overall_best(tmp_path: Path) -> None:
     assert "Overall Best" not in output
     assert "★" not in output
     assert "Best score" not in output
+    assert "🏆" not in output
