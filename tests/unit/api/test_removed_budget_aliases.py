@@ -13,10 +13,20 @@ import pytest
 
 from traigent.api.decorators import optimize
 
-REMOVED_BUDGET_ALIASES = {
-    "budget_limit": "cost_limit=<USD>",
-    "budget_metric": "metric_name=<name>",
-    "budget_include_pruned": "metric_include_pruned=<bool>",
+REMOVED_ALIASES = {
+    "budget_limit": (
+        "budget_limit parameter was removed in 0.13.0",
+        "cost_limit=<USD>",
+    ),
+    "budget_metric": (
+        "budget_metric parameter was removed in 0.13.0",
+        "metric_name=<name>",
+    ),
+    "budget_include_pruned": (
+        "budget_include_pruned parameter was removed in 0.13.0",
+        "metric_include_pruned=<bool>",
+    ),
+    "strategy": ("strategy parameter was removed", "algorithm=<optimizer>"),
 }
 
 
@@ -27,30 +37,30 @@ def _target():
     return optimize(configuration_space={"a": [1, 2]})(fn)
 
 
-@pytest.mark.parametrize("name", sorted(REMOVED_BUDGET_ALIASES))
-def test_decorator_refuses_removed_budget_alias_naming_replacement(name: str) -> None:
+@pytest.mark.parametrize("name", sorted(REMOVED_ALIASES))
+def test_decorator_refuses_removed_alias_naming_replacement(name: str) -> None:
     def fn(x: int) -> int:
         return x
 
     with pytest.raises(TypeError) as exc_info:
         optimize(configuration_space={"a": [1, 2]}, **{name: 1})(fn)
 
+    fragment, replacement = REMOVED_ALIASES[name]
     message = str(exc_info.value)
-    assert f"{name} parameter was removed in 0.13.0" in message
-    assert REMOVED_BUDGET_ALIASES[name] in message
+    assert fragment in message
+    assert replacement in message
     assert "Unknown keyword" not in message
 
 
-@pytest.mark.parametrize("name", sorted(REMOVED_BUDGET_ALIASES))
-def test_runtime_optimize_refuses_removed_budget_alias_naming_replacement(
-    name: str,
-) -> None:
+@pytest.mark.parametrize("name", sorted(REMOVED_ALIASES))
+def test_runtime_optimize_refuses_removed_alias_naming_replacement(name: str) -> None:
     target = _target()
 
     with pytest.raises(TypeError) as exc_info:
         asyncio.run(target.optimize(**{name: 1}))
 
+    fragment, replacement = REMOVED_ALIASES[name]
     message = str(exc_info.value)
-    assert f"{name} parameter was removed in 0.13.0" in message
-    assert REMOVED_BUDGET_ALIASES[name] in message
+    assert fragment in message
+    assert replacement in message
     assert "Unknown keyword" not in message

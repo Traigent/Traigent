@@ -73,7 +73,7 @@ function returns Traigent's optimized wrapper.
 | `default_config` | `dict[str, Any] \| None` | `None` | Baseline configuration applied before the first trial. Missing keys remain unset unless you provide defaults via `default_config` or parameter defaults (for example `Range(..., default=...)`). |
 | `constraints` | `list[Constraint \| Callable[..., Any]] \| None` | `None` | Hard constraints evaluated before running a trial. Accepts SE-friendly `Constraint` objects and/or callables that take `(config, metrics=None)` and return `True/False`. |
 | `safety_constraints` | `list[SafetyConstraint \| CompoundSafetyConstraint] \| None` | `None` | Safety metric gates evaluated as part of optimization. |
-| `strategy` | `str \| None` | `None` | Retained only for signature compatibility; a non-`None` value now raises `TypeError`. Use `algorithm` or `objectives`. |
+| `strategy` | — | — | Removed (#1370 item 9). Passing it raises `TypeError` naming `algorithm=<optimizer>`. |
 | `strategy_params` | `Mapping[str, Any] \| None` | `None` | Retained only for signature compatibility; a non-`None` value now raises `TypeError`. |
 | `effectuation` | `bool` | `False` | Enables effectuation tracking for tuned-variable observations. |
 | `agents`, `agent_prefixes`, `agent_measures`, `global_measures` | See signature | `None` | Multi-agent measurement configuration. |
@@ -227,7 +227,7 @@ async def optimize(
 | `tvl_spec` | `str \| Path \| None` | `None` | Load TVL spec at runtime. |
 | `tvl_environment` | `str \| None` | `None` | Environment overlay from the TVL spec. |
 | `tvl` | `TVLOptions \| dict \| None` | `None` | Structured TVL options for runtime overrides. |
-| `strategy` | `str \| None` | `None` | Deprecated alias for `algorithm` (emits `DeprecationWarning`); no longer accepts a preset name. |
+| `strategy` | — | — | Removed (#1370 item 9). Passing it raises `TypeError` naming `algorithm=<optimizer>`. |
 | `strategy_params` | `Mapping[str, Any] \| None` | `None` | Retained only for signature compatibility; a non-`None` value now raises `TypeError`. |
 | `progress_bar` | `bool \| None` | `None` | Runtime progress-bar override. |
 | `**algorithm_kwargs` | `Any` | – | Extra tuning knobs. See recognised keys below. |

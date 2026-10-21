@@ -28,7 +28,6 @@ import pytest
 import traigent
 import traigent.api
 from traigent.api.types import ExampleResult, OptimizationStatus
-from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import EvaluationExample
 from traigent.optimizers.grid import GridSearchOptimizer
 from traigent.optimizers.registry import _OPTIMIZER_REGISTRY, register_optimizer
@@ -113,37 +112,29 @@ def test_removed_preset_names_raise_a_message_that_names_the_removal(
     message calling the name an invalid *optimizer* is exactly the regression
     this guards, and would otherwise slip through.
     """
-    for raises in (
-        lambda: traigent.optimize(strategy=preset_name),
-        lambda: OptimizedFunction._resolve_runtime_strategy_argument(
-            strategy=preset_name, strategy_params=None, algorithm=None
-        ),
-    ):
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            with pytest.raises(TypeError) as excinfo:
-                raises()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(TypeError) as excinfo:
+            traigent.optimize(strategy=preset_name)
 
-        message = str(excinfo.value)
-        assert_names_the_removal(message, preset_name)
-        # It must not send the user back to the name that just failed …
-        assert f"algorithm={preset_name}" not in message
-        # … and the deprecated-alias warning must not fire on the way out.
-        assert not [
-            entry for entry in caught if issubclass(entry.category, DeprecationWarning)
-        ]
+    message = str(excinfo.value)
+    assert_names_the_removal(message, preset_name)
+    # It must not send the user back to the name that just failed …
+    assert f"algorithm={preset_name}" not in message
+    # … and the deprecated-alias warning must not fire on the way out.
+    assert not [
+        entry for entry in caught if issubclass(entry.category, DeprecationWarning)
+    ]
 
 
-def test_only_the_three_retired_names_are_refused() -> None:
-    """The refusal is by exact name, not by resemblance and not case-folded.
+def test_every_strategy_value_is_refused_as_the_removed_alias() -> None:
+    """``strategy=`` is removed outright; no value reaches the optimizer.
 
-    A legal optimizer alias — including one whose name merely resembles a
-    retired preset, and one that is a retired name in different casing — still
-    takes the pre-existing deprecated-alias path and resolves, rather than
-    being swept into the refusal. ``PARETO_FRONTIER`` is in this list because
-    the registry is case-sensitive: it is a name a user can own (see
-    ``test_a_registered_optimizer_named_like_a_preset_still_runs``), so the
-    refusal must not claim it.
+    The deprecated alias for ``algorithm=`` is removed (#1370 item 9). Every
+    value, including one that matches a registered optimizer name, is refused
+    with a message that names ``algorithm=`` as the replacement. Exact-name
+    optimizer selection stays on ``algorithm=`` (see the registered-optimizer
+    test below).
     """
     for strategy in (
         "GRID",
@@ -155,14 +146,16 @@ def test_only_the_three_retired_names_are_refused() -> None:
     ):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            resolved = OptimizedFunction._resolve_runtime_strategy_argument(
-                strategy=strategy, strategy_params=None, algorithm=None
-            )
+            with pytest.raises(TypeError) as excinfo:
+                traigent.optimize(strategy=strategy)
 
-        assert resolved == strategy
-        assert [
+        message = str(excinfo.value)
+        assert "strategy parameter was removed" in message
+        assert "algorithm=<optimizer>" in message
+        assert "preset" not in message
+        assert not [
             entry for entry in caught if issubclass(entry.category, DeprecationWarning)
-        ], f"{strategy} lost the pre-existing deprecated-alias warning"
+        ]
 
 
 @pytest.fixture
@@ -226,10 +219,15 @@ def test_a_registered_optimizer_named_like_a_preset_still_runs(
         traigent.get_config()
         return "answer"
 
+    # The retired alias is refused by name, not mistaken for the registered
+    # optimizer. The registered optimizer still runs through algorithm=.
+    with pytest.raises(TypeError, match="strategy parameter was removed"):
+        target.optimize_sync(strategy="PARETO_FRONTIER", cost_approved=True)
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         result = target.optimize_sync(
-            strategy="PARETO_FRONTIER", cost_approved=True, progress_bar=False
+            algorithm="PARETO_FRONTIER", cost_approved=True, progress_bar=False
         )
 
     assert result.status is OptimizationStatus.COMPLETED

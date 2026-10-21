@@ -35,7 +35,7 @@ import sys
 import threading
 import time
 import warnings
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -219,30 +219,46 @@ _REMOVED_MOCK_PARAMETERS = REMOVED_MOCK_PARAMETERS
 _removed_mock_parameter_message = removed_mock_parameter_message
 _reject_removed_mock_parameters = reject_removed_mock_parameters
 
-# Traigent#1370 Item 9: the budget_* aliases were removed in 0.13.0. Each maps to
-# the replacement the message names (hard removal, no deprecation window).
-_REMOVED_BUDGET_ALIAS_REPLACEMENTS: dict[str, str] = {
+# Traigent#1370 Item 9: hard-removed aliases, each refused with a message that
+# names its replacement (no deprecation window). The budget_* aliases went in
+# 0.13.0; strategy= (the deprecated alias for algorithm=) is removed now.
+_REMOVED_ALIAS_MESSAGES: dict[str, str] = {
     "budget_limit": (
-        "cost_limit=<USD> for hard spend control, or metric_limit=<value> with "
-        "metric_name=<name>"
+        "budget_limit parameter was removed in 0.13.0. Use cost_limit=<USD> for "
+        "hard spend control, or metric_limit=<value> with metric_name=<name> "
+        "instead."
     ),
-    "budget_metric": "metric_name=<name>",
-    "budget_include_pruned": "metric_include_pruned=<bool>",
+    "budget_metric": (
+        "budget_metric parameter was removed in 0.13.0. Use metric_name=<name> instead."
+    ),
+    "budget_include_pruned": (
+        "budget_include_pruned parameter was removed in 0.13.0. Use "
+        "metric_include_pruned=<bool> instead."
+    ),
+    "strategy": (
+        "strategy parameter was removed. Use algorithm=<optimizer> to select the "
+        "optimizer instead."
+    ),
 }
 
 
-def _removed_budget_alias_message(parameter_name: str) -> str:
-    """The single wording every route uses to refuse a removed budget_* alias."""
-    return (
-        f"{parameter_name} parameter was removed in 0.13.0. Use "
-        f"{_REMOVED_BUDGET_ALIAS_REPLACEMENTS[parameter_name]} instead."
-    )
+def _removed_alias_message(parameter_name: str) -> str:
+    """The single wording every route uses to refuse a removed alias."""
+    return _REMOVED_ALIAS_MESSAGES[parameter_name]
 
 
-def _reject_removed_budget_aliases(names: Iterable[str]) -> None:
-    """Raise ``TypeError`` naming the first removed budget_* alias in ``names``."""
-    for name in sorted(set(names) & set(_REMOVED_BUDGET_ALIAS_REPLACEMENTS)):
-        raise TypeError(_removed_budget_alias_message(name))
+def _reject_removed_aliases(arguments: Mapping[str, Any]) -> None:
+    """Raise ``TypeError`` naming the first removed alias passed a real value.
+
+    ``None`` is not a selector: ``strategy=None`` is the same as not passing it.
+    """
+    passed = {
+        name
+        for name, value in arguments.items()
+        if value is not None and name in _REMOVED_ALIAS_MESSAGES
+    }
+    for name in sorted(passed):
+        raise TypeError(_removed_alias_message(name))
 
 
 def _reject_removed_strategy_constructor_kwargs(kwargs: Mapping[str, Any]) -> None:
@@ -262,6 +278,7 @@ def _reject_removed_strategy_constructor_kwargs(kwargs: Mapping[str, Any]) -> No
     consumers are untouched.
     """
     _reject_removed_strategy_preset(kwargs.get("strategy"))
+    _reject_removed_aliases(kwargs)
     if "use_cloud_service" in kwargs:
         raise TypeError(
             "use_cloud_service was removed; remote cloud execution is not "
@@ -1918,7 +1935,9 @@ class OptimizedFunction(Generic[_P, _R]):
         # optimizer's algorithm_config and had no effect. The rejected set is
         # now derived from the allowlist above, not hand-maintained (#1705).
         _reject_removed_mock_parameters(algorithm_kwargs)
-        _reject_removed_budget_aliases(algorithm_kwargs)
+        # A retired preset name keeps its own message; only then the alias.
+        _reject_removed_strategy_preset(algorithm_kwargs.get("strategy"))
+        _reject_removed_aliases(algorithm_kwargs)
         decorator_only = _decorator_only_optimize_params()
         rejected = decorator_only.intersection(algorithm_kwargs)
         if rejected:
@@ -2285,35 +2304,18 @@ class OptimizedFunction(Generic[_P, _R]):
     @staticmethod
     def _resolve_runtime_strategy_argument(
         *,
-        strategy: str | None,
         strategy_params: Mapping[str, Any] | None,
         algorithm: str | None,
     ) -> str | None:
-        """Resolve the deprecated optimizer-alias compatibility argument."""
-        # Checked first: a removed preset name must not be answered with either
-        # the strategy_params message or the "use 'algorithm' instead"
-        # DeprecationWarning, both of which point at something that cannot work.
-        _reject_removed_strategy_preset(strategy)
+        """Refuse the retired ``strategy_params``; ``algorithm`` passes through.
+
+        ``strategy`` is no longer a parameter; see ``_REMOVED_ALIAS_MESSAGES``.
+        """
         if strategy_params is not None:
             raise TypeError(
                 "strategy_params is no longer supported; use algorithm or objectives."
             )
-        if strategy is None:
-            return algorithm
-
-        if algorithm is not None and algorithm != strategy:
-            raise TypeError(
-                "Conflicting optimization selector: received both "
-                f"'algorithm={algorithm}' and 'strategy={strategy}'. "
-                "Use only 'algorithm'."
-            )
-        warnings.warn(
-            "'strategy' as an optimizer selector is deprecated; "
-            "use 'algorithm' instead.",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-        return strategy
+        return algorithm
 
     async def optimize(
         self,
@@ -2330,7 +2332,6 @@ class OptimizedFunction(Generic[_P, _R]):
         tvl_spec: str | Path | None = None,
         tvl_environment: str | None = None,
         tvl: TVLOptions | dict[str, Any] | None = None,
-        strategy: str | None = None,
         strategy_params: Mapping[str, Any] | None = None,
         progress_bar: bool | None = None,
         budget: ExecutionBudget | None = None,
@@ -2362,8 +2363,6 @@ class OptimizedFunction(Generic[_P, _R]):
             tvl_spec: Optional TVL spec path to load at runtime.
             tvl_environment: Environment overlay to apply when loading the spec.
             tvl: Structured TVL options (dict or TVLOptions) for runtime overrides.
-            strategy: Deprecated alias for ``algorithm`` (emits ``DeprecationWarning``);
-                no longer accepts a preset name.
             strategy_params: Retained only for signature compatibility; a non-``None``
                 value raises ``TypeError``.
             progress_bar: Controls the live progress bar during optimization.
@@ -2436,7 +2435,6 @@ class OptimizedFunction(Generic[_P, _R]):
             "tvl_spec": tvl_spec,
             "tvl_environment": tvl_environment,
             "tvl": tvl,
-            "strategy": strategy,
             "strategy_params": strategy_params,
             "progress_bar": progress_bar,
             "budget": budget,
@@ -2469,7 +2467,6 @@ class OptimizedFunction(Generic[_P, _R]):
         tvl_spec: str | Path | None,
         tvl_environment: str | None,
         tvl: TVLOptions | dict[str, Any] | None,
-        strategy: str | None,
         strategy_params: Mapping[str, Any] | None,
         progress_bar: bool | None,
         budget: ExecutionBudget | None,
@@ -2481,8 +2478,9 @@ class OptimizedFunction(Generic[_P, _R]):
         logger.info(f"Starting optimization of {self.func.__name__}")
         _emit_cost_warning_once()
 
+        # A retired preset name keeps its own message, ahead of strategy_params.
+        _reject_removed_strategy_preset(algorithm_kwargs.get("strategy"))
         algorithm = self._resolve_runtime_strategy_argument(
-            strategy=strategy,
             strategy_params=strategy_params,
             algorithm=algorithm,
         )
@@ -2612,7 +2610,6 @@ class OptimizedFunction(Generic[_P, _R]):
         tvl_spec: str | Path | None = None,
         tvl_environment: str | None = None,
         tvl: TVLOptions | dict[str, Any] | None = None,
-        strategy: str | None = None,
         strategy_params: Mapping[str, Any] | None = None,
         progress_bar: bool | None = None,
         budget: ExecutionBudget | None = None,
@@ -2641,7 +2638,6 @@ class OptimizedFunction(Generic[_P, _R]):
             tvl_spec: Optional TVL spec path
             tvl_environment: Environment overlay for TVL spec
             tvl: Structured TVL options
-            strategy: Deprecated alias for ``algorithm``; no longer accepts a preset name.
             strategy_params: Retained only for signature compatibility; a non-``None``
                 value raises ``TypeError``.
             progress_bar: ``True`` to force, ``False`` to suppress, ``None``
@@ -2691,7 +2687,6 @@ class OptimizedFunction(Generic[_P, _R]):
             tvl_spec=tvl_spec,
             tvl_environment=tvl_environment,
             tvl=tvl,
-            strategy=strategy,
             strategy_params=strategy_params,
             progress_bar=progress_bar,
             budget=budget,

@@ -524,6 +524,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- **BREAKING: `strategy=` is removed from `@optimize`, `.optimize()`, `.optimize_sync()` and `OptimizedFunction(...)` (#1370 item 9).** It was the deprecated alias for `algorithm=`. Passing any non-`None` value raises `TypeError` naming `algorithm=<optimizer>`; use `algorithm=` to select the optimizer. `strategy_params=` is a separate, already-refused parameter and is unchanged.
 - **BREAKING: the `budget_limit`, `budget_metric` and `budget_include_pruned` aliases now name their replacement when refused (#1370 item 9).** They were removed in 0.13.0 and still raised `TypeError`, but with a generic "unknown keyword" message on the decorator path. They now raise `budget_limit parameter was removed in 0.13.0. Use cost_limit=<USD> ... or metric_limit=<value> with metric_name=<name> instead.` (the same message on `.optimize()`). Use `cost_limit` for hard USD spend control, `metric_limit` and `metric_name` for other cumulative metrics, and `metric_include_pruned` for pruned-trial accounting.
 - **`mock` and `mock_mode_config` are refused with a removal message (#1370 item 6).** They were already rejected by the removal guard; this entry records the public removal. The replacement for test code is `traigent.testing.enable_mock_mode_for_quickstart()`.
 - **BREAKING: `outputs_sample` removed from `InteractiveOptimizer.report_results`
