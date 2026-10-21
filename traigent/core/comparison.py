@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from traigent.utils.discrete_domains import discrete_values_for_config_param
+
 __all__ = [
     "ComparisonResult",
     "ConfigComparison",
@@ -63,24 +65,64 @@ def _is_number(value: Any) -> bool:
     )
 
 
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _in_numeric_range(
+    value: Any, low: Any, high: Any, *, step: Any = None, integer: bool = False
+) -> bool:
+    """Bounds, integer-ness and step membership for one numeric domain."""
+    if integer:
+        if not _is_int(value) or not _is_int(low):
+            return False
+    elif not _is_number(value):
+        return False
+    if not (_is_number(low) and _is_number(high)) or not low <= value <= high:
+        return False
+    if step is None:
+        return True
+    if not _is_number(step) or step <= 0:
+        return False
+    if integer:
+        return _is_int(step) and (value - low) % step == 0
+    k = round((value - low) / step)
+    return k >= 0 and math.isclose(low + k * step, value, rel_tol=1e-9, abs_tol=1e-12)
+
+
 def _value_in_domain(spec: Any, value: Any) -> bool:
-    """True when ``value`` lies inside one normalized configuration-space entry."""
-    if isinstance(spec, list):
-        return any(
-            value == option and isinstance(value, bool) == isinstance(option, bool)
-            for option in spec
-        )
+    """True when ``value`` lies inside one normalized configuration-space entry.
+
+    Finite domains (choice lists, categorical/fixed dicts) are resolved with the
+    SDK's own ``discrete_values_for_config_param``; numeric ranges are checked
+    arithmetically (integer-ness, bounds and ``step``) so a huge stepped range
+    is never expanded.
+    """
     if isinstance(spec, tuple) and len(spec) == 2 and all(_is_number(b) for b in spec):
-        return _is_number(value) and spec[0] <= value <= spec[1]
-    if isinstance(spec, Mapping) and "low" in spec and "high" in spec:
-        low, high = spec["low"], spec["high"]
-        return (
-            _is_number(value)
-            and _is_number(low)
-            and _is_number(high)
-            and low <= value <= high
+        return _in_numeric_range(
+            value, spec[0], spec[1], integer=all(_is_int(b) for b in spec)
         )
-    return bool(value == spec)
+    if isinstance(spec, Mapping) and "low" in spec and "high" in spec:
+        kind = str(spec.get("type") or "").lower()
+        if kind in {"int", "integer"}:
+            step = spec.get("step")
+            return _in_numeric_range(
+                value,
+                spec["low"],
+                spec["high"],
+                step=1 if step is None else step,
+                integer=True,
+            )
+        return _in_numeric_range(
+            value, spec["low"], spec["high"], step=spec.get("step")
+        )
+    values = discrete_values_for_config_param(spec)
+    if values is None:
+        return False
+    return any(
+        value == option and isinstance(value, bool) == isinstance(option, bool)
+        for option in values
+    )
 
 
 def validate_comparison_configs(
@@ -318,21 +360,49 @@ class ComparisonResult:
 
     comparison_id: str
     primary_metric: str
+    #: Declared orientation of the primary objective: maximize/minimize/band.
+    orientation: str
+    #: ``(low, high)`` target band when ``orientation == "band"``.
+    band: tuple[Any, Any] | None
     objectives: list[str]
     repeats: int
+    #: Examples each evaluation was asked to run (after any ``max_examples`` cap).
     n_examples: int
+    #: Examples in the dataset before the cap.
+    n_source_examples: int
+    #: The cap that truncated the dataset, or ``None`` when none applied.
+    max_examples_applied: int | None
+    #: Example ids the evaluator actually returned (first evaluation).
     example_ids: tuple[str, ...]
-    #: True when every config's evaluated example ids equal the dataset's.
+    #: True when EVERY evaluation returned the identical, non-empty id list.
     same_examples_across_configs: bool
+    #: True when every evaluation returned a row for every requested example.
+    coverage_complete: bool
     holdout: HoldoutCheck
     configs: list[ConfigComparison]
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
+    def _rank_key(self, mean: float) -> float:
+        """Higher is better, per the objective's declared orientation."""
+        if self.orientation == "minimize":
+            return -mean
+        if self.orientation == "band":
+            low, high = self.band if self.band is not None else (None, None)
+            if low is None or high is None:
+                raise ValueError("A banded objective requires a complete band.")
+            return -max(low - mean, mean - high, 0.0)
+        return mean
+
     @property
     def best(self) -> ConfigComparison | None:
-        """Config with the highest mean score (``None`` if none scored)."""
+        """Best config by mean score under the declared orientation.
+
+        ``None`` when no config scored. Ties go to the earlier config.
+        """
         scored = [c for c in self.configs if c.mean_score is not None]
-        return max(scored, key=lambda c: c.mean_score or 0.0) if scored else None
+        if not scored:
+            return None
+        return max(scored, key=lambda c: self._rank_key(c.mean_score or 0.0))
 
     @property
     def best_config(self) -> dict[str, Any] | None:
@@ -359,11 +429,16 @@ class ComparisonResult:
         return {
             "comparison_id": self.comparison_id,
             "primary_metric": self.primary_metric,
+            "orientation": self.orientation,
+            "band": list(self.band) if self.band is not None else None,
             "objectives": list(self.objectives),
             "repeats": self.repeats,
             "n_examples": self.n_examples,
+            "n_source_examples": self.n_source_examples,
+            "max_examples_applied": self.max_examples_applied,
             "example_ids": list(self.example_ids),
             "same_examples_across_configs": self.same_examples_across_configs,
+            "coverage_complete": self.coverage_complete,
             "holdout": self.holdout.to_dict(),
             "configs": [c.to_dict() for c in self.configs],
             "total_cost": self.total_cost,

@@ -364,7 +364,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **`compare()` evaluates fixed configs as one experiment (#1952).** `OptimizedFunction.compare(configs, eval_dataset=None, repeats=1)` (and `compare_async`) runs each fully specified config on the same examples through the normal `optimize()` pipeline and returns one `ComparisonResult` with per-config mean/spread, per-config cost (unmeasured cost is `None` plus a `cost_lower_bound`, never `0.0`), and a holdout check against the tuning dataset. Configs outside the declared space raise a value-free `ValueError`; the wrapper's applied config and history are unchanged. See `docs/user-guide/compare_configs.md`.
+- **`compare()` evaluates fixed configs as one experiment (#1952).** `OptimizedFunction.compare(configs, eval_dataset=None, repeats=1)` (and `compare_async`) calls the evaluator `optimize()` builds directly (no orchestrator, backend session, trial submission or `save_to` persistence) for each fully specified config on the same examples, and returns one `ComparisonResult` with per-config mean/spread, per-config cost (unmeasured cost is `None` plus a `cost_lower_bound`, never `0.0`), and a holdout check against the tuning dataset. Configs outside the declared space raise a value-free `ValueError`; the winner follows the objective's declared orientation; the wrapper's applied config and history are unchanged. See `docs/user-guide/compare_configs.md`.
 
 - **`example_timeout` option, decoupled from the run timeout (#2509).** New
   `@optimize(example_timeout=...)` / `ExecutionOptions(example_timeout=...)`

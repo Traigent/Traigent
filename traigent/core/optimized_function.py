@@ -2670,13 +2670,16 @@ class OptimizedFunction(Generic[_P, _R]):
     ) -> Any:
         """Evaluate fixed configurations head-to-head and record ONE experiment.
 
-        Pure evaluation, no search: each config is run ``repeats`` times on the
-        SAME examples through the normal ``optimize()`` pipeline (same evaluator,
-        metrics, honest-cost rules) as a single-trial run over a one-cell
-        configuration space. It mirrors :meth:`optimize_sync`; use
-        :meth:`compare_async` from async code. Routing follows the wrapper's
-        execution policy; the runs use the local grid path, so nothing is
-        synced to the portal.
+        Pure evaluation, no search. Each config is evaluated ``repeats`` times
+        on the SAME example list by calling the evaluator that ``optimize()``
+        builds (same factory: scoring, metric functions, cost capture and
+        honest-cost flags) directly, inside one hold of this wrapper's
+        exclusive slot. There is no orchestrator, backend session, trial
+        submission or ``save_to`` persistence: the comparison is recorded only
+        in the returned object and ``comparison_history``. LLM calls made by
+        the function itself behave as in a local ``optimize()`` run. Mirrors
+        :meth:`optimize_sync`; use :meth:`compare_async` from async code.
+        The decorator's ``max_examples`` cap is applied and reported.
 
         Args:
             configs: Fully specified configs; each must name every declared
@@ -2717,86 +2720,107 @@ class OptimizedFunction(Generic[_P, _R]):
         repeats: int = 1,
     ) -> Any:
         """Async form of :meth:`compare`."""
-        from traigent.api.parameter_ranges import Choices, normalize_configuration_space
+        from traigent.api.parameter_ranges import normalize_configuration_space
+        from traigent.config.context import ConfigurationSpaceContext
         from traigent.core import comparison as cmp
+        from traigent.utils.cost_calculator import cost_run_scope
 
         if isinstance(repeats, bool) or not isinstance(repeats, int) or repeats < 1:
             raise ValueError("compare() requires repeats to be an integer >= 1.")
         space, _ = normalize_configuration_space(self.configuration_space or {})
         fixed = cmp.validate_comparison_configs(configs, space)
+        primary_metric, orientation, band = self._comparison_primary_objective()
 
-        previous_override = self._dataset_override
-        self._dataset_override = None
+        # ONE acquisition of the wrapper's exclusive slot for the whole
+        # comparison: nothing else may advance or promote this wrapper while
+        # configs are being evaluated, and it is released exactly once.
+        self._acquire_exclusive_slot("run")
+        evaluator: BaseEvaluator | None = None
         try:
-            tuning_dataset = self._load_dataset()
+            tuning_full = self._load_dataset()
+            tuning_dataset = self._capped_comparison_dataset(tuning_full)
             if eval_dataset is None:
+                source_dataset = tuning_full
                 dataset = tuning_dataset
-            elif isinstance(eval_dataset, Dataset):
-                dataset = eval_dataset
             else:
-                saved_source = self.eval_dataset
-                self.eval_dataset = eval_dataset
-                try:
-                    dataset = self._load_dataset()
-                finally:
-                    self.eval_dataset = saved_source
-        finally:
-            self._dataset_override = previous_override
-        if not dataset.examples:
-            raise ValueError("compare() requires a non-empty evaluation dataset.")
-        eval_fps = [cmp.example_fingerprint(e) for e in dataset.examples]
-        tuning_fps = [cmp.example_fingerprint(e) for e in tuning_dataset.examples]
-        holdout = cmp.build_holdout_check(
-            eval_fps, tuning_fps, eval_dataset_supplied=eval_dataset is not None
-        )
-        if holdout.holdout_valid is False and eval_dataset is not None:
-            logger.warning("compare(): %s", holdout.note)
+                source_dataset = self._dataset_from_source(eval_dataset)
+                dataset = self._capped_comparison_dataset(source_dataset)
+            n_source = len(source_dataset.examples)
+            if not dataset.examples:
+                raise ValueError("compare() requires a non-empty evaluation dataset.")
+            holdout = cmp.build_holdout_check(
+                [cmp.example_fingerprint(e) for e in dataset.examples],
+                [cmp.example_fingerprint(e) for e in tuning_dataset.examples],
+                eval_dataset_supplied=eval_dataset is not None,
+            )
+            if holdout.holdout_valid is False and eval_dataset is not None:
+                logger.warning("compare(): %s", holdout.note)
 
-        objectives = list(self.objectives)
-        primary_metric = objectives[0] if objectives else "accuracy"
-        expected_ids = tuple(
-            f"example_{i}"
-            if not (e.metadata or {}).get("example_id")
-            else str(e.metadata["example_id"])
-            for i, e in enumerate(dataset.examples)
-        )
-
-        rows = []
-        observed_ids: list[tuple[str, ...]] = []
-        saved_state = self._snapshot_for_compare()
-        try:
-            for config in fixed:
-                one_cell = {k: Choices([v]) for k, v in config.items()}
-                runs = []
-                for _ in range(repeats):
-                    self._dataset_override = dataset
-                    try:
-                        runs.append(
-                            await self.optimize(
-                                algorithm="grid",
-                                configuration_space=one_cell,
-                                max_trials=1,
-                                progress_bar=False,
-                            )
+            # The SAME evaluator factory optimize() uses (evaluator, cost
+            # capture, metric functions, honest-cost flags); no orchestrator,
+            # backend session, trial submission or save_to persistence.
+            evaluator = self._create_effective_evaluator(
+                timeout=None,
+                custom_evaluator=None,
+                effective_batch_size=None,
+                effective_thread_workers=None,
+                effective_privacy_enabled=bool(getattr(self, "privacy_enabled", False)),
+            )
+            comparison_id = cmp.new_comparison_id()
+            rows: list[Any] = []
+            all_runs_ids: list[tuple[str, ...]] = []
+            with ConfigurationSpaceContext(space), cost_run_scope():
+                for ci, config in enumerate(fixed):
+                    one_cell = {k: [v] for k, v in config.items()}
+                    self._preflight_model_cost_coverage(one_cell)
+                    trial_func = self._trial_callable_for_config_space(one_cell)
+                    runs: list[Any] = []
+                    run_ids: list[tuple[str, ...]] = []
+                    for rep in range(repeats):
+                        run, ids = await self._evaluate_fixed_config_once(
+                            evaluator,
+                            trial_func,
+                            config,
+                            dataset,
+                            trial_id=f"{comparison_id}_c{ci}_r{rep}",
+                            primary_metric=primary_metric,
                         )
-                    finally:
-                        self._dataset_override = previous_override
-                    observed_ids.append(self._trial_example_ids(runs[-1], expected_ids))
-                rows.append(
-                    cmp.aggregate_config(config, runs, primary_metric, expected_ids)
-                )
+                        runs.append(run)
+                        run_ids.append(ids)
+                    all_runs_ids.extend(run_ids)
+                    rows.append(
+                        cmp.aggregate_config(config, runs, primary_metric, run_ids[0])
+                    )
         finally:
-            self._restore_after_compare(saved_state)
+            if evaluator is not None:
+                close = getattr(evaluator, "close", None)
+                if callable(close):
+                    try:
+                        maybe = close()
+                        if inspect.isawaitable(maybe):
+                            await maybe
+                    except Exception:  # pragma: no cover - best effort
+                        logger.debug("compare(): evaluator close failed", exc_info=True)
+            self._release_exclusive_slot()
 
+        first = all_runs_ids[0]
         result = cmp.ComparisonResult(
-            comparison_id=cmp.new_comparison_id(),
+            comparison_id=comparison_id,
             primary_metric=primary_metric,
-            objectives=objectives,
+            orientation=orientation,
+            band=band,
+            objectives=list(self.objectives),
             repeats=repeats,
             n_examples=len(dataset.examples),
-            example_ids=expected_ids,
-            same_examples_across_configs=all(
-                o == observed_ids[0] for o in observed_ids
+            n_source_examples=n_source,
+            max_examples_applied=(
+                len(dataset.examples) if n_source > len(dataset.examples) else None
+            ),
+            example_ids=first,
+            same_examples_across_configs=bool(first)
+            and all(ids == first for ids in all_runs_ids),
+            coverage_complete=all(
+                len(set(ids)) == len(dataset.examples) for ids in all_runs_ids
             ),
             holdout=holdout,
             configs=rows,
@@ -2804,56 +2828,111 @@ class OptimizedFunction(Generic[_P, _R]):
         self.__dict__.setdefault("_comparison_history", []).append(result)
         return result
 
-    @staticmethod
-    def _trial_example_ids(run: Any, fallback: tuple[str, ...]) -> tuple[str, ...]:
-        """Example ids a run evaluated (falls back to the dataset's own ids)."""
-        trials = getattr(run, "trials", None) or []
-        entries = (
-            (getattr(trials[0], "metadata", None) or {}).get("example_results")
-            if trials
-            else None
+    def _comparison_primary_objective(self) -> tuple[str, str, tuple[Any, Any] | None]:
+        """Primary objective name, declared orientation and band (fail closed)."""
+        from traigent.core.objective_directions import resolve_objective_orientation
+
+        objectives = list(self.objectives)
+        if not objectives:
+            raise ValueError("compare() requires at least one declared objective.")
+        name = objectives[0]
+        schema = getattr(self, "objective_schema", None)
+        definition = schema.get_objective(name) if schema is not None else None
+        if definition is not None:
+            band = definition.band
+            band_pair = (band.low, band.high) if band is not None else None
+            return name, definition.orientation, band_pair
+        return name, resolve_objective_orientation(name), None
+
+    def _capped_comparison_dataset(self, dataset: Dataset) -> Dataset:
+        """Apply the decorator's ``max_examples`` cap exactly as optimize() does."""
+        overrides = getattr(self, "_decorator_runtime_overrides", None) or {}
+        capped, _, _ = prepare_optimization_dataset(
+            dataset,
+            {"max_examples": overrides.get("max_examples")},
+            max_examples=getattr(self, "max_examples", None),
+            max_total_examples=None,
+            samples_include_pruned=True,
         )
-        ids: list[str] = []
-        for entry in entries or []:
-            value = (
-                entry.get("example_id")
-                if isinstance(entry, Mapping)
-                else getattr(entry, "example_id", None)
-            )
-            if value is not None:
-                ids.append(str(value))
-        return tuple(ids) if ids else fallback
+        return capped
 
-    _COMPARE_RESTORED_CSM_ATTRS = (
-        "_current_config",
-        "_best_config",
-        "_best_config_snapshot",
-        "_best_config_precondition",
-        "_override_sticky",
-        "_optimization_results",
-        "_optimization_history",
-        "_state",
-    )
+    async def _evaluate_fixed_config_once(
+        self,
+        evaluator: BaseEvaluator,
+        trial_func: Callable[..., Any],
+        config: dict[str, Any],
+        dataset: Dataset,
+        *,
+        trial_id: str,
+        primary_metric: str,
+    ) -> tuple[Any, tuple[str, ...]]:
+        """One evaluator call for one fixed config -> in-memory single-trial result.
 
-    def _snapshot_for_compare(self) -> dict[str, Any]:
-        """State an advancing ``optimize()`` run mutates, restored by compare().
-
-        compare() is evaluation, not a promotion: each underlying single-trial
-        run would otherwise apply its (only) config as the wrapper's best.
+        Builds the trial exactly like ``TrialLifecycle`` does (same capture
+        scope, cost extraction and ``build_success_result``), so cost flags and
+        scores follow the optimize() rules. Nothing is persisted or submitted.
         """
-        csm = self._csm
-        saved = {
-            name: copy.copy(getattr(csm, name))
-            for name in self._COMPARE_RESTORED_CSM_ATTRS
-            if hasattr(csm, name)
-        }
-        return {"csm": saved, "wrapped_func": self._wrapped_func}
+        from traigent.config.context import TrialContext
+        from traigent.core.orchestrator_helpers import extract_cost_from_results
+        from traigent.core.trial_result_factory import build_success_result
+        from traigent.utils.langchain_interceptor import capture_scope
 
-    def _restore_after_compare(self, snapshot: dict[str, Any]) -> None:
-        with self._csm._state_lock:
-            for name, value in snapshot["csm"].items():
-                setattr(self._csm, name, value)
-        self._wrapped_func = snapshot["wrapped_func"]
+        start = time.time()
+        eval_config = copy.deepcopy(config)
+        try:
+            async with (
+                capture_scope(),
+                TrialContext(trial_id=trial_id, metadata={"config": eval_config}),
+            ):
+                eval_result = await evaluator.evaluate(trial_func, eval_config, dataset)
+            attempted, total_cost = extract_cost_from_results(
+                eval_result, None, trial_id
+            )
+            trial = build_success_result(
+                trial_id=trial_id,
+                evaluation_config=eval_config,
+                eval_result=eval_result,
+                duration=time.time() - start,
+                examples_attempted=attempted,
+                total_cost=total_cost,
+                optuna_trial_id=None,
+                extra_reserved=getattr(
+                    evaluator, "_evaluator_computable_metric_names", frozenset
+                )(),
+                primary_objective=primary_metric,
+            )
+            ids = tuple(
+                str(row.example_id)
+                for row in (getattr(eval_result, "example_results", None) or [])
+                if getattr(row, "example_id", None) is not None
+            )
+        except Exception as exc:  # noqa: BLE001 - recorded as a failed repeat
+            from traigent.api.types import TrialResult, TrialStatus
+
+            logger.warning("compare(): an evaluation failed (%s)", type(exc).__name__)
+            trial = TrialResult(
+                trial_id=trial_id,
+                config=eval_config,
+                metrics={},
+                status=TrialStatus.FAILED,
+                duration=time.time() - start,
+                timestamp=datetime.now(UTC),
+                error_message=f"evaluation failed ({type(exc).__name__})",
+            )
+            ids = ()
+        run = OptimizationResult(
+            trials=[trial],
+            best_config=None,
+            best_score=None,
+            optimization_id=trial_id,
+            duration=trial.duration,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=list(self.objectives),
+            algorithm="compare",
+            timestamp=datetime.now(UTC),
+        )
+        return run, ids
 
     def _resolve_runtime_tvl_options(
         self,
@@ -4632,23 +4711,26 @@ Remediation:
         # precedence so synthesized examples persist across re-optimization rounds.
         if self._dataset_override is not None:
             return self._dataset_override
+        return self._dataset_from_source(self.eval_dataset)
 
-        if isinstance(self.eval_dataset, Dataset):
-            return self.eval_dataset
+    def _dataset_from_source(self, source: Any) -> Dataset:
+        """Resolve a dataset spec (Dataset, path, paths, inline examples)."""
+        if isinstance(source, Dataset):
+            return source
 
-        elif isinstance(self.eval_dataset, str):
+        elif isinstance(source, str):
             try:
-                return Dataset.from_jsonl(self.eval_dataset)
+                return Dataset.from_jsonl(source)
             except Exception as e:
                 raise ConfigurationError(
-                    f"Failed to load dataset from {self.eval_dataset}: {e}"
+                    f"Failed to load dataset from {source}: {e}"
                 ) from e
 
-        elif isinstance(self.eval_dataset, list):
-            if all(isinstance(item, str) for item in self.eval_dataset):
+        elif isinstance(source, list):
+            if all(isinstance(item, str) for item in source):
                 # Multiple datasets - combine them
                 all_examples = []
-                for path in self.eval_dataset:
+                for path in source:
                     try:
                         dataset = Dataset.from_jsonl(path)
                         all_examples.extend(dataset.examples)
@@ -4660,15 +4742,12 @@ Remediation:
                 return Dataset(
                     examples=all_examples,
                     name="combined_dataset",
-                    description=f"Combined dataset from {len(self.eval_dataset)} files",
+                    description=f"Combined dataset from {len(source)} files",
                 )
 
-            if all(
-                isinstance(item, (dict, EvaluationExample))
-                for item in self.eval_dataset
-            ):
+            if all(isinstance(item, (dict, EvaluationExample)) for item in source):
                 try:
-                    return load_inline_dataset(self.eval_dataset)
+                    return load_inline_dataset(source)
                 except Exception as e:
                     raise ConfigurationError(
                         f"Failed to load inline dataset: {e}"
@@ -4679,7 +4758,7 @@ Remediation:
             )
 
         else:
-            raise ConfigurationError(f"Invalid dataset type: {type(self.eval_dataset)}")
+            raise ConfigurationError(f"Invalid dataset type: {type(source)}")
 
     def _build_empty_result(self, algorithm: str) -> OptimizationResult:
         """Create a result representing a skipped optimization run."""

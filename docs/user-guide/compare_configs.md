@@ -76,7 +76,26 @@ dataset by content fingerprint:
 
 ## Behavior notes
 
-* Each (config, repeat) is one single-trial run of the normal pipeline over a
-  one-cell space on the local grid path; nothing is synced to the portal.
-* `compare()` does not apply any config: the wrapper's applied config, best
-  config and optimization history are unchanged afterwards.
+* `compare()` calls the evaluator that `optimize()` builds (same factory, so the
+  same scoring, metric functions and cost capture) directly, once per
+  (config, repeat), on one fixed example list. It does **not** go through the
+  orchestrator: no backend session, no trial submission, no `save_to`
+  persistence, and `default_config` is never substituted for a requested config.
+  The comparison lives only in the returned object and `comparison_history`;
+  nothing is synced to the portal.
+* The wrapper's exclusive slot is held once for the whole comparison, so no
+  `optimize()` run or promotion can overlap it. `compare()` applies no config
+  and leaves the applied config and optimization history unchanged, including
+  on an exception or cancellation.
+* The decorator's `max_examples` cap is applied; `n_source_examples`,
+  `n_examples` and `max_examples_applied` report it. `example_ids` are the ids
+  the evaluator actually returned; `same_examples_across_configs` and
+  `coverage_complete` are `False` if any evaluation returned a different or
+  partial set (for example after a failed repeat).
+* A failed evaluation is recorded as a failed repeat (score `None`, cost
+  unknown); its message is reduced to the exception type.
+* `best_config` follows the primary objective's declared orientation
+  (maximize, minimize, or target band).
+* Config values are validated with the SDK's own domain semantics: integer
+  ranges need integers, `step` is enforced, categorical/fixed dicts match their
+  values.
