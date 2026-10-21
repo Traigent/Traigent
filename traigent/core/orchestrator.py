@@ -5521,6 +5521,9 @@ class OptimizationOrchestrator:
                 "convergence": "convergence",
                 "semantic_saturation": "semantic_saturation",
                 "safety_constraint": "safety_constraint",
+                "safety_constraint_insufficient_evidence": (
+                    "safety_constraint_insufficient_evidence"
+                ),
                 "no_usage_captured": "no_usage_captured",
             }
             mapped_reason = reason_mapping.get(reason, "condition")

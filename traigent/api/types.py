@@ -180,6 +180,7 @@ StopReason = Literal[
     "convergence",
     "semantic_saturation",
     "safety_constraint",  # Statistical chance-constraint violated (issue #1532)
+    "safety_constraint_insufficient_evidence",  # Halted: safety unproven, not violated (#2481)
     "no_usage_captured",  # Strict cost objective, first successful trial had no usage (#2421)
     "user_cancelled",
     "condition",  # Generic stop condition triggered

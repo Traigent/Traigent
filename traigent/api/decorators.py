@@ -2664,8 +2664,11 @@ def optimize(  # NOSONAR(S107)
             statistical bound accumulated across completed trials; once a
             constraint's ``min_samples`` evidence floor is reached and it is
             statistically violated, the run halts with
-            ``OptimizationResult.stop_reason == "safety_constraint"``. Below the
-            evidence floor, or when satisfied, the run continues normally. See
+            ``OptimizationResult.stop_reason == "safety_constraint"``. If the
+            observed compliance meets the required rate but the confidence bound
+            cannot yet prove it, the run still halts (fail closed) with
+            ``stop_reason == "safety_constraint_insufficient_evidence"``. Below
+            the evidence floor, or when satisfied, the run continues normally. See
             ``traigent.api.safety`` for the available metrics.
 
         TVL integration:

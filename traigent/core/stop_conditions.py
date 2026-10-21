@@ -1147,7 +1147,10 @@ class SafetyConstraintStopCondition(StopCondition):
     unsatisfied lower bound is treated as a genuine violation and halts the run
     with ``stop_reason="safety_constraint"`` (see
     ``StopConditionManager``/``OptimizationOrchestrator._should_stop`` reason
-    mapping). A non-violated constraint never halts the run.
+    mapping). A non-violated constraint never halts the run. When the observed
+    compliance already meets the required rate but the confidence lower bound
+    does not yet prove it, the run still halts (fail closed) but reports
+    ``stop_reason="safety_constraint_insufficient_evidence"`` (issue #2481).
 
     Trials only ever reach here as evidence if they stayed ``COMPLETED``: a
     safety constraint's ``mode == "soft"`` excludes it from
@@ -1171,6 +1174,7 @@ class SafetyConstraintStopCondition(StopCondition):
     def reset(self) -> None:
         self._validator.reset()
         self._last_index = 0
+        self.reason = "safety_constraint"
 
     def should_stop(self, trials: Iterable[TrialResult]) -> bool:
         if not self._constraints:
@@ -1194,6 +1198,16 @@ class SafetyConstraintStopCondition(StopCondition):
                 # Not enough evidence yet for this constraint - never a violation.
                 continue
             if not result.satisfied:
+                # Issue #2481: tell a real violation (observed compliance is
+                # already below the required rate) from missing evidence
+                # (observed compliance meets it, but the confidence lower bound
+                # cannot yet prove it). The halt itself is unchanged
+                # (fail closed); only the reported reason differs.
+                self.reason = (
+                    "safety_constraint"
+                    if result.observed_rate < result.required_compliance_rate
+                    else "safety_constraint_insufficient_evidence"
+                )
                 return True
 
         return False

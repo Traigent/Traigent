@@ -900,6 +900,38 @@ class TestDecoratorIntegration:
             stage="post",
         )  # must not raise
 
+    def test_weak_evidence_halts_with_insufficient_evidence_reason_2481(
+        self,
+    ) -> None:
+        """Issue #2481: all-compliant but unproven evidence still halts (fail
+        closed) yet reports a distinct reason from a real violation."""
+        from datetime import UTC, datetime
+
+        from traigent.api.types import TrialResult, TrialStatus
+        from traigent.core.stop_conditions import SafetyConstraintStopCondition
+
+        constraint = custom_safety(
+            "must_pass", lambda config, metrics: metrics.get("safety_score", 0.0)
+        ).above(0.5, min_samples=2, confidence=0.95)
+
+        def completed(i: int, score: float) -> TrialResult:
+            return TrialResult(
+                trial_id=str(i),
+                config={"p": i},
+                metrics={"safety_score": score},
+                status=TrialStatus.COMPLETED,
+                duration=0.0,
+                timestamp=datetime.now(UTC),
+            )
+
+        weak = SafetyConstraintStopCondition([constraint])
+        assert weak.should_stop([completed(i, 1.0) for i in range(2)]) is True
+        assert weak.reason == "safety_constraint_insufficient_evidence"
+
+        violated = SafetyConstraintStopCondition([constraint])
+        assert violated.should_stop([completed(i, 0.0) for i in range(2)]) is True
+        assert violated.reason == "safety_constraint"
+
     def test_violated_safety_constraint_halts_with_stop_reason(self) -> None:
         """Issue #1532 acceptance: a deterministically violated chance
         constraint halts the run with stop_reason == "safety_constraint" once
