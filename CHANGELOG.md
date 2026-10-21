@@ -8,6 +8,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Finalize propagates ownership/auth errors (#2510).** HTTP 401/403 from the
+  session finalize call now raise `CloudServiceError` instead of being swallowed
+  as "endpoint unavailable"; only an unavailable endpoint or transport failure
+  falls back to backend auto-finalization.
 - **Safety compliance target is documented as derived (#2204).** The required
   compliance rate stays derived from a constraint's operator and value
   (`above(x)` needs `x`, `below(x)` needs `1 - x`); explained in

@@ -1572,8 +1572,9 @@ class SessionOperations:
         Returns:
             Parsed backend response payload (may be ``{}`` if the backend
             returned 2xx with an empty body) when finalization succeeded;
-            ``None`` when the endpoint was unavailable, returned a non-2xx
-            status, or failed locally. Per the tracked fix, callers use this
+            ``None`` when the endpoint was unavailable, returned a non-auth
+            non-2xx status, or failed at the transport level. Ownership (403)
+            and auth (401) failures raise ``CloudServiceError`` instead. Per the tracked fix, callers use this
             return shape to distinguish "backend gave us a summary" from
             "backend just accepted the finalize call with no payload".
         """
@@ -1669,13 +1670,23 @@ class SessionOperations:
                         raise AssertionError(
                             "unreachable"
                         )  # _raise_ownership_error never returns
+                    elif response.status == 401:
+                        # Auth failure is never "endpoint unavailable": fail closed.
+                        raise CloudServiceError(
+                            f"Finalizing session '{session_id}' via backend API "
+                            "failed: HTTP 401 Unauthorized. Re-authenticate and retry."
+                        )
                     else:
                         error_text = await response.text()
                         logger.debug(
                             f"Backend finalization endpoint returned {safe_http_error_summary(response.status, error_text)}"
                         )
                         return None
-        except Exception as e:  # silent-ok: None is the documented "finalize endpoint unavailable" signal; caller logs it and backend auto-finalizes (#890)
+        except CloudServiceError:
+            # Ownership (403) / auth (401) failures must reach the caller's
+            # explicit rethrow; they are not "endpoint unavailable" (#2510).
+            raise
+        except Exception as e:  # silent-ok: transport-level failure or non-auth HTTP status means the finalize endpoint is unavailable; None is the documented fallback signal, caller logs it and backend auto-finalizes (#890)
             # Class name only: the exception text can echo server/client content.
             logger.debug("Error calling backend finalization API: %s", type(e).__name__)
             return None

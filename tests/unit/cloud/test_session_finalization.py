@@ -753,3 +753,69 @@ class TestAutoFinalizationDetection:
 
             # Verify success (defaults to continue=true)
             assert result is True
+
+
+class TestFinalizeAuthErrorsFailClosed:
+    """#2510: 401/403 from finalize propagate; only unavailable falls back."""
+
+    @pytest.fixture
+    def client(self):
+        with patch("traigent.cloud.backend_client.AIOHTTP_AVAILABLE", True):
+            client = BackendIntegratedClient(
+                api_key="test-api-key", base_url="http://localhost:5000"
+            )
+            client.auth_manager = Mock()
+            client.auth_manager.augment_headers = AsyncMock(
+                return_value={"Authorization": "Bearer test-key"}
+            )
+            client.auth_manager.auth.get_owner_fingerprint = Mock(return_value={})
+            client.session_bridge.create_session_mapping(
+                session_id="s-1",
+                experiment_id="exp-1",
+                experiment_run_id="run-1",
+                function_name="f",
+                configuration_space={},
+                objectives=["maximize"],
+            )
+            return client
+
+    @staticmethod
+    def _session_returning(status):
+        response = AsyncMock()
+        response.status = status
+        response.text = AsyncMock(return_value="server-secret-text")
+        response.__aenter__ = AsyncMock(return_value=response)
+        response.__aexit__ = AsyncMock(return_value=None)
+        session = AsyncMock()
+        session.post = Mock(return_value=response)
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=None)
+        return session
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [401, 403])
+    async def test_auth_errors_propagate_from_via_api(self, client, status):
+        from traigent.cloud.client import CloudServiceError
+
+        with patch(
+            "aiohttp.ClientSession", return_value=self._session_returning(status)
+        ):
+            with pytest.raises(CloudServiceError):
+                await client._session_ops._finalize_session_via_api("s-1", "run-1")
+
+    @pytest.mark.asyncio
+    async def test_403_propagates_from_finalize_session(self, client):
+        from traigent.cloud.client import CloudServiceError
+
+        with patch("aiohttp.ClientSession", return_value=self._session_returning(403)):
+            with pytest.raises(CloudServiceError):
+                await client._session_ops.finalize_session("s-1")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [404, 405, 501])
+    async def test_endpoint_unavailable_returns_none(self, client, status):
+        with patch(
+            "aiohttp.ClientSession", return_value=self._session_returning(status)
+        ):
+            result = await client._session_ops._finalize_session_via_api("s-1", "run-1")
+        assert result is None
