@@ -34,8 +34,11 @@ class _Usage:
 
 
 def _billed_response(cost: float):
+    """An OpenRouter-style response (carries OpenRouter's ``provider`` field)."""
+
     class _Resp:
         model = MODEL
+        provider = "SomeUpstream"
         usage = _Usage(cost)
 
     return _Resp()
@@ -49,7 +52,9 @@ def _no_mocks(monkeypatch):
 def test_provider_billed_cost_below_floor_is_kept(caplog):
     billed = _table_total() * 0.1  # far below the 0.5 floor
     with caplog.at_level("WARNING"):
-        m = extract_llm_metrics(_billed_response(billed), model_name=MODEL)
+        m = extract_llm_metrics(
+            _billed_response(billed), model_name=MODEL, response_captured=True
+        )
     assert m.cost.total_cost == pytest.approx(billed)
     assert m.cost.cost_source == COST_SOURCE_PROVIDER_BILLED
     assert "implausibly below" not in caplog.text
@@ -89,7 +94,9 @@ def test_unknown_source_fails_closed_and_keeps_floor():
 
 def test_injected_meta_cost_overrides_provider_tag_and_keeps_floor():
     ev = LocalEvaluator.__new__(LocalEvaluator)
-    m = extract_llm_metrics(_billed_response(_table_total() * 0.1), model_name=MODEL)
+    m = extract_llm_metrics(
+        _billed_response(_table_total() * 0.1), model_name=MODEL, response_captured=True
+    )
     assert m.cost.cost_source == COST_SOURCE_PROVIDER_BILLED
 
     class _Out(dict):
@@ -145,3 +152,38 @@ def test_combine_calls_mixed_and_uniform_source():
         LocalEvaluator._combine_call_metrics([a, c]).cost.cost_source
         == COST_SOURCE_MIXED
     )
+
+
+def test_caller_supplied_response_with_tiny_usage_cost_is_floored():
+    """A caller-built raw_response is never provider-billed (#2505)."""
+    tiny = _table_total() * 0.001
+    m = extract_llm_metrics(_billed_response(tiny), model_name=MODEL)  # not captured
+    assert m.cost.cost_source != COST_SOURCE_PROVIDER_BILLED
+    assert m.cost.total_cost == pytest.approx(_table_total())
+
+
+def test_captured_non_billing_provider_is_floored():
+    class _Resp:
+        model = MODEL
+        usage = _Usage(_table_total() * 0.001)  # no provider marker
+
+    m = extract_llm_metrics(_Resp(), model_name=MODEL, response_captured=True)
+    assert m.cost.cost_source != COST_SOURCE_PROVIDER_BILLED
+    assert m.cost.total_cost == pytest.approx(_table_total())
+
+
+def test_local_evaluator_caller_raw_response_floored_captured_kept():
+    tiny = _table_total() * 0.001
+    caller = _billed_response(tiny)
+    ev = LocalEvaluator.__new__(LocalEvaluator)
+    assert LocalEvaluator._is_sdk_captured(caller, []) is False
+    assert LocalEvaluator._is_sdk_captured(caller, [caller]) is True
+    kept = LocalEvaluator._price_one_call(
+        caller, agent_model=MODEL, is_agent_call=True, response_captured=True
+    )
+    assert kept.cost.total_cost == pytest.approx(tiny)
+    floored = LocalEvaluator._price_one_call(
+        caller, agent_model=MODEL, is_agent_call=True, response_captured=False
+    )
+    assert floored.cost.total_cost == pytest.approx(_table_total())
+    del ev

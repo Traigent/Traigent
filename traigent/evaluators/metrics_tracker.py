@@ -2708,6 +2708,28 @@ class MetricsCalculator:
             logger.debug(f"Failed to calculate tokens per second: {e}")
 
 
+def _is_in_response_billing_provider(response: Any) -> bool:
+    """True when the response comes from a provider that bills in-response.
+
+    Currently only OpenRouter (``usage.cost``). Identified by LiteLLM's
+    ``custom_llm_provider`` hidden param, an ``openrouter/`` model prefix, or
+    OpenRouter's own top-level ``provider`` field. Anything else, or any
+    lookup failure, is False (fail closed).
+    """
+    try:
+        hidden = getattr(response, "_hidden_params", None)
+        if isinstance(hidden, dict):
+            if str(hidden.get("custom_llm_provider", "")).lower() == "openrouter":
+                return True
+        model = getattr(response, "model", None)
+        if isinstance(model, str) and model.lower().startswith("openrouter/"):
+            return True
+        provider = getattr(response, "provider", None)
+        return isinstance(provider, str) and bool(provider)
+    except Exception:
+        return False
+
+
 def extract_llm_metrics(
     response: Any,
     model_name: str | None = None,
@@ -2715,6 +2737,7 @@ def extract_llm_metrics(
     response_text: str | None = None,
     prompt_length: int | None = None,
     response_length: int | None = None,
+    response_captured: bool = False,
 ) -> ExampleMetrics:
     """Extract metrics from LLM response objects with cost calculation.
 
@@ -2731,6 +2754,11 @@ def extract_llm_metrics(
         response_text: The response text from the LLM (for accurate cost calculation)
         prompt_length: Length of prompt in privacy mode (alternative to original_prompt)
         response_length: Length of response in privacy mode (alternative to response_text)
+        response_captured: True only when ``response`` is a response the SDK
+            itself captured from a provider call. A caller-supplied object
+            (e.g. a returned ``raw_response``) is never provider-billed: any
+            cost it carries is a self-report (#2505). Defaults to False
+            (fail closed).
 
     Returns:
         ExampleMetrics with extracted token, cost, and response metrics
@@ -2738,6 +2766,14 @@ def extract_llm_metrics(
     # Create handler chain and extract basic metrics
     handler_chain = ResponseHandlerFactory.create_handler_chain()
     metrics = handler_chain.handle(response)
+    if (
+        metrics is not None
+        and metrics.cost.cost_source == COST_SOURCE_PROVIDER_BILLED
+        and not (response_captured and _is_in_response_billing_provider(response))
+    ):
+        # Fail closed (#2505): only an SDK-captured response from a provider
+        # known to bill inside the response keeps the floor exemption.
+        metrics.cost.cost_source = COST_SOURCE_SELF_REPORTED
 
     if metrics is None:
         # No handler extracted anything real for this response -- mark it

@@ -879,6 +879,19 @@ class LocalEvaluator(BaseEvaluator):
 
         return output
 
+    @staticmethod
+    def _is_sdk_captured(source: Any, all_captured_responses: list[Any]) -> bool:
+        """True when ``source`` is a response the SDK captured (by identity).
+
+        A caller-built ``raw_response`` or the function output itself is not.
+        Unclear provenance is False (fail closed, #2505).
+        """
+        if isinstance(source, _AggregatedResponses):
+            return True
+        if any(source is r for r in all_captured_responses):
+            return True
+        return False
+
     def _estimate_string_tokens(
         self,
         example_metric: ExampleMetrics,
@@ -1550,6 +1563,9 @@ class LocalEvaluator(BaseEvaluator):
                 response_text=None,
                 prompt_length=prompt_length,
                 response_length=response_length,
+                response_captured=self._is_sdk_captured(
+                    metrics_source, all_captured_responses
+                ),
             )
 
         logger.debug(
@@ -1635,6 +1651,7 @@ class LocalEvaluator(BaseEvaluator):
         agent_model: str | None,
         is_agent_call: bool,
         requested_model: str | None = None,
+        response_captured: bool = True,
         **prompt_kwargs: Any,
     ) -> ExampleMetrics:
         """Extract ONE captured call on its own (own model, charge, usage).
@@ -1652,6 +1669,7 @@ class LocalEvaluator(BaseEvaluator):
             response=response,
             model_name=model,
             response_text=None,
+            response_captured=response_captured,
             **(prompt_kwargs if is_agent_call else {}),
         )
         if (
@@ -1788,6 +1806,7 @@ class LocalEvaluator(BaseEvaluator):
                     agent_model=configured_model,
                     is_agent_call=True,
                     requested_model=primary_requested,
+                    response_captured=returned_pos is not None,
                     **prompt_kwargs,
                 )
             )
@@ -1819,6 +1838,7 @@ class LocalEvaluator(BaseEvaluator):
                 uncaptured,
                 agent_model=configured_model,
                 is_agent_call=False,
+                response_captured=False,
                 **{},
             )
             combined = self._combine_call_metrics(calls)
@@ -1848,6 +1868,7 @@ class LocalEvaluator(BaseEvaluator):
                 response_text=None,
                 prompt_length=prompt_length,
                 response_length=response_length,
+                response_captured=False,
             )
         return self._combine_call_metrics(calls)
 
