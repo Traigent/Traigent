@@ -33,6 +33,7 @@ from traigent.runtime import manifest
 from traigent.runtime.client import RuntimeClient
 from traigent.runtime.model import (
     E_STATE,
+    E_WATCH_REENTRY,
     SEVERITIES,
     RuntimeEvent,
     RuntimeRequirement,
@@ -145,10 +146,11 @@ def poll_once(
         with manifest.watch_lock(state, agent_id):
             return _poll_locked(requirements, api, state, agent_id, logger)
     except (OSError, RuntimeRequirementError) as exc:
-        if isinstance(exc, RuntimeRequirementError) and exc.code != E_STATE:
+        code = exc.code if isinstance(exc, RuntimeRequirementError) else E_STATE
+        if code == E_WATCH_REENTRY:
             raise
         logger.warning("watch state could not be locked")
-        return PollResult(coverage=COVERAGE_UNAVAILABLE, error="local_state_invalid")
+        return PollResult(coverage=COVERAGE_UNAVAILABLE, error=code)
 
 
 def _poll_locked(

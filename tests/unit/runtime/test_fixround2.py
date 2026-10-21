@@ -210,7 +210,7 @@ def test_ledger_lock_wait_is_bounded(state_dir: Path) -> None:
         with pytest.raises(RuntimeRequirementError) as err:
             with manifest._ledger_lock(state_dir, path, timeout=0.2):
                 pass
-        assert (err.value.code, err.value.path) == ("local_state_invalid", "lock")
+        assert err.value.code == "state_lock_timeout"
     finally:
         release.set()
         thread.join(5)

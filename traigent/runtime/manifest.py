@@ -24,6 +24,7 @@ from typing import Any
 from traigent.runtime.model import (
     E_EPISODE_FIX_RUNNING,
     E_HOLD,
+    E_LOCK_TIMEOUT,
     E_STATE,
     E_STATE_OWNER,
     E_STATE_VERSION,
@@ -340,7 +341,9 @@ def _ledger_lock(
                     break
                 except OSError:
                     if time.monotonic() >= deadline:
-                        raise RuntimeRequirementError(E_STATE, "lock") from None
+                        raise RuntimeRequirementError(
+                            E_LOCK_TIMEOUT, str(path) + ".lock"
+                        ) from None
                     time.sleep(0.01)
         held.add(ident)
         try:
