@@ -70,5 +70,5 @@ When using Traigent:
 
 - Never commit API keys or credentials
 - Use environment variables for sensitive configuration
-- Enable privacy mode for sensitive data
+- Use `offline=True` when nothing may leave the machine (the legacy `privacy_enabled` setting is deprecated and does not protect data)
 - Keep dependencies updated

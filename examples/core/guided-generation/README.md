@@ -1,6 +1,6 @@
 # Guided Generation
 
-**Privacy-preserving prompt rewrite + evaluation dataset growth, guided by backend tuning
+**Prompt rewrite + evaluation dataset growth, guided by backend tuning
 signals — without ever revealing those signals.**
 
 Traigent can generate *new* tuning material for you:
@@ -11,8 +11,8 @@ Traigent can generate *new* tuning material for you:
 - **Evaluation dataset guide generation** — new evaluation examples synthesized near the
   informative/difficult frontier, growing your dataset.
 
-Both run **on your own LLM** in privacy mode, so prompt text and example content
-never leave your environment. The backend returns only an opaque
+Both run **on your own LLM**, so the generation calls use your own model key
+rather than a Traigent-hosted model. The backend returns only an opaque
 **`GuidancePlan`** — which seeds to act on, an action verb
 (`generate_similar` / `generate_harder` / `diversify_around` / `rewrite_prompt`),
 and a coarse `high|medium|low` priority. It never reveals the proprietary tuning

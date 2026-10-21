@@ -17,7 +17,7 @@ Use this skill when you need to go beyond the basic `@traigent.optimize()` decor
 - Injection modes (how optimized configs reach your function)
 - Execution modes (where and how optimization runs)
 - Multi-objective optimization with weighted objectives
-- Privacy-preserving or local-only execution
+- Local-only execution (`offline=True`)
 
 ## Imports
 
