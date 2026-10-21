@@ -8,6 +8,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Mock-provenance metadata is documented and guarded (#2493).** Results keep
+  the `mock_llm_run` / `mock_llm_mixed` metadata keys; they are described in
+  `docs/user-guide/cost_capture.md` and the `traigent-analyze-results` skill, and
+  tests show they survive save and load while a legacy result without them is
+  reported as unknown, not as a real run.
 - **No-model-call examples point at `with_usage(total_cost=0)` (#2449).** The
   unmeasured-cost error and warning now say plainly that a path making no model
   calls should wrap its return value in `traigent.with_usage(value,

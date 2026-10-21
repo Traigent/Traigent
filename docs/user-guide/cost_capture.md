@@ -113,6 +113,21 @@ The key must be the model name Traigent prices. In the custom-evaluator lane
 that is the trial's `model` setting when the configuration has one, otherwise
 the model the response reports.
 
+## Mock provenance in result metadata
+
+A result records whether its LLM calls were simulated in `result.metadata`:
+
+| Key | Meaning |
+|---|---|
+| `mock_llm_run` | `True` if any mock response was served during the run, `False` if the run's calls were real. |
+| `mock_llm_mixed` | Present and `True` only when both mock and real calls were observed. |
+
+Both keys are saved and restored by `PersistenceManager`. A result saved before
+these keys existed, or built by hand, has no `mock_llm_run` key: that means
+**unknown**, not `False`. Read it with `result.metadata.get("mock_llm_run")` and
+treat `None` as "not recorded". The results table labels a recorded mock run,
+and hedges an unrecorded result only while mock mode is on in the process.
+
 ## When nothing was captured
 
 A missing measurement is not a free call. When a custom-evaluator example has
