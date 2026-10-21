@@ -1221,6 +1221,9 @@ class OptimizationOrchestrator:
 
     def _initialize_runtime_state(self) -> None:
         self._trials: list[TrialResult] = []
+        # Trials reused from a prior result by ``resume_from`` (#1697).
+        self._resume_source: OptimizationResult | None = None
+        self._resume_summary: dict[str, Any] | None = None
         # Known spend from opt-in winner-stability reruns. These reruns are
         # intentionally excluded from ``_trials`` and must therefore be carried
         # into both normal and cancellation result construction explicitly.
@@ -4069,7 +4072,8 @@ class OptimizationOrchestrator:
         function_identifier: str | None,
     ) -> int:
         """Run the main optimization loop. Returns final trial count."""
-        trial_count = 0
+        # Trials reused by resume_from (#1697) already count toward max_trials.
+        trial_count = len(self._trials)
 
         while True:
             remaining, remaining_samples, budget_stop = self._check_budget_limits(
@@ -5229,6 +5233,7 @@ class OptimizationOrchestrator:
     ) -> OptimizationResult:
         """Run optimization with tracing enabled."""
         self._check_cost_approval(dataset)
+        self._apply_resume()
 
         try:
             # Check for immediate timeout
@@ -5782,6 +5787,78 @@ class OptimizationOrchestrator:
         """Register or override a metric specification for aggregation."""
         self.metric_registry.register(spec)
 
+    def set_resume_source(self, prior: OptimizationResult | None) -> None:
+        """Set the validated prior result whose matching trials this run reuses.
+
+        Same seam as ``knob_resolver``/``execution_budget``: set after
+        construction, applied at run start by :meth:`_apply_resume`. Local runs
+        only; the caller (``OptimizedFunction``) enforces that (#1697).
+        """
+        self._resume_source = prior
+
+    def _apply_resume(self) -> int:
+        """Seed this run with reusable trials from the resume source (#1697).
+
+        Reused trials count toward ``max_trials`` and the result, are marked in
+        trial metadata, and are told to the optimizer so it does not propose the
+        same configuration again. Their cost is reported in the result totals but
+        is NOT charged to this run's cost enforcer (this run did not spend it).
+        Unfinished or unknown-status prior trials are neither reused nor retried.
+        Returns the number of trials reused.
+        """
+        prior = getattr(self, "_resume_source", None)
+        if prior is None:
+            return 0
+        from traigent.core.resume import (
+            plan_resume,
+            warn_if_not_reusable,
+        )
+
+        plan = plan_resume(
+            prior, self.artifact_fingerprints, max_trials=self.max_trials
+        )
+        warn_if_not_reusable(plan)
+        reused_cost = 0.0
+        unknown_cost_trials = 0
+        for trial in plan.reusable:
+            self._trials.append(trial)
+            if is_cost_unmeasured(trial.metrics):
+                unknown_cost_trials += 1
+            cost = self._extract_trial_cost(trial)
+            if cost is not None:
+                reused_cost += cost
+            if trial.is_successful:
+                self._successful_trials += 1
+                self.optimizer.update_best(trial)
+                self._update_best_trial_cache(trial)
+            mark = getattr(self.optimizer, "mark_config_evaluated", None)
+            if callable(mark):
+                try:
+                    mark(trial.config)
+                except (ValueError, TypeError, KeyError, AttributeError) as exc:
+                    logger.warning(
+                        "resume_from: optimizer could not record a reused "
+                        "configuration (%s)",
+                        type(exc).__name__,
+                    )
+        self._resume_summary = {
+            "reused_trials": len(plan.reusable),
+            "unfinished_prior_trials_not_reused": plan.not_reusable_unfinished,
+            "other_prior_trials_not_reused": plan.not_reusable_other,
+            "prior_trials_dropped_over_max_trials": plan.dropped_over_max_trials,
+            "identity_mismatch": list(plan.mismatched_components),
+            "reused_known_cost": reused_cost,
+            "reused_unknown_cost_trials": unknown_cost_trials,
+            "cost_charged_to_this_run_limit": False,
+        }
+        logger.info(
+            "resume_from: reused %d prior trial(s); %d unfinished prior trial(s) "
+            "not reused or retried.",
+            len(plan.reusable),
+            plan.not_reusable_unfinished,
+        )
+        return len(plan.reusable)
+
     def _log_trial(self, trial_result: TrialResult) -> None:
         """Legacy hook for logging trial results."""
         if self._logger_facade.logger is not self._logger:
@@ -5948,6 +6025,13 @@ class OptimizationOrchestrator:
                     "function_slug": descriptor.slug,
                 }
             )
+
+        # Value-free run identity, so a later run can resume from this result
+        # (#1697). Hashes only; absent when fingerprints were not computed.
+        if self.artifact_fingerprints:
+            metadata["artifact_fingerprints"] = dict(self.artifact_fingerprints)
+        if getattr(self, "_resume_summary", None) is not None:
+            metadata["resume"] = dict(self._resume_summary or {})
 
         # Flag offline mode so callbacks can show appropriate hints
         if is_offline_requested(policy_from_config(self.traigent_config)):

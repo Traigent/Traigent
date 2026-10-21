@@ -402,6 +402,18 @@ class BaseOptimizer(ABC):
         self._tried_config_hashes.add(config_hash)
         return True
 
+    def mark_config_evaluated(self, config: dict[str, Any]) -> None:
+        """Record a configuration as already evaluated by a resumed run (#1697).
+
+        The optimizer will not propose it again. It is not a suggestion, so no
+        trial count is consumed. Subclasses that enumerate their own candidates
+        override this.
+        """
+        keys = set(self.config_space)
+        self.register_tried_config(
+            {k: v for k, v in config.items() if not keys or k in keys}
+        )
+
     def is_config_space_exhausted(self) -> bool:
         """Check if all unique configurations have been tried.
 
