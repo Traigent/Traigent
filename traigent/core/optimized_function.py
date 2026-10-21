@@ -3017,6 +3017,9 @@ class OptimizedFunction(Generic[_P, _R]):
         permit = None
         trial = None
         dispatched = False
+        # Set BEFORE the untracked-attempt accounting call so an attempt is
+        # debited once even if that call raises (strict cost tracking).
+        accounted = False
 
         def mark_dispatched() -> None:
             nonlocal dispatched
@@ -3049,6 +3052,7 @@ class OptimizedFunction(Generic[_P, _R]):
                     # The watchdog cancelled the attempt: a dispatched attempt
                     # still debits the shared budget and marks spend untracked.
                     if dispatched:
+                        accounted = True
                         await asyncio.shield(
                             asyncio.create_task(
                                 orchestrator._account_winner_stability_rerun_attempt(
@@ -3073,9 +3077,10 @@ class OptimizedFunction(Generic[_P, _R]):
             await asyncio.shield(task)
             return trial
         except BaseException as original:
-            if trial is None and dispatched:
+            if trial is None and dispatched and not accounted:
                 # Dispatched but no result: record an untracked attempt so the
                 # ledgers carry a lower bound rather than a fabricated zero.
+                accounted = True
                 try:
                     await asyncio.shield(
                         asyncio.create_task(

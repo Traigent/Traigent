@@ -760,3 +760,17 @@ def test_compare_never_builds_a_backend_client_under_an_online_policy(monkeypatc
     assert len(result.configs) == 2
     assert result.configs[0].mean_score == pytest.approx(1.0)
     assert built == []
+
+
+def test_strict_timeout_debits_the_attempt_once_and_still_raises(monkeypatch):
+    monkeypatch.setenv("TRAIGENT_REQUIRE_COST_TRACKING", "true")
+
+    async def hang():
+        await asyncio.sleep(30)
+
+    fn = _make()
+    fn.timeout = 0.05
+    budget = ExecutionBudget(max_examples=1000)
+    with _dispatch_then(hang), pytest.raises(CostTrackingRequiredError):
+        fn.compare([_GOOD, _BAD], budget=budget)
+    assert budget.snapshot().untracked_trials == 1
