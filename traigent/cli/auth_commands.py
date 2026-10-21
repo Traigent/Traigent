@@ -230,6 +230,25 @@ def _format_env_assignment_from_existing(line: str, key: str, value: str) -> str
     return f"{leading}{export_prefix or ''}{key}={_format_env_value(value)}"
 
 
+def _parse_expires_at(raw: Any) -> str | None:
+    """Return ``raw`` when it is a timezone-aware ISO-8601 timestamp, else None.
+
+    The backend may omit ``expires_at`` or send null; an absent or malformed
+    value is never replaced by an invented one (SDK #1635).
+    """
+    from datetime import datetime
+
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.strip())
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return raw.strip()
+
+
 class TraigentAuthCLI:
     """Modern CLI authentication manager for Traigent SDK."""
 
@@ -634,7 +653,7 @@ class TraigentAuthCLI:
         if not isinstance(trial_limit, int) or not isinstance(api_call_limit, int):
             raise AuthenticationError("Malformed device token response: invalid quota")
 
-        return {
+        credentials: dict[str, Any] = {
             "api_key": api_key,
             "tenant_id": tenant_id,
             "project_id": project_id,
@@ -646,6 +665,10 @@ class TraigentAuthCLI:
             },
             "backend_url": self.backend_url,
         }
+        expires_at = _parse_expires_at(token_data.get("expires_at"))
+        if expires_at is not None:
+            credentials["expires_at"] = expires_at
+        return credentials
 
     @staticmethod
     def _device_error_from_envelope(data: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -1093,6 +1116,7 @@ class TraigentAuthCLI:
 
         # Step 2: Create API key using JWT token
         api_key = None
+        api_key_expires_at: str | None = None
         api_key_url = f"{self.backend_api_url}/keys"
 
         # Generate a unique key name to avoid conflicts
@@ -1138,6 +1162,9 @@ class TraigentAuthCLI:
                     try:
                         api_key_data = json.loads(response_text)
                         api_key = api_key_data["data"]["key"]
+                        api_key_expires_at = _parse_expires_at(
+                            api_key_data["data"].get("expires_at")
+                        )
                         console.print("[green]✓ API key created[/green]")
                     except (json.JSONDecodeError, KeyError) as e:
                         console.print("\n[yellow]--- API Key Response ---[/yellow]")
@@ -1180,6 +1207,8 @@ class TraigentAuthCLI:
         }
         if refresh_token:
             credentials["refresh_token"] = refresh_token
+        if api_key and api_key_expires_at is not None:
+            credentials["expires_at"] = api_key_expires_at
 
         return credentials
 
