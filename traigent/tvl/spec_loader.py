@@ -1883,6 +1883,12 @@ def _warn_derived_constraints_using_environment_context(
     The SDK evaluates derived constraints per trial only; it does not check
     them against the runtime environment. The message names constraint
     positions only, never expression text or values.
+
+    The check is advisory. It is a literal substring match on the text
+    ``environment.context`` (word boundaries only), so it does not detect
+    ``environment . context`` or ``environment["context"]``, and it can match
+    the same text inside a quoted string literal. A warning is a hint to read
+    the spec, not a verdict on it.
     """
     if not derived_constraints:
         return

@@ -2728,6 +2728,31 @@ objectives:
     def test_no_warning_without_environment_context(self, tmp_path: Path) -> None:
         assert self._load(tmp_path, '    - require: "env.budget >= 1000"') == []
 
+    def test_spaced_form_is_not_detected(self, tmp_path: Path) -> None:
+        """Boundary: the literal-text check does not see ``environment . context``."""
+        assert (
+            self._load(tmp_path, '    - require: "environment . context.quota >= 1000"')
+            == []
+        )
+
+    def test_bracket_form_is_not_detected(self, tmp_path: Path) -> None:
+        """Boundary: the literal-text check does not see ``environment["context"]``."""
+        assert (
+            self._load(
+                tmp_path, '    - require: "environment[\\"context\\"].quota >= 1000"'
+            )
+            == []
+        )
+
+    def test_quoted_string_containing_text_is_flagged(self, tmp_path: Path) -> None:
+        """Boundary: the literal-text check can match inside a string literal."""
+        msgs = self._load(
+            tmp_path,
+            "    - require: \"model == 'environment.context'\"",
+        )
+        assert len(msgs) == 1
+        assert "derived_constraint_0" in msgs[0]
+
     def test_warning_contains_no_values(self, tmp_path: Path) -> None:
         msgs = self._load(
             tmp_path,
