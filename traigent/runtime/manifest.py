@@ -494,13 +494,8 @@ def update_occurrence(
     run_info: Mapping[str, Any],
     *,
     attempt: int,
-    lease: timedelta | None = None,
-    now: datetime | None = None,
 ) -> bool:
     """Merge ``run_info`` into the record only if it still belongs to ``attempt``.
-
-    A heartbeat passes ``lease``: an expired lease is read as failed (INV-33) and a
-    beat never resurrects it.  Outcome writes pass none and keep the attempt fence.
 
     A writer whose reservation was superseded (its lease expired and a newer
     approved attempt took over) is fenced out: nothing is written, ``False``.
@@ -518,13 +513,45 @@ def update_occurrence(
             or record.get("finished")
         ):
             return False
-        if lease is not None:
-            resolved = effective_record(record, now=now, lease=lease)
-            if resolved is None or resolved.get("status") != STATUS_STARTED:
-                return False
         record.update(run_info)
         _write_json(path, doc)
     return True
+
+
+def heartbeat_occurrence(
+    state_dir: Path,
+    agent_id: str,
+    key: str,
+    *,
+    attempt: int,
+    lease: timedelta,
+    clock: Callable[[], datetime],
+) -> datetime | None:
+    """Renew the heartbeat of ``attempt``'s reservation; the stamp, or ``None`` if refused.
+
+    ``clock`` is read once the ledger lock is held, and that single reading both
+    validates the lease and stamps the beat, so a long lock wait can never let a
+    beat resurrect a lease that expired meanwhile.  An expired lease is read as
+    failed (INV-33) and refuses the beat; outcome writes keep the attempt fence only.
+    """
+    path = _occ_path(state_dir, agent_id)
+    with _ledger_lock(state_dir, path):
+        now = clock()
+        doc = _read_json(path, {})
+        record = doc.get(key) if isinstance(doc, dict) else None
+        if (
+            not isinstance(record, dict)
+            or record.get("attempts") != attempt
+            or record.get("status") != STATUS_STARTED
+            or record.get("finished")
+        ):
+            return None
+        resolved = effective_record(record, now=now, lease=lease)
+        if resolved is None or resolved.get("status") != STATUS_STARTED:
+            return None
+        record["heartbeat_at"] = now.isoformat()
+        _write_json(path, doc)
+    return now
 
 
 def release_occurrence(

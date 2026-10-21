@@ -202,28 +202,171 @@ def test_heartbeat_does_not_resurrect_an_expired_lease(state_dir: Path) -> None:
     assert manifest.reserve_occurrence(
         state_dir, AGENT, "b1|fix|0", {"run_id": None}, attempt=1, clock=lambda: t0
     )
-    late = t0 + timedelta(seconds=10)
     lease = timedelta(seconds=1)
-    assert not manifest.update_occurrence(
-        state_dir,
-        AGENT,
-        "b1|fix|0",
-        {"heartbeat_at": late.isoformat()},
-        attempt=1,
-        lease=lease,
-        now=late,
+    late = t0 + timedelta(seconds=10)
+    assert (
+        manifest.heartbeat_occurrence(
+            state_dir, AGENT, "b1|fix|0", attempt=1, lease=lease, clock=lambda: late
+        )
+        is None
     )
     assert _occ(state_dir)["heartbeat_at"] != late.isoformat()
     soon = t0 + timedelta(milliseconds=500)
-    assert manifest.update_occurrence(
-        state_dir,
-        AGENT,
-        "b1|fix|0",
-        {"heartbeat_at": soon.isoformat()},
-        attempt=1,
-        lease=lease,
-        now=soon,
+    assert (
+        manifest.heartbeat_occurrence(
+            state_dir, AGENT, "b1|fix|0", attempt=1, lease=lease, clock=lambda: soon
+        )
+        == soon
     )
+
+
+def test_heartbeat_samples_the_clock_after_the_lock_wait(state_dir: Path) -> None:
+    t0 = datetime.fromisoformat("2026-01-01T00:00:00+00:00")
+    lease = timedelta(seconds=1)
+    assert manifest.reserve_occurrence(
+        state_dir, AGENT, "b1|fix|0", {"run_id": None}, attempt=1, clock=lambda: t0
+    )
+    path = manifest._occ_path(state_dir, AGENT)
+    holding, late = threading.Event(), threading.Event()
+    results: list[datetime | None] = []
+
+    def clock() -> datetime:  # before expiry until the lock holder lets go
+        return t0 + (
+            timedelta(seconds=10) if late.is_set() else timedelta(milliseconds=500)
+        )
+
+    def hold() -> None:
+        with manifest._ledger_lock(state_dir, path):
+            holding.set()
+            threading.Event().wait(0.3)
+            late.set()  # expiry passes while the beat is still waiting for the lock
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    holding.wait(5)
+    beat = threading.Thread(
+        target=lambda: results.append(
+            manifest.heartbeat_occurrence(
+                state_dir, AGENT, "b1|fix|0", attempt=1, lease=lease, clock=clock
+            )
+        )
+    )
+    beat.start()
+    holder.join(10)
+    beat.join(10)
+    assert results == [None]  # judged at the post-wait time, so refused
+    assert _occ(state_dir)["heartbeat_at"] == t0.isoformat()
+
+
+async def test_heartbeat_errors_stop_counting_as_ownership_after_the_deadline(
+    backend: FakeBackend, state_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _live(backend)
+    fn, req = _applied(state_dir)
+    clock = _Clock()
+
+    def broken(*_a: object, **_k: object) -> datetime:
+        raise OSError("disk")
+
+    monkeypatch.setattr(manifest, "heartbeat_occurrence", broken)
+    cancelled: list[bool] = []
+
+    async def optimize(**_kw: object) -> object:
+        clock.now += timedelta(seconds=5)  # past the last verified deadline
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+        return None
+
+    fn.optimize = optimize
+    with pytest.raises(RuntimeRequirementError) as err:
+        await asyncio.wait_for(
+            respond(
+                fn,
+                req,
+                **_kw(state_dir, clock=clock, occurrence_lease=timedelta(seconds=0.04)),
+            ),
+            10,
+        )
+    assert (err.value.code, err.value.path) == ("hold", "lease")
+    assert cancelled == [True]
+
+
+async def test_failed_final_ownership_check_never_authorises_success(
+    backend: FakeBackend, state_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _live(backend)
+    fn, req = _applied(state_dir)
+
+    def broken(*_a: object, **_k: object) -> datetime:
+        raise OSError("disk")
+
+    monkeypatch.setattr(manifest, "heartbeat_occurrence", broken)
+    with pytest.raises(RuntimeRequirementError) as err:
+        await respond(fn, req, **_kw(state_dir))
+    assert (err.value.code, err.value.path) == ("hold", "lease")
+    assert not _occ(state_dir).get("finished")
+
+
+async def test_a_raising_run_is_drained_even_when_the_lease_was_lost(
+    backend: FakeBackend, state_dir: Path
+) -> None:
+    import gc
+
+    _live(backend)
+    fn, req = _applied(state_dir)
+    clock = _Clock()
+    unretrieved: list[dict] = []
+    asyncio.get_running_loop().set_exception_handler(
+        lambda _l, ctx: unretrieved.append(ctx)
+    )
+
+    async def optimize(**_kw: object) -> object:
+        clock.now += timedelta(seconds=5)  # blocked past the lease, then fails
+        raise RuntimeError("provider down")
+
+    fn.optimize = optimize
+    with pytest.raises(RuntimeRequirementError) as err:
+        await respond(
+            fn,
+            req,
+            **_kw(state_dir, clock=clock, occurrence_lease=timedelta(seconds=0.4)),
+        )
+    assert (err.value.code, err.value.path) == ("hold", "lease")
+    gc.collect()
+    await asyncio.sleep(0)
+    assert unretrieved == []
+
+
+async def test_final_write_fencing_drops_the_stale_outcome(
+    backend: FakeBackend, state_dir: Path, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    import json
+    import logging
+
+    _live(backend)
+    fn, req = _applied(state_dir)
+    caplog.set_level(logging.WARNING, logger="traigent.runtime")
+    real = manifest.update_occurrence
+
+    def superseded(
+        state, agent, key, info, **kw
+    ):  # a newer attempt takes over just before the write
+        if info.get("finished"):
+            path = manifest._occ_path(state, agent)
+            doc = json.loads(path.read_text())
+            doc[key]["attempts"] = 2
+            path.write_text(json.dumps(doc))
+        return real(state, agent, key, info, **kw)
+
+    monkeypatch.setattr(manifest, "update_occurrence", superseded)
+    await respond(fn, req, **_kw(state_dir))
+    assert "stale_outcome_dropped" in caplog.text
+    record = _occ(state_dir)
+    assert record["attempts"] == 2
+    assert not record.get("finished")
 
 
 async def test_named_breach_is_the_one_fixed(

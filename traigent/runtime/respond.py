@@ -16,7 +16,6 @@ its own human approval.  Occurrence numbers start at 0 (TVL RFC 0003, 7.4).
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -283,6 +282,8 @@ async def respond(
     # Last moment: the second round of checks can take longer than the approval has left.
     if manifest.approval_expired(approval, clock()):
         raise RuntimeRequirementError(E_APPROVAL_EXPIRED)
+    # Taken before the reservation, so the verified deadline can only be early, never late.
+    reserved_at = clock()
     if not manifest.reserve_occurrence(
         state,
         agent_id,
@@ -303,9 +304,10 @@ async def respond(
         if not manifest.update_occurrence(state, agent_id, key, info, attempt=attempt):
             LOGGER.warning("stale_outcome_dropped")
 
-    heartbeat = asyncio.create_task(
-        _heartbeat(state, agent_id, key, attempt, clock, occurrence_lease)
+    own = _Ownership(
+        state, agent_id, key, attempt, clock, occurrence_lease, reserved_at
     )
+    heartbeat = asyncio.create_task(_heartbeat(own))
     run: asyncio.Future[Any] | None = None
     lost = False
     try:
@@ -318,13 +320,11 @@ async def respond(
                 lost = True
             else:
                 # A synchronous run can block the loop past the lease with no beat
-                # having run: check ownership once more before reporting it finished.
-                lost = not _beat(state, agent_id, key, attempt, clock, occurrence_lease)
+                # having run: verify ownership once more, strictly (an error is a loss).
+                lost = not own.beat(strict=True)
         finally:
-            # Also on cancellation: neither task may outlive this call.
-            await _stop(heartbeat)
-            if run is not None and not run.done():
-                await _stop(run)
+            # Both tasks are drained on every exit, so no exception goes unretrieved.
+            await _drain(heartbeat, run)
         if lost:
             raise _LeaseLost
         result = run.result() if run is not None else None
@@ -344,42 +344,54 @@ async def respond(
     return RespondResult(breach_id, rule_id, OCCURRENCE, run_id, float(ceiling))
 
 
-def _beat(
-    state: Path,
-    agent_id: str,
-    key: str,
-    attempt: int,
-    clock: Callable[[], datetime],
-    lease: timedelta,
-) -> bool:
-    """One heartbeat write; ``False`` when the ledger refuses it (lease lost)."""
-    try:
-        return manifest.update_occurrence(
-            state,
-            agent_id,
-            key,
-            {"heartbeat_at": clock().isoformat()},
-            attempt=attempt,
-            lease=lease,
-            now=clock(),
-        )
-    except (OSError, RuntimeRequirementError):
-        return True  # a missed beat only shortens the lease; the next one retries
+class _Ownership:
+    """Whether this controller still owns its reservation, from the ledger's own word."""
+
+    def __init__(
+        self,
+        state: Path,
+        agent_id: str,
+        key: str,
+        attempt: int,
+        clock: Callable[[], datetime],
+        lease: timedelta,
+        reserved_at: datetime,
+    ) -> None:
+        self.state, self.agent_id, self.key = state, agent_id, key
+        self.attempt, self.clock, self.lease = attempt, clock, lease
+        #: The last instant the ledger verifiably vouched for (stamp + lease).
+        self.verified_until = reserved_at + lease
+
+    def beat(self, *, strict: bool = False) -> bool:
+        """One heartbeat; ``False`` when ownership is lost.
+
+        A refused beat is a loss.  A beat that ERRORS (storage trouble) is retried only
+        until the last verified deadline, then counts as a loss; ``strict`` (the final
+        check before reporting success) treats any error as a loss at once.
+        """
+        try:
+            stamp = manifest.heartbeat_occurrence(
+                self.state,
+                self.agent_id,
+                self.key,
+                attempt=self.attempt,
+                lease=self.lease,
+                clock=self.clock,
+            )
+        except (OSError, RuntimeRequirementError):
+            return not strict and self.clock() < self.verified_until
+        if stamp is None:
+            return False
+        self.verified_until = stamp + self.lease
+        return True
 
 
-async def _heartbeat(
-    state: Path,
-    agent_id: str,
-    key: str,
-    attempt: int,
-    clock: Callable[[], datetime],
-    lease: timedelta,
-) -> None:
+async def _heartbeat(own: _Ownership) -> None:
     """Renew the heartbeat every lease/4; RETURNS (ending the task) once the lease is lost."""
-    interval = max(lease.total_seconds() / 4, 0.001)
+    interval = max(own.lease.total_seconds() / 4, 0.001)
     while True:
         await asyncio.sleep(interval)
-        if not _beat(state, agent_id, key, attempt, clock, lease):
+        if not own.beat():
             return
 
 
@@ -387,7 +399,14 @@ class _LeaseLost(Exception):
     """Internal signal: this controller no longer owns the occurrence."""
 
 
-async def _stop(task: asyncio.Future[Any]) -> None:
-    task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await task
+async def _drain(*tasks: asyncio.Future[Any] | None) -> None:
+    """Cancel what is still running, then retrieve EVERY task's outcome (even done ones).
+
+    One task failing to finish cleanly never skips the other's cleanup, and no
+    exception is left unretrieved for the event loop to log.
+    """
+    live = [t for t in tasks if t is not None]
+    for task in live:
+        if not task.done():
+            task.cancel()
+    await asyncio.gather(*live, return_exceptions=True)
