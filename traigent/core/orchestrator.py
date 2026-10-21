@@ -10,12 +10,13 @@ import asyncio
 import copy
 import inspect
 import math
+import operator
 import os
 import statistics
 import sys
 import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from difflib import get_close_matches
 from typing import TYPE_CHECKING, Any, cast
@@ -96,11 +97,14 @@ from traigent.core.metrics_aggregator import (
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.orchestrator_helpers import (
     allocate_parallel_ceilings,
+    EFFECTIVE_SUBSET_ATTR,
     constraint_requires_metrics,
+    effective_subset_indices,
     normalize_parallel_trials,
     pre_trial_validate_config,
     prepare_evaluation_config,
     prepare_objectives,
+    subset_indices_of_dataset,
     validate_constructor_arguments,
     validate_dataset,
 )
@@ -131,6 +135,7 @@ from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.interactive_optimizer import CloudBrainOptimizationComplete
 from traigent.tvl.promotion_gate import PromotionGate
+from traigent.utils.example_id import LOCAL_MARKER_KEY
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
 from traigent.utils.env_config import (  # noqa: F401
     is_backend_offline as is_backend_offline,
@@ -2658,12 +2663,10 @@ class OptimizationOrchestrator:
             ds_for_trial = dataset
             if isinstance(cfg_copy, dict) and "__subset_indices__" in cfg_copy:
                 try:
-                    idxs = list(cfg_copy.get("__subset_indices__") or [])
-                    examples = [
-                        dataset.examples[j]
-                        for j in idxs
-                        if 0 <= j < len(dataset.examples)
-                    ]
+                    kept = effective_subset_indices(
+                        cfg_copy.get("__subset_indices__"), len(dataset.examples)
+                    )
+                    examples = [dataset.examples[j] for j in kept]
                     ds_for_trial = Dataset(
                         examples=examples,
                         name=f"{getattr(dataset, 'name', 'dataset')}_subset_{idx}",
@@ -2672,6 +2675,14 @@ class OptimizationOrchestrator:
                             "description",
                             "Traigent evaluation dataset",
                         ),
+                    )
+                    # What was actually evaluated (same filtered list), kept on
+                    # the subset dataset object -- never on the config, which is
+                    # hashed and sent to callbacks/optimizers/the backend.
+                    setattr(
+                        ds_for_trial,
+                        EFFECTIVE_SUBSET_ATTR,
+                        [operator.index(j) for j in kept],
                     )
                 except Exception as exc:
                     logger.debug(
@@ -2712,6 +2723,31 @@ class OptimizationOrchestrator:
         return cast(
             list[int | None], [len(desc[2].examples) for desc in trial_descriptors]
         )
+
+    @staticmethod
+    async def _run_trial_recording_subset(
+        run_trial: Callable[..., Awaitable[Any]],
+        subset: list[int] | None,
+        /,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Run a trial; stamp the rows its subset evaluated onto its RESULT.
+
+        Takes the trial callable and creates its coroutine here, so a wrapper that
+        is closed or cancelled before it starts leaves no never-awaited coroutine.
+        Indices only, set on ``trial_result.metadata`` under the reserved local
+        key after the result exists, so the trial config (hashed, submitted) is
+        never touched and no metric key can collide.
+        """
+        result = await run_trial(*args, **kwargs)
+        if subset is not None and isinstance(result, TrialResult):
+            local = result.metadata.get(LOCAL_MARKER_KEY)
+            if not isinstance(local, dict):
+                local = {}
+                result.metadata[LOCAL_MARKER_KEY] = local
+            local["subset_indices"] = list(subset)
+        return result
 
     async def _schedule_and_run_parallel_trials(
         self,
@@ -2756,7 +2792,9 @@ class OptimizationOrchestrator:
             scheduled_configs.append(cfg)
             scheduled_optuna_ids.append(optuna_id)
             tasks.append(
-                self._trial_lifecycle.run_trial(
+                self._run_trial_recording_subset(
+                    self._trial_lifecycle.run_trial,
+                    subset_indices_of_dataset(ds_for_trial),
                     func,
                     cfg,
                     ds_for_trial,

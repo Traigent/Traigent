@@ -10,7 +10,11 @@ from typing import Any, cast
 from traigent._version import get_version
 from traigent.api.types import OptimizationResult, TrialResult
 from traigent.config.types import ExecutionMode, TraigentConfig
-from traigent.utils.example_id import compute_dataset_hash, generate_stable_example_id
+from traigent.utils.example_id import (
+    SDK_MINTED_EXAMPLE_ID,
+    compute_dataset_hash,
+    resolve_wire_example_id,
+)
 from traigent.utils.logging import get_logger
 from traigent.utils.outcome_signals import (
     EXAMPLE_DIGEST_KEY,
@@ -597,22 +601,9 @@ def _numeric_metrics_only(
     return kept
 
 
-def _coerce_non_empty_example_id(value: Any) -> str | None:
-    if value is None or isinstance(value, bool):
-        return None
-    if isinstance(value, str):
-        value = value.strip()
-        return value or None
-    if isinstance(value, (int, float)):
-        return str(value)
-    return None
-
-
-#: The id the SDK's own evaluators mint for the example at position ``idx``
-#: (``traigent/evaluators/base.py`` ``_example_correlation_key``,
-#: ``core/evaluator_wrapper.py``, ``evaluators/local.py``). It encodes the
-#: index and nothing else.
-_SDK_MINTED_EXAMPLE_ID = "example_{idx}"
+#: Re-exported from :mod:`traigent.utils.example_id` (shared with the example
+#: content map so both sides key examples identically).
+_SDK_MINTED_EXAMPLE_ID = SDK_MINTED_EXAMPLE_ID
 
 
 def _resolve_measure_example_id(
@@ -642,13 +633,9 @@ def _resolve_measure_example_id(
     recompute it locally to join backend insights back to their rows; their own
     id is untouched on ``ExampleResult`` and in the on-disk trial logs.
     """
-    candidate = _coerce_non_empty_example_id(
-        _example_field(example_result, "example_id")
+    return resolve_wire_example_id(
+        _example_field(example_result, "example_id"), dataset_hash, idx
     )
-    if candidate is not None and candidate == _SDK_MINTED_EXAMPLE_ID.format(idx=idx):
-        return candidate
-
-    return generate_stable_example_id(dataset_hash, idx)
 
 
 def _build_single_measure_full(
