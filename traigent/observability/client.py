@@ -652,6 +652,12 @@ class _TraceState:
     # Agent scopes seen inside this trace; decides the scope-derived agent_id
     # that only the final (end_trace) snapshot may carry. Never on the wire.
     scope_ledger: ScopeLedger = field(default_factory=ScopeLedger)
+    # Set by `end_trace`; only an ended trace can be evicted from the client's
+    # state map (#2604). Reset by a restart (`start_trace` builds a new state).
+    ended: bool = False
+    # True while an entry for this state sits in the client's eviction queue,
+    # so repeated `end_trace` calls cannot enqueue it twice.
+    eviction_scheduled: bool = False
 
     def mark_content_history(self, entity_key: str, field_name: str) -> None:
         self.content_history.setdefault(entity_key, set()).add(field_name)
@@ -1003,6 +1009,10 @@ class _SyncBatchTransport:
         # in-flight snapshot of a lower generation (#2609).
         self._inflight_generations: dict[str, int] = {}
         self._delivered_digests: OrderedDict[str, bytes] = OrderedDict()
+        # Items the backend has accepted at least once (LRU, bounded by
+        # max_queue_size). Unlike `_delivered_digests` it survives a response
+        # with warnings, so the client can tell "confirmed" from "pending" (#2604).
+        self._acked_items: OrderedDict[str, None] = OrderedDict()
         self._oldest_inflight_started_at: float | None = None
         self._active_send_completion: threading.Event | None = None
         self._stats: dict[str, int] = {
@@ -1171,6 +1181,17 @@ class _SyncBatchTransport:
             return False
 
         return True
+
+    def is_settled(self, item_id: str) -> bool:
+        """True iff the backend accepted this item and nothing newer for it is
+        queued or in flight. A failed send leaves the item buffered, so a
+        failed or unconfirmed item is never settled (#2604)."""
+        with self._lock:
+            return (
+                item_id in self._acked_items
+                and item_id not in self._buffer
+                and item_id not in self._inflight_digests
+            )
 
     def flush(
         self,
@@ -1615,6 +1636,8 @@ class _SyncBatchTransport:
                 self._stats["sent_items"] += len(payloads)
                 for item_id, _ in batch_items:
                     digest = self._inflight_digests.pop(item_id, None)
+                    self._acked_items[item_id] = None
+                    self._acked_items.move_to_end(item_id)
                     if digest is None or response_warnings:
                         # A response with warnings (e.g. an unresolved prompt
                         # link) may be resolved by a later re-send, so it does
@@ -1625,6 +1648,8 @@ class _SyncBatchTransport:
                     self._delivered_digests.move_to_end(item_id)
                 while len(self._delivered_digests) > self.max_queue_size:
                     self._delivered_digests.popitem(last=False)
+                while len(self._acked_items) > self.max_queue_size:
+                    self._acked_items.popitem(last=False)
             return True, events
 
         with self._lock:
@@ -1945,6 +1970,10 @@ class _SyncBatchTransport:
         )
 
 
+DEFAULT_TRACE_STATE_GRACE_SECONDS = 300.0
+_MAX_EVICTION_STEPS_PER_PASS = 256
+
+
 class ObservabilityClient:
     """Client for capturing and shipping generic application traces.
 
@@ -1962,11 +1991,21 @@ class ObservabilityClient:
         request_sender: (
             Callable[[str, str, dict[str, Any] | None], dict[str, Any]] | None
         ) = None,
+        trace_state_grace_seconds: float = DEFAULT_TRACE_STATE_GRACE_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        if trace_state_grace_seconds < 0:
+            raise ValueError("trace_state_grace_seconds must be >= 0")
         self.config = config or ObservabilityConfig()
         self._sender_override = sender
         self._request_sender_override = request_sender
         self._trace_states: dict[str, _TraceState] = {}
+        # Ended traces awaiting eviction (#2604): (eligible_at, trace_id), in
+        # eligible-time order (the clock is monotonic and every entry is
+        # appended with now + grace), so a pass only ever looks at the head.
+        self._trace_state_grace = float(trace_state_grace_seconds)
+        self._clock = clock
+        self._eviction_queue: deque[tuple[float, str]] = deque()
         self._lock = threading.RLock()
         self._snapshot_submission_complete = threading.Event()
         self._snapshot_submission_complete.set()
@@ -2510,6 +2549,54 @@ class ObservabilityClient:
                 state.trace.metadata = merged
 
         self._queue_trace_snapshot(trace_id)
+        self._schedule_trace_state_eviction(trace_id)
+        self._evict_expired_trace_states()
+
+    def _schedule_trace_state_eviction(self, trace_id: str) -> None:
+        with self._lock:
+            state = self._trace_states.get(trace_id)
+            if state is None:
+                return
+            state.ended = True
+            if not state.eviction_scheduled:
+                state.eviction_scheduled = True
+                self._eviction_queue.append(
+                    (self._clock() + self._trace_state_grace, trace_id)
+                )
+
+    def _evict_expired_trace_states(self) -> int:
+        """Drop ended, delivered traces whose grace window has passed (#2604).
+
+        Bounded work: only the head of the time-ordered queue is examined, at
+        most `_MAX_EVICTION_STEPS_PER_PASS` entries per call. A trace that is
+        not ended, or whose latest snapshot is queued, in flight, failed or
+        otherwise unconfirmed, is kept and rechecked one grace window later.
+        A later update to an evicted trace id starts a fresh snapshot.
+        """
+        evicted = 0
+        with self._lock:
+            now = self._clock()
+            steps = 0
+            while (
+                self._eviction_queue
+                and self._eviction_queue[0][0] <= now
+                and steps < _MAX_EVICTION_STEPS_PER_PASS
+            ):
+                steps += 1
+                _, trace_id = self._eviction_queue.popleft()
+                state = self._trace_states.get(trace_id)
+                if state is None or not state.ended:
+                    if state is not None:
+                        state.eviction_scheduled = False
+                    continue
+                if self._ingest_suppressed or self._transport.is_settled(trace_id):
+                    del self._trace_states[trace_id]
+                    evicted += 1
+                else:
+                    self._eviction_queue.append(
+                        (now + self._trace_state_grace, trace_id)
+                    )
+        return evicted
 
     def scope_ledger(self, trace_id: str) -> ScopeLedger | None:
         """The agent-scope ledger of a live trace (None for an unknown trace)."""
@@ -2556,7 +2643,9 @@ class ObservabilityClient:
             self._submit_trace_snapshot(
                 trace_id, payload, deadline=deadline, state=descriptor
             )
-        return self._flush_transport_until(deadline)
+        result = self._flush_transport_until(deadline)
+        self._evict_expired_trace_states()
+        return result
 
     def get_stats(self) -> dict[str, Any]:
         """Return a snapshot of transport delivery and local-drop health.

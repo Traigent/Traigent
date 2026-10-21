@@ -211,6 +211,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Ended, delivered traces are evicted from the observability client (#2604).**
+  `ObservabilityClient` no longer keeps every trace it ever started. A trace
+  that has ended and whose latest snapshot the backend accepted is dropped from
+  memory after a grace window (`trace_state_grace_seconds`, default 300 s).
+  Traces that are still running, queued, in flight or failed stay for retry.
+  Restarting an evicted trace id starts a fresh snapshot.
+
 - **TVL float ranges that declare `resolution` are now a grid (#1612).** A
   float `range` with a positive `resolution` loads as the discrete values
   `min, min+resolution, ...` (never above `max`); without `resolution` it stays
