@@ -268,3 +268,73 @@ def test_tombstones_are_bounded_fifo(monkeypatch):
     with pytest.raises(ValueError, match="Unknown trace_id"):
         client.end_trace("f-0")  # aged out of the bounded tombstone set
     client.end_trace("f-5")  # still tombstoned
+
+
+def _client_record(sender, clock) -> ObservabilityClient:
+    return ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            content_mode="record",
+            batch_size=1000,
+            max_buffer_age=999.0,
+            enable_atexit_flush=False,
+        ),
+        sender=sender,
+        trace_state_grace_seconds=GRACE,
+        clock=clock,
+    )
+
+
+def _evict(client, clock, trace_id):
+    client.flush()
+    clock.advance(GRACE + 1)
+    client._evict_expired_trace_states()
+    assert trace_id not in client._trace_states
+
+
+def test_revived_trace_keeps_its_stricter_content_policy():
+    clock = FakeClock()
+    requests: list[list[dict]] = []
+    client = _client_record(requests.append, clock)
+    # Explicitly metadata, though the client default is record.
+    client.start_trace("t", trace_id="pol", content_mode="metadata")
+    client.end_trace("pol")
+    _evict(client, clock, "pol")
+
+    client.record_observation("pol", name="o", input_data="SECRET-IN")
+    client.end_trace("pol", output_data="SECRET-OUT")
+    assert client.flush().success
+    assert "SECRET" not in repr(requests)
+
+
+def test_revived_trace_sends_the_clearing_marker_for_delivered_output():
+    clock = FakeClock()
+    requests: list[list[dict]] = []
+    client = _client_record(requests.append, clock)
+    client.start_trace("t", trace_id="clr")
+    client.end_trace("clr", output_data="DELIVERED")
+    _evict(client, clock, "clr")
+
+    client.end_trace("clr", content_mode="metadata", output_data="NEW")
+    assert client.flush().success
+    last = [t for r in requests for t in r if t["id"] == "clr"][-1]
+    assert last["output_data"] == {"redacted": True}
+    assert "NEW" not in repr(requests[-1])
+
+
+def test_malformed_tombstone_fails_closed_to_metadata():
+    clock = FakeClock()
+    requests: list[list[dict]] = []
+    client = _client_record(requests.append, clock)
+    client.start_trace("t", trace_id="bad", content_mode="record")
+    client.end_trace("bad")
+    _evict(client, clock, "bad")
+    import dataclasses
+
+    client._evicted_traces["bad"] = dataclasses.replace(
+        client._evicted_traces["bad"], resolved_content_mode="bogus"
+    )
+    client.end_trace("bad", output_data="SECRET-OUT")
+    assert client.flush().success
+    assert "SECRET" not in repr(requests)

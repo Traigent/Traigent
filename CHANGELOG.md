@@ -243,6 +243,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Revived traces keep their content policy and clearing markers (#2604).**
+  A late update to an evicted trace now resolves its content mode from the
+  trace's own tombstone (a malformed one fails closed to `metadata`), so a
+  trace set to `metadata` never sends content under a looser client `record`
+  policy. The tombstone also keeps per-field "content was delivered" flags, so
+  an `end_trace`/`record_observation` that withholds content sends the clearing
+  marker as it would for a live trace. Only the last 4096 evictions are
+  remembered: an update to a trace evicted longer ago raises `Unknown
+  trace_id`; set a longer `trace_state_grace_seconds` if late updates are
+  expected.
 - **Ended, delivered traces are evicted from the observability client (#2604).**
   `ObservabilityClient` no longer keeps every trace it ever started. A trace
   that has ended and whose latest snapshot the backend accepted is dropped from

@@ -27,6 +27,7 @@ from traigent.observability.config import (
     INGEST_MAX_OBSERVATIONS_PER_REQUEST,
     INGEST_MAX_TRACES_PER_REQUEST,
     NOT_SUPPLIED,
+    OBSERVABILITY_CONTENT_MODES,
     ObservabilityConfig,
     apply_content_mode,
     apply_content_mode_to_text,
@@ -1986,8 +1987,9 @@ _MAX_EVICTED_TRACE_TOMBSTONES = 4096
 class _EvictedTrace:
     """What a later update needs to restart an evicted trace id (#2604).
 
-    Carries only the trace's identity and its content policy, never its
-    content, so memory per entry is small and bounded by the tombstone cap.
+    Carries only the trace's identity, its content policy and per-field
+    "content was delivered" flags, never its content, so memory per entry is
+    small and bounded by the tombstone cap.
     """
 
     name: str
@@ -2006,6 +2008,13 @@ class ObservabilityClient:
     will trigger a best-effort atexit flush, but abrupt termination (for example
     `SIGKILL` or `os._exit()`) can still drop buffered payloads. Short-lived or
     serverless processes should call `flush()` or `close()` explicitly.
+
+    Ended, delivered traces are evicted after `trace_state_grace_seconds` (#2604).
+    A late update to an evicted trace revives it from a tombstone that keeps its
+    content policy and delivered-content flags. Only the last 4096 evictions are
+    remembered: an update to a trace evicted longer ago than that raises
+    `ValueError("Unknown trace_id ...")`. Use a longer grace window if late
+    updates are expected.
     """
 
     def __init__(
@@ -2124,14 +2133,25 @@ class ObservabilityClient:
         normalized = validate_content_mode_override(content_mode)
         with self._lock:
             state = self._trace_states.get(trace_id)
-        if state is None:
+            tombstone = self._evicted_traces.get(trace_id) if state is None else None
+        if state is not None:
+            base_mode = state.resolved_content_mode
+            locked = state.content_mode_locked
+        elif tombstone is not None:
+            # #2604: an evicted trace keeps its own content policy -- the
+            # revival that follows restores it, so resolve against it now
+            # instead of the (possibly looser) client default. A malformed
+            # tombstone fails closed to the strictest mode.
+            base_mode = tombstone.resolved_content_mode
+            locked = tombstone.content_mode_locked
+            if base_mode not in OBSERVABILITY_CONTENT_MODES:
+                base_mode, locked = "metadata", True
+        else:
             return self._resolve_against_client_default(normalized)
         if normalized is None:
-            return state.resolved_content_mode
-        if state.content_mode_locked:
-            return most_restrictive_content_mode(
-                normalized, state.resolved_content_mode
-            )
+            return base_mode
+        if locked:
+            return most_restrictive_content_mode(normalized, base_mode)
         return normalized
 
     def start_trace(
@@ -2371,6 +2391,31 @@ class ObservabilityClient:
             )
 
             if existing is None:
+                # A revived trace (#2604) holds no observations, but its
+                # tombstone remembers which fields were delivered: send the
+                # clearing marker for those exactly as a live update would.
+                if input_supplied and state.had_prior_content(
+                    observation_id, "input_data"
+                ):
+                    gated_input_data = wire_value_for_tightened_update(
+                        gated_input_data,
+                        effective_content_mode=effective_content_mode,
+                        existing_value=redacted_content_marker(),
+                    )
+                if output_supplied and state.had_prior_content(
+                    observation_id, "output_data"
+                ):
+                    gated_output_data = wire_value_for_tightened_update(
+                        gated_output_data,
+                        effective_content_mode=effective_content_mode,
+                        existing_value=redacted_content_marker(),
+                    )
+                if (
+                    error_supplied
+                    and gated_error_message is None
+                    and state.had_prior_content(observation_id, "error_message")
+                ):
+                    metadata["error_message"] = "[REDACTED]"
                 observation = ObservationDTO(
                     id=observation_id,
                     type=effective_type,
@@ -2569,7 +2614,14 @@ class ObservabilityClient:
                 state.trace.output_data = wire_value_for_tightened_update(
                     gated_output_data,
                     effective_content_mode=effective_content_mode,
-                    existing_value=state.trace.output_data,
+                    existing_value=(
+                        state.trace.output_data
+                        if state.trace.output_data is not None
+                        or not state.had_prior_content(
+                            _TRACE_CONTENT_KEY, "output_data"
+                        )
+                        else redacted_content_marker()
+                    ),
                 )
             if metadata:
                 # A8: detach (deep copy) the caller's metadata before merging
@@ -2594,6 +2646,26 @@ class ObservabilityClient:
                     (self._clock() + self._trace_state_grace, trace_id)
                 )
 
+    @staticmethod
+    def _delivered_content_history(state: _TraceState) -> dict[str, frozenset[str]]:
+        """Per-field "content was delivered" flags to carry on a tombstone.
+
+        The history recorded so far, plus every content field the evicted
+        state still holds (a delivered value, or an earlier clearing marker),
+        so a revived trace sends the clearing marker exactly as a live one.
+        """
+        history = {key: set(fields) for key, fields in state.content_history.items()}
+        for field_name in _SAFE_SNAPSHOT_CONTENT_FIELDS:
+            if getattr(state.trace, field_name, None) is not None:
+                history.setdefault(_TRACE_CONTENT_KEY, set()).add(field_name)
+        for observation_id, observation in state.observations.items():
+            for field_name in _SAFE_SNAPSHOT_CONTENT_FIELDS:
+                if getattr(observation, field_name, None) is not None:
+                    history.setdefault(observation_id, set()).add(field_name)
+            if observation.metadata.get("error_message") is not None:
+                history.setdefault(observation_id, set()).add("error_message")
+        return {key: frozenset(fields) for key, fields in history.items()}
+
     def _remember_evicted_locked(self, trace_id: str, state: _TraceState) -> None:
         self._evicted_traces[trace_id] = _EvictedTrace(
             name=state.trace.name,
@@ -2602,9 +2674,7 @@ class ObservabilityClient:
             snapshot_sequence=state.snapshot_sequence,
             resolved_content_mode=state.resolved_content_mode,
             content_mode_locked=state.content_mode_locked,
-            content_history={
-                key: frozenset(fields) for key, fields in state.content_history.items()
-            },
+            content_history=self._delivered_content_history(state),
         )
         self._evicted_traces.move_to_end(trace_id)
         while len(self._evicted_traces) > _MAX_EVICTED_TRACE_TOMBSTONES:
