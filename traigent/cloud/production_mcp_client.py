@@ -125,6 +125,21 @@ def default_mcp_server_args() -> list[str]:
     ]
 
 
+def _safe_error_text(exc: BaseException) -> str:
+    """Log/response-safe text for an exception (#2555).
+
+    An ``McpError`` message is supplied by the remote server and may carry
+    customer text, so only its numeric code is surfaced alongside a fixed SDK
+    message. Other (locally raised) exceptions keep their own text.
+    """
+    if isinstance(exc, McpError):
+        code = getattr(getattr(exc, "error", None), "code", None)
+        if isinstance(code, int) and not isinstance(code, bool):
+            return f"MCP server error (code={code})"
+        return "MCP server error"
+    return str(exc)
+
+
 @dataclass
 class MCPServerConfig:
     """Configuration for MCP server connection."""
@@ -459,7 +474,9 @@ class ProductionMCPClient:
                     raise
                 except Exception as e:
                     # Other exceptions may not be retryable
-                    logger.error(f"MCP tool call failed: {tool_name} - {e}")
+                    logger.error(
+                        "MCP tool call failed: %s - %s", tool_name, _safe_error_text(e)
+                    )
                     raise
 
             # Use retry handler for robust tool execution
@@ -521,7 +538,7 @@ class ProductionMCPClient:
                 )
                 response = MCPResponse(
                     success=False,
-                    error_message=str(e),
+                    error_message=_safe_error_text(e),
                     data=error_data,
                     request_id=operation_id,
                 )
@@ -571,8 +588,8 @@ class ProductionMCPClient:
             )
 
         except Exception as e:
-            logger.error(f"Failed to list MCP resources: {e}")
-            return MCPResponse(success=False, error_message=str(e))
+            logger.error("Failed to list MCP resources: %s", _safe_error_text(e))
+            return MCPResponse(success=False, error_message=_safe_error_text(e))
 
     async def read_resource(self, uri: str) -> MCPResponse:
         """Read MCP resource.
@@ -603,15 +620,15 @@ class ProductionMCPClient:
             # Preserve the structured JSON-RPC error code so the transport
             # layer can classify not-found/unsupported without sniffing the
             # human-readable message.
-            logger.error(f"Failed to read MCP resource {uri}: {e}")
+            logger.error("Failed to read MCP resource %s: %s", uri, _safe_error_text(e))
             return MCPResponse(
                 success=False,
-                error_message=e.error.message,
+                error_message=_safe_error_text(e),
                 data={"error_code": e.error.code},
             )
         except Exception as e:
-            logger.error(f"Failed to read MCP resource {uri}: {e}")
-            return MCPResponse(success=False, error_message=str(e))
+            logger.error("Failed to read MCP resource %s: %s", uri, _safe_error_text(e))
+            return MCPResponse(success=False, error_message=_safe_error_text(e))
 
     # Backend Integration Operations
 

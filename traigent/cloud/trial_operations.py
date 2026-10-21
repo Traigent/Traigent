@@ -72,13 +72,34 @@ def resolve_privacy_enabled(client: Any) -> bool:
     return False
 
 
+def _closed_stop_reason(reason: Any) -> str | None:
+    """Map a backend-supplied stop reason onto the closed SDK vocabulary (#2555).
+
+    Falsy values stay ``None``; anything outside ``StopReason`` (including
+    non-strings) renders as ``"unknown"`` so server text never reaches logs,
+    warnings or reprs.
+    """
+    if not reason:
+        return None
+    from typing import get_args
+
+    from traigent.api.types import StopReason
+
+    if isinstance(reason, str) and reason in get_args(StopReason):
+        return reason
+    return "unknown"
+
+
 @dataclass(frozen=True)
 class TrialSlotResult:
     """Neutral result for a backend trial-slot request."""
 
     trial_id: str | None = None
     optimization_complete: bool = False
+    # Closed SDK vocabulary only (StopReason members or "unknown", #2555).
     reason: str | None = None
+    # Raw backend value: server-supplied, so never repr'd, compared or logged.
+    raw_reason: str | None = field(default=None, repr=False, compare=False)
 
     def __bool__(self) -> bool:
         return bool(self.trial_id)
@@ -597,16 +618,19 @@ class TrialOperations:
                             isinstance(data, dict)
                             and data.get("should_continue") is False
                         ):
-                            reason = data.get("stop_reason") or data.get("reason")
+                            raw = data.get("stop_reason") or data.get("reason")
+                            slot = TrialSlotResult(
+                                optimization_complete=True,
+                                reason=_closed_stop_reason(raw),
+                                raw_reason=raw if isinstance(raw, str) else None,
+                            )
                             logger.info(
                                 "Backend next-trial completed optimization for session %s "
                                 "(reason=%s)",
                                 session_id,
-                                reason,
+                                slot.reason,
                             )
-                            return TrialSlotResult.complete(
-                                str(reason) if reason else None
-                            )
+                            return slot
                         logger.info(
                             "Backend next-trial returned no slot for session %s "
                             "(should_continue=%s)",
