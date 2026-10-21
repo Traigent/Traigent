@@ -11,6 +11,8 @@ from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
 from traigent.observability.otel.exporter import TraigentOTLPExporter
 from traigent.observability.otel.transport import TransportError, TransportResponse
 
+pytestmark = pytest.mark.backend_online
+
 
 class FakeTransport:
     def __init__(self, script):
