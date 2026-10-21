@@ -1547,9 +1547,13 @@ class TestOptimizationOrchestrator:
         result = await orchestrator.optimize(mock_function, sample_dataset)
 
         # All trials should fail
-        assert (
-            result.status == OptimizationStatus.COMPLETED
-        )  # Optimization completes even if all fail
+        # #2477: a run where every trial failed is FAILED, not COMPLETED, and
+        # carries the ALL_TRIALS_FAILED warning code (no exception is raised).
+        assert result.status == OptimizationStatus.FAILED
+        assert "ALL_TRIALS_FAILED" in (
+            getattr(result, "warning_codes", None)
+            or result.metadata.get("warning_codes", [])
+        )
         assert len(result.trials) == 3  # All trials are recorded, even if failed
         assert result.best_config is None  # No successful config
         assert result.best_score is None

@@ -182,6 +182,20 @@ _EMPTY_SMART_RUN_OWNED_STOP_REASONS = frozenset(
     }
 )
 _OBJECTIVE_UNMATCHED_WARNING_CODE = "OBJECTIVE_UNMATCHED"
+# Issue #2477: every executed trial failed (none succeeded).
+_ALL_TRIALS_FAILED_WARNING_CODE = "ALL_TRIALS_FAILED"
+_ALL_FAILED_OWNED_STOP_REASONS = frozenset(
+    {
+        "timeout",
+        "user_cancelled",
+        "cost_limit",
+        "execution_budget",
+        "vendor_error",
+        "network_error",
+        "error",
+        "no_usage_captured",
+    }
+)
 # Issue #1832: a declared, weighted, matched objective whose value is uniformly
 # constant across the ranking-eligible trials cannot influence ``best_config`` —
 # its weight is a silent no-op (e.g. cost/latency = 0 on a no-LLM-scored or
@@ -5888,6 +5902,29 @@ class OptimizationOrchestrator:
             session_summary["available_metrics"] = list(available_metric_names)
             if suggestion:
                 session_summary["did_you_mean"] = suggestion
+            if result_status == OptimizationStatus.COMPLETED:
+                result_status = OptimizationStatus.FAILED
+                self._status = result_status
+
+        # Issue #2477 (mirrors the #1691 downgrade above): a run that executed
+        # trials where none succeeded is not COMPLETED. Stop causes that own
+        # their status (timeout/cancel, budgets, vendor/network errors) are
+        # left untouched; no exception is raised.
+        if (
+            self._trials
+            and not any(t.is_successful for t in self._trials)
+            and any(t.status == TrialStatus.FAILED for t in self._trials)
+            and self._stop_reason not in _ALL_FAILED_OWNED_STOP_REASONS
+        ):
+            failed_count = sum(
+                1 for t in self._trials if t.status == TrialStatus.FAILED
+            )
+            result_warnings.append(
+                f"All trials failed: {failed_count} of {len(self._trials)} trial(s) "
+                "failed and none succeeded; no best_config was selected. See "
+                "per-trial error messages."
+            )
+            result_warning_codes.append(_ALL_TRIALS_FAILED_WARNING_CODE)
             if result_status == OptimizationStatus.COMPLETED:
                 result_status = OptimizationStatus.FAILED
                 self._status = result_status
