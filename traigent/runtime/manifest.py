@@ -15,7 +15,7 @@ import secrets
 import tempfile
 import threading
 import time
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta, UTC
 from pathlib import Path
@@ -410,6 +410,7 @@ def reserve_occurrence(
     *,
     attempt: int | None = None,
     now: datetime | None = None,
+    clock: Callable[[], datetime] | None = None,
     lease: timedelta = OCCURRENCE_LEASE,
 ) -> bool:
     """Atomically record an occurrence; ``False`` when it is already recorded.
@@ -423,9 +424,15 @@ def reserve_occurrence(
     mismatch raises ``hold`` at ``approval``.  ``attempt=None`` (a low-level
     caller with no approval) skips the generation check; ``respond`` always
     passes it.
+
+    ``clock``, when given, is read again once the lock is held: the lease of
+    the new reservation starts at that moment, never at a time captured
+    before a long lock wait.
     """
     path = _occ_path(state_dir, agent_id)
     with _ledger_lock(state_dir, path):
+        if clock is not None:
+            now = clock()
         doc = _read_json(path, {})
         if not isinstance(doc, dict):
             raise RuntimeRequirementError(E_STATE, "occurrences.json")
@@ -450,10 +457,13 @@ def reserve_occurrence(
             ):
                 raise RuntimeRequirementError(E_EPISODE_FIX_RUNNING, "breach")
         started_at = (now or utcnow()).isoformat()
+        # A caller-supplied start time (low-level, no ``clock``) is honoured;
+        # ``respond`` supplies none, so its lease starts at the stamp above.
+        started_at = str(dict(run_info).get("started_at", started_at))
         doc[key] = {
-            "started_at": started_at,
             **dict(run_info),
-            "heartbeat_at": dict(run_info).get("started_at", started_at),
+            "started_at": started_at,
+            "heartbeat_at": started_at,
             "status": STATUS_STARTED,
             "attempts": failed + 1,
         }
@@ -478,12 +488,19 @@ def update_occurrence(
 
     A writer whose reservation was superseded (its lease expired and a newer
     approved attempt took over) is fenced out: nothing is written, ``False``.
+    The record must also still be an active reservation (``started``, not
+    finished): a restored ``failed`` record rejects late writes.
     """
     path = _occ_path(state_dir, agent_id)
     with _ledger_lock(state_dir, path):
         doc = _read_json(path, {})
         record = doc.get(key) if isinstance(doc, dict) else None
-        if not isinstance(record, dict) or record.get("attempts") != attempt:
+        if (
+            not isinstance(record, dict)
+            or record.get("attempts") != attempt
+            or record.get("status") != STATUS_STARTED
+            or record.get("finished")
+        ):
             return False
         record.update(run_info)
         _write_json(path, doc)

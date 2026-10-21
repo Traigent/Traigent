@@ -282,9 +282,9 @@ async def respond(
         state,
         agent_id,
         key,
-        {"started_at": clock().isoformat(), "run_id": None, "breach_id": breach_id},
+        {"run_id": None, "breach_id": breach_id},
         attempt=attempt,
-        now=clock(),
+        clock=clock,
         lease=occurrence_lease,
     ):
         raise OccurrenceUsed()
@@ -302,15 +302,17 @@ async def respond(
         _heartbeat(state, agent_id, key, attempt, clock, occurrence_lease)
     )
     try:
-        result = await fn.optimize(cost_limit=float(ceiling))
+        try:
+            result = await fn.optimize(cost_limit=float(ceiling))
+        finally:
+            # Also on cancellation: no heartbeat may outlive the run.
+            await _stop(heartbeat)
     except Exception:  # noqa: BLE001 - user code; its text is never surfaced
         # Spend may have occurred and is never undone.  The occurrence is marked
         # failed (kept in the ledger with its attempt count) so that an explicit
         # retry is possible, but only through a NEW human approval.
-        await _stop(heartbeat)
         record({"status": manifest.STATUS_FAILED, "run_id": None})
         raise RuntimeRequirementError(E_OPTIMIZE_FAILED) from None
-    await _stop(heartbeat)
     run_id = _run_id(result)
     record({"run_id": run_id, "finished": True})
     return RespondResult(breach_id, rule_id, OCCURRENCE, run_id, float(ceiling))
