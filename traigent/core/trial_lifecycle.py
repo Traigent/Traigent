@@ -680,6 +680,7 @@ class TrialLifecycle:
             self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_budget_metadata(result, closure, budget_exhausted)
             self._apply_effectuation_metadata(result, func)
+            self._apply_vendor_attempts(result, capture_bucket)
             self._apply_content_identity(
                 result,
                 evaluation_config,
@@ -786,6 +787,7 @@ class TrialLifecycle:
             )
             self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_effectuation_metadata(result, func)
+            self._apply_vendor_attempts(result, capture_bucket)
             self._apply_content_identity(
                 result, evaluation_config, identity_run, None, capture_bucket
             )
@@ -854,6 +856,22 @@ class TrialLifecycle:
                 getattr(result, "trial_id", "<unknown>"),
                 type(exc).__name__,
             )
+
+    @staticmethod
+    def _apply_vendor_attempts(result: TrialResult, capture_bucket: Any) -> None:
+        """Record per-trial provider-call attempts (SDK-41); no-op when none."""
+        if capture_bucket is None:
+            return
+        try:
+            from traigent.utils.vendor_retry import summarize_attempts
+
+            with capture_bucket.lock:
+                attempts = list(capture_bucket.vendor_attempts)
+            summary = summarize_attempts(attempts)
+            if summary:
+                result.metadata = {**(result.metadata or {}), **summary}
+        except Exception:  # noqa: BLE001 - accounting must never fail a trial
+            logger.debug("Vendor attempt metadata omitted", exc_info=True)
 
     def _apply_effectuation_metadata(
         self,

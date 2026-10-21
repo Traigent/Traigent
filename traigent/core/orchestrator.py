@@ -11,7 +11,6 @@ import copy
 import inspect
 import math
 import operator
-import os
 import statistics
 import sys
 import time
@@ -3376,6 +3375,10 @@ class OptimizationOrchestrator:
         # intentionally NOT clamped — that clamp was removed with the F1 fix.)
         self._apply_execution_budget()
 
+        # SDK-41: validate the vendor-retry env at run start so a typo fails
+        # here with a clear message instead of silently disabling retries.
+        self._vendor_retry_settings()
+
         descriptor = resolve_function_descriptor(func)
         self._function_descriptor = descriptor
         self._workflow_trace_manager._function_descriptor = descriptor
@@ -4273,22 +4276,13 @@ class OptimizationOrchestrator:
         Returns ``(max_retries, base_backoff_seconds)``. Defaults to ``0``
         (opt-in) so the documented graceful fail-stop contract is unchanged
         unless the operator sets ``TRAIGENT_VENDOR_MAX_RETRIES``. A malformed
-        value also yields the default.
+        value raises ``ConfigurationError`` (SDK-41; validated at run start).
         """
 
-        def _read(name: str, default: float, *, minimum: float) -> float:
-            raw = os.environ.get(name)
-            if raw is None or not raw.strip():
-                return default
-            try:
-                value = float(raw)
-            except (TypeError, ValueError):
-                return default
-            return value if value >= minimum else default
+        from traigent.utils.vendor_retry import resolve_vendor_retry_settings
 
-        max_retries = int(_read("TRAIGENT_VENDOR_MAX_RETRIES", 0.0, minimum=0.0))
-        base_backoff = _read("TRAIGENT_VENDOR_RETRY_BACKOFF", 1.0, minimum=0.0)
-        return max_retries, base_backoff
+        settings = resolve_vendor_retry_settings()
+        return settings.max_retries, settings.base_backoff_seconds
 
     async def _maybe_auto_retry_vendor_error(self, exc: VendorPauseError) -> str | None:
         """Bounded auto-retry/backoff for transient vendor errors (#1404).
@@ -6172,6 +6166,7 @@ class OptimizationOrchestrator:
             metadata["artifact_fingerprints"] = dict(artifact_fingerprints)
         if getattr(self, "_resume_summary", None) is not None:
             metadata["resume"] = dict(self._resume_summary or {})
+        metadata.update(self._vendor_attempt_totals())
 
         # Flag offline mode so callbacks can show appropriate hints
         if is_offline_requested(policy_from_config(self.traigent_config)):
@@ -6211,6 +6206,29 @@ class OptimizationOrchestrator:
             metadata["promotion_precondition"] = dict(precondition)
 
         return metadata
+
+    def _vendor_attempt_totals(self) -> dict[str, Any]:
+        """Run-level provider-call attempt totals (SDK-41); empty when none."""
+        attempts = retries = unknown = 0
+        records: list[dict[str, Any]] = []
+        for trial in self._trials:
+            meta = getattr(trial, "metadata", None) or {}
+            trial_attempts = meta.get("vendor_call_attempts")
+            if not isinstance(trial_attempts, int):
+                continue
+            attempts += trial_attempts
+            retries += int(meta.get("vendor_call_retries") or 0)
+            unknown += int(meta.get("vendor_call_unknown_usage_attempts") or 0)
+            for record in meta.get("vendor_call_attempt_records") or []:
+                records.append({"trial_id": getattr(trial, "trial_id", None), **record})
+        if not attempts:
+            return {}
+        return {
+            "vendor_call_attempts": attempts,
+            "vendor_call_retries": retries,
+            "vendor_call_unknown_usage_attempts": unknown,
+            "vendor_call_attempt_records": records,
+        }
 
     def _create_optimization_result(self) -> OptimizationResult:
         """Create final optimization result.
