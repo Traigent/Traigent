@@ -43,7 +43,8 @@ SDK_NAME = "python"
 #: leases.  A state directory written by an earlier version is refused, never converted.
 STATE_VERSION = 2
 STATE_MARKER = "state-owner.json"
-TOKEN_MAP_FORMAT = "tvl-token-map/2"
+#: The compiler's contract (tvl-spec accepts only /1); local state versioning is on the marker.
+TOKEN_MAP_FORMAT = "tvl-token-map/1"
 MANIFEST_FORMAT = "traigent-runtime-manifest/2"
 #: Longest wait for a ledger lock (same default as the JS SDK).
 LOCK_TIMEOUT_S = 60.0

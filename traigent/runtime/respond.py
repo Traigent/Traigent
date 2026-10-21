@@ -77,7 +77,7 @@ def _optimize_rule(requirement: RuntimeRequirement) -> str:
     for rule in requirement.rules:
         # Only a rule triggered by an OPENED episode may authorize a fix.
         if rule.action == "optimize" and rule.event == "episode_opened":
-            return rule.id
+            return str(rule.id)
     raise RuntimeRequirementError(E_NO_RULE)
 
 
