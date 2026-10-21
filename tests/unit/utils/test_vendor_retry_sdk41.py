@@ -1057,3 +1057,82 @@ def test_late_call_in_ended_scope_gets_unique_id(mock_off):
         assert len(ids) == 3 and len(set(ids)) == 3
     finally:
         p.stop()
+
+
+# ------------------------------------------------------------ review round 4
+
+
+def test_trial_scopes_inside_an_outer_scope_own_separate_ledgers():
+    from traigent.utils.langchain_interceptor import (
+        begin_vendor_call,
+        record_vendor_attempt,
+    )
+
+    with capture_scope() as outer:
+        with capture_scope(ledger_owner=True) as t1:
+            with capture_scope():  # the evaluator's nested scope
+                record_vendor_attempt(
+                    {
+                        "call_index": begin_vendor_call(),
+                        "retried": True,
+                        "usage_known": False,
+                    }
+                )
+        with capture_scope(ledger_owner=True) as t2:
+            with capture_scope():
+                record_vendor_attempt(
+                    {"call_index": begin_vendor_call(), "usage_known": True}
+                )
+    s1, s2 = summarize_bucket(t1), summarize_bucket(t2)
+    assert s1["vendor_call_attempts"] == 1 and s1["vendor_call_retries"] == 1
+    assert s2["vendor_call_attempts"] == 1 and s2["vendor_call_retries"] == 0
+    assert outer.vendor_attempt_total == 0
+
+    # a sibling's retry does not flag the other trial's cost
+    from traigent.utils.trial_costs import is_cost_unmeasured
+
+    r1 = types.SimpleNamespace(metadata={}, metrics={"cost": 0.1})
+    r2 = types.SimpleNamespace(metadata={}, metrics={"cost": 0.1})
+    TrialLifecycle._apply_vendor_attempts(r1, t1)
+    TrialLifecycle._apply_vendor_attempts(r2, t2)
+    assert is_cost_unmeasured(r1.metrics) and not is_cost_unmeasured(r2.metrics)
+
+
+@pytest.mark.asyncio
+async def test_parallel_trials_in_outer_scope_report_own_attempts_and_sum():
+    import asyncio
+
+    from traigent.core.orchestrator import OptimizationOrchestrator
+    from traigent.utils.langchain_interceptor import (
+        begin_vendor_call,
+        record_vendor_attempt,
+    )
+
+    async def trial(n_attempts, retried):
+        async with capture_scope(ledger_owner=True) as bucket:
+            async with capture_scope():
+                for i in range(n_attempts):
+                    await asyncio.sleep(0)
+                    record_vendor_attempt(
+                        {
+                            "call_index": begin_vendor_call(),
+                            "retried": retried and i == 0,
+                            "usage_known": not (retried and i == 0),
+                        }
+                    )
+        result = types.SimpleNamespace(
+            trial_id=str(n_attempts), metadata={}, metrics={}
+        )
+        TrialLifecycle._apply_vendor_attempts(result, bucket)
+        return result
+
+    with capture_scope():
+        a, b = await asyncio.gather(trial(2, True), trial(3, False))
+    assert a.metadata["vendor_call_attempts"] == 2
+    assert b.metadata["vendor_call_attempts"] == 3
+    assert "cost_unmeasured" in a.metrics and "cost_unmeasured" not in b.metrics
+    totals = OptimizationOrchestrator._vendor_attempt_totals(
+        types.SimpleNamespace(_trials=[a, b], _abandoned_vendor_attempts=[])
+    )
+    assert totals["vendor_call_attempts"] == 5
+    assert totals["vendor_call_retries"] == 1
