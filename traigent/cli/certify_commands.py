@@ -1070,6 +1070,10 @@ def _verify_agent_quality(
     }
     lines = [
         result.code,
+        # Machine code above stays stable; this scopes what was verified.
+        "verified_scope=signature_and_arithmetic "
+        "(quality numbers are reported by the customer; Traigent has not "
+        "measured or verified them)",
         f"primary_objective_id={result.primary_objective_id}",
         f"nominal_coverage_ppm={result.nominal_coverage_ppm}",
         f"holdout_item_count={result.holdout_item_count}",
