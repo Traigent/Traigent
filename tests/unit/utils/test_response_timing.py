@@ -2,7 +2,8 @@
 
 import asyncio
 import gc
-import threading
+import subprocess
+import sys
 import types
 from unittest.mock import patch
 
@@ -75,43 +76,54 @@ def test_object_without_weakref_support_falls_back_safely():
     assert rt.recorded_response_time_ms(obj) is None
 
 
-def test_gc_callback_while_lock_held_does_not_deadlock():
-    resp = Resp()
-    rt.record_response_time_ms(resp, 1.0)
-    del resp
-    done = threading.Event()
+_GC_SCRIPT = """
+import gc, importlib.util, sys, threading
+spec = importlib.util.spec_from_file_location("rt_under_test", sys.argv[1])
+rt = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(rt)
+from pydantic import BaseModel, ConfigDict
 
-    def work():
-        with rt._LOCK:  # a GC pass here fires the weakref callback
-            gc.collect()
-        rt.recorded_response_time_ms(Resp())  # drains the queue
-        done.set()
+class Resp(BaseModel):
+    model_config = ConfigDict(extra="allow")
 
-    t = threading.Thread(target=work, daemon=True)
-    t.start()
-    assert done.wait(10), "weakref callback deadlocked on _LOCK"
-
-
-def test_concurrent_record_and_read():
-    errors = []
-
-    def worker(n):
-        try:
-            for i in range(300):
-                r = Resp()
-                rt.record_response_time_ms(r, float(n * 1000 + i))
-                assert rt.recorded_response_time_ms(r) == float(n * 1000 + i)
-        except Exception as exc:  # noqa: BLE001
-            errors.append(exc)
-
-    threads = [threading.Thread(target=worker, args=(n,)) for n in range(6)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(30)
+resp = Resp()
+resp.__dict__["self_ref"] = resp  # reference cycle: only cyclic GC frees it
+rt.record_response_time_ms(resp, 1.0)
+del resp
+with rt._LOCK:  # the weakref callback fires inside this collect
     gc.collect()
-    _drain()
-    assert not errors
+assert rt.recorded_response_time_ms(Resp()) is None
+
+errors = []
+def worker(n):
+    try:
+        for i in range(300):
+            r = Resp()
+            rt.record_response_time_ms(r, float(n * 1000 + i))
+            assert rt.recorded_response_time_ms(r) == float(n * 1000 + i)
+    except Exception as exc:
+        errors.append(exc)
+threads = [threading.Thread(target=worker, args=(n,), daemon=True) for n in range(6)]
+for t in threads: t.start()
+for t in threads: t.join(15)
+assert not any(t.is_alive() for t in threads) and not errors
+"""
+
+_RT_PATH = rt.__file__
+
+
+def _run_gc_script(module_path):
+    return subprocess.run(
+        [sys.executable, "-c", _GC_SCRIPT, module_path],
+        timeout=20,
+        capture_output=True,
+        check=False,
+    )
+
+
+def test_gc_callback_while_lock_held_does_not_deadlock():
+    """Cyclic-GC weakref callback under _LOCK, bounded in a subprocess."""
+    assert _run_gc_script(_RT_PATH).returncode == 0
 
 
 @pytest.fixture()
