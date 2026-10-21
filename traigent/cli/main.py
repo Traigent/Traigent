@@ -174,7 +174,13 @@ def _display_optimization_result(
     best_score_str = (
         f"{result.best_score:.3f}" if result.best_score is not None else "N/A"
     )
-    console.print(f"✅ Best score: [green]{best_score_str}[/green]")
+    if getattr(result, "stop_reason", None) == "user_cancelled":
+        console.print(
+            "🛑 [yellow]Cancelled by user; results are partial.[/yellow] "
+            f"Best score so far: [green]{best_score_str}[/green]"
+        )
+    else:
+        console.print(f"✅ Best score: [green]{best_score_str}[/green]")
     console.print(f"   Best config: {result.best_config}")
     console.print(f"   Total trials: {len(result.trials)}")
     console.print(f"   Successful trials: {len(result.successful_trials)}")
@@ -189,7 +195,18 @@ def _display_optimization_summary(
     results: list[tuple[str, Any]], output_dir_resolved: Path
 ) -> None:
     """Display the final optimization summary table."""
-    console.print("\n[bold green]Optimization Complete![/bold green]")
+    cancelled = [
+        name
+        for name, res in results
+        if getattr(res, "stop_reason", None) == "user_cancelled"
+    ]
+    if cancelled:
+        console.print(
+            "\n[bold yellow]Optimization CANCELLED BY USER; results are "
+            f"partial for {len(cancelled)} of {len(results)} function(s).[/bold yellow]"
+        )
+    else:
+        console.print("\n[bold green]Optimization Complete![/bold green]")
     console.print(f"Total functions optimized: {len(results)}")
     console.print(f"Results saved to: {output_dir_resolved}")
 

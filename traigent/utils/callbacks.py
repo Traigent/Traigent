@@ -147,6 +147,12 @@ def _sanitize_user_labels(
     )
 
 
+def _is_user_cancelled(result: Any) -> bool:
+    """True when the run ended because the user cancelled it (#2666)."""
+    reason = getattr(result, "stop_reason", None)
+    return str(getattr(reason, "value", reason)) == "user_cancelled"
+
+
 def _run_status_text(result: Any) -> str:
     """Map a run's status onto the closed status set, never interpolating it raw.
 
@@ -369,7 +375,9 @@ class ProgressBarCallback(OptimizationCallback):
             )
 
         _safe_print("\n")
-        if result.stop_reason == "timeout" or result.status == "cancelled":
+        if _is_user_cancelled(result):
+            _safe_print("🛑 Optimization CANCELLED BY USER; results are partial.")
+        elif result.stop_reason == "timeout" or result.status == "cancelled":
             timeout_value = None
             if isinstance(result.metadata, dict):
                 timeout_value = result.metadata.get("timeout")
@@ -631,8 +639,13 @@ class LoggingCallback(OptimizationCallback):
         best_score_str = (
             f"{result.best_score:.3f}" if result.best_score is not None else "N/A"
         )
+        outcome = (
+            "Optimization CANCELLED BY USER (partial)"
+            if _is_user_cancelled(result)
+            else "Optimization complete"
+        )
         self._log(
-            f"Optimization complete: "
+            f"{outcome}: "
             f"best_score={best_score_str}, "
             f"success_rate={result.success_rate:.1%}, "
             f"duration={result.duration:.1f}s"
@@ -878,7 +891,10 @@ class SimpleProgressCallback(OptimizationCallback):
 
     def on_optimization_complete(self, result: OptimizationResult) -> None:
         """Called when optimization completes."""
-        self._output("\n✨ Optimization complete!")
+        if _is_user_cancelled(result):
+            self._output("\n🛑 Optimization CANCELLED BY USER; results are partial.")
+        else:
+            self._output("\n✨ Optimization complete!")
         if self.show_details and result.best_score is not None:
             self._output(f"🏆 Best score: {result.best_score:.3f}")
             if result.best_config:
@@ -1407,7 +1423,9 @@ class DetailedProgressCallback(OptimizationCallback):
         """Print the completion header."""
         _safe_print("\n" + "=" * 60)
         is_early_stop = result.stop_reason == "timeout" or result.status == "cancelled"
-        if is_early_stop:
+        if _is_user_cancelled(result):
+            _safe_print("🛑 OPTIMIZATION CANCELLED BY USER (partial results)")
+        elif is_early_stop:
             timeout_value = (
                 result.metadata.get("timeout")
                 if isinstance(result.metadata, dict)

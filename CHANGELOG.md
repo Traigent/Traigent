@@ -102,7 +102,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   with `status` CANCELLED and `stop_reason` `user_cancelled`. It now logs one
   warning with counts only (N of M trials finished, result is partial), and
   `traigent results list` has a Status column. Results saved before this
-  change show `unknown`.
+  change show `unknown`. Progress, summary and logging callbacks and the CLI
+  summary now say "CANCELLED BY USER" and that results are partial, instead of
+  "timeout reached" or "complete".
 
 - **`traigent hooks validate --exit-code` fails on an empty explicit target
   (#2639).** When a target path is given explicitly and contains no
@@ -161,7 +163,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **BREAKING: `outputs_sample` removed from `InteractiveOptimizer.report_results`
   and the trial-result payload (#2239).** Model outputs are customer content and
   are never sent to the backend. Passing `outputs_sample=` now raises
-  `TypeError`; drop the argument. The SDK no longer puts `outputs_sample` on
+  `TypeError`, and `error_message`/`metadata` on `report_results` and
+  `submit_trial_result` are now keyword-only so a legacy positional
+  `outputs_sample` cannot be silently rebound; drop the argument. The SDK no longer puts `outputs_sample` on
   the wire.
 
 - **Candidate runs (`optimize(apply=False)`) are temporarily withdrawn.** Their
