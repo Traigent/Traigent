@@ -62,7 +62,11 @@ from traigent.core.config_state_manager import (
 from traigent.core.config_state_manager import (
     OptimizationState,  # Lifecycle state owned by that manager.
 )
-from traigent.core.cost_enforcement import is_cost_preapproved, normalize_cost_approved
+from traigent.core.cost_enforcement import (
+    CostTrackingRequiredError,
+    is_cost_preapproved,
+    normalize_cost_approved,
+)
 from traigent.core.execution_budget import ExecutionBudget
 from traigent.core.execution_policy_runtime import (
     SOURCE_CLOUD_BRAIN,
@@ -136,6 +140,7 @@ from traigent.utils.env_config import (
 from traigent.utils.exceptions import (
     AuthenticationError,
     ConfigurationError,
+    CostLimitExceeded,
     OptimizationError,
     OverlappingOptimizationError,
     TVLValidationError,
@@ -2797,7 +2802,11 @@ class OptimizedFunction(Generic[_P, _R]):
                     and not bool(getattr(self, "_privacy_alias_enabled", False))
                 ),
                 execution_policy=execution_policy,
-                no_egress=result_source == SOURCE_OFFLINE,
+                # compare() never opens a backend session or client: no backend
+                # construction, hostname resolution or Redis ping. Provider calls
+                # and a configured hybrid-API evaluator are unaffected (this flag
+                # only gates backend transport).
+                no_egress=True,
                 result_source=result_source,
             )
             self.traigent_config = traigent_config
@@ -2866,7 +2875,11 @@ class OptimizedFunction(Generic[_P, _R]):
                 orchestrator._apply_execution_budget()
                 # Whole-comparison estimate (configs x repeats x examples)
                 # against the cost limit; raises CostLimitExceeded if declined.
-                orchestrator._check_cost_approval(dataset)
+                orchestrator._check_multi_config_cost_approval(
+                    dataset,
+                    [{k: [v] for k, v in cfg.items()} for cfg in fixed],
+                    repeats,
+                )
 
                 stop_reason = None
                 for ci, config in enumerate(fixed):
@@ -3033,6 +3046,19 @@ class OptimizedFunction(Generic[_P, _R]):
                     trial = await asyncio.wait_for(coro, timeout=remaining + grace)
                 except TimeoutError:
                     orchestrator._stop_reason = "timeout"
+                    # The watchdog cancelled the attempt: a dispatched attempt
+                    # still debits the shared budget and marks spend untracked.
+                    if dispatched:
+                        await asyncio.shield(
+                            asyncio.create_task(
+                                orchestrator._account_winner_stability_rerun_attempt(
+                                    rerun_trial=None,
+                                    rerun_dispatched=True,
+                                    permit=permit,
+                                    trial_id=trial_id,
+                                )
+                            )
+                        )
                     return None
             else:
                 trial = await coro
@@ -3046,7 +3072,7 @@ class OptimizedFunction(Generic[_P, _R]):
             )
             await asyncio.shield(task)
             return trial
-        except BaseException:
+        except BaseException as original:
             if trial is None and dispatched:
                 # Dispatched but no result: record an untracked attempt so the
                 # ledgers carry a lower bound rather than a fabricated zero.
@@ -3061,6 +3087,10 @@ class OptimizedFunction(Generic[_P, _R]):
                             )
                         )
                     )
+                except (CostTrackingRequiredError, CostLimitExceeded) as policy_exc:
+                    # Policy errors from attempt accounting must surface; chain
+                    # the original failure so neither is lost.
+                    raise policy_exc from original
                 except Exception:  # pragma: no cover - never mask the real error
                     logger.warning("compare(): could not account an attempt")
             raise

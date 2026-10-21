@@ -142,7 +142,11 @@ from traigent.utils.callbacks import CallbackManager, OptimizationCallback, Prog
 from traigent.utils.env_config import (  # noqa: F401
     is_backend_offline as is_backend_offline,
 )
-from traigent.utils.env_config import is_mock_llm, skip_provider_validation
+from traigent.utils.env_config import (
+    cost_preflight_mock_exempt,
+    is_mock_llm,
+    skip_provider_validation,
+)
 from traigent.utils.mock_provenance import MockProvenanceRecorder
 from traigent.utils.exceptions import (
     ConfigurationError,
@@ -3764,6 +3768,51 @@ class OptimizationOrchestrator:
         """
         self._preflight_provider_keys()
         self._cost_estimator.check_cost_approval(dataset)
+
+    def _check_multi_config_cost_approval(
+        self,
+        dataset: Dataset,
+        config_spaces: Sequence[dict[str, Any]],
+        repeats: int,
+    ) -> None:
+        """One approval decision over several fixed configs (``compare()``).
+
+        Each config is estimated with its own pricing / output-token
+        assumptions (a one-point space), times ``repeats``. With no global
+        example cap the per-config estimates are summed; with a cap the most
+        expensive config at the full cap is the conservative bound.
+        """
+        self._preflight_provider_keys()
+        if cost_preflight_mock_exempt():
+            return
+        input_tokens, output_tokens = self._extract_estimated_tokens_per_example(
+            getattr(self.evaluator, "optimization_spec", None)
+        )
+        estimates: list[tuple[float, CostEstimator]] = []
+        for space in config_spaces:
+            estimator = CostEstimator(
+                cost_enforcer=self.cost_enforcer,
+                max_trials=repeats,
+                max_total_examples=self._max_total_examples,
+                model_name=self.traigent_config.model,
+                candidate_models=self._extract_model_candidates_from_config_space(
+                    space
+                ),
+                estimated_input_tokens_per_example=input_tokens,
+                estimated_output_tokens_per_example=output_tokens,
+                estimated_calls_per_example=self._estimated_calls_per_example,
+                configured_max_output_tokens=(
+                    self._extract_max_output_tokens_from_config_space(space)
+                ),
+            )
+            estimates.append((estimator.estimate_optimization_cost(dataset), estimator))
+        if not estimates:
+            return
+        costs = [cost for cost, _ in estimates]
+        total = max(costs) if self._max_total_examples is not None else sum(costs)
+        worst = max(estimates, key=lambda pair: pair[0])[1]
+        self._cost_estimator._resolved_assumptions = worst._resolved_assumptions
+        self._cost_estimator.approve_estimated_cost(total)
 
     def _preflight_provider_keys(self) -> None:
         """Check provider keys once, before cost approval, for paid runs.

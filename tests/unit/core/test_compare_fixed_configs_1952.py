@@ -501,7 +501,7 @@ def test_pre_run_estimate_above_the_limit_requires_approval(monkeypatch):
     seen = {}
 
     def fake_estimate(self, dataset):
-        seen["max_trials"] = self._max_trials
+        seen.setdefault("max_trials", []).append(self._max_trials)
         seen["examples"] = len(dataset.examples)
         return 999.0
 
@@ -519,8 +519,8 @@ def test_pre_run_estimate_above_the_limit_requires_approval(monkeypatch):
         pytest.raises(CostLimitExceeded),
     ):
         fn.compare([_GOOD, _BAD], repeats=3)
-    # The estimate covers the whole comparison: 2 configs x 3 repeats.
-    assert seen == {"max_trials": 6, "examples": len(_ROWS)}
+    # One estimate per requested config, each covering its 3 repeats.
+    assert seen == {"max_trials": [3, 3], "examples": len(_ROWS)}
     assert calls["n"] == 0
     assert fn.comparison_history == []
     assert fn.__dict__.get("_exclusive_slot") is None
@@ -599,3 +599,122 @@ def test_stepped_int_range_includes_the_high_endpoint():
     for bad in (1, 7, 11):
         with pytest.raises(ValueError):
             validate_comparison_configs([{"p": bad}], space)
+
+
+# --- review round 68: all-config estimate, policy errors, timeout, no backend --
+
+
+def _make_model_space(**decorator_kwargs):
+    def agent(text: str) -> str:
+        return "yes"
+
+    return traigent.optimize(
+        eval_dataset=_ROWS,
+        objectives=["accuracy"],
+        configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+        execution_mode="local",
+        **decorator_kwargs,
+    )(agent)
+
+
+def test_estimate_covers_every_requested_config_not_just_the_first(monkeypatch):
+    monkeypatch.setenv("TRAIGENT_COST_APPROVED", "false")
+    from traigent.core.cost_estimator import CostEstimator
+
+    def by_model(self, dataset):
+        return 10.0 if "gpt-4o" in self._candidate_models else 1.0
+
+    def run(configs):
+        fn = _make_model_space(cost_limit=5.0)
+        with (
+            patch(
+                "traigent.core.cost_estimator.cost_preflight_mock_exempt",
+                return_value=False,
+            ),
+            patch.object(CostEstimator, "estimate_optimization_cost", by_model),
+            patch(
+                "traigent.core.cost_enforcement.CostEnforcer._request_user_approval",
+                return_value=False,
+            ),
+            patch(
+                "traigent.core.orchestrator.OptimizationOrchestrator."
+                "_preflight_provider_keys"
+            ),
+        ):
+            return fn.compare(configs)
+
+    # The cheap config alone (1.0) is under the 5.0 limit and is approved ...
+    # (approval passes; the unmeasured-cost refusal after it is a later gate).
+    with pytest.raises(CostTrackingRequiredError):
+        run([{"model": "gpt-4o-mini"}])
+    # ... but cheap-first + pricey-second (11.0 total) needs approval.
+    with pytest.raises(CostLimitExceeded):
+        run([{"model": "gpt-4o-mini"}, {"model": "gpt-4o"}])
+
+
+def _dispatch_then(action):
+    from traigent.core.trial_lifecycle import TrialLifecycle
+
+    async def fake(self, *args, **kwargs):
+        kwargs["on_evaluation_dispatch"]()
+        return await action()
+
+    return patch.object(TrialLifecycle, "run_trial", fake)
+
+
+def test_policy_error_from_attempt_accounting_propagates_chained():
+    from traigent.core.orchestrator import OptimizationOrchestrator
+
+    async def fail():
+        raise RuntimeError("evaluation failed")
+
+    async def policy(self, **kwargs):
+        raise CostTrackingRequiredError("tracking required")
+
+    fn = _make()
+    with (
+        _dispatch_then(fail),
+        patch.object(
+            OptimizationOrchestrator, "_account_untracked_trial_attempt", policy
+        ),
+        pytest.raises(CostTrackingRequiredError) as info,
+    ):
+        fn.compare([_GOOD])
+    assert isinstance(info.value.__cause__, RuntimeError)
+    assert fn.comparison_history == []
+
+
+def test_timed_out_dispatched_attempt_is_debited_and_marked_untracked():
+    async def hang():
+        await asyncio.sleep(30)
+
+    fn = _make()
+    fn.timeout = 0.05
+    budget = ExecutionBudget(max_examples=1000)
+    with _dispatch_then(hang):
+        result = fn.compare([_GOOD, _BAD], budget=budget)
+    assert result.stop_reason == "timeout"
+    snap = budget.snapshot()
+    assert snap.untracked_trials == 1
+
+
+def test_compare_makes_no_backend_connection_or_name_resolution(monkeypatch):
+    import socket
+
+    seen: list[str] = []
+    real_connect = socket.socket.connect
+    real_gai = socket.getaddrinfo
+
+    def connect(self, address, *a, **k):
+        seen.append("connect")
+        return real_connect(self, address, *a, **k)
+
+    def gai(*a, **k):
+        seen.append("getaddrinfo")
+        return real_gai(*a, **k)
+
+    monkeypatch.setattr(socket.socket, "connect", connect)
+    monkeypatch.setattr(socket, "getaddrinfo", gai)
+    result = _make().compare([_GOOD, _BAD])
+    assert len(result.configs) == 2
+    assert seen == []
