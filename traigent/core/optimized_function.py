@@ -35,7 +35,7 @@ import sys
 import threading
 import time
 import warnings
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -218,6 +218,31 @@ def _reject_removed_strategy_preset(
 _REMOVED_MOCK_PARAMETERS = REMOVED_MOCK_PARAMETERS
 _removed_mock_parameter_message = removed_mock_parameter_message
 _reject_removed_mock_parameters = reject_removed_mock_parameters
+
+# Traigent#1370 Item 9: the budget_* aliases were removed in 0.13.0. Each maps to
+# the replacement the message names (hard removal, no deprecation window).
+_REMOVED_BUDGET_ALIAS_REPLACEMENTS: dict[str, str] = {
+    "budget_limit": (
+        "cost_limit=<USD> for hard spend control, or metric_limit=<value> with "
+        "metric_name=<name>"
+    ),
+    "budget_metric": "metric_name=<name>",
+    "budget_include_pruned": "metric_include_pruned=<bool>",
+}
+
+
+def _removed_budget_alias_message(parameter_name: str) -> str:
+    """The single wording every route uses to refuse a removed budget_* alias."""
+    return (
+        f"{parameter_name} parameter was removed in 0.13.0. Use "
+        f"{_REMOVED_BUDGET_ALIAS_REPLACEMENTS[parameter_name]} instead."
+    )
+
+
+def _reject_removed_budget_aliases(names: Iterable[str]) -> None:
+    """Raise ``TypeError`` naming the first removed budget_* alias in ``names``."""
+    for name in sorted(set(names) & set(_REMOVED_BUDGET_ALIAS_REPLACEMENTS)):
+        raise TypeError(_removed_budget_alias_message(name))
 
 
 def _reject_removed_strategy_constructor_kwargs(kwargs: Mapping[str, Any]) -> None:
@@ -1893,6 +1918,7 @@ class OptimizedFunction(Generic[_P, _R]):
         # optimizer's algorithm_config and had no effect. The rejected set is
         # now derived from the allowlist above, not hand-maintained (#1705).
         _reject_removed_mock_parameters(algorithm_kwargs)
+        _reject_removed_budget_aliases(algorithm_kwargs)
         decorator_only = _decorator_only_optimize_params()
         rejected = decorator_only.intersection(algorithm_kwargs)
         if rejected:

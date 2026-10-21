@@ -4,7 +4,7 @@ Error Handling - Graceful failure modes and fallback patterns.
 
 This example demonstrates 5 error scenarios:
 1. Invalid configuration space (bad types)
-2. Sample-budget exceeded (budget_limit / budget_metric)
+2. Cost limit exceeded (cost_limit)
 3. Optimization timeout (stop_reason == "timeout")
 4. Preflight validation (environment checks)
 5. Graceful fallback (try/except with default config)
@@ -168,7 +168,7 @@ async def demo_invalid_config():
     print("  Status: HANDLED")
 
 
-async def demo_budget_exceeded():
+async def demo_cost_limit_exceeded():
     """Scenario 2: Cost limit exceeded via cost_limit."""
     print_scenario(2, "Cost-Limit Exceeded")
 
@@ -287,7 +287,7 @@ async def run_all_demos():
     print("=" * 60)
 
     await demo_invalid_config()
-    await demo_budget_exceeded()
+    await demo_cost_limit_exceeded()
     await demo_timeout()
     await demo_preflight_validation()
     await demo_graceful_fallback()

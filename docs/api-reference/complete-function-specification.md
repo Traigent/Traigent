@@ -243,7 +243,7 @@ async def optimize(
 | `cost_limit` | Maximum USD spending for this run. |
 | `cost_approved` | Skip cost approval prompt only when passed as real Python `True`; strings such as `"true"` are ignored. Env approval requires exact `TRAIGENT_COST_APPROVED=true`; `1`/`yes` do not approve. |
 | `metric_limit` / `metric_name` / `metric_include_pruned` | Configure soft cumulative-metric early stopping. |
-| `budget_limit` / `budget_metric` / `budget_include_pruned` | Deprecated aliases for metric-limit controls. Use `cost_limit` for hard USD spend control. |
+| `budget_limit` / `budget_metric` / `budget_include_pruned` | Removed in 0.13.0; passing them raises `TypeError` naming the replacement. Use `cost_limit` for hard USD spend control, or `metric_limit` / `metric_name` / `metric_include_pruned`. |
 | `plateau_window` / `plateau_epsilon` | Configure plateau detection stop conditions. |
 | `semantic_saturation` | Configure opt-in semantic saturation. Uses per-example metric-vector churn plus continuous objective improvement and emits sanitized diagnostics in `OptimizationResult.metadata["semantic_saturation"]`. |
 | `parameter_order` | Grid search only: mapping of parameter names to numeric priorities. Lower values vary slowest; higher values vary fastest. |

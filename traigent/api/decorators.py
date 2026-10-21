@@ -101,9 +101,11 @@ from traigent.core.objectives import (
     normalize_objectives,
 )
 from traigent.core.optimized_function import (
+    _REMOVED_BUDGET_ALIAS_REPLACEMENTS,
     _REMOVED_MOCK_PARAMETERS,
     OptimizedFunction,
     _reject_removed_strategy_preset,
+    _removed_budget_alias_message,
     _removed_mock_parameter_message,
 )
 from traigent.defaults import DEFAULT_MAX_TRIALS
@@ -1111,6 +1113,7 @@ _REMOVED_PARAMETERS = frozenset(
         "batch_size",
         "parallel_trials",
         *_REMOVED_MOCK_PARAMETERS,
+        *_REMOVED_BUDGET_ALIAS_REPLACEMENTS,
         *_JS_BRIDGE_REMOVED_PARAMETERS,
     )
 )
@@ -1164,6 +1167,8 @@ def _removed_parameter_message(parameter_name: str) -> str:
         return _JS_BRIDGE_REMOVED_MESSAGE
     if parameter_name in _REMOVED_MOCK_PARAMETERS:
         return _removed_mock_parameter_message(parameter_name)
+    if parameter_name in _REMOVED_BUDGET_ALIAS_REPLACEMENTS:
+        return _removed_budget_alias_message(parameter_name)
     return (
         f"{parameter_name} parameter has been removed. Use supported arguments such as "
         "parallel_config or ExecutionOptions instead."
@@ -1464,13 +1469,15 @@ def _reject_removed_names_early(
     runtime_overrides: Mapping[str, Any],
     legacy: LegacyOptimizeArgs | dict[str, Any] | None,
 ) -> None:
-    """Reject removed mock parameters even when later shortcuts would skip them."""
+    """Reject removed mock and budget_* parameters before later shortcuts skip them."""
     names = set(runtime_overrides)
     if isinstance(legacy, LegacyOptimizeArgs):
         names |= set(legacy.extra)
     elif isinstance(legacy, dict):
         names |= set(legacy)
-    for name in sorted(names & _REMOVED_MOCK_PARAMETERS):
+    for name in sorted(
+        names & (_REMOVED_MOCK_PARAMETERS | _REMOVED_BUDGET_ALIAS_REPLACEMENTS.keys())
+    ):
         raise TypeError(_removed_parameter_message(name))
 
 

@@ -8,7 +8,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- **Repeated `traigent hooks install --force` no longer overwrites the customer's hook backup (#2707).** A Traigent hook is replaced without a backup; a foreign hook is backed up only when no `.backup` exists, and the install fails closed (files untouched) when one does. `uninstall` no longer restores a backup that holds a Traigent hook; it removes that backup instead.
+- **`traigent hooks uninstall` now removes Traigent's pre-commit hook and restores the customer's `pre-commit` (#2707).** Uninstall recognised only the pre-push marker, so the pre-commit hook was never removed and its `.backup` was never restored.
+- **Repeated `traigent hooks install --force` no longer overwrites the customer's hook backup (#2707).** A Traigent hook is replaced without a backup; a foreign hook is backed up only when no `.backup- **Repeated `traigent hooks install --force` no longer overwrites the customer's hook backup (#2707).** A Traigent hook is replaced without a backup; a foreign hook is backed up only when no `.backup` exists, and the install fails closed (files untouched) when one does. `uninstall` no longer restores a backup that holds a Traigent hook; it removes that backup instead.
 - **Trial error text and three metadata maps now cross to the backend as closed codes and allowlisted keys (#2241).** `error_message` on trial submission and config-run status is reduced to one fixed code (for example `trial_failed` or `no_examples_succeeded`); the full text stays on the local result. `metadata.agent_configuration`, `metadata.surrogate_evaluator` and `summary_stats.metadata` are rebuilt from a key allowlist, so unlisted keys and judge prompts no longer leave the SDK.
 - **TVL derived constraints are documented as per-trial only; the loader warns when a spec relies on `environment.context` (#1618).** `load_tvl_spec` emits one value-free warning naming the derived constraint ids; `docs/tvl/CONSTRAINT_EXPRESSIONS.md` states the rule.
 - **Keyless quickstart is labelled a plumbing check, with no fake winner (#1690).** `traigent quickstart` now ends with a message saying the run used a mock LLM and simulated scores, is not a model comparison, and found no best configuration; the `best config ... scored 0.850` line is gone. Achievements stay blocked in mock runs.
@@ -523,6 +524,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- **BREAKING: the `budget_limit`, `budget_metric` and `budget_include_pruned` aliases now name their replacement when refused (#1370 item 9).** They were removed in 0.13.0 and still raised `TypeError`, but with a generic "unknown keyword" message on the decorator path. They now raise `budget_limit parameter was removed in 0.13.0. Use cost_limit=<USD> ... or metric_limit=<value> with metric_name=<name> instead.` (the same message on `.optimize()`). Use `cost_limit` for hard USD spend control, `metric_limit` and `metric_name` for other cumulative metrics, and `metric_include_pruned` for pruned-trial accounting.
+- **`mock` and `mock_mode_config` are refused with a removal message (#1370 item 6).** They were already rejected by the removal guard; this entry records the public removal. The replacement for test code is `traigent.testing.enable_mock_mode_for_quickstart()`.
 - **BREAKING: `outputs_sample` removed from `InteractiveOptimizer.report_results`
   and the trial-result payload (#2239).** Model outputs are customer content and
   are never sent to the backend. Passing `outputs_sample=` now raises
