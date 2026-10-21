@@ -6214,7 +6214,7 @@ class OptimizationOrchestrator:
 
     def _vendor_attempt_totals(self) -> dict[str, Any]:
         """Run-level provider-call attempt totals (SDK-41); empty when none."""
-        attempts = retries = unknown = 0
+        attempts = retries = unknown = incomplete = 0
         truncated = False
         records: list[dict[str, Any]] = []
         sources = [
@@ -6232,6 +6232,7 @@ class OptimizationOrchestrator:
             attempts += trial_attempts
             retries += int(meta.get("vendor_call_retries") or 0)
             unknown += int(meta.get("vendor_call_unknown_usage_attempts") or 0)
+            incomplete += int(meta.get("vendor_call_incomplete_attempts") or 0)
             truncated = truncated or bool(
                 meta.get("vendor_call_attempt_records_truncated")
             )
@@ -6243,6 +6244,7 @@ class OptimizationOrchestrator:
             "vendor_call_attempts": attempts,
             "vendor_call_retries": retries,
             "vendor_call_unknown_usage_attempts": unknown,
+            "vendor_call_incomplete_attempts": incomplete,
             "vendor_call_attempt_records": records,
             "vendor_call_attempt_records_truncated": truncated,
         }

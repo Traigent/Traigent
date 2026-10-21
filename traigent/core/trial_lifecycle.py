@@ -879,7 +879,10 @@ class TrialLifecycle:
             if not summary:
                 return
             result.metadata = {**(result.metadata or {}), **summary}
-            if summary["vendor_call_retries"] > 0:
+            if (
+                summary["vendor_call_retries"] > 0
+                or summary["vendor_call_incomplete_attempts"] > 0
+            ):
                 metrics = result.metrics
                 if isinstance(metrics, dict):
                     metrics["cost_unmeasured"] = 1.0
