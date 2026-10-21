@@ -765,6 +765,24 @@ class TestOptimizedFunction:
             _finite_grid_size({"x": {"type": "float", "low": 0.0, "high": 1.0}}) is None
         )
 
+    def test_finite_grid_size_does_not_materialize_huge_domains_2058(self):
+        """A billion-point IntRange is counted arithmetically, not enumerated."""
+        from unittest.mock import patch
+
+        from traigent.api.parameter_ranges import IntRange
+        from traigent.core.optimized_function import _finite_grid_size
+
+        huge = IntRange(1, 1_000_000_000, step=1).to_config_value()
+        with patch(
+            "traigent.utils.discrete_domains.discrete_values_for_config_param",
+            side_effect=AssertionError("domain was materialized"),
+        ):
+            assert _finite_grid_size({"n": huge}) == 1_000_000_000
+            # Product saturates instead of growing without bound.
+            assert _finite_grid_size({"a": huge, "b": huge, "c": huge, "d": huge}) > (
+                1_000_000_000
+            )
+
     @pytest.mark.asyncio
     async def test_optimize_skips_default_notice_for_explicit_max_trials(
         self,

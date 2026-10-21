@@ -953,6 +953,10 @@ _APPLY_FALSE_WITHDRAWN_MESSAGE = (
 )
 
 
+# Counting saturates here: any grid this large already exceeds every max_trials.
+_GRID_SIZE_COUNT_CAP = 10**12
+
+
 def _finite_grid_size(config_space: Any) -> int | None:
     """Number of grid combinations, or None when the space is not a finite grid.
 
@@ -961,19 +965,21 @@ def _finite_grid_size(config_space: Any) -> int | None:
     categorical, fixed). Any other shape (for example a continuous range)
     means the size is unknown and is never guessed.
     """
-    from traigent.utils.discrete_domains import discrete_values_for_config_param
+    from traigent.utils.discrete_domains import discrete_cardinality_for_config_param
 
     if not isinstance(config_space, dict) or not config_space:
         return None
     size = 1
     for definition in config_space.values():
         if isinstance(definition, list):
-            size *= max(len(definition), 1)
+            size = min(size * max(len(definition), 1), _GRID_SIZE_COUNT_CAP)
         elif isinstance(definition, dict):
-            values = discrete_values_for_config_param(definition)
-            if values is None:
+            # Arithmetic count: never materializes the domain (a huge IntRange
+            # must not allocate before the grid optimizer's size guard runs).
+            count = discrete_cardinality_for_config_param(definition)
+            if count is None:
                 return None
-            size *= max(len(values), 1)
+            size = min(size * max(count, 1), _GRID_SIZE_COUNT_CAP)
         elif isinstance(definition, (tuple, set, frozenset)):
             return None
     return size
