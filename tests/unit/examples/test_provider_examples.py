@@ -294,9 +294,20 @@ def test_example_runs_end_to_end_in_mock(module_name):
     assert "★" in combined
 
 
-def test_demo_cost_approval_is_scoped_to_run_optimization(monkeypatch):
+def test_demo_cost_approval_is_scoped_to_run_optimization(monkeypatch, request):
     """Review #2681: configure_demo_env must not leave process-wide approval."""
     import os
+
+    from traigent.testing import disable_mock_mode
+
+    # Importing _demo and configure_demo_env set process-wide state (dataset
+    # root, offline flag, mock mode). Record the prior values so monkeypatch
+    # restores them, and turn mock mode off again, so later tests in the same
+    # worker do not inherit them.
+    for leaky in ("TRAIGENT_DATASET_ROOT", "TRAIGENT_OFFLINE_MODE"):
+        monkeypatch.setenv(leaky, "placeholder")
+        monkeypatch.delenv(leaky)
+    request.addfinalizer(disable_mock_mode)
 
     from traigent.examples.providers import _demo
 
