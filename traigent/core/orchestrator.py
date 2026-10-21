@@ -3554,6 +3554,7 @@ class OptimizationOrchestrator:
             reset_run_content_identity_keys,
         )
 
+        self._reset_mock_provenance()
         fetched_identity_keys = await self._fetch_run_content_identity_keys()
         identity_keys_token = bind_run_content_identity_keys(fetched_identity_keys)
         sigterm_scope = sigterm_as_cancellation()  # #2667
@@ -5625,6 +5626,33 @@ class OptimizationOrchestrator:
             "generation": generation,
         }
 
+    def _reset_mock_provenance(self) -> None:
+        """Start a run's mock provenance: the state now, and no trials seen (#2516)."""
+        self._mock_states_seen: set[bool] = set()
+        self._mock_state_at_run_start = bool(is_mock_llm())
+
+    def record_trial_mock_state(self) -> None:
+        """Record whether mock mode is on as a trial is dispatched (#2516)."""
+        if not hasattr(self, "_mock_states_seen"):
+            self._reset_mock_provenance()
+        self._mock_states_seen.add(bool(is_mock_llm()))
+
+    def _mock_provenance_metadata(self) -> dict[str, bool]:
+        """Per-run mock provenance from the states trials actually executed under.
+
+        True if any trial ran mocked; False only if every executed trial ran with
+        mock off; a run with no trials uses the state at run start. Trials under
+        both states record ``mock_llm_mixed`` and stay labelled (fail closed).
+        """
+        seen = getattr(self, "_mock_states_seen", None)
+        if not seen:
+            start = getattr(self, "_mock_state_at_run_start", None)
+            return {"mock_llm_run": bool(is_mock_llm() if start is None else start)}
+        meta = {"mock_llm_run": True in seen}
+        if len(seen) > 1:
+            meta["mock_llm_mixed"] = True
+        return meta
+
     def _build_result_metadata(
         self,
         session_summary: dict[str, Any] | None,
@@ -5633,10 +5661,10 @@ class OptimizationOrchestrator:
         metadata: dict[str, Any] = {
             **({} if session_summary is None else {"session_summary": session_summary}),
             "safeguards": safeguards_telemetry,
-            # Mock provenance is a fact about THIS run, recorded when its result
-            # is built, so later display never depends on process state (#2516).
-            # It says LLM mocking was enabled, not that every call was mocked.
-            "mock_llm_run": bool(is_mock_llm()),
+            # Mock provenance is what each trial executed under, not process
+            # state at build time (#2516). It says LLM mocking was enabled,
+            # not that every call was mocked.
+            **OptimizationOrchestrator._mock_provenance_metadata(self),
         }
 
         if self._function_descriptor is not None:
