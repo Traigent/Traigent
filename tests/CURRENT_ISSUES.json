@@ -240,12 +240,6 @@
     "issue_type": "IT-NA"
   },
   {
-    "file": "tests/integration/backend/test_backend_minimal.py",
-    "test_name": "test_backend_api",
-    "line": 31,
-    "issue_type": "IT-NA"
-  },
-  {
     "file": "tests/integration/backend/test_session_finalization_integration.py",
     "test_name": "test_integration_prerequisites",
     "line": 224,
