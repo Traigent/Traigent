@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **TVL derived constraints are documented as per-trial only; the loader warns when a spec relies on `environment.context` (#1618).** `load_tvl_spec` emits one value-free warning naming the derived constraint ids; `docs/tvl/CONSTRAINT_EXPRESSIONS.md` states the rule.
 - **Keyless quickstart is labelled a plumbing check, with no fake winner (#1690).** `traigent quickstart` now ends with a message saying the run used a mock LLM and simulated scores, is not a model comparison, and found no best configuration; the `best config ... scored 0.850` line is gone. Achievements stay blocked in mock runs.
 - **Anthropic key probe uses a current Claude id (#2651).** `validate_providers` probes with `claude-haiku-5-5` (was `claude-haiku-4-5-20251001`); the known-models list carries the Claude 5.5 ids and no retired `claude-3*` ids.
 - **Dev tooling now agrees with CI (#2469).** `release-review.yml` formats with

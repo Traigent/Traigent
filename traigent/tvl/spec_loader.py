@@ -1157,6 +1157,8 @@ def load_tvl_spec(
                     f"expression '{dc.require}' is not valid"
                 ) from exc
 
+    _warn_derived_constraints_using_environment_context(derived_constraints)
+
     # Parse exploration section
     budget, algorithm, convergence, exploration_budgets, exploration_parallelism = (
         _parse_exploration_section(resolved)
@@ -1868,6 +1870,36 @@ def _compile_constraints_unified(
         return _compile_constraints(entries, path), None
 
     return [], None
+
+
+_ENV_CONTEXT_REF = re.compile(r"\benvironment\.context\b")
+
+
+def _warn_derived_constraints_using_environment_context(
+    derived_constraints: list[DerivedConstraint] | None,
+) -> None:
+    """Warn once when derived constraints reference ``environment.context``.
+
+    The SDK evaluates derived constraints per trial only; it does not check
+    them against the runtime environment. The message names constraint
+    positions only, never expression text or values.
+    """
+    if not derived_constraints:
+        return
+    flagged = [
+        dc.index for dc in derived_constraints if _ENV_CONTEXT_REF.search(dc.require)
+    ]
+    if not flagged:
+        return
+    ids = ", ".join(f"derived_constraint_{i}" for i in flagged)
+    warnings.warn(
+        f"TVL derived constraint(s) {ids} reference environment.context. "
+        "The SDK evaluates derived constraints per trial only and does not "
+        "check them against the runtime environment; do not rely on them to "
+        "verify environment feasibility.",
+        UserWarning,
+        stacklevel=2,
+    )
 
 
 def _parse_derived_constraints(entries: list[Any]) -> list[DerivedConstraint] | None:

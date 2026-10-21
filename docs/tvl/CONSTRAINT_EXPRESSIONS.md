@@ -16,6 +16,17 @@ Examples:
 - `params.model == "gpt-4o"`
 - `metrics.token_cost_usd <= 0.05`
 
+## Derived constraints are per-trial only
+
+TVL 0.9 `constraints.derived[].require` expressions are compiled and
+syntax-checked at load time and evaluated per trial, like other constraints.
+The SDK does **not** evaluate them against the runtime environment: there is no
+operational feasibility check against `environment.context`. A spec whose
+derived constraints reference `environment.context` loads, but the loader emits
+one warning naming the affected constraint ids (`derived_constraint_<index>`,
+never expression text or values). Verify environment feasibility with TVL
+tooling or your own check.
+
 ## Operators and literals
 
 - Equality: use `==` (single `=` is not supported and will raise a validation error)
