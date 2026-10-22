@@ -94,9 +94,8 @@ def test_read_requests_carry_no_body_and_no_local_names(backend: FakeBackend) ->
             assert local not in request["path"]
 
 
-def test_tvl_route_sends_only_refs_and_the_environment_label(
-    backend: FakeBackend,
-) -> None:
+def _send_tvl(backend: FakeBackend) -> tuple[dict[str, Any], Any]:
+    """Declare the TVL fixture, apply it against the fake backend, return the request."""
     pytest.importorskip("tvl.runtime_compiler", reason="needs the runtime-tvl extra")
     pytest.importorskip("scipy")
     fragment = (FIXTURES / "latency.tvl.yml").read_text().replace("production", ENV)
@@ -113,9 +112,15 @@ def test_tvl_route_sends_only_refs_and_the_environment_label(
         apply_requirement(fn.requirements[0], project_id=PROJECT, agent_id=AGENT)
     finally:
         path.unlink(missing_ok=True)
-    sent = backend.requests[0]
+    return backend.requests[0], fn
+
+
+def test_tvl_route_sends_only_refs_and_the_environment_label(
+    backend: FakeBackend,
+) -> None:
+    """Local confidentiality assertions: need the TVL compiler, not a Backend checkout."""
+    sent, fn = _send_tvl(backend)
     req = fn.requirements[0]
-    assert backend_parse_import(sent["body"]) == "OK"
     for local in (
         "latency_2s",
         "latency_2s_prod",
@@ -136,3 +141,11 @@ def test_tvl_route_sends_only_refs_and_the_environment_label(
     token_map = manifest.ensure_tokens(manifest.default_state_dir(), [], persist=False)
     assert {t["local"] for t in token_map["tokens"]} >= {req.name, req.monitor_name}
     assert all(t["hosted"] not in (t["local"],) for t in token_map["tokens"])
+
+
+def test_tvl_route_is_accepted_by_the_real_backend_parser(
+    backend: FakeBackend,
+) -> None:
+    """Real-Backend acceptance: skips (with reason) without TRAIGENT_BACKEND_SRC."""
+    sent, _fn = _send_tvl(backend)
+    assert backend_parse_import(sent["body"]) == "OK"

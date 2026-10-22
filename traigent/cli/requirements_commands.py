@@ -28,6 +28,7 @@ from traigent.runtime.model import (
     RuntimeRequirement,
     RuntimeRequirementError,
     one_line,
+    safe_lines,
 )
 from traigent.runtime.respond import OccurrenceUsed
 from traigent.runtime.respond import respond as run_respond
@@ -151,7 +152,7 @@ def validate_cmd(file_path: Path, function: str) -> None:
         _fail(exc)
         return
     # Multi-line YAML by design: clean each line, keep the line breaks.
-    click.echo("\n".join(one_line(ln) for ln in declared.to_tvl().split("\n")))
+    click.echo(safe_lines(declared.to_tvl()))
     for issue in issues:
         click.echo(
             one_line(f"{issue.severity}: {issue.code} at {issue.path}"), err=True

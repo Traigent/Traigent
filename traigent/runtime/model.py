@@ -234,18 +234,34 @@ def digest_of(value: Any) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
-_CONTROL_CHARS = re.compile("[\u0000-\u001f\u007f-\u009f\u2028\u2029]")
+# Shared with the JS SDK (S1): CONTROL is terminal/line-breaking, INVISIBLE is
+# display spoofing. U+200C/U+200D are legitimate joiners and are not listed.
+CONTROL = "\u0000-\u001f\u007f-\u009f\u2028\u2029"
+INVISIBLE = "\u061c\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff"
+UNSAFE = CONTROL + INVISIBLE
+_UNSAFE_CHARS = re.compile(f"[{UNSAFE}]")
+_LINE_SPLIT = re.compile("\r\n|\n|\r|\u0085|\u2028|\u2029")
 
 
 def one_line(text: Any) -> str:
-    """Neutralise control characters before text reaches a terminal or a log.
+    """Neutralise unsafe characters before text reaches a terminal or a log.
 
-    Replaces C0/C1 controls (including ESC, CR, LF, NUL, DEL, U+0085) and the
-    Unicode line/paragraph separators with a space, so user-, file- or
-    backend-derived text cannot inject ANSI sequences or forge log lines.
-    Mirrors the JS SDK: ``text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ')``.
+    Replaces every CONTROL and INVISIBLE character (ESC, CR, LF, NUL, DEL,
+    U+0085, line/paragraph separators, bidi and zero-width marks) with a space,
+    so user-, file- or backend-derived text cannot inject ANSI sequences, forge
+    log lines or spoof display. Mirrors the JS SDK ``oneLine``.
     """
-    return _CONTROL_CHARS.sub(" ", str(text))
+    return _UNSAFE_CHARS.sub(" ", str(text))
+
+
+def safe_lines(text: Any, prefix: str = "") -> str:
+    """Clean multi-line text while keeping its line structure.
+
+    Splits on CRLF, LF, CR, U+0085, U+2028 and U+2029, cleans each line with
+    ``one_line``, rejoins with a newline, and prefixes EVERY line when
+    ``prefix`` is given, so a line can never be forged without the prefix.
+    """
+    return "\n".join(prefix + one_line(ln) for ln in _LINE_SPLIT.split(str(text)))
 
 
 def normalise_environment(value: str) -> str:
@@ -409,7 +425,12 @@ class RuntimeRequirement:
         alpha = self.false_alarm_budget
         if not _is_number(alpha) or not 0 < alpha <= 0.5:
             bad("false_alarm_budget")
-        if not 1 <= len(self.environment.strip()) <= ENVIRONMENT_MAX_LENGTH:
+        env = self.environment
+        if (
+            not isinstance(env, str)
+            or _UNSAFE_CHARS.search(env)
+            or not 1 <= len(normalise_environment(env)) <= ENVIRONMENT_MAX_LENGTH
+        ):
             bad("environment")
         seen: set[str] = set()
         for index, rule in enumerate(self.rules):
