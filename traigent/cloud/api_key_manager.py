@@ -8,6 +8,7 @@ Extracted from AuthManager to follow Single Responsibility Principle.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 from datetime import UTC, datetime, timedelta
@@ -222,6 +223,19 @@ class APIKeyManager:
             Masked API key preview or None if no key is set
         """
         return self._api_key_preview
+
+    def get_credential_fingerprint(self) -> str | None:
+        """Domain-separated SHA-256 of the full credential, or None when no key is known.
+
+        A preview is not an identity (two keys can share first/last 4 characters and
+        length), so cache scoping uses this instead. The raw key is never returned.
+        """
+        key = self.get_key_for_internal_use()
+        if not key:
+            return None
+        return hashlib.sha256(
+            b"traigent-content-less-principal-v1\0" + key.encode("utf-8")
+        ).hexdigest()
 
     def has_key(self) -> bool:
         """Return True if an API key has been configured.

@@ -677,7 +677,7 @@ class ApiOperations:
         self._content_less_ctx: (
             tuple[
                 content_less_session.RefCache,
-                str,
+                str | None,
                 dict[str, str | None],
                 dict[str, str],
             ]
@@ -693,19 +693,23 @@ class ApiOperations:
         )
         return [api_base] if isinstance(api_base, str) else []
 
-    def _content_less_principal(self) -> str:
-        """Digest of (backend URL, credential preview): scopes the local ref cache."""
+    def _content_less_principal(self) -> str | None:
+        """Scope of the local ref cache: (backend URL, credential fingerprint).
+
+        Returns None when the identity cannot be determined (no key, no auth object,
+        or any error). The caller then skips cache reads and writes for this call.
+        """
         try:
             url = (
                 self.client.backend_config.api_base_url
                 or BackendConfig.get_backend_api_url()
             )
-            preview = self.client.auth_manager.auth.get_api_key_preview()
-        except Exception:  # noqa: BLE001 - scope only; an unknown scope finds no refs
-            url, preview = None, None
+            fingerprint = self.client.auth_manager.auth.get_api_key_fingerprint()
+        except Exception:  # noqa: BLE001 - unknown identity: fail closed, no cache use
+            return None
         return content_less_session.RefCache.principal(
             url if isinstance(url, str) else None,
-            preview if isinstance(preview, str) else None,
+            fingerprint if isinstance(fingerprint, str) else None,
         )
 
     @staticmethod

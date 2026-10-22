@@ -794,6 +794,13 @@ class AuthManager:
         """Return a masked preview of the currently configured API key."""
         return cast(str | None, self._api_key_manager.get_preview())
 
+    def get_api_key_fingerprint(self) -> str | None:
+        """Collision-resistant, domain-separated fingerprint of the full key, or None.
+
+        Raises whatever the key lookup raises; callers treat that as "identity unknown".
+        """
+        return self._api_key_manager.get_credential_fingerprint()
+
     def has_api_key(self) -> bool:
         """Return True if an API key has been configured."""
         return bool(self._api_key_manager.has_key())

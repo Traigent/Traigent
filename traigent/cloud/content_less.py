@@ -284,13 +284,24 @@ class RefCache:
             logger.debug("content-less ref cache could not be written")
 
     @staticmethod
-    def principal(backend_url: str | None, credential_preview: str | None) -> str:
-        return _digest(f"{backend_url or ''}\x00{credential_preview or ''}")
+    def principal(
+        backend_url: str | None, credential_fingerprint: str | None
+    ) -> str | None:
+        """Cache scope for (backend, credential), or None when either is unknown.
+
+        ``None`` means the identity could not be determined. Reads and writes are then
+        skipped entirely: there is no shared fallback bucket (fail closed).
+        """
+        if not backend_url or not credential_fingerprint:
+            return None
+        return _digest(f"{backend_url}\x00{credential_fingerprint}")
 
     def lookup(
-        self, principal: str, local_keys: Mapping[str, str | None]
+        self, principal: str | None, local_keys: Mapping[str, str | None]
     ) -> dict[str, str]:
         """Cached refs for ``local_keys`` (kind -> local key) in the principal's last scope."""
+        if principal is None:
+            return {}
         with self._lock:
             data = self._load()
         scope = data["scope_index"].get(principal)
@@ -308,12 +319,14 @@ class RefCache:
 
     def store(
         self,
-        principal: str,
+        principal: str | None,
         tenant_id: str,
         project_id: str,
         local_keys: Mapping[str, str | None],
         refs: Mapping[str, str],
     ) -> None:
+        if principal is None:
+            return  # identity unknown: never write under a shared bucket
         scope = f"{tenant_id}/{project_id}"
         with self._lock:
             data = self._load()
@@ -444,7 +457,7 @@ def require_capability(result: Mapping[str, Any]) -> None:
 def prepare_payload(
     payload: dict[str, Any],
     request: Any,
-    principal: str,
+    principal: str | None,
     env: Mapping[str, str] | None = None,
 ) -> tuple[Any, ...]:
     """Rewrite ``payload`` to the content-less shape; returns the response context.

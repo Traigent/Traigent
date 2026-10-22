@@ -78,7 +78,12 @@ def _request(**overrides: Any) -> SessionCreationRequest:
 
 
 def _ops() -> ApiOperations:
-    return ApiOperations(MagicMock())
+    # A known identity: the ref cache is keyed by (URL, credential fingerprint) and
+    # skipped entirely when either is unknown (fail closed).
+    client = MagicMock()
+    client.backend_config.api_base_url = "https://api.example.test"
+    client.auth_manager.auth.get_api_key_fingerprint.return_value = "f" * 64
+    return ApiOperations(client)
 
 
 class _Response:

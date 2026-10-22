@@ -1,10 +1,14 @@
 """Unit tests for API operations module."""
 
+import hashlib
 import json
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from traigent.cloud import content_less as content_less_session
+from traigent.cloud.api_key_manager import APIKeyManager
+from traigent.cloud.auth import UnifiedAuthConfig
 from traigent.utils.wire_text import WIRE_ERROR_CODES
 from traigent.cloud.api_operations import (
     _JSON_CONTENT_TYPE,
@@ -2296,24 +2300,98 @@ class TestOrchestratorDefaultConfigPayload:
         assert orch._consume_default_config() is None
 
 
+_CONTENT_LESS_URL = "https://api.example.test"
+_AGENT_REF = "agentref_" + "a" * 32
+
+
+def _ops_with_auth(auth: object) -> ApiOperations:
+    client = Mock()
+    client.backend_config.api_base_url = _CONTENT_LESS_URL
+    client.auth_manager = Mock(spec=["auth"])
+    client.auth_manager.auth = auth
+    return ApiOperations(client)
+
+
+def _key_manager(key: str) -> APIKeyManager:
+    manager = APIKeyManager(UnifiedAuthConfig())
+    manager.set_token(key, source="explicit")
+    return manager
+
+
 class TestContentLessPrincipal:
-    """Regression (#2710 mypy sweep): the principal read a method that does not exist."""
+    """The ref-cache scope is a credential fingerprint; unknown identity fails closed."""
 
-    def test_principal_carries_credential_preview(self):
-        """The preview comes from ``auth_manager.auth``; the old call always failed.
+    def test_same_preview_different_keys_do_not_share_refs(self, tmp_path):
+        key_a = "tg_a" + "1" * 56 + "aaaa"
+        key_b = "tg_a" + "2" * 56 + "aaaa"
+        assert APIKeyManager.mask_key(key_a) == APIKeyManager.mask_key(key_b)
+        auth_a, auth_b = Mock(), Mock()
+        auth_a.get_api_key_fingerprint = _key_manager(key_a).get_credential_fingerprint
+        auth_b.get_api_key_fingerprint = _key_manager(key_b).get_credential_fingerprint
+        principal_a = _ops_with_auth(auth_a)._content_less_principal()
+        principal_b = _ops_with_auth(auth_b)._content_less_principal()
+        assert principal_a is not None and principal_b is not None
+        assert principal_a != principal_b
 
-        ``BackendAuthManager`` has no ``get_api_key_preview``; the old lookup raised
-        AttributeError, which the broad except swallowed, so every principal was
-        keyed by URL alone. ``spec=["auth"]`` mirrors the real BackendAuthManager.
-        """
-        client = Mock()
-        client.backend_config.api_base_url = "https://api.example.test"
-        client.auth_manager = Mock(spec=["auth"])
-        client.auth_manager.auth.get_api_key_preview = Mock(return_value="tgk_abcd")
-        ops = ApiOperations(client)
+        cache = content_less_session.RefCache(tmp_path / "refs.json")
+        local_keys = {"agent": "agent-x"}
+        cache.store(principal_a, "t1", "p1", local_keys, {"agent": _AGENT_REF})
+        assert cache.lookup(principal_a, local_keys) == {"agent": _AGENT_REF}
+        assert cache.lookup(principal_b, local_keys) == {}
 
-        with_key = ops._content_less_principal()
-        client.auth_manager.auth.get_api_key_preview.return_value = None
-        without_key = ops._content_less_principal()
+    @pytest.mark.parametrize("fails", ["missing_key", "exception"])
+    def test_unknown_identity_skips_cache_read_and_write(
+        self, tmp_path, monkeypatch, fails
+    ):
+        cache_path = tmp_path / "refs.json"
+        local_keys = {"agent": "agent-x"}
+        legacy_urlnone = content_less_session._digest(f"{_CONTENT_LESS_URL}\x00")
+        legacy_nonenone = content_less_session._digest("\x00")
+        seeded = content_less_session.RefCache(cache_path)
+        seeded.store(legacy_urlnone, "t1", "p1", local_keys, {"agent": _AGENT_REF})
+        seeded.store(legacy_nonenone, "t1", "p1", local_keys, {"agent": _AGENT_REF})
+        # Control: a known identity reads the populated entry from this same file.
+        assert seeded.lookup(legacy_urlnone, local_keys) == {"agent": _AGENT_REF}
 
-        assert with_key != without_key
+        auth = Mock()
+        if fails == "missing_key":
+            auth.get_api_key_fingerprint = Mock(return_value=None)
+        else:
+            auth.get_api_key_fingerprint = Mock(side_effect=RuntimeError("boom"))
+        principal = _ops_with_auth(auth)._content_less_principal()
+        assert principal is None
+
+        reads, writes = [], []
+        orig_load, orig_save = (
+            content_less_session.RefCache._load,
+            content_less_session.RefCache._save,
+        )
+        monkeypatch.setattr(
+            content_less_session.RefCache,
+            "_load",
+            lambda self: reads.append(1) or orig_load(self),
+        )
+        monkeypatch.setattr(
+            content_less_session.RefCache,
+            "_save",
+            lambda self, data: writes.append(1) or orig_save(self, data),
+        )
+        cache = content_less_session.RefCache(cache_path)
+        assert cache.lookup(principal, local_keys) == {}
+        cache.store(principal, "t1", "p1", local_keys, {"agent": _AGENT_REF})
+        assert reads == []
+        assert writes == []
+
+    def test_fingerprint_is_domain_separated_stable_and_hides_the_key(self):
+        key = "tg_a" + "9" * 56 + "zzzz"
+        manager = _key_manager(key)
+        first = manager.get_credential_fingerprint()
+        assert first == manager.get_credential_fingerprint()
+        assert (
+            first
+            == hashlib.sha256(
+                b"traigent-content-less-principal-v1\0" + key.encode()
+            ).hexdigest()
+        )
+        assert first != hashlib.sha256(key.encode()).hexdigest()
+        assert key not in first and "9" * 56 not in first

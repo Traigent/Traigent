@@ -1768,14 +1768,15 @@ class TraigentCloudClient(BaseTraigentClient):
                 # Same content-less builder as the optimize() route: no legacy identity,
                 # capability required in the 201, never a legacy-shape retry.
                 try:
-                    preview = self.auth.get_api_key_preview()
-                except Exception:  # noqa: BLE001 - scope only
-                    preview = None
+                    fingerprint = self.auth.get_api_key_fingerprint()
+                except Exception:  # noqa: BLE001 - identity unknown: no cache use
+                    fingerprint = None
                 content_less_ctx = _content_less.prepare_payload(
                     request_data,
                     request,
                     _content_less.RefCache.principal(
-                        self.api_base_url, preview if isinstance(preview, str) else None
+                        self.api_base_url,
+                        fingerprint if isinstance(fingerprint, str) else None,
                     ),
                 )
 
