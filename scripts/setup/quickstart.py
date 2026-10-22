@@ -53,14 +53,14 @@ def check_python_version():
     """Check if Python version is suitable."""
     print_header("Checking Python Version")
     version = sys.version_info
-    if version.major == 3 and version.minor >= 11:
+    if version.major == 3 and version.minor >= 12:
         print_success(
             f"Python {version.major}.{version.minor}.{version.micro} is supported"
         )
         return True
     else:
         print_error(
-            f"Python {version.major}.{version.minor} is not supported. Please use Python 3.11+"
+            f"Python {version.major}.{version.minor} is not supported. Please use Python 3.12+"
         )
         return False
 

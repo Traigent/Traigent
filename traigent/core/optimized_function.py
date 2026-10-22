@@ -2584,9 +2584,6 @@ class OptimizedFunction(Generic[_P, _R]):
             execution_mode=self._resolve_runtime_execution_mode(algorithm).value,
         )
 
-        saved_dataset_override = self._dataset_override
-        if per_call_dataset is not None:
-            self._dataset_override = per_call_dataset
         try:
             validate_objectives(self.objectives)
             # When cost is an objective, a model with no price must not be
@@ -2617,6 +2614,7 @@ class OptimizedFunction(Generic[_P, _R]):
                     execution_budget=budget,
                     resume_from=resume_from,
                     allow_unverified_resume=allow_unverified_resume,
+                    call_dataset=per_call_dataset,
                 )
                 # Inside the run scope: a cost objective that measured no
                 # usage at all recorded $0 everywhere, which is an absent
@@ -2630,8 +2628,6 @@ class OptimizedFunction(Generic[_P, _R]):
             if runtime_schema is not None:
                 self.objective_schema = original_schema
             self._restore_tvl_state(tvl_state)
-            if per_call_dataset is not None:
-                self._dataset_override = saved_dataset_override
 
         return result
 
@@ -4326,6 +4322,7 @@ Remediation:
         execution_budget: ExecutionBudget | None = None,
         resume_from: OptimizationResult | str | os.PathLike[str] | None = None,
         allow_unverified_resume: bool = False,
+        call_dataset: Dataset | None = None,
     ) -> OptimizationResult:
         """Execute optimization assuming objective schema is already resolved.
 
@@ -4477,8 +4474,9 @@ Remediation:
         self.traigent_config = traigent_config
         self._check_ci_approval()
 
-        # Phase 3: Prepare dataset
-        dataset = self._load_dataset()
+        # Phase 3: Prepare dataset. ``call_dataset`` is this call's per-call
+        # override (#2541), passed explicitly rather than through shared state.
+        dataset = self._load_dataset(call_dataset)
         dataset, max_total_examples_value, samples_include_pruned_value = (
             prepare_optimization_dataset(
                 dataset,
@@ -4699,6 +4697,10 @@ Remediation:
         """
         if not optimize_kwargs.get("apply", True):
             raise ConfigurationError(_APPLY_FALSE_WITHDRAWN_MESSAGE)
+        # #2541: a per-call dataset is the SEED dataset for guidance (seeds and
+        # generated examples come from it). It is not forwarded into the rounds:
+        # each round passes its own grown dataset explicitly instead.
+        guided_seed_source = optimize_kwargs.pop("eval_dataset", None)
 
         from traigent.generation import (
             DatasetGrowthOptions,
@@ -4738,7 +4740,11 @@ Remediation:
         )
 
         config_space = dict(self.configuration_space or {})
-        dataset = self._load_dataset()
+        dataset = (
+            self._dataset_for_call(guided_seed_source)
+            if guided_seed_source is not None
+            else self._load_dataset()
+        )
 
         is_rewrite = kind is PlanKind.PROMPT_REWRITE
         rewriter = PromptRewriter(llm, prompt_opts) if is_rewrite else None
@@ -4755,8 +4761,11 @@ Remediation:
             return id_to_example.get(seed_ref)
 
         def _optimize_round(cs: dict[str, Any], ds: Any) -> Any:
-            self.set_eval_dataset_override(ds)
-            return self.optimize_sync(configuration_space=cs, **optimize_kwargs)
+            # Each round evaluates its own current (grown) dataset, passed
+            # explicitly for this call only; no shared override is written.
+            return self.optimize_sync(
+                configuration_space=cs, eval_dataset=ds, **optimize_kwargs
+            )
 
         loop = GuidanceLoop(
             provider=provider,
@@ -5072,8 +5081,12 @@ Remediation:
             return sorted(metrics)[0]
         return None
 
-    def _load_dataset(self) -> Dataset:
+    def _load_dataset(self, call_dataset: Dataset | None = None) -> Dataset:
         """Load evaluation dataset.
+
+        Args:
+            call_dataset: Per-call dataset (#2541) for this run only. Takes
+                precedence over every other source.
 
         Returns:
             Dataset object for evaluation
@@ -5081,6 +5094,8 @@ Remediation:
         Raises:
             ConfigurationError: If dataset cannot be loaded
         """
+        if call_dataset is not None:
+            return call_dataset
         # A guided-generation round may have grown the dataset; the override takes
         # precedence so synthesized examples persist across re-optimization rounds.
         if self._dataset_override is not None:

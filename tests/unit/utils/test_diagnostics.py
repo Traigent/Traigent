@@ -191,18 +191,18 @@ class TestTraigentDiagnostics:
             assert isinstance(description, str)
             assert isinstance(required, bool)
 
-    @patch("sys.version_info", new=SimpleNamespace(major=3, minor=8, micro=10))
+    @patch("sys.version_info", new=SimpleNamespace(major=3, minor=12, micro=4))
     def test_check_python_version_supported(self) -> None:
-        """Test Python version check for supported version."""
+        """Test Python version check for supported version (SDK floor 3.12)."""
         report = DiagnosticReport()
         TraigentDiagnostics._check_python_version(report)
 
         assert len(report.successes) == 1
         assert report.successes[0]["category"] == "Python"
-        assert "3.8.10" in report.successes[0]["message"]
+        assert "3.12.4" in report.successes[0]["message"]
         assert len(report.issues) == 0
 
-    @patch("sys.version_info", new=SimpleNamespace(major=3, minor=11, micro=5))
+    @patch("sys.version_info", new=SimpleNamespace(major=3, minor=13, micro=1))
     def test_check_python_version_newer_supported(self) -> None:
         """Test Python version check for newer supported version."""
         report = DiagnosticReport()
@@ -210,6 +210,16 @@ class TestTraigentDiagnostics:
 
         assert len(report.successes) == 1
         assert len(report.issues) == 0
+
+    @patch("sys.version_info", new=SimpleNamespace(major=3, minor=11, micro=9))
+    def test_check_python_version_311_no_longer_supported(self) -> None:
+        """Python 3.11 was dropped from the SDK floor (owner ruling 2026-10-22)."""
+        report = DiagnosticReport()
+        TraigentDiagnostics._check_python_version(report)
+
+        assert len(report.issues) == 1
+        assert "3.11" in report.issues[0]["message"]
+        assert "Install Python 3.12" in report.issues[0]["fix"]
 
     @patch("sys.version_info", new=SimpleNamespace(major=3, minor=7, micro=9))
     def test_check_python_version_unsupported(self) -> None:
@@ -220,7 +230,7 @@ class TestTraigentDiagnostics:
         assert len(report.issues) == 1
         assert report.issues[0]["category"] == "Python"
         assert "3.7" in report.issues[0]["message"]
-        assert "Install Python 3.8" in report.issues[0]["fix"]
+        assert "Install Python 3.12" in report.issues[0]["fix"]
 
     @patch("sys.version_info", new=SimpleNamespace(major=2, minor=7, micro=18))
     def test_check_python_version_python2(self) -> None:

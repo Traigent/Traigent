@@ -12,8 +12,8 @@ future *and re-raises it out of the step*. That re-raise unwinds the event loop
 frame, so the orchestrator's own interrupt handler finalized a partial result
 into a loop that no longer existed to return it.
 
-Only reproducible on Python 3.11 (the SDK's floor, and what CI runs); 3.12+
-happens to mask it. So these tests are version-independent by construction: they
+Only reproducible on Python 3.11 (the SDK's former floor, before 3.12 became
+the floor); 3.12+ happens to mask it. So these tests are version-independent by construction: they
 assert the observable contract, not the interpreter's internals.
 """
 

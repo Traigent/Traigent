@@ -163,11 +163,11 @@ def _python_version_step() -> dict[str, Any]:
     version = (
         f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     )
-    status = "passed" if sys.version_info >= (3, 11) else "failed"
+    status = "passed" if sys.version_info >= (3, 12) else "failed"
     return {
         "id": "python_version",
         "status": status,
-        "description": f"Python {version}; Traigent requires Python >=3.11",
+        "description": f"Python {version}; Traigent requires Python >=3.12",
     }
 
 
@@ -456,7 +456,7 @@ def _run_interactive_onboard(
     console.print("\n[bold blue]Traigent Onboarding[/bold blue]")
     console.print(python_step["description"])
     if python_step["status"] != "passed":
-        raise click.ClickException("Python >=3.11 is required.")
+        raise click.ClickException("Python >=3.12 is required.")
 
     _print_detection_table(project_markers, detected_agents)
 

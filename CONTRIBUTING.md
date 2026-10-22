@@ -23,7 +23,7 @@ Please search existing issues first to avoid duplicates.
 
 ## Development setup
 
-Requirements: Python 3.11 or newer.
+Requirements: Python 3.12 or newer.
 
 ```bash
 git clone https://github.com/Traigent/Traigent.git
