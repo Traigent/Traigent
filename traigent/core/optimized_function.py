@@ -817,10 +817,18 @@ def _record_pricing_provenance(
     # ``_guard_cost_objective_without_usage``).
     provenance["usage_captured"] = _run_captured_usage(result)
     metadata["pricing"] = provenance
+    snapshot_models = provenance.get("sdk_snapshot_models") or 0
+    snapshot_note = (
+        f"; {snapshot_models} OpenRouter prices from SDK snapshot "
+        f"{provenance.get('sdk_snapshot_version')}"
+        if snapshot_models
+        else ""
+    )
     logger.info(
-        "Pricing provenance: price table=%s, strict cost accounting=%s (%s), "
+        "Pricing provenance: price table=%s%s, strict cost accounting=%s (%s), "
         "usage captured=%s",
         provenance.get("price_table_source"),
+        snapshot_note,
         strict_effective,
         strict_origin,
         provenance["usage_captured"],
