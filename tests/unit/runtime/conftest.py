@@ -225,6 +225,12 @@ except ProductionRequirementError as exc:
 """
 
 
+BACKEND_SKIP_REASON = (
+    f"set {BACKEND_SRC_ENV} and {BACKEND_PYTHON_ENV} to validate against the real "
+    "Backend parse_import (tvl_import.py)"
+)  # scripts/ci/assert_tvl_tests_ran.py matches this text exactly
+
+
 def backend_parse_import(body: dict[str, Any]) -> str:
     """Run the Backend's REAL ``parse_import`` on a request body; ``"OK"`` or its closed code.
 
@@ -236,10 +242,7 @@ def backend_parse_import(body: dict[str, Any]) -> str:
 
     src, python = os.environ.get(BACKEND_SRC_ENV), os.environ.get(BACKEND_PYTHON_ENV)
     if not src or not python:
-        pytest.skip(
-            f"set {BACKEND_SRC_ENV} and {BACKEND_PYTHON_ENV} to validate against the real "
-            "Backend parse_import (tvl_import.py)"
-        )
+        pytest.skip(BACKEND_SKIP_REASON)
     done = subprocess.run(  # noqa: S603 - fixed code, caller-provided interpreter
         [python, "-c", _PARSE_SNIPPET],
         input=json.dumps(body),

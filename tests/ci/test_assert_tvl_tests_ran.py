@@ -16,7 +16,7 @@ assert _spec and _spec.loader
 guard = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(guard)
 
-BACKEND_REASON = "set TRAIGENT_BACKEND_SRC and TRAIGENT_BACKEND_PYTHON to validate"
+BACKEND_REASON = guard.BACKEND_SKIP_REASON
 
 
 def _case(module: str, name: str, outcome: str = "pass", reason: str = "") -> str:
@@ -32,10 +32,7 @@ def _case(module: str, name: str, outcome: str = "pass", reason: str = "") -> st
 
 
 def _required_passing() -> list[str]:
-    return [
-        _case(m, n if n != "test_real_compiler_resolves_tokens" else f"{n}[decorator]")
-        for m, n in guard.REQUIRED
-    ]
+    return [_case(m, n) for m, n in guard.REQUIRED]
 
 
 BACKEND_CASE = ("test_canary", "test_tvl_route_is_accepted_by_the_real_backend_parser")
@@ -108,10 +105,41 @@ def test_adding_unrelated_passing_tests_does_not_break_the_guard(
     assert _run(tmp_path, _required_passing() + extra) == 0
 
 
-def test_required_names_exist_in_the_test_files() -> None:
+def test_required_names_and_parameter_ids_exist_in_the_test_files() -> None:
     for module, name in (*guard.REQUIRED, BACKEND_CASE):
         text = (REPO_ROOT / "tests" / "unit" / "runtime" / f"{module}.py").read_text()
-        assert re.search(rf"^def {name}\(", text, re.M), (module, name)
+        base, _, param = name.partition("[")
+        assert re.search(rf"^def {base}\(", text, re.M), (module, name)
+        if param:
+            assert f'"{param.rstrip("]")}"' in text, (module, name)
+
+
+def test_declared_parameters_are_all_required() -> None:
+    text = (REPO_ROOT / "tests/unit/runtime/test_real_compiler.py").read_text()
+    ids = re.search(r"ids=\[([^\]]*)\]", text)
+    assert ids
+    declared = re.findall(r'"([^"]+)"', ids.group(1))
+    required = {n for m, n in guard.REQUIRED if m == "test_real_compiler"}
+    for pid in declared:
+        assert f"test_real_compiler_resolves_tokens[{pid}]" in required
+
+
+def test_skip_reason_matches_the_conftest_text() -> None:
+    from tests.unit.runtime.conftest import BACKEND_SKIP_REASON
+
+    assert guard.BACKEND_SKIP_REASON == BACKEND_SKIP_REASON
+
+
+def test_reason_that_only_mentions_the_variable_is_red(tmp_path: Path) -> None:
+    reason = "compiler import failed while TRAIGENT_BACKEND_SRC was configured"
+    cases = _required_passing() + [_case(*BACKEND_CASE, "skip", reason)]
+    assert _run(tmp_path, cases) == 1
+
+
+def test_missing_parameter_case_is_red(tmp_path: Path) -> None:
+    cases = [c for c in _required_passing() if "resolves_tokens[fragment]" not in c]
+    assert len(cases) == len(guard.REQUIRED) - 1
+    assert _run(tmp_path, cases) == 1
 
 
 FILTER = re.compile(
