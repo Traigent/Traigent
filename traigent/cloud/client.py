@@ -17,8 +17,8 @@ from importlib import import_module
 from typing import Any, NoReturn, cast
 from urllib.parse import urlparse
 
-from traigent.labels.transport_gate import client_origins, gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
+from traigent.labels.transport_gate import client_origins, gate_session
 
 # Capture the genuine, unpatched ClientSession class at module-load time — before
 # any test can monkeypatch the mutable ``aiohttp.ClientSession`` module attribute.
@@ -49,13 +49,14 @@ from traigent.utils.error_handler import TraigentError as HelpfulTraigentError
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
 from traigent.utils.retry import NetworkError, RateLimitError, retry_http_request
+from traigent.utils.trial_costs import lift_cost_floor_to_body
 from traigent.utils.validation import CoreValidators, validate_or_raise
+from traigent.utils.wire_text import error_code_for_wire, filter_wire_metadata
 
 from .auth import (
     AuthenticationError,
     AuthManager,
     UnifiedAuthConfig,
-    _strip_trace_context_headers,
 )
 from .billing import UsageTracker
 from .models import (
@@ -76,15 +77,12 @@ from .models import (
     SessionSummary,
     TrialResultSubmission,
     TrialSuggestion,
-    session_dataset_identity_to_wire,
     session_content_identity_to_wire,
+    session_dataset_identity_to_wire,
     session_identity_v2_to_wire,
     session_narrative_to_wire,
     session_task_type_to_wire,
 )
-from traigent.utils.trial_costs import lift_cost_floor_to_body
-from traigent.utils.wire_text import error_code_for_wire, filter_wire_metadata
-
 from .session_budgets import (
     ensure_cost_metric_for_budgeted_completed_submission,
     is_cost_budget_armed_session,
@@ -865,14 +863,13 @@ class TraigentCloudClient(BaseTraigentClient):
             logger.warning("aiohttp not available, will use fallback optimization")
             return self
 
+        # The session carries NO credential or trace headers as defaults: aiohttp
+        # merges defaults into every request, so a credential frozen here would
+        # outlive a later credential change (#2716). Every request sends its
+        # current credentials per request (see _get_headers).
         self._aio_session = gate_session(
             aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
-                # Session-default headers are long-lived: never freeze a
-                # traceparent/tracestate into them (it would stamp every later
-                # request with a stale span context). Trace context travels only
-                # on per-request headers (see _get_headers / _inject_trace_context).
-                headers=_strip_trace_context_headers(await self.auth.get_headers()),
                 trust_env=True,
             ),
             origins=client_origins(self),
@@ -922,12 +919,11 @@ class TraigentCloudClient(BaseTraigentClient):
                     "Client session not initialized and aiohttp not available"
                 )
 
+            # Same rule as __aenter__: no credentials in session defaults (#2716).
+            # The check above only proves credentials exist; they are sent per request.
             self._aio_session = gate_session(
                 aiohttp.ClientSession(
                     timeout=aiohttp.ClientTimeout(total=self.timeout),
-                    # Same rule as __aenter__: no stale trace context in
-                    # long-lived session-default headers.
-                    headers=_strip_trace_context_headers(headers),
                     trust_env=True,
                 ),
                 origins=client_origins(self),
@@ -1622,7 +1618,9 @@ class TraigentCloudClient(BaseTraigentClient):
         params = {"cascade": "true" if cascade else "false"}
 
         try:
-            async with self._aio_session.delete(url, params=params) as response:
+            async with self._aio_session.delete(
+                url, params=params, headers=await self._get_headers()
+            ) as response:
                 if response.status in {200, 202, 204}:
                     self._session_owners.pop(session_id, None)
                     return True
@@ -1682,7 +1680,9 @@ class TraigentCloudClient(BaseTraigentClient):
 
         url = f"{self.api_base_url}/sessions"
         try:
-            async with self._aio_session.get(url, params=params) as response:
+            async with self._aio_session.get(
+                url, params=params, headers=await self._get_headers()
+            ) as response:
                 if response.status != 200:
                     error_text = await response.text()
                     raise CloudServiceError(

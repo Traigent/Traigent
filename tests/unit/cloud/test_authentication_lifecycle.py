@@ -87,8 +87,10 @@ class TestSessionExpiryAndRefresh:
                     require(len(session_creations) == 2)
 
                     # Verify both sessions had proper headers
+                    # Credentials are sent per request, never as session defaults (#2716).
                     for headers in session_creations:
-                        require("X-API-Key" in headers or "Authorization" in headers)
+                        require("X-API-Key" not in headers)
+                        require("Authorization" not in headers)
 
     @pytest.mark.asyncio
     async def test_token_refresh_on_401_error(self):

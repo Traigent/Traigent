@@ -138,14 +138,12 @@ class TestTraigentCloudClientCore:
                 # Call _ensure_session directly
                 await client._ensure_session()
 
-                # Verify session was created with headers
+                # The session carries no credentials as defaults (#2716); they are
+                # sent per request (see test_session_auth_headers_2716.py).
                 mock_cs.assert_called_once()
                 call_kwargs = mock_cs.call_args[1]
-                assert "headers" in call_kwargs
-                headers = call_kwargs["headers"]
-                # API key can be in Authorization header or X-API-Key
-                assert "X-API-Key" in headers or "Authorization" in headers
-                assert "Content-Type" in headers
+                assert "X-API-Key" not in call_kwargs.get("headers", {})
+                assert "Authorization" not in call_kwargs.get("headers", {})
 
     @pytest.mark.asyncio
     async def test_headers_included_without_context_manager(self, valid_api_key):
@@ -199,9 +197,10 @@ class TestTraigentCloudClientCore:
                 # Verify session was created with headers
                 mock_aiohttp.ClientSession.assert_called_once()
                 call_kwargs = mock_aiohttp.ClientSession.call_args[1]
-                assert "headers" in call_kwargs
-                headers = call_kwargs["headers"]
-                assert "X-API-Key" in headers or "Authorization" in headers
+                assert "Authorization" not in call_kwargs.get("headers", {})
+                # The credential travels on the request itself (#2716).
+                request_headers = mock_session.post.call_args[1]["headers"]
+                assert "Authorization" in request_headers
 
     @pytest.mark.asyncio
     async def test_context_manager_creates_session_with_headers(
@@ -223,9 +222,8 @@ class TestTraigentCloudClientCore:
                     # Verify session was created with headers
                     mock_cs.assert_called_once()
                     call_kwargs = mock_cs.call_args[1]
-                    assert "headers" in call_kwargs
-                    headers = call_kwargs["headers"]
-                    assert "X-API-Key" in headers or "Authorization" in headers
+                    assert "X-API-Key" not in call_kwargs.get("headers", {})
+                    assert "Authorization" not in call_kwargs.get("headers", {})
 
     @pytest.mark.asyncio
     async def test_execute_agent_includes_headers(
@@ -836,10 +834,10 @@ class TestEdgeCasesAndErrorHandling:
                             # Verify session created with correct header format
                             mock_cs.assert_called_once()
                             call_kwargs = mock_cs.call_args[1]
-                            assert (
-                                call_kwargs["headers"]["Authorization"]
-                                == expected_header
-                            )
+                            assert "Authorization" not in call_kwargs.get("headers", {})
+                            # The format is sent per request, unchanged (#2716).
+                            request_headers = await client._get_headers()
+                            assert request_headers["Authorization"] == expected_header
 
     @pytest.mark.asyncio
     async def test_no_aiohttp_raises_error(self, valid_api_key):
@@ -1243,7 +1241,7 @@ class TestTraceparentInjection:
         """(staleness guard) Long-lived aiohttp session DEFAULT headers must
         never freeze a traceparent, even when a span is active at session
         creation -- trace context travels only on per-request headers."""
-        valid_api_key = "tg_" + "a" * 61
+        valid_api_key = "tg_" + "a" * 61  # pragma: allowlist secret
         with (
             _patch_backend_validate(),
             patch("traigent.cloud.client.AIOHTTP_AVAILABLE", True),
@@ -1258,9 +1256,10 @@ class TestTraceparentInjection:
                 await client._ensure_session()
 
             mock_cs.assert_called_once()
-            session_headers = mock_cs.call_args[1]["headers"]
-            # Auth headers survive; trace context does not.
-            assert "X-API-Key" in session_headers or "Authorization" in session_headers
+            session_headers = mock_cs.call_args[1].get("headers", {})
+            # No credentials as session defaults (#2716); trace context never either.
+            assert "X-API-Key" not in session_headers
+            assert "Authorization" not in session_headers
             assert not any(
                 name.lower() in ("traceparent", "tracestate")
                 for name in session_headers
