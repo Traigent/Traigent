@@ -78,7 +78,16 @@ def _request(**overrides: Any) -> SessionCreationRequest:
 
 
 def _ops() -> ApiOperations:
-    return ApiOperations(MagicMock())
+    client = MagicMock()
+    client.backend_config.api_base_url = "https://api.example.test"
+    return ApiOperations(client)
+
+
+#: Cache scope of an outgoing request that carries this X-API-Key (the header-derived
+#: principal the session path passes in). Without it the cache is skipped.
+_PRINCIPAL = cl.principal_for_headers(
+    "https://api.example.test", {"X-API-Key": "tg_" + "f" * 61}
+)
 
 
 class _Response:
@@ -111,7 +120,7 @@ def _created(**extra: Any) -> dict[str, Any]:
 def test_opt_in_off_is_the_legacy_request() -> None:
     ops = _ops()
     request = _request()
-    payload = ops._build_session_payload(request, 3)
+    payload = ops._build_session_payload(request, 3, principal=_PRINCIPAL)
     legacy = ops._build_typed_session_payload(request, 3)
     assert json.dumps(payload, sort_keys=True) == json.dumps(legacy, sort_keys=True)
     for key in ("capabilities", "environment", "agent_ref", "dataset_ref"):
@@ -154,7 +163,9 @@ def test_env_opt_in_declares_capability_environment_and_no_identity(
 
 def test_option_opt_in_sends_explicit_agent_ref() -> None:
     options = cl.ContentLessOptions(enabled=True, agent_ref=AGENT_REF)
-    payload = _ops()._build_session_payload(_request(content_less=options), 3)
+    payload = _ops()._build_session_payload(
+        _request(content_less=options), 3, principal=_PRINCIPAL
+    )
     assert payload["agent_ref"] == AGENT_REF
     assert "agent_key" not in payload
 
@@ -163,7 +174,9 @@ def test_agent_ref_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TRAIGENT_AGENT_REF", AGENT_REF)
     options = cl.ContentLessOptions(enabled=True)
     assert (
-        _ops()._build_session_payload(_request(content_less=options), 3)["agent_ref"]
+        _ops()._build_session_payload(
+            _request(content_less=options), 3, principal=_PRINCIPAL
+        )["agent_ref"]
         == AGENT_REF
     )
 
@@ -187,7 +200,9 @@ def test_explicit_agent_ref_beats_environment(monkeypatch: pytest.MonkeyPatch) -
 def test_invalid_agent_ref_is_refused_locally_without_echo(bad: str) -> None:
     options = cl.ContentLessOptions(enabled=True, agent_ref=bad)
     with pytest.raises(cl.ContentLessRefusal) as info:
-        _ops()._build_session_payload(_request(content_less=options), 3)
+        _ops()._build_session_payload(
+            _request(content_less=options), 3, principal=_PRINCIPAL
+        )
     assert info.value.code == cl.INVALID_AGENT_REF
     assert bad not in str(info.value)
     assert isinstance(info.value, SessionContractError)
@@ -258,7 +273,9 @@ def test_environment_is_case_and_whitespace_normalised() -> None:
 def test_environment_option_reaches_the_payload() -> None:
     options = cl.ContentLessOptions(enabled=True, environment="test")
     assert (
-        _ops()._build_session_payload(_request(content_less=options), 3)["environment"]
+        _ops()._build_session_payload(
+            _request(content_less=options), 3, principal=_PRINCIPAL
+        )["environment"]
         == "test"
     )
 
@@ -286,7 +303,7 @@ def test_refs_are_cached_per_scope_and_reused() -> None:
     ops = _ops()
     options = cl.ContentLessOptions(enabled=True)
     request = _request(content_less=options)
-    first = ops._build_session_payload(request, 3)
+    first = ops._build_session_payload(request, 3, principal=_PRINCIPAL)
     assert "agent_ref" not in first and "dataset_ref" not in first
     ctx = ops._content_less_ctx
     parsed = asyncio.run(
@@ -294,7 +311,9 @@ def test_refs_are_cached_per_scope_and_reused() -> None:
     )
     assert parsed[0] == "s1"
 
-    second = ops._build_session_payload(_request(content_less=options), 3)
+    second = ops._build_session_payload(
+        _request(content_less=options), 3, principal=_PRINCIPAL
+    )
     assert second["agent_ref"] == AGENT_REF
     assert second["dataset_ref"] == DATASET_REF
     assert second["evaluator_ref"] == EVALUATOR_REF
@@ -302,7 +321,9 @@ def test_refs_are_cached_per_scope_and_reused() -> None:
 
     # a different dataset label does not pick up the first dataset's ref
     other = ops._build_session_payload(
-        _request(content_less=options, dataset_id="somethingElse"), 3
+        _request(content_less=options, dataset_id="somethingElse"),
+        3,
+        principal=_PRINCIPAL,
     )
     assert "dataset_ref" not in other and other["agent_ref"] == AGENT_REF
 
@@ -310,7 +331,7 @@ def test_refs_are_cached_per_scope_and_reused() -> None:
 def test_ref_cache_holds_no_plaintext_names(tmp_path: Path) -> None:
     ops = _ops()
     options = cl.ContentLessOptions(enabled=True)
-    ops._build_session_payload(_request(content_less=options), 3)
+    ops._build_session_payload(_request(content_less=options), 3, principal=_PRINCIPAL)
     asyncio.run(
         ops._parse_session_response(
             _Response(_created()), content_less_ctx=ops._content_less_ctx
@@ -325,14 +346,16 @@ def test_ref_cache_holds_no_plaintext_names(tmp_path: Path) -> None:
 def test_malformed_response_refs_are_not_cached(tmp_path: Path) -> None:
     ops = _ops()
     options = cl.ContentLessOptions(enabled=True)
-    ops._build_session_payload(_request(content_less=options), 3)
+    ops._build_session_payload(_request(content_less=options), 3, principal=_PRINCIPAL)
     asyncio.run(
         ops._parse_session_response(
             _Response(_created(agent_ref="Alice_has_diabetes", dataset_ref=None)),
             content_less_ctx=ops._content_less_ctx,
         )
     )
-    again = ops._build_session_payload(_request(content_less=options), 3)
+    again = ops._build_session_payload(
+        _request(content_less=options), 3, principal=_PRINCIPAL
+    )
     assert "agent_ref" not in again and "dataset_ref" not in again
 
 

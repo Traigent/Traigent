@@ -472,12 +472,16 @@ class ApiOperations:
 
         try:
             max_trials_value = self._resolve_max_trials(session_request)
-            session_payload = self._build_session_payload(
-                session_request, max_trials_value
-            )
             connector = self._build_connector()
+            # Resolve the outgoing headers once. The cache scope is derived from
+            # exactly these headers, and the request is sent with them.
             headers = await self.client.auth_manager.augment_headers(
                 {"Content-Type": _JSON_CONTENT_TYPE}
+            )
+            session_payload = self._build_session_payload(
+                session_request,
+                max_trials_value,
+                principal=self._principal_for_headers(headers),
             )
             try:
                 result = await self._post_session_creation(
@@ -607,7 +611,11 @@ class ApiOperations:
         return bool(session_request.promotion_policy or session_request.tvl_governance)
 
     def _build_session_payload(
-        self, session_request: SessionCreationRequest, max_trials: int
+        self,
+        session_request: SessionCreationRequest,
+        max_trials: int,
+        *,
+        principal: str | None = None,
     ) -> dict[str, Any]:
         """Build the payload sent to the cloud session creation endpoint.
 
@@ -627,7 +635,7 @@ class ApiOperations:
                     "TRAIGENT_SESSION_CONTRACT=legacy cannot carry them."
                 )
             return self._build_content_less_session_payload(
-                session_request, max_trials, content_less_options
+                session_request, max_trials, content_less_options, principal
             )
         if contract == "legacy":
             if optimization_strategy:
@@ -657,11 +665,13 @@ class ApiOperations:
         session_request: SessionCreationRequest,
         max_trials: int,
         options: Any,
+        principal: str | None = None,
     ) -> dict[str, Any]:
         """The typed payload rewritten to the content-less identity shape (group 1).
 
         Legacy identity fields are removed and capabilities / environment / refs added.
-        The cache context for the response is parked on ``self`` for
+        ``principal`` is the cache scope of the outgoing request (None: no cache read
+        or write). The cache context for the response is parked on ``self`` for
         ``_post_session_creation`` (consumed once, then cleared).
         """
         payload = self._build_typed_session_payload(session_request, max_trials)
@@ -669,12 +679,19 @@ class ApiOperations:
             session_request, payload.get("metadata") or {}
         )
         cache = content_less_session.RefCache()
-        principal = self._content_less_principal()
         cached = cache.lookup(principal, local_keys)
         used_cache = content_less_session.apply_to_payload(
             payload, options=options, cached_refs=cached
         )
-        self._content_less_ctx = (cache, principal, local_keys, used_cache)
+        self._content_less_ctx: (
+            tuple[
+                content_less_session.RefCache,
+                str | None,
+                dict[str, str | None],
+                dict[str, str],
+            ]
+            | None
+        ) = (cache, principal, local_keys, used_cache)
         return payload
 
     def _gate_origins(self) -> list[str]:
@@ -685,19 +702,18 @@ class ApiOperations:
         )
         return [api_base] if isinstance(api_base, str) else []
 
-    def _content_less_principal(self) -> str:
-        """Digest of (backend URL, credential preview): scopes the local ref cache."""
+    def _principal_for_headers(self, headers: dict[str, str]) -> str | None:
+        """Cache scope of the exact outgoing headers; None skips the cache (fail closed)."""
         try:
             url = (
                 self.client.backend_config.api_base_url
                 or BackendConfig.get_backend_api_url()
             )
-            preview = self.client.auth_manager.get_api_key_preview()
-        except Exception:  # noqa: BLE001 - scope only; an unknown scope finds no refs
-            url, preview = None, None
-        return content_less_session.RefCache.principal(
-            url if isinstance(url, str) else None,
-            preview if isinstance(preview, str) else None,
+        except (AttributeError, ValueError):  # silent-ok: cache skipped, logged
+            logger.debug("content-less cache skipped: backend URL unavailable")
+            return None
+        return content_less_session.principal_for_headers(
+            url if isinstance(url, str) else None, headers.items()
         )
 
     @staticmethod
@@ -893,7 +909,7 @@ class ApiOperations:
         """Send the session creation request and handle responses."""
 
         self._raise_if_backend_egress_disabled("create session")
-        content_less_ctx = None
+        content_less_ctx: tuple[Any, ...] | None = None
         if "capabilities" in payload:
             content_less_ctx = getattr(self, "_content_less_ctx", None)
             self._content_less_ctx = None

@@ -2734,7 +2734,7 @@ class OptimizationResult:
         ) = self._aggregate_summary_data()
 
         unmeasured_trials = self._cost_unmeasured_trial_count()
-        summary = {
+        summary: dict[str, Any] = {
             "total_trials": total_trials,
             "completed_trials": status_counter.get(TrialStatus.COMPLETED, 0),
             "pruned_trials": status_counter.get(TrialStatus.PRUNED, 0),

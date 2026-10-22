@@ -935,6 +935,27 @@ class TraigentCloudClient(BaseTraigentClient):
             self._register_session_finalizer(self._aio_session)
             return self._aio_session
 
+    def _effective_request_headers(
+        self, request_headers: Mapping[str, str]
+    ) -> list[tuple[str, str]] | None:
+        """The headers aiohttp sends: session defaults overridden by per-request ones.
+
+        Matching is case-insensitive and per-request wins, as in aiohttp's merge.
+        Returns None when the session defaults cannot be read (the caller then skips
+        the cache).
+        """
+        defaults = getattr(self._aio_session, "headers", None)
+        if not isinstance(defaults, Mapping):
+            return None
+        request_names = {name.lower() for name in request_headers}
+        merged = [
+            (name, value)
+            for name, value in defaults.items()
+            if name.lower() not in request_names
+        ]
+        merged.extend(request_headers.items())
+        return merged
+
     async def _get_headers(self) -> dict[str, str]:
         """Get headers for HTTP requests."""
         headers = await self.auth.get_headers()
@@ -1763,24 +1784,25 @@ class TraigentCloudClient(BaseTraigentClient):
 
             url = f"{self.api_base_url}/sessions"
             request_data = self._serialize_session_request(request)
+            # Resolve the outgoing headers once. The cache scope is derived from
+            # exactly these headers, and the request is sent with them.
+            headers = await self._get_headers()
             content_less_ctx = None
             if _content_less.is_enabled(_content_less.options_of(request)):
                 # Same content-less builder as the optimize() route: no legacy identity,
-                # capability required in the 201, never a legacy-shape retry.
-                try:
-                    preview = self.auth.get_api_key_preview()
-                except Exception:  # noqa: BLE001 - scope only
-                    preview = None
+                # capability required in the 201, never a legacy-shape retry. The scope
+                # is derived from the headers aiohttp actually sends (session defaults
+                # merged with these), so a stale session header cannot scope the cache.
                 content_less_ctx = _content_less.prepare_payload(
                     request_data,
                     request,
-                    _content_less.RefCache.principal(
-                        self.api_base_url, preview if isinstance(preview, str) else None
+                    _content_less.principal_for_headers(
+                        self.api_base_url, self._effective_request_headers(headers)
                     ),
                 )
 
             async with self._aio_session.post(
-                url, json=request_data, headers=await self._get_headers()
+                url, json=request_data, headers=headers
             ) as response:
                 if response.status == 201:
                     data = await response.json()
