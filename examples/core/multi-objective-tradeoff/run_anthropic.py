@@ -416,7 +416,6 @@ def _dump_example_results(
             "claude-sonnet-4-6",
             "claude-haiku-4-5-20251001",
             # "claude-opus-4-5-20251101",
-            # "claude-sonnet-4-5-20250929"
         ],
         "temperature": [0.1],
         "max_tokens": [128],

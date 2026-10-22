@@ -107,7 +107,7 @@
       "import_line": "import litellm",
       "extra_imports": [],
       "llm_expr": null,
-      "models": ["gemini/gemini-3.7-flash", "gemini/gemini-3.8-flash"],
+      "models": ["gemini/gemini-3.8-flash"],
       "env_vars": [{ "name": "GEMINI_API_KEY", "placeholder": "AIza..." }],
       "creds_note": "Set GEMINI_API_KEY (Google AI Studio key). Via LiteLLM (core dep) because langchain's ChatGoogleGenerativeAI is not mock-intercepted by the SDK; for Google Cloud Vertex AI use the GCP Vertex provider instead.",
       "run_command": "python -m traigent.examples.providers.gemini"
@@ -156,7 +156,7 @@
       "import_line": "import litellm",
       "extra_imports": [],
       "llm_expr": null,
-      "models": ["vertex_ai/gemini-3.7-flash", "vertex_ai/gemini-3.8-flash"],
+      "models": ["vertex_ai/gemini-3.8-flash"],
       "env_vars": [
         { "name": "VERTEXAI_PROJECT", "placeholder": "my-gcp-project" },
         { "name": "VERTEXAI_LOCATION", "placeholder": "us-central1" },

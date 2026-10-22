@@ -61,3 +61,32 @@ def test_merge_adds_missing_without_overriding(monkeypatch):
     assert litellm.model_cost["openrouter/live/keep-me"] is sentinel
     assert cc.ensure_bundled_provider_prices() == 0
     assert not cc.model_pricing_resolves("openrouter/invented/zz-none")
+
+
+def test_sdk_openrouter_snapshot_is_valid_and_declared_in_package_data():
+    """The SDK-owned snapshot exists, parses, and ships in the wheel."""
+    import tomllib
+
+    from traigent.utils import cost_calculator as cc
+
+    snapshot = cc._load_sdk_openrouter_snapshot()
+    assert len(snapshot) > 100
+    assert all(k.startswith("openrouter/") for k in snapshot)
+
+    root = Path(__file__).resolve().parents[3]
+    package_data = tomllib.loads((root / "pyproject.toml").read_text("utf-8"))["tool"][
+        "setuptools"
+    ]["package-data"]["traigent"]
+    assert "utils/openrouter_prices_litellm_1_103_4.json" in package_data
+    rel = cc._SDK_OPENROUTER_SNAPSHOT.relative_to(root / "traigent").as_posix()
+    assert rel in package_data
+
+
+def test_litellm_price_wins_over_sdk_snapshot(monkeypatch):
+    from traigent.utils import cost_calculator as cc
+
+    key = next(iter(cc._load_sdk_openrouter_snapshot()))
+    sentinel = {"input_cost_per_token": 9.0, "output_cost_per_token": 9.0}
+    monkeypatch.setattr(litellm, "model_cost", {key: sentinel})
+    cc.ensure_bundled_provider_prices()
+    assert litellm.model_cost[key] is sentinel
