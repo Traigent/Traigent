@@ -8,7 +8,7 @@ import pytest
 
 from traigent.cloud import content_less as content_less_session
 from traigent.cloud.api_key_manager import APIKeyManager
-from traigent.cloud.auth import UnifiedAuthConfig
+from traigent.cloud.auth import AuthManager, UnifiedAuthConfig
 from traigent.utils.wire_text import WIRE_ERROR_CODES
 from traigent.cloud.api_operations import (
     _JSON_CONTENT_TYPE,
@@ -2312,6 +2312,12 @@ def _ops_with_auth(auth: object) -> ApiOperations:
     return ApiOperations(client)
 
 
+def _expected_fingerprint(key: str) -> str:
+    return hashlib.sha256(
+        b"traigent-content-less-principal-v1\0" + key.encode()
+    ).hexdigest()
+
+
 def _key_manager(key: str) -> APIKeyManager:
     manager = APIKeyManager(UnifiedAuthConfig())
     manager.set_token(key, source="explicit")
@@ -2395,3 +2401,77 @@ class TestContentLessPrincipal:
         )
         assert first != hashlib.sha256(key.encode()).hexdigest()
         assert key not in first and "9" * 56 not in first
+
+    @staticmethod
+    async def _accept_validation(self, api_key):  # noqa: ARG004
+        return None
+
+    @staticmethod
+    def _spy_reads(monkeypatch):
+        reads = []
+        orig_load = content_less_session.RefCache._load
+        monkeypatch.setattr(
+            content_less_session.RefCache,
+            "_load",
+            lambda self: reads.append(1) or orig_load(self),
+        )
+        return reads
+
+    @pytest.mark.asyncio
+    async def test_cleared_key_never_reuses_an_earlier_identity(
+        self, tmp_path, monkeypatch
+    ):
+        """Real AuthManager: authenticate(A), clear, B in env; A's refs are never read.
+
+        The earlier authentication (A) is still held in ``_last_auth_result`` after the
+        clear. The fingerprint must not fall back to it, and nothing is read or written
+        while the identity is unknown.
+        """
+        key_a = "tg_" + "a" * 61
+        key_b = "tg_" + "b" * 61
+        monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+        local_keys = {"agent": "agent-x"}
+        with patch.object(
+            AuthManager,
+            "_validate_api_key_with_backend",
+            new=self._accept_validation,
+        ):
+            auth = AuthManager(api_key=key_a)
+            assert (await auth.authenticate()).success
+            assert auth._last_auth_result is not None  # the historical fallback exists
+            ops = _ops_with_auth(auth)
+            principal_a = ops._content_less_principal()
+            assert principal_a is not None
+            cache = content_less_session.RefCache(tmp_path / "refs.json")
+            cache.store(principal_a, "t1", "p1", local_keys, {"agent": _AGENT_REF})
+            assert cache.lookup(principal_a, local_keys) == {"agent": _AGENT_REF}
+
+            auth.set_api_key(None)
+            monkeypatch.setenv("TRAIGENT_API_KEY", key_b)
+            reads = self._spy_reads(monkeypatch)
+            cleared = ops._content_less_principal()
+            assert cleared is None
+            assert cache.lookup(cleared, local_keys) == {}
+            assert reads == []
+
+            # The next authentication resolves B from env; the scope follows B.
+            assert (await auth.authenticate()).success
+            principal_b = ops._content_less_principal()
+            assert principal_b == content_less_session.RefCache.principal(
+                _CONTENT_LESS_URL, _expected_fingerprint(key_b)
+            )
+            assert principal_b != principal_a
+            assert cache.lookup(principal_b, local_keys) == {}
+
+    @pytest.mark.asyncio
+    async def test_cleared_key_with_no_other_source_has_no_identity(self, monkeypatch):
+        monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+        with patch.object(
+            AuthManager,
+            "_validate_api_key_with_backend",
+            new=self._accept_validation,
+        ):
+            auth = AuthManager(api_key="tg_" + "a" * 61)
+            assert (await auth.authenticate()).success
+            auth.set_api_key(None)
+        assert _ops_with_auth(auth)._content_less_principal() is None
