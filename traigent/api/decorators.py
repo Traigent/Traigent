@@ -44,8 +44,8 @@ Examples:
 from __future__ import annotations
 
 import dataclasses
-import math
 import inspect
+import math
 import os
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
@@ -521,7 +521,9 @@ _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
 
-def _is_same_named_twin(value: Any, model_cls: type[BundleModel]) -> bool:
+def _is_same_named_twin[BundleModel: BaseModel](
+    value: Any, model_cls: type[BundleModel]
+) -> bool:
     """Is ``value`` an instance of a *same-named twin* of ``model_cls``?
 
     A twin is a second class object built from the same source class statement:
@@ -552,7 +554,7 @@ def _is_same_named_twin(value: Any, model_cls: type[BundleModel]) -> bool:
     )
 
 
-def _replayable_legacy_inputs(
+def _replayable_legacy_inputs[BundleModel: BaseModel](
     value: BaseModel, model_cls: type[BundleModel]
 ) -> dict[str, Any]:
     """The deprecated *inputs* a twin recorded, for the live model to re-validate.
@@ -582,7 +584,7 @@ def _replayable_legacy_inputs(
     return dict(recorded)
 
 
-def _revalidate_same_named_twin(
+def _revalidate_same_named_twin[BundleModel: BaseModel](
     value: BaseModel, model_cls: type[BundleModel], parameter_name: str
 ) -> BundleModel:
     """Rebuild a twin instance as a real ``model_cls``, or raise ``TypeError``.
@@ -634,7 +636,7 @@ def _revalidate_same_named_twin(
     return rebuilt
 
 
-def _coerce_bundle(
+def _coerce_bundle[BundleModel: BaseModel](
     value: Any, model_cls: type[BundleModel], parameter_name: str
 ) -> BundleModel | None:
     if value is None:

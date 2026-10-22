@@ -59,7 +59,7 @@ import time
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
 from urllib.parse import urlsplit
 
 ENV_FLAG = "TRAIGENT_TOKEN_STORE_ENABLED"
@@ -156,10 +156,7 @@ class TokenStoreError(Exception):
         return f"TokenStoreError({self.code!r})"
 
 
-_F = TypeVar("_F", bound=Callable[..., Any])
-
-
-def _closed_boundary(func: _F) -> _F:
+def _closed_boundary[F: Callable[..., Any]](func: F) -> F:
     """Whatever leaves a public entry point is a :class:`TokenStoreError` without a cause.
 
     An exception nobody anticipated (a dependency's, an ``OSError`` quoting a path, a

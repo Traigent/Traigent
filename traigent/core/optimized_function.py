@@ -40,7 +40,7 @@ from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Generic, ParamSpec, TypeVar, cast
+from typing import Any, cast
 
 from traigent.api.types import OptimizationResult, OptimizationStatus
 from traigent.config import SeamlessParameterProvider, get_provider
@@ -169,9 +169,6 @@ logger = get_logger(__name__)
 _RUN_GUARD_LOCK = threading.Lock()
 
 # Type parameters for the @optimize decorator's generic return type.
-# _P captures the wrapped function's parameter spec; _R captures its return type.
-_P = ParamSpec("_P")
-_R = TypeVar("_R")
 
 # The named strategy presets that used to be accepted by ``strategy=``. They are
 # listed only so that passing one still produces a message naming the removal,
@@ -1055,14 +1052,14 @@ def _finite_grid_size(config_space: Any) -> int | None:
     return size
 
 
-class OptimizedFunction(Generic[_P, _R]):
+class OptimizedFunction[**P, R]:
     """Wrapper for functions decorated with @traigent.optimize.
 
     This class provides the optimization interface for decorated functions,
     including methods to run optimization, get results, and analyze performance.
 
-    The class is generic over the wrapped function's parameter spec (*_P*) and
-    return type (*_R*), so static type-checkers can preserve the original
+    The class is generic over the wrapped function's parameter spec (*P*) and
+    return type (*R*), so static type-checkers can preserve the original
     function signature through the decorator and still expose the
     :meth:`optimize` / :meth:`optimize_sync` method surface.
     """
@@ -1812,7 +1809,7 @@ class OptimizedFunction(Generic[_P, _R]):
             self.func, self._current_config, self.config_param
         )
 
-    def __call__(self, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
         """Make the optimized function callable.
 
         The signature is typed generically so that a decorated function
@@ -1820,12 +1817,12 @@ class OptimizedFunction(Generic[_P, _R]):
         """
         wrapped_func = self._wrapped_func
 
-        def invoke() -> _R:
+        def invoke() -> R:
             # If framework overrides are enabled, use them during function call
             if self.auto_override_frameworks and self.framework_targets:
                 with override_context(self.framework_targets):
-                    return cast(_R, wrapped_func(*args, **kwargs))
-            return cast(_R, wrapped_func(*args, **kwargs))
+                    return cast(R, wrapped_func(*args, **kwargs))
+            return cast(R, wrapped_func(*args, **kwargs))
 
         # Each call opens an agent scope so traces recorded inside it can carry
         # the agent key (see traigent.identity.agent_scope). Never let identity
@@ -1838,7 +1835,7 @@ class OptimizedFunction(Generic[_P, _R]):
             # vanish -- record it as ineligible in the active trace ledger.
             record_failed_boundary()
             return invoke()
-        return cast(_R, run_in_scope(scope, invoke))
+        return cast(R, run_in_scope(scope, invoke))
 
     def agent_binding(self) -> AgentBinding:
         """Registration identity, provenance and canonical trace key of this agent."""

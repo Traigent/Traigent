@@ -166,7 +166,7 @@ def _is_definitive_auth_rejection(exc: Exception) -> bool:
 _T = TypeVar("_T")
 
 
-async def _with_loop_local_session(client: Any, coro: Coroutine[Any, Any, _T]) -> _T:
+async def _with_loop_local_session[T](client: Any, coro: Coroutine[Any, Any, T]) -> T:
     """Run ``coro`` on a wrapper's private loop and release that loop's pool."""
     try:
         return await coro

@@ -49,7 +49,7 @@ logger = get_logger(__name__)
 _SESSION_NOT_INITIALIZED = "Session not initialized"
 
 
-def _run_async_safely(coro: Coroutine[Any, Any, T]) -> T:
+def _run_async_safely[T](coro: Coroutine[Any, Any, T]) -> T:
     """Run async coroutine from sync context, ensuring no event loop is running.
 
     Args:
