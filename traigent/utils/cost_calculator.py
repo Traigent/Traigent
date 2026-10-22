@@ -1428,7 +1428,7 @@ def get_pricing_provenance() -> dict[str, Any]:
         "sdk_snapshot_models": (
             sum(
                 1
-                for k in list(_sdk_snapshot_supplied)
+                for k in _sdk_snapshot_supplied.copy()
                 if _entry_is_sdk_snapshot_price(k, litellm.model_cost.get(k))
             )
             if LITELLM_AVAILABLE
