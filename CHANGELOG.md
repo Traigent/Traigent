@@ -51,6 +51,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Breaking: Python 3.11 is no longer supported; the SDK requires Python >=3.12 (numpy>=2.5.3 security fix, Aikido).** `numpy>=2.5.3` now applies on every supported Python.
+
 - **Honest run cost totals; unmeasured-cost floor in its own field (#2688).** When
   any trial's cost is unmeasured, `OptimizationResult.total_cost` and
   `metrics["total_cost"]` are now unknown (`None` / absent) instead of a partial
