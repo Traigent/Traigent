@@ -94,8 +94,10 @@ def _pricing_fields(entry: Any) -> dict[str, Any]:
 def _rates_are_sdk_snapshot(
     model_key: str, input_cost: float, output_cost: float
 ) -> bool:
-    """True when the per-token rates litellm just returned for ``model_key`` equal
-    the rates the SDK snapshot recorded for it (so they can only be the snapshot's)."""
+    """True when ``model_key`` was supplied by the SDK snapshot AND the (input,
+    output) per-token rate pair litellm just returned equals the snapshot's
+    recorded pair. This is an equality test on the returned rates, not a proof
+    of where litellm read them from."""
     recorded = _sdk_snapshot_supplied.get(model_key)
     if not recorded:
         return False
