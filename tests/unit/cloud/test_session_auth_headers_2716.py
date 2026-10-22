@@ -3,8 +3,11 @@
 aiohttp merges the session defaults into every request. When the session was created
 with the sign-in headers, a credential change (JWT A -> API key B) left
 ``Authorization: Bearer A`` on the wire next to ``X-API-Key: B``. These tests drive the
-real ``TraigentCloudClient`` session paths and capture what is actually sent. Only the
-aiohttp transport and the credential source (``auth.get_headers``) are replaced.
+real ``TraigentCloudClient`` session paths with the aiohttp transport replaced by a
+recorder and the credential source (``auth.get_headers``) replaced by a stub. They
+check the headers the client passes to the transport and what the session defaults
+hold. They do not observe bytes on the wire: test_session_auth_transport_2716.py
+does that against a real local server.
 """
 
 from __future__ import annotations

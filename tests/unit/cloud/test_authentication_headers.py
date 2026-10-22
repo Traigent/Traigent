@@ -1316,7 +1316,8 @@ class TestTraceparentInjection:
 
             mock_cs.assert_called_once()
             session_headers = mock_cs.call_args[1]["headers"]
-            assert "X-API-Key" in session_headers
+            # Pooled defaults carry no credential (#2716); the traceparent guard holds.
+            assert "X-API-Key" not in session_headers
             assert not any(
                 name.lower() in ("traceparent", "tracestate")
                 for name in session_headers
@@ -1352,7 +1353,8 @@ class TestTraceparentInjection:
 
             mock_cs.assert_called_once()
             session_headers = mock_cs.call_args[1]["headers"]
-            assert "X-API-Key" in session_headers
+            # Pooled defaults carry no credential (#2716); the traceparent guard holds.
+            assert "X-API-Key" not in session_headers
             assert not any(
                 name.lower() in ("traceparent", "tracestate")
                 for name in session_headers
