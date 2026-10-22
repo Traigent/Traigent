@@ -39,6 +39,7 @@ from traigent.runtime.model import (
     RuntimeRequirement,
     RuntimeRequirementError,
     normalise_environment,
+    one_line,
 )
 
 LOGGER_NAME = "traigent.runtime"
@@ -119,15 +120,15 @@ def _emit(logger: logging.Logger, req: RuntimeRequirement, event: RuntimeEvent) 
     logger.log(
         _LEVELS.get(event.severity, logging.INFO),
         "%s breach=%s severity=%s",
-        event.event,
-        event.breach_id,
-        event.severity,
+        one_line(event.event),
+        one_line(event.breach_id),
+        one_line(event.severity),
     )
     if req.on_event is not None:
         try:
             _run_hook(req.on_event(event))
         except Exception:  # noqa: BLE001 - a customer hook never breaks the watcher
-            logger.warning("on_event_hook_failed event=%s", event.event)
+            logger.warning("on_event_hook_failed event=%s", one_line(event.event))
 
 
 def poll_once(
@@ -164,7 +165,7 @@ def _poll_locked(
         rows, has_more = api.list_breaches(agent_id)
         saved = manifest.read_watch_state(state, agent_id)
     except RuntimeRequirementError as exc:
-        logger.warning("watch read failed: %s", exc.code)
+        logger.warning("watch read failed: %s", one_line(exc.code))
         return PollResult(coverage=COVERAGE_UNAVAILABLE, error=exc.code)
 
     result = PollResult(coverage=coverage_for(len(rows), has_more), rows=len(rows))
@@ -210,7 +211,7 @@ def _poll_locked(
     except (OSError, RuntimeRequirementError):
         result.persisted = False
         logger.warning("watch_state_not_persisted")
-    logger.info("coverage: %s", result.coverage)
+    logger.info("coverage: %s", one_line(result.coverage))
     return result
 
 

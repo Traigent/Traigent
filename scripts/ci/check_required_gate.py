@@ -115,6 +115,7 @@ CLASSIFIER_GATED: dict[str, str] = {
     "unit": "code_changed",
     "collection": "code_changed",
     "mcp-contract": "code_changed",
+    "runtime-tvl-compiler": "runtime_tvl_changed",
 }
 
 CHANGES_JOB = "changes"

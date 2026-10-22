@@ -345,14 +345,24 @@ class TestRealConfig:
         }
 
     def test_classifier_gated_covers_the_three_test_tier_jobs(self) -> None:
-        assert set(gate.CLASSIFIER_GATED) == {"unit", "collection", "mcp-contract"}
+        assert set(gate.CLASSIFIER_GATED) == {
+            "unit",
+            "collection",
+            "mcp-contract",
+            "runtime-tvl-compiler",
+        }
 
     def test_classifier_gated_points_at_real_changes_outputs(self) -> None:
         # Every gating output name must be one `changes` actually declares
         # (pr-gate.yml's `changes` job outputs block) -- a typo here would
         # make verify_classifier_gated_skip() always fail closed, silently
         # turning every relevant PR red.
-        real_changes_outputs = {"py_changed", "code_changed", "changed_file_count"}
+        real_changes_outputs = {
+            "py_changed",
+            "code_changed",
+            "changed_file_count",
+            "runtime_tvl_changed",
+        }
         assert set(gate.CLASSIFIER_GATED.values()) <= real_changes_outputs
 
     def test_workflow_declares_a_fail_closed_ancestry_only_verifier(self) -> None:
@@ -665,6 +675,7 @@ class TestCliEndToEnd:
         base_outputs = {
             "py_changed": "false",
             "code_changed": "false",
+            "runtime_tvl_changed": "false",
             "changed_file_count": "1",
             "ancestry_only": "false",
         }
@@ -676,6 +687,7 @@ class TestCliEndToEnd:
             "unit": {"result": unit_result},
             "collection": {"result": unit_result},
             "mcp-contract": {"result": unit_result},
+            "runtime-tvl-compiler": {"result": unit_result},
         }
 
     def test_all_success_passes(self) -> None:

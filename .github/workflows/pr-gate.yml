@@ -48,6 +48,7 @@ jobs:
       # the strict ancestry-only verifier below proves the exceptional topology.
       changed_file_count: ${{ steps.changed.outputs.changed_file_count }}
       ancestry_only: ${{ steps.changed.outputs.ancestry_only }}
+      runtime_tvl_changed: ${{ steps.changed.outputs.runtime_tvl_changed }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -116,6 +117,10 @@ jobs:
 
           set_output_bool py_changed has_match '\.py$'
           set_output_bool code_changed has_match '^(traigent|traigent_validation|tests|scripts|walkthrough)/|^(pyproject\.toml|requirements[^/]*\.txt|\.github/workflows/pr-gate\.yml)'
+
+          # Inputs of the runtime-tvl-compiler job: the runtime package, its
+          # tests, the pinned extra in pyproject.toml, and this workflow.
+          set_output_bool runtime_tvl_changed has_match '^(traigent/runtime/|tests/unit/runtime/|pyproject\.toml$|scripts/ci/assert_tvl_tests_ran\.py$|\.github/workflows/pr-gate\.yml$)'
 
           # A release ancestry-sync has no content diff by design, but it must
           # never turn the normal zero-diff detector into a blanket allowlist.
@@ -501,6 +506,45 @@ jobs:
           pytest tests/unit/mcp/test_local_server.py \
             tests/unit/analytics_mcp/test_observability_mcp_tools.py -q --tb=short
 
+  runtime-tvl-compiler:
+    name: runtime-tvl-compiler
+    # The tests in tests/unit/runtime that need the real TVL compiler skip via
+    # importorskip when the `runtime-tvl` extra is absent, which is how the
+    # `unit` job runs them. This job installs the extra and fails if any of them
+    # skips. tvl-spec is a public git pin, so no token is needed and fork PRs run
+    # it like `collection`.
+    if: ${{ !cancelled() && needs.changes.outputs.runtime_tvl_changed == 'true' && needs.preflight.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [changes, preflight]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install runtime-tvl extra and test deps
+        run: |
+          bash scripts/ci/install_sdk_requirements.sh -e ".[dev,runtime-tvl]"
+      - name: Verify the TVL compiler is importable
+        # Fail loudly here, not as a skip later, if the git pin did not install.
+        run: python -c "import tvl.runtime_compiler"
+      - name: Run runtime-tvl compiler tests
+        env:
+          PYTHONPATH: .
+        # -rs keeps skip reasons in the log. The JUnit file feeds the skip guard.
+        run: |
+          pytest tests/unit/runtime/test_real_compiler.py \
+            tests/unit/runtime/test_canary.py \
+            tests/unit/runtime/test_hosted_subset.py \
+            -q --tb=short -rs --junitxml=runtime-tvl-junit.xml
+      - name: Fail if any runtime-tvl test was skipped
+        # importorskip turns a missing extra into `skipped`, which pytest reports
+        # as success. Parse the JUnit XML and reject every skip except the
+        # documented Backend-checkout one.
+        run: python scripts/ci/assert_tvl_tests_ran.py runtime-tvl-junit.xml
+
   release-version-identity:
     name: release-version-identity
     # Rejects a PR that still declares pyproject.toml's version equal to an
@@ -536,7 +580,7 @@ jobs:
     # (in TraigentBackend's own classifier) that motivated tightening this.
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, schema-types, preflight, mypy, collection, unit, mcp-contract, release-version-identity]
+    needs: [changes, schema-types, preflight, mypy, collection, unit, mcp-contract, runtime-tvl-compiler, release-version-identity]
     if: ${{ !cancelled() }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

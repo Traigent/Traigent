@@ -234,6 +234,20 @@ def digest_of(value: Any) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
+_CONTROL_CHARS = re.compile("[\u0000-\u001f\u007f-\u009f\u2028\u2029]")
+
+
+def one_line(text: Any) -> str:
+    """Neutralise control characters before text reaches a terminal or a log.
+
+    Replaces C0/C1 controls (including ESC, CR, LF, NUL, DEL, U+0085) and the
+    Unicode line/paragraph separators with a space, so user-, file- or
+    backend-derived text cannot inject ANSI sequences or forge log lines.
+    Mirrors the JS SDK: ``text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ')``.
+    """
+    return _CONTROL_CHARS.sub(" ", str(text))
+
+
 def normalise_environment(value: str) -> str:
     return value.strip().lower()
 
