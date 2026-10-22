@@ -78,6 +78,10 @@ ERROR_TEXT: dict[str, str] = {
     "LINKAGE_ABSENT": "the backend returned a record without a commitment linkage",
     "EGRESS_DISABLED": "backend egress is disabled",
     "BAD_FP_DIGEST": "fp digests must be dataset or config_space as sha256:<64 hex>",
+    "SCHEMA_PACKAGE_TOO_OLD": (
+        "the installed traigent-schema lacks certification.commitment_linkage; "
+        "install a traigent-schema version that includes it; nothing was sent"
+    ),
 }
 
 
@@ -143,7 +147,14 @@ def _fsync_dir(directory: Path) -> None:
 
 def generate_openings() -> dict[str, bytes]:
     """Fresh openings for the dataset and config_space roles (Schema ``new_opening``)."""
-    from traigent_schema.certification.commitment_linkage import new_opening
+    try:
+        from traigent_schema.certification.commitment_linkage import new_opening
+    except ImportError:
+        # Older traigent-schema: raised outside the except block so the import
+        # failure is not chained into the user-visible error.
+        new_opening = None
+    if new_opening is None:
+        raise CommitmentLinkageClientError("SCHEMA_PACKAGE_TOO_OLD")
 
     return {role: _Opening(new_opening()) for role in OPENING_ROLES}
 

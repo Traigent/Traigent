@@ -902,6 +902,8 @@ def finalize(
         )
     except CommitmentLinkageClientError as err:
         click.echo(f"FINALIZE_REFUSED {err.code}", err=True)
+        if err.code == "SCHEMA_PACKAGE_TOO_OLD":
+            click.echo(str(err), err=True)
         raise click.exceptions.Exit(1) from None
     click.echo("FINALIZED")
     click.echo(
