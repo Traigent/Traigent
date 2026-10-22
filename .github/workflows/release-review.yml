@@ -32,7 +32,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PYTHON_VERSION: "3.11"
+  PYTHON_VERSION: "3.12"
   LINT_PYTHON_VERSION: "3.12"
   TRAIGENT_MOCK_LLM: "true"
   TRAIGENT_OFFLINE_MODE: "true"

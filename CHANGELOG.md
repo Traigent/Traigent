@@ -51,6 +51,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Breaking: Python 3.11 is no longer supported; the SDK requires Python >=3.12 (numpy>=2.5.3 security fix, Aikido).** `numpy>=2.5.3` now applies on every supported Python.
+
 - **Honest run cost totals; unmeasured-cost floor in its own field (#2688).** When
   any trial's cost is unmeasured, `OptimizationResult.total_cost` and
   `metrics["total_cost"]` are now unknown (`None` / absent) instead of a partial
@@ -392,8 +394,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reused and only the missing ones evaluated, aggregated as one trial. Reused
   examples are not charged again to the cost limit, stay in totals, keep unknown
   cost unknown, and use none of `max_total_examples`. Results without
-  per-example data fall back to trial-level reuse. Call-time `eval_dataset`
-  remains rejected (#1683).
+  per-example data fall back to trial-level reuse. `optimize(eval_dataset=...)` evaluates a per-call dataset (#2541);
+  the decorator's dataset is used when it is omitted.
 - **`example_timeout` option, decoupled from the run timeout (#2509).** New
   `@optimize(example_timeout=...)` / `ExecutionOptions(example_timeout=...)`
   (positive number of seconds; default 60) sets the per-example limit for the

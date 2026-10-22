@@ -60,7 +60,6 @@ class TestDecoratorOnlyKwargDenylist:
         "kwarg",
         [
             "warm_start_from",
-            "eval_dataset",
             "experiment_name",
             "default_config",
             "constraints",
@@ -78,11 +77,11 @@ class TestDecoratorOnlyKwargDenylist:
     def test_multiple_rejected_kwargs_all_named(self, opt_func):
         with pytest.raises(TypeError) as excinfo:
             opt_func._prepare_algorithm_kwargs(
-                {"warm_start_from": "exp_1", "eval_dataset": "data.jsonl"}
+                {"warm_start_from": "exp_1", "experiment_name": "run"}
             )
         message = str(excinfo.value)
         assert "warm_start_from" in message
-        assert "eval_dataset" in message
+        assert "experiment_name" in message
 
     def test_denylist_is_subset_of_decorator_defaults(self):
         """Every denylisted key must be a real decorator option, so the
@@ -612,6 +611,9 @@ def test_deriving_the_signature_params_rejects_exactly_what_it_did_before():
             "tvl_spec",
             "tvl_environment",
             "tvl",
+            # #2541: now a declared optimize() parameter (owner-ruled per-call
+            # dataset), so it is no longer decorator-only at call time.
+            "eval_dataset",
         }
     )
     as_curated = (

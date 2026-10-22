@@ -42,8 +42,9 @@ metrics, objectives and execution policy. Past results:
   inside the declared configuration space, otherwise `ValueError`. Errors name
   the config's position and the declared parameter names, never client values.
 * **`eval_dataset`**: a `Dataset`, JSONL path, list of paths, or inline
-  examples, used for this comparison only. `optimize()` rejects a call-time
-  `eval_dataset` because it would be ignored; `compare()` honors it.
+  examples, used for this comparison only. `optimize()` also accepts a
+  call-time `eval_dataset`: it applies to that call only, and the decorator's
+  dataset is used when it is omitted. `compare()` honors it.
 * **`repeats`**: evaluations per config. Every config runs on the same examples.
 
 ## What the result contains

@@ -12,14 +12,13 @@ description = "Enterprise-grade LLM optimization platform with advanced analytic
 readme = "README.md"
 license = "AGPL-3.0-only OR LicenseRef-Traigent-Commercial"
 license-files = ["LICENSE", "NOTICE", "COMMERCIAL-LICENSE.md", "CONTRIBUTOR-LICENSING.md"]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -58,8 +57,7 @@ dependencies = [
 [project.optional-dependencies]
 # Analytics and intelligence features (Sprint 8)
 analytics = [
-    "numpy>=1.21.0; python_version < '3.12'",
-    "numpy>=2.5.3; python_version >= '3.12'",  # AIKIDO-2026-775417; numpy 2.5 needs py>=3.12
+    "numpy>=2.5.3",  # AIKIDO-2026-775417
     "pandas>=1.3.0",
     "matplotlib>=3.5.0",
 ]
@@ -68,7 +66,7 @@ analytics = [
 # Needed only for TVL-fragment requirements (`@traigent.requirement(tvl=...)`);
 # the kwargs path and `import traigent` work without it. Pinned to a TVL git SHA.
 runtime-tvl = [
-    "tvl-spec @ git+https://github.com/Traigent/tvl@858092ac97bf8598538bf5f0193cc3193bd88671 ; python_version >= '3.12'",
+    "tvl-spec @ git+https://github.com/Traigent/tvl@858092ac97bf8598538bf5f0193cc3193bd88671",
 ]
 
 # Bayesian optimization (Sprint 4)
@@ -257,8 +255,7 @@ docs = [
 # This is the recommended bundle for production ML workloads
 ml = [
     "traigent[bayesian,analytics]",
-    "numpy>=1.21.0; python_version < '3.12'",
-    "numpy>=2.5.3; python_version >= '3.12'",  # AIKIDO-2026-775417; numpy 2.5 needs py>=3.12
+    "numpy>=2.5.3",  # AIKIDO-2026-775417
     "scipy>=1.7.0",
 ]
 
@@ -345,7 +342,7 @@ constraint-dependencies = [
 
 [tool.black]
 line-length = 88
-target-version = ["py311", "py312"]
+target-version = ["py312"]
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -507,6 +504,9 @@ exclude_lines = [
 ]
 
 [tool.ruff]
+# Kept at py311 while the SDK requires >=3.12: the py312 target enables 30
+# PEP 695 rewrites (UP040/UP046) that change runtime typing objects; that
+# migration is its own change.
 target-version = "py311"
 line-length = 88
 exclude = [

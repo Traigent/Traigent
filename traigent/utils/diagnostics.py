@@ -501,7 +501,7 @@ class TraigentDiagnostics:
     def _check_python_version(cls, report: DiagnosticReport) -> None:
         """Check Python version compatibility."""
         version = sys.version_info
-        if version.major == 3 and version.minor >= 8:
+        if version.major == 3 and version.minor >= 12:
             report.add_success(
                 "Python",
                 f"Version {version.major}.{version.minor}.{version.micro} is supported",
@@ -510,7 +510,7 @@ class TraigentDiagnostics:
             report.add_issue(
                 "Python",
                 f"Version {version.major}.{version.minor} is not supported",
-                "Install Python 3.8 or higher",
+                "Install Python 3.12 or higher",
             )
 
     @classmethod

@@ -39,14 +39,14 @@ jobs:
   # .[recommended] is the default user-facing bundle.
   # Per-branch matrix (mirrors the approved CI-rationalization plan):
   #   develop PR        -> ubuntu / 3.12 only (lean develop gate)
-  #   main PR / push     -> ubuntu / 3.11 + 3.12
-  #   nightly schedule   -> ubuntu + macOS + Windows / 3.11 + 3.12 (full OS matrix)
+  #   main PR / push     -> ubuntu / 3.12
+  #   nightly schedule   -> ubuntu + macOS + Windows / 3.12 (full OS matrix)
   install-recommended:
     strategy:
       fail-fast: false
       matrix:
         os: ${{ fromJSON( github.event_name == 'schedule' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]' ) }}
-        python-version: ${{ fromJSON( (github.event_name == 'pull_request' && github.base_ref == 'develop') && '["3.12"]' || '["3.11","3.12"]' ) }}
+        python-version: ${{ fromJSON( (github.event_name == 'pull_request' && github.base_ref == 'develop') && '["3.12"]' || '["3.12"]' ) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -87,17 +87,17 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.12
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install uv
         run: python -m pip install --upgrade pip uv
 
       - name: Install .[recommended] with uv
         run: |
-          uv venv --python 3.11
+          uv venv --python 3.12
           source .venv/bin/activate
           uv pip install -e ".[recommended]"
 
@@ -119,10 +119,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.12
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install .[enterprise]
         run: |
@@ -146,10 +146,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.12
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Build wheel
         run: |

@@ -1767,26 +1767,27 @@ class OptimizedFunction(Generic[_P, _R]):
 
     def _validate_dataset(self) -> None:
         """Validate dataset configuration."""
-        if isinstance(self.eval_dataset, str):
+        self._validate_dataset_spec(self.eval_dataset)
+
+    def _validate_dataset_spec(self, spec: Any) -> None:
+        """Validate one dataset spec (the decorator's or a per-call one)."""
+        if isinstance(spec, str):
             # Skip dataset validation in tests when the file doesn't exist
             if not (
                 os.environ.get("PYTEST_CURRENT_TEST")
-                or self.eval_dataset in ["test.jsonl", "data.jsonl"]
+                or spec in ["test.jsonl", "data.jsonl"]
             ):
-                validate_dataset_path(self.eval_dataset)
+                validate_dataset_path(spec)
             return
 
-        if isinstance(self.eval_dataset, list):
-            if all(isinstance(item, str) for item in self.eval_dataset):
+        if isinstance(spec, list):
+            if all(isinstance(item, str) for item in spec):
                 if not os.environ.get("PYTEST_CURRENT_TEST"):
-                    validate_dataset_path(self.eval_dataset)
+                    validate_dataset_path(spec)
                 return
 
-            if all(
-                isinstance(item, (dict, EvaluationExample))
-                for item in self.eval_dataset
-            ):
-                load_inline_dataset(self.eval_dataset)
+            if all(isinstance(item, (dict, EvaluationExample)) for item in spec):
+                load_inline_dataset(spec)
                 return
 
             raise ConfigurationError(
@@ -2356,6 +2357,9 @@ class OptimizedFunction(Generic[_P, _R]):
         apply: bool = True,
         resume_from: OptimizationResult | str | os.PathLike[str] | None = None,
         allow_unverified_resume: bool = False,
+        eval_dataset: (
+            str | list[str | dict[str, Any] | EvaluationExample] | Dataset | None
+        ) = None,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization on the function.
@@ -2418,6 +2422,11 @@ class OptimizedFunction(Generic[_P, _R]):
                 ``resume_from`` must have a verifying integrity manifest; set
                 ``True`` to resume from a legacy result without one (its trials
                 are then trusted unverified). Ignored for in-memory results.
+            eval_dataset: Evaluate on this dataset for this call only; the
+                decorator's dataset is used when omitted. Loaded and validated the
+                same way as the decorator's ``eval_dataset``. Not forwarded to
+                ``algorithm_kwargs``. With ``resume_from``, prior trials are reused
+                only when their dataset fingerprint matches this dataset.
             **algorithm_kwargs: Additional algorithm-specific parameters.
                 For grid search (algorithm="grid"):
                     - parameter_order: dict[str, int | float] controlling iteration order.
@@ -2459,6 +2468,7 @@ class OptimizedFunction(Generic[_P, _R]):
             "budget": budget,
             "resume_from": resume_from,
             "allow_unverified_resume": allow_unverified_resume,
+            "eval_dataset": eval_dataset,
             "algorithm_kwargs": algorithm_kwargs,
         }
         from traigent.utils.cost_calculator import cost_run_scope
@@ -2491,11 +2501,17 @@ class OptimizedFunction(Generic[_P, _R]):
         budget: ExecutionBudget | None,
         resume_from: OptimizationResult | str | os.PathLike[str] | None = None,
         allow_unverified_resume: bool = False,
+        eval_dataset: Any = None,
         algorithm_kwargs: dict[str, Any],
     ) -> OptimizationResult:
         """Body of :meth:`optimize` for one advancing run."""
         logger.info(f"Starting optimization of {self.func.__name__}")
         _emit_cost_warning_once()
+        # Per-call dataset (#2541): resolved before any run state changes, so a bad
+        # dataset fails the same way it does at decoration time.
+        per_call_dataset = (
+            None if eval_dataset is None else self._dataset_for_call(eval_dataset)
+        )
 
         # A retired preset name keeps its own message, ahead of strategy_params.
         _reject_removed_strategy_preset(algorithm_kwargs.get("strategy"))
@@ -2598,6 +2614,7 @@ class OptimizedFunction(Generic[_P, _R]):
                     execution_budget=budget,
                     resume_from=resume_from,
                     allow_unverified_resume=allow_unverified_resume,
+                    call_dataset=per_call_dataset,
                 )
                 # Inside the run scope: a cost objective that measured no
                 # usage at all recorded $0 everywhere, which is an absent
@@ -2635,6 +2652,9 @@ class OptimizedFunction(Generic[_P, _R]):
         apply: bool = True,
         resume_from: OptimizationResult | str | os.PathLike[str] | None = None,
         allow_unverified_resume: bool = False,
+        eval_dataset: (
+            str | list[str | dict[str, Any] | EvaluationExample] | Dataset | None
+        ) = None,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization synchronously (convenience wrapper).
@@ -2713,6 +2733,7 @@ class OptimizedFunction(Generic[_P, _R]):
             apply=apply,
             resume_from=resume_from,
             allow_unverified_resume=allow_unverified_resume,
+            eval_dataset=eval_dataset,
             **algorithm_kwargs,
         )
 
@@ -4301,6 +4322,7 @@ Remediation:
         execution_budget: ExecutionBudget | None = None,
         resume_from: OptimizationResult | str | os.PathLike[str] | None = None,
         allow_unverified_resume: bool = False,
+        call_dataset: Dataset | None = None,
     ) -> OptimizationResult:
         """Execute optimization assuming objective schema is already resolved.
 
@@ -4452,8 +4474,9 @@ Remediation:
         self.traigent_config = traigent_config
         self._check_ci_approval()
 
-        # Phase 3: Prepare dataset
-        dataset = self._load_dataset()
+        # Phase 3: Prepare dataset. ``call_dataset`` is this call's per-call
+        # override (#2541), passed explicitly rather than through shared state.
+        dataset = self._load_dataset(call_dataset)
         dataset, max_total_examples_value, samples_include_pruned_value = (
             prepare_optimization_dataset(
                 dataset,
@@ -4674,6 +4697,10 @@ Remediation:
         """
         if not optimize_kwargs.get("apply", True):
             raise ConfigurationError(_APPLY_FALSE_WITHDRAWN_MESSAGE)
+        # #2541: a per-call dataset is the SEED dataset for guidance (seeds and
+        # generated examples come from it). It is not forwarded into the rounds:
+        # each round passes its own grown dataset explicitly instead.
+        guided_seed_source = optimize_kwargs.pop("eval_dataset", None)
 
         from traigent.generation import (
             DatasetGrowthOptions,
@@ -4713,7 +4740,11 @@ Remediation:
         )
 
         config_space = dict(self.configuration_space or {})
-        dataset = self._load_dataset()
+        dataset = (
+            self._dataset_for_call(guided_seed_source)
+            if guided_seed_source is not None
+            else self._load_dataset()
+        )
 
         is_rewrite = kind is PlanKind.PROMPT_REWRITE
         rewriter = PromptRewriter(llm, prompt_opts) if is_rewrite else None
@@ -4730,8 +4761,11 @@ Remediation:
             return id_to_example.get(seed_ref)
 
         def _optimize_round(cs: dict[str, Any], ds: Any) -> Any:
-            self.set_eval_dataset_override(ds)
-            return self.optimize_sync(configuration_space=cs, **optimize_kwargs)
+            # Each round evaluates its own current (grown) dataset, passed
+            # explicitly for this call only; no shared override is written.
+            return self.optimize_sync(
+                configuration_space=cs, eval_dataset=ds, **optimize_kwargs
+            )
 
         loop = GuidanceLoop(
             provider=provider,
@@ -5047,8 +5081,12 @@ Remediation:
             return sorted(metrics)[0]
         return None
 
-    def _load_dataset(self) -> Dataset:
+    def _load_dataset(self, call_dataset: Dataset | None = None) -> Dataset:
         """Load evaluation dataset.
+
+        Args:
+            call_dataset: Per-call dataset (#2541) for this run only. Takes
+                precedence over every other source.
 
         Returns:
             Dataset object for evaluation
@@ -5056,11 +5094,18 @@ Remediation:
         Raises:
             ConfigurationError: If dataset cannot be loaded
         """
+        if call_dataset is not None:
+            return call_dataset
         # A guided-generation round may have grown the dataset; the override takes
         # precedence so synthesized examples persist across re-optimization rounds.
         if self._dataset_override is not None:
             return self._dataset_override
         return self._dataset_from_source(self.eval_dataset)
+
+    def _dataset_for_call(self, source: Any) -> Dataset:
+        """Resolve a per-call ``eval_dataset`` with the decorator path's checks."""
+        self._validate_dataset_spec(source)
+        return self._dataset_from_source(source)
 
     def _dataset_from_source(self, source: Any) -> Dataset:
         """Resolve a dataset spec (Dataset, path, paths, inline examples)."""

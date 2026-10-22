@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.12", "3.13"]
 
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -96,7 +96,7 @@ jobs:
         python examples/core/structured-output-json/run.py
 
     - name: Test README examples
-      if: matrix.python-version == '3.11'
+      if: matrix.python-version == '3.12'
       env:
         TRAIGENT_MOCK_LLM: "true"
         TRAIGENT_OFFLINE_MODE: "true"
@@ -128,7 +128,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
-        python-version: '3.11'
+        python-version: '3.12'
 
     - name: Quick install and test
       env:
@@ -154,10 +154,10 @@ jobs:
       with:
         persist-credentials: false
 
-    - name: Set up Python 3.11
+    - name: Set up Python 3.12
       uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
-        python-version: "3.11"
+        python-version: "3.12"
 
     - name: Install linting dependencies
       run: |

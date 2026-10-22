@@ -32,7 +32,7 @@ python hello_world.py
 Uv:
 
 ```bash
-uv venv --python 3.11
+uv venv --python 3.12
 source .venv/bin/activate
 uv pip install "traigent[recommended]"
 python hello_world.py
