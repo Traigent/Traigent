@@ -8,6 +8,27 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`traigent hooks install --force` no longer destroys the hook you already
+  had (#2707).** Backing up used `hook_path.rename(backup_path)`, and `rename`
+  overwrites: a second `--force` replaced the saved original with Traigent's
+  own hook, and `uninstall` then restored that instead, leaving the
+  customer's hook unrecoverable. Three ordinary commands were enough.
+  Ownership is now recorded rather than guessed. `install` writes the digest
+  of each artifact it publishes, and of any original it preserves, to
+  `.git/traigent-hooks.json`; `status` and `uninstall` read it. The SDK
+  removes exactly what it generated and never deletes or resurrects a hook it
+  did not: a preserved original is recorded before the backup is created, a
+  refused install claims nothing, a saved original is never collected as a
+  stale artifact even if a later release recognises its bytes, and a backup
+  with no record is left exactly where it is rather than restored over your
+  hook. Publication no longer overwrites: hooks are staged and linked, and
+  every mutation re-checks the file it is about to touch. `traigent hooks
+  status` now also tells outdated, unsafe and unreadable hooks apart, and
+  reports a backup left behind. The record lives inside `.git`, is never
+  committed, is read without following symlinks, and degrades to the previous
+  content-only behaviour with a warning if it is missing or unreadable. The
+  generated hook scripts themselves are unchanged.
+
 - **Trial error text and three metadata maps now cross to the backend as closed codes and allowlisted keys (#2241).** `error_message` on trial submission and config-run status is reduced to one fixed code (for example `trial_failed` or `no_examples_succeeded`); the full text stays on the local result. `metadata.agent_configuration`, `metadata.surrogate_evaluator` and `summary_stats.metadata` are rebuilt from a key allowlist, so unlisted keys and judge prompts no longer leave the SDK.
 - **TVL derived constraints are documented as per-trial only; the loader warns when a spec relies on `environment.context` (#1618).** `load_tvl_spec` emits one value-free warning naming the derived constraint ids; `docs/tvl/CONSTRAINT_EXPRESSIONS.md` states the rule.
 - **Keyless quickstart is labelled a plumbing check, with no fake winner (#1690).** `traigent quickstart` now ends with a message saying the run used a mock LLM and simulated scores, is not a model comparison, and found no best configuration; the `best config ... scored 0.850` line is gone. Achievements stay blocked in mock runs.

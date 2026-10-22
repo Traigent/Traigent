@@ -13,8 +13,41 @@ from pathlib import Path
 import click
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 console = Console()
+
+
+def _print_hook_state(
+    hook_status: dict[str, str], title: str = "Current hook state"
+) -> None:
+    """Display exact current state after completed, skipped or failed operations."""
+    if "error" in hook_status:
+        console.print(f"[red]Could not inspect hooks: {hook_status['error']}[/red]")
+        return
+    console.print(f"\n[bold]{title}:[/bold]")
+    displays = {
+        "not installed": ("Not installed", "dim"),
+        "not installed (backup present)": ("Not installed (backup present)", "yellow"),
+        "installed (traigent)": ("Installed (Traigent)", "green"),
+        "installed (traigent, outdated)": ("Installed (Traigent, outdated)", "yellow"),
+        "installed (other)": ("Installed (Other)", "yellow"),
+        "unsafe (not a regular file)": ("Unsafe (not a regular file)", "red"),
+        "unreadable": ("Unreadable", "red"),
+    }
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Hook")
+    table.add_column("Status")
+    for hook_name, status_str in hook_status.items():
+        label, style = displays.get(status_str, (status_str, ""))
+        table.add_row(hook_name, Text(label, style=style))
+    console.print(table)
+    for hook_name, status_str in hook_status.items():
+        if status_str == "not installed (backup present)":
+            console.print(
+                f".git/hooks/{hook_name}.backup was left in place; "
+                "restore or remove it manually."
+            )
 
 
 @click.group()
@@ -65,17 +98,24 @@ def install(force: bool, path: str | None) -> None:
                 console.print(f"  [green]Installed[/green]: .git/hooks/{hook_name}")
             else:
                 console.print(
-                    f"  [yellow]Skipped[/yellow]: .git/hooks/{hook_name} (exists, use --force)"
+                    f"  [yellow]Skipped[/yellow]: .git/hooks/{hook_name} "
+                    "(not an unmodified Traigent hook; left unchanged)"
                 )
 
         if all(results.values()):
             console.print("\n[green]Hooks installed successfully![/green]")
         else:
-            console.print("\n[yellow]Some hooks were skipped[/yellow]")
+            console.print(
+                "\n[yellow]Some hooks were skipped. traigent hooks install --force "
+                "keeps an existing hook as <hook>.backup and refuses if that backup "
+                "already exists.[/yellow]"
+            )
 
     except Exception as e:
         console.print(f"[red]Error installing hooks: {e}[/red]")
         raise SystemExit(1) from e
+    finally:
+        _print_hook_state(installer.status())
 
 
 @hooks.command()
@@ -102,17 +142,25 @@ def uninstall(path: str | None) -> None:
 
         for hook_name, success in results.items():
             if success:
-                console.print(f"  [green]Removed[/green]: .git/hooks/{hook_name}")
+                console.print(
+                    f"  [green]OK[/green]: .git/hooks/{hook_name} (no Traigent hook active)"
+                )
             else:
                 console.print(
-                    f"  [yellow]Skipped[/yellow]: .git/hooks/{hook_name} (not a Traigent hook)"
+                    f"  [yellow]Skipped[/yellow]: .git/hooks/{hook_name} "
+                    "(not an unmodified Traigent hook; left unchanged)"
                 )
 
-        console.print("\n[green]Hooks uninstalled![/green]")
+        if all(results.values()):
+            console.print("\n[green]Hooks uninstalled![/green]")
+        else:
+            console.print("\n[yellow]Some hooks were skipped[/yellow]")
 
     except Exception as e:
         console.print(f"[red]Error uninstalling hooks: {e}[/red]")
         raise SystemExit(1) from e
+    finally:
+        _print_hook_state(installer.status())
 
 
 @hooks.command()
@@ -140,27 +188,8 @@ def status(path: str | None) -> None:
     else:
         console.print("[yellow]Configuration:[/yellow] Not found (using defaults)")
 
-    # Hooks status
-    console.print("\n[bold]Installed Hooks:[/bold]")
-
     installer = HooksInstaller(repo_path)
-    hook_status = installer.status()
-
-    table = Table(show_header=True, header_style="bold")
-    table.add_column("Hook")
-    table.add_column("Status")
-
-    for hook_name, status_str in hook_status.items():
-        if status_str == "installed (traigent)":
-            status_display = "[green]Installed (Traigent)[/green]"
-        elif status_str == "installed (other)":
-            status_display = "[yellow]Installed (Other)[/yellow]"
-        else:
-            status_display = "[dim]Not installed[/dim]"
-
-        table.add_row(hook_name, status_display)
-
-    console.print(table)
+    _print_hook_state(installer.status(), title="Installed Hooks")
 
 
 @hooks.command()

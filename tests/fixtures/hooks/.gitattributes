@@ -1,0 +1,3 @@
+# Exact historical bytes (see PROVENANCE.md): never convert line endings, and
+# accept the CRLF fixtures' carriage returns as line endings, not whitespace.
+*.hook -text whitespace=cr-at-eol

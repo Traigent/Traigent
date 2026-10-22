@@ -1,0 +1,18 @@
+#!/bin/bash
+# Traigent pre-commit hook - quick config check
+# Installed by: traigent hooks install
+
+set -e
+
+# Check if traigent is available
+if ! command -v traigent &> /dev/null; then
+    if ! python -m traigent --version &> /dev/null; then
+        exit 0  # Skip if traigent not available
+    fi
+    TRAIGENT_CMD="python -m traigent"
+else
+    TRAIGENT_CMD="traigent"
+fi
+
+# Quick syntax check only (no full validation)
+$TRAIGENT_CMD hooks check --quick

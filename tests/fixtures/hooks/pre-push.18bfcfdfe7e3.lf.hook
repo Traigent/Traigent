@@ -1,0 +1,36 @@
+#!/bin/bash
+# Traigent pre-push hook - validates agent configurations
+# Installed by: traigent hooks install
+
+set -e
+
+# Check if traigent is available
+if ! command -v traigent &> /dev/null; then
+    # Try Python module invocation
+    if ! python -m traigent --version &> /dev/null; then
+        echo "Warning: traigent CLI not found, skipping validation"
+        exit 0
+    fi
+    TRAIGENT_CMD="python -m traigent"
+else
+    TRAIGENT_CMD="traigent"
+fi
+
+echo "[traigent-validate] Checking agent configurations..."
+
+# Run Traigent validation
+if ! $TRAIGENT_CMD hooks validate --exit-code; then
+    echo ""
+    echo "PUSH REJECTED: Agent configuration violates constraints"
+    echo ""
+    echo "To bypass (not recommended):"
+    echo "  git push --no-verify"
+    echo ""
+    echo "To fix:"
+    echo "  Review the errors above and update your agent configuration"
+    exit 1
+fi
+
+echo ""
+echo "All Traigent hooks passed!"
+exit 0
