@@ -48,7 +48,9 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from traigent._version import get_version
-from traigent.cloud.url_security import validate_cloud_base_url
+from traigent.cloud.url_security import (
+    validate_cloud_base_url,
+)
 from traigent.config.backend_config import BackendConfig
 from traigent.labels.transport_gate import gate_session, preflight_requests
 from traigent.utils.logging import get_logger
@@ -890,15 +892,22 @@ class WorkflowTracesClient:
             )
 
         try:
-            preflight_requests(
-                "POST", f"{self.backend_url}/api/v1/traces/ingest", json=request_payload
-            )
+            ingest_url = f"{self.backend_url}/api/v1/traces/ingest"
+            # Under the self-hosted opt-in the credential-bearing origin never
+            # follows a redirect; a 3xx is reported as a refusal below.
+            preflight_requests("POST", ingest_url, json=request_payload)
             response = requests.post(
-                f"{self.backend_url}/api/v1/traces/ingest",
+                ingest_url,
                 json=request_payload,
                 headers=self._get_headers(),
                 timeout=self.timeout,
+                allow_redirects=False,
             )
+            if 300 <= response.status_code < 400:
+                return TraceIngestionResponse(
+                    success=False,
+                    error=f"Redirect refused ({response.status_code})",
+                )
             # Auth failures: instance-scoped dedup at DEBUG
             if response.status_code in (401, 403):
                 if not self._auth_ingestion_error_logged:

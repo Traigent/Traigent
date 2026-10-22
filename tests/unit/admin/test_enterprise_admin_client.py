@@ -208,7 +208,7 @@ def test_enterprise_admin_client_manages_tenants_memberships_and_sso():
 def test_enterprise_admin_client_maps_auth_and_network_errors(monkeypatch):
     auth_client = EnterpriseAdminClient()
     monkeypatch.setattr(
-        "traigent.admin.client.request.urlopen",
+        "traigent.admin.client.open_no_redirect",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             error.HTTPError(
                 url="https://example.com",
@@ -224,7 +224,7 @@ def test_enterprise_admin_client_maps_auth_and_network_errors(monkeypatch):
 
     forbidden_client = EnterpriseAdminClient()
     monkeypatch.setattr(
-        "traigent.admin.client.request.urlopen",
+        "traigent.admin.client.open_no_redirect",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             error.HTTPError(
                 url="https://example.com",
@@ -240,7 +240,7 @@ def test_enterprise_admin_client_maps_auth_and_network_errors(monkeypatch):
 
     network_client = EnterpriseAdminClient()
     monkeypatch.setattr(
-        "traigent.admin.client.request.urlopen",
+        "traigent.admin.client.open_no_redirect",
         lambda *args, **kwargs: (_ for _ in ()).throw(error.URLError("offline")),
     )
     with pytest.raises(TraigentConnectionError):

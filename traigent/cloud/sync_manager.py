@@ -18,7 +18,6 @@ from urllib.parse import quote, urlencode
 
 import requests  # Always needed for synchronous operations
 
-from traigent.labels.transport_gate import gate_session
 from traigent.cloud.api_operations import _typed_configuration_space
 from traigent.cloud.client import raise_if_cloud_egress_disabled
 from traigent.cloud.models import (
@@ -27,6 +26,7 @@ from traigent.cloud.models import (
 )
 from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.core.session_types import safe_http_error_summary
+from traigent.labels.transport_gate import gate_session
 
 try:
     import aiohttp  # noqa: F401 - Import check only
@@ -137,7 +137,9 @@ class SyncManager:
         # X-API-Key only — Authorization: Bearer is reserved for JWTs.
         self.headers = {"X-API-Key": api_key} if api_key else {}
         # Always create requests session for synchronous operations
-        self._session = gate_session(requests.Session(), origins=[self.base_url])
+        self._session = gate_session(
+            requests.Session(), origins=[self.base_url], strict=True
+        )
         if api_key:
             self._session.headers.update(self.headers)
         self._request_timeout = self._resolve_request_timeout()

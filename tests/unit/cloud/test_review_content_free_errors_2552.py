@@ -52,7 +52,7 @@ def test_admin_auth_error_carries_no_backend_text(code: int) -> None:
     with (
         patch("traigent.admin.client.raise_if_backend_offline"),
         patch(
-            "traigent.admin.client.request.urlopen",
+            "traigent.admin.client.open_no_redirect",
             side_effect=_http_error(code, body),
         ),
         pytest.raises(AuthenticationError) as excinfo,
@@ -68,7 +68,7 @@ def test_admin_server_error_carries_no_backend_text() -> None:
     with (
         patch("traigent.admin.client.raise_if_backend_offline"),
         patch(
-            "traigent.admin.client.request.urlopen",
+            "traigent.admin.client.open_no_redirect",
             side_effect=_http_error(500, body),
         ),
         pytest.raises(ClientError) as excinfo,

@@ -25,8 +25,6 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, unquote, urlparse, urlunparse
 
-# Import and re-export BackendClientConfig for backward compatibility
-from traigent.labels.transport_gate import client_origins, gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.api_operations import ApiOperations, TraigentSessionApiResult
 from traigent.cloud.auth import (
@@ -68,18 +66,15 @@ from traigent.cloud.models import (
     TrialResultSubmission,
     TrialSuggestion,
 )
+
+# Import refactored sub-modules
+from traigent.cloud.privacy_operations import PrivacyOperations
 from traigent.cloud.session_budgets import (
     is_cost_budget_armed_session,
     remember_cost_budget_armed_session,
 )
-
-# Import refactored sub-modules
-from traigent.cloud.privacy_operations import PrivacyOperations
 from traigent.cloud.session_operations import SessionOperations
 from traigent.cloud.session_types import SessionCreationResult
-from traigent.core.session_types import safe_http_error_summary
-from traigent.core import best_config_diagnostics as diag
-from traigent.core.best_config_diagnostics import transport_failed_message
 from traigent.cloud.subset_selection import SmartSubsetSelector
 from traigent.cloud.trial_operations import (
     TrialOperations,
@@ -93,8 +88,18 @@ from traigent.cloud.url_security import (
 from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.config.backend_config import BackendConfig
 from traigent.config.project import read_optional_project_env
+from traigent.core import best_config_diagnostics as diag
+from traigent.core.best_config_diagnostics import transport_failed_message
+from traigent.core.session_types import safe_http_error_summary
 from traigent.evaluators.base import Dataset
-from traigent.labels.transport_gate import TransportGateRefusal, preflight_requests
+
+# Import and re-export BackendClientConfig for backward compatibility
+from traigent.labels.transport_gate import (
+    TransportGateRefusal,
+    client_origins,
+    gate_session,
+    preflight_requests,
+)
 from traigent.security.session_manager import SessionManager as SecuritySessionManager
 from traigent.utils.exceptions import RetryableError
 from traigent.utils.logging import get_logger
@@ -470,6 +475,18 @@ def _run_sync_backend_request_with_retry(
             f"{operation} failed ({type(error).__name__})"
         ) from error
     raise CloudServiceError(f"{operation} failed ({type(error).__name__})") from None
+
+
+def _refuse_redirect_response(response: Any, operation: str) -> None:
+    """Fail closed on a 3xx answer to a credential-bearing backend call.
+
+    The request is sent with ``allow_redirects=False``; a backend that answers with a
+    redirect is an error, never a place to follow (the credential header would travel
+    with it). Checked after the retry wrapper so a redirect is never retried.
+    """
+    status = int(getattr(response, "status_code", 0))
+    if 300 <= status < 400:
+        raise CloudServiceError(f"{operation} refused HTTP redirect (status {status})")
 
 
 def _session_is_closed(session: Any) -> bool:
@@ -2418,6 +2435,7 @@ class BackendIntegratedClient:
                     params=params,
                     headers=headers,
                     timeout=min(self.timeout, 30.0),
+                    allow_redirects=False,
                 )
             except (
                 requests.exceptions.ConnectionError,
@@ -2432,6 +2450,7 @@ class BackendIntegratedClient:
             return response
 
         response = _run_sync_backend_request_with_retry("Agent-head fetch", _get_head)
+        _refuse_redirect_response(response, "Agent-head fetch")
         if response.status_code >= 400:
             raise CloudServiceError(
                 f"Agent-head fetch rejected: "
@@ -2831,6 +2850,7 @@ class BackendIntegratedClient:
                     json=payload,
                     headers=headers,
                     timeout=min(self.timeout, 30.0),
+                    allow_redirects=False,
                 )
             except (
                 requests.exceptions.ConnectionError,
@@ -2848,6 +2868,7 @@ class BackendIntegratedClient:
             "Best-config publish",
             _post_best_config,
         )
+        _refuse_redirect_response(response, "Best-config publish")
 
         if response.status_code == 409 and expected_head_generation is not None:
             stale = self._stale_head_error_from_response(
@@ -2935,6 +2956,7 @@ class BackendIntegratedClient:
                     params=params or None,
                     headers=headers,
                     timeout=min(self.timeout, 30.0),
+                    allow_redirects=False,
                 )
             except (
                 requests.exceptions.ConnectionError,
@@ -2952,8 +2974,14 @@ class BackendIntegratedClient:
             "Best-config fetch",
             _get_best_config,
         )
+        if response.status_code == 304:
+            # Not Modified answers the If-None-Match conditional fetch. It is not a
+            # redirect: nothing is followed and no Location is read, so it is answered
+            # before the redirect guard (which refuses every other 3xx).
+            return None
+        _refuse_redirect_response(response, "Best-config fetch")
 
-        if response.status_code in {304, 404}:
+        if response.status_code == 404:
             return None
         if response.status_code >= 400:
             raise CloudServiceError(
@@ -3191,6 +3219,7 @@ class BackendIntegratedClient:
                     json=payload,
                     headers=headers,
                     timeout=min(self.timeout, 30.0),
+                    allow_redirects=False,
                 )
             except (
                 requests.exceptions.ConnectionError,
@@ -3209,6 +3238,7 @@ class BackendIntegratedClient:
                 "Example feature upload",
                 _post_example_features,
             )
+            _refuse_redirect_response(response, "Example feature upload")
         except Exception as exc:
             logger.debug(
                 "Example feature upload failed for run %s: %s",

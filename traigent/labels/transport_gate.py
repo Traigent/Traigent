@@ -291,6 +291,21 @@ def _is_strict(client: Any) -> bool:
     )
 
 
+def _refuses_redirects(client: Any, url: str) -> bool:
+    """True when this request must not follow redirects.
+
+    Strict sessions always refuse them. Any request to the origin admitted by the
+    self-hosted opt-in (``TRAIGENT_ALLOW_PRIVATE_BACKEND``) refuses them too, so the
+    credential-bearing private backend cannot be redirected to an address the
+    validator never checked.
+    """
+    if _is_strict(client):
+        return True
+    from traigent.cloud.url_security import private_backend_opt_in_covers
+
+    return private_backend_opt_in_covers(url)
+
+
 def _refuse_redirect() -> TransportGateRefusal:
     """A strict session never follows a redirect: it would carry the body and credentials
     to an origin the gate has not inspected."""
@@ -350,7 +365,7 @@ def _build_aiohttp(base: type) -> type:
                     body_present=unreadable or None,
                     extra_origins=extra,
                 )
-            if not _is_strict(self):
+            if not _refuses_redirects(self, url):
                 return await super()._request(method, str_or_url, **kwargs)
             kwargs["allow_redirects"] = False
             response = await super()._request(method, str_or_url, **kwargs)
@@ -380,7 +395,7 @@ def _build_requests(base: type) -> type:
                 body_present=None if readable else True,
                 extra_origins=_instance_origins(self),
             )
-            if not _is_strict(self):
+            if not _refuses_redirects(self, str(request.url)):
                 return super().send(request, **kwargs)
             kwargs["allow_redirects"] = False
             response = super().send(request, **kwargs)
@@ -414,7 +429,7 @@ def _build_httpx_sync(base: type) -> type:
                 body_present=True if unreadable else None,
                 extra_origins=_instance_origins(self),
             )
-            if not _is_strict(self):
+            if not _refuses_redirects(self, str(request.url)):
                 return super().send(request, **kwargs)
             kwargs["follow_redirects"] = False
             response = super().send(request, **kwargs)
@@ -441,7 +456,7 @@ def _build_httpx_async(base: type) -> type:
                 body_present=True if unreadable else None,
                 extra_origins=_instance_origins(self),
             )
-            if not _is_strict(self):
+            if not _refuses_redirects(self, str(request.url)):
                 return await super().send(request, **kwargs)
             kwargs["follow_redirects"] = False
             response = await super().send(request, **kwargs)

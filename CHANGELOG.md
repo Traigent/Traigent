@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+- **Explicit opt-in for a private self-hosted backend (`TRAIGENT_ALLOW_PRIVATE_BACKEND=1`).** Private and loopback backend URLs are still refused by default. With the opt-in set, they are allowed only when the URL's scheme, host and port match `TRAIGENT_BACKEND_URL`. HTTPS, metadata and link-local blocking, redirect refusal and DNS-failure refusal are unchanged. The opt-in is documented in `docs/features/safety-gates.md`.
+
 ### Fixed
 
 - **`traigent hooks uninstall` now removes Traigent's pre-commit hook and restores the customer's `pre-commit` (#2707).** Uninstall recognised only the pre-push marker, so the pre-commit hook was never removed and its `.backup` was never restored.

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, Literal, cast, overload
 from collections.abc import Iterator
+from typing import Any, Literal, cast, overload
 from urllib import error, request
 from urllib.parse import quote, urlencode
 
-from traigent.utils.wire_text import filter_wire_metadata
+from traigent.cloud.url_security import open_no_redirect
 from traigent.evaluation.config import EvaluationConfig
 from traigent.evaluation.dtos import (
     AnnotationQueueDTO,
@@ -42,6 +42,7 @@ from traigent.utils.exceptions import (
     TraigentConnectionError,
 )
 from traigent.utils.pagination import iter_pages
+from traigent.utils.wire_text import filter_wire_metadata
 
 
 class EvaluationClient:
@@ -777,7 +778,7 @@ class EvaluationClient:
             method=method,
         )
         try:
-            with request.urlopen(  # nosec B310 - backend_origin is caller-configured API endpoint
+            with open_no_redirect(  # nosec B310 - no-redirect opener, caller-configured endpoint
                 http_request, timeout=self.config.request_timeout
             ) as response:
                 status_code = getattr(response, "status", 200)

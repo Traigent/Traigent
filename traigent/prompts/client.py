@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
-from typing import Any, cast
 from collections.abc import Iterator
+from typing import Any, cast
 from urllib import error, request
 from urllib.parse import quote, urlencode
 
+from traigent.cloud.url_security import open_no_redirect
 from traigent.prompts.config import PromptManagementConfig
 from traigent.prompts.dtos import (
     ChatPromptMessage,
@@ -296,7 +297,7 @@ class PromptManagementClient:
             method=method,
         )
         try:
-            with request.urlopen(  # nosec B310 - backend_origin is caller-configured API endpoint
+            with open_no_redirect(  # nosec B310 - no-redirect opener, caller-configured endpoint
                 http_request, timeout=self.config.request_timeout
             ) as response:
                 body = response.read().decode("utf-8") if response else ""

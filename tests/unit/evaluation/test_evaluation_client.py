@@ -397,7 +397,7 @@ def test_evaluation_client_updates_typed_measures_and_maps_errors(monkeypatch):
 
     auth_client = EvaluationClient()
     monkeypatch.setattr(
-        "traigent.evaluation.client.request.urlopen",
+        "traigent.evaluation.client.open_no_redirect",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             error.HTTPError(
                 url="https://example.com",
@@ -413,7 +413,7 @@ def test_evaluation_client_updates_typed_measures_and_maps_errors(monkeypatch):
 
     network_client = EvaluationClient()
     monkeypatch.setattr(
-        "traigent.evaluation.client.request.urlopen",
+        "traigent.evaluation.client.open_no_redirect",
         lambda *args, **kwargs: (_ for _ in ()).throw(error.URLError("offline")),
     )
     with pytest.raises(TraigentConnectionError):
@@ -1209,7 +1209,7 @@ def _capture_urlopen(monkeypatch):
         captured["request"] = req
         return _FakeResponse()
 
-    monkeypatch.setattr("traigent.evaluation.client.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("traigent.evaluation.client.open_no_redirect", fake_urlopen)
     return captured
 
 

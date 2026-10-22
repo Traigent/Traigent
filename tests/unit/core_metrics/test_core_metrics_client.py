@@ -796,7 +796,7 @@ def test_core_metrics_client_maps_auth_and_network_errors(
                 fp=None,
             )
 
-        monkeypatch.setattr(client_module.request, "urlopen", _raise_auth)
+        monkeypatch.setattr(client_module, "open_no_redirect", _raise_auth)
         client.get_core_metrics_overview()
 
     with pytest.raises(TraigentConnectionError):
@@ -804,7 +804,7 @@ def test_core_metrics_client_maps_auth_and_network_errors(
         def _raise_network(*args, **kwargs):
             raise error.URLError("offline")
 
-        monkeypatch.setattr(client_module.request, "urlopen", _raise_network)
+        monkeypatch.setattr(client_module, "open_no_redirect", _raise_network)
         client.get_core_metrics_overview()
 
 
@@ -827,7 +827,7 @@ def test_core_metrics_client_maps_non_auth_http_errors(
             fp=None,
         )
 
-    monkeypatch.setattr(client_module.request, "urlopen", _raise_error)
+    monkeypatch.setattr(client_module, "open_no_redirect", _raise_error)
 
     with pytest.raises(ClientError, match="status 500"):
         client.get_analytics_summary()
@@ -857,7 +857,7 @@ def test_core_metrics_client_maps_text_request_paths(
             return b'{"messages":[{"role":"user","content":"hello"}]}'
 
     monkeypatch.setattr(
-        client_module.request, "urlopen", lambda *args, **kwargs: _Response()
+        client_module, "open_no_redirect", lambda *args, **kwargs: _Response()
     )
     export = client.export_fine_tuning_jsonl(limit=10)
 
@@ -873,14 +873,14 @@ def test_core_metrics_client_maps_text_request_paths(
             fp=None,
         )
 
-    monkeypatch.setattr(client_module.request, "urlopen", _raise_auth)
+    monkeypatch.setattr(client_module, "open_no_redirect", _raise_auth)
     with pytest.raises(AuthenticationError):
         client.export_fine_tuning_jsonl(limit=10)
 
     def _raise_network(*args, **kwargs):
         raise error.URLError("offline")
 
-    monkeypatch.setattr(client_module.request, "urlopen", _raise_network)
+    monkeypatch.setattr(client_module, "open_no_redirect", _raise_network)
     with pytest.raises(TraigentConnectionError):
         client.export_fine_tuning_jsonl(limit=10)
 

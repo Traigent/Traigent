@@ -422,7 +422,7 @@ def test_prompt_management_client_raises_authentication_error_on_401(monkeypatch
             fp=None,
         )
 
-    monkeypatch.setattr("traigent.prompts.client.request.urlopen", raise_http_error)
+    monkeypatch.setattr("traigent.prompts.client.open_no_redirect", raise_http_error)
 
     with pytest.raises(AuthenticationError, match="status 401"):
         client.get_prompt("support/welcome")
@@ -439,7 +439,7 @@ def test_prompt_management_client_raises_connection_error_on_url_error(monkeypat
     def raise_url_error(*args, **kwargs):
         raise error.URLError("connection refused")
 
-    monkeypatch.setattr("traigent.prompts.client.request.urlopen", raise_url_error)
+    monkeypatch.setattr("traigent.prompts.client.open_no_redirect", raise_url_error)
 
     with pytest.raises(
         TraigentConnectionError, match="Failed to connect to prompt backend"

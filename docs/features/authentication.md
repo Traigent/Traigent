@@ -55,6 +55,10 @@ You can also set the backend via environment variables:
 export TRAIGENT_BACKEND_URL=https://your-backend.example.com
 ```
 
+A self-hosted backend on a private network also needs `TRAIGENT_ALLOW_PRIVATE_BACKEND=1`,
+which is pinned to that exact backend origin. See
+[Self-hosted private backend](safety-gates.md#self-hosted-private-backend-traigent_allow_private_backend).
+
 Verify which backend you're pointing to with:
 
 ```bash
