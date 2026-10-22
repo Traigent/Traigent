@@ -9,6 +9,7 @@ supporting privacy-preserving operations.
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import json
@@ -234,14 +235,19 @@ class DatasetConverter:
 
         return candidate.rstrip("/")
 
-    def _egress_backend_base_url(self) -> str:
+    async def _egress_backend_base_url(self) -> str:
         """Return the backend base URL after the DNS-resolving check (fail closed).
 
-        Called immediately before a credential-bearing request, after the egress gate.
-        Not cached: each call re-resolves, so an unresolvable or metadata-resolving
-        host is refused at the point of use.
+        Called immediately before every credential-bearing request, after the egress
+        gate. Not cached: each call re-resolves, so an unresolvable or metadata-resolving
+        host is refused at the point of use. The blocking lookup runs in a worker
+        thread so it does not stall the event loop.
         """
-        validate_always_blocked_cloud_url(self.backend_base_url, purpose="backend")
+        await asyncio.to_thread(
+            validate_always_blocked_cloud_url,
+            self.backend_base_url,
+            purpose="backend",
+        )
         return self.backend_base_url
 
     def _raise_if_backend_egress_disabled(
@@ -984,7 +990,7 @@ class DatasetConverter:
         if not self._session:
             raise RuntimeError("Session not initialized") from None
 
-        url = f"{self._egress_backend_base_url()}{_EXAMPLE_SETS_PATH}"
+        url = f"{await self._egress_backend_base_url()}{_EXAMPLE_SETS_PATH}"
         payload = {
             "name": metadata.name,
             "type": metadata.type,
@@ -1037,7 +1043,7 @@ class DatasetConverter:
         csv_content = output.getvalue()
 
         # Upload via API
-        url = f"{self._egress_backend_base_url()}{_EXAMPLE_SETS_PATH}/{example_set_id}/upload"
+        url = f"{await self._egress_backend_base_url()}{_EXAMPLE_SETS_PATH}/{example_set_id}/upload"
 
         data = aiohttp.FormData()
         data.add_field(
@@ -1068,7 +1074,7 @@ class DatasetConverter:
 
         example_set_id = self._validate_example_set_id(example_set_id)
 
-        url = f"{self._egress_backend_base_url()}{_EXAMPLE_SETS_PATH}/{example_set_id}"
+        url = f"{await self._egress_backend_base_url()}{_EXAMPLE_SETS_PATH}/{example_set_id}"
 
         async with self._session.get(url) as response:
             if response.status == 200:
@@ -1091,13 +1097,13 @@ class DatasetConverter:
 
         example_set_id = self._validate_example_set_id(example_set_id)
 
-        url = f"{self._egress_backend_base_url()}{_EXAMPLE_SETS_PATH}/{example_set_id}/examples"
-
         # The endpoint is paginated; read every page so a set larger than one
-        # page is not silently truncated.
+        # page is not silently truncated. The egress check runs before each page's
+        # request, so a resolver answer that changes between pages is still refused.
         examples: list[dict[str, Any]] = []
         page = 1
         while True:
+            url = f"{await self._egress_backend_base_url()}{_EXAMPLE_SETS_PATH}/{example_set_id}/examples"
             params = {"page": page, "per_page": _EXAMPLES_PAGE_SIZE}
             async with self._session.get(url, params=params) as response:
                 if response.status != 200:

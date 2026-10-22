@@ -5,6 +5,7 @@ import socket
 import subprocess
 import sys
 import textwrap
+import threading
 from unittest.mock import Mock, patch
 
 import pytest
@@ -290,3 +291,84 @@ async def test_first_egress_refuses_when_backend_host_does_not_resolve() -> None
         with pytest.raises(CloudUrlUnreachableError, match="could not be resolved"):
             await converter._fetch_backend_example_set("example-set-1")
     session.get.assert_not_called()
+
+
+class _FakeResponse:
+    def __init__(self, payload: object) -> None:
+        self.status = 200
+        self._payload = payload
+
+    async def json(self) -> object:
+        return self._payload
+
+    async def text(self) -> str:
+        return ""
+
+
+class _FakeRequest:
+    def __init__(self, response: _FakeResponse) -> None:
+        self._response = response
+
+    async def __aenter__(self) -> _FakeResponse:
+        return self._response
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+
+def _examples_page(has_next: bool) -> dict[str, object]:
+    return {"data": {"items": [{"id": "e"}], "pagination": {"has_next": has_next}}}
+
+
+@pytest.mark.asyncio
+async def test_every_paginated_request_is_checked_after_the_resolver_changes() -> None:
+    # Page 1 resolves public; by page 2 the name answers the metadata address. The
+    # second request must be refused before it is sent.
+    pages = [_examples_page(True), _examples_page(False)]
+    answers: list[str] = []
+
+    def resolver(host: str, port: object, *args: object, **kwargs: object) -> list:
+        ip = "93.184.216.34" if not answers else "169.254.169.254"
+        answers.append(ip)
+        return [(2, 1, 6, "", (ip, 0))]
+
+    session = Mock()
+    session.get = Mock(
+        side_effect=lambda url, params=None: _FakeRequest(_FakeResponse(pages.pop(0)))
+    )
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch("socket.getaddrinfo", side_effect=resolver),
+    ):
+        converter = DatasetConverter(backend_base_url="https://api.example.com")
+        converter._session = session
+        with pytest.raises(ValueError, match="metadata service|link-local"):
+            await converter._fetch_backend_examples("example-set-1")
+    assert len(answers) == 2
+    assert session.get.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_egress_dns_lookup_runs_off_the_event_loop() -> None:
+    # The blocking lookup must run in a worker thread, not on the loop thread.
+    lookup_threads: list[int] = []
+
+    def resolver(host: str, port: object, *args: object, **kwargs: object) -> list:
+        lookup_threads.append(threading.get_ident())
+        return [(2, 1, 6, "", ("93.184.216.34", 0))]
+
+    session = Mock()
+    session.get = Mock(
+        side_effect=lambda url, params=None: _FakeRequest(_FakeResponse({}))
+    )
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch("socket.getaddrinfo", side_effect=resolver),
+    ):
+        converter = DatasetConverter(backend_base_url="https://api.example.com")
+        converter._session = session
+        loop_thread = threading.get_ident()
+        await converter._fetch_backend_example_set("example-set-1")
+    assert lookup_threads, "no DNS lookup was made"
+    assert all(thread != loop_thread for thread in lookup_threads)
+    assert session.get.call_count == 1
