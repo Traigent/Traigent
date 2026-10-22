@@ -82,7 +82,6 @@ CONFIG_SPACE = {
         "gpt-4.1",
         "gpt-5.2",
         "gpt-5-nano",
-        "gpt-5.1",
     ],
     "prompt": ["minimal", "role_based"],
     "temperature": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],

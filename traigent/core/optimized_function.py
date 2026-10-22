@@ -133,8 +133,8 @@ from traigent.utils.env_config import (
     cost_preflight_mock_exempt,
     is_mock_llm,
     is_strict_cost_accounting,
-    strict_cost_accounting_origin,
     offline_run_scope,
+    strict_cost_accounting_origin,
     strict_cost_accounting_run_default,
 )
 from traigent.utils.exceptions import (
@@ -879,10 +879,18 @@ def _record_pricing_provenance(
     # ``_guard_cost_objective_without_usage``).
     provenance["usage_captured"] = _run_captured_usage(result)
     metadata["pricing"] = provenance
+    snapshot_models = provenance.get("sdk_snapshot_models") or 0
+    snapshot_note = (
+        f"; {snapshot_models} OpenRouter prices from SDK snapshot "
+        f"{provenance.get('sdk_snapshot_version')}"
+        if snapshot_models
+        else ""
+    )
     logger.info(
-        "Pricing provenance: price table=%s, strict cost accounting=%s (%s), "
+        "Pricing provenance: price table=%s%s, strict cost accounting=%s (%s), "
         "usage captured=%s",
         provenance.get("price_table_source"),
+        snapshot_note,
         strict_effective,
         strict_origin,
         provenance["usage_captured"],
