@@ -504,7 +504,10 @@ exclude_lines = [
 ]
 
 [tool.ruff]
-target-version = "py312"
+# Kept at py311 while the SDK requires >=3.12: the py312 target enables 30
+# PEP 695 rewrites (UP040/UP046) that change runtime typing objects; that
+# migration is its own change.
+target-version = "py311"
 line-length = 88
 exclude = [
     # NOTE: the examples folder is excluded from this lint configuration
@@ -561,7 +564,7 @@ known-third-party = [
 [tool.ruff.lint.per-file-ignores]
 # The traigent-ui plugin is a SEPARATE distribution with its own
 # `requires-python = ">=3.10"` (plugins/traigent-ui/pyproject.toml), while this
-# config targets py312 for the SDK. Two pyupgrade rules rewrite code into
+# config targets py311 for the SDK. Two pyupgrade rules rewrite code into
 # 3.11-only forms and are therefore wrong for that subtree:
 #   UP017  datetime.timezone.utc -> datetime.UTC   (datetime.UTC is 3.11+)
 #   UP041  asyncio.TimeoutError  -> TimeoutError   (only ALIASED from 3.11; on
