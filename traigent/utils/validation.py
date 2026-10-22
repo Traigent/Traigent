@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.exceptions import ValidationError as ValidationException
@@ -1302,7 +1302,7 @@ def _numeric_bounds_domain(
     integer: bool = False,
     step: Any = None,
 ) -> None:
-    def _is_num(x: Any) -> bool:
+    def _is_num(x: Any) -> TypeGuard[int | float]:
         return isinstance(x, (int, float)) and not isinstance(x, bool)
 
     if not (_is_num(low) and _is_num(high)):

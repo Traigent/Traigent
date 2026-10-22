@@ -14,6 +14,7 @@ import stat
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from types import ModuleType
 
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import (
@@ -22,8 +23,11 @@ from traigent.utils.secure_path import (
     validate_path,
 )
 
+_fcntl: ModuleType | None = None
 try:  # POSIX advisory locks; absent on platforms without fcntl (e.g. Windows).
-    import fcntl as _fcntl
+    import fcntl
+
+    _fcntl = fcntl
 except ImportError:  # pragma: no cover - exercised only on non-POSIX hosts
     _fcntl = None
 

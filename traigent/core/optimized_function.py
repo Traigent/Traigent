@@ -1060,6 +1060,9 @@ class OptimizedFunction(Generic[_P, _R]):
     """
 
     _csm: ConfigStateManager
+    #: Declarations from ``@traigent.requirement`` below ``@optimize``; set by the
+    #: decorator only when present, so absence stays absence (read via getattr).
+    requirements: Any
 
     def __init__(
         self,
@@ -4400,7 +4403,7 @@ Remediation:
             if used_implicit_default_max_trials and algorithm == "grid"
             else None
         )
-        if grid_size is not None and grid_size > max_trials:
+        if grid_size is not None and max_trials is not None and grid_size > max_trials:
             # Issue #2058: the implicit cap silently truncates an exhaustive
             # grid. Counts only; no user content is echoed.
             if grid_size >= _GRID_SIZE_COUNT_CAP:

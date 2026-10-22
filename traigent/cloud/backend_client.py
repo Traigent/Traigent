@@ -2481,6 +2481,7 @@ class BackendIntegratedClient:
             spec = _HEAD_REFUSAL_ENVELOPE.get(raw) if isinstance(raw, str) else None
             if (
                 spec is not None
+                and isinstance(raw, str)
                 and body.get("success") is False
                 and body.get("error") == spec[1]
                 and body.get("message") == spec[2]

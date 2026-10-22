@@ -1451,14 +1451,15 @@ class LocalEvaluator(BaseEvaluator):
         responses, owners, requested = snapshot_captured_responses()
         captures = _CaptureOwnership.build(responses, owners, requested)
         if captures is None or dataset is None:
-            return super()._extract_progress_call_metrics(
+            fallback: ExampleMetrics | None = super()._extract_progress_call_metrics(
                 example_id, example, result, config, dataset, example_index
             )
+            return fallback
         history = _progress_capture_history.get()
         if history is not None:
             captures.returned_seen = history.returned_seen.copy()
             captures.captured_ids.update(history.captured_ids)
-        metrics = self._extract_llm_metrics_for_output(
+        metrics: ExampleMetrics | None = self._extract_llm_metrics_for_output(
             result.actual_output, example_index, config, dataset, responses, captures
         )
         if history is not None:
@@ -2018,9 +2019,15 @@ class LocalEvaluator(BaseEvaluator):
         read = cache.get("cache_read_tokens")
         fresh = usage.get("input_tokens")
         creation = cache.get("cache_creation_tokens")
-        for value in (read, fresh):
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                return
+        if (
+            isinstance(read, bool)
+            or not isinstance(read, int)
+            or read < 0
+            or isinstance(fresh, bool)
+            or not isinstance(fresh, int)
+            or fresh < 0
+        ):
+            return
         if creation is not None and (
             isinstance(creation, bool) or not isinstance(creation, int) or creation < 0
         ):

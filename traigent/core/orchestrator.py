@@ -252,7 +252,9 @@ def _partial_coverage_trials(
     found: list[tuple[str, int, int]] = []
     key = primary_objective.strip().lower()
     for trial in trials:
-        comparability = (getattr(trial, "metadata", None) or {}).get("comparability")
+        comparability: Any = (getattr(trial, "metadata", None) or {}).get(
+            "comparability"
+        )
         if hasattr(comparability, "to_dict"):
             comparability = comparability.to_dict()
         if not isinstance(comparability, dict):
@@ -3355,7 +3357,7 @@ class OptimizationOrchestrator:
         self._certified_promotions = 0
         self._winner_stability_accounted_cost = 0.0
         self._winner_stability_unmeasured_reruns = 0
-        self._winner_stability_recorded_ids: dict[Any, Any] = {}
+        self._winner_stability_recorded_ids = {}
 
         # Reset stop conditions for fresh optimization run
         self._stop_condition_manager.reset()

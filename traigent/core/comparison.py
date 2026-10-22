@@ -28,7 +28,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from traigent.utils.discrete_domains import (
     discrete_values_for_config_param,
@@ -323,7 +323,7 @@ def aggregate_config(
             failed += 1
             scores.append(None)
         else:
-            scores.append(float(score))
+            scores.append(float(cast(float, score)))
         for name, value in (trial.metrics or {}).items():
             if _is_number(value):
                 metric_values.setdefault(name, []).append(float(value))
@@ -411,7 +411,7 @@ class ComparisonResult:
             low, high = self.band if self.band is not None else (None, None)
             if low is None or high is None:
                 raise ValueError("A banded objective requires a complete band.")
-            return -max(low - mean, mean - high, 0.0)
+            return float(-max(low - mean, mean - high, 0.0))
         return mean
 
     @property

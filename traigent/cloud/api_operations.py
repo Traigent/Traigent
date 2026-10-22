@@ -674,7 +674,15 @@ class ApiOperations:
         used_cache = content_less_session.apply_to_payload(
             payload, options=options, cached_refs=cached
         )
-        self._content_less_ctx = (cache, principal, local_keys, used_cache)
+        self._content_less_ctx: (
+            tuple[
+                content_less_session.RefCache,
+                str,
+                dict[str, str | None],
+                dict[str, str],
+            ]
+            | None
+        ) = (cache, principal, local_keys, used_cache)
         return payload
 
     def _gate_origins(self) -> list[str]:
@@ -692,7 +700,7 @@ class ApiOperations:
                 self.client.backend_config.api_base_url
                 or BackendConfig.get_backend_api_url()
             )
-            preview = self.client.auth_manager.get_api_key_preview()
+            preview = self.client.auth_manager.auth.get_api_key_preview()
         except Exception:  # noqa: BLE001 - scope only; an unknown scope finds no refs
             url, preview = None, None
         return content_less_session.RefCache.principal(
@@ -893,7 +901,7 @@ class ApiOperations:
         """Send the session creation request and handle responses."""
 
         self._raise_if_backend_egress_disabled("create session")
-        content_less_ctx = None
+        content_less_ctx: tuple[Any, ...] | None = None
         if "capabilities" in payload:
             content_less_ctx = getattr(self, "_content_less_ctx", None)
             self._content_less_ctx = None

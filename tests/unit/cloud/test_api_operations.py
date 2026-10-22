@@ -2294,3 +2294,26 @@ class TestOrchestratorDefaultConfigPayload:
         assert consumed == {"model": "fast"}
         # And consumption remains one-shot.
         assert orch._consume_default_config() is None
+
+
+class TestContentLessPrincipal:
+    """Regression (#2710 mypy sweep): the principal read a method that does not exist."""
+
+    def test_principal_carries_credential_preview(self):
+        """The preview comes from ``auth_manager.auth``; the old call always failed.
+
+        ``BackendAuthManager`` has no ``get_api_key_preview``; the old lookup raised
+        AttributeError, which the broad except swallowed, so every principal was
+        keyed by URL alone. ``spec=["auth"]`` mirrors the real BackendAuthManager.
+        """
+        client = Mock()
+        client.backend_config.api_base_url = "https://api.example.test"
+        client.auth_manager = Mock(spec=["auth"])
+        client.auth_manager.auth.get_api_key_preview = Mock(return_value="tgk_abcd")
+        ops = ApiOperations(client)
+
+        with_key = ops._content_less_principal()
+        client.auth_manager.auth.get_api_key_preview.return_value = None
+        without_key = ops._content_less_principal()
+
+        assert with_key != without_key
