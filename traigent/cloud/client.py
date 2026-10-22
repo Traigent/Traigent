@@ -866,7 +866,9 @@ class TraigentCloudClient(BaseTraigentClient):
         # The session carries NO credential or trace headers as defaults: aiohttp
         # merges defaults into every request, so a credential frozen here would
         # outlive a later credential change (#2716). Every request sends its
-        # current credentials per request (see _get_headers).
+        # current credentials per request (see _get_headers). Resolving the
+        # headers here still fails closed on entry when authentication is missing.
+        await self.auth.get_headers()
         self._aio_session = gate_session(
             aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
