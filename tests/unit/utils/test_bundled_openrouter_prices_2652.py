@@ -90,3 +90,30 @@ def test_litellm_price_wins_over_sdk_snapshot(monkeypatch):
     monkeypatch.setattr(litellm, "model_cost", {key: sentinel})
     cc.ensure_bundled_provider_prices()
     assert litellm.model_cost[key] is sentinel
+
+
+def test_provenance_names_snapshot_for_supplied_models_only(monkeypatch):
+    from traigent.utils import cost_calculator as cc
+
+    snap_key = next(iter(cc._load_sdk_openrouter_snapshot()))
+    held = {"input_cost_per_token": 1e-6, "output_cost_per_token": 2e-6}
+    table = {
+        k: v for k, v in litellm.model_cost.items() if not k.startswith("openrouter/")
+    }
+    table["openrouter/live/held-by-litellm"] = held
+    monkeypatch.setattr(litellm, "model_cost", table)
+    monkeypatch.setattr(cc, "_sdk_snapshot_supplied", {})
+    # Older litellm bundles openrouter/* itself; isolate the SDK snapshot path.
+    from litellm.litellm_core_utils.get_model_cost_map import GetModelCostMap
+
+    monkeypatch.setattr(
+        GetModelCostMap, "load_local_model_cost_map", staticmethod(lambda: {})
+    )
+    cc.ensure_bundled_provider_prices()
+
+    assert cc.get_model_token_pricing(snap_key)[2] == "sdk_snapshot"
+    assert cc.get_model_token_pricing("openrouter/live/held-by-litellm")[2] == "litellm"
+    assert cc.get_model_token_pricing("gpt-4.1-mini")[2] == "litellm"
+    prov = cc.get_pricing_provenance()
+    assert prov["sdk_snapshot_version"].startswith("litellm-")
+    assert prov["sdk_snapshot_models"] > 0

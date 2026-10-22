@@ -94,6 +94,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Example models that litellm now lists with shutdown dates are replaced, and OpenRouter prices no longer depend on litellm bundling them.** `gemini-3.7-flash` is dropped from the providers manifest and walkthroughs 07 and the optimize-and-observe demo (`gemini-3.8-flash` remains); the `model` range preset uses `gpt-5-nano` instead of `gpt-5.4-nano`; commented `claude-sonnet-4-5` ids are removed or point to `claude-sonnet-4-6`; `gpt-5.1` is removed from walkthrough 09. litellm 1.103.7 ships no `openrouter/*` prices, so the SDK now bundles a snapshot of litellm 1.103.4's OpenRouter entries and uses it only for keys litellm lacks. These rates are frozen and can be stale; results report them as `sdk_snapshot` (method) and `sdk_snapshot_models` / `sdk_snapshot_version` (pricing provenance).
 - **Pre-run cost estimate samples the dataset and shows its assumptions
   (#2498).** Input tokens per example are now estimated from the first 20
   dataset examples (~4 ASCII chars/token, 1 token per non-ASCII char), plus a

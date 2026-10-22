@@ -76,6 +76,32 @@ _SDK_OPENROUTER_SNAPSHOT = (
 )
 
 
+# Entries the SDK snapshot actually supplied to ``litellm.model_cost`` (key ->
+# the exact dict inserted), filled under ``_bundled_price_merge_lock``. A key is
+# attributed to the snapshot only while litellm still holds that same object.
+_sdk_snapshot_supplied: dict[str, dict[str, Any]] = {}
+
+
+def _sdk_snapshot_version() -> str:
+    """Version label of the snapshot's source, e.g. ``litellm-1.103.4``."""
+    try:
+        data = json.loads(_SDK_OPENROUTER_SNAPSHOT.read_text(encoding="utf-8"))
+        match = re.search(r"litellm (\d+(?:\.\d+)*)", str(data.get("_source", "")))
+        return f"litellm-{match.group(1)}" if match else "unknown"
+    except (OSError, ValueError):  # silent-ok: provenance label only
+        return "unknown"
+
+
+def _is_sdk_snapshot_price(model_key: str) -> bool:
+    """True when ``model_key``'s current litellm entry came from the SDK snapshot."""
+    supplied = _sdk_snapshot_supplied.get(model_key)
+    return (
+        supplied is not None
+        and LITELLM_AVAILABLE
+        and litellm.model_cost.get(model_key) is supplied
+    )
+
+
 def _load_sdk_openrouter_snapshot() -> dict[str, Any]:
     """Return the SDK-owned OpenRouter price snapshot ({} if unreadable)."""
     try:
@@ -126,6 +152,7 @@ def ensure_bundled_provider_prices() -> int:
                     and key not in current
                 ):
                     current[key] = value
+                    _sdk_snapshot_supplied[key] = value
                     added += 1
             return added
     except Exception as exc:  # silent-ok: pricing stays "unknown", never $0
@@ -911,6 +938,14 @@ def get_model_token_pricing(model_name: str) -> tuple[float, float, str]:
 
     litellm_rates = _try_litellm_per_token_rates(candidates)
     if litellm_rates is not None:
+        # Rates the SDK snapshot supplied are frozen; say so instead of "litellm".
+        first_known = (
+            next((c for c in candidates if c in litellm.model_cost), None)
+            if LITELLM_AVAILABLE
+            else None
+        )
+        if first_known is not None and _is_sdk_snapshot_price(first_known):
+            return litellm_rates[0], litellm_rates[1], "sdk_snapshot"
         return litellm_rates[0], litellm_rates[1], "litellm"
 
     custom_pricing = _try_custom_model_pricing(model_name)
@@ -1356,6 +1391,12 @@ def get_pricing_provenance() -> dict[str, Any]:
         "price_table_env_forced": None,
         "price_table_fallback_reason": None,
         "litellm_local_model_cost_map": os.environ.get("LITELLM_LOCAL_MODEL_COST_MAP"),
+        # Models whose rate came from the SDK's frozen snapshot, not litellm's
+        # table; ``price_table_source`` describes litellm's table only.
+        "sdk_snapshot_models": sum(
+            1 for k in list(_sdk_snapshot_supplied) if _is_sdk_snapshot_price(k)
+        ),
+        "sdk_snapshot_version": _sdk_snapshot_version(),
     }
     if not LITELLM_AVAILABLE:
         return provenance
