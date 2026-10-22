@@ -505,10 +505,7 @@ exclude_lines = [
 ]
 
 [tool.ruff]
-# Kept at py311 while the SDK requires >=3.12: the py312 target enables 30
-# PEP 695 rewrites (UP040/UP046) that change runtime typing objects; that
-# migration is its own change.
-target-version = "py311"
+target-version = "py312"
 line-length = 88
 exclude = [
     # NOTE: the examples folder is excluded from this lint configuration

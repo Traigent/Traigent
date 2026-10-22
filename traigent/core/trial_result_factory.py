@@ -8,7 +8,7 @@ import copy
 import logging
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
-from typing import Any, TypeVar, cast
+from typing import Any, cast
 
 from traigent.api.types import (
     ComparabilityInfo,
@@ -28,10 +28,10 @@ from traigent.utils.outcome_signals import build_example_signals
 
 logger = get_logger(__name__)
 
-_TrialResultT = TypeVar("_TrialResultT")
 
-
-def _stamp_trial_rows(trial_result: _TrialResultT, raw_results: Any) -> _TrialResultT:
+def _stamp_trial_rows[TrialResultT](
+    trial_result: TrialResultT, raw_results: Any
+) -> TrialResultT:
     """Keep each raw result's true dataset row on the TrialResult (local only).
 
     Read from the raw ``ExampleResult`` objects (stamped by the built-in

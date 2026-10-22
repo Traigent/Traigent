@@ -325,7 +325,7 @@ def _is_insufficient_funds_error(exc: Exception) -> bool:
     return any(kw in msg for kw in _INSUFFICIENT_FUNDS_KEYWORDS)
 
 
-def _run_with_timeout(func: Callable[[], T], timeout: float, provider: str) -> T:
+def _run_with_timeout[T](func: Callable[[], T], timeout: float, provider: str) -> T:
     """Run a function with a timeout using ThreadPoolExecutor.
 
     Used for SDKs that don't support native timeout parameters (e.g., google-genai).
