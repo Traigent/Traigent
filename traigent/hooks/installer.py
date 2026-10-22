@@ -81,7 +81,11 @@ fi
 $TRAIGENT_CMD hooks check --quick
 """
 
-# Retained compatibility marker for the generated pre-push hook.
+# Exported for import compatibility only. This string used to decide whether a
+# hook was Traigent's; it no longer does, and nothing in the SDK reads it.
+# Ownership is settled by _classify below -- exact template bytes, a known
+# historical digest, or the install-time record -- because a marker cannot tell
+# a hook Traigent wrote from one a customer copied the header into.
 HOOK_MARKER = "# Traigent pre-push hook - validates agent configurations"
 
 # Generated artifacts this SDK has shipped that are NOT the current template,

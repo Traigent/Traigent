@@ -67,7 +67,15 @@ def hooks() -> None:
 
 
 @hooks.command()
-@click.option("--force", "-f", is_flag=True, help="Overwrite existing hooks")
+@click.option(
+    "--force",
+    "-f",
+    is_flag=True,
+    help=(
+        "Replace a hook Traigent did not generate, keeping it as "
+        "<hook>.backup. Refuses if that backup already exists."
+    ),
+)
 @click.option("--path", "-p", type=click.Path(exists=True), help="Git repository path")
 def install(force: bool, path: str | None) -> None:
     """Install Traigent Git hooks.
@@ -151,10 +159,20 @@ def uninstall(path: str | None) -> None:
                     "(not an unmodified Traigent hook; left unchanged)"
                 )
 
-        if all(results.values()):
-            console.print("\n[green]Hooks uninstalled![/green]")
-        else:
+        left_behind = [
+            name
+            for name, state in installer.status().items()
+            if state == "not installed (backup present)"
+        ]
+        if not all(results.values()):
             console.print("\n[yellow]Some hooks were skipped[/yellow]")
+        elif left_behind:
+            console.print(
+                "\n[yellow]Hooks uninstalled, but a backup was left in place "
+                "for you to deal with[/yellow]"
+            )
+        else:
+            console.print("\n[green]Hooks uninstalled![/green]")
 
     except Exception as e:
         console.print(f"[red]Error uninstalling hooks: {e}[/red]")

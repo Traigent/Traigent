@@ -311,3 +311,31 @@ def test_status_outside_a_repository_reports_the_error(tmp_path: Path) -> None:
 
     assert "Not a Git repository" in result.output
     assert "not installed" not in result.output.lower()
+
+
+def test_uninstall_does_not_claim_success_when_a_backup_is_left_behind(
+    tmp_path: Path,
+) -> None:
+    """A backup Traigent cannot account for must not read as a clean uninstall.
+
+    `uninstall` returns True for three different outcomes -- nothing was
+    installed, the customer's hook was handed back, and the generated hook was
+    removed but an unrecorded backup stayed. The first two are successes; the
+    third leaves the user something to do, and saying "Hooks uninstalled!" in
+    green hides it.
+    """
+    hooks_dir = tmp_path / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    # Our generated hook active, and a backup with no ownership record.
+    assert _invoke(tmp_path, "install").exit_code == 0
+    (hooks_dir / "pre-commit.backup").write_text("#!/bin/sh\n# someone else's\n")
+    (tmp_path / ".git" / "traigent-hooks.json").unlink(missing_ok=True)
+
+    result = _invoke(tmp_path, "uninstall")
+
+    assert result.exit_code == 0, result.output
+    assert "Hooks uninstalled!" not in result.output, result.output
+    assert "backup was left in place" in result.output, result.output
+    # and the state table still names the file
+    assert "pre-commit.backup" in result.output, result.output
+    assert (hooks_dir / "pre-commit.backup").exists()
