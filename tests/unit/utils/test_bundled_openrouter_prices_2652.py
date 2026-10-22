@@ -92,28 +92,66 @@ def test_litellm_price_wins_over_sdk_snapshot(monkeypatch):
     assert litellm.model_cost[key] is sentinel
 
 
-def test_provenance_names_snapshot_for_supplied_models_only(monkeypatch):
+def _snapshot_only_table(monkeypatch):
+    """litellm table without openrouter/* and no litellm-bundled openrouter merge,
+    so every openrouter/* entry after the merge comes from the SDK snapshot."""
+    from litellm.litellm_core_utils.get_model_cost_map import GetModelCostMap
+
     from traigent.utils import cost_calculator as cc
 
-    snap_key = next(iter(cc._load_sdk_openrouter_snapshot()))
-    held = {"input_cost_per_token": 1e-6, "output_cost_per_token": 2e-6}
     table = {
         k: v for k, v in litellm.model_cost.items() if not k.startswith("openrouter/")
     }
-    table["openrouter/live/held-by-litellm"] = held
     monkeypatch.setattr(litellm, "model_cost", table)
-    monkeypatch.setattr(cc, "_sdk_snapshot_supplied", {})
-    # Older litellm bundles openrouter/* itself; isolate the SDK snapshot path.
-    from litellm.litellm_core_utils.get_model_cost_map import GetModelCostMap
-
     monkeypatch.setattr(
         GetModelCostMap, "load_local_model_cost_map", staticmethod(lambda: {})
     )
     cc.ensure_bundled_provider_prices()
+    snap_key = next(k for k in table if k.startswith("openrouter/"))
+    return cc, table, snap_key
 
+
+def test_provenance_names_snapshot_for_supplied_models_only(monkeypatch):
+    cc, table, snap_key = _snapshot_only_table(monkeypatch)
+    table["openrouter/live/held-by-litellm"] = {
+        "input_cost_per_token": 1e-6,
+        "output_cost_per_token": 2e-6,
+    }
     assert cc.get_model_token_pricing(snap_key)[2] == "sdk_snapshot"
     assert cc.get_model_token_pricing("openrouter/live/held-by-litellm")[2] == "litellm"
     assert cc.get_model_token_pricing("gpt-4.1-mini")[2] == "litellm"
     prov = cc.get_pricing_provenance()
     assert prov["sdk_snapshot_version"].startswith("litellm-")
     assert prov["sdk_snapshot_models"] > 0
+
+
+def test_in_place_override_of_snapshot_key_reports_litellm(monkeypatch):
+    """register_model updates entry dicts in place; identity must not survive that."""
+    cc, table, snap_key = _snapshot_only_table(monkeypatch)
+    assert cc.get_model_token_pricing(snap_key)[2] == "sdk_snapshot"
+    before = cc.get_pricing_provenance()["sdk_snapshot_models"]
+    table[snap_key].update(
+        {"input_cost_per_token": 7e-6, "output_cost_per_token": 8e-6}
+    )
+    # (litellm may cache model info, so only the attribution is asserted.)
+    assert cc.get_model_token_pricing(snap_key)[2] == "litellm"
+    assert cc.get_pricing_provenance()["sdk_snapshot_models"] == before - 1
+
+
+def test_label_comes_from_the_candidate_that_supplied_the_rates(monkeypatch):
+    """First candidate fails to price; a later snapshot-supplied one answers."""
+    cc, table, snap_key = _snapshot_only_table(monkeypatch)
+    # A table-present, litellm-held first candidate that cost_per_token rejects.
+    table["zz-first-fails"] = {"input_cost_per_token": 1e-6}
+    real = litellm.cost_per_token
+
+    def flaky(model=None, **kw):
+        if model == "zz-first-fails":
+            raise ValueError("not mapped")
+        return real(model=model, **kw)
+
+    monkeypatch.setattr(litellm, "cost_per_token", flaky)
+    monkeypatch.setattr(
+        cc, "_build_model_candidates", lambda name: ["zz-first-fails", snap_key]
+    )
+    assert cc.get_model_token_pricing("anything")[2] == "sdk_snapshot"
