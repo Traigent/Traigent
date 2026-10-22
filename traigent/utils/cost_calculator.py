@@ -91,9 +91,31 @@ def _pricing_fields(entry: Any) -> dict[str, Any]:
     return {k: v for k, v in entry.items() if "cost" in str(k)}
 
 
+def _rates_are_sdk_snapshot(
+    model_key: str, input_cost: float, output_cost: float
+) -> bool:
+    """True when the per-token rates litellm just returned for ``model_key`` equal
+    the rates the SDK snapshot recorded for it (so they can only be the snapshot's)."""
+    recorded = _sdk_snapshot_supplied.get(model_key)
+    if not recorded:
+        return False
+    rec_in = recorded.get("input_cost_per_token")
+    rec_out = recorded.get("output_cost_per_token")
+    return (
+        rec_in is not None
+        and rec_out is not None
+        and float(rec_in) == float(input_cost)
+        and float(rec_out) == float(output_cost)
+    )
+
+
 def _entry_is_sdk_snapshot_price(model_key: str, entry: Any) -> bool:
-    """True when ``entry`` (already read for ``model_key``) still carries the
-    snapshot's recorded pricing values."""
+    """True when ``entry`` still carries the snapshot's recorded pricing values.
+
+    Used only for the ``sdk_snapshot_models`` count, which therefore means
+    "snapshot entries currently installed in litellm's table with unchanged
+    recorded cost fields". Per-model attribution uses the rates actually
+    returned (``_rates_are_sdk_snapshot``)."""
     recorded = _sdk_snapshot_supplied.get(model_key)
     return bool(recorded) and _pricing_fields(entry) == recorded
 
@@ -902,9 +924,9 @@ def _try_litellm_per_token_rates(
 
     Returns:
         ``(input_cost_per_token, output_cost_per_token, source)`` or ``None``.
-        ``source`` is ``"sdk_snapshot"`` when the matched candidate's table entry
-        (read once, here) still carries the SDK snapshot's recorded rates, else
-        ``"litellm"``.
+        ``source`` is ``"sdk_snapshot"`` iff the matched candidate was supplied by
+        the SDK snapshot AND the rates returned here equal the snapshot's recorded
+        rates, else ``"litellm"``.
     """
     if not LITELLM_AVAILABLE:
         return None
@@ -918,10 +940,9 @@ def _try_litellm_per_token_rates(
                 or output_cost > 0
                 or _is_model_known_to_litellm(candidate)
             ):
-                entry = litellm.model_cost.get(candidate)
                 source = (
                     "sdk_snapshot"
-                    if _entry_is_sdk_snapshot_price(candidate, entry)
+                    if _rates_are_sdk_snapshot(candidate, input_cost, output_cost)
                     else "litellm"
                 )
                 return float(input_cost), float(output_cost), source
