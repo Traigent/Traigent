@@ -20,6 +20,7 @@ import warnings
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from traigent.utils.env_config import is_truthy
@@ -64,6 +65,28 @@ except (ImportError, KeyError):
 # litellm's bundled backup file, never over an entry litellm already holds.
 _BUNDLED_FALLBACK_PRICE_PREFIXES: tuple[str, ...] = ("openrouter/",)
 
+# litellm >= 1.103.7 ships no ``openrouter/`` entries at all (neither its bundled
+# backup nor upstream main), so an unconstrained install would price every
+# OpenRouter model as unknown. The SDK keeps its own snapshot, taken from
+# litellm 1.103.4's bundled backup (462 entries). It is merged only for keys
+# litellm does not hold, after litellm's own bundled file, so litellm stays the
+# source of truth whenever it carries a price.
+_SDK_OPENROUTER_SNAPSHOT = (
+    Path(__file__).parent / "openrouter_prices_litellm_1_103_4.json"
+)
+
+
+def _load_sdk_openrouter_snapshot() -> dict[str, Any]:
+    """Return the SDK-owned OpenRouter price snapshot ({} if unreadable)."""
+    try:
+        data = json.loads(_SDK_OPENROUTER_SNAPSHOT.read_text(encoding="utf-8"))
+        models = data.get("models", {})
+        return models if isinstance(models, dict) else {}
+    except (OSError, ValueError):  # silent-ok: unpriced stays unknown, never $0
+        logger.warning("SDK OpenRouter price snapshot unreadable")
+        return {}
+
+
 # Claude 5.5 / Fable 5.1 first-party rates (USD per 1M tokens), used only for
 # ids litellm does not price (issue #2701). Source: Anthropic model pricing
 # table, cached 2026-10-06. Claude Haiku 5.5 is $0.50 input / $2.50 output for
@@ -104,6 +127,14 @@ def ensure_bundled_provider_prices() -> int:
                 if (
                     isinstance(key, str)
                     and key.startswith(_BUNDLED_FALLBACK_PRICE_PREFIXES)
+                    and isinstance(value, dict)
+                    and key not in current
+                ):
+                    current[key] = value
+                    added += 1
+            for key, value in _load_sdk_openrouter_snapshot().items():
+                if (
+                    key.startswith(_BUNDLED_FALLBACK_PRICE_PREFIXES)
                     and isinstance(value, dict)
                     and key not in current
                 ):

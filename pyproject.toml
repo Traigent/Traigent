@@ -320,6 +320,7 @@ traigent = [
     "observability/otel/*.json",
     "connectors/schemas/*.json",
     "labels/content_class_table.json",
+    "utils/openrouter_prices_litellm_1_103_4.json",
 ]
 traigent_validation = ["py.typed"]
 
