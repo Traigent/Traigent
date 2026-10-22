@@ -15,14 +15,13 @@ from collections.abc import Coroutine
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NoReturn, TypeVar, cast
 
-from traigent.labels.transport_gate import client_origins, gate_session
 from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.backend_bridges import SessionExperimentMapping
 from traigent.cloud.client import (
     CloudEgressBlockedError,
     CloudServiceError,
-    SessionContractError,
     SessionBackendRefusedError,
+    SessionContractError,
     SessionQuotaRefusedError,
     raise_if_cloud_egress_disabled,
 )
@@ -35,7 +34,6 @@ from traigent.cloud.models import (
     SessionCreationRequest,
     declared_dataset_identity,
 )
-from traigent.utils.wire_text import filter_wire_metadata
 from traigent.cloud.session_types import (
     SessionCreationFailureDetail,
     SessionCreationFailureReason,
@@ -44,10 +42,12 @@ from traigent.cloud.session_types import (
 from traigent.cloud.smart_pruning import normalize_smart_pruning_options
 from traigent.config.backend_config import BackendConfig
 from traigent.core.session_types import safe_http_error_summary
+from traigent.labels.transport_gate import client_origins, gate_session
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import CoreValidators, validate_or_raise
+from traigent.utils.wire_text import filter_wire_metadata
 
 # Optional aiohttp dependency handling
 try:
@@ -1792,6 +1792,7 @@ class SessionOperations:
             async with session.delete(
                 url,
                 params={"cascade": "true"},
+                headers=await self.client.auth_manager.auth.get_headers(),
             ) as response:
                 if response.status in {200, 202, 204}:
                     return True

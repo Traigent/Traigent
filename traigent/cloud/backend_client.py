@@ -1670,28 +1670,25 @@ class BackendIntegratedClient:
         if getattr(self, "_url_invalid", False) is True:
             return self
         if AIOHTTP_AVAILABLE:
-            # Try to get headers, but don't fail if authentication is not available
+            # Authentication is checked here, but its headers are never kept as
+            # session defaults (#2716): a pooled session outlives credential
+            # changes, so every request sends its current credentials per request.
             # B4 ROUND 4: ``AuthenticationError`` must propagate -- a
-            # backend-rejected key must NEVER produce an authenticated session,
-            # even one with empty auth headers (which could be paired with a
-            # raw key elsewhere in the stack). Other exceptions (e.g. Edge
-            # Analytics mode without a key) continue with empty headers.
+            # backend-rejected key must NEVER produce an authenticated session.
+            # Other exceptions (e.g. Edge Analytics mode without a key) continue.
             try:
-                headers = await self.auth_manager.auth.get_headers()
+                await self.auth_manager.auth.get_headers()
             except AuthenticationError:
                 raise
             except Exception as e:
-                # In Edge Analytics mode or when no API key is available, continue without auth headers
+                # In Edge Analytics mode or when no API key is available, continue without auth
                 logger.debug(f"No authentication available for context manager: {e}")
-                headers = {}
 
-            # Add security headers
-            headers.update(
-                {
-                    "X-Request-ID": self._generate_request_nonce(),
-                    "X-Client-Version": "2.0.0",
-                }
-            )
+            # Non-credential session defaults only.
+            headers: dict[str, str] = {
+                "X-Request-ID": self._generate_request_nonce(),
+                "X-Client-Version": "2.0.0",
+            }
             if self._pool_for_loop(asyncio.get_running_loop()) is not None:
                 # Keep the running loop's pool: in-flight requests may be using it.
                 return self
@@ -1735,8 +1732,11 @@ class BackendIntegratedClient:
         # unexpected errors are surfaced as ``CloudServiceError`` rather
         # than silently swallowed -- still fail-closed for auth, but
         # without losing diagnostic context.
+        # The credential check stays fail closed, but the headers it returns are
+        # never session defaults (#2716): this session is pooled and outlives a
+        # credential change, so each request sends its current credentials.
         try:
-            headers = await self.auth_manager.auth.get_headers()
+            await self.auth_manager.auth.get_headers()
         except AuthenticationError:
             # Do NOT fall back to raw-key headers. Re-raise so callers
             # see the auth failure instead of getting a session that
@@ -1750,15 +1750,13 @@ class BackendIntegratedClient:
             raise CloudServiceError(
                 f"Failed to build authenticated session ({type(exc).__name__})"
             ) from None
-        headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
-        headers.setdefault("User-Agent", _SDK_USER_AGENT)
+        defaults = {"Content-Type": _JSON_CONTENT_TYPE, "User-Agent": _SDK_USER_AGENT}
 
         return gate_session(
             aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
-                # Same rule as __aenter__: no stale trace context in
-                # long-lived session-default headers.
-                headers=_strip_trace_context_headers(headers),
+                # Non-credential defaults only (see above).
+                headers=defaults,
                 trust_env=True,
             ),
             origins=client_origins(self),

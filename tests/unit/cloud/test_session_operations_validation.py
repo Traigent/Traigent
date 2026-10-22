@@ -188,6 +188,9 @@ async def test_finalize_session_uses_lock(monkeypatch):
 @pytest.mark.asyncio
 async def test_delete_session_cascade_calls_backend_delete():
     client = FakeClient()
+    client.auth_manager.auth.get_headers = AsyncMock(
+        return_value={"X-API-Key": "tg_fake"}
+    )
     client.backend_config.api_base_url = "https://backend.example/api/v1"
     client.session_bridge._session_mappings = {"session-1": object()}
 
@@ -208,6 +211,7 @@ async def test_delete_session_cascade_calls_backend_delete():
     http_session.delete.assert_called_once_with(
         "https://backend.example/api/v1/sessions/session-1",
         params={"cascade": "true"},
+        headers={"X-API-Key": "tg_fake"},
     )
     assert "session-1" not in client.session_bridge._session_mappings
 
@@ -215,6 +219,9 @@ async def test_delete_session_cascade_calls_backend_delete():
 @pytest.mark.asyncio
 async def test_delete_session_cascade_success_returns_true_without_local_mapping():
     client = FakeClient()
+    client.auth_manager.auth.get_headers = AsyncMock(
+        return_value={"X-API-Key": "tg_fake"}
+    )
     client.backend_config.api_base_url = "https://backend.example/api/v1"
     client.session_bridge._session_mappings = {}
     client.session_bridge.get_session_mapping = MagicMock(return_value=None)
@@ -236,6 +243,7 @@ async def test_delete_session_cascade_success_returns_true_without_local_mapping
     http_session.delete.assert_called_once_with(
         "https://backend.example/api/v1/sessions/session-1",
         params={"cascade": "true"},
+        headers={"X-API-Key": "tg_fake"},
     )
 
 
