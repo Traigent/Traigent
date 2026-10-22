@@ -14,8 +14,7 @@ import inspect
 import pytest  # noqa: F401  (used indirectly for monkeypatch fixture)
 
 from traigent.api.decorators import optimize
-from traigent.core.optimized_function import OptimizedFunction, _P, _R
-
+from traigent.core.optimized_function import OptimizedFunction
 
 # ---------------------------------------------------------------------------
 # Runtime tests (no mypy required — verify behavior, not types at import time)
@@ -63,24 +62,26 @@ def test_decorated_function_exposes_optimize_method():
 
 
 def test_optimized_function_class_is_generic():
-    """OptimizedFunction must be Generic (carries _P and _R type vars)."""
+    """OptimizedFunction must be Generic (carries its P and R type parameters)."""
     # Generic is verified by checking __class_getitem__ exists, which is how
     # Generic subclasses are subscripted (e.g. OptimizedFunction[P, R]).
     assert hasattr(OptimizedFunction, "__class_getitem__"), (
-        "OptimizedFunction must be Generic[_P, _R] to support type subscripting"
+        "OptimizedFunction must be generic over [P, R] to support type subscripting"
     )
 
 
-def test_paramspec_and_typevar_exported_from_module():
-    """_P and _R must be importable and be the right kinds."""
+def test_class_type_params_are_paramspec_and_typevar():
+    """OptimizedFunction's PEP 695 type parameters are (ParamSpec, TypeVar)."""
     from typing import ParamSpec, TypeVar
 
-    assert isinstance(_P, ParamSpec), "_P must be a ParamSpec"
-    assert isinstance(_R, TypeVar), "_R must be a TypeVar"
+    params = OptimizedFunction.__type_params__
+    assert len(params) == 2
+    assert isinstance(params[0], ParamSpec), "first type parameter must be a ParamSpec"
+    assert isinstance(params[1], TypeVar), "second type parameter must be a TypeVar"
 
 
 def test_optimized_function_call_signature_uses_paramspec():
-    """OptimizedFunction.__call__ must have *args/_P.args and **kwargs/_P.kwargs."""
+    """OptimizedFunction.__call__ must have *args/P.args and **kwargs/P.kwargs."""
     sig = inspect.signature(OptimizedFunction.__call__)
     params = list(sig.parameters.values())
     # self, *args, **kwargs
