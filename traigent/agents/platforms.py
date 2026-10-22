@@ -67,7 +67,7 @@ logger = get_logger(__name__)
 
 # Common model alias fixes
 MODEL_ALIASES: dict[str, str] = {
-    "o4-mini": "gpt-4o-mini",
+    "o4-mini": "gpt-5.6-terra",  # OpenAI replacement, retired 2026-10-23
 }
 
 
@@ -255,7 +255,7 @@ class LangChainAgentExecutor(AgentExecutor):
         valid_models = [
             "gpt-4o-mini",
             "GPT-4o",
-            "gpt-4-turbo",
+            "gpt-5.6-sol",
             "claude-2",
             "claude-instant",
         ]
@@ -652,8 +652,7 @@ class OpenAIAgentExecutor(AgentExecutor):
             "gpt-4o-mini-16k",
             "GPT-4o",
             "gpt-4-32k",
-            "gpt-4-turbo",
-            "gpt-4-1106-preview",
+            "gpt-5.6-sol",
         }
 
         model = config.get("model")

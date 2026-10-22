@@ -92,7 +92,7 @@ The app will open in your browser at `http://localhost:8501`
 
 1. Go to Run Optimizations
 2. Select your problem from the dropdown
-3. Choose models to test (e.g., gpt-3.5-turbo, gpt-4o-mini)
+3. Choose models to test (e.g., gpt-5.6-terra, gpt-4o-mini)
 4. Select strategy: "adaptive_batch"
 5. Click "Start Optimization"
 

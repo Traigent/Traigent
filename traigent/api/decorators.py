@@ -12,7 +12,7 @@ Examples:
     ...     eval_dataset="qa_test.jsonl",
     ...     objectives=["accuracy"],
     ...     configuration_space={
-    ...         "model": ["gpt-3.5-turbo", "gpt-4"],
+    ...         "model": ["gpt-5.6-terra", "gpt-5.6-sol"],
     ...         "temperature": [0.1, 0.5, 0.9]
     ...     }
     ... )
@@ -26,12 +26,12 @@ Examples:
     ...     eval_dataset="customer_support.jsonl",
     ...     objectives=["accuracy", "cost", "latency"],
     ...     configuration_space={
-    ...         "model": ["gpt-3.5-turbo", "gpt-4", "claude-haiku-4-5-20251001"],
+    ...         "model": ["gpt-5.6-terra", "gpt-5.6-sol", "claude-haiku-4-5-20251001"],
     ...         "temperature": [0.1, 0.3, 0.5, 0.7, 0.9],
     ...         "max_tokens": [100, 500, 1000]
     ...     },
     ...     constraints=[
-    ...         lambda config: config["temperature"] < 0.8 if config["model"] == "gpt-4" else True,
+    ...         lambda config: config["temperature"] < 0.8 if config["model"] == "gpt-5.6-sol" else True,
     ...         lambda config, metrics: metrics.get("cost") is not None
     ...         and metrics["cost"] <= 0.10
     ...     ]
@@ -44,8 +44,8 @@ Examples:
 from __future__ import annotations
 
 import dataclasses
-import math
 import inspect
+import math
 import os
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
@@ -2851,13 +2851,13 @@ def optimize(  # NOSONAR(S107)
 
         WRONG - relying on parameter defaults to be overridden::
 
-            @traigent.optimize(configuration_space={"model": ["gpt-4", "gpt-3.5"]})
-            def my_func(model: str = "gpt-4"):  # model will stay "gpt-4"!
+            @traigent.optimize(configuration_space={"model": ["gpt-5.6-sol", "gpt-3.5"]})
+            def my_func(model: str = "gpt-5.6-sol"):  # model will stay "gpt-5.6-sol"!
                 return call_llm(model=model)
 
         CORRECT - explicitly fetch trial config::
 
-            @traigent.optimize(configuration_space={"model": ["gpt-4", "gpt-3.5"]})
+            @traigent.optimize(configuration_space={"model": ["gpt-5.6-sol", "gpt-3.5"]})
             def my_func():
                 cfg = traigent.get_config()  # Works during trials and after apply_best_config
                 return call_llm(model=cfg["model"])
@@ -2885,13 +2885,13 @@ def optimize(  # NOSONAR(S107)
         ...     objectives=["accuracy"],
         ...     evaluation={"eval_dataset": "qa_test.jsonl"},
         ...     configuration_space={
-        ...         "model": ["gpt-3.5-turbo", "gpt-4"],
+        ...         "model": ["gpt-5.6-terra", "gpt-5.6-sol"],
         ...         "temperature": [0.1, 0.5, 0.9]
         ...     }
         ... )
         ... def answer_question(question: str) -> str:
         ...     # Your existing code - no changes needed!
-        ...     llm = OpenAI(model="gpt-3.5-turbo", temperature=0.7)
+        ...     llm = OpenAI(model="gpt-5.6-terra", temperature=0.7)
         ...     return llm.complete(question)
 
         Multi-objective optimization with constraints:
@@ -2900,12 +2900,12 @@ def optimize(  # NOSONAR(S107)
         ...     objectives=["accuracy", "cost"],
         ...     evaluation={"eval_dataset": "support_tickets.jsonl"},
         ...     configuration_space={
-        ...         "model": ["gpt-3.5-turbo", "gpt-4"],
+        ...         "model": ["gpt-5.6-terra", "gpt-5.6-sol"],
         ...         "temperature": (0.0, 1.0),
         ...         "max_tokens": [100, 500, 1000]
         ...     },
         ...     constraints=[
-        ...         lambda cfg: cfg["max_tokens"] <= 500 if cfg["model"] == "gpt-4" else True,
+        ...         lambda cfg: cfg["max_tokens"] <= 500 if cfg["model"] == "gpt-5.6-sol" else True,
         ...         lambda cfg, metrics: metrics.get("cost") is not None
         ...         and metrics["cost"] <= 0.10
         ...     ]
@@ -2929,7 +2929,7 @@ def optimize(  # NOSONAR(S107)
         ...         "minimal_logging": True,
         ...     },
         ...     configuration_space={
-        ...         "model": ["gpt-4", "claude-haiku-4-5-20251001"],
+        ...         "model": ["gpt-5.6-sol", "claude-haiku-4-5-20251001"],
         ...         "temperature": [0.1, 0.3, 0.5],
         ...         "safety_filter": ["strict", "moderate"]
         ...     }

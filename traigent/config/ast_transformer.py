@@ -34,11 +34,11 @@ class ConfigTransformer(ast.NodeTransformer):
     that match configuration keys with the configured values.
 
     Example:
-        >>> config = {"model": "gpt-4", "temperature": 0.2}
+        >>> config = {"model": "gpt-5.6-sol", "temperature": 0.2}
         >>> transformer = ConfigTransformer(config)
         >>> tree = ast.parse("model = 'gpt-3.5'\\ntemperature = 0.7")
         >>> modified_tree = transformer.visit(tree)
-        >>> # model assignment now has value 'gpt-4'
+        >>> # model assignment now has value 'gpt-5.6-sol'
         >>> # temperature assignment now has value 0.2
     """
 

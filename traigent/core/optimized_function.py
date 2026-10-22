@@ -133,8 +133,8 @@ from traigent.utils.env_config import (
     cost_preflight_mock_exempt,
     is_mock_llm,
     is_strict_cost_accounting,
-    strict_cost_accounting_origin,
     offline_run_scope,
+    strict_cost_accounting_origin,
     strict_cost_accounting_run_default,
 )
 from traigent.utils.exceptions import (
@@ -1757,7 +1757,7 @@ class OptimizedFunction(Generic[_P, _R]):
             raise ValueError(
                 "Configuration space cannot be empty. Please specify at least one parameter to optimize "
                 "in the @traigent.optimize decorator. Example: configuration_space={'temperature': [0.0, 0.5, 1.0], "
-                "'model': ['gpt-3.5-turbo', 'gpt-4']}"
+                "'model': ['gpt-5.6-terra', 'gpt-5.6-sol']}"
             )
 
     def _allows_empty_configuration_space(self) -> bool:

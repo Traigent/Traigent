@@ -11,11 +11,11 @@ Example:
     >>> # Define parameters
     >>> temperature = Range(0.0, 2.0, name="temperature", unit="ratio")
     >>> max_tokens = IntRange(100, 4096, name="max_tokens", unit="count")
-    >>> model = Choices(["gpt-4", "gpt-3.5-turbo"], name="model")
+    >>> model = Choices(["gpt-5.6-sol", "gpt-5.6-terra"], name="model")
     >>>
     >>> # Define constraints
     >>> constraints = [
-    ...     implies(model.equals("gpt-4"), max_tokens.gte(1000)),
+    ...     implies(model.equals("gpt-5.6-sol"), max_tokens.gte(1000)),
     ... ]
     >>>
     >>> # Create config space
@@ -25,7 +25,7 @@ Example:
     ... )
     >>>
     >>> # Validate a configuration
-    >>> result = space.validate({"temperature": 0.5, "max_tokens": 2000, "model": "gpt-4"})
+    >>> result = space.validate({"temperature": 0.5, "max_tokens": 2000, "model": "gpt-5.6-sol"})
     >>> result.is_valid
     True
 """
@@ -115,11 +115,11 @@ class ConfigSpace:
         >>> from traigent.api.config_space import ConfigSpace
         >>>
         >>> temp = Range(0.0, 2.0, name="temperature")
-        >>> model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        >>> model = Choices(["gpt-5.6-sol", "gpt-3.5"], name="model")
         >>>
         >>> space = ConfigSpace(
         ...     tvars={"temperature": temp, "model": model},
-        ...     constraints=[implies(model.equals("gpt-4"), temp.lte(0.7))],
+        ...     constraints=[implies(model.equals("gpt-5.6-sol"), temp.lte(0.7))],
         ... )
     """
 

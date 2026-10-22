@@ -12,22 +12,22 @@ Supports three syntax styles for constraints:
 
 1. Functional (canonical, explicit)::
 
-    implies(model.equals("gpt-4"), temp.lte(0.7))
+    implies(model.equals("gpt-5.6-sol"), temp.lte(0.7))
 
 2. Operator-based (concise, formula-like)::
 
-    model.equals("gpt-4") >> temp.lte(0.7)
+    model.equals("gpt-5.6-sol") >> temp.lte(0.7)
 
 3. Fluent (readable)::
 
-    when(model.equals("gpt-4")).then(temp.lte(0.7))
+    when(model.equals("gpt-5.6-sol")).then(temp.lte(0.7))
 
 OPERATOR PRECEDENCE WARNING:
     Python precedence: ~ > << >> > & > ^ > |
     This means: a & b >> c  evaluates as  a & (b >> c), NOT (a & b) >> c
     Always use parentheses for clarity::
 
-        (model.equals("gpt-4") & temp.lte(0.7)) >> max_tokens.gte(1000)
+        (model.equals("gpt-5.6-sol") & temp.lte(0.7)) >> max_tokens.gte(1000)
 
 Example:
     >>> from traigent import Range, IntRange, Choices, implies
@@ -35,14 +35,14 @@ Example:
     >>> # Define parameters
     >>> temperature = Range(0.0, 2.0)
     >>> max_tokens = IntRange(100, 4096)
-    >>> model = Choices(["gpt-4", "gpt-3.5-turbo"])
+    >>> model = Choices(["gpt-5.6-sol", "gpt-5.6-terra"])
     >>>
     >>> # Define constraints using any syntax style
     >>> constraints = [
     ...     # Functional style
-    ...     implies(model.equals("gpt-4"), max_tokens.gte(1000)),
+    ...     implies(model.equals("gpt-5.6-sol"), max_tokens.gte(1000)),
     ...     # Operator style
-    ...     model.equals("gpt-3.5-turbo") >> temperature.lte(0.7),
+    ...     model.equals("gpt-5.6-terra") >> temperature.lte(0.7),
     ... ]
 """
 
@@ -189,7 +189,7 @@ class BoolExpr(ABC):
 
         Example::
 
-            model.equals("gpt-4") >> temp.lte(0.7)
+            model.equals("gpt-5.6-sol") >> temp.lte(0.7)
         """
         if not isinstance(other, BoolExpr):
             return NotImplemented
@@ -200,7 +200,7 @@ class BoolExpr(ABC):
 
         Example::
 
-            model.equals("gpt-4") & temp.lte(0.7)
+            model.equals("gpt-5.6-sol") & temp.lte(0.7)
         """
         if not isinstance(other, BoolExpr):
             return NotImplemented
@@ -211,7 +211,7 @@ class BoolExpr(ABC):
 
         Example::
 
-            model.equals("gpt-4") | model.equals("gpt-3.5")
+            model.equals("gpt-5.6-sol") | model.equals("gpt-3.5")
         """
         if not isinstance(other, BoolExpr):
             return NotImplemented
@@ -222,7 +222,7 @@ class BoolExpr(ABC):
 
         Example::
 
-            ~model.equals("gpt-4")
+            ~model.equals("gpt-5.6-sol")
         """
         return NotCondition(self)
 
@@ -230,7 +230,7 @@ class BoolExpr(ABC):
         """Prevent accidental boolean evaluation.
 
         Raises TypeError to catch mistakes like:
-            if model.equals("gpt-4"):  # Wrong! Use operators instead.
+            if model.equals("gpt-5.6-sol"):  # Wrong! Use operators instead.
 
         Use & | ~ operators instead of 'and', 'or', 'not'.
         """
@@ -245,7 +245,7 @@ class BoolExpr(ABC):
 
         Example::
 
-            model.equals("gpt-4").implies(temp.lte(0.7))
+            model.equals("gpt-5.6-sol").implies(temp.lte(0.7))
         """
         return Constraint(when=self, then=other)
 
@@ -258,7 +258,7 @@ class BoolExpr(ABC):
                 If not provided, uses the name attribute of each ParameterRange.
 
         Returns:
-            Human-readable explanation like "model equals 'gpt-4'"
+            Human-readable explanation like "model equals 'gpt-5.6-sol'"
 
         Example:
             >>> temp = Range(0.0, 2.0, name="temperature")
@@ -280,7 +280,7 @@ class Condition(BoolExpr):
 
     Conditions are created via builder methods on ParameterRange objects
     (Range, IntRange, Choices) and represent atomic predicates like
-    "temperature <= 0.7" or "model == 'gpt-4'".
+    "temperature <= 0.7" or "model == 'gpt-5.6-sol'".
 
     Attributes:
         _tvar: The ParameterRange this condition applies to
@@ -444,7 +444,7 @@ class AndCondition(BoolExpr):
 
     Example::
 
-        model.equals("gpt-4") & temp.lte(0.7)
+        model.equals("gpt-5.6-sol") & temp.lte(0.7)
     """
 
     conditions: tuple[BoolExpr, ...] = field(default_factory=tuple)
@@ -492,7 +492,7 @@ class OrCondition(BoolExpr):
 
     Example::
 
-        model.equals("gpt-4") | model.equals("gpt-3.5")
+        model.equals("gpt-5.6-sol") | model.equals("gpt-3.5")
     """
 
     conditions: tuple[BoolExpr, ...] = field(default_factory=tuple)
@@ -540,7 +540,7 @@ class NotCondition(BoolExpr):
 
     Example::
 
-        ~model.equals("gpt-4")
+        ~model.equals("gpt-5.6-sol")
     """
 
     condition: BoolExpr
@@ -603,12 +603,12 @@ class Constraint:
 
     Example:
         >>> from traigent import Range, Choices
-        >>> model = Choices(["gpt-4", "gpt-3.5-turbo"])
+        >>> model = Choices(["gpt-5.6-sol", "gpt-5.6-terra"])
         >>> temperature = Range(0.0, 2.0)
         >>>
-        >>> # Implication: if model is gpt-4, temperature must be <= 0.7
+        >>> # Implication: if model is gpt-5.6-sol, temperature must be <= 0.7
         >>> c = Constraint(
-        ...     when=model.equals("gpt-4"),
+        ...     when=model.equals("gpt-5.6-sol"),
         ...     then=temperature.lte(0.7),
         ...     description="GPT-4 requires low temperature"
         ... )
@@ -702,8 +702,8 @@ class Constraint:
 
         Example::
 
-            c = implies(model.equals("gpt-4"), temp.lte(0.7))
-            c.explain()  # "IF model equals 'gpt-4' THEN temperature is at most 0.7"
+            c = implies(model.equals("gpt-5.6-sol"), temp.lte(0.7))
+            c.explain()  # "IF model equals 'gpt-5.6-sol' THEN temperature is at most 0.7"
         """
         if self.expr is not None:
             return f"REQUIRE: {self.expr.explain(var_names)}"
@@ -764,13 +764,13 @@ class Constraint:
         Example:
             >>> from traigent import Range, Choices, implies
             >>>
-            >>> model = Choices(["gpt-4", "gpt-3.5"], name="model")
+            >>> model = Choices(["gpt-5.6-sol", "gpt-3.5"], name="model")
             >>> temp = Range(0.0, 2.0, name="temperature")
-            >>> constraint = implies(model.equals("gpt-4"), temp.lte(0.7))
+            >>> constraint = implies(model.equals("gpt-5.6-sol"), temp.lte(0.7))
             >>>
             >>> # Convert to callable for decorator
             >>> constraint_fn = constraint.to_callable()
-            >>> constraint_fn({"model": "gpt-4", "temperature": 0.5})
+            >>> constraint_fn({"model": "gpt-5.6-sol", "temperature": 0.5})
             True
         """
         import warnings
@@ -926,11 +926,11 @@ def implies(
     Example:
         >>> from traigent import Range, Choices, implies
         >>>
-        >>> model = Choices(["gpt-4", "gpt-3.5"])
+        >>> model = Choices(["gpt-5.6-sol", "gpt-3.5"])
         >>> temp = Range(0.0, 2.0)
         >>>
-        >>> # If model is gpt-4, temperature must be <= 0.7
-        >>> c = implies(model.equals("gpt-4"), temp.lte(0.7))
+        >>> # If model is gpt-5.6-sol, temperature must be <= 0.7
+        >>> c = implies(model.equals("gpt-5.6-sol"), temp.lte(0.7))
     """
     return Constraint(when=when, then=then, description=description, id=id)
 
@@ -973,7 +973,7 @@ class WhenBuilder:
 
     Example::
 
-        when(model.equals("gpt-4")).then(temp.lte(0.7))
+        when(model.equals("gpt-5.6-sol")).then(temp.lte(0.7))
     """
 
     def __init__(self, condition: BoolExpr) -> None:
@@ -1012,7 +1012,7 @@ def when(condition: BoolExpr) -> WhenBuilder:
     """Start a when().then() fluent implication chain.
 
     Provides readable syntax for constraints:
-        when(model.equals("gpt-4")).then(temp.lte(0.7))
+        when(model.equals("gpt-5.6-sol")).then(temp.lte(0.7))
 
     Args:
         condition: The guard/antecedent condition
@@ -1023,11 +1023,11 @@ def when(condition: BoolExpr) -> WhenBuilder:
     Example:
         >>> from traigent import Range, Choices, when
         >>>
-        >>> model = Choices(["gpt-4", "gpt-3.5"])
+        >>> model = Choices(["gpt-5.6-sol", "gpt-3.5"])
         >>> temp = Range(0.0, 2.0)
         >>>
-        >>> # If model is gpt-4, temperature must be <= 0.7
-        >>> c = when(model.equals("gpt-4")).then(temp.lte(0.7))
+        >>> # If model is gpt-5.6-sol, temperature must be <= 0.7
+        >>> c = when(model.equals("gpt-5.6-sol")).then(temp.lte(0.7))
     """
     return WhenBuilder(condition)
 
@@ -1059,11 +1059,11 @@ def constraints_to_callables(
     Example:
         >>> from traigent import Range, Choices, implies, constraints_to_callables
         >>>
-        >>> model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        >>> model = Choices(["gpt-5.6-sol", "gpt-3.5"], name="model")
         >>> temp = Range(0.0, 2.0, name="temperature")
         >>>
         >>> constraints = [
-        ...     implies(model.equals("gpt-4"), temp.lte(0.7)),
+        ...     implies(model.equals("gpt-5.6-sol"), temp.lte(0.7)),
         ... ]
         >>>
         >>> # Convert for use with decorator
@@ -1087,8 +1087,8 @@ def normalize_constraints(
     - Raw callables: passed through unchanged
 
     This enables users to mix all syntax styles:
-    - Functional: implies(model.equals("gpt-4"), temp.lte(0.7))
-    - Operator: model.equals("gpt-4") >> temp.lte(0.7)
+    - Functional: implies(model.equals("gpt-5.6-sol"), temp.lte(0.7))
+    - Operator: model.equals("gpt-5.6-sol") >> temp.lte(0.7)
     - Bare condition: temp.lte(1.5)  (auto-wrapped with require())
     - Legacy callable: lambda cfg: cfg["max_tokens"] < 4096
 
@@ -1107,12 +1107,12 @@ def normalize_constraints(
     Example:
         >>> from traigent import Range, Choices, implies, normalize_constraints
         >>>
-        >>> model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        >>> model = Choices(["gpt-5.6-sol", "gpt-3.5"], name="model")
         >>> temp = Range(0.0, 2.0, name="temperature")
         >>>
         >>> # Mixed list of different constraint types
         >>> constraints = [
-        ...     implies(model.equals("gpt-4"), temp.lte(0.7)),
+        ...     implies(model.equals("gpt-5.6-sol"), temp.lte(0.7)),
         ...     model.equals("gpt-3.5") >> temp.lte(0.9),
         ...     temp.lte(1.5),  # bare BoolExpr, auto-wrapped
         ...     lambda cfg: cfg["max_tokens"] < 4096,

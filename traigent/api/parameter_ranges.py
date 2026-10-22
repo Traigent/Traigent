@@ -17,16 +17,16 @@ Example::
     @traigent.optimize(
         temperature=Range(0.0, 2.0),
         max_tokens=IntRange(100, 4096),
-        model=Choices(["gpt-4", "gpt-3.5-turbo"]),
+        model=Choices(["gpt-5.6-sol", "gpt-5.6-terra"]),
         learning_rate=LogRange(1e-5, 1e-1),
     )
     def my_func(query): ...
 
     # With TVL features (constraints, units)
     temp = Range(0.0, 2.0, unit="ratio")
-    model = Choices(["gpt-4", "gpt-3.5"])
+    model = Choices(["gpt-5.6-sol", "gpt-3.5"])
     constraints = [
-        implies(model.equals("gpt-4"), temp.lte(0.7)),
+        implies(model.equals("gpt-5.6-sol"), temp.lte(0.7)),
     ]
 """
 
@@ -650,11 +650,11 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
             Set to False to allow mixed types (e.g., [None, "default", 1]).
 
     Example:
-        >>> model = Choices(["gpt-4", "gpt-3.5-turbo", "claude-haiku-4-5-20251001"])
+        >>> model = Choices(["gpt-5.6-sol", "gpt-5.6-terra", "claude-haiku-4-5-20251001"])
         >>> use_cache = Choices([True, False], default=True)
         >>> temperature = Choices([0.0, 0.3, 0.7, 1.0])
         >>> # Multi-agent: assign to specific agent
-        >>> financial_model = Choices(["gpt-4", "gpt-3.5"], agent="financial")
+        >>> financial_model = Choices(["gpt-5.6-sol", "gpt-3.5"], agent="financial")
 
     Raises:
         TypeError: If values is a string or bytes, or if enforce_type=True and

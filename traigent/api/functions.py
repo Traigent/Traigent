@@ -375,7 +375,7 @@ def get_config() -> dict[str, Any]:
 
     .. warning::
         Traigent does NOT automatically inject config into function parameters.
-        Function parameters like ``model: str = "gpt-4"`` will NOT be overridden
+        Function parameters like ``model: str = "gpt-5.6-sol"`` will NOT be overridden
         by Traigent during optimization. Use ``get_config()`` to access trial values.
 
     Returns:
@@ -387,7 +387,7 @@ def get_config() -> dict[str, Any]:
 
     Example::
 
-        @traigent.optimize(configuration_space={"model": ["gpt-3.5", "gpt-4"]})
+        @traigent.optimize(configuration_space={"model": ["gpt-3.5", "gpt-5.6-sol"]})
         def my_func(query: str):
             cfg = traigent.get_config()  # Works during trials and after apply_best_config
             return call_llm(model=cfg["model"])
@@ -451,7 +451,7 @@ def get_trial_config() -> dict[str, Any]:
     Example::
 
         @traigent.optimize(
-            configuration_space={"model": ["gpt-3.5", "gpt-4"], "temperature": [0.5, 0.8]}
+            configuration_space={"model": ["gpt-3.5", "gpt-5.6-sol"], "temperature": [0.5, 0.8]}
         )
         def my_function(query: str) -> str:
             config = traigent.get_trial_config()  # Gets trial-specific config

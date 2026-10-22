@@ -183,7 +183,7 @@ def test_different_models():
         from tokencost import calculate_completion_cost, calculate_prompt_cost
 
         # Test different models
-        models = ["gpt-4o-mini", "gpt-3.5-turbo", "claude-3-5-sonnet-20241022"]
+        models = ["gpt-4o-mini", "gpt-5.6-terra", "claude-3-5-sonnet-20241022"]
         prompt = [{"role": "user", "content": "Test prompt"}]
         completion = "Test response"
 
