@@ -472,12 +472,16 @@ class ApiOperations:
 
         try:
             max_trials_value = self._resolve_max_trials(session_request)
-            session_payload = self._build_session_payload(
-                session_request, max_trials_value
-            )
             connector = self._build_connector()
+            # Resolve the outgoing headers once. The cache scope is derived from
+            # exactly these headers, and the request is sent with them.
             headers = await self.client.auth_manager.augment_headers(
                 {"Content-Type": _JSON_CONTENT_TYPE}
+            )
+            session_payload = self._build_session_payload(
+                session_request,
+                max_trials_value,
+                principal=self._principal_for_headers(headers),
             )
             try:
                 result = await self._post_session_creation(
@@ -607,7 +611,11 @@ class ApiOperations:
         return bool(session_request.promotion_policy or session_request.tvl_governance)
 
     def _build_session_payload(
-        self, session_request: SessionCreationRequest, max_trials: int
+        self,
+        session_request: SessionCreationRequest,
+        max_trials: int,
+        *,
+        principal: str | None = None,
     ) -> dict[str, Any]:
         """Build the payload sent to the cloud session creation endpoint.
 
@@ -627,7 +635,7 @@ class ApiOperations:
                     "TRAIGENT_SESSION_CONTRACT=legacy cannot carry them."
                 )
             return self._build_content_less_session_payload(
-                session_request, max_trials, content_less_options
+                session_request, max_trials, content_less_options, principal
             )
         if contract == "legacy":
             if optimization_strategy:
@@ -657,11 +665,13 @@ class ApiOperations:
         session_request: SessionCreationRequest,
         max_trials: int,
         options: Any,
+        principal: str | None = None,
     ) -> dict[str, Any]:
         """The typed payload rewritten to the content-less identity shape (group 1).
 
         Legacy identity fields are removed and capabilities / environment / refs added.
-        The cache context for the response is parked on ``self`` for
+        ``principal`` is the cache scope of the outgoing request (None: no cache read
+        or write). The cache context for the response is parked on ``self`` for
         ``_post_session_creation`` (consumed once, then cleared).
         """
         payload = self._build_typed_session_payload(session_request, max_trials)
@@ -669,7 +679,6 @@ class ApiOperations:
             session_request, payload.get("metadata") or {}
         )
         cache = content_less_session.RefCache()
-        principal = self._content_less_principal()
         cached = cache.lookup(principal, local_keys)
         used_cache = content_less_session.apply_to_payload(
             payload, options=options, cached_refs=cached
@@ -693,23 +702,17 @@ class ApiOperations:
         )
         return [api_base] if isinstance(api_base, str) else []
 
-    def _content_less_principal(self) -> str | None:
-        """Scope of the local ref cache: (backend URL, credential fingerprint).
-
-        Returns None when the identity cannot be determined (no key, no auth object,
-        or any error). The caller then skips cache reads and writes for this call.
-        """
+    def _principal_for_headers(self, headers: dict[str, str]) -> str | None:
+        """Cache scope of the exact outgoing headers; None skips the cache (fail closed)."""
         try:
             url = (
                 self.client.backend_config.api_base_url
                 or BackendConfig.get_backend_api_url()
             )
-            fingerprint = self.client.auth_manager.auth.get_api_key_fingerprint()
-        except Exception:  # noqa: BLE001 - unknown identity: fail closed, no cache use
+        except Exception:  # noqa: BLE001 - unknown backend: fail closed, no cache use
             return None
-        return content_less_session.RefCache.principal(
-            url if isinstance(url, str) else None,
-            fingerprint if isinstance(fingerprint, str) else None,
+        return content_less_session.principal_for_headers(
+            url if isinstance(url, str) else None, headers
         )
 
     @staticmethod

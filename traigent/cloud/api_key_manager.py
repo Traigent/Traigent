@@ -8,7 +8,6 @@ Extracted from AuthManager to follow Single Responsibility Principle.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import time
 from datetime import UTC, datetime, timedelta
@@ -223,41 +222,6 @@ class APIKeyManager:
             Masked API key preview or None if no key is set
         """
         return self._api_key_preview
-
-    def get_current_credential(self) -> str | None:
-        """The credential a request would use now, with no historical fallback.
-
-        Same order as ``get_key_for_internal_use`` (explicit token, then current and
-        provided credentials) but never ``_last_auth_result``: a key from an earlier
-        authentication that has since been cleared must not scope a later request.
-        """
-        from traigent.cloud.auth import TokenExpiredError
-
-        if self._api_key_token and not self._api_key_token.is_expired:
-            try:
-                return self._api_key_token.get_value()
-            except TokenExpiredError:
-                pass
-        for fetch_fn in (self._get_credentials_fn, self._get_provided_credentials_fn):
-            if fetch_fn is None:
-                continue
-            key = self._extract_valid_key(fetch_fn())
-            if key:
-                return key
-        return None
-
-    def get_credential_fingerprint(self) -> str | None:
-        """Domain-separated SHA-256 of the current credential, or None when unknown.
-
-        A preview is not an identity (two keys can share first/last 4 characters and
-        length), so cache scoping uses this instead. The raw key is never returned.
-        """
-        key = self.get_current_credential()
-        if not key:
-            return None
-        return hashlib.sha256(
-            b"traigent-content-less-principal-v1\0" + key.encode("utf-8")
-        ).hexdigest()
 
     def has_key(self) -> bool:
         """Return True if an API key has been configured.

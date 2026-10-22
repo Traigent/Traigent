@@ -229,6 +229,35 @@ def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+#: Domain separator for the credential fingerprint the ref cache scopes by.
+_CREDENTIAL_FINGERPRINT_DOMAIN = b"traigent-content-less-principal-v1\x00"
+
+
+def credential_fingerprint(api_key: str) -> str:
+    """Domain-separated SHA-256 of the full API key. The raw key is never stored."""
+    return hashlib.sha256(
+        _CREDENTIAL_FINGERPRINT_DOMAIN + api_key.encode("utf-8")
+    ).hexdigest()
+
+
+def principal_for_headers(
+    backend_url: str | None, headers: Mapping[str, str]
+) -> str | None:
+    """Cache scope of the exact outgoing request, or None (cache skipped).
+
+    Derived only from the headers the request is sent with, so the cached refs and
+    the credential on the wire are the same. Only a request that authenticates solely
+    by ``X-API-Key`` is cacheable: any ``Authorization`` header (Bearer / JWT), or a
+    missing or ambiguous key, returns None.
+    """
+    if any(name.lower() == "authorization" for name in headers):
+        return None
+    keys = [value for name, value in headers.items() if name.lower() == "x-api-key"]
+    if len(keys) != 1 or not isinstance(keys[0], str) or not keys[0]:
+        return None
+    return RefCache.principal(backend_url, credential_fingerprint(keys[0]))
+
+
 def _cache_path() -> Path:
     base = os.getenv("TRAIGENT_RESULTS_FOLDER")
     root = Path(base).expanduser() if base else Path.home() / ".traigent"

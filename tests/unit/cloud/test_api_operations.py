@@ -7,9 +7,13 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from traigent.cloud import content_less as content_less_session
-from traigent.cloud.api_key_manager import APIKeyManager
-from traigent.cloud.auth import AuthManager, UnifiedAuthConfig
+from traigent.cloud.auth import (
+    AuthCredentials,
+    AuthManager,
+    AuthMode,
+)
 from traigent.utils.wire_text import WIRE_ERROR_CODES
+from traigent.cloud.api_key_manager import APIKeyManager
 from traigent.cloud.api_operations import (
     _JSON_CONTENT_TYPE,
     AIOHTTP_AVAILABLE,
@@ -2302,9 +2306,11 @@ class TestOrchestratorDefaultConfigPayload:
 
 _CONTENT_LESS_URL = "https://api.example.test"
 _AGENT_REF = "agentref_" + "a" * 32
+_KEY_A = "tg_" + "a" * 61
+_KEY_B = "tg_" + "b" * 61
 
 
-def _ops_with_auth(auth: object) -> ApiOperations:
+def _ops_for(auth: AuthManager) -> ApiOperations:
     client = Mock()
     client.backend_config.api_base_url = _CONTENT_LESS_URL
     client.auth_manager = Mock(spec=["auth"])
@@ -2312,166 +2318,219 @@ def _ops_with_auth(auth: object) -> ApiOperations:
     return ApiOperations(client)
 
 
-def _expected_fingerprint(key: str) -> str:
-    return hashlib.sha256(
-        b"traigent-content-less-principal-v1\0" + key.encode()
-    ).hexdigest()
+async def _accept_key(self, api_key):  # noqa: ARG001 - backend validation boundary
+    return None
 
 
-def _key_manager(key: str) -> APIKeyManager:
-    manager = APIKeyManager(UnifiedAuthConfig())
-    manager.set_token(key, source="explicit")
-    return manager
+def _backend_accepts_keys():
+    """Patch the backend validation call only; every other auth step is real."""
+    return patch.object(AuthManager, "_validate_api_key_with_backend", new=_accept_key)
+
+
+def _spy_cache_reads_and_writes(monkeypatch):
+    reads, writes = [], []
+    orig_load = content_less_session.RefCache._load
+    orig_save = content_less_session.RefCache._save
+    monkeypatch.setattr(
+        content_less_session.RefCache,
+        "_load",
+        lambda self: reads.append(1) or orig_load(self),
+    )
+    monkeypatch.setattr(
+        content_less_session.RefCache,
+        "_save",
+        lambda self, data: writes.append(1) or orig_save(self, data),
+    )
+    return reads, writes
 
 
 class TestContentLessPrincipal:
-    """The ref-cache scope is a credential fingerprint; unknown identity fails closed."""
+    """The cache scope is derived from the headers the request is sent with.
 
-    def test_same_preview_different_keys_do_not_share_refs(self, tmp_path):
-        key_a = "tg_a" + "1" * 56 + "aaaa"
-        key_b = "tg_a" + "2" * 56 + "aaaa"
-        assert APIKeyManager.mask_key(key_a) == APIKeyManager.mask_key(key_b)
-        auth_a, auth_b = Mock(), Mock()
-        auth_a.get_api_key_fingerprint = _key_manager(key_a).get_credential_fingerprint
-        auth_b.get_api_key_fingerprint = _key_manager(key_b).get_credential_fingerprint
-        principal_a = _ops_with_auth(auth_a)._content_less_principal()
-        principal_b = _ops_with_auth(auth_b)._content_less_principal()
-        assert principal_a is not None and principal_b is not None
-        assert principal_a != principal_b
+    Each test builds the real outgoing headers with ``AuthManager.get_auth_headers``
+    and checks both the cache selection and the credential on the wire.
+    """
+
+    @pytest.mark.asyncio
+    async def test_single_key_scope_is_the_fingerprint_of_the_outgoing_key(self):
+        auth = AuthManager(api_key=_KEY_A)
+        with _backend_accepts_keys():
+            assert (await auth.authenticate()).success
+            headers = await auth.get_auth_headers()
+        assert headers["X-API-Key"] == _KEY_A
+        principal = _ops_for(auth)._principal_for_headers(headers)
+        assert principal == content_less_session.RefCache.principal(
+            _CONTENT_LESS_URL, content_less_session.credential_fingerprint(_KEY_A)
+        )
+
+    @pytest.mark.asyncio
+    async def test_same_preview_different_keys_do_not_share_refs(self, tmp_path):
+        key_1 = "tg_a" + "1" * 56 + "wxyz"
+        key_2 = "tg_a" + "2" * 56 + "wxyz"
+        assert APIKeyManager.mask_key(key_1) == APIKeyManager.mask_key(key_2)
+        principals = []
+        for key in (key_1, key_2):
+            auth = AuthManager(api_key=key)
+            with _backend_accepts_keys():
+                assert (await auth.authenticate()).success
+                headers = await auth.get_auth_headers()
+            principals.append(_ops_for(auth)._principal_for_headers(headers))
+        principal_1, principal_2 = principals
+        assert principal_1 is not None and principal_2 is not None
+        assert principal_1 != principal_2
 
         cache = content_less_session.RefCache(tmp_path / "refs.json")
         local_keys = {"agent": "agent-x"}
+        cache.store(principal_1, "t1", "p1", local_keys, {"agent": _AGENT_REF})
+        assert cache.lookup(principal_1, local_keys) == {"agent": _AGENT_REF}
+        assert cache.lookup(principal_2, local_keys) == {}
+
+    @pytest.mark.asyncio
+    async def test_reauthenticated_key_is_the_scope_not_the_earlier_one(
+        self, tmp_path, monkeypatch
+    ):
+        """A is authenticated and cached; A is dropped; B is in env and is re-authenticated.
+
+        Clearing A is the reproducible form of the divergence: the earlier key stays
+        in ``_last_auth_result`` and A's refs stay in the cache. The request must carry
+        B, and the scope must be B's, with A's refs not used.
+        """
+        monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+        local_keys = {"agent": "agent-x"}
+        cache = content_less_session.RefCache(tmp_path / "refs.json")
+        auth = AuthManager(api_key=_KEY_A)
+        with _backend_accepts_keys():
+            assert (await auth.authenticate()).success
+            headers_a = await auth.get_auth_headers()
+        ops = _ops_for(auth)
+        principal_a = ops._principal_for_headers(headers_a)
         cache.store(principal_a, "t1", "p1", local_keys, {"agent": _AGENT_REF})
         assert cache.lookup(principal_a, local_keys) == {"agent": _AGENT_REF}
+
+        auth.set_api_key(None)
+        monkeypatch.setenv("TRAIGENT_API_KEY", _KEY_B)
+        with _backend_accepts_keys():
+            headers_b = await auth.get_auth_headers()
+        assert headers_b["X-API-Key"] == _KEY_B
+        principal_b = ops._principal_for_headers(headers_b)
+        assert principal_b == content_less_session.RefCache.principal(
+            _CONTENT_LESS_URL, content_less_session.credential_fingerprint(_KEY_B)
+        )
+        assert principal_b != principal_a
         assert cache.lookup(principal_b, local_keys) == {}
 
-    @pytest.mark.parametrize("fails", ["missing_key", "exception"])
-    def test_unknown_identity_skips_cache_read_and_write(
-        self, tmp_path, monkeypatch, fails
-    ):
-        cache_path = tmp_path / "refs.json"
+    @pytest.mark.asyncio
+    async def test_api_key_then_jwt_is_never_cached(self, monkeypatch, tmp_path):
+        """A JWT request carries no X-API-Key: no cache read, no cache write."""
+        monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
         local_keys = {"agent": "agent-x"}
-        legacy_urlnone = content_less_session._digest(f"{_CONTENT_LESS_URL}\x00")
-        legacy_nonenone = content_less_session._digest("\x00")
-        seeded = content_less_session.RefCache(cache_path)
-        seeded.store(legacy_urlnone, "t1", "p1", local_keys, {"agent": _AGENT_REF})
-        seeded.store(legacy_nonenone, "t1", "p1", local_keys, {"agent": _AGENT_REF})
-        # Control: a known identity reads the populated entry from this same file.
-        assert seeded.lookup(legacy_urlnone, local_keys) == {"agent": _AGENT_REF}
+        cache = content_less_session.RefCache(tmp_path / "refs.json")
+        auth = AuthManager(api_key=_KEY_A)
+        with _backend_accepts_keys():
+            assert (await auth.authenticate()).success
+        ops = _ops_for(auth)
+        principal_a = ops._principal_for_headers(await auth.get_auth_headers())
+        cache.store(principal_a, "t1", "p1", local_keys, {"agent": _AGENT_REF})
 
-        auth = Mock()
-        if fails == "missing_key":
-            auth.get_api_key_fingerprint = Mock(return_value=None)
-        else:
-            auth.get_api_key_fingerprint = Mock(side_effect=RuntimeError("boom"))
-        principal = _ops_with_auth(auth)._content_less_principal()
+        validator_result = type(
+            "ValidationResult",
+            (),
+            {
+                "valid": True,
+                "claims": {"sub": "test"},
+                "warnings": [],
+                "expires_at": None,
+                "error": None,
+            },
+        )()
+        with patch(
+            "traigent.security.jwt_validator.get_secure_jwt_validator"
+        ) as validator:
+            validator.return_value.validate_token.return_value = validator_result
+            jwt_result = await auth.authenticate(
+                AuthCredentials(
+                    mode=AuthMode.JWT_TOKEN,
+                    jwt_token="header.payload.signature",
+                )
+            )
+        assert jwt_result.success
+        headers = await auth.get_auth_headers()
+        assert "X-API-Key" not in headers
+        assert headers["Authorization"].startswith("Bearer ")
+
+        principal = ops._principal_for_headers(headers)
         assert principal is None
-
-        reads, writes = [], []
-        orig_load, orig_save = (
-            content_less_session.RefCache._load,
-            content_less_session.RefCache._save,
-        )
-        monkeypatch.setattr(
-            content_less_session.RefCache,
-            "_load",
-            lambda self: reads.append(1) or orig_load(self),
-        )
-        monkeypatch.setattr(
-            content_less_session.RefCache,
-            "_save",
-            lambda self, data: writes.append(1) or orig_save(self, data),
-        )
-        cache = content_less_session.RefCache(cache_path)
+        reads, writes = _spy_cache_reads_and_writes(monkeypatch)
         assert cache.lookup(principal, local_keys) == {}
         cache.store(principal, "t1", "p1", local_keys, {"agent": _AGENT_REF})
         assert reads == []
         assert writes == []
 
-    def test_fingerprint_is_domain_separated_stable_and_hides_the_key(self):
-        key = "tg_a" + "9" * 56 + "zzzz"
-        manager = _key_manager(key)
-        first = manager.get_credential_fingerprint()
-        assert first == manager.get_credential_fingerprint()
-        assert (
-            first
-            == hashlib.sha256(
-                b"traigent-content-less-principal-v1\0" + key.encode()
-            ).hexdigest()
-        )
-        assert first != hashlib.sha256(key.encode()).hexdigest()
-        assert key not in first and "9" * 56 not in first
-
-    @staticmethod
-    async def _accept_validation(self, api_key):  # noqa: ARG004
-        return None
-
-    @staticmethod
-    def _spy_reads(monkeypatch):
-        reads = []
-        orig_load = content_less_session.RefCache._load
-        monkeypatch.setattr(
-            content_less_session.RefCache,
-            "_load",
-            lambda self: reads.append(1) or orig_load(self),
-        )
-        return reads
-
     @pytest.mark.asyncio
-    async def test_cleared_key_never_reuses_an_earlier_identity(
-        self, tmp_path, monkeypatch
+    async def test_cleared_key_with_no_other_source_sends_nothing_cacheable(
+        self, monkeypatch
     ):
-        """Real AuthManager: authenticate(A), clear, B in env; A's refs are never read.
-
-        The earlier authentication (A) is still held in ``_last_auth_result`` after the
-        clear. The fingerprint must not fall back to it, and nothing is read or written
-        while the identity is unknown.
-        """
-        key_a = "tg_" + "a" * 61
-        key_b = "tg_" + "b" * 61
         monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+        auth = AuthManager(api_key=_KEY_A)
+        with _backend_accepts_keys():
+            assert (await auth.authenticate()).success
+        auth.set_api_key(None)
+        with _backend_accepts_keys(), pytest.raises(Exception):  # noqa: B017
+            await auth.get_auth_headers()
+        assert _ops_for(auth)._principal_for_headers({}) is None
+
+    def test_unknown_identity_skips_cache_read_and_write(self, tmp_path, monkeypatch):
+        cache_path = tmp_path / "refs.json"
         local_keys = {"agent": "agent-x"}
-        with patch.object(
-            AuthManager,
-            "_validate_api_key_with_backend",
-            new=self._accept_validation,
-        ):
-            auth = AuthManager(api_key=key_a)
-            assert (await auth.authenticate()).success
-            assert auth._last_auth_result is not None  # the historical fallback exists
-            ops = _ops_with_auth(auth)
-            principal_a = ops._content_less_principal()
-            assert principal_a is not None
-            cache = content_less_session.RefCache(tmp_path / "refs.json")
-            cache.store(principal_a, "t1", "p1", local_keys, {"agent": _AGENT_REF})
-            assert cache.lookup(principal_a, local_keys) == {"agent": _AGENT_REF}
+        legacy = content_less_session._digest(f"{_CONTENT_LESS_URL}\x00")
+        seeded = content_less_session.RefCache(cache_path)
+        seeded.store(legacy, "t1", "p1", local_keys, {"agent": _AGENT_REF})
+        # Control: a known scope reads the populated entry from this same file.
+        assert seeded.lookup(legacy, local_keys) == {"agent": _AGENT_REF}
 
-            auth.set_api_key(None)
-            monkeypatch.setenv("TRAIGENT_API_KEY", key_b)
-            reads = self._spy_reads(monkeypatch)
-            cleared = ops._content_less_principal()
-            assert cleared is None
-            assert cache.lookup(cleared, local_keys) == {}
-            assert reads == []
+        reads, writes = _spy_cache_reads_and_writes(monkeypatch)
+        cache = content_less_session.RefCache(cache_path)
+        assert cache.lookup(None, local_keys) == {}
+        cache.store(None, "t1", "p1", local_keys, {"agent": _AGENT_REF})
+        assert reads == []
+        assert writes == []
 
-            # The next authentication resolves B from env; the scope follows B.
-            assert (await auth.authenticate()).success
-            principal_b = ops._content_less_principal()
-            assert principal_b == content_less_session.RefCache.principal(
-                _CONTENT_LESS_URL, _expected_fingerprint(key_b)
+    def test_fingerprint_is_domain_separated_stable_and_hides_the_key(self):
+        headers = {"X-API-Key": _KEY_A}
+        principal = content_less_session.principal_for_headers(
+            _CONTENT_LESS_URL, headers
+        )
+        assert principal == content_less_session.principal_for_headers(
+            _CONTENT_LESS_URL, dict(headers)
+        )
+        fingerprint = hashlib.sha256(
+            b"traigent-content-less-principal-v1\0" + _KEY_A.encode()
+        ).hexdigest()
+        assert principal == content_less_session.RefCache.principal(
+            _CONTENT_LESS_URL, fingerprint
+        )
+        assert fingerprint != hashlib.sha256(_KEY_A.encode()).hexdigest()
+        assert _KEY_A not in principal and "a" * 61 not in principal
+
+    def test_ambiguous_or_mixed_headers_are_never_cacheable(self):
+        url = _CONTENT_LESS_URL
+        assert content_less_session.principal_for_headers(url, {}) is None
+        assert (
+            content_less_session.principal_for_headers(
+                url, {"X-API-Key": _KEY_A, "Authorization": "Bearer t"}
             )
-            assert principal_b != principal_a
-            assert cache.lookup(principal_b, local_keys) == {}
-
-    @pytest.mark.asyncio
-    async def test_cleared_key_with_no_other_source_has_no_identity(self, monkeypatch):
-        monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
-        with patch.object(
-            AuthManager,
-            "_validate_api_key_with_backend",
-            new=self._accept_validation,
-        ):
-            auth = AuthManager(api_key="tg_" + "a" * 61)
-            assert (await auth.authenticate()).success
-            auth.set_api_key(None)
-        assert _ops_with_auth(auth)._content_less_principal() is None
+            is None
+        )
+        assert (
+            content_less_session.principal_for_headers(
+                url, {"X-API-Key": _KEY_A, "x-api-key": _KEY_B}
+            )
+            is None
+        )
+        assert (
+            content_less_session.principal_for_headers(url, {"X-API-Key": ""}) is None
+        )
+        assert (
+            content_less_session.principal_for_headers(None, {"X-API-Key": _KEY_A})
+            is None
+        )

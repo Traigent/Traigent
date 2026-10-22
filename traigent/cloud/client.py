@@ -1763,25 +1763,21 @@ class TraigentCloudClient(BaseTraigentClient):
 
             url = f"{self.api_base_url}/sessions"
             request_data = self._serialize_session_request(request)
+            # Resolve the outgoing headers once. The cache scope is derived from
+            # exactly these headers, and the request is sent with them.
+            headers = await self._get_headers()
             content_less_ctx = None
             if _content_less.is_enabled(_content_less.options_of(request)):
                 # Same content-less builder as the optimize() route: no legacy identity,
                 # capability required in the 201, never a legacy-shape retry.
-                try:
-                    fingerprint = self.auth.get_api_key_fingerprint()
-                except Exception:  # noqa: BLE001 - identity unknown: no cache use
-                    fingerprint = None
                 content_less_ctx = _content_less.prepare_payload(
                     request_data,
                     request,
-                    _content_less.RefCache.principal(
-                        self.api_base_url,
-                        fingerprint if isinstance(fingerprint, str) else None,
-                    ),
+                    _content_less.principal_for_headers(self.api_base_url, headers),
                 )
 
             async with self._aio_session.post(
-                url, json=request_data, headers=await self._get_headers()
+                url, json=request_data, headers=headers
             ) as response:
                 if response.status == 201:
                     data = await response.json()
