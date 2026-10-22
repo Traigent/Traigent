@@ -591,9 +591,10 @@ def validate_always_blocked_cloud_url(
     :func:`validate_cloud_base_url`. The checks are: the scheme is http(s) with a
     host, plain HTTP is refused outside development, the metadata hostnames and
     IP literals are refused, and every resolved answer is checked against the
-    always-blocked set. Private and loopback answers are allowed, and a name that
-    does not resolve is not an error (both as in development). The shared
-    validator's stricter rules do not apply here.
+    always-blocked set. Private and loopback answers are allowed. A name that does
+    not resolve is refused (:class:`CloudUrlUnreachableError`) outside development,
+    and tolerated only in development. The shared validator's stricter rules do not
+    apply here.
     """
     parsed = urlparse((base_url or "").strip().rstrip("/"))
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -614,7 +615,14 @@ def validate_always_blocked_cloud_url(
     try:
         addr_infos = socket.getaddrinfo(normalized, None)
     except socket.gaierror:
-        return
+        # Fail closed in production: an unresolvable name cannot be checked against
+        # the always-blocked set, and "not blocked" must not be the default. The
+        # development allowance mirrors _reject_unsafe_hostname's allow_local branch.
+        if _is_development_environment():
+            return
+        raise CloudUrlUnreachableError(
+            f"{purpose} base URL host could not be resolved"
+        ) from None
     for _family, _socktype, _proto, _canonname, sockaddr in addr_infos:
         resolved_ip = _parse_resolved_ip(sockaddr[0])
         if resolved_ip is not None:

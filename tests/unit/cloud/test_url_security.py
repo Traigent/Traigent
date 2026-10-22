@@ -12,6 +12,7 @@ from traigent.cloud.url_security import (
     CloudUrlUnreachableError,
     _unwrap_embedded_ipv4,
     _validation_needs_dns_resolution,
+    validate_always_blocked_cloud_url,
     validate_cloud_base_url,
     validate_cloud_base_url_async,
 )
@@ -127,6 +128,24 @@ def test_validate_cloud_base_url_fails_closed_on_dns_failure() -> None:
     ):
         with pytest.raises(ValueError, match="could not be resolved"):
             validate_cloud_base_url("https://unresolvable.example")
+
+
+def test_always_blocked_validator_fails_closed_on_dns_failure_in_production() -> None:
+    # Unresolvable name: the always-blocked set cannot be checked, so refuse.
+    with (
+        patch.dict("os.environ", {"ENVIRONMENT": "production"}, clear=True),
+        patch("socket.getaddrinfo", side_effect=socket.gaierror),
+    ):
+        with pytest.raises(CloudUrlUnreachableError, match="could not be resolved"):
+            validate_always_blocked_cloud_url("https://unresolvable.example")
+
+
+def test_always_blocked_validator_tolerates_dns_failure_in_development() -> None:
+    with (
+        patch.dict("os.environ", {"TRAIGENT_ENV": "development"}, clear=True),
+        patch("socket.getaddrinfo", side_effect=socket.gaierror),
+    ):
+        validate_always_blocked_cloud_url("https://unresolvable.example")
 
 
 @pytest.mark.asyncio
