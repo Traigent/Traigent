@@ -18,12 +18,7 @@ Example usage:
 # Traceability: CONC-Layer-Core CONC-Quality-Reliability FUNC-EVAL-METRICS REQ-EVAL-005
 
 import math
-from typing import Any, TypedDict, TypeGuard
-
-try:
-    from typing import NotRequired  # Python 3.11+
-except ImportError:
-    from typing import NotRequired  # Python 3.8-3.10
+from typing import Any, NotRequired, TypedDict, TypeGuard
 
 
 class UsageMetadata(TypedDict):
