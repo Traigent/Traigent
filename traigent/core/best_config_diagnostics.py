@@ -85,9 +85,16 @@ class Category(StrEnum):
 _TRUSTED: dict[int, weakref.ref[BaseException]] = {}
 
 
-def _trust(error: ConfigurationError) -> ConfigurationError:
+_ConfigErrorT = TypeVar("_ConfigErrorT", bound=ConfigurationError)
+
+
+def _trust(error: _ConfigErrorT) -> _ConfigErrorT:
     key = id(error)
-    _TRUSTED[key] = weakref.ref(error, lambda _ref, key=key: _TRUSTED.pop(key, None))
+
+    def _forget(_ref: weakref.ref[BaseException], key: int = key) -> None:
+        _TRUSTED.pop(key, None)
+
+    _TRUSTED[key] = weakref.ref(error, _forget)
     return error
 
 
@@ -105,7 +112,7 @@ def _safe_error(message: str, **kwargs: Any) -> SafeConfigurationError:
     return _trust(SafeConfigurationError(message, **kwargs))  # type: ignore[return-value]
 
 
-def _mark_safe(error: ConfigurationError) -> ConfigurationError:
+def _mark_safe(error: _ConfigErrorT) -> _ConfigErrorT:
     """Trust ``error`` as carrying a fixed, literal message (see :func:`fixed_reason`)."""
 
     return _trust(error)
@@ -127,7 +134,8 @@ def fixed_reason(exc: BaseException) -> str:
     """
 
     if is_safe(exc):
-        return exc.message  # type: ignore[attr-defined]
+        message: str = exc.message  # type: ignore[attr-defined]
+        return message
     return type(exc).__name__
 
 

@@ -14,12 +14,13 @@ import functools
 import sys
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 from traigent.utils.langchain_interceptor import (
-    classify_import_failure,
     capture_langchain_response,
     capture_observed_response,
+    classify_import_failure,
     instrumented_provider_call,
 )
 from traigent.utils.logging import configure_litellm_logging, get_logger
@@ -90,11 +91,12 @@ def _install_function_setup_guard(litellm: Any) -> None:
     """
     utils_mod = getattr(litellm, "utils", None)
     current = getattr(utils_mod, "function_setup", None)
-    if not callable(current):
+    if utils_mod is None or not callable(current):
         raise RuntimeError(
             "litellm.utils.function_setup is unavailable; cannot guarantee "
             "that mock mode blocks provider calls."
         )
+    original_setup: Callable[..., Any] = current
     if getattr(current, "_traigent_mock_guard", False):
         return
 
@@ -104,10 +106,10 @@ def _install_function_setup_guard(litellm: Any) -> None:
     ) -> Any:
         if original_function in _GUARDED_CALL_TYPES:
             _raise_if_mock_bypass()
-        return current(original_function, *args, **kwargs)
+        return original_setup(original_function, *args, **kwargs)
 
     function_setup_with_mock_guard._traigent_mock_guard = True  # type: ignore[attr-defined]
-    function_setup_with_mock_guard._traigent_original = current  # type: ignore[attr-defined]
+    function_setup_with_mock_guard._traigent_original = original_setup  # type: ignore[attr-defined]
     utils_mod.function_setup = function_setup_with_mock_guard
 
 
