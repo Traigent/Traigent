@@ -12,6 +12,8 @@ Usage:
 from __future__ import annotations
 
 import ast
+import enum
+import importlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -35,6 +37,7 @@ except ImportError:
 # Namespace for our ontology
 TRAIGENT_NS = "http://traigent.ai/ontology/test#"
 UNRESOLVED = object()
+ENUMS_KEY = "__enums__"
 
 
 # ==============================================================================
@@ -289,6 +292,9 @@ class TestParser:
     def _build_module_context(self, tree: ast.AST) -> dict[str, Any]:
         """Collect module-level constants for evaluation."""
         context: dict[str, Any] = {}
+        enums = self._collect_imported_enums(tree)
+        if enums:
+            context[ENUMS_KEY] = enums
         for node in getattr(tree, "body", []):
             if isinstance(node, ast.Assign):
                 if len(node.targets) != 1:
@@ -304,6 +310,47 @@ class TestParser:
                     if value is not UNRESOLVED:
                         context[node.target.id] = value
         return context
+
+    @staticmethod
+    def _collect_imported_enums(tree: ast.AST) -> dict[str, type[enum.Enum]]:
+        """Map local names to Enum classes imported from the traigent package."""
+        enums: dict[str, type[enum.Enum]] = {}
+        for node in getattr(tree, "body", []):
+            if not isinstance(node, ast.ImportFrom) or node.level:
+                continue
+            if not node.module or node.module.split(".")[0] != "traigent":
+                continue
+            try:
+                module = importlib.import_module(node.module)
+            except Exception:
+                continue
+            for alias in node.names:
+                candidate = getattr(module, alias.name, None)
+                if isinstance(candidate, type) and issubclass(candidate, enum.Enum):
+                    enums[alias.asname or alias.name] = candidate
+        return enums
+
+    def _eval_enum_values(self, node: ast.ListComp, context: dict[str, Any]) -> Any:
+        """Resolve ``[x.value for x in SomeEnum]``; anything else is unresolved."""
+        if len(node.generators) != 1:
+            return UNRESOLVED
+        gen = node.generators[0]
+        if gen.ifs or gen.is_async:
+            return UNRESOLVED
+        if not isinstance(gen.target, ast.Name) or not isinstance(gen.iter, ast.Name):
+            return UNRESOLVED
+        elt = node.elt
+        if not (
+            isinstance(elt, ast.Attribute)
+            and elt.attr == "value"
+            and isinstance(elt.value, ast.Name)
+            and elt.value.id == gen.target.id
+        ):
+            return UNRESOLVED
+        enum_cls = context.get(ENUMS_KEY, {}).get(gen.iter.id)
+        if enum_cls is None:
+            return UNRESOLVED
+        return [member.value for member in enum_cls]
 
     def _parse_class(
         self,
@@ -638,6 +685,8 @@ class TestParser:
                     return UNRESOLVED
                 items.append(value)
             return items if isinstance(node, ast.List) else tuple(items)
+        if isinstance(node, ast.ListComp):
+            return self._eval_enum_values(node, context)
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Name):
                 return f"{node.value.id}.{node.attr}"
