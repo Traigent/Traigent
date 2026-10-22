@@ -24,11 +24,15 @@ from traigent.runtime.apply import (
     matching_heads,
 )
 from traigent.runtime.client import RuntimeClient
-from traigent.runtime.model import RuntimeRequirement, RuntimeRequirementError
+from traigent.runtime.model import (
+    RuntimeRequirement,
+    RuntimeRequirementError,
+    one_line,
+)
 from traigent.runtime.respond import OccurrenceUsed
 from traigent.runtime.respond import respond as run_respond
-from traigent.runtime.watch import poll_once
 from traigent.runtime.watch import LOGGER_NAME as _LOGGER_NAME
+from traigent.runtime.watch import poll_once
 
 E_FUNCTION_NOT_FOUND = "function_not_found"
 E_AMBIGUOUS_FUNCTION = "ambiguous_function"
@@ -38,7 +42,7 @@ E_AGENT_REQUIRED = "agent_id_required"
 
 
 def _fail(exc: RuntimeRequirementError, status: int = 1) -> None:
-    click.echo(f"error: {exc}", err=True)
+    click.echo(f"error: {one_line(exc)}", err=True)
     raise click.exceptions.Exit(status)
 
 
@@ -146,9 +150,12 @@ def validate_cmd(file_path: Path, function: str) -> None:
     except RuntimeRequirementError as exc:
         _fail(exc)
         return
-    click.echo(declared.to_tvl())
+    # Multi-line YAML by design: clean each line, keep the line breaks.
+    click.echo("\n".join(one_line(ln) for ln in declared.to_tvl().split("\n")))
     for issue in issues:
-        click.echo(f"{issue.severity}: {issue.code} at {issue.path}", err=True)
+        click.echo(
+            one_line(f"{issue.severity}: {issue.code} at {issue.path}"), err=True
+        )
     if any(i.severity == "error" for i in issues):
         raise click.exceptions.Exit(1)
 
@@ -189,19 +196,28 @@ def apply_cmd(
             "error: requirement_exists (the registered profile differs)", err=True
         )
         for name, local, remote in conflict.diff:
-            click.echo(f"  {name}: declared={local} registered={remote}", err=True)
+            click.echo(
+                one_line(f"  {name}: declared={local} registered={remote}"),
+                err=True,
+            )
         raise click.exceptions.Exit(EXIT_CONFLICT) from None
     except RuntimeRequirementError as exc:
         _fail(exc)
         return
     click.echo(
-        f"{result.outcome} via {result.route}; policy digest {result.policy_digest[:12]}"
+        one_line(
+            f"{result.outcome} via {result.route}; "
+            f"policy digest {result.policy_digest[:12]}"
+        )
     )
     if result.receipt is not None:
         r = result.receipt
         click.echo(
-            f"head={r.head_id} revision={r.revision_id} number={r.revision_number} "
-            f"provenance={r.provenance} status={r.status}"
+            one_line(
+                f"head={r.head_id} revision={r.revision_id} "
+                f"number={r.revision_number} "
+                f"provenance={r.provenance} status={r.status}"
+            )
         )
 
 
@@ -227,8 +243,10 @@ def status_cmd(
         click.echo("not registered (run `traigent requirements apply`)")
     for head in heads:
         click.echo(
-            f"head={head.get('head_id')} revision={head.get('revision_id')} "
-            f"status={head.get('status')} provenance={head.get('provenance')}"
+            one_line(
+                f"head={head.get('head_id')} revision={head.get('revision_id')} "
+                f"status={head.get('status')} provenance={head.get('provenance')}"
+            )
         )
     open_rows = [
         r for r in rows if r.get("outcome") is None and r.get("closed_at") is None
@@ -277,10 +295,13 @@ def watch_cmd(
             [declared], project_id=project, agent_id=agent, state_dir=_state_dir()
         )
         click.echo(
-            f"coverage: {result.coverage}; breaches seen: {result.rows}; events: {len(result.events)}"
+            one_line(
+                f"coverage: {result.coverage}; breaches seen: {result.rows}; "
+                f"events: {len(result.events)}"
+            )
         )
         if result.error:
-            click.echo(f"error: {result.error}", err=True)
+            click.echo(f"error: {one_line(result.error)}", err=True)
             failed = True
         if interval <= 0:
             break
@@ -312,7 +333,7 @@ def respond_cmd(
     def confirm(facts: dict[str, Any]) -> bool:
         click.echo("Open breach, restore requested:")
         for key, value in facts.items():
-            click.echo(f"  {key}: {value}")
+            click.echo(one_line(f"  {key}: {value}"))
         return bool(
             click.confirm("Run optimize under this cost ceiling?", default=False)
         )
@@ -338,14 +359,20 @@ def respond_cmd(
     except RuntimeRequirementError as exc:
         if isinstance(exc, OccurrenceUsed):
             click.echo(
-                f"occurrence already used: run id {exc.run_id or 'unavailable'}",
+                one_line(
+                    f"occurrence already used: run id {exc.run_id or 'unavailable'}"
+                ),
                 err=True,
             )
         _fail(exc)
         return
     click.echo(
-        f"optimization started for breach {result.breach_id} (occurrence {result.occurrence}); "
-        f"run id: {result.run_id or 'unavailable'}; cost ceiling: {result.cost_ceiling_usd} USD"
+        one_line(
+            f"optimization started for breach {result.breach_id} "
+            f"(occurrence {result.occurrence}); "
+            f"run id: {result.run_id or 'unavailable'}; "
+            f"cost ceiling: {result.cost_ceiling_usd} USD"
+        )
     )
 
 
@@ -357,4 +384,4 @@ def explain_cmd(ref: str) -> None:
     if local is None:
         click.echo("error: ref_unknown", err=True)
         raise click.exceptions.Exit(1)
-    click.echo(local)
+    click.echo(one_line(local))
