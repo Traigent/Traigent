@@ -2974,9 +2974,14 @@ class BackendIntegratedClient:
             "Best-config fetch",
             _get_best_config,
         )
+        if response.status_code == 304:
+            # Not Modified answers the If-None-Match conditional fetch. It is not a
+            # redirect: nothing is followed and no Location is read, so it is answered
+            # before the redirect guard (which refuses every other 3xx).
+            return None
         _refuse_redirect_response(response, "Best-config fetch")
 
-        if response.status_code in {304, 404}:
+        if response.status_code == 404:
             return None
         if response.status_code >= 400:
             raise CloudServiceError(

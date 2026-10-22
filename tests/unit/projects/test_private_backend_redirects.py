@@ -223,3 +223,59 @@ def test_best_config_call_refused_when_transport_gate_is_off(
         excinfo.value
     )
     assert recorded_redirect == []
+
+
+@pytest.fixture
+def answer_status(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Factory: every requests send at the adapter answers ``status`` (optional Location)."""
+    import requests
+
+    def install(status: int, location: str | None = None) -> list[str]:
+        seen: list[str] = []
+
+        def fake_send(self: Any, request: Any, **kwargs: Any) -> requests.Response:
+            seen.append(request.url)
+            response = requests.Response()
+            response.status_code = status
+            if location is not None:
+                response.headers["Location"] = location
+            response._content = b""
+            response.url = request.url
+            response.request = request
+            response.encoding = "utf-8"
+            return response
+
+        monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", fake_send)
+        return seen
+
+    return install
+
+
+def test_fetch_best_config_304_not_modified_returns_none(answer_status: Any) -> None:
+    # Conditional fetch: the backend answers 304 Not Modified. That is the documented
+    # None answer, not a refused redirect.
+    seen = answer_status(304)
+    with patch.dict("os.environ", OPT_IN_ENV, clear=True):
+        with patch("socket.getaddrinfo", return_value=_addr_info("10.20.30.40")):
+            client = _backend_client()
+            result = client.fetch_best_config_sync(
+                "cfg-1", environment="dev", etag='"v1"'
+            )
+    assert result is None
+    assert len(seen) == 1
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_fetch_best_config_real_redirect_with_etag_still_refused(
+    status: int, answer_status: Any
+) -> None:
+    from traigent.cloud.backend_client import CloudServiceError
+
+    seen = answer_status(status, location=_METADATA_LOCATION)
+    with patch.dict("os.environ", OPT_IN_ENV, clear=True):
+        with patch("socket.getaddrinfo", return_value=_addr_info("10.20.30.40")):
+            client = _backend_client()
+            with pytest.raises(CloudServiceError, match="refused HTTP redirect"):
+                client.fetch_best_config_sync("cfg-1", environment="dev", etag='"v1"')
+    assert len(seen) == 1
+    assert seen[0].startswith(SELF_HOSTED)
