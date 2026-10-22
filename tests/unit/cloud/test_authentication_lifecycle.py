@@ -697,23 +697,38 @@ class TestBackendClientAuthLifecycle:
             raise Exception("Client 2 auth failed")
 
         session_data = []
+        # Per-request headers each session actually sent (#2716 coverage).
+        session_requests: list[list[dict[str, str]]] = []
 
         def mock_session_constructor(*args, **kwargs):
             session_data.append(
                 {"headers": kwargs.get("headers", {}), "timeout": kwargs.get("timeout")}
             )
+            seen: list[dict[str, str]] = []
+            session_requests.append(seen)
+
+            def _respond(*req_args, **req_kwargs):
+                seen.append(req_kwargs.get("headers", {}))
+                mock_response = Mock()
+                mock_response.status = 201
+                mock_response.json = AsyncMock(
+                    return_value={
+                        "session_id": "hybrid-session-mixed",
+                        "token": "token-mixed",
+                        "optimizer_endpoint": "http://optimizer.test.com",
+                        "status": "active",
+                    }
+                )
+                mock_response.text = AsyncMock(return_value="OK")
+
+                mock_context = Mock()
+                mock_context.__aenter__ = AsyncMock(return_value=mock_response)
+                mock_context.__aexit__ = AsyncMock(return_value=None)
+                return mock_context
 
             session = Mock()
-            mock_response = Mock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value={"result": "ok"})
-
-            mock_context = Mock()
-            mock_context.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_context.__aexit__ = AsyncMock(return_value=None)
-
-            session.post = Mock(return_value=mock_context)
-            session.get = Mock(return_value=mock_context)
+            session.post = Mock(side_effect=_respond)
+            session.get = Mock(side_effect=_respond)
             return session
 
         with patch("traigent.cloud.backend_client.AIOHTTP_AVAILABLE", True):
@@ -768,6 +783,17 @@ class TestBackendClientAuthLifecycle:
                         # Pooled defaults carry no credentials (#2716).
                         require("Authorization" not in headers_1)
                         require("X-API-Key" not in headers_1)
+
+                        # Client 1 succeeded and its request carried its own token.
+                        require(not isinstance(results[0], Exception))
+                        require(results[0][0] == "hybrid-session-mixed")
+                        require(len(session_requests[0]) >= 1)
+                        client_1_request = session_requests[0][-1]
+                        require(
+                            client_1_request.get("Authorization")
+                            == "Bearer client-1-token"
+                        )
+                        require(client_1_request.get("X-API-Key") == "key-1")
 
                         # The raw fallback key MUST NOT appear in any session.
                         for entry in session_data:
