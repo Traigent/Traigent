@@ -74,8 +74,11 @@ def test_optimize_with_guidance_rewrite_expands_space_and_clears_override() -> N
     scores = iter([0.3, 0.8])
 
     def fake_optimize_sync(*, configuration_space=None, **kwargs):
-        # the override must be active while a round runs
-        assert opt._dataset_override is not None
+        # each round receives its dataset explicitly; the shared override is
+        # never written by the guidance rounds (#2541 review r84)
+        assert isinstance(kwargs.get("eval_dataset"), Dataset)
+        assert kwargs["eval_dataset"].examples == opt.eval_dataset.examples
+        assert opt._dataset_override is None
         seen_spaces.append(list(configuration_space["prompt"].values))
         return _Result(next(scores))
 
