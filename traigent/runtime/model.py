@@ -409,7 +409,10 @@ class RuntimeRequirement:
         alpha = self.false_alarm_budget
         if not _is_number(alpha) or not 0 < alpha <= 0.5:
             bad("false_alarm_budget")
-        if not 1 <= len(self.environment.strip()) <= ENVIRONMENT_MAX_LENGTH:
+        env_label = self.environment.strip()
+        if not 1 <= len(env_label) <= ENVIRONMENT_MAX_LENGTH or _CONTROL_CHARS.search(
+            env_label
+        ):
             bad("environment")
         seen: set[str] = set()
         for index, rule in enumerate(self.rules):
