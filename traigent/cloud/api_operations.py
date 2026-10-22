@@ -709,7 +709,8 @@ class ApiOperations:
                 self.client.backend_config.api_base_url
                 or BackendConfig.get_backend_api_url()
             )
-        except Exception:  # noqa: BLE001 - unknown backend: fail closed, no cache use
+        except (AttributeError, ValueError):  # silent-ok: cache skipped, logged
+            logger.debug("content-less cache skipped: backend URL unavailable")
             return None
         return content_less_session.principal_for_headers(
             url if isinstance(url, str) else None, headers.items()

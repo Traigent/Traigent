@@ -2503,13 +2503,13 @@ class TestContentLessPrincipal:
         assert principal == content_less_session.principal_for_headers(
             _CONTENT_LESS_URL, dict(headers)
         )
-        fingerprint = hashlib.sha256(
-            b"traigent-content-less-principal-v1\0" + _KEY_A.encode()
-        ).hexdigest()
+        fingerprint = hashlib.pbkdf2_hmac(
+            "sha256", _KEY_A.encode(), b"traigent-content-less-principal-v1", 200_000
+        ).hex()
         assert principal == content_less_session.RefCache.principal(
             _CONTENT_LESS_URL, fingerprint
         )
-        assert fingerprint != hashlib.sha256(_KEY_A.encode()).hexdigest()
+        assert fingerprint == content_less_session.credential_fingerprint(_KEY_A)
         assert _KEY_A not in principal and "a" * 61 not in principal
 
     def test_ambiguous_or_mixed_headers_are_never_cacheable(self):

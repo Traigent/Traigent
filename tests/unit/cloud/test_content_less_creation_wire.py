@@ -9,6 +9,7 @@ selection and writes against it.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -139,12 +140,21 @@ async def _accept_key(self, api_key):  # noqa: ARG001 - backend validation bound
     return None
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear every TRAIGENT_* variable: the auth path reads several of them.
+
+    The wire assertions are about the exact headers sent, so ambient configuration
+    (API key, JWT token, mode or environment markers) must not decide them.
+    """
+    for name in [n for n in os.environ if n.startswith("TRAIGENT_")]:
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def wire(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[dict[str, Any]]:
     _Wire.sent = []
     monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path))
-    monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
-    monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
     monkeypatch.setattr(aiohttp, "ClientSession", _Wire)
     monkeypatch.setattr(
         "traigent.labels.transport.send_session_labels", AsyncMock(return_value=None)
@@ -232,6 +242,9 @@ async def test_session_default_jwt_with_api_key_is_never_cached(
 
     sent = wire[-1]
     effective = _effective(sent)
+    # The stale Authorization is a session default; the per-request set has none.
+    assert "Authorization" not in sent["request_headers"]
+    assert sent["defaults"] == {"Authorization": JWT_A}
     assert effective["X-API-Key"] == KEY_B
     assert effective["Authorization"] == JWT_A
     assert "agent_ref" not in sent["json"]

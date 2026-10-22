@@ -19,6 +19,7 @@ Function-derived names are code identifiers (GNFR-PRIV-003) and stay as ``functi
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
@@ -230,14 +231,26 @@ def _digest(text: str) -> str:
 
 
 #: Domain separator for the credential fingerprint the ref cache scopes by.
-_CREDENTIAL_FINGERPRINT_DOMAIN = b"traigent-content-less-principal-v1\x00"
+#: Salt and domain separator for the credential fingerprint the ref cache scopes by.
+_CREDENTIAL_FINGERPRINT_SALT = b"traigent-content-less-principal-v1"
+#: PBKDF2 work factor: a key-derivation function, not a bare hash, so a leaked
+#: fingerprint is expensive to brute-force. Paid once per key per process (memoized).
+_CREDENTIAL_FINGERPRINT_ITERATIONS = 200_000
 
 
+@functools.lru_cache(maxsize=64)
 def credential_fingerprint(api_key: str) -> str:
-    """Domain-separated SHA-256 of the full API key. The raw key is never stored."""
-    return hashlib.sha256(
-        _CREDENTIAL_FINGERPRINT_DOMAIN + api_key.encode("utf-8")
-    ).hexdigest()
+    """Key-derived (PBKDF2-HMAC-SHA256) fingerprint of the full API key.
+
+    The raw key is never stored or returned; only this derivation is. Memoized per
+    key within the process, so the derivation cost is paid once per key.
+    """
+    return hashlib.pbkdf2_hmac(
+        "sha256",
+        api_key.encode("utf-8"),
+        _CREDENTIAL_FINGERPRINT_SALT,
+        _CREDENTIAL_FINGERPRINT_ITERATIONS,
+    ).hex()
 
 
 def principal_for_headers(
