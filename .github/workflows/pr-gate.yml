@@ -331,6 +331,30 @@ jobs:
       - name: Syntax check (whole repo)
         run: ruff check . --select E9 --no-cache --output-format=github
 
+  # Type checking, in the PR gate. Mirrors the pre-commit mypy hook
+  # (.pre-commit-config.yaml: mirrors-mypy v2.3.1, --config-file=pyproject.toml,
+  # whole repo via [tool.mypy] files=, pass_filenames false) so develop cannot
+  # drift red again on a machine that never ran pre-commit (#2710). Like the
+  # hook, the env holds mypy and its stubs only, not the SDK's dependencies.
+  mypy:
+    name: mypy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: changes
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install mypy at the hook's pinned version
+        run: |
+          python -m pip install --upgrade pip
+          pip install "mypy==2.3.1" types-PyYAML types-bleach types-requests
+      - name: Run mypy over the repo
+        run: mypy --config-file=pyproject.toml
+
   unit:
     name: unit
     if: ${{ !cancelled() && needs.changes.outputs.code_changed == 'true' && needs.preflight.result == 'success' && (github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository) }}
@@ -512,7 +536,7 @@ jobs:
     # (in TraigentBackend's own classifier) that motivated tightening this.
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, schema-types, preflight, collection, unit, mcp-contract, release-version-identity]
+    needs: [changes, schema-types, preflight, mypy, collection, unit, mcp-contract, release-version-identity]
     if: ${{ !cancelled() }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
