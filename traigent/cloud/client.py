@@ -1843,6 +1843,15 @@ class TraigentCloudClient(BaseTraigentClient):
                             error_code=detail.safe_quota_error_code,
                         )
                         raise safe from None
+                    if detail.is_closed_refusal:
+                        refused = SessionBackendRefusedError(
+                            response.status, detail.safe_error_code
+                        )
+                        refused.session_creation_failure = SessionCreationFailureDetail(
+                            status_code=response.status,
+                            error_code=detail.safe_error_code,
+                        )
+                        raise refused from None
                     # Status only: never embed the backend body (customer text).
                     raise CloudServiceError(
                         f"Failed to create session: HTTP {response.status}"
@@ -2695,6 +2704,26 @@ class SessionQuotaRefusedError(CloudServiceError):
             f"Plan quota/limit reached ({status}, error_code={error_code}). "
             "Session creation was refused by the Traigent backend; the run was "
             "stopped. Upgrade your plan in the Traigent portal (Billing)."
+        )
+        self.status_code = status_code
+        self.error_code = error_code
+        # Sanitized detail (status + closed code only); set by the raiser.
+        self.session_creation_failure: Any = None
+
+
+class SessionBackendRefusedError(CloudServiceError):
+    """Session create was refused by the backend with a closed refusal code (SDK-52).
+
+    A definitive answer from a reachable backend: NEVER a connectivity failure
+    and NEVER absorbed into the local-fallback path. The message carries only
+    the HTTP status and the closed error code; backend text is dropped.
+    """
+
+    def __init__(self, status_code: int | None, error_code: str) -> None:
+        status = f"HTTP {status_code}" if status_code is not None else "HTTP status n/a"
+        super().__init__(
+            f"Backend refused the session ({status}, error_code={error_code}). "
+            "The run was stopped; no local fallback was created."
         )
         self.status_code = status_code
         self.error_code = error_code

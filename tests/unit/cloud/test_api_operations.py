@@ -601,6 +601,58 @@ class TestQuotaRefusalSessionCreate:
         assert post.await_count == 1  # no legacy-contract retry
 
 
+class TestClosedRefusalSessionCreate:
+    """SDK-52: a closed backend refusal must not trigger the legacy retry."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "code",
+        [
+            "typed_storage_mapping_unavailable",
+            "director_tokens_required",
+            "director_opaque_ids_required",
+            "content_identity_keys_unavailable",
+        ],
+    )
+    async def test_closed_refusal_skips_legacy_retry_and_keeps_detail(
+        self, monkeypatch, code
+    ):
+        from traigent.cloud.client import CloudServiceError
+        from traigent.cloud.session_types import SessionCreationFailureDetail
+
+        monkeypatch.setenv("TRAIGENT_SESSION_CONTRACT", "auto")
+        client = Mock()
+        client.auth_manager.augment_headers = AsyncMock(return_value={})
+        ops = ApiOperations(client)
+        request = SessionCreationRequest(
+            function_name="test_func",
+            configuration_space={"param": [1, 2, 3]},
+            objectives=["maximize"],
+            max_trials=10,
+        )
+        refusal_exc = CloudServiceError("Session creation failed: HTTP 503")
+        refusal_exc.session_creation_failure = (
+            SessionCreationFailureDetail.from_http_response(
+                503, f'{{"error_code": "{code}"}}'
+            )
+        )
+        post = AsyncMock(side_effect=refusal_exc)
+        with (
+            patch(
+                "traigent.cloud.api_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.api_operations.AIOHTTP_AVAILABLE", True),
+            patch.object(ops, "_post_session_creation", new=post),
+            patch.object(ops, "_is_governed_request", return_value=False),
+        ):
+            with pytest.raises(CloudServiceError) as info:
+                await ops.create_traigent_session_via_api(request)
+
+        assert info.value is refusal_exc
+        assert post.await_count == 1  # no legacy-contract retry
+
+
 class TestResolveMaxTrials:
     """Test _resolve_max_trials method."""
 

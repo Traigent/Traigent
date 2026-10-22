@@ -240,6 +240,12 @@ def initial_result_source(
 def fallback_reason_from_session_result(result: SessionCreationResult) -> str:
     """Build a non-secret fallback reason from a failed session result."""
 
+    if (
+        result.failure_response is not None
+        and result.failure_response.is_closed_refusal
+    ):
+        # Closed refusal (SDK-52): name only the closed code, never connectivity.
+        return f"backend refused the session: {result.failure_response.safe_error_code}"
     parts: list[str] = []
     if result.failure_reason is not None:
         parts.append(result.failure_reason.value)
@@ -359,6 +365,10 @@ def session_failure_is_connectivity(result: SessionCreationResult) -> bool:
         # A plan quota/limit refusal is a reachable-backend answer, never
         # connectivity (#2550).
         return False
+    if detail is not None and detail.is_closed_refusal:
+        # A closed backend refusal (e.g. 503 with a closed code) is a
+        # reachable-backend answer, never connectivity (SDK-52).
+        return False
     status = detail.status_code if detail else None
     if status in HARD_FAILURE_STATUSES:
         return False
@@ -376,7 +386,7 @@ def session_failure_is_session_create_400(result: SessionCreationResult) -> bool
     if not result.typed_legacy_session_create_400:
         return False
     detail = result.failure_response
-    if detail is not None and detail.is_quota_refusal:
+    if detail is not None and (detail.is_quota_refusal or detail.is_closed_refusal):
         return False
     if detail and detail.status_code == 400:
         return True
