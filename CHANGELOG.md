@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-10-22
+
 ### Changed
 
 - **Finalize propagates ownership/auth errors (#2510).** HTTP 401/403 from the
