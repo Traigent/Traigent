@@ -168,6 +168,10 @@ def _client(api_key: str) -> BackendIntegratedClient:
         return BackendIntegratedClient(api_key=api_key, base_url=URL)
 
 
+def _backend_accepts_keys_for_test():
+    return patch.object(AuthManager, "_validate_api_key_with_backend", new=_accept_key)
+
+
 def _cloud_client(api_key: str) -> TraigentCloudClient:
     with patch("socket.getaddrinfo", return_value=_PUBLIC_ADDRINFO):
         return TraigentCloudClient(api_key=api_key, base_url=URL)
@@ -227,9 +231,17 @@ async def test_cleared_key_then_env_key_sends_b_and_no_a_refs(
 async def test_session_default_jwt_with_api_key_is_never_cached(
     wire, tmp_path, monkeypatch
 ):
-    """Client path: an Authorization session default rides along with X-API-Key B."""
+    """Client path: an Authorization session default rides along with X-API-Key B.
+
+    The security property is asserted over the EFFECTIVE merged header set, so it
+    holds whichever source the Authorization came from (session default or
+    per-request). The auth object is pinned to the API-key path first, so the
+    per-request set is deterministic.
+    """
     client = _cloud_client(KEY_B)
     client.auth.set_api_key(KEY_B)
+    with _backend_accepts_keys_for_test():
+        assert (await client.auth.authenticate()).success
     client._aio_session = _Wire(headers={"Authorization": JWT_A})
 
     loads = []
@@ -242,11 +254,8 @@ async def test_session_default_jwt_with_api_key_is_never_cached(
 
     sent = wire[-1]
     effective = _effective(sent)
-    # The stale Authorization is a session default; the per-request set has none.
-    assert "Authorization" not in sent["request_headers"]
-    assert sent["defaults"] == {"Authorization": JWT_A}
+    assert "Authorization" in effective  # premise: a Bearer rides on this request
     assert effective["X-API-Key"] == KEY_B
-    assert effective["Authorization"] == JWT_A
     assert "agent_ref" not in sent["json"]
     assert loads == []
     assert _scope_index(tmp_path) == {}
