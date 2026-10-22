@@ -6,6 +6,8 @@ import asyncio
 import ipaddress
 import os
 import socket
+import urllib.request
+from typing import Any
 from urllib.parse import ParseResult, unquote, urlparse, urlunparse
 
 _METADATA_HOSTNAMES = {
@@ -313,15 +315,16 @@ def _origin_key(url: str) -> tuple[str, str, int] | None:
     )
 
 
-def _private_backend_opt_in(candidate: str) -> bool:
-    """Return True when the explicit self-hosted opt-in covers ``candidate``.
+_GATE_OFF_OPT_IN_MESSAGE = (
+    f"{_PRIVATE_BACKEND_OPT_IN_ENV} requires the transport gate; "
+    "unset TRAIGENT_TRANSPORT_GATE=off"
+)
 
-    ``TRAIGENT_ALLOW_PRIVATE_BACKEND`` must be exactly ``1`` or ``true`` (case-
-    insensitive); any other value is off. The allowance is pinned to the origin
-    (scheme + host + port) of ``TRAIGENT_BACKEND_URL``. It does not fall back to
-    ``TRAIGENT_API_URL`` or stored credentials, so an unset backend URL means the
-    opt-in does nothing. It never relaxes metadata/link-local blocking, the https
-    requirement, redirect handling or DNS-failure handling.
+
+def _opt_in_origin_matches(candidate: str) -> bool:
+    """True when the opt-in env is on and ``candidate`` has the configured origin.
+
+    Independent of the transport-gate mode; see :func:`_private_backend_opt_in`.
     """
     raw = os.getenv(_PRIVATE_BACKEND_OPT_IN_ENV, "")
     if raw.lower() not in _PRIVATE_BACKEND_OPT_IN_VALUES:
@@ -339,6 +342,69 @@ def _private_backend_opt_in(candidate: str) -> bool:
         ) from None
     configured_key = _origin_key(configured)
     return configured_key is not None and configured_key == _origin_key(candidate)
+
+
+def _transport_gate_is_off() -> bool:
+    # Lazy import: transport_gate imports this module's public opt-in helper.
+    from traigent.labels.transport_gate import current_mode
+
+    return bool(current_mode() == "off")
+
+
+def _private_backend_opt_in(candidate: str) -> bool:
+    """Return True when the explicit self-hosted opt-in covers ``candidate``.
+
+    ``TRAIGENT_ALLOW_PRIVATE_BACKEND`` must be exactly ``1`` or ``true`` (case-
+    insensitive); any other value is off. The allowance is pinned to the origin
+    (scheme + host + port) of ``TRAIGENT_BACKEND_URL``. It does not fall back to
+    ``TRAIGENT_API_URL`` or stored credentials, so an unset backend URL means the
+    opt-in does nothing. It never relaxes metadata/link-local blocking, the https
+    requirement, redirect handling or DNS-failure handling.
+
+    It is also refused while ``TRAIGENT_TRANSPORT_GATE=off``: the redirect refusal
+    lives in the transport gate, so an opt-in without the gate would send
+    credentials to the private origin with redirects followed.
+    """
+    if not _opt_in_origin_matches(candidate):
+        return False
+    return not _transport_gate_is_off()
+
+
+def _opt_in_blocked_by_gate_off(candidate: str) -> bool:
+    return _opt_in_origin_matches(candidate) and _transport_gate_is_off()
+
+
+class _RefuseRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """urllib redirect handler that never follows a 3xx.
+
+    Returning None makes urllib raise ``HTTPError`` with the 3xx status; the
+    redirect target is never requested and the credential headers are not replayed.
+    """
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: object,
+        code: int,
+        msg: str,
+        headers: object,
+        newurl: str,
+    ) -> None:
+        return None
+
+
+def build_no_redirect_opener() -> urllib.request.OpenerDirector:
+    """An opener for credential-carrying urllib requests that refuses every redirect."""
+    return urllib.request.build_opener(_RefuseRedirectHandler)
+
+
+def open_no_redirect(req: urllib.request.Request, *, timeout: float) -> Any:
+    """``urlopen`` for credential-carrying requests: a 3xx raises ``HTTPError``.
+
+    urllib follows redirects by default and replays the credential headers to the
+    target. The redirect target is never requested here.
+    """
+    return build_no_redirect_opener().open(req, timeout=timeout)
 
 
 def private_backend_opt_in_covers(url: str) -> bool:
@@ -499,9 +565,16 @@ def validate_cloud_base_url(base_url: str, *, purpose: str = "cloud request") ->
         ) from None
 
     allow_private = allow_local or _private_backend_opt_in(candidate)
-    _reject_unsafe_hostname(
-        hostname, allow_local=allow_local, allow_private=allow_private
-    )
+    try:
+        _reject_unsafe_hostname(
+            hostname, allow_local=allow_local, allow_private=allow_private
+        )
+    except CloudUrlUnreachableError:
+        raise
+    except ValueError:
+        if not allow_private and _opt_in_blocked_by_gate_off(candidate):
+            raise ValueError(_GATE_OFF_OPT_IN_MESSAGE) from None
+        raise
 
     clean_path = parsed.path.rstrip("/")
     return urlunparse(

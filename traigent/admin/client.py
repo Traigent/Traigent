@@ -18,7 +18,7 @@ from traigent.admin.dtos import (
     TenantMembershipStatus,
     TenantSSOConfigDTO,
 )
-from traigent.utils.wire_text import filter_wire_metadata
+from traigent.cloud.url_security import open_no_redirect
 from traigent.core.session_types import safe_http_error_summary
 from traigent.security.tenant import TenantStatus, TenantTier
 from traigent.utils.env_config import raise_if_backend_offline
@@ -27,6 +27,7 @@ from traigent.utils.exceptions import (
     ClientError,
     TraigentConnectionError,
 )
+from traigent.utils.wire_text import filter_wire_metadata
 
 
 class EnterpriseAdminClient:
@@ -241,7 +242,7 @@ class EnterpriseAdminClient:
             method=method,
         )
         try:
-            with request.urlopen(  # nosec B310 - backend_origin is caller-configured API endpoint
+            with open_no_redirect(  # nosec B310 - no-redirect opener, caller-configured endpoint
                 http_request, timeout=self.config.request_timeout
             ) as response:
                 status_code = getattr(response, "status", 200)

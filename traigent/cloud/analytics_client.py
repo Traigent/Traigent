@@ -60,7 +60,6 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
 
-from traigent.labels.transport_gate import gate_session
 from traigent.cloud.dtos import (
     ExperimentGroupDetailDTO,
     ExperimentGroupsPageDTO,
@@ -69,6 +68,7 @@ from traigent.cloud.dtos import (
 )
 from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.cloud.user_agent import get_sdk_user_agent
+from traigent.labels.transport_gate import gate_session
 from traigent.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -2341,6 +2341,7 @@ class BackendAnalyticsClient:
                     base_url=self.backend_url,
                     headers=_strip_trace_context_headers(headers),
                     timeout=self.timeout,
+                    follow_redirects=False,
                 )
             )
         return self._client

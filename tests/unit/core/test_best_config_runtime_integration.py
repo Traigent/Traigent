@@ -311,7 +311,7 @@ def test_fresh_process_cloud_publish_then_fetch_uses_backend_network_contract(tm
                 },
             }
 
-        def _fake_get(url, params=None, headers=None, timeout=None):
+        def _fake_get(url, params=None, headers=None, timeout=None, allow_redirects=True):
             parsed = urlparse(url)
             query = parse_qs(parsed.query)
             for key, value in (params or {}).items():
@@ -329,7 +329,7 @@ def test_fresh_process_cloud_publish_then_fetch_uses_backend_network_contract(tm
                 return _FakeResponse(404, {})
             return _FakeResponse(200, _response_payload(spec))
 
-        def _fake_post(url, json=None, headers=None, timeout=None):
+        def _fake_post(url, json=None, headers=None, timeout=None, allow_redirects=True):
             parsed = urlparse(url)
             body = json or {}
             spec = body["spec"]

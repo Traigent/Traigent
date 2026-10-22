@@ -12,7 +12,6 @@ import pytest
 from traigent.cloud.backend_client import BackendIntegratedClient
 from traigent.cloud.benchmark_client import BenchmarkClient, BenchmarkClientConfig
 from traigent.cloud.client import CloudServiceError
-from traigent.utils.exceptions import AuthenticationError
 from traigent.cloud.session_operations import SessionOperations
 from traigent.cloud.trial_operations import TrialOperations, TrialSubmissionResult
 from traigent.core.backend_session_manager import _format_untracked_warning_block
@@ -21,7 +20,7 @@ from traigent.core.session_types import (
     SessionCreationFailureReason,
     SessionCreationResult,
 )
-from traigent.utils.exceptions import ClientError
+from traigent.utils.exceptions import AuthenticationError, ClientError
 
 pytestmark = pytest.mark.backend_online
 
@@ -189,7 +188,7 @@ def test_benchmark_client_errors_exclude_body(code, exc_type, body, monkeypatch)
         "https://api.example.test", code, "x", {}, io.BytesIO(body.encode())
     )
     monkeypatch.setattr(
-        "traigent.cloud.benchmark_client.request.urlopen",
+        "traigent.cloud.benchmark_client.open_no_redirect",
         Mock(side_effect=http_err),
     )
     with pytest.raises(exc_type) as info:

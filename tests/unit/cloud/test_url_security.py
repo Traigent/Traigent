@@ -823,3 +823,31 @@ def test_port_zero_never_equals_default_port() -> None:
             validate_cloud_base_url("https://10.20.30.40:0")
         # Explicit :443 and no port remain the same origin.
         assert validate_cloud_base_url("https://10.20.30.40") == "https://10.20.30.40"
+
+
+def test_private_backend_opt_in_refused_when_transport_gate_is_off() -> None:
+    # sol r2: the redirect refusal lives in the transport gate, so the opt-in must not
+    # admit the private origin while the gate is off.
+    env = {**_PRIVATE_OPT_IN_ENV, "TRAIGENT_TRANSPORT_GATE": "off"}
+    with patch.dict("os.environ", env, clear=True):
+        with patch("socket.getaddrinfo", return_value=_addr_info("10.20.30.40")):
+            with pytest.raises(ValueError) as excinfo:
+                validate_cloud_base_url(_SELF_HOSTED)
+    message = str(excinfo.value)
+    assert "TRAIGENT_ALLOW_PRIVATE_BACKEND requires the transport gate" in message
+    assert "unset TRAIGENT_TRANSPORT_GATE=off" in message
+    assert "10.20.30.40" not in message
+
+
+def test_private_backend_opt_in_accepted_when_transport_gate_is_on() -> None:
+    env = {**_PRIVATE_OPT_IN_ENV, "TRAIGENT_TRANSPORT_GATE": "refuse"}
+    with patch.dict("os.environ", env, clear=True):
+        with patch("socket.getaddrinfo", return_value=_addr_info("10.20.30.40")):
+            assert validate_cloud_base_url(_SELF_HOSTED) == _SELF_HOSTED
+
+
+def test_gate_off_does_not_change_public_url_validation() -> None:
+    env = {**_PRIVATE_OPT_IN_ENV, "TRAIGENT_TRANSPORT_GATE": "off"}
+    with patch.dict("os.environ", env, clear=True):
+        with patch("socket.getaddrinfo", return_value=_addr_info("93.184.216.34")):
+            assert validate_cloud_base_url(_SELF_HOSTED) == _SELF_HOSTED

@@ -12,7 +12,7 @@ import io
 import socket
 import urllib.request
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from urllib.response import addinfourl
 
 import pytest
@@ -144,3 +144,82 @@ def test_workflow_traces_ingest_does_not_follow_redirect_under_opt_in() -> None:
     assert post.call_args.kwargs["allow_redirects"] is False
     assert result.success is False
     assert "Redirect refused" in (result.error or "")
+
+
+# --- ad-hoc credentialed backend calls (sol r2) ----------------------------------
+
+_METADATA_LOCATION = "http://169.254.169.254/latest/meta-data/"
+
+
+@pytest.fixture
+def recorded_redirect(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Every requests send at the adapter: each 3xx answer names the metadata service.
+
+    Patching ``HTTPAdapter.send`` keeps requests' own redirect loop, so a request that
+    is allowed to follow a redirect shows up here a second time.
+    """
+    import requests
+
+    seen: list[str] = []
+
+    def fake_send(self: Any, request: Any, **kwargs: Any) -> requests.Response:
+        seen.append(request.url)
+        response = requests.Response()
+        response.status_code = 302
+        response.headers["Location"] = _METADATA_LOCATION
+        response._content = b""
+        response.url = request.url
+        response.request = request
+        response.encoding = "utf-8"
+        return response
+
+    monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", fake_send)
+    return seen
+
+
+def _backend_client() -> Any:
+    from traigent.cloud.backend_client import BackendIntegratedClient
+
+    client = BackendIntegratedClient(api_key="k", base_url=SELF_HOSTED)
+    # No key validation over the network: the auth header is stubbed.
+    client.auth_manager.auth.get_headers = AsyncMock(
+        return_value={"Authorization": "Bearer test-token"}
+    )
+    return client
+
+
+@pytest.mark.parametrize("operation", ["publish", "fetch"])
+def test_best_config_call_refuses_redirect_to_metadata(
+    operation: str, recorded_redirect: list[str]
+) -> None:
+    from traigent.cloud.backend_client import CloudServiceError
+
+    with patch.dict("os.environ", OPT_IN_ENV, clear=True):
+        with patch("socket.getaddrinfo", return_value=_addr_info("10.20.30.40")):
+            client = _backend_client()
+            with pytest.raises(CloudServiceError, match="refused HTTP redirect"):
+                if operation == "publish":
+                    client.publish_best_config_sync({"spec": "x"}, environment="dev")
+                else:
+                    client.fetch_best_config_sync("cfg-1", environment="dev")
+    assert len(recorded_redirect) == 1
+    assert recorded_redirect[0].startswith(SELF_HOSTED)
+
+
+@pytest.mark.parametrize("operation", ["publish", "fetch"])
+def test_best_config_call_refused_when_transport_gate_is_off(
+    operation: str, recorded_redirect: list[str]
+) -> None:
+    env = {**OPT_IN_ENV, "TRAIGENT_TRANSPORT_GATE": "off"}
+    with patch.dict("os.environ", env, clear=True):
+        with patch("socket.getaddrinfo", return_value=_addr_info("10.20.30.40")):
+            with pytest.raises(Exception) as excinfo:
+                client = _backend_client()
+                if operation == "publish":
+                    client.publish_best_config_sync({"spec": "x"}, environment="dev")
+                else:
+                    client.fetch_best_config_sync("cfg-1", environment="dev")
+    assert "TRAIGENT_ALLOW_PRIVATE_BACKEND requires the transport gate" in str(
+        excinfo.value
+    )
+    assert recorded_redirect == []

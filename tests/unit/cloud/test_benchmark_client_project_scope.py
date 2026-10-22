@@ -73,7 +73,7 @@ def _capture_urlopen(monkeypatch):
         cm.__exit__.return_value = False
         return cm
 
-    patcher = patch.object(bc_module.request, "urlopen", side_effect=fake_urlopen)
+    patcher = patch.object(bc_module, "open_no_redirect", side_effect=fake_urlopen)
     return captured, patcher
 
 
@@ -99,7 +99,7 @@ def test_no_egress_blocks_benchmark_generation(monkeypatch):
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
     client = BenchmarkClient(_config(None), no_egress=True)
 
-    with patch.object(bc_module.request, "urlopen") as urlopen:
+    with patch.object(bc_module, "open_no_redirect") as urlopen:
         with pytest.raises(OfflineModeError):
             client.generate_sync(
                 description="qa", count=5, use_case="question-answering"
