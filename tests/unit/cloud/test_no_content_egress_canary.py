@@ -13,7 +13,10 @@ import pytest
 
 from traigent import optimize
 from traigent.evaluators.base import Dataset, EvaluationExample
-from traigent.utils.artifact_fingerprints import artifact_fingerprints_to_wire
+from traigent.utils.artifact_fingerprints import (
+    artifact_fingerprints_to_wire,
+    compute_dataset_fingerprint,
+)
 
 # SDK #2033: opt into the connected/backend code paths (see pyproject markers).
 pytestmark = pytest.mark.backend_online
@@ -796,9 +799,8 @@ def test_per_call_eval_dataset_content_never_crosses_the_wire(
     def canary_app(example: dict[str, Any]) -> str:
         return "safe-local-output"
 
-    result = canary_app.optimize_sync(
-        eval_dataset=_dataset_with_canaries(), progress_bar=False
-    )
+    call_dataset = _dataset_with_canaries()
+    result = canary_app.optimize_sync(eval_dataset=call_dataset, progress_bar=False)
 
     assert result.source == "cloud_brain"
     _assert_required_production_bodies_were_captured(capture)
@@ -811,6 +813,9 @@ def test_per_call_eval_dataset_content_never_crosses_the_wire(
     body = session_bodies[0]
     assert body["dataset_id"] == "canary_dataset"
     assert body["fingerprint_meta"]["dataset_example_count"] == 2
+    outbound_dataset_fp = body["artifact_fingerprints"]["dataset"]
+    assert outbound_dataset_fp == compute_dataset_fingerprint(call_dataset)
+    assert outbound_dataset_fp != compute_dataset_fingerprint(decorator_dataset)
 
 
 def test_artifact_fingerprint_wire_serializer_rejects_raw_content_smuggling() -> None:
