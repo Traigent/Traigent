@@ -712,7 +712,7 @@ class ApiOperations:
         except Exception:  # noqa: BLE001 - unknown backend: fail closed, no cache use
             return None
         return content_less_session.principal_for_headers(
-            url if isinstance(url, str) else None, headers
+            url if isinstance(url, str) else None, headers.items()
         )
 
     @staticmethod

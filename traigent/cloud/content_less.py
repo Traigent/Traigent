@@ -24,7 +24,7 @@ import json
 import os
 import re
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -241,18 +241,23 @@ def credential_fingerprint(api_key: str) -> str:
 
 
 def principal_for_headers(
-    backend_url: str | None, headers: Mapping[str, str]
+    backend_url: str | None,
+    headers: Mapping[str, str] | Iterable[tuple[str, str]] | None,
 ) -> str | None:
     """Cache scope of the exact outgoing request, or None (cache skipped).
 
-    Derived only from the headers the request is sent with, so the cached refs and
-    the credential on the wire are the same. Only a request that authenticates solely
-    by ``X-API-Key`` is cacheable: any ``Authorization`` header (Bearer / JWT), or a
-    missing or ambiguous key, returns None.
+    ``headers`` are the name/value pairs the request is actually sent with, including
+    any session defaults merged in (see ``BackendIntegratedClient``). Only a request
+    that authenticates solely by ``X-API-Key`` is cacheable: any ``Authorization``
+    header (Bearer / JWT), a missing or ambiguous key, or unreadable headers (None)
+    return None.
     """
-    if any(name.lower() == "authorization" for name in headers):
+    if headers is None:
         return None
-    keys = [value for name, value in headers.items() if name.lower() == "x-api-key"]
+    pairs = list(headers.items() if isinstance(headers, Mapping) else headers)
+    if any(name.lower() == "authorization" for name, _ in pairs):
+        return None
+    keys = [value for name, value in pairs if name.lower() == "x-api-key"]
     if len(keys) != 1 or not isinstance(keys[0], str) or not keys[0]:
         return None
     return RefCache.principal(backend_url, credential_fingerprint(keys[0]))
