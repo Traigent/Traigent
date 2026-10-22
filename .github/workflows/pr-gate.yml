@@ -118,9 +118,11 @@ jobs:
           set_output_bool py_changed has_match '\.py$'
           set_output_bool code_changed has_match '^(traigent|traigent_validation|tests|scripts|walkthrough)/|^(pyproject\.toml|requirements[^/]*\.txt|\.github/workflows/pr-gate\.yml)'
 
-          # Inputs of the runtime-tvl-compiler job: the runtime package, its
-          # tests, the pinned extra in pyproject.toml, and this workflow.
-          set_output_bool runtime_tvl_changed has_match '^(traigent/runtime/|tests/unit/runtime/|pyproject\.toml$|scripts/ci/assert_tvl_tests_ran\.py$|\.github/workflows/pr-gate\.yml$)'
+          # Inputs of the runtime-tvl-compiler job: any SDK code (the tests import
+          # the package root), the shared conftest and the fixture plugin it loads,
+          # the runtime tests, the installer, the guard, the pinned extra in
+          # pyproject.toml, and this workflow.
+          set_output_bool runtime_tvl_changed has_match '^(traigent/|tests/conftest\.py$|tests/fixtures/rate_limit_fixtures\.py$|tests/unit/runtime/|scripts/ci/install_sdk_requirements\.sh$|scripts/ci/assert_tvl_tests_ran\.py$|pyproject\.toml$|\.github/workflows/pr-gate\.yml$)'
 
           # A release ancestry-sync has no content diff by design, but it must
           # never turn the normal zero-diff detector into a blanket allowlist.
