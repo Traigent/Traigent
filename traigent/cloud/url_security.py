@@ -270,11 +270,78 @@ def _parse_resolved_ip(
     return _parse_ip_literal(sockaddr_host.split("%", 1)[0])
 
 
-def _reject_unsafe_hostname(hostname: str, *, allow_local: bool) -> None:
+_PRIVATE_BACKEND_OPT_IN_ENV = "TRAIGENT_ALLOW_PRIVATE_BACKEND"
+_PRIVATE_BACKEND_OPT_IN_VALUES = frozenset({"1", "true"})
+_PRIVATE_BACKEND_HINT = (
+    f"set {_PRIVATE_BACKEND_OPT_IN_ENV}=1 if this is your self-hosted Traigent backend"
+)
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _origin_key(url: str) -> tuple[str, str, int] | None:
+    """Return ``(scheme, host, port)`` for a URL, or None when it cannot be parsed.
+
+    Hostnames are normalized (lower-cased, IPv6 brackets stripped) and a missing
+    port is replaced by the scheme default, so ``https://host`` and
+    ``https://host:443`` compare equal.
+    """
+    parsed = urlparse(url)
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in _DEFAULT_PORTS or not parsed.hostname:
+        return None
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    return (
+        scheme,
+        _normalize_hostname(parsed.hostname),
+        port or _DEFAULT_PORTS[scheme],
+    )
+
+
+def _private_backend_opt_in(candidate: str) -> bool:
+    """Return True when the explicit self-hosted opt-in covers ``candidate``.
+
+    ``TRAIGENT_ALLOW_PRIVATE_BACKEND`` must be exactly ``1`` or ``true`` (case-
+    insensitive); any other value is off. The allowance is pinned to the origin
+    (scheme + host + port) of ``TRAIGENT_BACKEND_URL``. It does not fall back to
+    ``TRAIGENT_API_URL`` or stored credentials, so an unset backend URL means the
+    opt-in does nothing. It never relaxes metadata/link-local blocking, the https
+    requirement, redirect handling or DNS-failure handling.
+    """
+    raw = os.getenv(_PRIVATE_BACKEND_OPT_IN_ENV, "")
+    if raw.lower() not in _PRIVATE_BACKEND_OPT_IN_VALUES:
+        return False
+    # Lazy import: backend_config is a foundational module and may import cloud code.
+    from traigent.config.backend_config import BackendConfig
+
+    configured = BackendConfig._normalize_origin(os.environ.get("TRAIGENT_BACKEND_URL"))
+    if not configured:
+        return False
+    configured_key = _origin_key(configured)
+    return configured_key is not None and configured_key == _origin_key(candidate)
+
+
+def _reject_unsafe_hostname(
+    hostname: str,
+    *,
+    allow_local: bool,
+    allow_private: bool | None = None,
+) -> None:
+    """Reject unsafe hosts.
+
+    ``allow_local`` is the development allowance (private/loopback hosts and
+    unresolvable names). ``allow_private`` controls only private/loopback
+    destinations, so the self-hosted opt-in can admit them without also admitting
+    unresolvable names. It defaults to ``allow_local``.
+    """
+    if allow_private is None:
+        allow_private = allow_local
     normalized = _reject_always_blocked_hostname(hostname, purpose="Cloud")
 
     if _is_local_name(normalized):
-        if not allow_local:
+        if not allow_private:
             raise ValueError(
                 "Cloud base URL host is not allowed in production: "
                 f"{_production_assumed_hint()}"
@@ -288,9 +355,10 @@ def _reject_unsafe_hostname(hostname: str, *, allow_local: bool) -> None:
     host_ip = _parse_ip_literal(normalized)
 
     if host_ip is not None:
-        if not allow_local and not host_ip.is_global:
+        if not allow_private and not host_ip.is_global:
             raise ValueError(
-                "Cloud base URL must not target private or loopback IPs"
+                "Cloud base URL must not target private or loopback IPs; "
+                f"{_PRIVATE_BACKEND_HINT}"
             ) from None
         return
 
@@ -319,9 +387,10 @@ def _reject_unsafe_hostname(hostname: str, *, allow_local: bool) -> None:
         # legitimate local/private endpoints, never a hostname that resolves to
         # a metadata service or the link-local range (issue #1908).
         _reject_always_blocked_ip(resolved_ip, purpose="Cloud")
-        if not allow_local and not resolved_ip.is_global:
+        if not allow_private and not resolved_ip.is_global:
             raise ValueError(
-                "Cloud base URL must not resolve to private or loopback IPs"
+                "Cloud base URL must not resolve to private or loopback IPs; "
+                f"{_PRIVATE_BACKEND_HINT}"
             ) from None
 
 
@@ -397,7 +466,10 @@ def validate_cloud_base_url(base_url: str, *, purpose: str = "cloud request") ->
             f"{purpose} base URL must not contain path traversal"
         ) from None
 
-    _reject_unsafe_hostname(hostname, allow_local=allow_local)
+    allow_private = allow_local or _private_backend_opt_in(candidate)
+    _reject_unsafe_hostname(
+        hostname, allow_local=allow_local, allow_private=allow_private
+    )
 
     clean_path = parsed.path.rstrip("/")
     return urlunparse(

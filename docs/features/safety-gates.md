@@ -90,6 +90,30 @@ export ENVIRONMENT=development
 
 Do not use this override for production.
 
+### Self-hosted private backend (`TRAIGENT_ALLOW_PRIVATE_BACKEND`)
+
+A self-hosted Traigent backend on a private network (RFC 1918, ULA or loopback
+address) is refused by default, because the SDK sends your API key to the
+configured backend. To allow one, set both variables:
+
+```bash
+export TRAIGENT_BACKEND_URL=https://traigent.internal.example:8443
+export TRAIGENT_ALLOW_PRIVATE_BACKEND=1
+```
+
+Security notes:
+
+- The opt-in is exact: `1` or `true` (case-insensitive). Any other value is off.
+- It is pinned to the scheme, host and port of `TRAIGENT_BACKEND_URL`. Any other
+  URL, including a different port on the same host, stays refused. With
+  `TRAIGENT_BACKEND_URL` unset it does nothing. It never reads `TRAIGENT_API_URL`.
+- HTTPS is still required outside a development environment. Plain HTTP is not
+  relaxed.
+- Cloud metadata and link-local addresses (169.254.0.0/16, fe80::/10 and the
+  known metadata hosts) stay blocked, and so do redirects and DNS failures.
+- DNS rebinding is not closed by this check. The SDK validates the resolved
+  address but cannot pin the connection to it.
+
 ## Content Logging Opt-Out
 
 Per-example prompt, response, and expected-output content is persisted by
