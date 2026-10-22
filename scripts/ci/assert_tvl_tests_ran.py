@@ -64,7 +64,7 @@ def main(path: str) -> int:
         if skipped is not None:
             reason = skipped.get("message") or ""
             expected = ALLOWED_SKIPS.get(key)
-            if expected is None or reason.strip() != expected:
+            if expected is None or reason != expected:
                 problems.append(f"unexpected skip {label}: {reason.strip()[:200]}")
         elif case.find("failure") is not None or case.find("error") is not None:
             problems.append(f"failed {label}")

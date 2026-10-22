@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import re
 from pathlib import Path
@@ -114,14 +115,36 @@ def test_required_names_and_parameter_ids_exist_in_the_test_files() -> None:
             assert f'"{param.rstrip("]")}"' in text, (module, name)
 
 
+def _declared_parameter_ids(module: str, func: str) -> set[str]:
+    """Ids of the @pytest.mark.parametrize decorator on ``func``, read via ast."""
+    tree = ast.parse((REPO_ROOT / "tests/unit/runtime" / f"{module}.py").read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == func:
+            for deco in node.decorator_list:
+                if (
+                    isinstance(deco, ast.Call)
+                    and ast.unparse(deco.func) == "pytest.mark.parametrize"
+                ):
+                    for kw in deco.keywords:
+                        if kw.arg == "ids":
+                            return set(ast.literal_eval(kw.value))
+    raise AssertionError(f"no parametrize ids on {func}")
+
+
 def test_declared_parameters_are_all_required() -> None:
-    text = (REPO_ROOT / "tests/unit/runtime/test_real_compiler.py").read_text()
-    ids = re.search(r"ids=\[([^\]]*)\]", text)
-    assert ids
-    declared = re.findall(r'"([^"]+)"', ids.group(1))
-    required = {n for m, n in guard.REQUIRED if m == "test_real_compiler"}
-    for pid in declared:
-        assert f"test_real_compiler_resolves_tokens[{pid}]" in required
+    func = "test_real_compiler_resolves_tokens"
+    declared = _declared_parameter_ids("test_real_compiler", func)
+    required = {
+        n[len(func) + 1 : -1]
+        for m, n in guard.REQUIRED
+        if m == "test_real_compiler" and n.startswith(func + "[")
+    }
+    assert declared and declared == required
+
+
+def test_reason_with_trailing_whitespace_is_red(tmp_path: Path) -> None:
+    cases = _required_passing() + [_case(*BACKEND_CASE, "skip", BACKEND_REASON + " ")]
+    assert _run(tmp_path, cases) == 1
 
 
 def test_skip_reason_matches_the_conftest_text() -> None:
