@@ -64,9 +64,9 @@ analytics = [
 
 # Runtime requirements TVL compiler (PY-1): development-only, Python 3.12+.
 # Needed only for TVL-fragment requirements (`@traigent.requirement(tvl=...)`);
-# the kwargs path and `import traigent` work without it. Pinned to a TVL git SHA.
+# the kwargs path and `import traigent` work without it. Pinned to the tvl-spec 1.4.0 release on PyPI.
 runtime-tvl = [
-    "tvl-spec @ git+https://github.com/Traigent/tvl@858092ac97bf8598538bf5f0193cc3193bd88671",
+    "tvl-spec==1.4.0",
 ]
 
 # Bayesian optimization (Sprint 4)

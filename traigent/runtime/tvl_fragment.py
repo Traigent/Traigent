@@ -19,13 +19,21 @@ import yaml
 from traigent.runtime.model import (
     ACTIONS,
     DEFAULT_ENVIRONMENT,
+    DEPLOY_MODES,
     E_ACTION_UNSUPPORTED,
     E_CAPABILITY,
     E_COMPILER,
     E_FRAGMENT,
+    E_NOTIFY_ONLY,
+    E_VERSION_BELOW,
     EVENTS,
+    GUARD_STATES,
+    OUTCOME_EVENTS,
     PROFILE_DEFAULTS,
     SEVERITIES,
+    UNKNOWN_FOR,
+    NotifyGuard,
+    PromotionMonitor,
     ResponseRule,
     RuntimeEvent,
     RuntimeRequirement,
@@ -103,6 +111,50 @@ def _parse_requirement(node: Any) -> tuple[str, int, float]:
         raise _unsupported(f"{path}.violation.metric")
     threshold = _int(violation["exceeds"], f"{path}.violation.exceeds")
     return name, threshold, _num(req["max_rate"], f"{path}.max_rate")
+
+
+def _parse_promotion(node: Any, requirement_name: str) -> PromotionMonitor:
+    path = "monitors[1]"
+    mon = _closed_keys(
+        node,
+        {"name", "requirement", "phase", "evidence", "decision"},
+        {"name", "requirement", "phase", "evidence", "decision"},
+        path,
+    )
+    name = _name(mon["name"], f"{path}.name")
+    if mon["requirement"] != requirement_name:
+        raise _invalid(f"{path}.requirement")
+    evidence = _closed_keys(mon["evidence"], {"source"}, {"source"}, f"{path}.evidence")
+    if evidence["source"] != "evaluation_set":
+        raise _unsupported(f"{path}.evidence.source")
+    decision = _closed_keys(
+        mon["decision"],
+        {"method", "confidence", "false_alarm_budget"},
+        {"method", "confidence", "false_alarm_budget"},
+        f"{path}.decision",
+    )
+    if decision["method"] != "clopper_pearson_rational_v2":
+        raise _unsupported(f"{path}.decision.method")
+    return PromotionMonitor(
+        name,
+        _num(decision["confidence"], f"{path}.decision.confidence"),
+        _num(decision["false_alarm_budget"], f"{path}.decision.false_alarm_budget"),
+    )
+
+
+def _split_monitors(mons: list[Any]) -> tuple[Any, Any | None]:
+    """The one runtime monitor and the optional promotion monitor, in either order."""
+    if len(mons) > 2:
+        raise _unsupported("monitors[2]")
+    promotion = [
+        m for m in mons if isinstance(m, Mapping) and m.get("phase") == "promotion"
+    ]
+    runtime = [m for m in mons if m not in promotion]
+    if len(promotion) > 1:
+        raise _unsupported("monitors[1]")
+    if len(runtime) != 1:
+        raise _unsupported("monitors[1]") if len(runtime) > 1 else _invalid("monitors")
+    return runtime[0], (promotion[0] if promotion else None)
 
 
 def _parse_monitor(node: Any, requirement_name: str) -> tuple[str, dict[str, Any]]:
@@ -197,6 +249,59 @@ def _parse_monitor(node: Any, requirement_name: str) -> tuple[str, dict[str, Any
     return name, fields
 
 
+def _parse_trigger(
+    node: Any, monitor_name: str, path: str
+) -> tuple[str | None, str, int | None]:
+    """``(trigger_rule, event, hours)``: a monitor trigger or an outcome trigger."""
+    trigger = _closed_keys(node, {"monitor", "rule", "event", "hours"}, {"event"}, path)
+    event = trigger["event"]
+    if "rule" in trigger:
+        # Outcome trigger (RFC 0004 section 2.2): {rule, event} and nothing else.
+        if "monitor" in trigger or "hours" in trigger:
+            raise _invalid(path)
+        if event not in OUTCOME_EVENTS:
+            raise _unsupported(f"{path}.event")
+        return _name(trigger["rule"], f"{path}.rule"), event, None
+    if "monitor" not in trigger:
+        raise _invalid(f"{path}.monitor")
+    if trigger["monitor"] != monitor_name:
+        raise _invalid(f"{path}.monitor")
+    if event not in EVENTS and event != UNKNOWN_FOR:
+        raise _unsupported(f"{path}.event")
+    hours: int | None = None
+    if event == UNKNOWN_FOR:
+        if "hours" not in trigger:
+            raise _invalid(f"{path}.hours")
+        hours = _int(trigger["hours"], f"{path}.hours")
+    elif "hours" in trigger:
+        raise _invalid(f"{path}.hours")
+    return None, event, hours
+
+
+def _parse_guards(node: Any, monitor_name: str, path: str) -> tuple[NotifyGuard, ...]:
+    if node is None:
+        return ()
+    if not isinstance(node, list) or not node:
+        raise _invalid(path)
+    guards: list[NotifyGuard] = []
+    for index, raw in enumerate(node):
+        where = f"{path}[{index}]"
+        if not isinstance(raw, Mapping):
+            raise _invalid(where)
+        kind = "monitor" if "monitor" in raw else "rule" if "rule" in raw else None
+        if kind is None:
+            raise _invalid(where)
+        guard = _closed_keys(raw, {kind, "state"}, {kind, "state"}, where)
+        if guard["state"] != GUARD_STATES[kind]:
+            raise _unsupported(f"{where}.state")
+        ref = _name(guard[kind], f"{where}.{kind}")
+        if kind == "monitor" and ref != monitor_name:
+            # One monitor per fragment: a guard on any other monitor cannot resolve.
+            raise _unsupported(f"{where}.monitor")
+        guards.append(NotifyGuard(kind, ref))
+    return tuple(guards)
+
+
 def _parse_responses(
     node: Any, monitor_name: str
 ) -> tuple[str | None, tuple[ResponseRule, ...]]:
@@ -220,26 +325,38 @@ def _parse_responses(
         path = f"responses[0].rules[{index}]"
         rule = _closed_keys(
             raw,
-            {"id", "trigger", "do", "severity", "approval"},
+            {
+                "id",
+                "trigger",
+                "do",
+                "severity",
+                "approval",
+                "deploy",
+                "only_while",
+                "unless",
+            },
             {"id", "trigger", "do"},
             path,
         )
         rule_id = _name(rule["id"], f"{path}.id")
-        trigger = _closed_keys(
-            rule["trigger"],
-            {"monitor", "event"},
-            {"monitor", "event"},
-            f"{path}.trigger",
+        trigger_rule, event, hours = _parse_trigger(
+            rule["trigger"], monitor_name, f"{path}.trigger"
         )
-        if trigger["monitor"] != monitor_name:
-            raise _invalid(f"{path}.trigger.monitor")
-        if trigger["event"] not in EVENTS:
-            raise _unsupported(f"{path}.trigger.event")
+        only_while = _parse_guards(
+            rule.get("only_while"), monitor_name, f"{path}.only_while"
+        )
+        unless = _parse_guards(rule.get("unless"), monitor_name, f"{path}.unless")
         action = rule["do"]
         if action not in ACTIONS:
             raise RuntimeRequirementError(E_ACTION_UNSUPPORTED, f"{path}.do")
         severity = rule.get("severity")
         approval = rule.get("approval")
+        deploy = rule.get("deploy")
+        reactive = bool(trigger_rule or event == UNKNOWN_FOR or only_while or unless)
+        if reactive and action != "notify":
+            raise RuntimeRequirementError(E_NOTIFY_ONLY, f"{path}.do")
+        if deploy is not None and (action != "optimize" or deploy not in DEPLOY_MODES):
+            raise _invalid(f"{path}.deploy")
         if action == "notify":
             if severity is None:
                 severity = "critical"  # RFC 0003 section 7.2: the default severity
@@ -250,6 +367,7 @@ def _parse_responses(
         elif action == "optimize":
             if severity is not None:
                 raise _invalid(f"{path}.severity")
+            # Owner ruling: ``approval: standing`` is refused locally with a closed code.
             if approval not in (None, "human"):
                 raise RuntimeRequirementError(E_ACTION_UNSUPPORTED, f"{path}.approval")
             approval = "human"
@@ -257,7 +375,18 @@ def _parse_responses(
             if severity is not None or approval is not None:
                 raise _invalid(f"{path}.do")
         rules.append(
-            ResponseRule(rule_id, trigger["event"], action, severity, approval)
+            ResponseRule(
+                rule_id,
+                event,
+                action,
+                severity,
+                approval,
+                trigger_rule=trigger_rule,
+                hours=hours,
+                only_while=only_while,
+                unless=unless,
+                deploy=deploy,
+            )
         )
     return ladder, tuple(rules)
 
@@ -277,7 +406,8 @@ def parse_fragment(
         {"requirements", "monitors"},
         "<root>",
     )
-    if top.get("tvl_version", "1.3") != "1.3":
+    declared = top.get("tvl_version", "1.3")
+    if declared not in ("1.3", "1.4"):
         raise _unsupported("tvl_version")
     reqs, mons = top["requirements"], top["monitors"]
     if not isinstance(reqs, list) or not reqs:
@@ -286,11 +416,15 @@ def parse_fragment(
         raise _unsupported("requirements[1]")
     if not isinstance(mons, list) or not mons:
         raise _invalid("monitors")
-    if len(mons) > 1:
-        raise _unsupported("monitors[1]")
+    runtime_node, promotion_node = _split_monitors(mons)
     name, threshold, rate = _parse_requirement(reqs[0])
-    monitor_name, fields = _parse_monitor(mons[0], name)
+    monitor_name, fields = _parse_monitor(runtime_node, name)
+    promotion = (
+        _parse_promotion(promotion_node, name) if promotion_node is not None else None
+    )
     ladder, rules = _parse_responses(top.get("responses"), monitor_name)
+    if declared == "1.3" and any(r.is_reactive() for r in rules):
+        raise RuntimeRequirementError(E_VERSION_BELOW, "tvl_version")
     if max_fix_cost_usd is not None and not positive_finite(max_fix_cost_usd):
         raise RuntimeRequirementError("fix_ceiling_required", "max_fix_cost_usd")
     values: dict[str, Any] = {key: PROFILE_DEFAULTS[key] for key in PROFILE_DEFAULTS}
@@ -298,9 +432,14 @@ def parse_fragment(
     on_breach = (
         "fix"
         if any(r.action == "optimize" for r in rules)
-        else "alert"
-        if any(r.action == "notify" and r.severity != "info" for r in rules)
-        else "log"
+        else (
+            "alert"
+            if any(
+                r.action == "notify" and r.severity != "info" and not r.is_reactive()
+                for r in rules
+            )
+            else "log"
+        )
     )
     requirement = RuntimeRequirement(
         name=name,
@@ -314,6 +453,7 @@ def parse_fragment(
         agent_id=agent_id,
         source="tvl",
         fragment_path=fragment_path,
+        promotion=promotion,
         on_event=on_event,
         **values,
     )
@@ -378,7 +518,7 @@ def module_document(
     """A complete TVL module: a minimal synthesized header plus the runtime blocks."""
     header: dict[str, Any] = {
         "tvl": {"module": module},
-        "tvl_version": "1.3",
+        "tvl_version": "1.4" if requirement.is_reactive() else "1.3",
         "environment": {"snapshot_id": "2026-10-16T00:00:00Z"},
         "evaluation_set": {"dataset": "traigent://runtime"},
         "tvars": [
@@ -408,29 +548,44 @@ def token_entries(
         ("monitor", requirement.monitor_name),
         ("environment", normalise_environment(requirement.environment)),
     ]
+    if requirement.promotion is not None:
+        entries.append(("monitor", requirement.promotion.name))
     if requirement.rules:
         entries.append(("response", requirement.ladder_name))
         entries.extend(("rule", rule.id) for rule in requirement.rules)
     return entries
 
 
+def _toolchain(requirement: RuntimeRequirement) -> dict[str, str]:
+    return {} if requirement.is_reactive() else {"toolchain_version": "1.3.0"}
+
+
 def compile_hosted_subset(
     requirement: RuntimeRequirement, token_map: Mapping[str, Any], module: str
 ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
-    """Compile the one-requirement, one-monitor, ``responses: []`` hosted contract."""
+    """Compile the one-requirement, one-monitor hosted contract, responses included.
+
+    A contract with a TVL 1.4 reactive construct compiles to
+    ``tvl-runtime-contract/2``; any other contract stays ``/1`` and keeps the
+    1.3.0 toolchain stamp, so a Backend that has not yet accepted ``1.4.0``
+    still reads it (RFC 0004 section 3).
+    """
     compiler = import_compiler()
     try:
         contract, local, issues = compiler.compile_runtime_document(
-            module_document(requirement, module, with_responses=False),
+            module_document(requirement, module, with_responses=True),
             token_map_doc=token_map,
+            **_toolchain(requirement),
         )
         return dict(contract), dict(local), list(issues)
     except Exception as exc:  # noqa: BLE001 - closed re-raise, no echo
         code = getattr(exc, "code", None)
         raise RuntimeRequirementError(
-            code
-            if isinstance(code, str) and re.fullmatch(r"[a-z_]{1,64}", code)
-            else E_FRAGMENT,
+            (
+                code
+                if isinstance(code, str) and re.fullmatch(r"[a-z_]{1,64}", code)
+                else E_FRAGMENT
+            ),
             _safe_path(getattr(exc, "path", None)),
         ) from None
 
@@ -444,13 +599,16 @@ def compile_full_policy(
         _contract, _local, issues = compiler.compile_runtime_document(
             module_document(requirement, module, with_responses=True),
             token_map_doc=token_map,
+            **_toolchain(requirement),
         )
     except Exception as exc:  # noqa: BLE001
         code = getattr(exc, "code", None)
         raise RuntimeRequirementError(
-            code
-            if isinstance(code, str) and re.fullmatch(r"[a-z_]{1,64}", code)
-            else E_FRAGMENT,
+            (
+                code
+                if isinstance(code, str) and re.fullmatch(r"[a-z_]{1,64}", code)
+                else E_FRAGMENT
+            ),
             _safe_path(getattr(exc, "path", None)),
         ) from None
     return list(issues)

@@ -44,6 +44,16 @@ REQUIRED = (
     ("test_hosted_subset", "test_compiled_contract_matches_checked_in_fixture"),
     ("test_hosted_subset", "test_full_policy_lints_with_only_the_liveness_warning"),
     ("test_canary", "test_tvl_route_sends_only_refs_and_the_environment_label"),
+    ("test_hosted_subset", "test_reactive_fragment_compiles_to_the_v2_contract"),
+    ("test_reactive_upload", "test_upload_of_a_reactive_fragment_is_the_v2_contract"),
+    (
+        "test_local_guards_compiler",
+        "test_guard_reads_the_compiled_local_artifact[local-v1]",
+    ),
+    (
+        "test_local_guards_compiler",
+        "test_guard_reads_the_compiled_local_artifact[local-v2]",
+    ),
 )
 
 
