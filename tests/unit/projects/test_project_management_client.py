@@ -20,6 +20,16 @@ def _online_backend(jwt_development_mode, monkeypatch):
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
 
 
+def _patch_opener_open(monkeypatch, fake_open) -> None:
+    """Route the client's request through a stub opener (it no longer uses urlopen)."""
+    from traigent.projects import client as project_client
+
+    class _StubOpener:
+        open = staticmethod(fake_open)
+
+    monkeypatch.setattr(project_client, "_build_opener", lambda: _StubOpener())
+
+
 def test_project_management_client_crud_and_list() -> None:
     calls: list[tuple[str, str, dict | None]] = []
 
@@ -242,7 +252,7 @@ def test_project_management_client_maps_http_errors(monkeypatch) -> None:
             fp=None,
         )
 
-    monkeypatch.setattr("urllib.request.urlopen", raise_unauthorized)
+    _patch_opener_open(monkeypatch, raise_unauthorized)
 
     with pytest.raises(AuthenticationError, match="status 401"):
         client.list_projects()
@@ -260,7 +270,7 @@ def test_project_management_client_maps_generic_http_failures(monkeypatch) -> No
             fp=None,
         )
 
-    monkeypatch.setattr("urllib.request.urlopen", raise_conflict)
+    _patch_opener_open(monkeypatch, raise_conflict)
 
     with pytest.raises(ClientError, match="status 409"):
         client.create_project(name="Alpha")

@@ -166,3 +166,53 @@ class TestSensitiveMetadataKeyUnion:
         keys like `prompt_version` are legitimate backend tags. The invariant
         from review: no path gains content-marker redaction it didn't have."""
         assert is_sensitive_metadata_key(key) is False
+
+
+# --- Shared always-blocked checks (metadata / link-local / plaintext) ----------
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://169.254.169.254",
+        "https://169.254.169.254",
+        "https://[fd00:ec2::254]",
+        "https://metadata.google.internal",
+    ],
+)
+def test_dataset_converter_refuses_metadata_destinations(url: str) -> None:
+    with pytest.raises(ValueError, match="metadata service|link-local"):
+        DatasetConverter(backend_base_url=url)
+
+
+def test_dataset_converter_refuses_name_resolving_to_metadata() -> None:
+    from unittest.mock import patch
+
+    with patch(
+        "socket.getaddrinfo",
+        return_value=[(2, 1, 6, "", ("169.254.169.254", 0))],
+    ):
+        with pytest.raises(ValueError, match="metadata service|link-local"):
+            DatasetConverter(backend_base_url="https://api.example.com")
+
+
+def test_dataset_converter_refuses_plaintext_http_in_production() -> None:
+    from unittest.mock import patch
+
+    with patch.dict("os.environ", {}, clear=True):
+        with patch(
+            "socket.getaddrinfo",
+            return_value=[(2, 1, 6, "", ("93.184.216.34", 0))],
+        ):
+            with pytest.raises(ValueError, match="must use https in production"):
+                DatasetConverter(backend_base_url="http://api.example.com")
+
+
+def test_dataset_converter_private_host_policy_unchanged() -> None:
+    # Only metadata/link-local and plaintext-in-production changed; private
+    # ranges stay as they were for this converter.
+    from unittest.mock import patch
+
+    with patch.dict("os.environ", {}, clear=True):
+        converter = DatasetConverter(backend_base_url="https://10.20.30.40:8443")
+    assert converter.backend_base_url == "https://10.20.30.40:8443"

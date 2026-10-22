@@ -6,7 +6,7 @@ import asyncio
 import ipaddress
 import os
 import socket
-from urllib.parse import unquote, urlparse, urlunparse
+from urllib.parse import ParseResult, unquote, urlparse, urlunparse
 
 _METADATA_HOSTNAMES = {
     "metadata",
@@ -278,25 +278,38 @@ _PRIVATE_BACKEND_HINT = (
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
+def _has_invalid_port(parsed: ParseResult) -> bool:
+    """Return True when an explicit port is out of range or is ``0``.
+
+    ``parsed.port`` accepts ``0`` (and raises for values above 65535). An explicit
+    port ``0`` is never a valid destination, so it is treated as invalid rather
+    than as "no port".
+    """
+    try:
+        port = parsed.port
+    except ValueError:
+        return True
+    return port == 0
+
+
 def _origin_key(url: str) -> tuple[str, str, int] | None:
     """Return ``(scheme, host, port)`` for a URL, or None when it cannot be parsed.
 
     Hostnames are normalized (lower-cased, IPv6 brackets stripped) and a missing
-    port is replaced by the scheme default, so ``https://host`` and
-    ``https://host:443`` compare equal.
+    port (``None``) is replaced by the scheme default, so ``https://host`` and
+    ``https://host:443`` compare equal while ``https://host:0`` never does.
     """
     parsed = urlparse(url)
     scheme = (parsed.scheme or "").lower()
     if scheme not in _DEFAULT_PORTS or not parsed.hostname:
         return None
-    try:
-        port = parsed.port
-    except ValueError:
+    if _has_invalid_port(parsed):
         return None
+    port = parsed.port
     return (
         scheme,
         _normalize_hostname(parsed.hostname),
-        port or _DEFAULT_PORTS[scheme],
+        _DEFAULT_PORTS[scheme] if port is None else port,
     )
 
 
@@ -319,8 +332,23 @@ def _private_backend_opt_in(candidate: str) -> bool:
     configured = BackendConfig._normalize_origin(os.environ.get("TRAIGENT_BACKEND_URL"))
     if not configured:
         return False
+    if _has_invalid_port(urlparse(configured)):
+        raise ValueError(
+            "TRAIGENT_BACKEND_URL has an invalid port (must be 1-65535); "
+            f"{_PRIVATE_BACKEND_OPT_IN_ENV} cannot be honoured"
+        ) from None
     configured_key = _origin_key(configured)
     return configured_key is not None and configured_key == _origin_key(candidate)
+
+
+def private_backend_opt_in_covers(url: str) -> bool:
+    """Public form of the opt-in check, used by the transport gate.
+
+    True when ``TRAIGENT_ALLOW_PRIVATE_BACKEND`` is on and ``url`` has exactly the
+    origin of ``TRAIGENT_BACKEND_URL``. Callers that send credentials to that origin
+    refuse redirects while this is True.
+    """
+    return _private_backend_opt_in(url)
 
 
 def _reject_unsafe_hostname(
@@ -346,10 +374,12 @@ def _reject_unsafe_hostname(
                 "Cloud base URL host is not allowed in production: "
                 f"{_production_assumed_hint()}"
             ) from None
-        # ``localhost``/``.localhost`` are reserved for loopback and cannot
-        # reach a metadata endpoint. ``.local`` (mDNS) can, so it falls through
-        # to the resolved-IP guard below.
-        if _is_loopback_name(normalized):
+        # Development only: ``localhost``/``.localhost`` are reserved for loopback
+        # and skip the lookup. Under the self-hosted opt-in the name is resolved and
+        # every answer is checked, so a loopback name cannot stand in for an
+        # unchecked destination. ``.local`` (mDNS) always falls through to the
+        # resolved-IP guard below.
+        if allow_local and _is_loopback_name(normalized):
             return
 
     host_ip = _parse_ip_literal(normalized)
@@ -426,6 +456,8 @@ def validate_cloud_base_url(base_url: str, *, purpose: str = "cloud request") ->
     parsed = urlparse(candidate)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError(f"{purpose} base URL must be http(s) with a host") from None
+    if _has_invalid_port(parsed):
+        raise ValueError(f"{purpose} base URL has an invalid port") from None
     if parsed.username or parsed.password:
         raise ValueError(f"{purpose} base URL must not include credentials") from None
     if parsed.params or parsed.query or parsed.fragment:
@@ -477,6 +509,45 @@ def validate_cloud_base_url(base_url: str, *, purpose: str = "cloud request") ->
     )
 
 
+def validate_always_blocked_cloud_url(
+    base_url: str, *, purpose: str = "cloud request"
+) -> None:
+    """Refuse metadata/link-local destinations and, outside development, plaintext HTTP.
+
+    For callers that keep their own private-range policy and so cannot use
+    :func:`validate_cloud_base_url`. The checks are: the scheme is http(s) with a
+    host, plain HTTP is refused outside development, the metadata hostnames and
+    IP literals are refused, and every resolved answer is checked against the
+    always-blocked set. Private and loopback answers are allowed, and a name that
+    does not resolve is not an error (both as in development). The shared
+    validator's stricter rules do not apply here.
+    """
+    parsed = urlparse((base_url or "").strip().rstrip("/"))
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError(f"{purpose} base URL must be http(s) with a host") from None
+    if parsed.scheme != "https" and not _is_development_environment():
+        raise ValueError(
+            f"{purpose} base URL must use https in production: "
+            f"{_production_assumed_hint()}"
+        ) from None
+
+    normalized = _normalize_hostname(parsed.hostname)
+    if normalized in _METADATA_HOSTNAMES:
+        raise ValueError(f"{purpose} base URL points at a metadata service") from None
+    host_ip = _parse_ip_literal(normalized)
+    if host_ip is not None:
+        _reject_always_blocked_ip(host_ip, purpose=purpose)
+        return
+    try:
+        addr_infos = socket.getaddrinfo(normalized, None)
+    except socket.gaierror:
+        return
+    for _family, _socktype, _proto, _canonname, sockaddr in addr_infos:
+        resolved_ip = _parse_resolved_ip(sockaddr[0])
+        if resolved_ip is not None:
+            _reject_always_blocked_ip(resolved_ip, purpose=purpose)
+
+
 def _validation_needs_dns_resolution(base_url: str) -> bool:
     """Return True when URL validation may perform blocking DNS lookup."""
     candidate = (base_url or "").strip().rstrip("/")
@@ -488,7 +559,7 @@ def _validation_needs_dns_resolution(base_url: str) -> bool:
     normalized = _normalize_hostname(hostname)
     # ``.local`` is deliberately absent: it is resolved (and its answers guarded)
     # in development, so it must be offloaded like any other resolvable name.
-    if _is_loopback_name(normalized):
+    if _is_loopback_name(normalized) and _is_development_environment():
         return False
 
     if normalized in _METADATA_HOSTNAMES:

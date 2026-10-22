@@ -20,9 +20,10 @@ from random import SystemRandom
 from typing import Any, cast
 from urllib.parse import urlparse
 
-from traigent.labels.transport_gate import gate_session
 from traigent.cloud.client import raise_if_cloud_egress_disabled
+from traigent.cloud.url_security import validate_always_blocked_cloud_url
 from traigent.config.backend_config import DEFAULT_CLOUD_URL
+from traigent.labels.transport_gate import gate_session
 
 # Optional dependency for HTTP client
 try:
@@ -225,6 +226,9 @@ class DatasetConverter:
             path=sanitized_path, query="", fragment="", params=""
         )
         candidate = normalized.geturl()
+        # Shared always-blocked rules: metadata/link-local destinations and plain
+        # HTTP outside development. Private ranges stay allowed here as before.
+        validate_always_blocked_cloud_url(candidate, purpose="backend")
 
         return candidate.rstrip("/")
 

@@ -110,9 +110,19 @@ Security notes:
 - HTTPS is still required outside a development environment. Plain HTTP is not
   relaxed.
 - Cloud metadata and link-local addresses (169.254.0.0/16, fe80::/10 and the
-  known metadata hosts) stay blocked, and so do redirects and DNS failures.
+  known metadata hosts) stay blocked in every environment.
+- Redirects are refused for the private backend. Any 3xx response from the
+  pinned origin is an error, and the redirect target is never requested. This
+  covers the SDK's project-management client and the SDK's HTTP clients that
+  carry the API key to that origin.
+- DNS failures are refused for the pinned host. The opt-in does not accept a
+  name it cannot resolve, and it does not skip the lookup for `localhost`
+  names. Every resolved answer must pass the always-blocked check.
+- A port of `0`, or any port outside 1-65535, is invalid in the configured URL
+  and in the candidate URL.
 - DNS rebinding is not closed by this check. The SDK validates the resolved
-  address but cannot pin the connection to it.
+  address but cannot pin the connection to it, so an answer that changes between
+  the validation lookup and the connection is not caught.
 
 ## Content Logging Opt-Out
 
