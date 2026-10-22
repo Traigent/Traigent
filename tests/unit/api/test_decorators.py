@@ -1068,7 +1068,7 @@ class TestRemovedDecoratorCompatibilityOptions:
 
     def test_decorator_rejects_a_non_preset_strategy_value(self):
         """``strategy=`` is refused outright, not only for the retired names."""
-        with pytest.raises(TypeError, match="no longer supported"):
+        with pytest.raises(TypeError, match="strategy parameter was removed"):
 
             @optimize(configuration_space={"x": [1, 2, 3]}, strategy="grid")
             def sample_function(x: int) -> int:

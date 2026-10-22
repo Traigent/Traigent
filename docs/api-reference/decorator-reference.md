@@ -48,7 +48,6 @@ def optimize(
     injection: InjectionOptions | dict[str, Any] | None = None,
     effectuation: bool = False,
     execution: ExecutionOptions | dict[str, Any] | None = None,
-    strategy: str | None = None,
     strategy_params: Mapping[str, Any] | None = None,
 
     # Multi-agent configuration

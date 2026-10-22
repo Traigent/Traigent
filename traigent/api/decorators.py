@@ -43,6 +43,7 @@ Examples:
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import inspect
 import os
@@ -101,10 +102,14 @@ from traigent.core.objectives import (
     normalize_objectives,
 )
 from traigent.core.optimized_function import (
+    _REMOVED_ALIAS_MESSAGES,
     _REMOVED_MOCK_PARAMETERS,
     OptimizedFunction,
+    _reject_removed_aliases,
     _reject_removed_strategy_preset,
+    _removed_alias_message,
     _removed_mock_parameter_message,
+    _without_none_removed_aliases,
 )
 from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -1111,6 +1116,7 @@ _REMOVED_PARAMETERS = frozenset(
         "batch_size",
         "parallel_trials",
         *_REMOVED_MOCK_PARAMETERS,
+        *_REMOVED_ALIAS_MESSAGES,
         *_JS_BRIDGE_REMOVED_PARAMETERS,
     )
 )
@@ -1164,6 +1170,8 @@ def _removed_parameter_message(parameter_name: str) -> str:
         return _JS_BRIDGE_REMOVED_MESSAGE
     if parameter_name in _REMOVED_MOCK_PARAMETERS:
         return _removed_mock_parameter_message(parameter_name)
+    if parameter_name in _REMOVED_ALIAS_MESSAGES:
+        return _removed_alias_message(parameter_name)
     return (
         f"{parameter_name} parameter has been removed. Use supported arguments such as "
         "parallel_config or ExecutionOptions instead."
@@ -1464,7 +1472,9 @@ def _reject_removed_names_early(
     runtime_overrides: Mapping[str, Any],
     legacy: LegacyOptimizeArgs | dict[str, Any] | None,
 ) -> None:
-    """Reject removed mock parameters even when later shortcuts would skip them."""
+    """Reject removed mock, budget_* and strategy parameters before shortcuts skip them."""
+    # A retired preset name keeps its own message, ahead of the alias message.
+    _reject_removed_strategy_preset(runtime_overrides.get("strategy"))
     names = set(runtime_overrides)
     if isinstance(legacy, LegacyOptimizeArgs):
         names |= set(legacy.extra)
@@ -1472,6 +1482,15 @@ def _reject_removed_names_early(
         names |= set(legacy)
     for name in sorted(names & _REMOVED_MOCK_PARAMETERS):
         raise TypeError(_removed_parameter_message(name))
+    legacy_values: Mapping[str, Any]
+    if isinstance(legacy, LegacyOptimizeArgs):
+        legacy_values = legacy.extra
+    elif isinstance(legacy, dict):
+        legacy_values = legacy
+    else:
+        legacy_values = {}
+    _reject_removed_aliases(runtime_overrides)
+    _reject_removed_aliases(legacy_values)
 
 
 def _parse_legacy_args(
@@ -2591,7 +2610,6 @@ def optimize(  # NOSONAR(S107)
     evaluator: ExternalServiceEvaluator | dict[str, Any] | None = None,
     algorithm: str = "auto",
     offline: bool = False,
-    strategy: str | None = None,
     strategy_params: Mapping[str, Any] | None = None,
     smart_pruning: SmartPruningOptions | dict[str, Any] | None = None,
     # Multi-agent configuration
@@ -2632,9 +2650,6 @@ def optimize(  # NOSONAR(S107)
             only when it exactly names an SDK-owned metric; custom names require
             an ObjectiveSchema with explicit orientation and weight. Omitted values
             fall back to ``traigent.configure(objectives=...)`` or ``["accuracy"]``.
-        strategy: Retained only for signature compatibility; a non-``None`` value
-            now raises ``TypeError``. Use ``algorithm`` to select an optimizer by
-            name, or ``objectives`` to set what is optimized.
         strategy_params: Retained only for signature compatibility; a non-``None``
             value now raises ``TypeError``.
         configuration_space: Dictionary describing the search space. Keys are
@@ -2927,6 +2942,16 @@ def optimize(  # NOSONAR(S107)
         Set TRAIGENT_DISABLED=1 environment variable to disable all optimization.
         The decorator becomes a pass-through that returns the original function.
     """
+    # A removed alias passed as None means "not passed": strip it before any
+    # check, so @optimize(strategy=None) behaves as if the key were absent.
+    runtime_overrides = _without_none_removed_aliases(runtime_overrides)
+    if isinstance(legacy, dict):
+        legacy = _without_none_removed_aliases(legacy)
+    elif isinstance(legacy, LegacyOptimizeArgs):
+        legacy = dataclasses.replace(
+            legacy, extra=_without_none_removed_aliases(legacy.extra)
+        )
+
     # Explicitly supplied removed parameters are rejected before any shortcut
     # (including the TRAIGENT_DISABLED pass-through below).
     _reject_removed_names_early(runtime_overrides, legacy)
@@ -2962,8 +2987,7 @@ def optimize(  # NOSONAR(S107)
         for key, value in legacy_args.iter_known_values():
             record_option(key, value, "legacy arguments")
 
-    _reject_removed_strategy_preset(strategy)
-    if strategy is not None or strategy_params is not None:
+    if strategy_params is not None:
         raise TypeError(
             "strategy presets are no longer supported; use algorithm or objectives."
         )

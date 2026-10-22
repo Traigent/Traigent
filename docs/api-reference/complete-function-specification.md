@@ -33,7 +33,6 @@ def optimize(
     injection: InjectionOptions | dict[str, Any] | None = None,
     effectuation: bool = False,
     execution: ExecutionOptions | dict[str, Any] | None = None,
-    strategy: str | None = None,
     strategy_params: Mapping[str, Any] | None = None,
     # Multi-agent configuration
     agents: dict[str, AgentDefinition] | None = None,
@@ -73,7 +72,7 @@ function returns Traigent's optimized wrapper.
 | `default_config` | `dict[str, Any] \| None` | `None` | Baseline configuration applied before the first trial. Missing keys remain unset unless you provide defaults via `default_config` or parameter defaults (for example `Range(..., default=...)`). |
 | `constraints` | `list[Constraint \| Callable[..., Any]] \| None` | `None` | Hard constraints evaluated before running a trial. Accepts SE-friendly `Constraint` objects and/or callables that take `(config, metrics=None)` and return `True/False`. |
 | `safety_constraints` | `list[SafetyConstraint \| CompoundSafetyConstraint] \| None` | `None` | Safety metric gates evaluated as part of optimization. |
-| `strategy` | `str \| None` | `None` | Retained only for signature compatibility; a non-`None` value now raises `TypeError`. Use `algorithm` or `objectives`. |
+| `strategy` | — | — | Removed (#1370 item 9). Passing it raises `TypeError` naming `algorithm=<optimizer>`. |
 | `strategy_params` | `Mapping[str, Any] \| None` | `None` | Retained only for signature compatibility; a non-`None` value now raises `TypeError`. |
 | `effectuation` | `bool` | `False` | Enables effectuation tracking for tuned-variable observations. |
 | `agents`, `agent_prefixes`, `agent_measures`, `global_measures` | See signature | `None` | Multi-agent measurement configuration. |
@@ -205,7 +204,6 @@ async def optimize(
     tvl_spec: str | Path | None = None,
     tvl_environment: str | None = None,
     tvl: TVLOptions | dict[str, Any] | None = None,
-    strategy: str | None = None,
     strategy_params: Mapping[str, Any] | None = None,
     progress_bar: bool | None = None,
     **algorithm_kwargs: Any,
@@ -227,7 +225,7 @@ async def optimize(
 | `tvl_spec` | `str \| Path \| None` | `None` | Load TVL spec at runtime. |
 | `tvl_environment` | `str \| None` | `None` | Environment overlay from the TVL spec. |
 | `tvl` | `TVLOptions \| dict \| None` | `None` | Structured TVL options for runtime overrides. |
-| `strategy` | `str \| None` | `None` | Deprecated alias for `algorithm` (emits `DeprecationWarning`); no longer accepts a preset name. |
+| `strategy` | — | — | Removed (#1370 item 9). Passing it raises `TypeError` naming `algorithm=<optimizer>`. |
 | `strategy_params` | `Mapping[str, Any] \| None` | `None` | Retained only for signature compatibility; a non-`None` value now raises `TypeError`. |
 | `progress_bar` | `bool \| None` | `None` | Runtime progress-bar override. |
 | `**algorithm_kwargs` | `Any` | – | Extra tuning knobs. See recognised keys below. |
@@ -243,7 +241,7 @@ async def optimize(
 | `cost_limit` | Maximum USD spending for this run. |
 | `cost_approved` | Skip cost approval prompt only when passed as real Python `True`; strings such as `"true"` are ignored. Env approval requires exact `TRAIGENT_COST_APPROVED=true`; `1`/`yes` do not approve. |
 | `metric_limit` / `metric_name` / `metric_include_pruned` | Configure soft cumulative-metric early stopping. |
-| `budget_limit` / `budget_metric` / `budget_include_pruned` | Deprecated aliases for metric-limit controls. Use `cost_limit` for hard USD spend control. |
+| `budget_limit` / `budget_metric` / `budget_include_pruned` | Removed in 0.13.0; passing them raises `TypeError` naming the replacement. Use `cost_limit` for hard USD spend control, or `metric_limit` / `metric_name` / `metric_include_pruned`. |
 | `plateau_window` / `plateau_epsilon` | Configure plateau detection stop conditions. |
 | `semantic_saturation` | Configure opt-in semantic saturation. Uses per-example metric-vector churn plus continuous objective improvement and emits sanitized diagnostics in `OptimizationResult.metadata["semantic_saturation"]`. |
 | `parameter_order` | Grid search only: mapping of parameter names to numeric priorities. Lower values vary slowest; higher values vary fastest. |
