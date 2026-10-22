@@ -584,7 +584,6 @@ def test_the_signature_param_set_is_read_from_the_signature():
         "callbacks",
         "progress_bar",
         "save_to",
-        "strategy",
         "strategy_params",
         "surrogate_evaluator",
         "surrogate_evaluator_name",
