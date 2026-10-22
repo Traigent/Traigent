@@ -980,7 +980,9 @@ def install_hooks(repo_path: Path | str | None = None, force: bool = False) -> b
 
     Args:
         repo_path: Path to Git repository (auto-detects if None)
-        force: Overwrite existing hooks
+        force: Replace a hook Traigent did not generate, keeping it as
+            ``<hook>.backup``; refuses if that backup already holds
+            anything but a stale Traigent hook
 
     Returns:
         True if all hooks installed successfully

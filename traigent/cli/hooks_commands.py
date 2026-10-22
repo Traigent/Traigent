@@ -73,7 +73,8 @@ def hooks() -> None:
     is_flag=True,
     help=(
         "Replace a hook Traigent did not generate, keeping it as "
-        "<hook>.backup. Refuses if that backup already exists."
+        "<hook>.backup. Refuses if that backup already holds anything "
+        "but a stale Traigent hook."
     ),
 )
 @click.option("--path", "-p", type=click.Path(exists=True), help="Git repository path")

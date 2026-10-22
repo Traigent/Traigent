@@ -13,29 +13,38 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   overwrites: a second `--force` replaced the saved original with Traigent's
   own hook, and `uninstall` then restored that instead, leaving the
   customer's hook unrecoverable. Three ordinary commands were enough.
-  Ownership is now recorded rather than guessed. `install` writes the digest
-  of each artifact it publishes, and of any original it preserves, to
-  `.git/traigent-hooks.json`; `status` and `uninstall` read it. The SDK
-  removes exactly what it generated and never deletes or resurrects a hook it
-  did not: a preserved original is recorded before the backup is created, a
-  refused install claims nothing, a saved original is never collected as a
-  stale artifact even if a later release recognises its bytes, and a backup
-  with no record is left exactly where it is rather than restored over your
-  hook. Publication no longer overwrites: hooks are staged and linked, and
-  every mutation re-checks the file it is about to touch. `traigent hooks
-  status` now also tells outdated, unsafe and unreadable hooks apart, and
-  reports a backup left behind. The record lives inside `.git`, is never
-  committed, is read without following symlinks, and degrades to the previous
-  content-only behaviour with a warning if it is missing or unreadable. The
-  generated hook scripts themselves are unchanged.
+  A hook Traigent saved for you is now identified by a record rather than
+  guessed from its bytes. `install` writes the digest of each artifact it
+  publishes, and of any original it preserves, to `.git/traigent-hooks.json`;
+  `status` and `uninstall` read it. An active hook is still recognised by its
+  bytes first, with the record settling the cases bytes cannot: whose the
+  backup is, and artifacts a future release writes. The SDK removes exactly
+  what it generated and never deletes or resurrects a hook it did not: a
+  preserved original is recorded before the backup is created, a refused
+  install claims nothing, a saved original is never collected as a stale
+  artifact even if a later release recognises its bytes, and a backup with no
+  record is left exactly where it is rather than restored over your hook.
+  Publication no longer overwrites: hooks are staged and linked, and every
+  mutation re-checks the file it is about to touch. `traigent hooks status`
+  now also tells outdated, unsafe and unreadable hooks apart, and reports a
+  backup left behind. The record lives inside `.git`, is never committed, is
+  read without following symlinks, and degrades to the previous content-only
+  behaviour if it is missing, and with a warning if it is present but
+  unreadable or malformed. The generated hook scripts themselves are
+  unchanged.
 
-  Two consequences of deciding ownership exactly, both user-visible. A
-  Traigent hook **you have edited** is no longer removed by `uninstall`: it no
-  longer matches an artifact Traigent generated, so it is reported skipped and
-  left for you, where before the marker in its header was enough to delete it.
-  And `uninstall` now removes the **pre-commit** hook: ownership was previously
-  decided by looking for the *pre-push* header in both files, so a generated
-  pre-commit hook never matched and was always left behind.
+  Three consequences of deciding ownership exactly, all user-visible:
+
+  - A Traigent hook **you have edited** is no longer removed by `uninstall`.
+    It no longer matches an artifact Traigent generated, so it is reported
+    skipped and left for you, where before the marker in its header was
+    enough to delete it.
+  - `uninstall` now removes the **pre-commit** hook. Ownership was previously
+    decided by looking for the *pre-push* header in both files, so a
+    generated pre-commit hook never matched and was always left behind.
+  - When no Traigent hook is installed but `<hook>.backup` holds something
+    Traigent did not generate, a plain `install` now stops and names the file
+    instead of installing over a backup whose owner it cannot establish.
 
 - **Trial error text and three metadata maps now cross to the backend as closed codes and allowlisted keys (#2241).** `error_message` on trial submission and config-run status is reduced to one fixed code (for example `trial_failed` or `no_examples_succeeded`); the full text stays on the local result. `metadata.agent_configuration`, `metadata.surrogate_evaluator` and `summary_stats.metadata` are rebuilt from a key allowlist, so unlisted keys and judge prompts no longer leave the SDK.
 - **TVL derived constraints are documented as per-trial only; the loader warns when a spec relies on `environment.context` (#1618).** `load_tvl_spec` emits one value-free warning naming the derived constraint ids; `docs/tvl/CONSTRAINT_EXPRESSIONS.md` states the rule.
