@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import traigent.cloud.client as _cloud_client_module
 from traigent.cloud import content_less as cl
 from traigent.cloud._aiohttp_compat import aiohttp
 from traigent.cloud.api_operations import ApiOperations
@@ -138,6 +139,16 @@ def _effective(record: dict[str, Any]) -> dict[str, str]:
 
 async def _accept_key(self, api_key):  # noqa: ARG001 - backend validation boundary
     return None
+
+
+@pytest.fixture(autouse=True)
+def _real_client_classes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use the genuine AuthManager in the client module, whatever ran before.
+
+    Other test files patch ``traigent.cloud.client.AuthManager`` concurrently, and an
+    interleaved patch can leave a Mock installed. This file must not depend on that.
+    """
+    monkeypatch.setattr(_cloud_client_module, "AuthManager", AuthManager)
 
 
 @pytest.fixture(autouse=True)

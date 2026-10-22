@@ -21,6 +21,8 @@ from aiohttp.client import ClientSession as _REAL_CLIENT_SESSION
 from aiohttp.client import ClientTimeout as _REAL_CLIENT_TIMEOUT
 from aiohttp.connector import TCPConnector as _REAL_TCP_CONNECTOR
 
+import traigent.cloud.client as _cloud_client_module
+from traigent.cloud.auth import AuthManager as _REAL_AUTH_MANAGER
 from traigent.cloud.client import TraigentCloudClient
 
 # SDK #2033: opt into the connected/backend code paths (see pyproject markers).
@@ -39,6 +41,9 @@ def _restore_real_aiohttp_after_stress():
     bleeds into later test files (e.g. the finalizer tests in
     test_session_cleanup.py) which need a real session/connector. Restore the
     genuine classes after every test here so the global module is left clean.
+    The same applies to ``traigent.cloud.client.AuthManager``: a leaked Mock there
+    made a later file's client await a Mock (reproduced: stress file, then
+    test_content_less_creation_wire.py).
     """
     try:
         yield
@@ -46,6 +51,9 @@ def _restore_real_aiohttp_after_stress():
         aiohttp.ClientSession = _REAL_CLIENT_SESSION
         aiohttp.ClientTimeout = _REAL_CLIENT_TIMEOUT
         aiohttp.TCPConnector = _REAL_TCP_CONNECTOR
+        # The same concurrent-enter interleaving applies to the client module's
+        # AuthManager name, which these tests patch per client.
+        _cloud_client_module.AuthManager = _REAL_AUTH_MANAGER
 
 
 class TestHighVolumeRequests:
