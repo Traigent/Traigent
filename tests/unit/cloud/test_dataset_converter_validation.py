@@ -1,9 +1,19 @@
 """Validation tests for DatasetConverter safety checks."""
 
+import os
+import socket
+import subprocess
+import sys
+import textwrap
+from unittest.mock import Mock, patch
+
 import pytest
 
 from traigent.cloud.dataset_converter import DatasetConverter, is_sensitive_metadata_key
+from traigent.cloud.url_security import CloudUrlUnreachableError
 from traigent.config.backend_config import DEFAULT_CLOUD_URL
+
+_PRIVATE_BACKEND = "https://bank.internal.example"
 
 # SDK #2033: opt into the connected/backend code paths (see pyproject markers).
 pytestmark = pytest.mark.backend_online
@@ -185,15 +195,21 @@ def test_dataset_converter_refuses_metadata_destinations(url: str) -> None:
         DatasetConverter(backend_base_url=url)
 
 
-def test_dataset_converter_refuses_name_resolving_to_metadata() -> None:
+@pytest.mark.asyncio
+async def test_dataset_converter_refuses_name_resolving_to_metadata() -> None:
     from unittest.mock import patch
 
+    # Construction does no DNS (imports must not resolve hosts). The metadata answer
+    # is refused at the first credential-bearing call, before any request is sent.
+    converter = DatasetConverter(backend_base_url="https://api.example.com")
+    converter._session = Mock()
     with patch(
         "socket.getaddrinfo",
         return_value=[(2, 1, 6, "", ("169.254.169.254", 0))],
     ):
         with pytest.raises(ValueError, match="metadata service|link-local"):
-            DatasetConverter(backend_base_url="https://api.example.com")
+            await converter._fetch_backend_example_set("example-set-1")
+    converter._session.get.assert_not_called()
 
 
 def test_dataset_converter_refuses_plaintext_http_in_production() -> None:
@@ -216,3 +232,61 @@ def test_dataset_converter_private_host_policy_unchanged() -> None:
     with patch.dict("os.environ", {}, clear=True):
         converter = DatasetConverter(backend_base_url="https://10.20.30.40:8443")
     assert converter.backend_base_url == "https://10.20.30.40:8443"
+
+
+def _production_private_backend_env() -> dict[str, str]:
+    """Environment of a bank deployment: production, private backend opted in."""
+    # Minimal environment: inherited TRAIGENT_* flags (for example TRAIGENT_MOCK_LLM)
+    # would trip the production guards in the child process.
+    env = {
+        key: os.environ[key] for key in ("PATH", "HOME", "LANG") if key in os.environ
+    }
+    env.update(
+        {
+            "ENVIRONMENT": "production",
+            "TRAIGENT_ALLOW_PRIVATE_BACKEND": "1",
+            "TRAIGENT_BACKEND_URL": _PRIVATE_BACKEND,
+        }
+    )
+    return env
+
+
+def test_import_does_not_resolve_backend_host_when_dns_fails() -> None:
+    # A bank configures a private backend and its resolver cannot answer yet. Import
+    # must still succeed: construction does no DNS; the first egress resolves.
+    code = textwrap.dedent(
+        """
+        import socket
+
+        def _no_dns(*args, **kwargs):
+            raise socket.gaierror("no dns in this test")
+
+        socket.getaddrinfo = _no_dns
+        import traigent
+        import traigent.cloud.backend_client  # noqa: F401
+        print("IMPORT_OK")
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        env=_production_private_backend_env(),
+        capture_output=True,
+        text=True,
+        timeout=240,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert "IMPORT_OK" in result.stdout
+
+
+@pytest.mark.asyncio
+async def test_first_egress_refuses_when_backend_host_does_not_resolve() -> None:
+    session = Mock()
+    with (
+        patch.dict("os.environ", _production_private_backend_env(), clear=True),
+        patch("socket.getaddrinfo", side_effect=socket.gaierror),
+    ):
+        converter = DatasetConverter(backend_base_url=_PRIVATE_BACKEND)
+        converter._session = session
+        with pytest.raises(CloudUrlUnreachableError, match="could not be resolved"):
+            await converter._fetch_backend_example_set("example-set-1")
+    session.get.assert_not_called()

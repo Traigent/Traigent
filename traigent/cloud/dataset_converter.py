@@ -228,9 +228,21 @@ class DatasetConverter:
         candidate = normalized.geturl()
         # Shared always-blocked rules: metadata/link-local destinations and plain
         # HTTP outside development. Private ranges stay allowed here as before.
-        validate_always_blocked_cloud_url(candidate, purpose="backend")
+        # Construction does no network I/O (this module is imported at SDK import
+        # time); the DNS step runs before each credential-bearing call instead.
+        validate_always_blocked_cloud_url(candidate, purpose="backend", resolve=False)
 
         return candidate.rstrip("/")
+
+    def _egress_backend_base_url(self) -> str:
+        """Return the backend base URL after the DNS-resolving check (fail closed).
+
+        Called immediately before a credential-bearing request, after the egress gate.
+        Not cached: each call re-resolves, so an unresolvable or metadata-resolving
+        host is refused at the point of use.
+        """
+        validate_always_blocked_cloud_url(self.backend_base_url, purpose="backend")
+        return self.backend_base_url
 
     def _raise_if_backend_egress_disabled(
         self, operation: str, *, no_egress: bool | None = None
@@ -972,7 +984,7 @@ class DatasetConverter:
         if not self._session:
             raise RuntimeError("Session not initialized") from None
 
-        url = f"{self.backend_base_url}{_EXAMPLE_SETS_PATH}"
+        url = f"{self._egress_backend_base_url()}{_EXAMPLE_SETS_PATH}"
         payload = {
             "name": metadata.name,
             "type": metadata.type,
@@ -1025,7 +1037,7 @@ class DatasetConverter:
         csv_content = output.getvalue()
 
         # Upload via API
-        url = f"{self.backend_base_url}{_EXAMPLE_SETS_PATH}/{example_set_id}/upload"
+        url = f"{self._egress_backend_base_url()}{_EXAMPLE_SETS_PATH}/{example_set_id}/upload"
 
         data = aiohttp.FormData()
         data.add_field(
@@ -1056,7 +1068,7 @@ class DatasetConverter:
 
         example_set_id = self._validate_example_set_id(example_set_id)
 
-        url = f"{self.backend_base_url}{_EXAMPLE_SETS_PATH}/{example_set_id}"
+        url = f"{self._egress_backend_base_url()}{_EXAMPLE_SETS_PATH}/{example_set_id}"
 
         async with self._session.get(url) as response:
             if response.status == 200:
@@ -1079,7 +1091,7 @@ class DatasetConverter:
 
         example_set_id = self._validate_example_set_id(example_set_id)
 
-        url = f"{self.backend_base_url}{_EXAMPLE_SETS_PATH}/{example_set_id}/examples"
+        url = f"{self._egress_backend_base_url()}{_EXAMPLE_SETS_PATH}/{example_set_id}/examples"
 
         # The endpoint is paginated; read every page so a set larger than one
         # page is not silently truncated.

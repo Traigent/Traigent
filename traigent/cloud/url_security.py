@@ -583,7 +583,7 @@ def validate_cloud_base_url(base_url: str, *, purpose: str = "cloud request") ->
 
 
 def validate_always_blocked_cloud_url(
-    base_url: str, *, purpose: str = "cloud request"
+    base_url: str, *, purpose: str = "cloud request", resolve: bool = True
 ) -> None:
     """Refuse metadata/link-local destinations and, outside development, plaintext HTTP.
 
@@ -595,6 +595,10 @@ def validate_always_blocked_cloud_url(
     not resolve is refused (:class:`CloudUrlUnreachableError`) outside development,
     and tolerated only in development. The shared validator's stricter rules do not
     apply here.
+
+    ``resolve=False`` skips the DNS step (no network I/O): construction-time callers
+    use it so importing the SDK never resolves a host. Egress callers keep the default
+    and resolve immediately before the credential-bearing request.
     """
     parsed = urlparse((base_url or "").strip().rstrip("/"))
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -611,6 +615,8 @@ def validate_always_blocked_cloud_url(
     host_ip = _parse_ip_literal(normalized)
     if host_ip is not None:
         _reject_always_blocked_ip(host_ip, purpose=purpose)
+        return
+    if not resolve:
         return
     try:
         addr_infos = socket.getaddrinfo(normalized, None)
