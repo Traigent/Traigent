@@ -42,6 +42,15 @@ def _close_unstarted_coroutine(coro: Any) -> None:
         close()
 
 
+class _ShutdownInterrupt:
+    """Carries KeyboardInterrupt/SystemExit out of a gathered Task as a value."""
+
+    __slots__ = ("exc",)
+
+    def __init__(self, exc: BaseException) -> None:
+        self.exc = exc
+
+
 @dataclass
 class ParallelBatchCaps:
     """Calculated caps for parallel batch execution."""
@@ -439,8 +448,12 @@ class ParallelExecutionManager:
                     )
                 if isinstance(e, (KeyboardInterrupt, SystemExit)):
                     # Shutdown requests must stop the run, not become a failed
-                    # trial the optimizer carries on past.
-                    raise
+                    # trial the optimizer carries on past. Raising inside a
+                    # gathered Task would unwind the event loop past gather and
+                    # strand sibling permits, so carry it as a value (same
+                    # pattern as evaluators.base._TaskBoundaryInterrupt) and
+                    # re-raise after siblings are settled below.
+                    return (index, _ShutdownInterrupt(e), denied_permit)
                 # Return exception with denied permit (already released)
                 return (index, e, denied_permit)
 
@@ -449,6 +462,27 @@ class ParallelExecutionManager:
 
         # Run all tasks and collect results
         indexed_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # A shutdown request in any trial aborts the batch. Release every
+        # sibling permit that is still active (results are discarded, so
+        # nothing will reach track_cost_async), then re-raise the original.
+        interrupt: BaseException | None = None
+        for item in indexed_results:
+            if isinstance(item, tuple) and len(item) == 3:
+                if type(item[1]) is _ShutdownInterrupt and interrupt is None:
+                    interrupt = item[1].exc
+        if interrupt is not None:
+            for item in indexed_results:
+                if not (isinstance(item, tuple) and len(item) == 3):
+                    continue
+                sibling_permit = item[2]
+                if (
+                    type(item[1]) is not _ShutdownInterrupt
+                    and sibling_permit.is_granted
+                    and self.cost_enforcer is not None
+                ):
+                    await self.cost_enforcer.release_permit_async(sibling_permit)
+            raise interrupt
 
         # Sort by index to preserve original order
         indexed_results = sorted(

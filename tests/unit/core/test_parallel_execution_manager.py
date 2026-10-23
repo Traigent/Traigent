@@ -416,6 +416,64 @@ class TestParallelExecutionManagerAsync:
         assert status.in_flight_count == 0
         assert status.reserved_cost_usd == pytest.approx(0.0)
 
+    @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
+    def test_shutdown_interrupt_releases_successful_sibling_permit(
+        self, monkeypatch, interrupt
+    ):
+        """A succeeded sibling's permit is released once before the interrupt re-raises."""
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
+        enforcer = CostEnforcer(
+            CostEnforcerConfig(limit=10.0, estimated_cost_per_trial=1.0)
+        )
+        manager = ParallelExecutionManager(
+            parallel_trials=2, max_concurrent=2, cost_enforcer=enforcer
+        )
+        released: list[int] = []
+        original = enforcer.release_permit_async
+
+        async def spy(permit):
+            released.append(permit.id)
+            return await original(permit)
+
+        monkeypatch.setattr(enforcer, "release_permit_async", spy)
+
+        async def ok():
+            return "ok"
+
+        async def boom():
+            await asyncio.sleep(0.01)
+            raise interrupt()
+
+        with pytest.raises(interrupt):
+            asyncio.run(manager.run_with_cost_permits([ok(), boom()]))
+
+        assert len(released) == 2
+        assert len(set(released)) == 2
+        status = enforcer.get_status()
+        assert status.in_flight_count == 0
+        assert status.reserved_cost_usd == pytest.approx(0.0)
+
+    def test_batch_without_interrupt_keeps_permits_for_tracking(self, monkeypatch):
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
+        enforcer = CostEnforcer(
+            CostEnforcerConfig(limit=10.0, estimated_cost_per_trial=1.0)
+        )
+        manager = ParallelExecutionManager(
+            parallel_trials=2, max_concurrent=2, cost_enforcer=enforcer
+        )
+
+        async def ok():
+            return "ok"
+
+        async def bad():
+            raise ValueError("x")
+
+        results, cancelled = asyncio.run(manager.run_with_cost_permits([ok(), bad()]))
+        assert cancelled == 0
+        assert results[0].result == "ok" and results[0].permit.is_granted
+        assert isinstance(results[1].result, ValueError)
+        assert enforcer.get_status().in_flight_count == 1
+
 
 class TestBackwardCompatibilityWithOrchestrator:
     """Test that ParallelExecutionManager works with orchestrator patterns."""
