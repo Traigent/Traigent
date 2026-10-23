@@ -252,7 +252,7 @@ class CredentialResolver:
         except FileNotFoundError:
             # File not found is expected for first run
             return None
-        except (json.JSONDecodeError, KeyError, OSError) as e:
+        except (json.JSONDecodeError, KeyError, PermissionError, OSError) as e:
             logger.warning(f"Failed to load cached credentials: {e}")
             return None
         except Exception:
