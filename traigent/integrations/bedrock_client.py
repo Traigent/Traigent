@@ -22,6 +22,8 @@ from collections.abc import AsyncGenerator, Generator, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+_JSON_CONTENT_TYPE = "application/json"
+
 
 def _require_boto3():  # pragma: no cover - import guard
     try:
@@ -216,8 +218,8 @@ class BedrockChatClient:
 
         resp = client.invoke_model(
             modelId=model_id,
-            accept="application/json",
-            contentType="application/json",
+            accept=_JSON_CONTENT_TYPE,
+            contentType=_JSON_CONTENT_TYPE,
             body=json.dumps(payload),
         )
 
@@ -273,8 +275,8 @@ class BedrockChatClient:
 
         resp = client.invoke_model(
             modelId=model_id,
-            accept="application/json",
-            contentType="application/json",
+            accept=_JSON_CONTENT_TYPE,
+            contentType=_JSON_CONTENT_TYPE,
             body=json.dumps(payload),
         )
         raw_body = resp.get("body")
@@ -334,8 +336,8 @@ class BedrockChatClient:
         final_text_parts: list[str] = []
         resp = client.invoke_model_with_response_stream(
             modelId=model_id,
-            accept="application/json",
-            contentType="application/json",
+            accept=_JSON_CONTENT_TYPE,
+            contentType=_JSON_CONTENT_TYPE,
             body=json.dumps(payload),
         )
 
@@ -458,8 +460,8 @@ class BedrockChatClient:
         ) as client:
             resp = await client.invoke_model(
                 modelId=model_id,
-                accept="application/json",
-                contentType="application/json",
+                accept=_JSON_CONTENT_TYPE,
+                contentType=_JSON_CONTENT_TYPE,
                 body=json.dumps(payload),
             )
             raw_body = resp.get("body")
@@ -555,8 +557,8 @@ class BedrockChatClient:
         ) as client:
             resp = await client.invoke_model_with_response_stream(
                 modelId=model_id,
-                accept="application/json",
-                contentType="application/json",
+                accept=_JSON_CONTENT_TYPE,
+                contentType=_JSON_CONTENT_TYPE,
                 body=json.dumps(payload),
             )
             stream = resp.get("body")

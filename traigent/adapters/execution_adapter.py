@@ -11,6 +11,8 @@ from typing import Any, cast
 from traigent.config.types import ExecutionMode
 from traigent.evaluators.base import _accuracy_matches_after_unwrap
 
+_UNKNOWN = "<unknown>"
+
 logger = logging.getLogger(__name__)
 
 
@@ -240,8 +242,8 @@ class LocalExecutionAdapter(ExecutionAdapter):
                 "is configured for LocalExecutionAdapter; marking example "
                 "as failed. Provide a scoring_function for semantic scoring. "
                 "trial_id=%s example_index=%s",
-                trial_id or "<unknown>",
-                example_index if example_index is not None else "<unknown>",
+                trial_id or _UNKNOWN,
+                example_index if example_index is not None else _UNKNOWN,
             )
 
         else:
@@ -258,8 +260,8 @@ class LocalExecutionAdapter(ExecutionAdapter):
                 "example as failed and excluding it from accuracy. "
                 "trial_id=%s example_index=%s",
                 eval_type,
-                trial_id or "<unknown>",
-                example_index if example_index is not None else "<unknown>",
+                trial_id or _UNKNOWN,
+                example_index if example_index is not None else _UNKNOWN,
             )
 
         return result

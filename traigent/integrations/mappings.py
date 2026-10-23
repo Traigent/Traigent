@@ -19,6 +19,10 @@ IMPORTANT — constructor vs method params:
 
 from __future__ import annotations
 
+_HF_ASYNC_INFERENCE_CLIENT = "huggingface_hub.AsyncInferenceClient"
+
+_HF_INFERENCE_CLIENT = "huggingface_hub.InferenceClient"
+
 # Parameter mappings from Traigent canonical names to framework-specific parameter names.
 # Keys are fully-qualified class names, values are dicts mapping traigent_param -> framework_param
 PARAMETER_MAPPINGS: dict[str, dict[str, str]] = {
@@ -154,10 +158,10 @@ PARAMETER_MAPPINGS: dict[str, dict[str, str]] = {
     #
     # Generation params live ONLY in METHOD_MAPPINGS (to control which methods receive them)
     # and METHOD_PARAMETER_TRANSLATIONS (for max_tokens → max_new_tokens in text_generation).
-    "huggingface_hub.InferenceClient": {
+    _HF_INFERENCE_CLIENT: {
         "model": "model",
     },
-    "huggingface_hub.AsyncInferenceClient": {
+    _HF_ASYNC_INFERENCE_CLIENT: {
         "model": "model",
     },
     # PydanticAI mappings — discovery/documentation only.
@@ -325,7 +329,7 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
     # is applied per-method via METHOD_PARAMETER_TRANSLATIONS below; chat_completion needs
     # no translation because every param it accepts uses its canonical name (max_tokens is
     # native), so the identity fallback in _create_override_method handles it.
-    "huggingface_hub.InferenceClient": {
+    _HF_INFERENCE_CLIENT: {
         "text_generation": [
             "model",
             "max_tokens",
@@ -344,7 +348,7 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "stream",
         ],
     },
-    "huggingface_hub.AsyncInferenceClient": {
+    _HF_ASYNC_INFERENCE_CLIENT: {
         "text_generation": [
             "model",
             "max_tokens",
@@ -387,7 +391,7 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
 METHOD_PARAMETER_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
     # HuggingFace text_generation: the framework param is max_new_tokens, not max_tokens.
     # All other generation params use the canonical Traigent name (temperature, top_p, etc.).
-    "huggingface_hub.InferenceClient": {
+    _HF_INFERENCE_CLIENT: {
         "text_generation": {
             "max_tokens": "max_new_tokens",
         },
@@ -397,7 +401,7 @@ METHOD_PARAMETER_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
         # (chat_completion has no max_new_tokens kwarg). Keep this empty.
         "chat_completion": {},
     },
-    "huggingface_hub.AsyncInferenceClient": {
+    _HF_ASYNC_INFERENCE_CLIENT: {
         "text_generation": {
             "max_tokens": "max_new_tokens",
         },

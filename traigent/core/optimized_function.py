@@ -160,6 +160,8 @@ from traigent.utils.validation import (
     validate_objectives,
 )
 
+_NAME_WITH_DETAIL_FMT = "%s (%s)"
+
 logger = get_logger(__name__)
 
 # Guards every wrapper's exclusive slot (check-and-set of ``_exclusive_slot``
@@ -765,7 +767,9 @@ def _warn_cost_objective_partial_coverage(
     result_warnings = getattr(result, "warnings", None)
     if isinstance(result_warnings, list) and message not in result_warnings:
         result_warnings.append(message)
-    logger.warning("%s (%s)", message, COST_OBJECTIVE_PARTIAL_USAGE_WARNING_CODE)
+    logger.warning(
+        _NAME_WITH_DETAIL_FMT, message, COST_OBJECTIVE_PARTIAL_USAGE_WARNING_CODE
+    )
 
 
 def _no_usage_is_fatal() -> bool:
@@ -848,7 +852,7 @@ def _guard_cost_objective_without_usage(
         if _NO_USAGE_CAPTURED_MESSAGE not in result_warnings:
             result_warnings.append(_NO_USAGE_CAPTURED_MESSAGE)
     logger.warning(
-        "%s (%s)",
+        _NAME_WITH_DETAIL_FMT,
         _NO_USAGE_CAPTURED_MESSAGE,
         COST_OBJECTIVE_NO_USAGE_WARNING_CODE,
     )
@@ -3832,7 +3836,7 @@ class OptimizedFunction[**P, R]:
             result.warning_codes.append(code)
         if message not in result.warnings:
             result.warnings.append(message)
-        logger.warning("%s (%s)", message, code)
+        logger.warning(_NAME_WITH_DETAIL_FMT, message, code)
 
     def _attach_execution_budget_snapshot(
         self,

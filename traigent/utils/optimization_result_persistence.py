@@ -69,6 +69,8 @@ from traigent.api.types import (
     TrialStatus,
 )
 
+_UNNAMED = "<unnamed>"
+
 logger = logging.getLogger(__name__)
 
 #: Version stamped into every artifact written by a loader-aware writer. An
@@ -711,7 +713,7 @@ def _legacy_view(
         # absent, and those take dataclass defaults below.
         return dict(data), []
 
-    label = artifact_name or "<unnamed>"
+    label = artifact_name or _UNNAMED
     view: dict[str, Any] = {
         key: data[key]
         for key in (
@@ -959,7 +961,7 @@ def verify_envelope_version(
         ValueError: If exactly one of the two stamps is present, or if both are
             present and they disagree.
     """
-    label = f"'{artifact_name}'" if artifact_name else "<unnamed>"
+    label = f"'{artifact_name}'" if artifact_name else _UNNAMED
     outer_declared = SCHEMA_VERSION_KEY in envelope
     inner_declared = isinstance(payload, dict) and SCHEMA_VERSION_KEY in payload
 
@@ -1034,7 +1036,7 @@ def decode_result(
         RuntimeError: If this build's :data:`FIELD_INTRODUCED_IN` does not cover
             every restorable field — an SDK defect, not an artifact one.
     """
-    label = f"'{artifact_name}'" if artifact_name else "<unnamed>"
+    label = f"'{artifact_name}'" if artifact_name else _UNNAMED
     if not isinstance(data, dict):
         raise ValueError(
             f"Corrupted optimization result artifact {label}: "

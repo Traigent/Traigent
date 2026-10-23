@@ -9,10 +9,10 @@ OptimizedFunction to reduce class complexity.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
-import copy
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -58,6 +58,8 @@ from traigent.utils.secure_path import (
     validate_path,
     validate_user_path,
 )
+
+_SAVE_FAILED_MSG = "Failed to save optimization results"
 
 logger = get_logger(__name__)
 
@@ -1183,7 +1185,7 @@ class ConfigStateManager:
 
     @diag.boundary(
         diag.Category.RESULT_INVALID,
-        "Failed to save optimization results",
+        _SAVE_FAILED_MSG,
     )
     def save_optimization_results(self, path: str) -> None:
         """Save optimization results to file.
@@ -1241,7 +1243,7 @@ class ConfigStateManager:
         _redact_example_content_for_disk_save(result_dict)
 
         try:
-            with diag.fs_guard("Failed to save optimization results"):
+            with diag.fs_guard(_SAVE_FAILED_MSG):
                 output_path = Path(path).expanduser()
                 base_dir = (
                     output_path.parent
@@ -1257,7 +1259,7 @@ class ConfigStateManager:
             # a value's own __str__ can raise ConfigurationError(<customer text>):
             # only a refusal built by this SDK passes unchanged
             raise diag.refusal(
-                "Failed to save optimization results",
+                _SAVE_FAILED_MSG,
                 category=diag.Category.FILESYSTEM_FAILED,
                 cause=exc,
             ) from None
@@ -1265,7 +1267,7 @@ class ConfigStateManager:
             # PathTraversalError / secure_path's ValueError quote the path, and a
             # value's own __str__ can raise customer text: fixed refusal, type only
             raise diag.refusal(
-                "Failed to save optimization results",
+                _SAVE_FAILED_MSG,
                 category=diag.Category.FILESYSTEM_FAILED,
                 cause=exc,
             ) from None

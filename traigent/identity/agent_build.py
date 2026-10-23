@@ -60,6 +60,8 @@ from traigent.identity.content_identity import (
 from traigent.utils import fp2
 from traigent.utils.logging import get_logger
 
+_SHA256_PREFIX = "sha256:"
+
 logger = get_logger(__name__)
 
 __all__ = [
@@ -95,9 +97,9 @@ def _asset_digest(value: Any) -> str:
     if isinstance(value, str) and _SHA256_DIGEST_RE.fullmatch(value):
         return value
     if isinstance(value, str):
-        return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+        return _SHA256_PREFIX + hashlib.sha256(value.encode("utf-8")).hexdigest()
     if isinstance(value, (bytes, bytearray)):
-        return "sha256:" + hashlib.sha256(bytes(value)).hexdigest()
+        return _SHA256_PREFIX + hashlib.sha256(bytes(value)).hexdigest()
     try:
         # Structured tool / retriever specifications: the fp2 digest of the
         # JSON value, so key order never changes the version.
@@ -426,7 +428,7 @@ def _enumerate_helper_modules(
         except OSError:
             gaps.append("helper_module_unreadable")
             continue
-        digests[name] = "sha256:" + hashlib.sha256(data).hexdigest()
+        digests[name] = _SHA256_PREFIX + hashlib.sha256(data).hexdigest()
     return digests, set(files), gaps
 
 
@@ -435,7 +437,9 @@ def _dependency_lock_digest(project_root: Path) -> str | None:
         candidate = project_root / name
         try:
             if candidate.is_file():
-                return "sha256:" + hashlib.sha256(candidate.read_bytes()).hexdigest()
+                return (
+                    _SHA256_PREFIX + hashlib.sha256(candidate.read_bytes()).hexdigest()
+                )
         except OSError:
             return None
     return None

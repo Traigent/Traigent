@@ -33,6 +33,8 @@ from typing import Any, ClassVar
 
 from traigent.utils.logging import configure_litellm_logging
 
+_CHAT_COMPLETION_OBJECT = "chat.completion"
+
 logger = logging.getLogger(__name__)
 
 # Default mock delay in milliseconds (0 = no delay)
@@ -210,7 +212,7 @@ class MockAdapter:
         """
         return {
             "id": data.response_id,
-            "object": "chat.completion",
+            "object": _CHAT_COMPLETION_OBJECT,
             "created": int(time.time()),
             "model": data.model,
             "choices": [
@@ -319,7 +321,7 @@ class MockAdapter:
             logger.debug("LiteLLM ModelResponse unavailable, using fallback: %s", exc)
             return SimpleNamespace(
                 id=data.response_id,
-                object="chat.completion",
+                object=_CHAT_COMPLETION_OBJECT,
                 created=int(time.time()),
                 model=data.model,
                 choices=[
@@ -343,7 +345,7 @@ class MockAdapter:
         return ModelResponse(
             id=data.response_id,
             model=data.model,
-            object="chat.completion",
+            object=_CHAT_COMPLETION_OBJECT,
             choices=[
                 {
                     "index": 0,
