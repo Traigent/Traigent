@@ -252,11 +252,8 @@ class TestOpenAIDiscovery:
         discovery = OpenAIDiscovery()
 
         valid_models = [
-            "gpt-4",
             "gpt-4o",
-            "gpt-4-turbo",
-            "gpt-3.5-turbo",
-            "o1",
+            "gpt-4.1",
             "text-davinci-003",
             "code-davinci-002",
             "davinci",
@@ -271,7 +268,16 @@ class TestOpenAIDiscovery:
 
         # Retired o1 preview line (#1936/#1937): shape still matches the
         # pattern, but the canonical denylist rejects it.
-        for retired in ["o1-preview", "o1-mini", "o1-preview-2024-09-12"]:
+        for retired in [
+            "o1-preview",
+            "o1-mini",
+            "o1-preview-2024-09-12",
+            # Retired 2026-10-23
+            "gpt-4",
+            "gpt-4-turbo",
+            "gpt-3.5-turbo",
+            "o1",
+        ]:
             message = f"Retired model {retired} must not validate"
             assert not discovery.is_valid_model(retired), message
 

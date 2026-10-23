@@ -229,7 +229,7 @@ class TraigentClient:
 
         # Normalize configuration space and derive fallback defaults
         fallback_model = (
-            "gpt-3.5-turbo" if self.execution_mode == ExecutionMode.LOCAL else None
+            "gpt-5.6-terra" if self.execution_mode == ExecutionMode.LOCAL else None
         )
         configuration_space, config_defaults = self._normalise_configuration_space(
             configuration_space, fallback_model=fallback_model

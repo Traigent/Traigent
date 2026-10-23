@@ -249,7 +249,7 @@ class ParameterValidator:
             raise ValidationError(
                 "configuration_space cannot be empty. "
                 "You must define at least one parameter to optimize. "
-                "Example: {'model': ['gpt-3.5-turbo', 'gpt-4'], 'temperature': [0.3, 0.7]}"
+                "Example: {'model': ['gpt-5.6-terra', 'gpt-5.6-sol'], 'temperature': [0.3, 0.7]}"
             )
 
         for key, value in config_space.items():

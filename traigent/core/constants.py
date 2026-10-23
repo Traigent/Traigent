@@ -271,7 +271,6 @@ def get_model_config(model_name: str) -> dict[str, Any]:
             "max_tokens": TEACH_MAX_TOKENS  # GPT-4o can handle longer responses
         },
         "gpt-4o-mini": {"max_tokens": DEFAULT_MAX_TOKENS},
-        "gpt-3.5-turbo": {"max_tokens": 1000},  # GPT-3.5 has lower token limits
     }
 
     if model_name in model_overrides:

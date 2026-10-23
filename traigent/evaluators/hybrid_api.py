@@ -180,7 +180,7 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         result = await evaluator.evaluate(
             func=lambda: None,  # Not used in hybrid mode
-            config={"temperature": 0.7, "model": "gpt-4"},
+            config={"temperature": 0.7, "model": "gpt-5.6-sol"},
             dataset=my_dataset,
         )
     """

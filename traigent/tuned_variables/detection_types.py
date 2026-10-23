@@ -64,7 +64,7 @@ class SuggestedRange:
 
         Returns:
             String like ``Range(low=0.0, high=2.0)`` or
-            ``Choices(values=['gpt-4', 'gpt-3.5-turbo'])``.
+            ``Choices(values=['gpt-5.6-sol', 'gpt-5.6-terra'])``.
         """
         parts = [f"{k}={v!r}" for k, v in self.kwargs.items()]
         return f"{self.range_type}({', '.join(parts)})"

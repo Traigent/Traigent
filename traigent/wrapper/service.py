@@ -194,7 +194,7 @@ class TraigentService:
 
         @app.tvars
         def config_space():
-            return {"model": {"type": "enum", "values": ["gpt-4"]}}
+            return {"model": {"type": "enum", "values": ["gpt-5.6-sol"]}}
 
         @app.execute
         async def run(example_id, data, config):
@@ -317,7 +317,7 @@ class TraigentService:
             @app.tvars
             def config_space():
                 return {
-                    "model": {"type": "enum", "values": ["gpt-4"]},
+                    "model": {"type": "enum", "values": ["gpt-5.6-sol"]},
                     "temperature": {"type": "float", "range": [0.0, 2.0]},
                 }
         """
@@ -335,7 +335,7 @@ class TraigentService:
             @app.tunables
             def config_space():
                 return {
-                    "model": {"type": "enum", "values": ["gpt-4", "claude-3"]},
+                    "model": {"type": "enum", "values": ["gpt-5.6-sol", "claude-3"]},
                     "temperature": {"type": "float", "range": [0.0, 1.0]},
                 }
         """

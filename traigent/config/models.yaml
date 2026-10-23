@@ -32,29 +32,18 @@ openai:
     - gpt-4o-mini
     - gpt-4o-2024-11-20
     - gpt-4o-2024-08-06
-    - gpt-4o-2024-05-13
     - gpt-4o-mini-2024-07-18
     # O1 reasoning models. Retired preview line swept (#1936/#1937):
     # o1-preview / o1-mini (+ dated aliases) are no longer served by the
     # discovery fallback; explicit user references still validate via the
     # provider pattern below.
-    - o1
     # GPT-4 Turbo
-    - gpt-4-turbo
     - gpt-4-turbo-preview
-    - gpt-4-turbo-2024-04-09
-    - gpt-4-1106-preview
     - gpt-4-0125-preview
     # GPT-4 standard
-    - gpt-4
     - gpt-4-32k
     - gpt-4-0613
     - gpt-4-32k-0613
-    # GPT-3.5 Turbo
-    - gpt-3.5-turbo
-    - gpt-3.5-turbo-16k
-    - gpt-3.5-turbo-1106
-    - gpt-3.5-turbo-0125
     # Legacy models
     - text-davinci-003
     - text-davinci-002
@@ -122,9 +111,7 @@ azure_openai:
   known_models:
     # Azure uses deployment names, but also supports base model names
     # GPT-4 family
-    - gpt-4
     - gpt-4-32k
-    - gpt-4-turbo
     - gpt-4o
     - gpt-4o-mini
     # GPT-3.5 (Azure uses "35" not "3.5")

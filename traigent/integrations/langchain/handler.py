@@ -85,7 +85,7 @@ def trial_context(config: dict[str, Any]):
         config: Trial configuration dict (temperature, model, etc.)
 
     Example:
-        with trial_context({"temperature": 0.7, "model": "gpt-4"}):
+        with trial_context({"temperature": 0.7, "model": "gpt-5.6-sol"}):
             result = await app.ainvoke(inputs)
     """
     token = _current_trial_context.set(config)

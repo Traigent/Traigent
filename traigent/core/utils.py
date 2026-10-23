@@ -42,9 +42,9 @@ def safe_get_nested_attr(obj: Any, path: str, default: Any | None = None) -> Any
         Attribute value or default if path doesn't exist
 
     Example:
-        >>> response = type('Response', (), {'metadata': type('Meta', (), {'model': 'gpt-4'})})()
+        >>> response = type('Response', (), {'metadata': type('Meta', (), {'model': 'gpt-5.6-sol'})})()
         >>> safe_get_nested_attr(response, 'metadata.model', 'unknown')
-        'gpt-4'
+        'gpt-5.6-sol'
         >>> safe_get_nested_attr(response, 'metadata.missing', 'default')
         'default'
     """

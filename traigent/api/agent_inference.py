@@ -11,7 +11,7 @@ Example:
     >>> # Using explicit parameter agents
     >>> config = build_agent_configuration(
     ...     configuration_space={
-    ...         "model": Choices(["gpt-4"]),
+    ...         "model": Choices(["gpt-5.6-sol"]),
     ...         "temperature": Range(0.0, 1.0),
     ...     },
     ...     parameter_agents={"model": "financial", "temperature": "financial"},
@@ -78,7 +78,7 @@ def build_agent_configuration(
     Example:
         >>> # Method 1: Explicit agents
         >>> config = build_agent_configuration(
-        ...     configuration_space={"model": ["gpt-4"], "temp": (0, 1)},
+        ...     configuration_space={"model": ["gpt-5.6-sol"], "temp": (0, 1)},
         ...     explicit_agents={
         ...         "financial": AgentDefinition(
         ...             display_name="Financial",
@@ -89,14 +89,14 @@ def build_agent_configuration(
 
         >>> # Method 2: Per-parameter agents
         >>> config = build_agent_configuration(
-        ...     configuration_space={"model": ["gpt-4"], "temp": (0, 1)},
+        ...     configuration_space={"model": ["gpt-5.6-sol"], "temp": (0, 1)},
         ...     parameter_agents={"model": "financial", "temp": "financial"},
         ... )
 
         >>> # Method 3: Prefix-based inference
         >>> config = build_agent_configuration(
         ...     configuration_space={
-        ...         "financial_model": ["gpt-4"],
+        ...         "financial_model": ["gpt-5.6-sol"],
         ...         "legal_model": ["claude"],
         ...     },
         ...     agent_prefixes=["financial", "legal"],
@@ -162,7 +162,7 @@ def extract_parameter_agents(
     Example:
         >>> from traigent.api.parameter_ranges import Choices, Range
         >>> config_space = {
-        ...     "model": Choices(["gpt-4"], agent="financial"),
+        ...     "model": Choices(["gpt-5.6-sol"], agent="financial"),
         ...     "temperature": Range(0.0, 1.0, agent="financial"),
         ...     "max_tokens": Range(100, 4096),  # No agent
         ... }

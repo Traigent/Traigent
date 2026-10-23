@@ -370,7 +370,7 @@ class SeamlessParameterProvider(ConfigurationProvider):
     Example:
         >>> @traigent.optimize(
         ...     injection_mode="seamless",
-        ...     configuration_space={"model": ["gpt-3.5", "gpt-4"]}
+        ...     configuration_space={"model": ["gpt-3.5", "gpt-5.6-sol"]}
         ... )
         ... def my_function():
         ...     model = "gpt-3.5"  # Traigent will override this

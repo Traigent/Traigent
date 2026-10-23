@@ -1762,7 +1762,7 @@ class OptimizedFunction[**P, R]:
             raise ValueError(
                 "Configuration space cannot be empty. Please specify at least one parameter to optimize "
                 "in the @traigent.optimize decorator. Example: configuration_space={'temperature': [0.0, 0.5, 1.0], "
-                "'model': ['gpt-3.5-turbo', 'gpt-4']}"
+                "'model': ['gpt-5.6-terra', 'gpt-5.6-sol']}"
             )
 
     def _allows_empty_configuration_space(self) -> bool:
