@@ -60,7 +60,7 @@ launch_playground()
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.12+
 - traigent >= 0.9.0
 - streamlit >= 1.28.0
 - plotly >= 5.17.0
