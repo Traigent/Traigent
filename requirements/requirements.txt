@@ -21,3 +21,4 @@ tenacity>=8.1.0
 rank-bm25
 psutil>=5.8.0
 pydantic>=2.0.0
+traigent-schema==7.0.0

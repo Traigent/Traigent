@@ -52,6 +52,12 @@ dependencies = [
     "psutil>=5.8.0",
     # Required by API decorators and config validation
     "pydantic>=2.0.0",
+    # Published contract package: the certification verifier (`traigent certify
+    # verify`) and the economics telemetry contract fingerprint both read it, and
+    # the verifier fails closed unless the installed non-claim catalog is the one
+    # the certificate was issued against. Exact pin on purpose (normal PyPI
+    # requirement, never a direct URL); keep in step with scripts/ci/schema-pin.txt.
+    "traigent-schema==7.0.0",
 ]
 
 [project.optional-dependencies]
@@ -145,15 +151,11 @@ mcp = [
     "mcp>=1.30.0,<3.0.0",  # CVE-2026-59950 (websocket Host/Origin), CVE-2026-52870 (task-handler session scoping), CVE-2026-59951
 ]
 
-# NOTE: there is deliberately no extra here for the schema-contract package.
-#
-# PyPI rejects any distribution whose metadata contains a direct URL
-# reference, including one nested in an optional extra, so such a pin cannot
-# be declared in this file.
-#
-# The pin lives in scripts/ci/schema-pin.txt, which is not shipped in the
-# sdist. CI lanes that need it install it with
-# `pip install -r scripts/ci/schema-pin.txt`.
+# NOTE: traigent-schema is a core dependency (see `dependencies` above), pinned
+# to the exact PyPI release. PyPI rejects any distribution whose metadata contains
+# a direct URL reference (PEP 508 `name @ url`), so a git/commit pin can never be
+# declared here. The internal-lane commit pin lives in scripts/ci/schema-pin.txt
+# (not shipped in the sdist) and must resolve to the same contract as the PyPI pin.
 
 # Testing dependencies
 test = [

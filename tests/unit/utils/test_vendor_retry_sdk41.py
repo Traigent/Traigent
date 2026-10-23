@@ -376,6 +376,7 @@ def _lifecycle_with(side_effect):
 
 async def _run_exit_path(exc):
     from unittest.mock import AsyncMock
+
     from traigent.utils.langchain_interceptor import record_vendor_attempt
 
     async def evaluate(*a, **k):
@@ -560,8 +561,8 @@ def test_error_type_is_closed():
 
 
 def test_vendor_wait_forms():
-    from email.utils import format_datetime
     from datetime import UTC, datetime, timedelta
+    from email.utils import format_datetime
 
     from traigent.utils.vendor_retry import vendor_wait_seconds
 

@@ -93,7 +93,8 @@ single script pasted in full at the bottom of this section.
 
 ## Source
 
-`TraigentSchema@321d98133645d343297545a155b9549650e3152d`
+`TraigentSchema@7104839ae6d748e852b1cb584312cf86d1f0f2db` (tag `v7.0.0`, = PyPI
+`traigent-schema==7.0.0`; regenerated 2026-10-23, previously 321d981 / d5d0cb6)
 (`tests/test_agent_quality_verifier.py`'s `build_agent_quality_bundle`,
 `build_abstained_agent_quality_bundle`, `build_agent_quality_context`,
 `_GV_PROCESS_RECORD_BUNDLE`/`_GV_PROCESS_RECORD_CONTEXT`, and
@@ -129,12 +130,13 @@ serialized.
 ## File sha256
 
 ```
-7f4a4183005222718c46b09d151d34401293f9bae271e9821646381b96853325  agent_quality_abstained_bundle.json
+3347f52137edab77354c88c1b9bc1457be611337fcff833e3d6387a8f55663f0  agent_quality_abstained_bundle.json
 fe30802d9a98da4dac8debcea9e82ea0a0d8954d074fecffa1e87780b2af3ee0  agent_quality_anchor.json
-e025e70a81fcca48219beac3f118c31cc9f5736f2ddffda04395c2fc190ecdc0  agent_quality_bundle.json
-b572de306fd86a8f2d19692b85fbe10d5da568ecbe20a8dcc7e3abb112b587be  agent_quality_bundle_tamper_interval_minus1.json
-3b21b1f4b1bb0dfc2941947ac7d25029db1db15f5fc42a0274cf076e130b2b4a  agent_quality_bundle_tamper_interval_plus1.json
-e36c20f483c9fa10f4e0a909846fdbe6f9d1bf3653bc02e66e42e3146d068685  agent_quality_bundle_tamper_signature.json
+1136a996d6a0b7c2fbbe033ee809d271d527f6dc627ff4fddf34691ac89aa69b  agent_quality_bundle.json
+e025e70a81fcca48219beac3f118c31cc9f5736f2ddffda04395c2fc190ecdc0  agent_quality_bundle_legacy_d5d0cb6.json
+f36eff6559b3a28dc0442c9b203ce1ef7b28b113a1acb8bb296f86d0c61091d9  agent_quality_bundle_tamper_interval_minus1.json
+6884f39b225839b44077f1d0e8144ba328f601e7979f7fe2420b6afa55e5fa19  agent_quality_bundle_tamper_interval_plus1.json
+44808e9310dd6431b8aac712cb38f51c17f98ac6bb83952fdbe23cdf08f68ade  agent_quality_bundle_tamper_signature.json
 ac9b74d6259a1984ddd6ca9a288ccc256abb2dc6de08b2d4eccc135d30a02b44  agent_quality_context_checked.json
 c92f5cd4a60db3e3b0889b001f77e5865c24d2a5e9315095e52868fcecf9f7f9  agent_quality_context_tamper_commitment_ref.json
 9c7469a6eadfd6282b85d9dbdf64c57d7bc9ee65e1a0d500926692b47aba35bc  agent_quality_context_tamper_scope.json
@@ -144,6 +146,13 @@ f8da998d4593c1daa730fd953063eb0f913e2fad616b0495dde068b730760d62  agent_quality_
 fe30802d9a98da4dac8debcea9e82ea0a0d8954d074fecffa1e87780b2af3ee0  agent_quality_trust_anchor.json
 96babef52699a1662bd3240b84d970ce604c280df984ddd71adc457d47f40284  agent_quality_trust_status_active.json
 ```
+
+`agent_quality_bundle_legacy_d5d0cb6.json` is the one NON-regenerated file: the
+golden bundle exactly as issued against TraigentSchema d5d0cb6 (pre-7.0.0 non-claim
+wording "measured"). It is kept as a NEGATIVE fixture; under traigent-schema 7.0.0
+the verifier must refuse it with `NON_CLAIM_SET_MISMATCH`
+(`tests/unit/cli/test_certify_agent_quality.py::test_legacy_non_claim_wording_bundle_is_refused_with_non_claim_set_mismatch`).
+Never regenerate it and never add tolerance for the old wording.
 
 Note: `agent_quality_anchor.json` and `agent_quality_trust_anchor.json`
 share a sha256 (both are the same `TrustAnchorKeyV1` payload). This is
@@ -170,7 +179,7 @@ signs `agent_quality_trust_status_active.json` -- and
 """Generator for tests/fixtures/certification/agent_quality_*.json.
 
 Run from inside a scratch clone of TraigentSchema checked out at
-321d98133645d343297545a155b9549650e3152d, with that clone's venv (which has
+7104839ae6d748e852b1cb584312cf86d1f0f2db (v7.0.0; `git archive` is enough), with that clone's venv (which has
 traigent-schema installed at the same pin) active, and the SDK worktree's
 scripts/ci/schema-pin.txt already updated to that same commit.
 

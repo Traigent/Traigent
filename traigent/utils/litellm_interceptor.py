@@ -18,9 +18,9 @@ from collections.abc import Callable
 from typing import Any
 
 from traigent.utils.langchain_interceptor import (
-    classify_import_failure,
     capture_langchain_response,
     capture_observed_response,
+    classify_import_failure,
     instrumented_provider_call,
 )
 from traigent.utils.logging import configure_litellm_logging, get_logger

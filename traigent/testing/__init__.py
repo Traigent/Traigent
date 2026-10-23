@@ -115,7 +115,6 @@ def _install_mock_interceptors() -> None:
         from traigent.utils.litellm_interceptor import (
             patch_litellm_for_metadata_capture,
         )
-
         from traigent.utils.mock_transport_guard import (
             install_mock_transport_guard,
         )

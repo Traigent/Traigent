@@ -10,9 +10,9 @@ it is not active.
 from __future__ import annotations
 
 import threading
-from contextvars import ContextVar
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 
 __all__ = ["inject_vendor_failures"]
