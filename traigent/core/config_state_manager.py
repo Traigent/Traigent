@@ -59,8 +59,6 @@ from traigent.utils.secure_path import (
     validate_user_path,
 )
 
-_SAVE_FAILED_MSG = "Failed to save optimization results"
-
 logger = get_logger(__name__)
 
 # Legacy files the user named themselves. A discovered dev log is not one of them.
@@ -1185,7 +1183,7 @@ class ConfigStateManager:
 
     @diag.boundary(
         diag.Category.RESULT_INVALID,
-        _SAVE_FAILED_MSG,
+        "Failed to save optimization results",
     )
     def save_optimization_results(self, path: str) -> None:
         """Save optimization results to file.
@@ -1243,7 +1241,7 @@ class ConfigStateManager:
         _redact_example_content_for_disk_save(result_dict)
 
         try:
-            with diag.fs_guard(_SAVE_FAILED_MSG):
+            with diag.fs_guard("Failed to save optimization results"):
                 output_path = Path(path).expanduser()
                 base_dir = (
                     output_path.parent
@@ -1259,7 +1257,7 @@ class ConfigStateManager:
             # a value's own __str__ can raise ConfigurationError(<customer text>):
             # only a refusal built by this SDK passes unchanged
             raise diag.refusal(
-                _SAVE_FAILED_MSG,
+                "Failed to save optimization results",
                 category=diag.Category.FILESYSTEM_FAILED,
                 cause=exc,
             ) from None
@@ -1267,7 +1265,7 @@ class ConfigStateManager:
             # PathTraversalError / secure_path's ValueError quote the path, and a
             # value's own __str__ can raise customer text: fixed refusal, type only
             raise diag.refusal(
-                _SAVE_FAILED_MSG,
+                "Failed to save optimization results",
                 category=diag.Category.FILESYSTEM_FAILED,
                 cause=exc,
             ) from None
