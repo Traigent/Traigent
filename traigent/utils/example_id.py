@@ -125,7 +125,7 @@ TRIAL_ROW_INDICES_ATTR = "_traigent_row_indices"
 _StampedResult = TypeVar("_StampedResult")
 
 
-def stamp_row_index(result: _StampedResult, index: int) -> _StampedResult:
+def stamp_row_index[StampedResult](result: StampedResult, index: int) -> StampedResult:
     """Record the true dataset row on a freshly created example result."""
     try:
         setattr(result, ROW_INDEX_ATTR, int(index))

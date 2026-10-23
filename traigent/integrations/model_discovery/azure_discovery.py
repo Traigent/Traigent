@@ -23,9 +23,8 @@ AZURE_MODEL_PATTERN = r"^(gpt-[0-9]|o[0-9]|text-|code-|davinci|curie|babbage|ada
 # Known Azure OpenAI base models (underlying models, not deployments)
 KNOWN_AZURE_BASE_MODELS = [
     # GPT-4 family
-    "gpt-4",
+    # gpt-4 / gpt-4-turbo retired 2026-10-23 (see retired_models).
     "gpt-4-32k",
-    "gpt-4-turbo",
     "gpt-4o",
     "gpt-4o-mini",
     # GPT-3.5 family

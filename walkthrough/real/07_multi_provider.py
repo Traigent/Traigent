@@ -79,9 +79,9 @@ traigent.initialize(offline=True, minimal_logging=True)
 # Models organized by provider (valid model names: https://models.litellm.ai/)
 OPENAI_MODELS = ["gpt-4.1-mini", "gpt-4.1"]
 ANTHROPIC_MODELS = ["claude-haiku-4-5-20251001"]
-GOOGLE_MODELS = ["gemini-3.7-flash", "gemini-3.8-flash"]
+GOOGLE_MODELS = ["gemini-3.8-flash"]
 
-# All models we want to potentially use (5 models × 2 temperatures = 10 trials)
+# All models we want to potentially use (4 models × 2 temperatures = 8 trials)
 ALL_MODELS = OPENAI_MODELS + ANTHROPIC_MODELS + GOOGLE_MODELS
 
 # Validate all providers using core validation
@@ -144,7 +144,7 @@ def create_llm_client(model: str, temperature: float) -> Any:
         raise ValueError(f"Unknown provider for model: {model}")
 
 
-# Use 10-question dataset for ~100 API calls (5 models × 2 temps × 10 examples)
+# Use 10-question dataset for ~80 API calls (4 models × 2 temps × 10 examples)
 # For more thorough evaluation, use "simple_questions.jsonl" (20 examples, ~200 calls)
 @traigent.optimize(
     eval_dataset=str(DATASETS / "simple_questions_10.jsonl"),
@@ -224,7 +224,7 @@ async def main() -> None:
 
     # Calculate total trials dynamically based on configuration space
     # This ensures grid search covers all combinations: models × temperatures
-    # Example: 5 models × 2 temperatures = 10 total trials
+    # Example: 4 models × 2 temperatures = 8 total trials
     total_trials = len(CONFIG_SPACE["model"]) * len(CONFIG_SPACE["temperature"])
 
     record_runtime = os.getenv("TRAIGENT_RECORD_RUNTIME", "").lower() in (

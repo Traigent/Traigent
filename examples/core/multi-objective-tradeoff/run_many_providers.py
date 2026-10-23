@@ -764,7 +764,7 @@ def _invoke_model(
             # "anthropic/claude-3-5-haiku-20241022",
             # "anthropic/claude-haiku-4-5-20251001",
             # "anthropic/claude-sonnet-4",
-            # "anthropic/claude-sonnet-4-5",
+            # "anthropic/claude-sonnet-4-6",
             # "openai/gpt-4.1-mini",
             "openai/gpt-4.1-mini",
             # "openai/gpt-5o-mini",

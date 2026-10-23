@@ -138,7 +138,7 @@ def enable_openai_optimization(client_types: list[str] | None = None) -> None:
         def my_openai_app():
             client = openai.OpenAI()
             response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-5.6-terra",
                 messages=[{"role": "user", "content": "Hello!"}]
             )
             return response.choices[0].message.content

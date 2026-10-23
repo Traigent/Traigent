@@ -13,7 +13,7 @@ import asyncio
 import os
 import time
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from traigent.api.types import TrialResult
 from traigent.api.types import TrialStatus as SDKTrialStatus
@@ -25,9 +25,9 @@ from traigent.utils.logging import get_logger
 if TYPE_CHECKING:
     from traigent.cloud.models import TrialStatus
 
-    TrialStatusLike: TypeAlias = SDKTrialStatus | TrialStatus
+    type TrialStatusLike = SDKTrialStatus | TrialStatus
 else:
-    TrialStatusLike: TypeAlias = Any
+    type TrialStatusLike = Any
 
 # Cloud models - required at runtime for this optimizer
 try:

@@ -109,7 +109,7 @@ def create_mcp_fixtures():
         "agent_spec": {
             "name": "test_agent",
             "type": "conversational",
-            "model": "gpt-3.5-turbo",
+            "model": "gpt-5.6-terra",
         },
         "expected_validation": {"is_valid": True, "errors": []},
     }

@@ -119,7 +119,7 @@ _CANONICAL_PRESETS: dict[str, dict[str, Any]] = {
     "model": {
         "range_type": "Choices",
         "kwargs": {
-            "values": ["gpt-4o-mini", "gpt-4o", "gpt-5.4-mini", "gpt-5.4-nano"],
+            "values": ["gpt-4o-mini", "gpt-4o", "gpt-5.4-mini", "gpt-5-nano"],
         },
     },
     "prompting_strategy": {

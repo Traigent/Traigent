@@ -61,3 +61,144 @@ def test_merge_adds_missing_without_overriding(monkeypatch):
     assert litellm.model_cost["openrouter/live/keep-me"] is sentinel
     assert cc.ensure_bundled_provider_prices() == 0
     assert not cc.model_pricing_resolves("openrouter/invented/zz-none")
+
+
+def test_sdk_openrouter_snapshot_is_valid_and_declared_in_package_data():
+    """The SDK-owned snapshot exists, parses, and ships in the wheel."""
+    import tomllib
+
+    from traigent.utils import cost_calculator as cc
+
+    snapshot = cc._load_sdk_openrouter_snapshot()
+    assert len(snapshot) > 100
+    assert all(k.startswith("openrouter/") for k in snapshot)
+
+    root = Path(__file__).resolve().parents[3]
+    package_data = tomllib.loads((root / "pyproject.toml").read_text("utf-8"))["tool"][
+        "setuptools"
+    ]["package-data"]["traigent"]
+    assert "utils/openrouter_prices_litellm_1_103_4.json" in package_data
+    rel = cc._SDK_OPENROUTER_SNAPSHOT.relative_to(root / "traigent").as_posix()
+    assert rel in package_data
+
+
+def test_litellm_price_wins_over_sdk_snapshot(monkeypatch):
+    from traigent.utils import cost_calculator as cc
+
+    key = next(iter(cc._load_sdk_openrouter_snapshot()))
+    sentinel = {"input_cost_per_token": 9.0, "output_cost_per_token": 9.0}
+    monkeypatch.setattr(litellm, "model_cost", {key: sentinel})
+    cc.ensure_bundled_provider_prices()
+    assert litellm.model_cost[key] is sentinel
+
+
+def _drop_litellm_price_caches():
+    """litellm caches model info per id; clear it when the table is swapped."""
+    from litellm import utils as litellm_utils
+
+    invalidate = getattr(litellm_utils, "_invalidate_model_cost_lowercase_map", None)
+    if invalidate is not None:
+        invalidate()
+    else:
+        litellm.get_model_info.cache_clear()
+
+
+@pytest.fixture
+def _clean_litellm_caches():
+    _drop_litellm_price_caches()
+    yield
+    _drop_litellm_price_caches()
+
+
+def _snapshot_only_table(monkeypatch):
+    """litellm table without openrouter/* and no litellm-bundled openrouter merge,
+    so every openrouter/* entry after the merge comes from the SDK snapshot."""
+    from litellm.litellm_core_utils.get_model_cost_map import GetModelCostMap
+
+    from traigent.utils import cost_calculator as cc
+
+    table = {
+        k: v for k, v in litellm.model_cost.items() if not k.startswith("openrouter/")
+    }
+    monkeypatch.setattr(litellm, "model_cost", table)
+    monkeypatch.setattr(
+        GetModelCostMap, "load_local_model_cost_map", staticmethod(lambda: {})
+    )
+    cc.ensure_bundled_provider_prices()
+    snap_key = next(k for k in table if k.startswith("openrouter/"))
+    return cc, table, snap_key
+
+
+def test_provenance_names_snapshot_for_supplied_models_only(
+    monkeypatch, _clean_litellm_caches
+):
+    cc, table, snap_key = _snapshot_only_table(monkeypatch)
+    table["openrouter/live/held-by-litellm"] = {
+        "input_cost_per_token": 1e-6,
+        "output_cost_per_token": 2e-6,
+    }
+    assert cc.get_model_token_pricing(snap_key)[2] == "sdk_snapshot"
+    assert cc.get_model_token_pricing("openrouter/live/held-by-litellm")[2] == "litellm"
+    assert cc.get_model_token_pricing("gpt-4.1-mini")[2] == "litellm"
+    prov = cc.get_pricing_provenance()
+    assert prov["sdk_snapshot_version"].startswith("litellm-")
+    assert prov["sdk_snapshot_models"] > 0
+
+
+def test_register_model_override_of_snapshot_key_reports_litellm(
+    monkeypatch, _clean_litellm_caches
+):
+    """litellm's real register_model() updates entries in place and clears its caches."""
+    cc, table, snap_key = _snapshot_only_table(monkeypatch)
+    snap_in = cc._sdk_snapshot_supplied[snap_key]["input_cost_per_token"]
+    snap_out = cc._sdk_snapshot_supplied[snap_key]["output_cost_per_token"]
+    inp, out, source = cc.get_model_token_pricing(snap_key)
+    assert (inp, out, source) == (snap_in, snap_out, "sdk_snapshot")
+    before = cc.get_pricing_provenance()["sdk_snapshot_models"]
+
+    litellm.register_model(
+        {
+            snap_key: {
+                "input_cost_per_token": 7e-6,
+                "output_cost_per_token": 8e-6,
+                "litellm_provider": "openrouter",
+                "mode": "chat",
+            }
+        }
+    )
+    inp, out, source = cc.get_model_token_pricing(snap_key)
+    assert (inp, out, source) == (7e-6, 8e-6, "litellm")
+    assert cc.get_pricing_provenance()["sdk_snapshot_models"] == before - 1
+
+
+def test_label_comes_from_the_candidate_that_supplied_the_rates(
+    monkeypatch, _clean_litellm_caches
+):
+    """First candidate fails to price; a later snapshot-supplied one answers."""
+    cc, table, snap_key = _snapshot_only_table(monkeypatch)
+    # A table-present, litellm-held first candidate that cost_per_token rejects.
+    table["zz-first-fails"] = {"input_cost_per_token": 1e-6}
+    real = litellm.cost_per_token
+
+    def flaky(model=None, **kw):
+        if model == "zz-first-fails":
+            raise ValueError("not mapped")
+        return real(model=model, **kw)
+
+    monkeypatch.setattr(litellm, "cost_per_token", flaky)
+    monkeypatch.setattr(
+        cc, "_build_model_candidates", lambda name: ["zz-first-fails", snap_key]
+    )
+    assert cc.get_model_token_pricing("anything")[2] == "sdk_snapshot"
+
+
+def test_label_follows_the_rates_returned_not_the_table_entry(
+    monkeypatch, _clean_litellm_caches
+):
+    """If litellm returns rates other than the snapshot's (e.g. cached model
+    info) while the table entry still holds the snapshot values, the rates are
+    not the snapshot's, so the label must say litellm."""
+    cc, table, snap_key = _snapshot_only_table(monkeypatch)
+    monkeypatch.setattr(litellm, "cost_per_token", lambda **kw: (3e-6, 4e-6))
+    monkeypatch.setattr(cc, "_build_model_candidates", lambda name: [snap_key])
+    assert cc.get_model_token_pricing("x") == (3e-6, 4e-6, "litellm")

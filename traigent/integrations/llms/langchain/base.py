@@ -142,7 +142,7 @@ def enable_langchain_optimization(llm_types: list[str] | None = None) -> None:
         # Your existing LangChain code works unchanged
         @traigent.optimize()
         def my_langchain_app():
-            llm = ChatOpenAI(model="gpt-3.5-turbo")
+            llm = ChatOpenAI(model="gpt-5.6-terra")
             return llm.invoke("Hello world")
 
         # Traigent will automatically test different models/parameters

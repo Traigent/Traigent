@@ -607,17 +607,17 @@ def ErrorContext(operation: str, retryable: bool = True):
         raise
 
 
-def retry_http_request(func: Callable[..., T]) -> Callable[..., T]:
+def retry_http_request[T](func: Callable[..., T]) -> Callable[..., T]:
     """Decorator specifically for HTTP requests."""
     return cast(Callable[..., T], retry_with_config(HTTP_RETRY_CONFIG)(func))
 
 
-def retry_cloud_api(func: Callable[..., T]) -> Callable[..., T]:
+def retry_cloud_api[T](func: Callable[..., T]) -> Callable[..., T]:
     """Decorator specifically for cloud API calls."""
     return cast(Callable[..., T], retry_with_config(CLOUD_API_RETRY_CONFIG)(func))
 
 
-def retry_database_operation(func: Callable[..., T]) -> Callable[..., T]:
+def retry_database_operation[T](func: Callable[..., T]) -> Callable[..., T]:
     """Decorator specifically for database operations."""
     return cast(Callable[..., T], retry_with_config(DATABASE_RETRY_CONFIG)(func))
 

@@ -331,14 +331,16 @@ class TestSessionSharingUnderLoad:
 
                 # Check for corruption
                 usage_headers = usage_kwargs.get("headers", {})
-                creation_headers = headers
 
-                if usage_headers.get("Authorization") != creation_headers.get(
-                    "Authorization"
-                ):
+                # Credentials travel per request, never as session defaults (#2716):
+                # the session is built without Authorization and every request
+                # carries the current credential.
+                if "Authorization" in headers:
+                    corruption_detected.append({"session_default_auth": True})
+                if usage_headers.get("Authorization") != f"Bearer {api_key}":
                     corruption_detected.append(
                         {
-                            "creation_auth": creation_headers.get("Authorization"),
+                            "expected_auth": f"Bearer {api_key}",
                             "usage_auth": usage_headers.get("Authorization"),
                         }
                     )

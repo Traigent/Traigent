@@ -18,7 +18,7 @@ a knob effectuates, not how it binds).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Generic, TypeVar
+from typing import Any, TypeVar
 
 from traigent.api.parameter_ranges import ParameterRange
 
@@ -32,7 +32,7 @@ TValue = TypeVar("TValue")
 
 
 @dataclass(frozen=True, slots=True)
-class Tuned(Generic[TValue]):
+class Tuned[TValue]:
     """Optimizer-visible binding over a searched domain."""
 
     range: ParameterRange
@@ -40,7 +40,7 @@ class Tuned(Generic[TValue]):
 
 
 @dataclass(frozen=True, slots=True)
-class Fixed(Generic[TValue]):
+class Fixed[TValue]:
     """Runtime-supplied constant binding; never searched."""
 
     value: TValue
@@ -68,7 +68,7 @@ class Ref:
 
 
 @dataclass(frozen=True, slots=True)
-class Calibrated(Generic[TValue]):
+class Calibrated[TValue]:
     """A CVAR binding: value produced by a calibrator, certificate-backed.
 
     ``fallback`` may only be consumed OUTSIDE strict evidence modes, and its
@@ -109,7 +109,7 @@ Binding = Tuned[TValue] | Fixed[TValue] | Calibrated[TValue]
 
 
 @dataclass(frozen=True, slots=True)
-class Knob(Generic[TValue]):
+class Knob[TValue]:
     """A named configuration variable with exactly one typed binding."""
 
     name: str

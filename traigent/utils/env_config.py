@@ -7,10 +7,10 @@ This module provides secure access to environment variables and configuration.
 
 import os
 import secrets
+import threading
 import warnings
 from collections.abc import Iterator
 from contextlib import contextmanager
-import threading
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast, overload
@@ -159,7 +159,7 @@ def _find_bounded_project_dotenv() -> str:
     """
     try:
         cwd = Path.cwd()
-    except (FileNotFoundError, OSError):
+    except OSError:
         return ""
 
     boundary = _find_project_boundary(cwd)

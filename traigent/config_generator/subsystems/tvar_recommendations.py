@@ -278,7 +278,7 @@ def _without_comments(source_code: str) -> str:
             if tok.type != tokenize.COMMENT
         ]
         return " ".join(tok.string for tok in tokens)
-    except (tokenize.TokenError, IndentationError, SyntaxError):
+    except (tokenize.TokenError, SyntaxError):
         # Not tokenizable (partial or non-Python source): fall back to a
         # line-wise strip of text after "#" that is outside quotes.
         return "\n".join(

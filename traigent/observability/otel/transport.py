@@ -62,7 +62,7 @@ class UrllibTransport:
                 body=data,
                 retry_after=_parse_retry_after(exc.headers),
             )
-        except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        except OSError as exc:
             raise TransportError(type(exc).__name__) from None
         except Exception as exc:  # http.client errors etc.
             raise TransportError(type(exc).__name__) from None

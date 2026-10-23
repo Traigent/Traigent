@@ -238,7 +238,7 @@ def extract_json_block(text: str) -> Any:
             candidate = candidate[first_newline + 1 : closing_fence].strip()
     try:
         return json.loads(candidate)
-    except (ValueError, json.JSONDecodeError):
+    except ValueError:
         # Fall back to the first {...} or [...] span located by index, not regex.
         obj_start = candidate.find("{")
         arr_start = candidate.find("[")
@@ -253,7 +253,7 @@ def extract_json_block(text: str) -> Any:
             return None
         try:
             return json.loads(candidate[start : end + 1])
-        except (ValueError, json.JSONDecodeError):
+        except ValueError:
             return None
 
 

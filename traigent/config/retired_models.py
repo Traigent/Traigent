@@ -31,6 +31,26 @@ RETIRED_MODEL_IDS: frozenset[str] = frozenset(
         "o1-mini",
         "o1-preview-2024-09-12",
         "o1-mini-2024-09-12",
+        # OpenAI deprecations, retired 2026-10-23. Replacements: gpt-5.6-terra
+        # (gpt-3.5-turbo family, o4-mini), gpt-5.6-sol (gpt-4, gpt-4-turbo,
+        # gpt-4o-2024-05-13, o1, o1-pro, o3-mini), gpt-5.6-luna (gpt-4.1-nano).
+        # gpt-4o, gpt-4o-mini, gpt-4.1 and gpt-4.1-mini retire 2027-01-14 and
+        # stay valid. Membership is exact-match on the normalized ID (no
+        # prefix matching), so "gpt-4" does not catch "gpt-4o" / "gpt-4.1".
+        "gpt-3.5-turbo",
+        "gpt-3.5-turbo-16k",
+        "gpt-3.5-turbo-1106",
+        "gpt-3.5-turbo-0125",
+        "gpt-4",
+        "gpt-4-1106-preview",
+        "gpt-4-turbo",
+        "gpt-4-turbo-2024-04-09",
+        "gpt-4o-2024-05-13",
+        "o1",
+        "o1-pro",
+        "o3-mini",
+        "o4-mini",
+        "gpt-4.1-nano",
         # Anthropic Claude 3 Opus (retirement track), incl. -latest alias
         "claude-3-opus-20240229",
         "claude-3-opus-latest",

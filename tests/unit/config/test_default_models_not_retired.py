@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 from traigent.config.retired_models import (
     is_retired_model,
 )
@@ -35,9 +34,9 @@ def test_default_model_tables_have_no_retired_models() -> None:
                 for m in Choices.model(provider=provider, tier=tier).values
                 if is_retired_model(m)
             ]
-    # Shut down by the provider (gemini-2.0-flash 2026-06-01) or within days
-    # (gpt-3.5-turbo 2026-10-23) but still accepted for explicit references,
-    # so not in the runtime denylist.
+    # Shut down by the provider (gemini-2.0-flash 2026-06-01) but still
+    # accepted for explicit references, so not in the runtime denylist.
+    # (gpt-3.5-turbo, retired 2026-10-23, is now in the denylist too.)
     offenders += [m for t in tables for m in t if m in _SHUT_DOWN_DEFAULTS]
     assert not offenders, sorted(set(offenders))
 

@@ -87,8 +87,10 @@ class TestSessionExpiryAndRefresh:
                     require(len(session_creations) == 2)
 
                     # Verify both sessions had proper headers
+                    # Credentials are sent per request, never as session defaults (#2716).
                     for headers in session_creations:
-                        require("X-API-Key" in headers or "Authorization" in headers)
+                        require("X-API-Key" not in headers)
+                        require("Authorization" not in headers)
 
     @pytest.mark.asyncio
     async def test_token_refresh_on_401_error(self):
@@ -549,6 +551,7 @@ class TestBackendClientAuthLifecycle:
                 }
 
         session_creations = []
+        request_headers: list[dict[str, str]] = []
 
         def mock_session_constructor(*args, **kwargs):
             session_creations.append(kwargs.get("headers", {}))
@@ -557,6 +560,7 @@ class TestBackendClientAuthLifecycle:
 
             # Create different responses for different operations
             def mock_post(*args, **kwargs):
+                request_headers.append(kwargs.get("headers", {}))
                 mock_response = Mock()
                 # Check URL to determine correct status code
                 url = args[0] if args else ""
@@ -581,6 +585,7 @@ class TestBackendClientAuthLifecycle:
                 return mock_context
 
             def mock_get(*args, **kwargs):
+                request_headers.append(kwargs.get("headers", {}))
                 mock_response = Mock()
                 mock_response.status = 200  # GET operations expect 200
                 mock_response.json = AsyncMock(
@@ -635,13 +640,11 @@ class TestBackendClientAuthLifecycle:
                         # First request - should use fallback-style headers
                         await client.create_hybrid_session("test problem", {}, {})
 
-                        # Verify headers were used (either style is acceptable)
+                        # Pooled session defaults carry no credentials (#2716).
                         require(len(session_creations) == 1)
                         headers_1 = session_creations[0]
-                        # Either X-API-Key or Authorization should be present
-                        require(
-                            "X-API-Key" in headers_1 or "Authorization" in headers_1
-                        )
+                        require("X-API-Key" not in headers_1)
+                        require("Authorization" not in headers_1)
 
                         # Reset session for second attempt
                         client._session = None
@@ -649,12 +652,10 @@ class TestBackendClientAuthLifecycle:
                         # Second request - still uses fallback
                         await client.get_hybrid_session_status("session-123")
 
-                        # Verify still using some auth
                         require(len(session_creations) == 2)
                         headers_2 = session_creations[1]
-                        require(
-                            "X-API-Key" in headers_2 or "Authorization" in headers_2
-                        )
+                        require("X-API-Key" not in headers_2)
+                        require("Authorization" not in headers_2)
 
                         # Reset session for third attempt
                         client._session = None
@@ -662,12 +663,14 @@ class TestBackendClientAuthLifecycle:
                         # Third request - should now use primary auth
                         await client.finalize_hybrid_session("session-123")
 
-                        # Verify primary auth is now working
+                        # Primary auth is sent per request on the finalize call.
                         require(len(session_creations) == 3)
-                        headers_3 = session_creations[2]
-                        require("Authorization" in headers_3)
+                        require("Authorization" not in session_creations[2])
+                        finalize_headers = request_headers[-1]
+                        require("Authorization" in finalize_headers)
                         require(
-                            "Bearer primary-auth-token" in headers_3["Authorization"]
+                            "Bearer primary-auth-token"
+                            in finalize_headers["Authorization"]
                         )
 
                         # Verify auth was attempted multiple times
@@ -694,23 +697,38 @@ class TestBackendClientAuthLifecycle:
             raise Exception("Client 2 auth failed")
 
         session_data = []
+        # Per-request headers each session actually sent (#2716 coverage).
+        session_requests: list[list[dict[str, str]]] = []
 
         def mock_session_constructor(*args, **kwargs):
             session_data.append(
                 {"headers": kwargs.get("headers", {}), "timeout": kwargs.get("timeout")}
             )
+            seen: list[dict[str, str]] = []
+            session_requests.append(seen)
+
+            def _respond(*req_args, **req_kwargs):
+                seen.append(req_kwargs.get("headers", {}))
+                mock_response = Mock()
+                mock_response.status = 201
+                mock_response.json = AsyncMock(
+                    return_value={
+                        "session_id": "hybrid-session-mixed",
+                        "token": "token-mixed",
+                        "optimizer_endpoint": "http://optimizer.test.com",
+                        "status": "active",
+                    }
+                )
+                mock_response.text = AsyncMock(return_value="OK")
+
+                mock_context = Mock()
+                mock_context.__aenter__ = AsyncMock(return_value=mock_response)
+                mock_context.__aexit__ = AsyncMock(return_value=None)
+                return mock_context
 
             session = Mock()
-            mock_response = Mock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value={"result": "ok"})
-
-            mock_context = Mock()
-            mock_context.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_context.__aexit__ = AsyncMock(return_value=None)
-
-            session.post = Mock(return_value=mock_context)
-            session.get = Mock(return_value=mock_context)
+            session.post = Mock(side_effect=_respond)
+            session.get = Mock(side_effect=_respond)
             return session
 
         with patch("traigent.cloud.backend_client.AIOHTTP_AVAILABLE", True):
@@ -762,8 +780,20 @@ class TestBackendClientAuthLifecycle:
                         require(len(session_data) == 1)
 
                         headers_1 = session_data[0]["headers"]
-                        require("Authorization" in headers_1)
-                        require("Bearer client-1-token" in headers_1["Authorization"])
+                        # Pooled defaults carry no credentials (#2716).
+                        require("Authorization" not in headers_1)
+                        require("X-API-Key" not in headers_1)
+
+                        # Client 1 succeeded and its request carried its own token.
+                        require(not isinstance(results[0], Exception))
+                        require(results[0][0] == "hybrid-session-mixed")
+                        require(len(session_requests[0]) >= 1)
+                        client_1_request = session_requests[0][-1]
+                        require(
+                            client_1_request.get("Authorization")
+                            == "Bearer client-1-token"
+                        )
+                        require(client_1_request.get("X-API-Key") == "key-1")
 
                         # The raw fallback key MUST NOT appear in any session.
                         for entry in session_data:

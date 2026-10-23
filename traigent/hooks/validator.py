@@ -29,7 +29,7 @@ def _build_model_cost_per_1k() -> dict[str, float]:
 
     Computes a blended (input+output)/2 average per-1K-token cost for each
     model, then adds short-name aliases so that user configs in traigent.yml
-    using names like ``"gpt-4"`` or ``"claude-3-haiku"`` still resolve.
+    using names like ``"gpt-5.6-sol"`` or ``"claude-3-haiku"`` still resolve.
     """
     result: dict[str, float] = {}
     for model, pricing in ESTIMATION_MODEL_PRICING.items():

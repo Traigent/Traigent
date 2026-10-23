@@ -168,7 +168,7 @@ def extract_agents_from_config(
     Example:
         >>> config = {
         ...     "grader__temperature": [0.0, 0.3],
-        ...     "grader__model": ["gpt-4"],
+        ...     "grader__model": ["gpt-5.6-sol"],
         ...     "generator__temperature": [0.5, 0.7],
         ...     "max_retries": [3],  # Global, not namespaced
         ... }
@@ -198,14 +198,14 @@ def group_params_by_agent(
     Example:
         >>> config = {
         ...     "grader__temperature": [0.0, 0.3],
-        ...     "generator__model": ["gpt-4"],
+        ...     "generator__model": ["gpt-5.6-sol"],
         ...     "max_retries": [3],
         ... }
         >>> grouped = group_params_by_agent(config)
         >>> grouped["grader"]
         {'temperature': [0.0, 0.3]}
         >>> grouped["generator"]
-        {'model': ['gpt-4']}
+        {'model': ['gpt-5.6-sol']}
         >>> grouped[""]  # Global params
         {'max_retries': [3]}
     """

@@ -10,7 +10,7 @@ import random
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from threading import RLock
-from typing import Any, Generic, TypeVar
+from typing import Any, TypeVar
 
 T = TypeVar("T")
 
@@ -78,7 +78,7 @@ class RandomSamplerPlan:
         )
 
 
-class RandomSampler(Generic[T]):
+class RandomSampler[T]:
     """Sample elements uniformly at random until a limit is reached.
 
     Notes

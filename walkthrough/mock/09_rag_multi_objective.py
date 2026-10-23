@@ -56,7 +56,6 @@ CONFIG_SPACE = {
         "gpt-4.1",
         "gpt-5.2",
         "gpt-5-nano",
-        "gpt-5.1",
     ],
     "prompt": ["minimal", "role_based"],
     "temperature": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
@@ -71,14 +70,14 @@ CONFIG_SPACE = {
 # Mock calibration data, re-keyed from the retired models of the original run
 # (mini tier and legacy cheap tier -> gpt-4.1-mini, flagship -> gpt-4.1;
 # originals: `git show origin/develop:walkthrough/mock/09_rag_multi_objective.py`).
-# Every original row maps to exactly one distinct key and no value is dropped (16 rows in, 16 keys out). These values are NOT measurements
+# Every original row maps to exactly one distinct key and no value is dropped (16 rows in, 16 keys out; rows of a model litellm now lists with a shutdown date are re-keyed gpt-5.2). These values are NOT measurements
 # of the new models.
 _REAL_ACCURACY: dict[tuple, float] = {
-    ("gpt-5.1", "minimal", 0.0, "direct", 50): 0.180,
+    ("gpt-5.2", "minimal", 0.0, "direct", 50): 0.180,
     ("gpt-4.1-mini", "minimal", 0.1, "CoT", 200): 0.771,  # orig row: mini tier
     ("gpt-5.2", "minimal", 0.0, "CoT", 50): 0.128,
     ("gpt-4.1-mini", "minimal", 0.8, "CoT", 200): 0.745,  # orig row: mini tier
-    ("gpt-5.1", "role_based", 0.3, "direct", 200): 0.811,
+    ("gpt-5.2", "role_based", 0.3, "direct", 200): 0.811,
     ("gpt-4.1", "minimal", 0.2, "direct", 100): 0.741,  # orig row: flagship
     ("gpt-4.1", "minimal", 0.3, "direct", 50): 0.710,  # orig row: flagship
     (
@@ -105,20 +104,18 @@ _REAL_ACCURACY: dict[tuple, float] = {
         50,
     ): 0.776,  # orig row: legacy cheap tier
     ("gpt-4.1-mini", "minimal", 0.6, "direct", 100): 0.738,  # orig row: mini tier
-    ("gpt-5.1", "role_based", 0.2, "direct", 100): 0.711,
+    ("gpt-5.2", "role_based", 0.2, "direct", 100): 0.711,
     ("gpt-4.1-mini", "role_based", 0.1, "CoT", 200): 0.864,  # orig row: mini tier
-    ("gpt-5.1", "minimal", 0.2, "direct", 100): 0.335,
+    ("gpt-5.2", "minimal", 0.2, "direct", 100): 0.335,
 }
 
 _RAG_MODEL_BASE = {
-    "gpt-5.1": 0.75,
     "gpt-5.2": 0.70,
     "gpt-4.1-mini": 0.75,
     "gpt-4.1": 0.68,
     "gpt-5-nano": 0.03,
 }
 _COT_SENSITIVITY = {
-    "gpt-5.1": 0.27,
     "gpt-5.2": 0.02,
     "gpt-4.1": 0.05,
     "gpt-4.1-mini": 0.02,

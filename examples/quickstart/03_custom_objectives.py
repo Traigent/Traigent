@@ -118,7 +118,11 @@ def weighted_agent(question: str) -> str:
     - Continuous parameter spaces (temperature, top_p)
     - Mixed configuration space (continuous + categorical)
     """
-    return _mock_answer_for_config(question, traigent.get_config())
+    answer = _mock_answer_for_config(question, traigent.get_config())
+    # This rule-based mock makes no model calls, so its measured spend is $0.
+    # Report it explicitly: strict cost accounting refuses an unreported
+    # `cost` objective rather than silently recording it as free.
+    return traigent.with_usage(answer, total_cost=0)
 
 
 async def main():
