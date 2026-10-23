@@ -41,8 +41,8 @@ from traigent.identity.examples import result_identity_fields
 from traigent.utils.env_config import is_truthy
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
-from traigent.utils.exceptions import ConfigurationError, EvaluationError
 from traigent.utils.example_id import stamp_row_index
+from traigent.utils.exceptions import ConfigurationError, EvaluationError
 from traigent.utils.exceptions import TraigentError as CoreTraigentError
 from traigent.utils.exceptions import TrialPrunedError, ValidationError
 from traigent.utils.function_identity import is_coroutine_callable
