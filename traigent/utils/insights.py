@@ -236,19 +236,20 @@ def _analyze_parameter_importance(
             # Calculate performance impact (association-style measure)
             performance_impact = _calculate_parameter_impact(param_values, param_scores)
 
+            if performance_impact > 0.1:
+                optimization_priority = "high"
+            elif performance_impact > 0.05:
+                optimization_priority = "medium"
+            else:
+                optimization_priority = "low"
+
             parameter_analysis[param] = {
                 "best_value": best_value,
                 "performance_impact": performance_impact,
                 "value_distribution": _analyze_value_distribution(
                     param_values, param_scores
                 ),
-                "optimization_priority": (
-                    "high"
-                    if performance_impact > 0.1
-                    else "medium"
-                    if performance_impact > 0.05
-                    else "low"
-                ),
+                "optimization_priority": optimization_priority,
             }
 
     return parameter_analysis

@@ -834,12 +834,19 @@ async def auth_status_tool() -> dict[str, Any]:
         else:
             authenticated = bool(credential_kwargs.get("jwt_token"))
 
+    if api_key:
+        auth_type = "api_key"
+    elif jwt_token:
+        auth_type = "jwt"
+    else:
+        auth_type = "none"
+
     return {
         "ok": True,
         "authenticated": authenticated,
         "credential_present": credential_present,
         "credential_source": credential_source if credential_present else "none",
-        "auth_type": "api_key" if api_key else ("jwt" if jwt_token else "none"),
+        "auth_type": auth_type,
         "api_key": _mask_api_key(api_key),
         "backend_url": _sanitize_url(credentials.get("backend_url")),
     }

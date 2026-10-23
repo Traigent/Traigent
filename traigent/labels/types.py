@@ -145,13 +145,12 @@ class CodeIdentifier(_Checked):
         match = _CODE_ID.match(identifier)
         if match:
             module_name, qualname = match.groups()
-            search = (
-                [Path(p) for p in search_paths]
-                if search_paths is not None
-                else (
-                    [root] if root is not None else [Path(p or ".") for p in sys.path]
-                )
-            )
+            if search_paths is not None:
+                search = [Path(p) for p in search_paths]
+            elif root is not None:
+                search = [root]
+            else:
+                search = [Path(p or ".") for p in sys.path]
             source = cls._find_source(module_name, [p.resolve() for p in search])
             if source is None:
                 raise ContentClassError("code identifier module source not found")

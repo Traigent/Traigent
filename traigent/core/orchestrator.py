@@ -6520,11 +6520,13 @@ class OptimizationOrchestrator:
 
         # Create convergence info
         successful_trials = [t for t in self._trials if t.is_successful]
-        success_rate = (
-            0.0
-            if _OBJECTIVE_UNMATCHED_WARNING_CODE in result_warning_codes
-            else (len(successful_trials) / len(self._trials) if self._trials else 0.0)
-        )
+        if (
+            _OBJECTIVE_UNMATCHED_WARNING_CODE in result_warning_codes
+            or not self._trials
+        ):
+            success_rate = 0.0
+        else:
+            success_rate = len(successful_trials) / len(self._trials)
         convergence_info = {
             "total_trials": len(self._trials),
             "successful_trials": len(successful_trials),

@@ -595,9 +595,13 @@ class AuthManager:
 
         self._provided_credentials: AuthCredentials | None = None
         initial_api_key = api_key or os.getenv("TRAIGENT_API_KEY")
-        initial_source = (
-            "explicit" if api_key else ("environment" if initial_api_key else None)
-        )
+        initial_source: str | None
+        if api_key:
+            initial_source = "explicit"
+        elif initial_api_key:
+            initial_source = "environment"
+        else:
+            initial_source = None
 
         if initial_api_key:
             self._api_key_manager.set_token(initial_api_key, source=initial_source)

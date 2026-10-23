@@ -2235,11 +2235,12 @@ class ObservabilityClient:
         with self._lock:
             previous = self._trace_states.get(trace_id)
             tombstone = self._evicted_traces.pop(trace_id, None)
-            previous_sequence = (
-                previous.snapshot_sequence
-                if previous is not None
-                else (tombstone.snapshot_sequence if tombstone is not None else 0)
-            )
+            if previous is not None:
+                previous_sequence = previous.snapshot_sequence
+            elif tombstone is not None:
+                previous_sequence = tombstone.snapshot_sequence
+            else:
+                previous_sequence = 0
             self._trace_states[trace_id] = _TraceState(
                 trace=trace,
                 resolved_content_mode=effective_content_mode,

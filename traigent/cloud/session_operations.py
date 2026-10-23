@@ -1458,15 +1458,12 @@ class SessionOperations:
         create_warm_start_transfer = (
             session.metadata.get("warm_start_transfer") if session else None
         )
-        effective_warm_start_transfer = (
-            backend_warm_start_transfer
-            if isinstance(backend_warm_start_transfer, dict)
-            else (
-                create_warm_start_transfer
-                if isinstance(create_warm_start_transfer, dict)
-                else None
-            )
-        )
+        if isinstance(backend_warm_start_transfer, dict):
+            effective_warm_start_transfer = backend_warm_start_transfer
+        elif isinstance(create_warm_start_transfer, dict):
+            effective_warm_start_transfer = create_warm_start_transfer
+        else:
+            effective_warm_start_transfer = None
 
         summary_fields: list[str] = []
 
@@ -1531,11 +1528,12 @@ class SessionOperations:
         if isinstance(backend_convergence_history, list):
             summary_fields.append("convergence_history")
 
-        response_full_history = (
-            backend_full_history
-            if include_full_history and isinstance(backend_full_history, list)
-            else ([] if include_full_history else None)
-        )
+        if include_full_history and isinstance(backend_full_history, list):
+            response_full_history = backend_full_history
+        elif include_full_history:
+            response_full_history = []
+        else:
+            response_full_history = None
         if include_full_history and isinstance(backend_full_history, list):
             summary_fields.append("full_history")
 
