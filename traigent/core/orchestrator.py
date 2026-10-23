@@ -2433,6 +2433,15 @@ class OptimizationOrchestrator:
                 # Dispatched with no result: spend unknown, floor unknown (0).
                 if self._winner_stability_mark_recorded(trial_id):
                     self._winner_stability_unmeasured_reruns += 1
+                # The lifecycle also filed this attempt in the abandoned-attempt
+                # ledger; the stability counter owns it, so the abandoned-cost
+                # reader must not count it a second time.
+                start = getattr(self, "_winner_stability_ledger_start", None)
+                if isinstance(start, int):
+                    for entry in getattr(self, "_abandoned_vendor_attempts", [])[
+                        start:
+                    ]:
+                        entry["counted_as_winner_stability"] = True
                 await self._account_untracked_trial_attempt(
                     trial_id=trial_id,
                     permit=permit,
@@ -4604,6 +4613,9 @@ class OptimizationOrchestrator:
                                 len(scores),
                             )
                             break
+                    self._winner_stability_ledger_start = len(
+                        getattr(self, "_abandoned_vendor_attempts", [])
+                    )
                     rerun_trial = await self._trial_lifecycle.run_trial(
                         func=func,
                         config=copy.deepcopy(result.best_config),
@@ -6228,6 +6240,7 @@ class OptimizationOrchestrator:
             1
             for entry in getattr(self, "_abandoned_vendor_attempts", [])
             if int(entry.get("vendor_call_unmeasured_attempts") or 0) > 0
+            and not entry.get("counted_as_winner_stability")
         )
         if unmeasured:
             OptimizationOrchestrator._add_winner_stability_cost_to_result(
