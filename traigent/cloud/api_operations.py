@@ -13,7 +13,7 @@ import time
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 from urllib.parse import urlparse
 
-from traigent.labels.transport_gate import gate_session
+from traigent.cloud import content_less as content_less_session
 from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.client import (
     CloudEgressBlockedError,
@@ -22,7 +22,6 @@ from traigent.cloud.client import (
     SessionContractError,
     raise_if_cloud_egress_disabled,
 )
-from traigent.cloud import content_less as content_less_session
 from traigent.cloud.governance import promotion_policy_to_wire, tvl_governance_to_wire
 from traigent.cloud.models import (
     AgentExecutionRequest,
@@ -53,6 +52,7 @@ from traigent.core.session_types import (
     SessionCreationHTTPError,
     safe_http_error_summary,
 )
+from traigent.labels.transport_gate import gate_session
 from traigent.security.redaction import redact_embedded_credentials
 from traigent.utils.artifact_fingerprints import (
     artifact_fingerprints_to_wire,
@@ -793,7 +793,15 @@ class ApiOperations:
         used_cache = content_less_session.apply_to_payload(
             payload, options=options, cached_refs=cached
         )
-        self._content_less_ctx = (cache, principal, local_keys, used_cache)
+        self._content_less_ctx: (
+            tuple[
+                content_less_session.RefCache,
+                str,
+                dict[str, str | None],
+                dict[str, str],
+            ]
+            | None
+        ) = (cache, principal, local_keys, used_cache)
         return payload
 
     def _gate_origins(self) -> list[str]:
@@ -811,7 +819,7 @@ class ApiOperations:
                 self.client.backend_config.api_base_url
                 or BackendConfig.get_backend_api_url()
             )
-            preview = self.client.auth_manager.get_api_key_preview()
+            preview = self.client.auth_manager.auth.get_api_key_preview()
         except Exception:  # noqa: BLE001 - scope only; an unknown scope finds no refs
             url, preview = None, None
         return content_less_session.RefCache.principal(
@@ -1010,7 +1018,7 @@ class ApiOperations:
         """Send the session creation request and handle responses."""
 
         self._raise_if_backend_egress_disabled("create session")
-        content_less_ctx = None
+        content_less_ctx: tuple[Any, ...] | None = None
         if "capabilities" in payload:
             content_less_ctx = getattr(self, "_content_less_ctx", None)
             self._content_less_ctx = None

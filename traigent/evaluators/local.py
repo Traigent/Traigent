@@ -24,9 +24,9 @@ from traigent.evaluators.base import (
     EvaluationResult,
     _accuracy_matches_after_unwrap,
     _accuracy_value_for_example,
-    coercion_log_scope,
     _example_correlation_key,
     _is_empty_expected_output,
+    coercion_log_scope,
 )
 from traigent.evaluators.metrics_tracker import (
     COST_SOURCE_MIXED,
@@ -38,19 +38,19 @@ from traigent.evaluators.metrics_tracker import (
     ResponseHandlerFactory,
     compute_empty_output_rate,
     compute_truncated_output_rate,
-    enforce_user_metric_ceiling,
     enforce_unknown_cost_invariant,
+    enforce_user_metric_ceiling,
     extract_llm_metrics,
 )
 from traigent.utils.exceptions import EvaluationError
 from traigent.utils.langchain_interceptor import (
     capture_scope,
-    get_captured_response_by_key,
     drain_captured_responses,
-    seal_captured_responses,
     finish_captured_responses,
-    snapshot_captured_responses,
+    get_captured_response_by_key,
     patch_langchain_for_metadata_capture,
+    seal_captured_responses,
+    snapshot_captured_responses,
 )
 from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
 from traigent.utils.logging import get_logger
@@ -1449,14 +1449,15 @@ class LocalEvaluator(BaseEvaluator):
         responses, owners, requested = snapshot_captured_responses()
         captures = _CaptureOwnership.build(responses, owners, requested)
         if captures is None or dataset is None:
-            return super()._extract_progress_call_metrics(
+            fallback: ExampleMetrics | None = super()._extract_progress_call_metrics(
                 example_id, example, result, config, dataset, example_index
             )
+            return fallback
         history = _progress_capture_history.get()
         if history is not None:
             captures.returned_seen = history.returned_seen.copy()
             captures.captured_ids.update(history.captured_ids)
-        metrics = self._extract_llm_metrics_for_output(
+        metrics: ExampleMetrics | None = self._extract_llm_metrics_for_output(
             result.actual_output, example_index, config, dataset, responses, captures
         )
         if history is not None:
@@ -2016,9 +2017,15 @@ class LocalEvaluator(BaseEvaluator):
         read = cache.get("cache_read_tokens")
         fresh = usage.get("input_tokens")
         creation = cache.get("cache_creation_tokens")
-        for value in (read, fresh):
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                return
+        if (
+            isinstance(read, bool)
+            or not isinstance(read, int)
+            or read < 0
+            or isinstance(fresh, bool)
+            or not isinstance(fresh, int)
+            or fresh < 0
+        ):
+            return
         if creation is not None and (
             isinstance(creation, bool) or not isinstance(creation, int) or creation < 0
         ):

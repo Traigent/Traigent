@@ -498,7 +498,7 @@ def _mock_run_notice(results: Any) -> str | None:
     """
     metadata = getattr(results, "metadata", None)
     recorded = metadata.get("mock_llm_run") if isinstance(metadata, dict) else None
-    if recorded is True:
+    if recorded is True and isinstance(metadata, dict):
         if metadata.get("mock_llm_mixed") is True:
             return (
                 "Some trials used simulated LLM calls; scores and costs mix "

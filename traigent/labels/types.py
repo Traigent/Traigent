@@ -15,7 +15,7 @@ import ast
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from ._codec import unb64u
 
@@ -45,7 +45,7 @@ class _Checked(str):
     def _check(cls, value: str) -> None:  # pragma: no cover - overridden
         raise NotImplementedError
 
-    def __new__(cls, value: str) -> Any:
+    def __new__(cls, value: str) -> Self:
         if not isinstance(value, str):
             raise ContentClassError(f"{cls.__name__} requires a string")
         cls._check(value)

@@ -11,7 +11,7 @@ Thread Safety: All functions are thread-safe and stateless.
 """
 
 import hashlib
-from typing import Any
+from typing import Any, TypeVar
 
 
 def generate_stable_example_id(dataset_hash: str, example_index: int) -> str:
@@ -95,9 +95,9 @@ def resolve_wire_example_id(
     else (a customer-authored id, another shape, a mismatched index) falls
     back to the opaque ``ex_<hash>_<index>`` id. Customer ids never cross.
     """
-    candidate = coerce_candidate_example_id(candidate)
-    if candidate is not None and candidate == sdk_minted_example_id(example_index):
-        return candidate
+    normalized = coerce_candidate_example_id(candidate)
+    if normalized is not None and normalized == sdk_minted_example_id(example_index):
+        return normalized
     return generate_stable_example_id(dataset_hash, example_index)
 
 
@@ -122,7 +122,10 @@ ROW_INDEX_ATTR = "_traigent_row_index"
 TRIAL_ROW_INDICES_ATTR = "_traigent_row_indices"
 
 
-def stamp_row_index(result: Any, index: int) -> Any:
+_StampedResult = TypeVar("_StampedResult")
+
+
+def stamp_row_index(result: _StampedResult, index: int) -> _StampedResult:
     """Record the true dataset row on a freshly created example result."""
     try:
         setattr(result, ROW_INDEX_ATTR, int(index))

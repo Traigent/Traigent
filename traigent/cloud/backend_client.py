@@ -25,8 +25,6 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, unquote, urlparse, urlunparse
 
-# Import and re-export BackendClientConfig for backward compatibility
-from traigent.labels.transport_gate import client_origins, gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.api_operations import ApiOperations, TraigentSessionApiResult
 from traigent.cloud.auth import (
@@ -68,18 +66,15 @@ from traigent.cloud.models import (
     TrialResultSubmission,
     TrialSuggestion,
 )
+
+# Import refactored sub-modules
+from traigent.cloud.privacy_operations import PrivacyOperations
 from traigent.cloud.session_budgets import (
     is_cost_budget_armed_session,
     remember_cost_budget_armed_session,
 )
-
-# Import refactored sub-modules
-from traigent.cloud.privacy_operations import PrivacyOperations
 from traigent.cloud.session_operations import SessionOperations
 from traigent.cloud.session_types import SessionCreationResult
-from traigent.core.session_types import safe_http_error_summary
-from traigent.core import best_config_diagnostics as diag
-from traigent.core.best_config_diagnostics import transport_failed_message
 from traigent.cloud.subset_selection import SmartSubsetSelector
 from traigent.cloud.trial_operations import (
     TrialOperations,
@@ -93,8 +88,18 @@ from traigent.cloud.url_security import (
 from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.config.backend_config import BackendConfig
 from traigent.config.project import read_optional_project_env
+from traigent.core import best_config_diagnostics as diag
+from traigent.core.best_config_diagnostics import transport_failed_message
+from traigent.core.session_types import safe_http_error_summary
 from traigent.evaluators.base import Dataset
-from traigent.labels.transport_gate import TransportGateRefusal, preflight_requests
+
+# Import and re-export BackendClientConfig for backward compatibility
+from traigent.labels.transport_gate import (
+    TransportGateRefusal,
+    client_origins,
+    gate_session,
+    preflight_requests,
+)
 from traigent.security.session_manager import SessionManager as SecuritySessionManager
 from traigent.utils.exceptions import RetryableError
 from traigent.utils.logging import get_logger
@@ -2427,6 +2432,7 @@ class BackendIntegratedClient:
             spec = _HEAD_REFUSAL_ENVELOPE.get(raw) if isinstance(raw, str) else None
             if (
                 spec is not None
+                and isinstance(raw, str)
                 and body.get("success") is False
                 and body.get("error") == spec[1]
                 and body.get("message") == spec[2]

@@ -4,10 +4,9 @@
 
 from __future__ import annotations
 
-import dataclasses
-
 import asyncio
 import copy
+import dataclasses
 import inspect
 import math
 import operator
@@ -69,7 +68,6 @@ from traigent.core.cost_enforcement import (
     validate_cost_limit,
 )
 from traigent.core.cost_estimator import CostEstimator
-from traigent.core.sigterm_cancellation import sigterm_as_cancellation
 from traigent.core.exception_handler import (
     VendorErrorCategory,
     classify_systematic_provider_failure,
@@ -97,8 +95,8 @@ from traigent.core.metrics_aggregator import (
 )
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.orchestrator_helpers import (
-    allocate_parallel_ceilings,
     EFFECTIVE_SUBSET_ATTR,
+    allocate_parallel_ceilings,
     constraint_requires_metrics,
     effective_subset_indices,
     normalize_parallel_trials,
@@ -125,6 +123,7 @@ from traigent.core.result_selection import (
 )
 from traigent.core.sample_budget import SampleBudgetManager
 from traigent.core.selection_receipt import build_selection_receipt
+from traigent.core.sigterm_cancellation import sigterm_as_cancellation
 from traigent.core.stat_significance import compute_significance
 from traigent.core.stop_condition_manager import StopConditionManager
 from traigent.core.stop_conditions import StopCondition
@@ -136,13 +135,10 @@ from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.interactive_optimizer import CloudBrainOptimizationComplete
 from traigent.tvl.promotion_gate import PromotionGate
-from traigent.utils.example_id import LOCAL_MARKER_KEY
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
-from traigent.utils.env_config import (  # noqa: F401
-    is_backend_offline as is_backend_offline,
-)
+from traigent.utils.env_config import is_backend_offline as is_backend_offline  # noqa: F401
 from traigent.utils.env_config import is_mock_llm, skip_provider_validation
-from traigent.utils.mock_provenance import MockProvenanceRecorder
+from traigent.utils.example_id import LOCAL_MARKER_KEY
 from traigent.utils.exceptions import (
     ConfigurationError,
     OptimizationError,
@@ -154,6 +150,7 @@ from traigent.utils.function_identity import (
 )
 from traigent.utils.hashing import generate_run_label
 from traigent.utils.logging import get_logger
+from traigent.utils.mock_provenance import MockProvenanceRecorder
 from traigent.utils.objectives import (
     coerce_finite_objective_score,
     is_minimization_objective,
@@ -242,7 +239,9 @@ def _partial_coverage_trials(
     found: list[tuple[str, int, int]] = []
     key = primary_objective.strip().lower()
     for trial in trials:
-        comparability = (getattr(trial, "metadata", None) or {}).get("comparability")
+        comparability: Any = (getattr(trial, "metadata", None) or {}).get(
+            "comparability"
+        )
         if hasattr(comparability, "to_dict"):
             comparability = comparability.to_dict()
         if not isinstance(comparability, dict):

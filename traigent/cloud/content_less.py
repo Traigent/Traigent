@@ -302,7 +302,7 @@ class RefCache:
             if not key:
                 continue
             ref = (entries.get(kind) or {}).get(_digest(key))
-            if is_well_formed_ref(kind, ref):
+            if isinstance(ref, str) and is_well_formed_ref(kind, ref):
                 out[kind] = ref
         return out
 
@@ -419,15 +419,14 @@ def apply_to_payload(
 
 def refs_from_response(result: Mapping[str, Any]) -> dict[str, str]:
     """Well-formed refs on the 201 (top level, or the metadata copy legacy clients get)."""
-    metadata = (
-        result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
-    )
+    raw_metadata = result.get("metadata")
+    metadata: Mapping[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
     out: dict[str, str] = {}
     for kind, field in REF_FIELDS.items():
         value = result.get(field)
         if value is None:
             value = metadata.get(field)
-        if is_well_formed_ref(kind, value):
+        if isinstance(value, str) and is_well_formed_ref(kind, value):
             out[kind] = value
     return out
 
@@ -468,9 +467,8 @@ def accept_response(result: Any, ctx: tuple[Any, ...]) -> dict[str, str]:
         raise ContentLessRefusal(BACKEND_UPGRADE_REQUIRED)
     require_capability(result)
     cache, principal, local_keys, _used = ctx
-    metadata = (
-        result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
-    )
+    raw_metadata = result.get("metadata")
+    metadata: Mapping[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
     tenant_id = result.get("tenant_id") or metadata.get("tenant_id")
     project_id = result.get("project_id") or metadata.get("project_id")
     refs = refs_from_response(result)
