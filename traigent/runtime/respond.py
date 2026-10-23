@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -43,6 +43,7 @@ from traigent.runtime.lease_cache import LeaseCache
 from traigent.runtime.model import (
     E_APPROVAL_EXPIRED,
     E_APPROVAL_REQUIRED,
+    E_COMPILER,
     E_FIX_CEILING,
     E_HOLD,
     E_NOT_APPLIED,
@@ -91,6 +92,9 @@ class RespondResult:
     result_recorded: bool = False
     #: Hosted path only: the closed candidate facts that were reported (no content).
     candidates: tuple[dict[str, Any], ...] = ()
+    #: Hosted path only: fingerprint -> candidate configuration, for a deploy.  Customer
+    #: content kept in memory on the customer side; never sent with these facts.
+    configs: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
 def _optimize_rule(requirement: RuntimeRequirement) -> str:
@@ -616,18 +620,42 @@ def _candidates(
     result: Any,
     extract: Callable[[Any, dict[str, Any]], Any] | None,
     grant: dict[str, Any],
-) -> list[Any]:
-    """Closed candidate facts, from ``extract`` or the result's ``reactive_candidates``.
+    *,
+    requirement: RuntimeRequirement,
+    tokens: TokenMap,
+) -> tuple[list[Any], dict[str, Any]]:
+    """Closed candidate facts and the configurations behind them (customer side only).
 
-    The promotion gate is not computed here: a result that carries no gate evidence
-    reports no candidate (``optimize_no_candidate``), never a guessed ``Promote``.
+    From ``extract`` when given.  Otherwise, a result that carries the optimizer's
+    ``promotion_decisions`` (an ``OptimizationResult``) is turned into promotion
+    evidence by :func:`evidence_from_result`.  Anything else reports no candidate
+    (``optimize_no_candidate``), never a guessed ``Promote``.
     """
-    raw = (
-        extract(result, grant)
-        if extract is not None
-        else getattr(result, "reactive_candidates", ())
-    )
-    return list(raw) if isinstance(raw, (list, tuple)) else []
+    configs: dict[str, Any] = {}
+    if extract is not None:
+        raw = extract(result, grant)
+        configs = dict(getattr(extract, "configs", {}) or {})
+    elif hasattr(result, "promotion_decisions"):
+        from traigent.runtime.promotion_evidence import (
+            candidate_extractor,
+            evidence_from_result,
+        )
+
+        try:
+            reporter = candidate_extractor(
+                requirement,
+                tokens,
+                lambda res: evidence_from_result(requirement, res),
+            )
+            raw = reporter(result, grant)
+            configs = dict(reporter.configs)
+        except RuntimeRequirementError as exc:
+            if exc.code != E_COMPILER:
+                raise
+            raw = ()  # no TVL evaluator: nothing can be established, nothing promotes
+    else:
+        raw = getattr(result, "reactive_candidates", ())
+    return (list(raw) if isinstance(raw, (list, tuple)) else []), configs
 
 
 async def respond_hosted(
@@ -735,9 +763,10 @@ async def respond_hosted(
             raise RuntimeRequirementError(E_OPTIMIZE_FAILED) from None
         raise
 
-    reported = _candidates(
-        result, candidates, grant
-    )  # once: retries re-send the same facts
+    # Once: retries re-send the same facts.
+    reported, configs = _candidates(
+        result, candidates, grant, requirement=requirement, tokens=api.tokens
+    )
     try:
         receipt = await _bounded(
             lambda key: api.report_finished(
@@ -765,6 +794,7 @@ async def respond_hosted(
         reservation_generation=reservation.generation,
         result_recorded=bool(receipt["recorded"]),
         candidates=tuple(reported),
+        configs=configs,
     )
 
 

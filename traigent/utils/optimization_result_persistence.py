@@ -159,6 +159,10 @@ RESULT_RESET: frozenset[str] = frozenset(
         # init=False memoization cache for the `experiment_stats` property;
         # recomputed on demand from `trials`.
         "_experiment_stats",
+        # Which closed decision the optimizer's promotion gate made for each candidate
+        # of THIS run (config hash -> decision). Live evidence for the hosted deploy
+        # path, recomputable only by re-running; not a fact to restore.
+        "promotion_decisions",
     }
 )
 

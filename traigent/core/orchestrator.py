@@ -4,10 +4,9 @@
 
 from __future__ import annotations
 
-import dataclasses
-
 import asyncio
 import copy
+import dataclasses
 import inspect
 import math
 import operator
@@ -69,7 +68,6 @@ from traigent.core.cost_enforcement import (
     validate_cost_limit,
 )
 from traigent.core.cost_estimator import CostEstimator
-from traigent.core.sigterm_cancellation import sigterm_as_cancellation
 from traigent.core.exception_handler import (
     VendorErrorCategory,
     classify_systematic_provider_failure,
@@ -89,17 +87,17 @@ from traigent.core.execution_policy_runtime import (
     unsupported_backend_smart_algorithm_message,
 )
 from traigent.core.logger_facade import LoggerFacade
+from traigent.core.mandatory_metrics import MandatoryMetricsCollector
 from traigent.core.metadata_helpers import merge_run_metrics_into_session_summary
 from traigent.core.metric_registry import MetricRegistry, MetricSpec
-from traigent.core.mandatory_metrics import MandatoryMetricsCollector
 from traigent.core.metrics_aggregator import (
     aggregate_metrics,
     build_safeguards_telemetry,
 )
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.orchestrator_helpers import (
-    allocate_parallel_ceilings,
     EFFECTIVE_SUBSET_ATTR,
+    allocate_parallel_ceilings,
     constraint_requires_metrics,
     effective_subset_indices,
     normalize_parallel_trials,
@@ -126,6 +124,7 @@ from traigent.core.result_selection import (
 )
 from traigent.core.sample_budget import SampleBudgetManager
 from traigent.core.selection_receipt import build_selection_receipt
+from traigent.core.sigterm_cancellation import sigterm_as_cancellation
 from traigent.core.stat_significance import compute_significance
 from traigent.core.stop_condition_manager import StopConditionManager
 from traigent.core.stop_conditions import StopCondition
@@ -137,17 +136,13 @@ from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.interactive_optimizer import CloudBrainOptimizationComplete
 from traigent.tvl.promotion_gate import PromotionGate
-from traigent.utils.example_id import LOCAL_MARKER_KEY
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
-from traigent.utils.env_config import (  # noqa: F401
-    is_backend_offline as is_backend_offline,
-)
 from traigent.utils.env_config import (
     cost_preflight_mock_exempt,
-    is_mock_llm,
-    skip_provider_validation,
 )
-from traigent.utils.mock_provenance import MockProvenanceRecorder
+from traigent.utils.env_config import is_backend_offline as is_backend_offline  # noqa: F401
+from traigent.utils.env_config import is_mock_llm, skip_provider_validation
+from traigent.utils.example_id import LOCAL_MARKER_KEY
 from traigent.utils.exceptions import (
     ConfigurationError,
     OptimizationError,
@@ -159,6 +154,7 @@ from traigent.utils.function_identity import (
 )
 from traigent.utils.hashing import generate_run_label
 from traigent.utils.logging import get_logger
+from traigent.utils.mock_provenance import MockProvenanceRecorder
 from traigent.utils.objectives import (
     coerce_finite_objective_score,
     is_minimization_objective,
@@ -558,6 +554,9 @@ class OptimizationOrchestrator:
         self._smart_pruning: dict[str, Any] | None = kwargs.pop("smart_pruning", None)
         self._config_metrics_history: dict[str, dict[str, list[float]]] = {}
         self._incumbent_config_hash: str | None = None
+        # config hash -> the closed promotion decision last made for that candidate
+        # (additive record; nothing here changes which config wins).
+        self._promotion_decisions: dict[str, str] = {}
 
         # Multi-agent configuration
         self._agent_configuration = self._init_agent_configuration(kwargs)
@@ -1740,6 +1739,11 @@ class OptimizationOrchestrator:
         )
         return self._simple_is_better(candidate_trial)
 
+    def _record_promotion(self, config_hash: str, decision: str) -> None:
+        """Record the closed promotion decision for a candidate (additive; never raises)."""
+        decisions = self.__dict__.setdefault("_promotion_decisions", {})
+        decisions[config_hash] = decision
+
     def _evaluate_promotion(
         self,
         candidate_hash: str,
@@ -1755,6 +1759,10 @@ class OptimizationOrchestrator:
         """
         # If no promotion gate or no incumbent, use simple logic
         if self._promotion_gate is None:
+            self._record_promotion(
+                candidate_hash,
+                "withheld_no_gate" if self._is_strict_evidence_mode() else "no_gate",
+            )
             if self._is_strict_evidence_mode():
                 # RFC 0001 §3.6: a declared-governed CVAR demands
                 # certificate-backed promotion evidence; with no promotion
@@ -1767,6 +1775,7 @@ class OptimizationOrchestrator:
                 )
             return self._simple_is_better(candidate_trial)
         if self._incumbent_config_hash is None:
+            self._record_promotion(candidate_hash, "no_incumbent")
             return True
 
         # Get metrics for both configs
@@ -1780,6 +1789,7 @@ class OptimizationOrchestrator:
         if not has_data or not self._has_sufficient_samples(
             candidate_metrics, incumbent_metrics
         ):
+            self._record_promotion(candidate_hash, "insufficient_samples")
             if self._is_strict_evidence_mode():
                 return self._withhold_promotion(
                     "insufficient samples for statistical comparison"
@@ -1789,13 +1799,19 @@ class OptimizationOrchestrator:
         # Use PromotionGate for statistical evaluation
         inc_metrics_seq = cast(dict[str, Sequence[float]], incumbent_metrics)
         cand_metrics_seq = cast(dict[str, Sequence[float]], candidate_metrics)
+        decision: Any = None
         try:
             decision = self._promotion_gate.evaluate(
                 incumbent_metrics=inc_metrics_seq,
                 candidate_metrics=cand_metrics_seq,
             )
+            self._record_promotion(candidate_hash, str(decision.decision))
             return self._handle_promotion_decision(decision, candidate_trial)
         except Exception as e:
+            if (
+                decision is None
+            ):  # the gate itself failed (not the handling of its answer)
+                self._record_promotion(candidate_hash, "gate_error")
             if self._is_strict_evidence_mode():
                 # Gate exception fails CLOSED in strict modes (Rule 1: a
                 # failing policy surface denies; it never silently degrades
@@ -1960,6 +1976,8 @@ class OptimizationOrchestrator:
 
         # First trial becomes incumbent
         if self._best_trial_cached is None:
+            # Recorded explicitly: there was no incumbent to compare against.
+            self._record_promotion(config_hash, "no_incumbent")
             self._best_trial_cached = trial_result
             self._incumbent_config_hash = config_hash
             return
@@ -6569,6 +6587,7 @@ class OptimizationOrchestrator:
             # Thread the terminal selector's exact eligible set through so
             # post-hoc range normalization shares its basis (issue #1704).
             ranking_eligible_trial_ids=selection.ranking_eligible_trial_ids,
+            promotion_decisions=dict(getattr(self, "_promotion_decisions", {})),
         )
         self._selection_receipt_binding = (optimization_result, selection_receipt)
 

@@ -115,6 +115,60 @@ def latency_counts(
     }
 
 
+_GATE_TO_TVL = {"promote": "Promote", "reject": "Reject"}
+
+
+def legacy_decision_from_gate(decision: str | None) -> str:
+    """Map the optimizer's closed gate decision to the TVL legacy decision.
+
+    Only an explicit statistical ``promote`` / ``reject`` carries over.  Everything else
+    (``no_decision``, the first candidate's ``no_incumbent``, ``insufficient_samples``,
+    ``no_gate``, ``withheld_no_gate``, ``gate_error``, or no record) is ``NoDecision``:
+    absence of a gate answer never promotes.
+    """
+    return _GATE_TO_TVL.get(decision or "", "NoDecision")
+
+
+def evidence_from_result(
+    requirement: RuntimeRequirement, result: Any
+) -> list[CandidateEvidence]:
+    """The winner of an ``OptimizationResult`` as promotion evidence.
+
+    ``legacy_decision`` is the optimizer's own gate decision for ``best_config``
+    (``result.promotion_decisions``).  The promotion monitor's counts come from the
+    per-example response times the winning trial MEASURED: a positive time is a
+    resolved example (violation when above the requirement's latency threshold), an
+    example with no usable time is unresolved, and a trial with no measured example at
+    all supplies no counts, so the monitor is ``UNKNOWN(insufficient)``.
+    """
+    from traigent.api.types import OptimizationResult
+    from traigent.utils.hashing import generate_config_hash
+
+    config = getattr(result, "best_config", None)
+    if not isinstance(config, Mapping) or not config:
+        return []
+    key = generate_config_hash(dict(config))
+    decision = (getattr(result, "promotion_decisions", None) or {}).get(key)
+    counts: dict[str, Mapping[str, Any]] = {}
+    promotion = requirement.promotion
+    trials = [
+        t
+        for t in (getattr(result, "trials", None) or [])
+        if generate_config_hash(dict(t.config or {})) == key and t.is_successful
+    ]
+    entries = (trials[-1].metadata or {}).get("example_results") if trials else None
+    if promotion is not None and isinstance(entries, (list, tuple)) and entries:
+        times = [OptimizationResult._extract_response_time(e) for e in entries]
+        if any(t is not None and t > 0 for t in times):
+            counts[promotion.name] = latency_counts(
+                [t * 1000.0 if t is not None and t > 0 else None for t in times],
+                requirement.latency_threshold_ms,
+            )
+    return [
+        CandidateEvidence(dict(config), legacy_decision_from_gate(decision), counts)
+    ]
+
+
 def _tvl() -> tuple[Any, Any, Any]:
     try:
         from tvl.canonical import RuntimeClosedError

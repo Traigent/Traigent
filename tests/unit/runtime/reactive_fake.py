@@ -656,7 +656,10 @@ class StrictBackend:
             if body["fact"] == "finished":
                 promoted = any(
                     c.get("legacy_decision") == "Promote"
-                    for c in body.get("candidates", [])
+                    and all(v == "MET" for v in c.get("monitor_verdicts", []))
+                    for c in body.get(
+                        "candidates", []
+                    )  # the gate join (Reject/NoDecision win)
                 )
                 attempt["optimize_outcome"] = (
                     "promoted"

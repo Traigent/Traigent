@@ -496,3 +496,128 @@ def test_the_fake_backend_refuses_a_publication_whose_spec_does_not_match_the_fi
             )
         )
     assert hold.value.path == "idempotency_conflict" and b.head.generation == 3
+
+
+# --- the optimizer's own decision and trial timings feed the evidence ----------------------
+
+
+def _real_result(decision: str | None, latencies_s: list[float | None] | None) -> Any:
+    from datetime import UTC, datetime
+
+    from traigent.api.types import (
+        OptimizationResult,
+        OptimizationStatus,
+        TrialResult,
+        TrialStatus,
+    )
+    from traigent.utils.hashing import generate_config_hash
+
+    entries = (
+        [
+            {"execution_time": t, "metrics": {}} if t is not None else {"metrics": {}}
+            for t in latencies_s
+        ]
+        if latencies_s is not None
+        else []
+    )
+    trial = TrialResult(
+        trial_id="t1",
+        config=dict(CONFIG),
+        metrics={"accuracy": 0.9},
+        status=TrialStatus.COMPLETED,
+        duration=1.0,
+        timestamp=datetime.now(UTC),
+        metadata={"example_results": entries},
+    )
+    return OptimizationResult(
+        trials=[trial],
+        best_config=dict(CONFIG),
+        best_score=0.9,
+        optimization_id="opt-1",
+        duration=1.0,
+        convergence_info={},
+        status=OptimizationStatus.COMPLETED,
+        objectives=["accuracy"],
+        algorithm="mock",
+        timestamp=datetime.now(UTC),
+        promotion_decisions=(
+            {generate_config_hash(dict(CONFIG)): decision} if decision else {}
+        ),
+    )
+
+
+def _respond_default(promo: Reactive, result: Any) -> Any:
+    ref = promo.approved_optimize()
+
+    async def body() -> Any:
+        return result
+
+    out = asyncio.run(
+        respond_hosted(
+            Fn(promo, body),
+            promo.requirement,
+            agent_ref=promo.agent_ref,
+            client=promo.client,
+            state_dir=promo.state,
+            clock=promo.clock,
+            retry_delay=0.0,
+        )
+    )
+    return out, promo.backend.attempts[ref]["optimize_outcome"]
+
+
+def test_gate_promote_and_measured_latency_report_a_promotable_candidate(
+    promo: Reactive,
+) -> None:
+    out, outcome = _respond_default(promo, _real_result("promote", [0.1] * 400))
+    (fact,) = out.candidates
+    assert fact["legacy_decision"] == "Promote" and fact["monitor_verdicts"] == ["MET"]
+    assert fact["fingerprint"] == candidate_fingerprint(CONFIG)
+    assert out.configs[fact["fingerprint"]] == CONFIG
+    assert outcome == "promoted"
+    assert "m-small" not in json.dumps(
+        promo.backend.log
+    )  # the config never travels here
+
+
+@pytest.mark.parametrize(
+    ("decision", "latencies", "legacy", "verdicts"),
+    [
+        (
+            "no_incumbent",
+            [0.1] * 400,
+            "NoDecision",
+            ["MET"],
+        ),  # first candidate: explicit, not Promote
+        (None, [0.1] * 400, "NoDecision", ["MET"]),  # no record at all
+        ("reject", [0.1] * 400, "Reject", ["MET"]),
+        ("promote", None, "Promote", ["UNKNOWN(insufficient)"]),  # nothing measured
+        (
+            "promote",
+            [0.1] * 400 + [None],
+            "Promote",
+            ["UNKNOWN"],
+        ),  # one unresolved example
+        (
+            "promote",
+            [0.1] * 300 + [3.0] * 100,
+            "Promote",
+            ["BREACHED"],
+        ),  # 100 of 400 above 2000 ms
+    ],
+    ids=[
+        "first-candidate",
+        "no-record",
+        "gate-reject",
+        "unmeasured",
+        "unresolved",
+        "breached",
+    ],
+)
+def test_default_evidence_never_promotes_without_a_gate_answer_and_measurements(
+    promo: Reactive, decision: Any, latencies: Any, legacy: str, verdicts: list[str]
+) -> None:
+    out, outcome = _respond_default(promo, _real_result(decision, latencies))
+    (fact,) = out.candidates
+    assert (fact["legacy_decision"], fact["monitor_verdicts"]) == (legacy, verdicts)
+    assert outcome != "promoted"

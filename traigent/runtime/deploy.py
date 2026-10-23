@@ -127,8 +127,8 @@ class DeployController:
         attempt_ref: str,
         optimized: Any,
         *,
-        configs: Mapping[str, Mapping[str, Any]],
         config_id: str,
+        configs: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> DeployOutcome:
         """Deploy the promoted candidate the deploy grant is bound to.
 
@@ -136,7 +136,8 @@ class DeployController:
         reported candidates supply the fingerprint and gate-result digest, so the caller
         passes neither.  The deploy attempt's grant says which one was approved: exactly
         one promoted candidate must match it, otherwise nothing is reserved.
-        ``configs`` maps fingerprint to the configuration (kept customer-side).
+        ``configs`` (default: the optimize result's own) maps fingerprint to the
+        configuration, kept customer-side.
         """
         from traigent.runtime.promotion_evidence import candidate_fingerprint, promoted
 
@@ -152,6 +153,7 @@ class DeployController:
             if c["fingerprint"] == binding["candidate_fingerprint"]
             and c["gate_result_digest"] == binding["gate_result_digest"]
         ]
+        configs = configs if configs is not None else getattr(optimized, "configs", {})
         config = configs.get(binding["candidate_fingerprint"])
         if len(match) != 1 or config is None:
             raise RuntimeRequirementError(E_BINDING_MISMATCH)

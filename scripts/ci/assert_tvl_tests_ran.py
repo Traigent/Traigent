@@ -126,6 +126,34 @@ REQUIRED = (
         "test_promotion_evidence",
         "test_the_fake_backend_refuses_a_publication_whose_spec_does_not_match_the_fingerprint",
     ),
+    (
+        "test_promotion_evidence",
+        "test_gate_promote_and_measured_latency_report_a_promotable_candidate",
+    ),
+    (
+        "test_promotion_evidence",
+        "test_default_evidence_never_promotes_without_a_gate_answer_and_measurements[first-candidate]",
+    ),
+    (
+        "test_promotion_evidence",
+        "test_default_evidence_never_promotes_without_a_gate_answer_and_measurements[no-record]",
+    ),
+    (
+        "test_promotion_evidence",
+        "test_default_evidence_never_promotes_without_a_gate_answer_and_measurements[gate-reject]",
+    ),
+    (
+        "test_promotion_evidence",
+        "test_default_evidence_never_promotes_without_a_gate_answer_and_measurements[unmeasured]",
+    ),
+    (
+        "test_promotion_evidence",
+        "test_default_evidence_never_promotes_without_a_gate_answer_and_measurements[unresolved]",
+    ),
+    (
+        "test_promotion_evidence",
+        "test_default_evidence_never_promotes_without_a_gate_answer_and_measurements[breached]",
+    ),
 )
 
 
