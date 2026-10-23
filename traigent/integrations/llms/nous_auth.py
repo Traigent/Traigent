@@ -37,7 +37,6 @@ the provider logs one value-free warning saying so.
 from __future__ import annotations
 
 import base64
-import binascii
 import hmac
 import json
 import logging
@@ -473,7 +472,7 @@ def _decode_jwt_exp(token: str) -> int | None:
     try:
         decoded = base64.urlsafe_b64decode(payload_segment + padding)
         claims = json.loads(decoded)
-    except (binascii.Error, ValueError, json.JSONDecodeError):
+    except ValueError:
         # Malformed base64 (``binascii.Error``), non-UTF-8 bytes / non-JSON
         # payload (``ValueError`` / ``json.JSONDecodeError``): treat as "no
         # decodable exp" and return None so the caller fails loud with a clean

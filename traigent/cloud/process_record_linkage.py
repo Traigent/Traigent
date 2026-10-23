@@ -26,7 +26,6 @@ with the session's recorded declaration. It is not execution evidence.
 from __future__ import annotations
 
 import base64
-import binascii
 import json
 import os
 import re
@@ -169,7 +168,7 @@ def _decode_opening(value: Any) -> bytes:
     if ok:
         try:
             raw = base64.b64decode(value, validate=True)
-        except (binascii.Error, ValueError):
+        except ValueError:
             ok = False
     # Raised OUTSIDE the except block so no decoder exception stays as __context__.
     if not ok or len(raw) != _OPENING_BYTES:

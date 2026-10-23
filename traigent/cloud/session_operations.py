@@ -909,7 +909,7 @@ class SessionOperations:
                     intends_cloud_egress,
                 )
 
-            except (TimeoutError, CloudServiceError, OSError) as e:
+            except (CloudServiceError, OSError) as e:
                 await self._reset_client_session("create_session fallback")
                 self._raise_if_quota_refusal(e)
                 self._raise_if_closed_refusal(e)
@@ -1007,7 +1007,7 @@ class SessionOperations:
                 intends_cloud_egress,
             )
 
-        except (TimeoutError, CloudServiceError, OSError) as exc:
+        except (CloudServiceError, OSError) as exc:
             self._raise_if_quota_refusal(exc)
             self._raise_if_closed_refusal(exc)
             if _must_fail_loud(exc):

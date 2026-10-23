@@ -370,7 +370,7 @@ class TraigentClient:
                     )
                     final_results.setdefault("source", "cloud_brain")
                     final_results.setdefault("persistence_status", "succeeded")
-                except (CloudServiceError, ConnectionError, OSError, TimeoutError) as e:
+                except (CloudServiceError, OSError) as e:
                     logger.warning(
                         "⚠️  Traigent backend unreachable at finalize (%s); "
                         "returning computed results with persistence_status='failed'. "

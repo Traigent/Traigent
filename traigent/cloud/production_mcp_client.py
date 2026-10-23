@@ -107,7 +107,7 @@ def resolve_default_mcp_server_module() -> str:
     for module_name in _DEFAULT_MCP_SERVER_CANDIDATES:
         try:
             spec = importlib.util.find_spec(module_name)
-        except (ImportError, ModuleNotFoundError, ValueError):
+        except (ImportError, ValueError):
             spec = None
         if spec is not None:
             return module_name

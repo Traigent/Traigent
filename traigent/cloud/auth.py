@@ -25,8 +25,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, cast
 
-from traigent.labels.transport_gate import preflight_requests
-from traigent.labels.transport_gate import gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.api_key_manager import APIKeyManager
 from traigent.cloud.credential_resolver import CredentialResolver
@@ -35,9 +33,9 @@ from traigent.cloud.session_types import SessionCreationFailureDetail
 from traigent.cloud.token_manager import TokenManager
 from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.cloud.user_agent import get_sdk_user_agent
+from traigent.labels.transport_gate import gate_session, preflight_requests
 from traigent.security.redaction import redact_sensitive_data
 from traigent.utils.exceptions import AuthenticationError as TraigentAuthenticationError
-from traigent.utils.url_security import UnsafeUrlError
 
 logger = logging.getLogger(__name__)
 
@@ -1955,7 +1953,7 @@ class AuthManager:
             cloud_base_url = await validate_cloud_base_url_async(
                 self.config.cloud_base_url, purpose="OAuth2 client credentials"
             )
-        except (ValueError, UnsafeUrlError) as exc:
+        except ValueError as exc:
             logger.warning("Rejected unsafe OAuth2 cloud_base_url: %s", exc)
             raise RuntimeError("OAuth2 cloud_base_url is not allowed") from None
         token_url = f"{cloud_base_url}/oauth/token"

@@ -632,7 +632,7 @@ def candidate_agent_version(
         applied = str(fp2.digest(dict(config or {})))
         manifest = base.manifest(applied)
         build_digest = compute_agent_build_digest(manifest)
-    except (fp2.Fp2UnsupportedValue, ContentIdentityError, TypeError, ValueError):
+    except (TypeError, ValueError):
         return None
     return {
         "agent_id": base.agent_id,
