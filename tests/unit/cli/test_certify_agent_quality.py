@@ -339,6 +339,52 @@ def test_tamper_signature_byte_flip_is_issuer_signature_invalid() -> None:
 
 
 @requires_schema
+@pytest.mark.parametrize("checked", [False, True])
+def test_legacy_non_claim_wording_bundle_is_refused_with_non_claim_set_mismatch(
+    checked: bool,
+) -> None:
+    """NEGATIVE fixture: a bundle issued against the pre-7.0.0 non-claim catalog
+    (TraigentSchema d5d0cb6, wording "measured") is correctly signed but names a
+    catalog digest the installed 7.0.0 catalog does not have. The verifier must
+    refuse it; there is deliberately no tolerance for the old wording."""
+    kwargs: dict = {}
+    if checked:
+        kwargs = {
+            "context": FIXTURES / "agent_quality_context_checked.json",
+            "anchor": FIXTURES / "agent_quality_trust_anchor.json",
+            "trust_status": FIXTURES / "agent_quality_trust_status_active.json",
+        }
+    result = _invoke(
+        _base_args(
+            bundle=FIXTURES / "agent_quality_bundle_legacy_d5d0cb6.json",
+            kind="agent-quality",
+            as_json=True,
+            **kwargs,
+        )
+    )
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.output)
+    assert payload["code"] == "NON_CLAIM_SET_MISMATCH"
+    assert payload["certification_eligible"] is False
+
+
+@requires_schema
+def test_declared_schema_dependency_is_exact_and_matches_installed_release() -> None:
+    import importlib.metadata as md
+    import tomllib
+
+    root = Path(__file__).parents[3]
+    deps = tomllib.loads((root / "pyproject.toml").read_text("utf-8"))["project"][
+        "dependencies"
+    ]
+    pins = [d for d in deps if d.replace(" ", "").startswith("traigent-schema")]
+    assert len(pins) == 1 and "@" not in pins[0], pins
+    match = re.fullmatch(r"traigent-schema\s*==\s*([0-9][0-9A-Za-z.]*)", pins[0])
+    assert match, pins[0]
+    assert md.version("traigent-schema") == match.group(1)
+
+
+@requires_schema
 def test_tamper_signature_byte_flip_is_actually_tampered() -> None:
     """Not vacuous: the tamper fixture's signature differs from the golden
     bundle's own -- proves the negative above exercises a real mutation."""
