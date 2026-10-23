@@ -198,17 +198,17 @@ fi
 # staged/unstaged/untracked, so an about-to-be-pushed edit is covered.
 changed_files() {
   local pathspec=("$@")
-  { if git rev-parse --verify --quiet "$base_ref" >/dev/null; then
-      mb="$(git merge-base "$base_ref" HEAD 2>/dev/null || true)"
-      if [[ -n "$mb" ]]; then
-        git diff --name-only --diff-filter=ACMRT "${mb}...HEAD" -- "${pathspec[@]}"
-      else
-        git diff --name-only --diff-filter=ACMRT "$base_ref" HEAD -- "${pathspec[@]}"
-      fi
-    fi
-    git diff --name-only --diff-filter=ACMRT HEAD -- "${pathspec[@]}"
-    git ls-files --others --exclude-standard -- "${pathspec[@]}"
-  } | sort -u
+  local out mb all=""
+  if git rev-parse --verify --quiet "$base_ref" >/dev/null; then
+    mb="$(git merge-base "$base_ref" HEAD 2>/dev/null)" || { echo "git merge-base $base_ref HEAD failed" >&2; return 1; }
+    out="$(git diff --name-only --diff-filter=ACMRT "${mb}...HEAD" -- "${pathspec[@]}")" || { echo "git diff vs merge-base failed" >&2; return 1; }
+    all+="$out"$'\n'
+  fi
+  out="$(git diff --name-only --diff-filter=ACMRT HEAD -- "${pathspec[@]}")" || { echo "git diff HEAD failed" >&2; return 1; }
+  all+="$out"$'\n'
+  out="$(git ls-files --others --exclude-standard -- "${pathspec[@]}")" || { echo "git ls-files failed" >&2; return 1; }
+  all+="$out"
+  printf '%s\n' "$all" | sort -u
 }
 
 # ── 1. ruff (changed-file format-check + lint) ────────────────────────────
