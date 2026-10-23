@@ -668,7 +668,7 @@ class TraigentClient:
                 trial_id=trial_id,
             )
         except Exception as exc:
-            logger.error("Local trial %s failed: %s", trial_id, exc, exc_info=True)
+            logger.exception("Local trial %s failed: %s", trial_id, exc)
             return self._build_local_trial_result(
                 trial_id=trial_id,
                 config=config,
