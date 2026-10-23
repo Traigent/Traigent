@@ -484,15 +484,14 @@ class CostOptimizationAI:
                     simulation["savings_breakdown"][action.resource_type.value] = (
                         savings
                     )
-        else:
-            # Dictionary format
-            if isinstance(actions, dict):
-                for action_type, savings_percent in actions.items():
-                    if isinstance(savings_percent, (int, float)):
-                        savings = simulation["baseline_cost"] * savings_percent
-                        simulation["total_savings"] += savings
-                        simulation["total_estimated_savings"] += savings
-                        simulation["savings_breakdown"][action_type] = savings
+        # Dictionary format
+        elif isinstance(actions, dict):
+            for action_type, savings_percent in actions.items():
+                if isinstance(savings_percent, (int, float)):
+                    savings = simulation["baseline_cost"] * savings_percent
+                    simulation["total_savings"] += savings
+                    simulation["total_estimated_savings"] += savings
+                    simulation["savings_breakdown"][action_type] = savings
 
         simulation["projected_cost"] = max(
             0, simulation["baseline_cost"] - simulation["total_savings"]

@@ -118,11 +118,10 @@ class ParetoPoint:
                     return False  # Other is better in this objective
                 elif diff > epsilon:  # obj_value significantly greater than other_value
                     better_in_at_least_one = True
-            else:  # minimize
-                if diff > epsilon:  # obj_value significantly greater than other_value
-                    return False  # Other is better in this objective
-                elif diff < -epsilon:  # obj_value significantly less than other_value
-                    better_in_at_least_one = True
+            elif diff > epsilon:  # obj_value significantly greater than other_value
+                return False  # Other is better in this objective
+            elif diff < -epsilon:  # obj_value significantly less than other_value
+                better_in_at_least_one = True
 
         return better_in_at_least_one
 
@@ -480,9 +479,8 @@ class ParetoFrontCalculator:
                 if should_maximize:
                     if value < sample_value:
                         return False
-                else:
-                    if value > sample_value:
-                        return False
+                elif value > sample_value:
+                    return False
 
         return True
 

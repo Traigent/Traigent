@@ -327,19 +327,18 @@ class WorkflowTraceManager:
                         total_unconfirmed += len(spans)
                     if response.graph_id:
                         graph_id = response.graph_id
+                # Auth rejections are expected in local/edge mode — log at DEBUG only
+                elif _is_trace_ingestion_auth_rejection(response.error):
+                    logger.debug(
+                        "Trace ingestion auth rejected for config_run %s",
+                        config_run_id,
+                    )
                 else:
-                    # Auth rejections are expected in local/edge mode — log at DEBUG only
-                    if _is_trace_ingestion_auth_rejection(response.error):
-                        logger.debug(
-                            "Trace ingestion auth rejected for config_run %s",
-                            config_run_id,
-                        )
-                    else:
-                        logger.warning(
-                            "Failed to submit spans for config_run %s: %s",
-                            config_run_id,
-                            response.error,
-                        )
+                    logger.warning(
+                        "Failed to submit spans for config_run %s: %s",
+                        config_run_id,
+                        response.error,
+                    )
 
             graph_msg = f", graph_id={graph_id}" if graph_id else ""
             unconfirmed_msg = (

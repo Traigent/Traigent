@@ -253,9 +253,8 @@ def _parse_responses(
             if approval not in (None, "human"):
                 raise RuntimeRequirementError(E_ACTION_UNSUPPORTED, f"{path}.approval")
             approval = "human"
-        else:
-            if severity is not None or approval is not None:
-                raise _invalid(f"{path}.do")
+        elif severity is not None or approval is not None:
+            raise _invalid(f"{path}.do")
         rules.append(
             ResponseRule(rule_id, trigger["event"], action, severity, approval)
         )

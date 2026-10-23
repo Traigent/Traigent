@@ -1786,9 +1786,8 @@ def _missing_stage_names(
         judge = body.aggregate.judge
         if isinstance(judge, StageArm):
             needed.append(judge.name)
-    else:  # LoopBody
-        if isinstance(body.body, StageArm):
-            needed = [body.body.name]
+    elif isinstance(body.body, StageArm):
+        needed = [body.body.name]
     return [name for name in needed if name not in stages]
 
 
