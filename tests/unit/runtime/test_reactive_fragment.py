@@ -73,7 +73,7 @@ def test_declared_13_with_a_reactive_construct_is_refused() -> None:
     del doc["tvl_version"]
     with pytest.raises(RuntimeRequirementError) as err:
         parse_fragment(doc, max_fix_cost_usd=5.0)
-    assert err.value.code == "declared_version_below_constructs"
+    assert err.value.code == "runtime_version_required"
 
 
 def test_declared_14_without_a_reactive_construct_is_fine() -> None:
@@ -165,8 +165,8 @@ REFUSALS = {
         ),
         "invalid_requirement",
     ),
-    "empty_guard_list": (
-        lambda d: _rule(d, "undecided").update(unless=[]),
+    "guards_not_a_list": (
+        lambda d: _rule(d, "undecided").update(unless={"rule": "fix"}),
         "tvl_fragment_invalid",
     ),
     "approval_standing_is_refused_locally": (
@@ -201,3 +201,28 @@ def test_standing_approval_is_refused_on_the_sugar_too() -> None:
             max_fix_cost_usd=5.0,
         )
     assert err.value.code == "response_action_unsupported"
+
+
+def test_empty_guard_lists_are_accepted_and_projection_neutral() -> None:
+    doc = _doc()
+    rule = _rule(doc, "page_while_open")
+    rule.update(only_while=[], unless=[])
+    req = parse_fragment(doc, max_fix_cost_usd=5.0)
+    rendered = next(
+        r for r in req.to_doc()["responses"][0]["rules"] if r["id"] == "page_while_open"
+    )
+    assert "only_while" not in rendered and "unless" not in rendered
+    # With no other 1.4 construct the policy is not reactive (projected /1).
+    doc["responses"][0]["rules"] = [
+        {
+            "id": "n",
+            "trigger": {"monitor": "latency_2s_prod", "event": "episode_opened"},
+            "do": "notify",
+            "severity": "info",
+            "only_while": [],
+            "unless": [],
+        }
+    ]
+    doc["tvl_version"] = "1.3"
+    doc["monitors"] = doc["monitors"][:1]
+    assert not parse_fragment(doc).is_reactive()

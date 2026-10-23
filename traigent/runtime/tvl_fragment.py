@@ -26,6 +26,7 @@ from traigent.runtime.model import (
     E_FRAGMENT,
     E_NOTIFY_ONLY,
     E_VERSION_BELOW,
+    E_VERSION_REQUIRED,
     EVENTS,
     GUARD_STATES,
     OUTCOME_EVENTS,
@@ -281,8 +282,8 @@ def _parse_trigger(
 def _parse_guards(node: Any, monitor_name: str, path: str) -> tuple[NotifyGuard, ...]:
     if node is None:
         return ()
-    if not isinstance(node, list) or not node:
-        raise _invalid(path)
+    if not isinstance(node, list):
+        raise _invalid(path)  # an empty list is valid and projection-neutral
     guards: list[NotifyGuard] = []
     for index, raw in enumerate(node):
         where = f"{path}[{index}]"
@@ -423,8 +424,11 @@ def parse_fragment(
         _parse_promotion(promotion_node, name) if promotion_node is not None else None
     )
     ladder, rules = _parse_responses(top.get("responses"), monitor_name)
-    if declared == "1.3" and any(r.is_reactive() for r in rules):
-        raise RuntimeRequirementError(E_VERSION_BELOW, "tvl_version")
+    if any(r.is_reactive() for r in rules):
+        if "tvl_version" not in top:
+            raise RuntimeRequirementError(E_VERSION_REQUIRED, "tvl_version")
+        if declared == "1.3":
+            raise RuntimeRequirementError(E_VERSION_BELOW, "tvl_version")
     if max_fix_cost_usd is not None and not positive_finite(max_fix_cost_usd):
         raise RuntimeRequirementError("fix_ceiling_required", "max_fix_cost_usd")
     values: dict[str, Any] = {key: PROFILE_DEFAULTS[key] for key in PROFILE_DEFAULTS}
