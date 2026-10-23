@@ -733,7 +733,6 @@ def test_partial_trial_cost_uncertainty_flag_reaches_reused_rows(
     trial.metrics = {k: v for k, v in trial.metrics.items() if k != "total_cost"}
     trial.metrics["cost_unmeasured"] = 1.0
 
-
     calls.clear()
 
     resumed = agent.optimize_sync(resume_from=first)
