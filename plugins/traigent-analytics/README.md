@@ -86,7 +86,7 @@ schedule = scheduler.create_schedule(jobs, constraints)
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.12+
 - traigent >= 0.9.0
 - numpy >= 1.21.0
 - scipy >= 1.7.0
