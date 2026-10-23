@@ -3589,6 +3589,168 @@
     },
     {
       "cites": [
+        "FS Def 12.6"
+      ],
+      "id": "precedence/spend-the-grant-revoked-soonest-when-the-later-grant-is-revoked",
+      "local": {
+        "customer_monitors": [
+          "mon_g"
+        ],
+        "declarations": {
+          "monitors": [
+            {
+              "applies_to": "agent",
+              "decision": {
+                "method": "exact_count_v1",
+                "min_samples": 1
+              },
+              "episode": {
+                "closure_max_age_hours": 48,
+                "closure_windows": 1
+              },
+              "evidence": {
+                "attribution": "agent_key_exact_v1",
+                "deployment_environment": "production",
+                "resolution": "terminal_status_v1",
+                "source": "customer_side"
+              },
+              "limits": {
+                "max_active_obligations": 64,
+                "max_tracked_correlations": 1024
+              },
+              "name": "mon_g",
+              "phase": "runtime",
+              "requirement": "req_g",
+              "single_producer": false,
+              "window": {
+                "grace_minutes": 60,
+                "tumbling_hours": 24
+              }
+            }
+          ],
+          "requirements": [
+            {
+              "kind": "zero_tolerance",
+              "name": "req_g",
+              "unit": "invocation",
+              "violation": {
+                "a": {
+                  "event": "authorization_granted"
+                },
+                "b": {
+                  "event": "tool_call",
+                  "tool": "payments.charge"
+                },
+                "correlate_by": "correlation_id",
+                "pattern": "precedence"
+              }
+            }
+          ],
+          "responses": [
+            {
+              "name": "guards",
+              "rules": []
+            }
+          ]
+        },
+        "document": "module",
+        "format": "tvl-runtime-local/1",
+        "guards": [
+          {
+            "action": "block_action",
+            "monitor": "mon_g",
+            "on_check_error": "block",
+            "response": "guards",
+            "rule_id": "g"
+          }
+        ],
+        "harness_monitors": [],
+        "tvl_version": "1.3"
+      },
+      "note": "Mirror of the previous case: r2 is revoked soonest, so b1 must spend r2; a first-eligible assignment would spend r1 and fail b2.",
+      "steps": [
+        {
+          "event": {
+            "correlation_id": "c1",
+            "producer": "sdk",
+            "ref": "r1",
+            "sequence": 0,
+            "type": "authorization_granted"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "not_relevant",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "correlation_id": "c1",
+            "producer": "sdk",
+            "ref": "r2",
+            "sequence": 1,
+            "type": "authorization_granted"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "not_relevant",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "correlation_id": "c1",
+            "producer": "sdk",
+            "sequence": 2,
+            "tool": "payments.charge",
+            "tool_call_id": "t1",
+            "type": "tool_call"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "no_violation",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "correlation_id": "c1",
+            "producer": "sdk",
+            "ref": "r2",
+            "sequence": 3,
+            "type": "authorization_revoked"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "not_relevant",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "correlation_id": "c1",
+            "producer": "sdk",
+            "sequence": 4,
+            "tool": "payments.charge",
+            "tool_call_id": "t2",
+            "type": "tool_call"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "no_violation",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        }
+      ],
+      "unit": {}
+    },
+    {
+      "cites": [
         "RFC0003 \u00a76.3",
         "FS Def 12.6"
       ],

@@ -4,7 +4,7 @@
 (`tests/unit/runtime/test_local_guards.py`) and is vendored byte-for-byte by the
 JS SDK (`traigent-js`), which must reproduce every decision.
 
-local_guard_vectors.json sha256: 4a0278a264c4b1ac5e1e4a4986d9ac2687d3d3dbd6e24a489e37aaa82f4c4ce1
+local_guard_vectors.json sha256: aa636f2d8b44e4e5c9d09ca17abcbc3119d27ca154c9c9da48db9c2a75df025d
 
 ## Derived from
 

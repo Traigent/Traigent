@@ -35,13 +35,13 @@ def test_upload_carries_the_responses_of_a_13_fragment(backend: FakeBackend) -> 
     assert len(contract["declarations"]["responses"][0]["rules"]) == 4
 
 
-def test_strict_backend_of_today_refuses_responses(backend: FakeBackend) -> None:
-    """DEPENDENCY: documents today's Backend, which accepts only ``responses: []``.
+def test_backend_refusal_of_responses_propagates_closed(backend: FakeBackend) -> None:
+    """Mocked fail-closed propagation: a 422 ``response_action_unsupported`` reaches the caller.
 
-    TraigentBackend ``tvl_import.py`` (``_single_requirement_and_monitor``) refuses a
-    non-empty ``responses`` with ``response_action_unsupported``.  Until the TRAIG-101
-    Backend PR (B1) lands, uploading a contract with responses fails closed.  When B1
-    lands, this test must flip: delete it (the tests above then describe the success).
+    The fake Backend refuses any non-empty ``responses`` the way TraigentBackend
+    ``develop`` ``tvl_import.py:326`` does today (``_single_requirement_and_monitor``).
+    This test claims only that the SDK surfaces such a refusal as that closed code and
+    does not swallow it; it makes no claim about any deployed Backend.
     """
     from traigent.runtime.model import RuntimeRequirementError
 
