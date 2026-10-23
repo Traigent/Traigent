@@ -295,13 +295,27 @@ if ! python3 scripts/ci/spine_preflight.py; then FAIL=1; fi
 # lines; overall coverage on this analysis is partial by construction.
 sonar_prepare_coverage() {
   rm -f coverage.xml
-  local f mod rc
+  local f mod rc out sel_rc g_rc
   local -a tests=() mods=()
-  mapfile -t tests < <(changed_files 'tests/*.py' | grep -E '(^|/)test_[^/]*\.py$' | while read -r f; do [[ -f "$f" ]] && echo "$f"; done)
-  mapfile -t mods < <(changed_files 'traigent/*.py' | while read -r f; do [[ -f "$f" ]] && echo "$f"; done)
+  # Capture selector output + status explicitly: `mapfile < <(...)` would hide a
+  # selector failure and look like "nothing selected".
+  out="$(changed_files 'tests/*.py')"; sel_rc=$?
+  if [[ "$sel_rc" -ne 0 ]]; then
+    echo "  ❌ changed-test selector failed (rc=$sel_rc): cannot decide which tests to measure"; FAIL=1; return 0
+  fi
+  mapfile -t tests < <(printf '%s\n' "$out" | grep -E '(^|/)test_[^/]*\.py$' | while read -r f; do [[ -f "$f" ]] && echo "$f"; done)
+  out="$(changed_files 'traigent/*.py')"; sel_rc=$?
+  if [[ "$sel_rc" -ne 0 ]]; then
+    echo "  ❌ changed-module selector failed (rc=$sel_rc): cannot decide which tests to measure"; FAIL=1; return 0
+  fi
+  mapfile -t mods < <(printf '%s\n' "$out" | while read -r f; do [[ -n "$f" && -f "$f" ]] && echo "$f"; done)
   for f in "${mods[@]}"; do
     mod="${f%.py}"; mod="${mod//\//.}"; mod="${mod%.__init__}"
-    while IFS= read -r t; do tests+=("$t"); done < <(grep -rlF --include='test_*.py' "$mod" tests/unit 2>/dev/null | head -10)
+    out="$(grep -rlF --include='test_*.py' "$mod" tests/unit 2>/dev/null)"; g_rc=$?
+    if [[ "$g_rc" -gt 1 ]]; then
+      echo "  ❌ related-test search failed for $mod (grep rc=$g_rc)"; FAIL=1; return 0
+    fi
+    while IFS= read -r t; do [[ -n "$t" ]] && tests+=("$t"); done < <(printf '%s\n' "$out" | head -10)
   done
   mapfile -t tests < <(printf '%s\n' "${tests[@]}" | sed '/^$/d' | sort -u | head -60)
   if [[ "${#tests[@]}" -eq 0 ]]; then
@@ -323,9 +337,13 @@ sonar_prepare_coverage() {
   rm -f "$rcfile"
   if [[ ! -s coverage.xml ]]; then
     echo "  ⚠️  coverage.xml was not produced (pytest rc=$rc): coverage NOT MEASURED for this scan"
-  elif [[ "$rc" -ne 0 ]]; then
-    echo "  ⚠️  coverage tests exited rc=$rc: coverage.xml is PARTIAL (new-code coverage is a lower bound)"
-  else
+  fi
+  # pyproject sets no coverage fail-under, so a nonzero pytest rc is a real
+  # test failure (or collection error) in the selected tests: fail the gate.
+  if [[ "$rc" -ne 0 ]]; then
+    echo "  ❌ selected tests FAILED (pytest rc=$rc): fix them; coverage.xml (if any) is PARTIAL"
+    FAIL=1
+  elif [[ -s coverage.xml ]]; then
     echo "  ✅ coverage.xml written ($(wc -c <coverage.xml) bytes)"
   fi
 }
