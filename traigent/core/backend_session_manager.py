@@ -83,6 +83,8 @@ from traigent.utils.trial_costs import (
     move_flagged_cost_to_floor_field,
 )
 
+_TRIAL_SUBMISSION = "trial submission"
+
 logger = get_logger(__name__)
 
 _WARNING_RULE = "=" * 72
@@ -2904,7 +2906,7 @@ class BackendSessionManager:
                 # withhold for this incumbent (never attest an unbound winner).
                 # A missing slot in a tracking-enabled run is the first symptom
                 # of a backend outage — degrade to local-only (issue #1265).
-                self._flag_backend_degraded("trial submission")
+                self._flag_backend_degraded(_TRIAL_SUBMISSION)
                 logger.warning(
                     "No backend trial slot acquired for session %s "
                     "(client trial %s); skipping submission (fail closed)",
@@ -2959,7 +2961,7 @@ class BackendSessionManager:
                 # Required cloud tracking cannot tolerate an unacknowledged
                 # write, so it raises instead (#2510).
                 if policy_requires_cloud(policy_from_config(self._traigent_config)):
-                    self._flag_backend_degraded("trial submission")
+                    self._flag_backend_degraded(_TRIAL_SUBMISSION)
             elif not submitted:
                 # False covers a real backend rejection (non-2xx that is not a
                 # transient not-found) or a network failure; degrade to local-only
@@ -2970,7 +2972,7 @@ class BackendSessionManager:
                         or "backend returned a permanent 4xx rejection"
                     )
                     self._flag_backend_degraded(
-                        "trial submission", rejection_reason=rejection_reason
+                        _TRIAL_SUBMISSION, rejection_reason=rejection_reason
                     )
                     logger.warning(
                         "Backend session endpoint rejected trial %s for session %s "
@@ -2979,7 +2981,7 @@ class BackendSessionManager:
                         session_id,
                     )
                 else:
-                    self._flag_backend_degraded("trial submission")
+                    self._flag_backend_degraded(_TRIAL_SUBMISSION)
                     logger.warning(
                         "Backend session endpoint did not accept trial %s for session %s",
                         backend_trial_id,
@@ -3003,7 +3005,7 @@ class BackendSessionManager:
             # A raised error here is a backend interaction failure; the run is
             # no longer cloud-tracked for this trial, so degrade to local-only
             # (issue #1265) rather than retrying the backend every trial.
-            self._flag_backend_degraded("trial submission")
+            self._flag_backend_degraded(_TRIAL_SUBMISSION)
             logger.warning(
                 "Failed to submit trial %s for session %s to backend: %s",
                 trial_result.trial_id,

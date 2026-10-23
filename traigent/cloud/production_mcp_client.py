@@ -87,6 +87,8 @@ from traigent.utils.wire_text import error_code_for_wire, filter_wire_metadata
 from .backend_bridges import bridge
 from .models import AgentSpecification, OptimizationRequest
 
+_MCP_CONNECT_ERROR = "Unable to connect to MCP server"
+
 logger = get_logger(__name__)
 
 # Error message constants
@@ -443,9 +445,8 @@ class ProductionMCPClient:
 
             async def execute_tool_call():
                 """Internal function for tool execution with proper error handling."""
-                if not await self.is_connected():
-                    if not await self.connect():
-                        raise NetworkError("Unable to connect to MCP server") from None
+                if not await self.is_connected() and not await self.connect():
+                    raise NetworkError(_MCP_CONNECT_ERROR) from None
 
                 if self._session is None:
                     raise ConnectionError(_MCP_SESSION_UNAVAILABLE)
@@ -575,9 +576,8 @@ class ProductionMCPClient:
             MCP response with available resources
         """
         try:
-            if not await self.is_connected():
-                if not await self.connect():
-                    raise ConnectionError("Unable to connect to MCP server") from None
+            if not await self.is_connected() and not await self.connect():
+                raise ConnectionError(_MCP_CONNECT_ERROR) from None
 
             if self._session is None:
                 raise ConnectionError(_MCP_SESSION_UNAVAILABLE)
@@ -602,9 +602,8 @@ class ProductionMCPClient:
             MCP response with resource content
         """
         try:
-            if not await self.is_connected():
-                if not await self.connect():
-                    raise ConnectionError("Unable to connect to MCP server") from None
+            if not await self.is_connected() and not await self.connect():
+                raise ConnectionError(_MCP_CONNECT_ERROR) from None
 
             if self._session is None:
                 raise ConnectionError(_MCP_SESSION_UNAVAILABLE)

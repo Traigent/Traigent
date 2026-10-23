@@ -17,6 +17,8 @@ from ..utils.incentives import show_upgrade_hint
 from ..utils.local_analytics import collect_and_submit_analytics
 from ..utils.logging import get_logger
 
+_NOT_SET = "not set"
+
 logger = get_logger(__name__)
 WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 _TRUTHY_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
@@ -447,20 +449,20 @@ def manage_config(show: bool, set_path: str | None, reset: bool) -> None:
             # Show environment variables
             click.echo("\n🌍 Environment Variables:")
             env_vars = [
-                ("TRAIGENT_OFFLINE", os.getenv("TRAIGENT_OFFLINE", "not set")),
+                ("TRAIGENT_OFFLINE", os.getenv("TRAIGENT_OFFLINE", _NOT_SET)),
                 (
                     "TRAIGENT_OFFLINE_MODE",
-                    os.getenv("TRAIGENT_OFFLINE_MODE", "not set"),
+                    os.getenv("TRAIGENT_OFFLINE_MODE", _NOT_SET),
                 ),
                 (
                     "TRAIGENT_RESULTS_FOLDER",
-                    os.getenv("TRAIGENT_RESULTS_FOLDER", "not set"),
+                    os.getenv("TRAIGENT_RESULTS_FOLDER", _NOT_SET),
                 ),
                 (
                     "TRAIGENT_MINIMAL_LOGGING",
-                    os.getenv("TRAIGENT_MINIMAL_LOGGING", "not set"),
+                    os.getenv("TRAIGENT_MINIMAL_LOGGING", _NOT_SET),
                 ),
-                ("TRAIGENT_AUTO_SYNC", os.getenv("TRAIGENT_AUTO_SYNC", "not set")),
+                ("TRAIGENT_AUTO_SYNC", os.getenv("TRAIGENT_AUTO_SYNC", _NOT_SET)),
             ]
 
             for name, value in env_vars:

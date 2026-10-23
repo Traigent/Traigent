@@ -40,6 +40,8 @@ from traigent.utils.secure_path import (
 from traigent.utils.validation import OptimizationValidator
 from traigent.visualization.plots import create_quick_plot
 
+_OUTPUT_FILE_LABEL = "Output file"
+
 console = Console()
 
 # Style constant for table headers
@@ -1097,7 +1099,7 @@ def report_example_map(
         )
         resolved_output = _resolve_user_cli_path(
             Path(output_path),
-            "Output file",
+            _OUTPUT_FILE_LABEL,
             for_write=True,
         )
         resolved_output.parent.mkdir(parents=True, exist_ok=True)
@@ -2170,7 +2172,9 @@ def export(
         else:
             output_path = Path(output)
 
-        output_path = _resolve_user_cli_path(output_path, "Output file", for_write=True)
+        output_path = _resolve_user_cli_path(
+            output_path, _OUTPUT_FILE_LABEL, for_write=True
+        )
         if output_path.is_dir():
             raise click.ClickException(
                 f"Output file is a directory, not a file path: {output_path}"
@@ -2360,7 +2364,7 @@ def generate(template: str, output: str) -> None:
 
     output_path = _resolve_user_cli_path(
         Path(output),
-        "Output file",
+        _OUTPUT_FILE_LABEL,
         for_write=True,
     )
 

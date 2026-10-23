@@ -10,6 +10,10 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+_PERMISSION_DENIED = "Permission denied"
+
+_NO_MODULE_NAMED = "No module named"
+
 
 class TraigentError(Exception):
     """Base exception for Traigent errors with helpful messages."""
@@ -183,8 +187,8 @@ class ErrorHandler:
 
     # Common error patterns and their solutions
     ERROR_PATTERNS = {
-        "No module named": {
-            "check": lambda e: "No module named" in str(e),
+        _NO_MODULE_NAMED: {
+            "check": lambda e: _NO_MODULE_NAMED in str(e),
             "handler": "handle_import_error",
         },
         "API key": {
@@ -199,8 +203,8 @@ class ErrorHandler:
             ),
             "handler": "handle_connection_error",
         },
-        "Permission denied": {
-            "check": lambda e: "Permission denied" in str(e),
+        _PERMISSION_DENIED: {
+            "check": lambda e: _PERMISSION_DENIED in str(e),
             "handler": "handle_permission_error",
         },
         "accuracy = 0.0": {
@@ -233,7 +237,7 @@ class ErrorHandler:
         error_str = str(error)
 
         # Extract module name from error
-        if "No module named" in error_str:
+        if _NO_MODULE_NAMED in error_str:
             parts = error_str.split("'")
             if len(parts) >= 2:
                 module_name = parts[1].split(".")[0]
@@ -292,7 +296,7 @@ class ErrorHandler:
     def handle_permission_error(cls, error: Exception) -> None:
         """Handle permission errors."""
         raise TraigentError(
-            message="Permission denied",
+            message=_PERMISSION_DENIED,
             fix="1. Check file permissions\n"
             "   2. Run in virtual environment\n"
             "   3. Use --user flag: pip install --user",

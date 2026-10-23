@@ -39,6 +39,10 @@ from .base import BaseOverrideManager
 # Import static mappings from dedicated module
 from .mappings import METHOD_MAPPINGS, METHOD_PARAMETER_TRANSLATIONS, PARAMETER_MAPPINGS
 
+_OPENAI_ASYNC_CLIENT_PATH = "openai.AsyncOpenAI"
+
+_OPENAI_CLIENT_PATH = "openai.OpenAI"
+
 logger = get_logger(__name__)
 
 # Backwards compatibility alias
@@ -104,7 +108,7 @@ except ImportError:
 
 #: Framework targets whose patched methods return OpenAI SDK objects that
 #: carry ``usage`` (Traigent#2441).
-_OPENAI_USAGE_TARGETS = frozenset({"openai.OpenAI", "openai.AsyncOpenAI"})
+_OPENAI_USAGE_TARGETS = frozenset({_OPENAI_CLIENT_PATH, _OPENAI_ASYNC_CLIENT_PATH})
 
 
 def _unwrap_raw_openai_response(response: Any) -> Any:
@@ -1189,7 +1193,7 @@ def apply_mock_overrides(mock_classes: dict[str, type]) -> None:
 # Convenience functions for common frameworks
 def override_openai_sdk() -> None:
     """Enable overrides for OpenAI SDK classes."""
-    enable_framework_overrides(["openai.OpenAI", "openai.AsyncOpenAI"])
+    enable_framework_overrides([_OPENAI_CLIENT_PATH, _OPENAI_ASYNC_CLIENT_PATH])
 
 
 def override_langchain() -> None:
@@ -1234,8 +1238,8 @@ def override_all_platforms() -> None:
     enable_framework_overrides(
         [
             # OpenAI
-            "openai.OpenAI",
-            "openai.AsyncOpenAI",
+            _OPENAI_CLIENT_PATH,
+            _OPENAI_ASYNC_CLIENT_PATH,
             # LangChain OpenAI
             "langchain.llms.OpenAI",
             "langchain_openai.OpenAI",

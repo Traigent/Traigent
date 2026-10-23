@@ -41,8 +41,8 @@ from traigent.identity.examples import result_identity_fields
 from traigent.utils.env_config import is_truthy
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
-from traigent.utils.exceptions import ConfigurationError, EvaluationError
 from traigent.utils.example_id import stamp_row_index
+from traigent.utils.exceptions import ConfigurationError, EvaluationError
 from traigent.utils.exceptions import TraigentError as CoreTraigentError
 from traigent.utils.exceptions import TrialPrunedError, ValidationError
 from traigent.utils.function_identity import is_coroutine_callable
@@ -62,6 +62,8 @@ from traigent.utils.trial_costs import (
 if TYPE_CHECKING:
     from traigent.core.execution_budget import ExecutionBudget
     from traigent.core.sample_budget import SampleBudgetLease
+
+_JSON_SUFFIX = ".json"
 
 # Tracing utilities are imported lazily to avoid circular imports
 # The actual import happens in _get_tracing_functions()
@@ -1208,12 +1210,12 @@ class Dataset:
         resolved_path, registry_entry = _resolve_dataset_source(file_path)
 
         # Additional security: Check file extension
-        if resolved_path.suffix.lower() not in [".jsonl", ".json"]:
+        if resolved_path.suffix.lower() not in [".jsonl", _JSON_SUFFIX]:
             raise ValidationError(
                 f"Dataset must be JSONL or JSON file, got: {resolved_path.suffix}"
             )
 
-        if resolved_path.suffix.lower() == ".json":
+        if resolved_path.suffix.lower() == _JSON_SUFFIX:
             examples, name_hint, description_hint, metadata_hint = _parse_json_dataset(
                 resolved_path, file_path
             )
@@ -4473,7 +4475,7 @@ def load_dataset_from_file(file_path: str) -> Dataset:
             registry_entry=registry_entry,
         )
 
-    if suffix == ".json":
+    if suffix == _JSON_SUFFIX:
         examples, name_hint, description_hint, metadata_hint = _parse_json_dataset(
             resolved_path, file_path
         )
@@ -4506,7 +4508,7 @@ def _load_json_dataset(file_path: str) -> Dataset:
         ValidationError: If file format is invalid
     """
     resolved_path, registry_entry = _resolve_dataset_source(file_path)
-    if resolved_path.suffix.lower() != ".json":
+    if resolved_path.suffix.lower() != _JSON_SUFFIX:
         raise ValidationError(f"Dataset must be JSON file, got: {resolved_path.suffix}")
 
     examples, name_hint, description_hint, metadata_hint = _parse_json_dataset(

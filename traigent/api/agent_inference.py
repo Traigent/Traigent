@@ -21,7 +21,7 @@ Example:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from traigent.api.types import (
     AgentConfiguration,
@@ -29,9 +29,6 @@ from traigent.api.types import (
     GlobalConfiguration,
 )
 from traigent.utils.logging import get_logger
-
-if TYPE_CHECKING:
-    pass
 
 logger = get_logger(__name__)
 

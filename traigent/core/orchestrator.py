@@ -2947,7 +2947,7 @@ class OptimizationOrchestrator:
         for descriptor, sample_ceiling in zip(
             trial_descriptors, ceilings, strict=False
         ):
-            cfg, cfg_eval, ds_for_trial, optuna_id = descriptor
+            cfg, _, ds_for_trial, optuna_id = descriptor
             if sample_ceiling is not None and sample_ceiling <= 0:
                 logger.debug(
                     "Skipping parallel trial due to zero sample ceiling (config=%s)",

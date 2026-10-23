@@ -33,6 +33,8 @@ from traigent.utils.persistence import PersistenceManager
 from traigent.utils.secure_path import PathTraversalError, validate_path
 from traigent.utils.validation import ValidationResult, Validators
 
+_TRAIGENT_DIRNAME = ".traigent"
+
 V1_TOOL_NAMES: tuple[str, ...] = (
     "auth_status",
     "detect_tvars",
@@ -752,7 +754,7 @@ def _run_loaded_optimizations(
 
     stdout_buffer = io.StringIO()
     stderr_buffer = io.StringIO()
-    persistence = PersistenceManager(".traigent")
+    persistence = PersistenceManager(_TRAIGENT_DIRNAME)
     timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     summaries: list[dict[str, Any]] = []
     with (
@@ -1006,7 +1008,7 @@ def _serialize_loaded_result(result: Any) -> dict[str, Any]:
 
 def get_results_tool(result_name: str | None = None) -> dict[str, Any]:
     """List or show local optimization results from the .traigent store."""
-    persistence = PersistenceManager(".traigent")
+    persistence = PersistenceManager(_TRAIGENT_DIRNAME)
     if result_name is None:
         return {
             "ok": True,
@@ -1034,7 +1036,7 @@ def export_evidence_tool(
     output_dir: str = ".traigent/evidence",
 ) -> dict[str, Any]:
     """Export a local evidence bundle from saved optimization results."""
-    persistence = PersistenceManager(".traigent")
+    persistence = PersistenceManager(_TRAIGENT_DIRNAME)
     if result_name is None:
         results = persistence.list_results()
         if not results:

@@ -21,6 +21,8 @@ from traigent.integrations.utils import Framework
 if TYPE_CHECKING:
     from traigent.config.types import TraigentConfig
 
+_MESSAGES_CREATE = "messages.create"
+
 logger = logging.getLogger(__name__)
 
 
@@ -124,11 +126,11 @@ class AnthropicPlugin(LLMPlugin):
     def get_target_methods(self) -> dict[str, list[str]]:
         """Return mapping of Anthropic classes to methods to override."""
         return {
-            "anthropic.Anthropic": ["messages.create", "messages.stream"],
-            "anthropic.AsyncAnthropic": ["messages.create", "messages.stream"],
-            "anthropic.Client": ["messages.create", "completions.create"],  # Legacy
+            "anthropic.Anthropic": [_MESSAGES_CREATE, "messages.stream"],
+            "anthropic.AsyncAnthropic": [_MESSAGES_CREATE, "messages.stream"],
+            "anthropic.Client": [_MESSAGES_CREATE, "completions.create"],  # Legacy
             "anthropic.AsyncClient": [
-                "messages.create",
+                _MESSAGES_CREATE,
                 "completions.create",
             ],  # Legacy
             "anthropic.resources.messages.Messages": ["create", "stream"],

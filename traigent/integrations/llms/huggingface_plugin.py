@@ -6,8 +6,6 @@ parameter mappings and framework overrides.
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
 
-from typing import TYPE_CHECKING
-
 from traigent.integrations.base_plugin import (
     IntegrationPriority,
     PluginMetadata,
@@ -15,9 +13,6 @@ from traigent.integrations.base_plugin import (
 )
 from traigent.integrations.llms import LLMPlugin
 from traigent.integrations.utils import Framework
-
-if TYPE_CHECKING:
-    pass
 
 
 class HuggingFacePlugin(LLMPlugin):

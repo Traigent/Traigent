@@ -11,6 +11,8 @@ from traigent.core.objective_directions import resolve_objective_orientation
 from ..api.types import OptimizationResult
 from ..utils.multi_objective import ParetoFrontCalculator
 
+_NO_DATA_TO_PLOT = "No data to plot"
+
 
 class PlotGenerator:
     """Generates plots for optimization results using ASCII and optional matplotlib."""
@@ -150,7 +152,7 @@ class PlotGenerator:
     ) -> str:
         """Create ASCII progress plot."""
         if not scores:
-            return "No data to plot"
+            return _NO_DATA_TO_PLOT
 
         # Normalize scores for plotting
         min_score = min(scores)
@@ -346,7 +348,7 @@ class PlotGenerator:
     ) -> str:
         """Create ASCII Pareto front plot."""
         if not all_x or not all_y:
-            return "No data to plot"
+            return _NO_DATA_TO_PLOT
 
         width = 60
         height = 20
@@ -519,7 +521,7 @@ class PlotGenerator:
     def _plot_importance_ascii(self, params: list[str], scores: list[float]) -> str:
         """Create ASCII parameter importance plot."""
         if not params or not scores:
-            return "No data to plot"
+            return _NO_DATA_TO_PLOT
 
         # Sort by importance
         sorted_data = sorted(

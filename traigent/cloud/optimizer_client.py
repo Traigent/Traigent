@@ -9,12 +9,14 @@ from typing import Any, cast
 
 import backoff
 
-from traigent.labels.transport_gate import gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.client import raise_if_cloud_egress_disabled
 from traigent.cloud.url_security import validate_cloud_base_url
-from traigent.utils.wire_text import filter_wire_metadata
 from traigent.core.session_types import safe_http_error_summary
+from traigent.labels.transport_gate import gate_session
+from traigent.utils.wire_text import filter_wire_metadata
+
+_SESSION_ID_REQUIRED = "session_id must be a non-empty string"
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +176,7 @@ class OptimizerDirectClient:
         }
 
         if not isinstance(session_id, str) or not session_id.strip():
-            raise ValueError("session_id must be a non-empty string")
+            raise ValueError(_SESSION_ID_REQUIRED)
         if not isinstance(trial_id, str) or not trial_id.strip():
             raise ValueError("trial_id must be a non-empty string")
         session_id = session_id.strip()
@@ -211,7 +213,7 @@ class OptimizerDirectClient:
         if self.session is None:
             raise RuntimeError(_SESSION_NOT_INITIALIZED)
         if not isinstance(session_id, str) or not session_id.strip():
-            raise ValueError("session_id must be a non-empty string")
+            raise ValueError(_SESSION_ID_REQUIRED)
         session_id = session_id.strip()
         try:
             async with self.session.get(
@@ -245,7 +247,7 @@ class OptimizerDirectClient:
         if self.session is None:
             raise RuntimeError(_SESSION_NOT_INITIALIZED)
         if not isinstance(session_id, str) or not session_id.strip():
-            raise ValueError("session_id must be a non-empty string")
+            raise ValueError(_SESSION_ID_REQUIRED)
         session_id = session_id.strip()
         try:
             async with self.session.get(
