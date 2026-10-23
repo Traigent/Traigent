@@ -610,14 +610,18 @@ def _completion(result: Any) -> str:
     )
 
 
-def _candidates(result: Any, extract: Callable[[Any], Any] | None) -> list[Any]:
+def _candidates(
+    result: Any,
+    extract: Callable[[Any, dict[str, Any]], Any] | None,
+    grant: dict[str, Any],
+) -> list[Any]:
     """Closed candidate facts, from ``extract`` or the result's ``reactive_candidates``.
 
     The promotion gate is not computed here: a result that carries no gate evidence
     reports no candidate (``optimize_no_candidate``), never a guessed ``Promote``.
     """
     raw = (
-        extract(result)
+        extract(result, grant)
         if extract is not None
         else getattr(result, "reactive_candidates", ())
     )
@@ -638,7 +642,7 @@ async def respond_hosted(
     skew: timedelta = CLOCK_SKEW_MARGIN,
     retry_delay: float = RETRY_DELAY_S,
     sleep: Callable[[float], Any] = asyncio.sleep,
-    candidates: Callable[[Any], Any] | None = None,
+    candidates: Callable[[Any, dict[str, Any]], Any] | None = None,
 ) -> RespondResult:
     """Run the existing ``.optimize()`` for an attempt a person granted in the portal.
 
@@ -734,7 +738,7 @@ async def respond_hosted(
             lambda key: api.report_finished(
                 reservation,
                 completion=_completion(result),
-                candidates=_candidates(result, candidates),
+                candidates=_candidates(result, candidates, grant),
                 key=key,
             ),
             sleep=sleep,

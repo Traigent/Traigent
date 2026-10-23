@@ -306,7 +306,7 @@ def test_candidates_are_closed_facts_and_a_gate_is_never_guessed(
     go(
         reactive,
         fn,
-        candidates=lambda _r: [
+        candidates=lambda _r, _g: [
             {
                 "evidence_valid": True,
                 "legacy_decision": "Promote",
