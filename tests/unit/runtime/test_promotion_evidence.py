@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -381,3 +382,117 @@ def test_deploy_refuses_a_grant_bound_to_a_candidate_that_was_not_promoted(
         r for r in b.requests_of("reserveTvlReactiveAttempt") if deploy_ref in r["path"]
     ] == []
     assert b.head.generation == 3
+
+
+VECTORS = (
+    Path(__file__).resolve().parents[2]
+    / "fixtures"
+    / "runtime"
+    / "promotion_digest_vectors.json"
+)
+
+
+def test_digest_vectors_are_pinned_and_every_case_recomputes() -> None:
+    import hashlib
+
+    from tvl.canonical import canonical_json_digest
+
+    from traigent.runtime.promotion_evidence import gate_result_digest
+
+    from .reactive_fake import canonical_digest
+
+    raw = VECTORS.read_bytes()
+    pinned = (VECTORS.parent / "SOURCE.md").read_text()
+    assert (
+        f"promotion_digest_vectors.json sha256: {hashlib.sha256(raw).hexdigest()}"
+        in pinned
+    )
+    doc = json.loads(raw)
+    assert len(doc["fingerprints"]) >= 10 and len(doc["gates"]) >= 5
+    for case in doc["fingerprints"]:
+        assert candidate_fingerprint(case["config"]) == case["fingerprint"], case[
+            "name"
+        ]
+        assert (
+            canonical_json_digest(case["config"]) == case["fingerprint"]
+        )  # TVL is the authority
+        assert (
+            canonical_digest(case["config"]) == case["fingerprint"]
+        )  # independent re-derivation
+    by_name = {c["name"]: c["fingerprint"] for c in doc["fingerprints"]}
+    assert by_name["key-order-a"] == by_name["key-order-b"]
+    assert len(set(by_name.values())) == len(by_name) - 1
+    for case in doc["gates"]:
+        got = gate_result_digest(
+            contract_digest=case["contract_digest"],
+            fingerprint=case["fingerprint"],
+            legacy_decision=case["legacy_decision"],
+            verdicts_by_monitor_token=case["monitors"],
+            decision=case["decision"],
+        )
+        assert got == case["gate_result_digest"], case["name"]
+        document = {
+            "format": doc["gate_document"]["format"],
+            **{
+                k: case[k]
+                for k in (
+                    "contract_digest",
+                    "fingerprint",
+                    "legacy_decision",
+                    "monitors",
+                    "decision",
+                )
+            },
+        }
+        assert canonical_digest(document) == case["gate_result_digest"]
+
+
+def test_the_fake_backend_refuses_a_publication_whose_spec_does_not_match_the_fingerprint(
+    promo: Reactive,
+) -> None:
+    from traigent.runtime.deploy import DeployController
+
+    b = promo.backend
+    result, reporter, _ref = _optimize_promoted(promo)
+    from traigent.runtime.promotion_evidence import promoted
+
+    (winner,) = promoted(result.candidates)
+    deploy_ref = promo.attempt("deploy")
+    b.grant(
+        deploy_ref,
+        deploy={
+            "candidate_fingerprint": winner["fingerprint"],
+            "gate_result_digest": winner["gate_result_digest"],
+            "expected_head_generation": b.head.generation,
+        },
+    )
+    tampered = {**reporter.configs, winner["fingerprint"]: {**CONFIG, "model": "other"}}
+    with pytest.raises(Exception) as err:  # noqa: B017
+        asyncio.run(
+            DeployController(
+                promo.client, state_dir=promo.state, clock=promo.clock
+            ).run_promoted(deploy_ref, result, configs=tampered, config_id="answer")
+        )
+    assert (
+        getattr(err.value, "code", "") == "deploy_binding_mismatch"
+    )  # caught before any write
+    assert b.requests_of("publishTvlDeploy") == [] and b.head.generation == 3
+    # Bypassing the client-side check, the Backend still recomputes and refuses.
+    from traigent.runtime.deploy import DeployHold
+
+    with pytest.raises(DeployHold) as hold:
+        asyncio.run(
+            DeployController(
+                promo.client, state_dir=promo.state, clock=promo.clock
+            ).run(
+                deploy_ref,
+                spec={
+                    "schema_version": "traigent.best_config.v1",
+                    "config_id": "answer",
+                    "config": tampered[winner["fingerprint"]],
+                },
+                candidate_fingerprint=winner["fingerprint"],
+                gate_result_digest=winner["gate_result_digest"],
+            )
+        )
+    assert hold.value.path == "idempotency_conflict" and b.head.generation == 3

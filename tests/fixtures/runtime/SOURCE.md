@@ -39,3 +39,13 @@ Each case names the sections it rests on in `cites`.
   events a precedence predicate looks at; `max_active_obligations` bounds grants still
   pending (neither consumed nor revoked).
 - Precedence assignment: each `b` spends the eligible grant that is revoked soonest.
+
+# Promotion digest vectors
+
+`promotion_digest_vectors.json` is SDK-owned and is vendored byte-for-byte by the Backend
+and the JS SDK, which must reproduce every digest. The candidate fingerprint and the
+gate-result digest are TVL's `canonical_json_digest` (`tvl/python/tvl/canonical.py`:
+`json.dumps(value, sort_keys=True, indent=2, ensure_ascii=True) + "\n"`, sha256 hex).
+`tests/unit/runtime/test_promotion_evidence.py` pins the file and recomputes every case.
+
+promotion_digest_vectors.json sha256: 2db38aaeb42b0fa8dc4cbfb960bd2a695a2d8b06b30c462b785d5c18540555f9

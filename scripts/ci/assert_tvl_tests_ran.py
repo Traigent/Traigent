@@ -118,6 +118,14 @@ REQUIRED = (
         "test_promotion_evidence",
         "test_deploy_refuses_a_grant_bound_to_a_candidate_that_was_not_promoted",
     ),
+    (
+        "test_promotion_evidence",
+        "test_digest_vectors_are_pinned_and_every_case_recomputes",
+    ),
+    (
+        "test_promotion_evidence",
+        "test_the_fake_backend_refuses_a_publication_whose_spec_does_not_match_the_fingerprint",
+    ),
 )
 
 

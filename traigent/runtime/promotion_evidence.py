@@ -2,7 +2,7 @@
 
 A candidate of an optimize run is reported to the Backend as a CLOSED fact:
 
-* ``fingerprint``: the sha256 (hex) of the canonical JSON of the candidate
+* ``fingerprint``: the sha256 (hex) of the TVL canonical JSON of the candidate
   configuration (the knob values).  The configuration itself never leaves the
   customer side with this fact.
 * ``legacy_decision``: the existing promotion decision (``Promote`` / ``Reject`` /
@@ -25,6 +25,7 @@ Needs the ``runtime-tvl`` extra (``tvl-spec``).
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -40,7 +41,6 @@ from traigent.runtime.model import (
     E_COMPILER,
     RuntimeRequirement,
     RuntimeRequirementError,
-    digest_of,
 )
 
 GATE_FORMAT = "traigent-gate-result/1"
@@ -64,14 +64,34 @@ class CandidateEvidence:
     monitor_counts: Mapping[str, Mapping[str, Any]]
 
 
-def candidate_fingerprint(config: Mapping[str, Any]) -> str:
-    """sha256 hex of the canonical JSON of the candidate configuration."""
-    if not isinstance(config, Mapping) or not config:
-        raise RuntimeRequirementError("candidate_unfingerprintable")
+def _tvl_digest() -> Callable[[Any], str]:
+    """TVL's own ``canonical_json_digest`` (sorted keys, indent 2, ASCII, trailing LF).
+
+    TVL is the authority for the canonical form; the Backend and the JS SDK vendor the
+    shared vectors in ``tests/fixtures/runtime/promotion_digest_vectors.json``.
+    """
     try:
-        return digest_of(dict(config))
+        from tvl.canonical import canonical_json_digest
+    except ImportError:
+        raise RuntimeRequirementError(E_COMPILER) from None
+    return canonical_json_digest  # type: ignore[no-any-return]
+
+
+def _digest(value: Any) -> str:
+    try:
+        json.dumps(
+            value, allow_nan=False
+        )  # TVL's encoder would emit NaN/Infinity tokens
     except (TypeError, ValueError):
         raise RuntimeRequirementError("candidate_unfingerprintable") from None
+    return _tvl_digest()(value)
+
+
+def candidate_fingerprint(config: Mapping[str, Any]) -> str:
+    """TVL canonical-JSON sha256 (hex) of the candidate configuration."""
+    if not isinstance(config, Mapping) or not config:
+        raise RuntimeRequirementError("candidate_unfingerprintable")
+    return _digest(dict(config))
 
 
 def latency_counts(
@@ -121,7 +141,7 @@ def gate_result_digest(
     verdicts_by_monitor_token: Mapping[str, str],
     decision: str,
 ) -> str:
-    return digest_of(
+    return _digest(
         {
             "format": GATE_FORMAT,
             "contract_digest": contract_digest,

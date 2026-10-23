@@ -19,6 +19,7 @@ lease renewal, same-key replay before stale-generation, tombstoned publications.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 from collections import defaultdict
@@ -149,6 +150,12 @@ class Clock:
 
 class DroppedResponse(ConnectionError):
     """The response was lost after the server committed."""
+
+
+def canonical_digest(value: Any) -> str:
+    """The Backend's independent re-derivation of TVL's canonical_json_digest."""
+    text = json.dumps(value, sort_keys=True, indent=2, ensure_ascii=True) + "\n"
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _iso(moment: datetime) -> str:
@@ -759,6 +766,12 @@ class StrictBackend:
         if (
             key != expected_key
             or body["expected_head_generation"] != binding["expected_head_generation"]
+        ):
+            return 409, refusal("idempotency_conflict")
+        # The Backend recomputes the fingerprint from the published spec (TVL canonical form).
+        if (
+            canonical_digest(body["spec"].get("config"))
+            != binding["candidate_fingerprint"]
         ):
             return 409, refusal("idempotency_conflict")
         # Same-key replay answers first, before ANY stale-generation or effect check.

@@ -20,13 +20,15 @@ from traigent.runtime.hosted import ReactiveError, deploy_key
 from traigent.runtime.model import E_OCCURRENCE_USED, RuntimeRequirementError
 
 from .conftest import CANARY, Reactive
+from .reactive_fake import canonical_digest
 
-FP, GATE = "c" * 64, "d" * 64
+GATE = "d" * 64
 SPEC = {
     "schema_version": "traigent.best_config.v1",
     "config_id": "answer",
     "config": {"temperature": 0.2, "model": "m-small"},
 }
+FP = canonical_digest(SPEC["config"])  # the Backend recomputes this from the spec
 PUBLISH = "publishTvlDeploy"
 LOOKUP = "getTvlDeployPublishResult"
 FINALIZE = "finalizeTvlDeployPublishResult"
