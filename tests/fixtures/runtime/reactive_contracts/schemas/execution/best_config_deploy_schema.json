@@ -1,0 +1,171 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/execution/best_config_deploy_schema.json",
+  "title": "BestConfigDeploy",
+  "description": "Deploy publish-result and finalize contracts of the agent-configuration-head deploy target (TRAIG-101 plan 8.7). Closed: refs, digests, enums, integers and timestamps only. The published CONFIGURATION itself is customer content (plan 8.4), is NOT part of this closed contract and is not covered by the Director bridge guarantee; it is classified in best_config_agent_head_config_schema.json.",
+  "definitions": {
+    "DeployIdempotencyKey": {
+      "x-content-class": "opaque_ref",
+      "type": "string",
+      "pattern": "^deploy:attemptref_[0-9a-f]{32}:[0-9a-f]{64}:[0-9a-f]{64}$",
+      "minLength": 180,
+      "maxLength": 180,
+      "description": "Deploy idempotency key `deploy:{attempt_ref}:{candidate_fingerprint}:{gate_result_digest}`, carried in the body of the deploy publication (POST .../deploy-publications), the path of publish-results and the deploy_result outcome, and stored with a durable publish-result record. Fixed shape of refs and digests only. Same key replays the original result before any stale-generation check."
+    },
+    "DeployPublishResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "idempotency_key",
+        "state",
+        "head_generation",
+        "pinned_version",
+        "decided_at"
+      ],
+      "properties": {
+        "schema_version": {
+          "x-content-class": "closed_enum",
+          "type": "integer",
+          "const": 1
+        },
+        "idempotency_key": {
+          "$ref": "#/definitions/DeployIdempotencyKey"
+        },
+        "state": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "succeeded",
+            "cancelled",
+            "pending"
+          ],
+          "description": "succeeded: the publish committed and advanced the head; cancelled: a cancellation tombstone was committed under the head lock (a tombstoned publication cannot commit); pending: neither yet."
+        },
+        "head_generation": {
+          "x-content-class": "number",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "description": "Head generation produced by the committed publish; null unless succeeded."
+        },
+        "pinned_version": {
+          "x-content-class": "number",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "description": "Pinned config version promoted; null unless succeeded."
+        },
+        "decided_at": {
+          "x-content-class": "timestamp",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "maxLength": 40
+        }
+      },
+      "description": "Durable publish-result record of a deploy. An absent lookup alone never justifies a terminal outcome; unavailable or timed-out finalization means HOLD.",
+      "oneOf": [
+        {
+          "properties": {
+            "state": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "succeeded"
+            },
+            "head_generation": {
+              "x-content-class": "number",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "pinned_version": {
+              "x-content-class": "number",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "decided_at": {
+              "x-content-class": "timestamp",
+              "type": "string",
+              "format": "date-time",
+              "maxLength": 40
+            }
+          }
+        },
+        {
+          "properties": {
+            "state": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "cancelled"
+            },
+            "head_generation": {
+              "x-content-class": "closed_enum",
+              "type": "null",
+              "const": null
+            },
+            "pinned_version": {
+              "x-content-class": "closed_enum",
+              "type": "null",
+              "const": null
+            },
+            "decided_at": {
+              "x-content-class": "timestamp",
+              "type": "string",
+              "format": "date-time",
+              "maxLength": 40
+            }
+          }
+        },
+        {
+          "properties": {
+            "state": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "pending"
+            },
+            "head_generation": {
+              "x-content-class": "closed_enum",
+              "type": "null",
+              "const": null
+            },
+            "pinned_version": {
+              "x-content-class": "closed_enum",
+              "type": "null",
+              "const": null
+            },
+            "decided_at": {
+              "x-content-class": "closed_enum",
+              "type": "null",
+              "const": null
+            }
+          }
+        }
+      ]
+    },
+    "DeployFinalizeRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version"
+      ],
+      "properties": {
+        "schema_version": {
+          "x-content-class": "closed_enum",
+          "type": "integer",
+          "const": 1
+        }
+      },
+      "description": "Finalize a deploy publish: under the agent-head lock only (never the best-config row), return the stored success or commit a cancellation tombstone. Body carries only the version; the key is the path."
+    }
+  }
+}

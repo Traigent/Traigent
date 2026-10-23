@@ -1,0 +1,262 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Traigent Deploy Publish-result and Pinned Config Routes",
+    "version": "1.0.0",
+    "description": "Agent-configuration-head deploy target of TVL Reactive Contracts (TRAIG-101 plan 8): publish-result lookup and finalize. The deploy publication itself is POST .../deploy-publications (best_config_agent_head_config_endpoints.json), a branch separate from POST /api/v1/best-configs because its precondition is the APPROVAL-TIME generation, whereas best_config_endpoints.json requires the generation captured at optimization start and forbids refreshing it."
+  },
+  "paths": {
+    "/api/v1/best-configs/agent-heads/{agent_ref}/publish-results/{key}": {
+      "get": {
+        "summary": "Look up the durable publish-result record of a deploy",
+        "description": "Lookup by deploy idempotency key. An absent lookup (404 reference_not_found) alone never justifies a terminal outcome. Tenant and project come from the authenticated request context only (X-Tenant-Id, query strings and unknown body fields are never consulted or are refused). Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the uniform unknown-route 404. Every error body is the closed envelope ../optimization/tvl_reactive_common_schema.json#/definitions/Refusal except 429.",
+        "operationId": "getTvlDeployPublishResult",
+        "x-asserted-against-backend": false,
+        "parameters": [
+          {
+            "name": "agent_ref",
+            "in": "path",
+            "required": true,
+            "description": "Agent ref.",
+            "schema": {
+              "$ref": "../labels/label_common_schema.json#/definitions/AgentRef"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "Deploy idempotency key.",
+            "schema": {
+              "$ref": "./best_config_deploy_schema.json#/definitions/DeployIdempotencyKey"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stored result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./best_config_deploy_schema.json#/definitions/DeployPublishResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthenticated. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden, fact_source_not_permitted. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "reference_not_found. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait; the only rate-limit detail on the wire.",
+                "schema": {
+                  "x-content-class": "number",
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 86400
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "service_unavailable. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/best-configs/agent-heads/{agent_ref}/publish-results/{key}/finalize": {
+      "post": {
+        "summary": "Finalize an ambiguous deploy publish under the head lock",
+        "description": "Locks the agent head only (publisher lock order is best-config row then head; finalization never takes the best-config row afterward) WITHOUT satisfying an expected-generation precondition, then returns the stored success or commits a cancellation tombstone; a tombstoned publication cannot commit (publish answers 409 publication_cancelled). Unavailable or timed-out finalization means HOLD. Tenant and project come from the authenticated request context only (X-Tenant-Id, query strings and unknown body fields are never consulted or are refused). Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the uniform unknown-route 404. Every error body is the closed envelope ../optimization/tvl_reactive_common_schema.json#/definitions/Refusal except 429.",
+        "operationId": "finalizeTvlDeployPublishResult",
+        "x-asserted-against-backend": false,
+        "parameters": [
+          {
+            "name": "agent_ref",
+            "in": "path",
+            "required": true,
+            "description": "Agent ref.",
+            "schema": {
+              "$ref": "../labels/label_common_schema.json#/definitions/AgentRef"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "Deploy idempotency key.",
+            "schema": {
+              "$ref": "./best_config_deploy_schema.json#/definitions/DeployIdempotencyKey"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./best_config_deploy_schema.json#/definitions/DeployFinalizeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored success (succeeded) or committed tombstone (cancelled).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./best_config_deploy_schema.json#/definitions/DeployPublishResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthenticated. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden, fact_source_not_permitted. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "reference_not_found. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "batch_out_of_order, instant_not_increasing, evaluation_inputs_frozen, instant_sealed, fact_contradicts_record, idempotency_conflict, grant_not_valid, reservation_conflict, reservation_generation_stale, start_refused, attempt_not_open, head_generation_stale, publication_cancelled. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait; the only rate-limit detail on the wire.",
+                "schema": {
+                  "x-content-class": "number",
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 86400
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "service_unavailable. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

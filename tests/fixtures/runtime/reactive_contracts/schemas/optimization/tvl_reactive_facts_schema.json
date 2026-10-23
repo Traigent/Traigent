@@ -1,0 +1,764 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/tvl_reactive_facts_schema.json",
+  "title": "TvlReactiveFacts",
+  "description": "Closed fact vocabulary of the TVL 1.4 reactive layer: revision, window, episode, liveness and optimization facts, the shapes the TVL reference trace (python/tvl/runtime_trace.py) accepts with hosted tokens in place of names, plus transport-only fields (window unknown_reason, candidate fingerprint and gate_result_digest) that the reference rejects; traigent_schema.tvl_reactive.project_fact drops them and renames revision `target` to `name`. Closed enums, bounded integers, booleans, digests and hosted tokens only; no free text.",
+  "definitions": {
+    "RevisionFact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "target",
+        "value"
+      ],
+      "properties": {
+        "kind": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "response",
+            "monitor"
+          ]
+        },
+        "target": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken",
+          "description": "Response or monitor token whose revision changed."
+        },
+        "value": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest",
+          "description": "New revision identity (digest)."
+        }
+      },
+      "description": "A response-policy or monitor-key revision recorded for the evaluation. Native monitors' revisions are written by the Backend only."
+    },
+    "WindowFact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "monitor",
+        "start",
+        "end",
+        "verdict",
+        "usable"
+      ],
+      "properties": {
+        "monitor": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+        },
+        "start": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Hours"
+        },
+        "end": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Hours"
+        },
+        "verdict": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/MonitorVerdict"
+        },
+        "unknown_reason": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/UnknownReason",
+          "description": "Present only for verdict UNKNOWN (optional there)."
+        },
+        "usable": {
+          "x-content-class": "closed_enum",
+          "type": "boolean",
+          "description": "Counts as usable evidence for unknown_for (backend_native_usable/v1 for native windows; the customer's declaration for customer-recorded monitors)."
+        }
+      },
+      "description": "One decided monitor window. Width and tumbling alignment are checked against the stored monitor.",
+      "oneOf": [
+        {
+          "properties": {
+            "verdict": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "UNKNOWN"
+            }
+          },
+          "required": [
+            "verdict"
+          ]
+        },
+        {
+          "properties": {
+            "verdict": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "enum": [
+                "MET",
+                "BREACHED"
+              ]
+            }
+          },
+          "required": [
+            "verdict"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "unknown_reason"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "EpisodeFact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "monitor",
+        "scope",
+        "event"
+      ],
+      "properties": {
+        "monitor": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+        },
+        "scope": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken",
+          "description": "Episode scope token (ingest-minted at `opened`, repeated on continued and closed)."
+        },
+        "event": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "opened",
+            "continued",
+            "closed"
+          ]
+        },
+        "reason": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "resolved",
+            "withdrawn"
+          ],
+          "description": "Closure reason; present iff event is closed."
+        }
+      },
+      "description": "Episode boundary fact of a monitor.",
+      "oneOf": [
+        {
+          "properties": {
+            "event": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "closed"
+            }
+          },
+          "required": [
+            "event",
+            "reason"
+          ]
+        },
+        {
+          "properties": {
+            "event": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "enum": [
+                "opened",
+                "continued"
+              ]
+            }
+          },
+          "required": [
+            "event"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "reason"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "LivenessFact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "monitor",
+        "event",
+        "scope"
+      ],
+      "properties": {
+        "monitor": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken",
+          "description": "Liveness monitor token; posted by the principal authorized for the primary monitor it observes."
+        },
+        "event": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "stale",
+            "live_again"
+          ]
+        },
+        "scope": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+        }
+      },
+      "description": "Customer-recorded liveness fact. The Backend computes no liveness; native primaries are refused at import."
+    },
+    "Candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_valid"
+      ],
+      "properties": {
+        "evidence_valid": {
+          "x-content-class": "closed_enum",
+          "type": "boolean"
+        },
+        "legacy_decision": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/LegacyDecision"
+        },
+        "monitor_verdicts": {
+          "type": "array",
+          "items": {
+            "$ref": "./tvl_reactive_common_schema.json#/definitions/CandidateMonitorVerdict"
+          },
+          "maxItems": 32
+        },
+        "fingerprint": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest",
+          "description": "Candidate fingerprint (digest of the candidate configuration); required for deploy-eligible candidates."
+        },
+        "gate_result_digest": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest",
+          "description": "Digest of the promotion gate result under the current contract digest."
+        }
+      },
+      "description": "One optimization candidate. Valid evidence carries the promotion join inputs; invalid evidence carries none.",
+      "oneOf": [
+        {
+          "properties": {
+            "evidence_valid": {
+              "x-content-class": "closed_enum",
+              "type": "boolean",
+              "const": true
+            }
+          },
+          "required": [
+            "evidence_valid",
+            "legacy_decision",
+            "monitor_verdicts"
+          ]
+        },
+        {
+          "properties": {
+            "evidence_valid": {
+              "x-content-class": "closed_enum",
+              "type": "boolean",
+              "const": false
+            }
+          },
+          "required": [
+            "evidence_valid"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "legacy_decision"
+                ]
+              },
+              {
+                "required": [
+                  "monitor_verdicts"
+                ]
+              },
+              {
+                "required": [
+                  "fingerprint"
+                ]
+              },
+              {
+                "required": [
+                  "gate_result_digest"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "OptimizationFact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "response",
+        "revision",
+        "rule",
+        "scope",
+        "occurrence",
+        "fact"
+      ],
+      "properties": {
+        "response": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+        },
+        "revision": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest",
+          "description": "Response-policy revision value the attempt belongs to."
+        },
+        "rule": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+        },
+        "scope": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+        },
+        "occurrence": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Occurrence"
+        },
+        "fact": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "fired",
+            "started",
+            "finished",
+            "approval",
+            "authority",
+            "deploy_started",
+            "deploy_result"
+          ]
+        },
+        "completion": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "normal",
+            "error",
+            "cancelled",
+            "cost_limit"
+          ],
+          "description": "How the optimization run ended."
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "./tvl_reactive_facts_schema.json#/definitions/Candidate"
+          },
+          "maxItems": 64,
+          "description": "Candidates produced by the run."
+        },
+        "effect": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Effect"
+        },
+        "state": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "granted",
+            "declined",
+            "expired",
+            "reachable",
+            "unreachable"
+          ],
+          "description": "approval: granted, declined or expired; authority: reachable or unreachable."
+        },
+        "checks": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "passed",
+            "refused",
+            "unreachable"
+          ],
+          "description": "Effect-time deploy checks."
+        },
+        "write": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "succeeded",
+            "failed",
+            "not_attempted"
+          ],
+          "description": "Deploy write outcome."
+        },
+        "retries_exhausted": {
+          "x-content-class": "closed_enum",
+          "type": "boolean",
+          "description": "The finite deploy retry bound was reached."
+        }
+      },
+      "description": "One optimization/deploy fact of an attempt, a superset of the TVL reference trace's fact shape (tvl_reactive_trace_projection: the extra transport fields are dropped when projecting to a trace history; see docs/tvl-reactive-contracts.md). Authority records (`approval`, `started`, `deploy_started`) are generated by the Backend from grant, reservation and start rows; when posted through ingestion they never create authority and a contradicting claim is 409 fact_contradicts_record.",
+      "oneOf": [
+        {
+          "properties": {
+            "fact": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "fired"
+            }
+          },
+          "required": [
+            "fact"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "completion"
+                ]
+              },
+              {
+                "required": [
+                  "candidates"
+                ]
+              },
+              {
+                "required": [
+                  "effect"
+                ]
+              },
+              {
+                "required": [
+                  "state"
+                ]
+              },
+              {
+                "required": [
+                  "checks"
+                ]
+              },
+              {
+                "required": [
+                  "write"
+                ]
+              },
+              {
+                "required": [
+                  "retries_exhausted"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "fact": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "started"
+            }
+          },
+          "required": [
+            "fact"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "completion"
+                ]
+              },
+              {
+                "required": [
+                  "candidates"
+                ]
+              },
+              {
+                "required": [
+                  "effect"
+                ]
+              },
+              {
+                "required": [
+                  "state"
+                ]
+              },
+              {
+                "required": [
+                  "checks"
+                ]
+              },
+              {
+                "required": [
+                  "write"
+                ]
+              },
+              {
+                "required": [
+                  "retries_exhausted"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "fact": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "finished"
+            }
+          },
+          "required": [
+            "fact",
+            "completion",
+            "candidates"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "effect"
+                ]
+              },
+              {
+                "required": [
+                  "state"
+                ]
+              },
+              {
+                "required": [
+                  "checks"
+                ]
+              },
+              {
+                "required": [
+                  "write"
+                ]
+              },
+              {
+                "required": [
+                  "retries_exhausted"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "fact": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "approval"
+            },
+            "state": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "enum": [
+                "granted",
+                "declined",
+                "expired"
+              ]
+            }
+          },
+          "required": [
+            "fact",
+            "effect",
+            "state"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "completion"
+                ]
+              },
+              {
+                "required": [
+                  "candidates"
+                ]
+              },
+              {
+                "required": [
+                  "checks"
+                ]
+              },
+              {
+                "required": [
+                  "write"
+                ]
+              },
+              {
+                "required": [
+                  "retries_exhausted"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "fact": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "authority"
+            },
+            "state": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "enum": [
+                "reachable",
+                "unreachable"
+              ]
+            }
+          },
+          "required": [
+            "fact",
+            "state"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "completion"
+                ]
+              },
+              {
+                "required": [
+                  "candidates"
+                ]
+              },
+              {
+                "required": [
+                  "effect"
+                ]
+              },
+              {
+                "required": [
+                  "checks"
+                ]
+              },
+              {
+                "required": [
+                  "write"
+                ]
+              },
+              {
+                "required": [
+                  "retries_exhausted"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "fact": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "deploy_started"
+            }
+          },
+          "required": [
+            "fact"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "completion"
+                ]
+              },
+              {
+                "required": [
+                  "candidates"
+                ]
+              },
+              {
+                "required": [
+                  "effect"
+                ]
+              },
+              {
+                "required": [
+                  "state"
+                ]
+              },
+              {
+                "required": [
+                  "checks"
+                ]
+              },
+              {
+                "required": [
+                  "write"
+                ]
+              },
+              {
+                "required": [
+                  "retries_exhausted"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "fact": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "deploy_result"
+            }
+          },
+          "required": [
+            "fact",
+            "checks",
+            "write",
+            "retries_exhausted"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "completion"
+                ]
+              },
+              {
+                "required": [
+                  "candidates"
+                ]
+              },
+              {
+                "required": [
+                  "effect"
+                ]
+              },
+              {
+                "required": [
+                  "state"
+                ]
+              }
+            ]
+          },
+          "if": {
+            "properties": {
+              "checks": {
+                "const": "passed"
+              }
+            },
+            "required": [
+              "checks"
+            ]
+          },
+          "else": {
+            "properties": {
+              "write": {
+                "x-content-class": "closed_enum",
+                "type": "string",
+                "enum": [
+                  "not_attempted"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

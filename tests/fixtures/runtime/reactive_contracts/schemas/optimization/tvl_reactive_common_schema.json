@@ -1,0 +1,712 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/tvl_reactive_common_schema.json",
+  "title": "TvlReactiveCommon",
+  "description": "Shared closed vocabularies of the TVL 1.4 reactive layer (TRAIG-101, S1): hosted tokens, server-issued refs, digests, bounded integers, the closed refusal envelope. Reviewed closed-contract expansion (GNFR-PRIV-002(f)): every field of the reactive wire contracts is a hosted token or server ref, an enum, a bounded integer, a boolean, a digest or a server timestamp. No free text and no customer-chosen name crosses this channel. See docs/tvl-reactive-contracts.md.",
+  "definitions": {
+    "SchemaVersion": {
+      "x-content-class": "closed_enum",
+      "type": "integer",
+      "const": 1,
+      "description": "TVL reactive contract version."
+    },
+    "HostedToken": {
+      "x-content-class": "key_material",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "minLength": 17,
+      "maxLength": 17,
+      "allOf": [
+        {
+          "pattern": "^t[A-Za-z0-9_-]{16}$"
+        }
+      ],
+      "description": "Hosted token minted by the customer-side SDK for a compiled TVL name (response, rule, monitor, scope, environment, requirement): the letter t followed by 16 base64url characters of a random value (never a hash or a name; tvl-token-map/1 entries from the SDK). The Backend validates OWNERSHIP: the token must exist in the stored response-policy revision's refs, or be a scope previously announced by an `opened` or `fired` fact of the same agent; an unknown token is refused without echo. A token that does not have this exact shape is refused at the schema."
+    },
+    "Digest": {
+      "x-content-class": "digest",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "maxLength": 64,
+      "description": "Lowercase hex SHA-256 digest (contract digest, candidate fingerprint, gate-result digest, revision value)."
+    },
+    "IdempotencyKey": {
+      "x-content-class": "key_material",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "minLength": 32,
+      "maxLength": 32,
+      "allOf": [
+        {
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      ],
+      "description": "128-bit random idempotency key, client-generated, 32 lowercase hex characters (a nonce, never derived from a name). Same key and same request returns the stored receipt; the same key with any difference is 409 idempotency_conflict."
+    },
+    "Hours": {
+      "x-content-class": "number",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000000,
+      "description": "Integer lifecycle hours (an instant or a window bound), 0 to 1000000000."
+    },
+    "Occurrence": {
+      "x-content-class": "number",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "Zero-based occurrence index of an optimize rule firing within its attempt identity."
+    },
+    "Generation": {
+      "x-content-class": "number",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "Agent-head or reservation generation, 0 to 2^53-1."
+    },
+    "Timestamp": {
+      "x-content-class": "timestamp",
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 40,
+      "description": "Server-set point in time (RFC 3339 UTC)."
+    },
+    "UserRef": {
+      "x-content-class": "opaque_ref",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "maxLength": 36,
+      "description": "UUID of the authenticated principal that made a human decision (no name or email)."
+    },
+    "PolicyRevisionRef": {
+      "x-content-class": "opaque_ref",
+      "type": "string",
+      "pattern": "^policyrevisionref_[0-9a-f]{32}$",
+      "maxLength": 50,
+      "description": "Server-issued reference to a response-policy revision (the Backend-computed digest identity of the canonical response semantics, not the contract digest)."
+    },
+    "AttemptRef": {
+      "x-content-class": "opaque_ref",
+      "type": "string",
+      "pattern": "^attemptref_[0-9a-f]{32}$",
+      "maxLength": 43,
+      "description": "Server-issued reference to an optimize/deploy attempt, created at Freeze when a rule fires."
+    },
+    "GrantRef": {
+      "x-content-class": "opaque_ref",
+      "type": "string",
+      "pattern": "^grantref_[0-9a-f]{32}$",
+      "maxLength": 41,
+      "description": "Server-issued reference to a human approval grant row."
+    },
+    "ReservationRef": {
+      "x-content-class": "opaque_ref",
+      "type": "string",
+      "pattern": "^reservationref_[0-9a-f]{32}$",
+      "maxLength": 47,
+      "description": "Server-issued reference to a reservation against a valid grant."
+    },
+    "NotificationRef": {
+      "x-content-class": "opaque_ref",
+      "type": "string",
+      "pattern": "^notificationref_[0-9a-f]{32}$",
+      "maxLength": 48,
+      "description": "Server-issued reference to a recorded notification (deterministic per policy revision, rule, scope and occurrence index)."
+    },
+    "MonitorVerdict": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "MET",
+        "BREACHED",
+        "UNKNOWN"
+      ],
+      "description": "Verdict of a monitor window."
+    },
+    "UnknownReason": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "inconclusive",
+        "insufficient",
+        "unresolved",
+        "unplaceable",
+        "late_evaluation",
+        "revision_gap"
+      ],
+      "description": "Reason code of an UNKNOWN window (the Backend statistics reasons)."
+    },
+    "CandidateMonitorVerdict": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "MET",
+        "BREACHED",
+        "UNKNOWN",
+        "UNKNOWN(inconclusive)",
+        "UNKNOWN(insufficient)",
+        "UNKNOWN(unresolved)",
+        "UNKNOWN(unplaceable)",
+        "UNKNOWN(late_evaluation)",
+        "UNKNOWN(revision_gap)"
+      ],
+      "description": "A monitor verdict as the promotion join accepts it: MET, BREACHED, UNKNOWN or UNKNOWN(<reason>)."
+    },
+    "LegacyDecision": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "Promote",
+        "Reject",
+        "NoDecision"
+      ],
+      "description": "Legacy promotion decision of a candidate."
+    },
+    "Effect": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "optimize",
+        "deploy"
+      ],
+      "description": "Which effect a grant, reservation or start authorizes."
+    },
+    "AttemptState": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "open_pending",
+        "approved",
+        "reserved",
+        "started",
+        "lapsed",
+        "finished",
+        "closed"
+      ],
+      "description": "Attempt state shown to humans; `lapsed` = started effect without heartbeat (still open, `attempt_open` TRUE)."
+    },
+    "Refusal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "success",
+        "error",
+        "error_code",
+        "message"
+      ],
+      "properties": {
+        "success": {
+          "x-content-class": "closed_enum",
+          "type": "boolean",
+          "const": false
+        },
+        "error": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "invalid_request",
+            "unauthenticated",
+            "forbidden",
+            "fact_source_not_permitted",
+            "reference_not_found",
+            "payload_too_large",
+            "batch_out_of_order",
+            "instant_not_increasing",
+            "evaluation_inputs_frozen",
+            "instant_sealed",
+            "fact_contradicts_record",
+            "idempotency_conflict",
+            "grant_not_valid",
+            "reservation_conflict",
+            "reservation_generation_stale",
+            "start_refused",
+            "attempt_not_open",
+            "head_generation_stale",
+            "publication_cancelled",
+            "rate_limited",
+            "internal_error",
+            "service_unavailable"
+          ]
+        },
+        "error_code": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "invalid_request",
+            "unauthenticated",
+            "forbidden",
+            "fact_source_not_permitted",
+            "reference_not_found",
+            "payload_too_large",
+            "batch_out_of_order",
+            "instant_not_increasing",
+            "evaluation_inputs_frozen",
+            "instant_sealed",
+            "fact_contradicts_record",
+            "idempotency_conflict",
+            "grant_not_valid",
+            "reservation_conflict",
+            "reservation_generation_stale",
+            "start_refused",
+            "attempt_not_open",
+            "head_generation_stale",
+            "publication_cancelled",
+            "rate_limited",
+            "internal_error",
+            "service_unavailable"
+          ]
+        },
+        "message": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "Request is invalid.",
+            "Authentication is required.",
+            "Not permitted.",
+            "Fact source is not permitted.",
+            "Reference not found.",
+            "Request is too large.",
+            "Batch is out of order.",
+            "Instant does not increase.",
+            "Evaluation inputs are frozen.",
+            "Instant is sealed.",
+            "Fact contradicts the stored record.",
+            "Key was used with a different request.",
+            "Grant is not valid.",
+            "Attempt is already reserved.",
+            "Reservation generation is stale.",
+            "Start is not authorized.",
+            "Attempt is not open.",
+            "Agent head moved since approval.",
+            "Publication was cancelled.",
+            "Too many requests.",
+            "Internal error.",
+            "Service is temporarily unavailable."
+          ],
+          "description": "Fixed text per code."
+        }
+      },
+      "description": "Closed error envelope of every TVL reactive route (stage, complete, grants, reservations, start, results, cancel, notifications, attempts, deploy finalize and publish-result). `error` and `error_code` are the same closed code; `message` is the fixed text for that code. Nothing of the request is echoed: no key, value, ref, token, name or digest. While the feature flag is off the routes answer the framework's uniform unknown-route 404, never this envelope. Codes by status: 400 invalid_request; 401 unauthenticated; 403 forbidden; 403 fact_source_not_permitted; 404 reference_not_found; 413 payload_too_large; 409 batch_out_of_order; 409 instant_not_increasing; 409 evaluation_inputs_frozen; 409 instant_sealed; 409 fact_contradicts_record; 409 idempotency_conflict; 409 grant_not_valid; 409 reservation_conflict; 409 reservation_generation_stale; 409 start_refused; 409 attempt_not_open; 409 head_generation_stale; 409 publication_cancelled; 429 rate_limited; 500 internal_error; 503 service_unavailable. Precedence is fixed by each route: authentication and permission first, then body validity, then reference ownership, then record contradictions, then ordering and phase refusals.",
+      "oneOf": [
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "invalid_request"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "invalid_request"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Request is invalid."
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "unauthenticated"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "unauthenticated"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Authentication is required."
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "forbidden"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "forbidden"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Not permitted."
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "fact_source_not_permitted"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "fact_source_not_permitted"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Fact source is not permitted."
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "reference_not_found"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "reference_not_found"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Reference not found."
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "payload_too_large"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "payload_too_large"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Request is too large."
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "batch_out_of_order"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "batch_out_of_order"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Batch is out of order."
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "instant_not_increasing"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "instant_not_increasing"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Instant does not increase."
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "evaluation_inputs_frozen"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "evaluation_inputs_frozen"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Evaluation inputs are frozen."
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "instant_sealed"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "instant_sealed"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Instant is sealed."
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "fact_contradicts_record"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "fact_contradicts_record"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Fact contradicts the stored record."
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "idempotency_conflict"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "idempotency_conflict"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Key was used with a different request."
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "grant_not_valid"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "grant_not_valid"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Grant is not valid."
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "reservation_conflict"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "reservation_conflict"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Attempt is already reserved."
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "reservation_generation_stale"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "reservation_generation_stale"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Reservation generation is stale."
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "start_refused"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "start_refused"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Start is not authorized."
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "attempt_not_open"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "attempt_not_open"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Attempt is not open."
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "head_generation_stale"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "head_generation_stale"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Agent head moved since approval."
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "publication_cancelled"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "publication_cancelled"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Publication was cancelled."
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "rate_limited"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "rate_limited"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Too many requests."
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "internal_error"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "internal_error"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Internal error."
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "service_unavailable"
+            },
+            "error_code": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "service_unavailable"
+            },
+            "message": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "Service is temporarily unavailable."
+            }
+          }
+        }
+      ]
+    }
+  }
+}
