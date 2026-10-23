@@ -326,7 +326,14 @@ def answer_question(question: str) -> str:
         if hasattr(answer_question, "_mock_telemetry"):
             answer_question._mock_telemetry = telemetry
 
-        return _mock_answer(question)
+        # Report the simulated usage so the `cost` objective is real data (an
+        # unpriced call is refused by strict cost accounting).
+        return traigent.with_usage(
+            _mock_answer(question),
+            total_cost=telemetry["cost"],
+            input_tokens=telemetry["input_tokens"],
+            output_tokens=telemetry["output_tokens"],
+        )
 
     if os.getenv("ANTHROPIC_API_KEY") is None:
         raise APIKeyError("ANTHROPIC_API_KEY")
