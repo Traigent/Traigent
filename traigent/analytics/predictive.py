@@ -154,15 +154,12 @@ class CostForecaster:
             predicted_cost = costs[-1] * (1 + growth_rate) ** day
             predictions.append(predicted_cost)
 
-        trend_direction = (
-            TrendDirection.INCREASING
-            if growth_rate > 0.05
-            else (
-                TrendDirection.DECREASING
-                if growth_rate < -0.05
-                else TrendDirection.STABLE
-            )
-        )
+        if growth_rate > 0.05:
+            trend_direction = TrendDirection.INCREASING
+        elif growth_rate < -0.05:
+            trend_direction = TrendDirection.DECREASING
+        else:
+            trend_direction = TrendDirection.STABLE
 
         return ForecastResult(
             period=period,
@@ -203,13 +200,12 @@ class CostForecaster:
             projected_total = current_spend
 
         projected_overage = max(0, projected_total - budget_limit)
-        alert_level = (
-            "critical"
-            if projected_overage > budget_limit * 0.1
-            else "warning"
-            if projected_overage > 0
-            else "none"
-        )
+        if projected_overage > budget_limit * 0.1:
+            alert_level = "critical"
+        elif projected_overage > 0:
+            alert_level = "warning"
+        else:
+            alert_level = "none"
 
         return {
             "alert_level": alert_level,
@@ -451,16 +447,17 @@ class CostForecaster:
             else 0
         )
 
+        if efficiency_change < 0:
+            trend = "improving"
+        elif efficiency_change > 0:
+            trend = "degrading"
+        else:
+            trend = "stable"
+
         return {
             "current_cost_per_optimization": recent_efficiency,
             "efficiency_change_percent": efficiency_change * 100,
-            "trend": (
-                "improving"
-                if efficiency_change < 0
-                else "degrading"
-                if efficiency_change > 0
-                else "stable"
-            ),
+            "trend": trend,
         }
 
     def _generate_cost_recommendations(

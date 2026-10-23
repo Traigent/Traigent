@@ -704,6 +704,14 @@ def models(
         is_valid = verdict in {"live", "snapshot-only"}
 
     if output_json:
+        note: str | None
+        if normalized_provider == "bedrock":
+            note = (
+                "Bedrock validation lists regional foundation models only; it does "
+                "not invoke a model or prove account entitlement."
+            )
+        else:
+            note = _LIVE_NOTE if verdict == "snapshot-only" else None
         payload = {
             "provider": normalized_provider,
             "region": region if normalized_provider == "bedrock" else None,
@@ -711,12 +719,7 @@ def models(
             "valid": is_valid,
             "verdict": verdict,
             "models": model_ids,
-            "note": (
-                "Bedrock validation lists regional foundation models only; it does "
-                "not invoke a model or prove account entitlement."
-                if normalized_provider == "bedrock"
-                else (_LIVE_NOTE if verdict == "snapshot-only" else None)
-            ),
+            "note": note,
         }
         click.echo(json.dumps(payload, indent=2))
     else:

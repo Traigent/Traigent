@@ -69,7 +69,9 @@ def find_unknown_config_keys(data: Any) -> list[tuple[str, str | None]]:
             path = f"{prefix}.{name}" if prefix else name
             if name not in known:
                 near = difflib.get_close_matches(name, sorted(known), n=1, cutoff=0.7)
-                hint = (f"{prefix}.{near[0]}" if prefix else near[0]) if near else None
+                hint = None
+                if near:
+                    hint = f"{prefix}.{near[0]}" if prefix else near[0]
                 found.append((path, hint))
             elif path in _KNOWN_KEYS:
                 walk(node[key], path)

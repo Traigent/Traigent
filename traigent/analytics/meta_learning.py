@@ -513,9 +513,7 @@ class PerformancePredictor:
 
         # Find similar historical optimizations
         similar_records = []
-        target_chars = self._get_problem_characteristics(
-            function_name, configuration_space
-        )
+        target_chars = self._get_problem_characteristics(configuration_space)
 
         for record in self.history.records:
             if (
@@ -605,7 +603,7 @@ class PerformancePredictor:
         return curve
 
     def _get_problem_characteristics(
-        self, function_name: str, configuration_space: dict[str, Any]
+        self, configuration_space: dict[str, Any]
     ) -> ProblemCharacteristics:
         """Get problem characteristics for similarity comparison."""
         config_size = len(configuration_space)

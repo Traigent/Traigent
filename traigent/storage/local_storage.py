@@ -292,7 +292,7 @@ class LocalStorageManager:
         except ValueError:
             return None
 
-    def _try_cleanup_stale_lock(self, lock_path: Path, lock_name: str) -> bool:
+    def _try_cleanup_stale_lock(self, lock_path: Path) -> bool:
         """Remove stale lock when owner PID is no longer running."""
         owner_pid = self._read_lock_pid(lock_path)
         if owner_pid is None or self._is_process_alive(owner_pid):
@@ -354,7 +354,7 @@ class LocalStorageManager:
                 break
             except FileExistsError:
                 # Lock is held by another process
-                if self._try_cleanup_stale_lock(lock_path, lock_name):
+                if self._try_cleanup_stale_lock(lock_path):
                     continue
                 if time.time() - start_time > timeout:
                     # the lock name can embed a session id: kept off the message

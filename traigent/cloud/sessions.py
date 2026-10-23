@@ -712,7 +712,7 @@ class SessionManager:
             dataset_subset=subset_indices,
             exploration_type=self._determine_exploration_type(session, history),
             priority=1,
-            estimated_duration=self._estimate_duration(session, history),
+            estimated_duration=self._estimate_duration(history),
         )
 
         # Store pending trial
@@ -925,9 +925,7 @@ class SessionManager:
         else:
             return "exploitation"
 
-    def _estimate_duration(
-        self, session: OptimizationSession, history: list[TrialResultSubmission]
-    ) -> float | None:
+    def _estimate_duration(self, history: list[TrialResultSubmission]) -> float | None:
         """Estimate duration for next trial based on history."""
         if not history:
             return None

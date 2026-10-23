@@ -25,7 +25,7 @@ from traigent.utils.validation import CoreValidators, validate_or_raise
 
 from .backend_bridges import SessionExperimentMapping
 from .backend_client import BackendClientConfig, get_backend_client
-from .client import CloudRemoteExecutionUnavailableError, CloudServiceError
+from .client import CloudServiceError
 from .dataset_converter import converter
 from .models import (
     OptimizationRequest,
@@ -563,7 +563,7 @@ class IntegrationManager:
 
         except asyncio.CancelledError:
             raise
-        except (CloudRemoteExecutionUnavailableError, CloudServiceError):
+        except CloudServiceError:
             # Typed cloud failures are public signals. Do not collapse them into
             # None, which means "no suggestion / optimization complete" here.
             raise

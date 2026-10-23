@@ -528,11 +528,8 @@ def _format_unpriced_model_warning(
     # warning quantitative and explicit that $0 means UNKNOWN spend — not
     # verified-free — so a reported total_cost is understood as a lower bound.
     total_calls = sum(occurrences.get(m, 0) for m in model_ids) if occurrences else 0
-    call_note = (
-        f" across {total_calls} call{'s' if total_calls != 1 else ''}"
-        if total_calls
-        else ""
-    )
+    call_plural = "" if total_calls == 1 else "s"
+    call_note = f" across {total_calls} call{call_plural}" if total_calls else ""
     unknown_spend_note = (
         " These are recorded as $0 because pricing is UNKNOWN, not because "
         "usage was free — any reported total_cost is a lower bound on actual "

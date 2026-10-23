@@ -107,7 +107,7 @@ def resolve_default_mcp_server_module() -> str:
     for module_name in _DEFAULT_MCP_SERVER_CANDIDATES:
         try:
             spec = importlib.util.find_spec(module_name)
-        except (ImportError, ModuleNotFoundError, ValueError):
+        except (ImportError, ValueError):
             spec = None
         if spec is not None:
             return module_name
@@ -690,24 +690,16 @@ class ProductionMCPClient:
         # Prefer the real backend IDs returned by upstream create_agent /
         # upload_dataset calls. Fall back to bridge-generated IDs only when
         # the caller did not supply them (e.g. standalone create_experiment).
-        resolved_agent_id = (
-            agent_id
-            if agent_id is not None
-            else (
-                backend_request.agent_data.get("agent_id")
-                if hasattr(backend_request, "agent_data")
-                else None
+        resolved_agent_id = agent_id
+        if resolved_agent_id is None and hasattr(backend_request, "agent_data"):
+            resolved_agent_id = backend_request.agent_data.get("agent_id")
+        resolved_example_set_id = example_set_id
+        if resolved_example_set_id is None and hasattr(
+            backend_request, "example_set_data"
+        ):
+            resolved_example_set_id = backend_request.example_set_data.get(
+                "example_set_id"
             )
-        )
-        resolved_example_set_id = (
-            example_set_id
-            if example_set_id is not None
-            else (
-                backend_request.example_set_data.get("example_set_id")
-                if hasattr(backend_request, "example_set_data")
-                else None
-            )
-        )
 
         arguments = {
             "name": backend_request.name,

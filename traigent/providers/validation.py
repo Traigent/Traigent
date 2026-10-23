@@ -1318,7 +1318,12 @@ def print_provider_status(results: dict[str, ProviderStatus]) -> None:
     unknown_all: list[str] = []
 
     for provider, status in sorted(results.items()):
-        symbol = "[OK]" if status.valid else ("[SK]" if status.skipped else "[--]")
+        if status.valid:
+            symbol = "[OK]"
+        elif status.skipped:
+            symbol = "[SK]"
+        else:
+            symbol = "[--]"
         funds_note = ""
         if status.valid and status.funds in (_FUNDS_NOT_CHECKED, _FUNDS_UNKNOWN):
             funds_note = " (funds not checked)"

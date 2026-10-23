@@ -185,7 +185,7 @@ def _negotiated_body(
     """
     if not isinstance(envelope, dict) or any(type(k) is not str for k in envelope):
         raise LabelTransportError("invalid_request")
-    env = {k: envelope[k] for k in list(envelope)}
+    env = {k: envelope[k] for k in envelope}
     if (
         type(object_ref) is not str
         or not _OBJECT_REF.fullmatch(object_ref)

@@ -388,8 +388,8 @@ def _serialize_example_result(ex: Any, *, log_content: bool = True) -> dict[str,
         return {
             "example_id": ex.get("example_id"),
             "query": (
-                (actual.get("query") if isinstance(actual, dict) else None)
-                if log_content
+                actual.get("query")
+                if log_content and isinstance(actual, dict)
                 else None
             ),
             "response": _extract_output_text(actual) if log_content else None,
@@ -410,9 +410,7 @@ def _serialize_example_result(ex: Any, *, log_content: bool = True) -> dict[str,
     return {
         "example_id": getattr(ex, "example_id", None),
         "query": (
-            (actual.get("query") if isinstance(actual, dict) else None)
-            if log_content
-            else None
+            actual.get("query") if log_content and isinstance(actual, dict) else None
         ),
         "response": _extract_output_text(actual) if log_content else None,
         "expected": getattr(ex, "expected_output", None) if log_content else None,

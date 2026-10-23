@@ -1694,13 +1694,18 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
                 + risk * criteria["risk_weight"]
             )
 
+            if score > 0.7:
+                priority_rank = "high"
+            elif score > 0.4:
+                priority_rank = "medium"
+            else:
+                priority_rank = "low"
+
             prioritized.append(
                 {
                     **rec,
                     "priority_score": score,
-                    "priority_rank": (
-                        "high" if score > 0.7 else "medium" if score > 0.4 else "low"
-                    ),
+                    "priority_rank": priority_rank,
                 }
             )
 

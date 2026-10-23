@@ -341,16 +341,19 @@ async def auth_status_tool(check: bool = False) -> dict[str, Any]:
                     "source": "backend",
                 }
 
+    if api_key:
+        auth_type = "api_key"
+    elif credentials.get("jwt_token"):
+        auth_type = "jwt"
+    else:
+        auth_type = "none"
+
     return {
         "ok": True,
         "authenticated": authenticated,
         "credential_source": credentials.get("source") or "none",
         "api_key": _mask_api_key(api_key),
-        "auth_type": (
-            "api_key"
-            if api_key
-            else ("jwt" if credentials.get("jwt_token") else "none")
-        ),
+        "auth_type": auth_type,
         "tenant_id": tenant_id,
         "project_id": project_id,
         "backend_url": _sanitize_backend_url(cast("str | None", backend_url)),
@@ -912,9 +915,9 @@ def run_optimization_tool(
     # configured max_trials (the SDK default is 10, the previous MCP default)
     # and is not treated as explicitly sized, so the unmeasured-cost safety
     # limit still applies (#2441).
-    effective_trials: int | None = (
-        max_trials if max_trials is not None else (4 if mode == "mock" else None)
-    )
+    effective_trials: int | None = max_trials
+    if effective_trials is None and mode == "mock":
+        effective_trials = 4
     effective_algorithm = algorithm or "random"
 
     # v1 single-agent limitation: optimization runs synchronously below and

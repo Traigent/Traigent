@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent._version import get_version
-from traigent.utils.wire_text import filter_agent_configuration
 from traigent.api.types import (
     AgentConfiguration,
     OptimizationResult,
@@ -26,6 +25,7 @@ from traigent.api.types import (
     TrialStatus,
 )
 from traigent.config.types import ExecutionIntent, TraigentConfig, _read_bool_env
+from traigent.utils.wire_text import filter_agent_configuration
 
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
@@ -78,9 +78,9 @@ from traigent.utils.trial_costs import (
     COST_FLOOR_WIRE_KEY,
     TRIAL_COST_FIELDS,
     extract_trial_cost_metric,
-    move_flagged_cost_to_floor_field,
     is_cost_unmeasured,
     is_finite_numeric_cost,
+    move_flagged_cost_to_floor_field,
 )
 
 logger = get_logger(__name__)
@@ -1683,15 +1683,12 @@ class BackendSessionManager:
         if self._backend_client:
             evaluation_set_name = getattr(dataset, "name", None) or "default_evaluation"
             self._warn_if_dataset_unlinked(dataset, dataset_id)
-            effective_smart_pruning = (
-                dict(smart_pruning)
-                if smart_pruning is not None
-                else (
-                    dict(self._smart_pruning)
-                    if self._smart_pruning is not None
-                    else None
-                )
-            )
+            if smart_pruning is not None:
+                effective_smart_pruning = dict(smart_pruning)
+            elif self._smart_pruning is not None:
+                effective_smart_pruning = dict(self._smart_pruning)
+            else:
+                effective_smart_pruning = None
 
             # #2049: do NOT substitute a plausible number here. An unset max_trials
             # used to be stamped as a literal 10, which is indistinguishable on disk
