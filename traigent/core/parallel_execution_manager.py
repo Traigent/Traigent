@@ -437,6 +437,10 @@ class ParallelExecutionManager:
                         index,
                         type(e).__name__,
                     )
+                if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                    # Shutdown requests must stop the run, not become a failed
+                    # trial the optimizer carries on past.
+                    raise
                 # Return exception with denied permit (already released)
                 return (index, e, denied_permit)
 

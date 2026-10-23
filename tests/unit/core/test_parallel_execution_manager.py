@@ -393,6 +393,29 @@ class TestParallelExecutionManagerAsync:
         ]
         assert unawaited_warnings == []
 
+    @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
+    def test_shutdown_interrupt_propagates_and_releases_permit(
+        self, monkeypatch, interrupt
+    ):
+        """KeyboardInterrupt/SystemExit in a trial must stop the run, not fail one trial."""
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
+        enforcer = CostEnforcer(
+            CostEnforcerConfig(limit=10.0, estimated_cost_per_trial=1.0)
+        )
+        manager = ParallelExecutionManager(
+            parallel_trials=1, max_concurrent=1, cost_enforcer=enforcer
+        )
+
+        async def trial():
+            raise interrupt()
+
+        with pytest.raises(interrupt):
+            asyncio.run(manager.run_with_cost_permits([trial()]))
+
+        status = enforcer.get_status()
+        assert status.in_flight_count == 0
+        assert status.reserved_cost_usd == pytest.approx(0.0)
+
 
 class TestBackwardCompatibilityWithOrchestrator:
     """Test that ParallelExecutionManager works with orchestrator patterns."""
