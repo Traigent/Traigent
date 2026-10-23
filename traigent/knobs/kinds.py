@@ -14,7 +14,7 @@ __all__ = ["KnobKind"]
 
 try:  # pragma: no cover - exercised only once effectuation merges
     from traigent.effectuation.contracts import KnobKind  # type: ignore[no-redef]
-except (ImportError, ModuleNotFoundError):  # pragma: no cover - tested path today
+except ImportError:  # pragma: no cover - tested path today
     from enum import StrEnum
 
     class KnobKind(StrEnum):  # type: ignore[no-redef]

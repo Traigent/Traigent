@@ -239,7 +239,7 @@ def canonical_json_bytes(value: Any) -> bytes:
             allow_nan=False,
         )
         return text.encode("utf-8")
-    except (TypeError, ValueError, UnicodeError):
+    except (TypeError, ValueError):
         pass
     raise EconomicsTelemetryContractError(
         "telemetry payload is not serializable to canonical UTF-8 JSON"
