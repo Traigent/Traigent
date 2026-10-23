@@ -167,7 +167,7 @@ test = [
 # Pin all otel packages to the same minor so UV/pip can't mix incompatible
 # API ↔ SDK ↔ exporter versions (see #558 ReadableLogRecord crash).
 tracing = [
-    "opentelemetry-api>=1.20.0,<2.0.0",
+    "opentelemetry-api<2.0.0,>=1.44.0",
     "opentelemetry-sdk>=1.20.0,<2.0.0",
     "opentelemetry-exporter-otlp>=1.20.0,<2.0.0",
 ]
