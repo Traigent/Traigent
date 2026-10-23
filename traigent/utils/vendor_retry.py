@@ -418,11 +418,10 @@ def _on_failure(
         if category is not None and attempt <= settings.max_retries
         else None
     )
-    if delay is None:
+    if delay is None or category is None:
         _finish(handle, "error", error=exc)
         return None
     _finish(handle, "error", error=exc, backoff_seconds=delay)
-    assert category is not None
     logger.warning(
         "traigent.vendor_call_retry category=%s retry=%s/%s backoff=%.2fs",
         category.value,
