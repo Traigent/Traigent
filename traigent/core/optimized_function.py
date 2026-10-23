@@ -160,6 +160,8 @@ from traigent.utils.validation import (
     validate_objectives,
 )
 
+_NAME_WITH_DETAIL_FMT = "%s (%s)"
+
 logger = get_logger(__name__)
 
 # Guards every wrapper's exclusive slot (check-and-set of ``_exclusive_slot``
@@ -528,11 +530,8 @@ def _format_unpriced_model_warning(
     # warning quantitative and explicit that $0 means UNKNOWN spend — not
     # verified-free — so a reported total_cost is understood as a lower bound.
     total_calls = sum(occurrences.get(m, 0) for m in model_ids) if occurrences else 0
-    call_note = (
-        f" across {total_calls} call{'s' if total_calls != 1 else ''}"
-        if total_calls
-        else ""
-    )
+    call_plural = "" if total_calls == 1 else "s"
+    call_note = f" across {total_calls} call{call_plural}" if total_calls else ""
     unknown_spend_note = (
         " These are recorded as $0 because pricing is UNKNOWN, not because "
         "usage was free — any reported total_cost is a lower bound on actual "
@@ -768,7 +767,9 @@ def _warn_cost_objective_partial_coverage(
     result_warnings = getattr(result, "warnings", None)
     if isinstance(result_warnings, list) and message not in result_warnings:
         result_warnings.append(message)
-    logger.warning("%s (%s)", message, COST_OBJECTIVE_PARTIAL_USAGE_WARNING_CODE)
+    logger.warning(
+        _NAME_WITH_DETAIL_FMT, message, COST_OBJECTIVE_PARTIAL_USAGE_WARNING_CODE
+    )
 
 
 def _no_usage_is_fatal() -> bool:
@@ -851,7 +852,7 @@ def _guard_cost_objective_without_usage(
         if _NO_USAGE_CAPTURED_MESSAGE not in result_warnings:
             result_warnings.append(_NO_USAGE_CAPTURED_MESSAGE)
     logger.warning(
-        "%s (%s)",
+        _NAME_WITH_DETAIL_FMT,
         _NO_USAGE_CAPTURED_MESSAGE,
         COST_OBJECTIVE_NO_USAGE_WARNING_CODE,
     )
@@ -3835,7 +3836,7 @@ class OptimizedFunction[**P, R]:
             result.warning_codes.append(code)
         if message not in result.warnings:
             result.warnings.append(message)
-        logger.warning("%s (%s)", message, code)
+        logger.warning(_NAME_WITH_DETAIL_FMT, message, code)
 
     def _attach_execution_budget_snapshot(
         self,

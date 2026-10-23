@@ -23,7 +23,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import ExampleResult
 from traigent.evaluators.dataset_registry import (
@@ -62,6 +62,8 @@ from traigent.utils.trial_costs import (
 if TYPE_CHECKING:
     from traigent.core.execution_budget import ExecutionBudget
     from traigent.core.sample_budget import SampleBudgetLease
+
+_JSON_SUFFIX = ".json"
 
 # Tracing utilities are imported lazily to avoid circular imports
 # The actual import happens in _get_tracing_functions()
@@ -164,9 +166,6 @@ def aggregate_measured_metric(metric: str, all_metrics: list[dict[str, Any]]) ->
         )
         logger.warning("%s.", message)
     return sum(measured) / len(measured)
-
-
-_T = TypeVar("_T")
 
 
 class _TaskBoundaryInterrupt:
@@ -1208,12 +1207,12 @@ class Dataset:
         resolved_path, registry_entry = _resolve_dataset_source(file_path)
 
         # Additional security: Check file extension
-        if resolved_path.suffix.lower() not in [".jsonl", ".json"]:
+        if resolved_path.suffix.lower() not in [".jsonl", _JSON_SUFFIX]:
             raise ValidationError(
                 f"Dataset must be JSONL or JSON file, got: {resolved_path.suffix}"
             )
 
-        if resolved_path.suffix.lower() == ".json":
+        if resolved_path.suffix.lower() == _JSON_SUFFIX:
             examples, name_hint, description_hint, metadata_hint = _parse_json_dataset(
                 resolved_path, file_path
             )
@@ -1776,13 +1775,13 @@ class BaseEvaluator(ABC):
             execution_budget_lease.finalize()
 
     @staticmethod
-    async def _await_with_sample_lease_cleanup(
-        awaitable: Awaitable[_T],
+    async def _await_with_sample_lease_cleanup[T](
+        awaitable: Awaitable[T],
         sample_lease: SampleBudgetLease | None,
         execution_budget_lease: SampleBudgetLease | None,
         *,
         cleanup_on_cancel: bool = True,
-    ) -> _T:
+    ) -> T:
         """Await one evaluator operation and clean up at its boundary."""
         try:
             return await awaitable
@@ -4473,7 +4472,7 @@ def load_dataset_from_file(file_path: str) -> Dataset:
             registry_entry=registry_entry,
         )
 
-    if suffix == ".json":
+    if suffix == _JSON_SUFFIX:
         examples, name_hint, description_hint, metadata_hint = _parse_json_dataset(
             resolved_path, file_path
         )
@@ -4506,7 +4505,7 @@ def _load_json_dataset(file_path: str) -> Dataset:
         ValidationError: If file format is invalid
     """
     resolved_path, registry_entry = _resolve_dataset_source(file_path)
-    if resolved_path.suffix.lower() != ".json":
+    if resolved_path.suffix.lower() != _JSON_SUFFIX:
         raise ValidationError(f"Dataset must be JSON file, got: {resolved_path.suffix}")
 
     examples, name_hint, description_hint, metadata_hint = _parse_json_dataset(

@@ -19,6 +19,10 @@ from traigent.integrations.utils import Framework
 if TYPE_CHECKING:
     from traigent.config.types import TraigentConfig
 
+_EMBEDDINGS_CREATE = "embeddings.create"
+
+_CHAT_COMPLETIONS_CREATE = "chat.completions.create"
+
 
 class AzureOpenAIPlugin(LLMPlugin):
     """Plugin for Azure OpenAI SDK integration."""
@@ -70,15 +74,15 @@ class AzureOpenAIPlugin(LLMPlugin):
     def get_target_methods(self) -> dict[str, list[str]]:
         """Return mapping of classes to methods to override."""
         return {
-            "openai.AzureOpenAI": ["chat.completions.create", "embeddings.create"],
-            "openai.AsyncAzureOpenAI": ["chat.completions.create", "embeddings.create"],
+            "openai.AzureOpenAI": [_CHAT_COMPLETIONS_CREATE, _EMBEDDINGS_CREATE],
+            "openai.AsyncAzureOpenAI": [_CHAT_COMPLETIONS_CREATE, _EMBEDDINGS_CREATE],
             "openai.lib.azure.AzureOpenAI": [
-                "chat.completions.create",
-                "embeddings.create",
+                _CHAT_COMPLETIONS_CREATE,
+                _EMBEDDINGS_CREATE,
             ],
             "openai.lib.azure.AsyncAzureOpenAI": [
-                "chat.completions.create",
-                "embeddings.create",
+                _CHAT_COMPLETIONS_CREATE,
+                _EMBEDDINGS_CREATE,
             ],
         }
 

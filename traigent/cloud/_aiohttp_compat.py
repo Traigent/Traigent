@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+_AIOHTTP_NOT_AVAILABLE = "aiohttp not available"
+
 try:
     import aiohttp
 
@@ -32,13 +34,13 @@ except ImportError:  # pragma: no cover - minimal environments
         """ClientSession stub that raises ImportError on use."""
 
         def __init__(self, *args: Any, **kwargs: Any) -> None:
-            raise ImportError("aiohttp not available") from None
+            raise ImportError(_AIOHTTP_NOT_AVAILABLE) from None
 
         async def __aenter__(self) -> _MockClientSession:
-            raise ImportError("aiohttp not available") from None
+            raise ImportError(_AIOHTTP_NOT_AVAILABLE) from None
 
         async def __aexit__(self, *exc: Any) -> None:
-            raise ImportError("aiohttp not available") from None
+            raise ImportError(_AIOHTTP_NOT_AVAILABLE) from None
 
     class _MockTCPConnector:
         """Replacement for aiohttp.TCPConnector."""

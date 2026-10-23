@@ -427,7 +427,7 @@ def build_evaluator_binding(
             "dependency_versions": dependency_versions,
         }
         version_digest = compute_evaluator_version_digest(manifest)
-    except (fp2.Fp2UnsupportedValue, ContentIdentityError, TypeError, ValueError):
+    except (TypeError, ValueError):
         return None, source, "evaluator_manifest_unavailable"
     return (
         {

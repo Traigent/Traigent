@@ -20,10 +20,7 @@ import inspect
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
-
-if TYPE_CHECKING:
-    pass
+from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 

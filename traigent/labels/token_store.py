@@ -695,7 +695,7 @@ def _read_state(place: _Place, namespace: TokenNamespace) -> dict[str, Any]:
         raise TokenStoreError(TOKEN_MAP_NOT_PERSISTED)
     try:
         state = json.loads(raw[1:].decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
+    except ValueError:
         raise TokenStoreError(TOKEN_MAP_NOT_PERSISTED) from None
     _validate_state(state, namespace)
     return state  # type: ignore[no-any-return]

@@ -44,7 +44,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal
 
 from traigent.hybrid.protocol import (
     EstimatedTokensPerExample,
@@ -56,7 +56,6 @@ from traigent.wrapper.errors import BadRequestError, HybridAPIError
 
 logger = get_logger(__name__)
 
-F = TypeVar("F", bound=Callable[..., Any])
 
 # OpenAPI contract: tunable and objective names must be valid Python identifiers.
 _IDENTIFIER_RE = re.compile(r"^[a-zA-Z_]\w*$")
@@ -307,7 +306,7 @@ class TraigentService:
             # Fallback for non-JSON-native values in custom wrappers.
             return repr(payload)
 
-    def tvars(self, func: F) -> F:
+    def tvars[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register TVAR configuration function.
 
         The decorated function should return a dictionary of TVAR
@@ -325,7 +324,7 @@ class TraigentService:
         self._cached_tvars = None  # Invalidate cache
         return func
 
-    def tunables(self, func: F) -> F:
+    def tunables[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register tunable configuration function.
 
         Client-friendly alias for tvars(). The decorated function should
@@ -341,7 +340,7 @@ class TraigentService:
         """
         return self.tvars(func)
 
-    def execute(self, func: F) -> F:
+    def execute[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register execution handler.
 
         The decorated function receives:
@@ -364,7 +363,7 @@ class TraigentService:
         self._execute_handler = func
         return func
 
-    def evaluate(self, func: F) -> F:
+    def evaluate[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register evaluation handler.
 
         The decorated function receives:
@@ -385,37 +384,37 @@ class TraigentService:
         self._evaluate_handler = func
         return func
 
-    def constraints(self, func: F) -> F:
+    def constraints[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register constraints declaration function."""
         self._constraints_handler = func  # type: ignore[assignment]
         return func
 
-    def objectives(self, func: F) -> F:
+    def objectives[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register objectives declaration function."""
         self._objectives_handler = func  # type: ignore[assignment]
         return func
 
-    def exploration(self, func: F) -> F:
+    def exploration[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register exploration declaration function."""
         self._exploration_handler = func  # type: ignore[assignment]
         return func
 
-    def promotion_policy(self, func: F) -> F:
+    def promotion_policy[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register promotion policy declaration function."""
         self._promotion_policy_handler = func  # type: ignore[assignment]
         return func
 
-    def defaults(self, func: F) -> F:
+    def defaults[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register default-config declaration function."""
         self._defaults_handler = func  # type: ignore[assignment]
         return func
 
-    def measures(self, func: F) -> F:
+    def measures[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register declared measure names function."""
         self._measures_handler = func  # type: ignore[assignment]
         return func
 
-    def evaluation_kwargs(self, func: F) -> F:
+    def evaluation_kwargs[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register supported evaluate kwargs."""
         self._evaluation_kwargs_handler = func  # type: ignore[assignment]
         return func

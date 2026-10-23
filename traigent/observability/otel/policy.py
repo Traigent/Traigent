@@ -243,7 +243,7 @@ class ContentPolicy:
         return out, dropped
 
     # -- resource / scope -----------------------------------------------
-    def _resource(self, resource: Resource | None, mode: str) -> Resource:
+    def _resource(self, resource: Resource | None) -> Resource:
         kept: dict[str, Any] = {}
         for key, value in (resource.attributes if resource else {}).items():
             spec = C.RESOURCE_ALLOWLIST.get(key)
@@ -392,7 +392,7 @@ class ContentPolicy:
             name=name,
             context=_strip_trace_state(span.context),
             parent=_strip_trace_state(span.parent),
-            resource=self._resource(span.resource, mode),
+            resource=self._resource(span.resource),
             attributes=attrs,
             events=events,
             links=links,

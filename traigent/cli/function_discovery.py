@@ -61,7 +61,7 @@ def discover_optimized_functions(
             f"Module path must reside inside the current workspace ({workspace_base}): {module_path}"
         ) from exc
 
-    if not module_path_obj.suffix == ".py":
+    if module_path_obj.suffix != ".py":
         raise ValueError(f"Module must be a Python file (.py): {module_path_obj}")
 
     # Load the Python file as a module

@@ -23,6 +23,8 @@ from ..core.constants import (
 )
 from ..utils.logging import get_logger
 
+_NO_CHANGE = "no change"
+
 logger = get_logger(__name__)
 
 
@@ -1070,7 +1072,7 @@ class ResourceOptimizer:
         else:
             expected_improvements = {
                 "cost_reduction": "0%",
-                "performance_change": "no change",
+                "performance_change": _NO_CHANGE,
                 "resource_utilization": "optimal",
             }
             implementation_steps = [
@@ -1169,7 +1171,7 @@ class ResourceOptimizer:
         else:
             expected_improvements = {
                 "cost_reduction": "0%",
-                "performance_change": "no change",
+                "performance_change": _NO_CHANGE,
                 "storage_efficiency": "optimal",
             }
             implementation_steps = [
@@ -1193,7 +1195,7 @@ class ResourceOptimizer:
 
         expected_improvements = {
             "cost_reduction": "0%",
-            "performance_change": "no change",
+            "performance_change": _NO_CHANGE,
             "resource_efficiency": "unknown",
         }
         implementation_steps = [

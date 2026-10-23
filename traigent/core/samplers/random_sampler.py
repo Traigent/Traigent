@@ -267,11 +267,12 @@ class RandomSampler[T]:
                     fingerprint=fingerprint,
                 )
 
-            pool = (
-                list(self._initial_index_pool)
-                if from_start and self._initial_index_pool is not None
-                else (list(self._index_pool) if self._index_pool is not None else None)
-            )
+            if from_start and self._initial_index_pool is not None:
+                pool = list(self._initial_index_pool)
+            elif self._index_pool is not None:
+                pool = list(self._index_pool)
+            else:
+                pool = None
             samples_drawn = 0 if from_start else self._samples_drawn
             rng_state = self._initial_rng_state if from_start else self._rng.getstate()
             remaining = self._remaining_capacity(pool, samples_drawn)

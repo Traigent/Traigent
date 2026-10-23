@@ -47,6 +47,8 @@ from traigent.utils.exceptions import DatasetValidationError
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import safe_write_text, sanitize_filename, validate_path
 
+_SESSION_NOT_INITIALIZED = "Session not initialized"
+
 logger = get_logger(__name__)
 
 _SECURE_RANDOM = SystemRandom()
@@ -988,7 +990,7 @@ class DatasetConverter:
             "create backend example set", no_egress=no_egress
         )
         if not self._session:
-            raise RuntimeError("Session not initialized") from None
+            raise RuntimeError(_SESSION_NOT_INITIALIZED) from None
 
         url = f"{await self._egress_backend_base_url()}{_EXAMPLE_SETS_PATH}"
         payload = {
@@ -1020,7 +1022,7 @@ class DatasetConverter:
             "upload backend examples", no_egress=no_egress
         )
         if not self._session:
-            raise RuntimeError("Session not initialized")
+            raise RuntimeError(_SESSION_NOT_INITIALIZED)
 
         example_set_id = self._validate_example_set_id(example_set_id)
 
@@ -1070,7 +1072,7 @@ class DatasetConverter:
             "fetch backend example set", no_egress=no_egress
         )
         if not self._session:
-            raise RuntimeError("Session not initialized")
+            raise RuntimeError(_SESSION_NOT_INITIALIZED)
 
         example_set_id = self._validate_example_set_id(example_set_id)
 
@@ -1093,7 +1095,7 @@ class DatasetConverter:
             "fetch backend examples", no_egress=no_egress
         )
         if not self._session:
-            raise RuntimeError("Session not initialized")
+            raise RuntimeError(_SESSION_NOT_INITIALIZED)
 
         example_set_id = self._validate_example_set_id(example_set_id)
 

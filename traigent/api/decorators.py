@@ -124,6 +124,8 @@ from traigent.utils.exceptions import (
 )
 from traigent.utils.logging import get_logger
 
+_OFFLINE_MUST_BE_BOOL = "offline must be a bool"
+
 logger = get_logger(__name__)
 
 
@@ -500,7 +502,7 @@ class ExecutionOptions(BaseModel):
     @classmethod
     def _validate_offline(cls, v: bool) -> bool:
         if not isinstance(v, bool):
-            raise ValueError("offline must be a bool")
+            raise ValueError(_OFFLINE_MUST_BE_BOOL)
         return v
 
     @field_validator("reps_aggregation")
@@ -3110,7 +3112,7 @@ def optimize(  # NOSONAR(S107)
     algorithm_value = validate_algorithm_name(combined_settings["algorithm"])
     offline_value = combined_settings["offline"]
     if not isinstance(offline_value, bool):
-        raise TypeError("offline must be a bool")
+        raise TypeError(_OFFLINE_MUST_BE_BOOL)
     evaluator_value = combined_settings["evaluator"]
     legacy_execution_options = {
         key: combined_settings[key]
@@ -3299,7 +3301,7 @@ def optimize(  # NOSONAR(S107)
     algorithm_value = validate_algorithm_name(resolved_execution.algorithm)
     offline_value = resolved_execution.offline
     if not isinstance(offline_value, bool):
-        raise TypeError("offline must be a bool")
+        raise TypeError(_OFFLINE_MUST_BE_BOOL)
     evaluator_value = resolved_execution.evaluator
     local_storage_path = resolved_execution.local_storage_path
     minimal_logging = resolved_execution.minimal_logging

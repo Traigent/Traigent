@@ -21,6 +21,8 @@ import httpx
 
 from traigent.labels.transport_gate import gate_session
 
+_REQUEST_DEADLINE_MSG = "connector request deadline exceeded"
+
 
 @dataclass(frozen=True, slots=True, repr=False)
 class ConnectionCredentials:
@@ -275,7 +277,7 @@ class HttpKernel:
                 loop = state["loop"]
                 if loop is not None and not loop.is_closed():
                     loop.call_soon_threadsafe(cancel_task)
-            raise DeadlineExceeded("connector request deadline exceeded") from error
+            raise DeadlineExceeded(_REQUEST_DEADLINE_MSG) from error
         finally:
             if not finished.wait(timeout=max(0.0, shutdown_at - time.monotonic())):
                 raise CleanupDeadlineExceeded(
@@ -308,7 +310,7 @@ class HttpKernel:
                     client, method, path, headers, timeout
                 )
         except TimeoutError as error:
-            raise DeadlineExceeded("connector request deadline exceeded") from error
+            raise DeadlineExceeded(_REQUEST_DEADLINE_MSG) from error
 
     async def _request_with_retries(
         self,
@@ -343,7 +345,7 @@ class HttpKernel:
         for attempt in range(self._max_retries + 1):
             remaining = end - self._clock()
             if remaining <= 0:
-                raise DeadlineExceeded("connector request deadline exceeded")
+                raise DeadlineExceeded(_REQUEST_DEADLINE_MSG)
             attempt_timeout = min(self._timeout, timeout or self._timeout, remaining)
             async with client.stream(
                 method, url, headers=request_headers, timeout=attempt_timeout
@@ -355,7 +357,7 @@ class HttpKernel:
                     b"".join(chunks),
                 )
             if self._clock() > end:
-                raise DeadlineExceeded("connector request deadline exceeded")
+                raise DeadlineExceeded(_REQUEST_DEADLINE_MSG)
             if response.status_code in {301, 302, 303, 307, 308}:
                 location = response.headers.get("location") or response.headers.get(
                     "Location"
@@ -387,7 +389,7 @@ class HttpKernel:
             else:
                 delay = server_delay
             if self._clock() + delay >= end:
-                raise DeadlineExceeded("connector request deadline exceeded")
+                raise DeadlineExceeded(_REQUEST_DEADLINE_MSG)
             if self._sleep is time.sleep:
                 await asyncio.sleep(delay)
             else:

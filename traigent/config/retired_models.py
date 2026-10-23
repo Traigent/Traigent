@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import re
 
+_MODELS_PREFIX = "models/"
+
 __all__ = ["RETIRED_MODEL_IDS", "normalize_model_id", "is_retired_model"]
 
 # Known-retired / delisted model IDs that must never be served by discovery
@@ -104,11 +106,11 @@ def normalize_model_id(model_id: str) -> str:
     listed explicitly in :data:`RETIRED_MODEL_IDS`.
     """
     normalized = model_id.strip()
-    if normalized.startswith("models/"):
-        normalized = normalized[len("models/") :]
+    if normalized.startswith(_MODELS_PREFIX):
+        normalized = normalized[len(_MODELS_PREFIX) :]
     normalized = _ROUTING_PREFIX_RE.sub("", normalized)
-    if normalized.startswith("models/"):
-        normalized = normalized[len("models/") :]
+    if normalized.startswith(_MODELS_PREFIX):
+        normalized = normalized[len(_MODELS_PREFIX) :]
     normalized = _VENDOR_PREFIX_RE.sub("", normalized)
     normalized = _BEDROCK_VERSION_SUFFIX_RE.sub("", normalized)
     return normalized

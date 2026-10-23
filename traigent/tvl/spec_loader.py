@@ -16,8 +16,8 @@ from typing import Any, Literal, cast
 
 import yaml
 
-from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.objective_directions import resolve_objective_orientation
+from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.utils.exceptions import TVLValidationError
 from traigent.utils.logging import get_logger
 
@@ -440,7 +440,7 @@ def _validate_range_membership(
 
 
 def _validate_tuple_components(
-    name: str, domain: dict[str, Any], default: Any, raw_type: str | None
+    name: str, domain: dict[str, Any], default: Any
 ) -> list[str]:
     """Validate a canonical tuple ``components`` domain and default membership."""
     from traigent.tvl.models import _enumerate_tuple_components
@@ -505,7 +505,7 @@ def _validate_domain_structure(
         if "registry" in domain or domain_type == "registry":
             return issues
         if "components" in domain and normalized_type == "tuple":
-            return _validate_tuple_components(name, domain, default, raw_type)
+            return _validate_tuple_components(name, domain, default)
 
         issues.append(
             f"TVAR '{name}' domain must define one of range, set, values, "

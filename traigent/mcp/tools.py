@@ -33,6 +33,8 @@ from traigent.utils.persistence import PersistenceManager
 from traigent.utils.secure_path import PathTraversalError, validate_path
 from traigent.utils.validation import ValidationResult, Validators
 
+_TRAIGENT_DIRNAME = ".traigent"
+
 V1_TOOL_NAMES: tuple[str, ...] = (
     "auth_status",
     "detect_tvars",
@@ -341,16 +343,19 @@ async def auth_status_tool(check: bool = False) -> dict[str, Any]:
                     "source": "backend",
                 }
 
+    if api_key:
+        auth_type = "api_key"
+    elif credentials.get("jwt_token"):
+        auth_type = "jwt"
+    else:
+        auth_type = "none"
+
     return {
         "ok": True,
         "authenticated": authenticated,
         "credential_source": credentials.get("source") or "none",
         "api_key": _mask_api_key(api_key),
-        "auth_type": (
-            "api_key"
-            if api_key
-            else ("jwt" if credentials.get("jwt_token") else "none")
-        ),
+        "auth_type": auth_type,
         "tenant_id": tenant_id,
         "project_id": project_id,
         "backend_url": _sanitize_backend_url(cast("str | None", backend_url)),
@@ -749,7 +754,7 @@ def _run_loaded_optimizations(
 
     stdout_buffer = io.StringIO()
     stderr_buffer = io.StringIO()
-    persistence = PersistenceManager(".traigent")
+    persistence = PersistenceManager(_TRAIGENT_DIRNAME)
     timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     summaries: list[dict[str, Any]] = []
     with (
@@ -912,9 +917,9 @@ def run_optimization_tool(
     # configured max_trials (the SDK default is 10, the previous MCP default)
     # and is not treated as explicitly sized, so the unmeasured-cost safety
     # limit still applies (#2441).
-    effective_trials: int | None = (
-        max_trials if max_trials is not None else (4 if mode == "mock" else None)
-    )
+    effective_trials: int | None = max_trials
+    if effective_trials is None and mode == "mock":
+        effective_trials = 4
     effective_algorithm = algorithm or "random"
 
     # v1 single-agent limitation: optimization runs synchronously below and
@@ -1003,7 +1008,7 @@ def _serialize_loaded_result(result: Any) -> dict[str, Any]:
 
 def get_results_tool(result_name: str | None = None) -> dict[str, Any]:
     """List or show local optimization results from the .traigent store."""
-    persistence = PersistenceManager(".traigent")
+    persistence = PersistenceManager(_TRAIGENT_DIRNAME)
     if result_name is None:
         return {
             "ok": True,
@@ -1031,7 +1036,7 @@ def export_evidence_tool(
     output_dir: str = ".traigent/evidence",
 ) -> dict[str, Any]:
     """Export a local evidence bundle from saved optimization results."""
-    persistence = PersistenceManager(".traigent")
+    persistence = PersistenceManager(_TRAIGENT_DIRNAME)
     if result_name is None:
         results = persistence.list_results()
         if not results:

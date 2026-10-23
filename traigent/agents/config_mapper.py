@@ -20,6 +20,18 @@ from traigent.utils.logging import get_logger
 if TYPE_CHECKING:
     from traigent.cloud.models import AgentSpecification
 
+_DESC_TOP_K = "Top-k sampling parameter"
+
+_DESC_PRESENCE_PENALTY = "Presence penalty"
+
+_DESC_FREQUENCY_PENALTY = "Frequency penalty"
+
+_DESC_TOP_P = "Nucleus sampling parameter"
+
+_DESC_MAX_TOKENS = "Maximum output tokens"
+
+_DESC_TEMPERATURE = "Sampling temperature"
+
 logger = get_logger(__name__)
 
 # Maximum length (in characters) of a single config value substituted into a
@@ -441,31 +453,31 @@ class ConfigurationMapper:
                     source_key="temperature",
                     target_key="temperature",
                     validation=self._validate_temperature,
-                    description="Sampling temperature",
+                    description=_DESC_TEMPERATURE,
                 ),
                 ParameterMapping(
                     source_key="max_tokens",
                     target_key="max_tokens",
                     validation=self._validate_positive_int,
-                    description="Maximum output tokens",
+                    description=_DESC_MAX_TOKENS,
                 ),
                 ParameterMapping(
                     source_key="top_p",
                     target_key="top_p",
                     validation=self._validate_probability,
-                    description="Nucleus sampling parameter",
+                    description=_DESC_TOP_P,
                 ),
                 ParameterMapping(
                     source_key="frequency_penalty",
                     target_key="frequency_penalty",
                     validation=self._validate_penalty,
-                    description="Frequency penalty",
+                    description=_DESC_FREQUENCY_PENALTY,
                 ),
                 ParameterMapping(
                     source_key="presence_penalty",
                     target_key="presence_penalty",
                     validation=self._validate_penalty,
-                    description="Presence penalty",
+                    description=_DESC_PRESENCE_PENALTY,
                 ),
             ],
             template_mappings={
@@ -487,13 +499,13 @@ class ConfigurationMapper:
                     source_key="temperature",
                     target_key="temperature",
                     validation=self._validate_temperature,
-                    description="Sampling temperature",
+                    description=_DESC_TEMPERATURE,
                 ),
                 ParameterMapping(
                     source_key="max_tokens",
                     target_key="max_tokens",
                     validation=self._validate_positive_int,
-                    description="Maximum output tokens",
+                    description=_DESC_MAX_TOKENS,
                 ),
                 ParameterMapping(
                     source_key="top_p",
@@ -505,13 +517,13 @@ class ConfigurationMapper:
                     source_key="frequency_penalty",
                     target_key="frequency_penalty",
                     validation=self._validate_penalty,
-                    description="Frequency penalty",
+                    description=_DESC_FREQUENCY_PENALTY,
                 ),
                 ParameterMapping(
                     source_key="presence_penalty",
                     target_key="presence_penalty",
                     validation=self._validate_penalty,
-                    description="Presence penalty",
+                    description=_DESC_PRESENCE_PENALTY,
                 ),
                 ParameterMapping(
                     source_key="stop_sequences",
@@ -538,25 +550,25 @@ class ConfigurationMapper:
                     source_key="temperature",
                     target_key="temperature",
                     validation=self._validate_temperature,
-                    description="Sampling temperature",
+                    description=_DESC_TEMPERATURE,
                 ),
                 ParameterMapping(
                     source_key="max_tokens",
                     target_key="max_tokens_to_sample",
                     validation=self._validate_positive_int,
-                    description="Maximum output tokens",
+                    description=_DESC_MAX_TOKENS,
                 ),
                 ParameterMapping(
                     source_key="top_p",
                     target_key="top_p",
                     validation=self._validate_probability,
-                    description="Nucleus sampling parameter",
+                    description=_DESC_TOP_P,
                 ),
                 ParameterMapping(
                     source_key="top_k",
                     target_key="top_k",
                     validation=self._validate_positive_int,
-                    description="Top-k sampling parameter",
+                    description=_DESC_TOP_K,
                 ),
                 ParameterMapping(
                     source_key="stop_sequences",
@@ -579,37 +591,37 @@ class ConfigurationMapper:
                     source_key="temperature",
                     target_key="temperature",
                     validation=self._validate_temperature,
-                    description="Sampling temperature",
+                    description=_DESC_TEMPERATURE,
                 ),
                 ParameterMapping(
                     source_key="max_tokens",
                     target_key="max_tokens",
                     validation=self._validate_positive_int,
-                    description="Maximum output tokens",
+                    description=_DESC_MAX_TOKENS,
                 ),
                 ParameterMapping(
                     source_key="top_p",
                     target_key="p",
                     validation=self._validate_probability,
-                    description="Nucleus sampling parameter",
+                    description=_DESC_TOP_P,
                 ),
                 ParameterMapping(
                     source_key="top_k",
                     target_key="k",
                     validation=self._validate_positive_int,
-                    description="Top-k sampling parameter",
+                    description=_DESC_TOP_K,
                 ),
                 ParameterMapping(
                     source_key="frequency_penalty",
                     target_key="frequency_penalty",
                     validation=self._validate_penalty,
-                    description="Frequency penalty",
+                    description=_DESC_FREQUENCY_PENALTY,
                 ),
                 ParameterMapping(
                     source_key="presence_penalty",
                     target_key="presence_penalty",
                     validation=self._validate_penalty,
-                    description="Presence penalty",
+                    description=_DESC_PRESENCE_PENALTY,
                 ),
                 ParameterMapping(
                     source_key="seed",
@@ -633,7 +645,7 @@ class ConfigurationMapper:
                     source_key="temperature",
                     target_key="temperature",
                     validation=self._validate_temperature,
-                    description="Sampling temperature",
+                    description=_DESC_TEMPERATURE,
                 ),
                 ParameterMapping(
                     source_key="max_tokens",
@@ -645,13 +657,13 @@ class ConfigurationMapper:
                     source_key="top_p",
                     target_key="top_p",
                     validation=self._validate_probability,
-                    description="Nucleus sampling parameter",
+                    description=_DESC_TOP_P,
                 ),
                 ParameterMapping(
                     source_key="top_k",
                     target_key="top_k",
                     validation=self._validate_positive_int,
-                    description="Top-k sampling parameter",
+                    description=_DESC_TOP_K,
                 ),
                 ParameterMapping(
                     source_key="stop_sequences",

@@ -14,14 +14,12 @@ import time
 from collections.abc import Awaitable, Callable
 from enum import Enum
 from hashlib import sha256
-from typing import Any, TypeVar, cast
+from typing import Any, cast
 
 from traigent.labels.transport_gate import gate_session
 from traigent.utils.exceptions import NonRetryableError, RetryableError
 
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T")
 
 
 class ErrorType(Enum):
@@ -247,7 +245,7 @@ class ResilientClient:
 
         return delay
 
-    async def execute_with_retry(
+    async def execute_with_retry[T](
         self,
         operation: Callable[..., Awaitable[T]],
         *args: Any,
