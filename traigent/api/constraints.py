@@ -610,7 +610,7 @@ class Constraint:
         >>> c = Constraint(
         ...     when=model.equals("gpt-5.6-sol"),
         ...     then=temperature.lte(0.7),
-        ...     description="GPT-4 requires low temperature"
+        ...     description="gpt-5.6-sol requires low temperature"
         ... )
         >>>
         >>> # Standalone: temperature must always be positive

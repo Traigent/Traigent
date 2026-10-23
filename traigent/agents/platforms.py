@@ -66,9 +66,9 @@ def _openai_supported_models() -> list[str]:
 logger = get_logger(__name__)
 
 # Common model alias fixes
-MODEL_ALIASES: dict[str, str] = {
-    "o4-mini": "gpt-5.6-terra",  # OpenAI replacement, retired 2026-10-23
-}
+# (o4-mini -> gpt-5.6-terra was removed: o4-mini is retired 2026-10-23 and is
+# now rejected by validation via traigent.config.retired_models.)
+MODEL_ALIASES: dict[str, str] = {}
 
 
 class LangChainAgentExecutor(AgentExecutor):

@@ -13,9 +13,9 @@ Tests cover:
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 import sys
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -152,7 +152,7 @@ class TestValidateModelNames:
         # Current (non-retired) known models only. o1-mini used to sit here but
         # was swept as retired (#1936/#1937), so it now falls to the unknown
         # bucket rather than validating.
-        models = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"]
+        models = ["gpt-4o", "gpt-4o-mini", "gpt-4.1"]
         valid, unknown = validate_model_names(models, "openai")
         assert valid == models
         assert unknown == []
@@ -188,11 +188,12 @@ class TestValidateModelNames:
 
     def test_mixed_valid_and_unknown(self):
         """Test validation with mix of valid and unknown models."""
+        # gpt-3.5-turbo retired 2026-10-23: no longer in the known set.
         models = ["gpt-4o", "gpt-6-ultra", "gpt-3.5-turbo"]
         valid, unknown = validate_model_names(models, "openai")
         assert "gpt-4o" in valid
-        assert "gpt-3.5-turbo" in valid
-        assert unknown == ["gpt-6-ultra"]
+        assert "gpt-3.5-turbo" not in valid
+        assert unknown == ["gpt-6-ultra", "gpt-3.5-turbo"]
 
     def test_all_unknown_models(self):
         """Test validation with all unknown models."""
