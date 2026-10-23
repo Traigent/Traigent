@@ -89,6 +89,8 @@ class RespondResult:
     reservation_generation: int | None = None
     #: Hosted path only: the Backend recorded the result (else it must be reported later).
     result_recorded: bool = False
+    #: Hosted path only: the closed candidate facts that were reported (no content).
+    candidates: tuple[dict[str, Any], ...] = ()
 
 
 def _optimize_rule(requirement: RuntimeRequirement) -> str:
@@ -733,12 +735,15 @@ async def respond_hosted(
             raise RuntimeRequirementError(E_OPTIMIZE_FAILED) from None
         raise
 
+    reported = _candidates(
+        result, candidates, grant
+    )  # once: retries re-send the same facts
     try:
         receipt = await _bounded(
             lambda key: api.report_finished(
                 reservation,
                 completion=_completion(result),
-                candidates=_candidates(result, candidates, grant),
+                candidates=reported,
                 key=key,
             ),
             sleep=sleep,
@@ -759,6 +764,7 @@ async def respond_hosted(
         attempt_ref=attempt["attempt_ref"],
         reservation_generation=reservation.generation,
         result_recorded=bool(receipt["recorded"]),
+        candidates=tuple(reported),
     )
 
 

@@ -542,6 +542,7 @@ jobs:
             tests/unit/runtime/test_hosted_subset.py \
             tests/unit/runtime/test_reactive_upload.py \
             tests/unit/runtime/test_local_guards_compiler.py \
+            tests/unit/runtime/test_promotion_evidence.py \
             -q --tb=short -rs --junitxml=runtime-tvl-junit.xml
       - name: Fail if any runtime-tvl test was skipped
         # importorskip turns a missing extra into `skipped`, which pytest reports

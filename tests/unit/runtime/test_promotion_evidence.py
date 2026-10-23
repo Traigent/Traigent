@@ -9,7 +9,10 @@ from typing import Any
 
 import pytest
 
-pytest.importorskip("tvl.promotion_join")
+pytest.importorskip(
+    "tvl.promotion_join",
+    reason="tvl-spec (the runtime-tvl extra, Python >= 3.12) is not installed",
+)
 
 from tvl.promotion_join import join_promotion_decisions  # noqa: E402
 
@@ -125,6 +128,14 @@ def test_promotable_candidate_carries_the_join_inputs_and_digests(
             "Promote",
         ),  # SDK gate spelling
     ],
+    ids=[
+        "breached-rejects",
+        "legacy-reject",
+        "legacy-nodecision",
+        "inconclusive",
+        "absent-counts",
+        "sdk-spelling",
+    ],
 )
 def test_join_matches_the_tvl_reference(
     promo: Reactive, legacy: str, counts: Any, verdicts: list[str], joined: str
@@ -158,6 +169,7 @@ def test_unresolved_units_are_unknown_not_met(promo: Reactive) -> None:
         {"answer_promo": {"k": 1}},
         {"answer_promo": {"n": 1.5, "k": 0}},
     ],
+    ids=["k-gt-n", "negative", "missing-n", "float-n"],
 )
 def test_evidence_that_cannot_be_established_is_invalid_with_nothing_else(
     promo: Reactive, bad: Any
@@ -259,3 +271,113 @@ def test_reported_through_respond_and_accepted_by_the_strict_contract(
     assert good == expected  # the digest is under the GRANT's current contract digest
     for sent in promo.backend.log:
         assert CANARY not in json.dumps(sent) and "m-small" not in json.dumps(sent)
+
+
+def _optimize_promoted(promo: Reactive) -> tuple[Any, Any, str]:
+    from traigent.runtime.promotion_evidence import candidate_extractor
+
+    ref = promo.approved_optimize()
+    reporter = candidate_extractor(
+        promo.requirement,
+        promo.tokens,
+        lambda result: [
+            CandidateEvidence(
+                result.best_config, "Promote", {"answer_promo": {"n": 400, "k": 2}}
+            ),
+            CandidateEvidence(
+                {"x": 2}, "Promote", {"answer_promo": {"n": 400, "k": 60}}
+            ),
+        ],
+    )
+
+    async def body() -> Any:
+        return SimpleNamespace(
+            optimization_id="run-1", best_config=CONFIG, prompts=[CANARY]
+        )
+
+    result = asyncio.run(
+        respond_hosted(
+            Fn(promo, body),
+            promo.requirement,
+            agent_ref=promo.agent_ref,
+            client=promo.client,
+            state_dir=promo.state,
+            clock=promo.clock,
+            retry_delay=0.0,
+            candidates=reporter,
+        )
+    )
+    return result, reporter, ref
+
+
+def test_optimize_to_deploy_end_to_end_through_the_strict_fake(promo: Reactive) -> None:
+    from traigent.runtime.deploy import DEPLOYED, DeployController
+    from traigent.runtime.promotion_evidence import promoted
+
+    b = promo.backend
+    result, reporter, ref = _optimize_promoted(promo)
+    assert b.attempts[ref]["optimize_outcome"] == "promoted"
+    (winner,) = promoted(result.candidates)  # the BREACHED one is not promotable
+    # A person approves the deploy attempt, binding what was reported + the head generation.
+    deploy_ref = promo.attempt("deploy")
+    b.grant(
+        deploy_ref,
+        deploy={
+            "candidate_fingerprint": winner["fingerprint"],
+            "gate_result_digest": winner["gate_result_digest"],
+            "expected_head_generation": b.head.generation,
+        },
+    )
+
+    async def sleep(_s: float) -> None:
+        return None
+
+    outcome = asyncio.run(
+        DeployController(
+            promo.client, state_dir=promo.state, clock=promo.clock, sleep=sleep
+        ).run_promoted(deploy_ref, result, configs=reporter.configs, config_id="answer")
+    )
+    assert outcome.state == DEPLOYED and outcome.result_recorded
+    assert b.head.spec["config"] == CONFIG and b.head.generation == 4
+    last = b.results[-1]
+    assert (last["fact"], last["write"], last["retries_exhausted"]) == (
+        "deploy_result",
+        "succeeded",
+        False,
+    )
+    assert b.attempts[deploy_ref]["deploy_outcome"] == "deployed"
+    (pub,) = b.requests_of("publishTvlDeploy")
+    assert winner["fingerprint"] in pub["body"]["idempotency_key"]
+
+
+def test_deploy_refuses_a_grant_bound_to_a_candidate_that_was_not_promoted(
+    promo: Reactive,
+) -> None:
+    from traigent.runtime.deploy import DeployController
+
+    b = promo.backend
+    result, reporter, _ref = _optimize_promoted(promo)
+    deploy_ref = promo.attempt("deploy")
+    b.grant(
+        deploy_ref,
+        deploy={
+            "candidate_fingerprint": candidate_fingerprint(
+                {"x": 2}
+            ),  # the BREACHED candidate
+            "gate_result_digest": "1" * 64,
+            "expected_head_generation": b.head.generation,
+        },
+    )
+    with pytest.raises(Exception) as err:  # noqa: B017
+        asyncio.run(
+            DeployController(
+                promo.client, state_dir=promo.state, clock=promo.clock
+            ).run_promoted(
+                deploy_ref, result, configs=reporter.configs, config_id="answer"
+            )
+        )
+    assert getattr(err.value, "code", "") == "deploy_binding_mismatch"
+    assert [
+        r for r in b.requests_of("reserveTvlReactiveAttempt") if deploy_ref in r["path"]
+    ] == []
+    assert b.head.generation == 3

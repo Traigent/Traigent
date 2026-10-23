@@ -122,6 +122,52 @@ class DeployController:
         self.retry_delay, self.skew = retry_delay, skew
 
     # -- public ---------------------------------------------------------------------------
+    async def run_promoted(
+        self,
+        attempt_ref: str,
+        optimized: Any,
+        *,
+        configs: Mapping[str, Mapping[str, Any]],
+        config_id: str,
+    ) -> DeployOutcome:
+        """Deploy the promoted candidate the deploy grant is bound to.
+
+        ``optimized`` is the :class:`RespondResult` of the optimize attempt; its
+        reported candidates supply the fingerprint and gate-result digest, so the caller
+        passes neither.  The deploy attempt's grant says which one was approved: exactly
+        one promoted candidate must match it, otherwise nothing is reserved.
+        ``configs`` maps fingerprint to the configuration (kept customer-side).
+        """
+        from traigent.runtime.promotion_evidence import candidate_fingerprint, promoted
+
+        attempt = self.client.get_attempt(attempt_ref)
+        if not attempt.get("grant_ref"):
+            raise RuntimeRequirementError(E_NO_APPROVED_ATTEMPT)
+        binding = self.client.get_grant(attempt["grant_ref"]).get("deploy")
+        if not isinstance(binding, dict):
+            raise RuntimeRequirementError(E_APPROVAL_REQUIRED, "grant")
+        match = [
+            c
+            for c in promoted(getattr(optimized, "candidates", ()))
+            if c["fingerprint"] == binding["candidate_fingerprint"]
+            and c["gate_result_digest"] == binding["gate_result_digest"]
+        ]
+        config = configs.get(binding["candidate_fingerprint"])
+        if len(match) != 1 or config is None:
+            raise RuntimeRequirementError(E_BINDING_MISMATCH)
+        if candidate_fingerprint(config) != match[0]["fingerprint"]:
+            raise RuntimeRequirementError(E_BINDING_MISMATCH)
+        return await self.run(
+            attempt_ref,
+            spec={
+                "schema_version": "traigent.best_config.v1",
+                "config_id": config_id,
+                "config": dict(config),
+            },
+            candidate_fingerprint=match[0]["fingerprint"],
+            gate_result_digest=match[0]["gate_result_digest"],
+        )
+
     async def run(
         self,
         attempt_ref: str,

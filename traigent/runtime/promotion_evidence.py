@@ -198,19 +198,68 @@ def evaluate_candidate(
     )
 
 
+def promoted(candidates: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """The reported candidates whose gate join is ``Promote`` and that can be deployed.
+
+    Deployable means a fingerprint and a gate-result digest were reported.  The Backend
+    decides again at effect time under the current contract digest; this only selects
+    what to hand to the deploy controller.
+    """
+    _closed, join, _evaluate = _tvl()
+    out: list[dict[str, Any]] = []
+    for fact in candidates:
+        if fact.get("evidence_valid") is not True:
+            continue
+        if not fact.get("fingerprint") or not fact.get("gate_result_digest"):
+            continue
+        try:
+            joined = join(fact["legacy_decision"], fact["monitor_verdicts"])
+        except Exception:  # noqa: BLE001 - invalid inputs never promote
+            continue
+        if joined == "Promote":
+            out.append(dict(fact))
+    return out
+
+
+class PromotionReporter:
+    """A ``candidates=`` callable for ``respond_hosted`` that remembers the configurations.
+
+    The configurations stay in this object (customer side); only the closed facts are
+    returned for reporting.  ``configs[fingerprint]`` is what a deploy will publish.
+    """
+
+    def __init__(
+        self,
+        requirement: RuntimeRequirement,
+        tokens: TokenMap,
+        evidence_of: Callable[[Any], Iterable[CandidateEvidence]],
+    ) -> None:
+        self._requirement, self._tokens, self._evidence_of = (
+            requirement,
+            tokens,
+            evidence_of,
+        )
+        self.configs: dict[str, Mapping[str, Any]] = {}
+
+    def __call__(self, result: Any, grant: Mapping[str, Any]) -> list[dict[str, Any]]:
+        facts: list[dict[str, Any]] = []
+        for ev in self._evidence_of(result):
+            fact = evaluate_candidate(
+                self._requirement,
+                ev,
+                contract_digest=grant["contract_digest"],
+                tokens=self._tokens,
+            )
+            if fact.get("fingerprint"):
+                self.configs[fact["fingerprint"]] = dict(ev.config)
+            facts.append(fact)
+        return facts
+
+
 def candidate_extractor(
     requirement: RuntimeRequirement,
     tokens: TokenMap,
     evidence_of: Callable[[Any], Iterable[CandidateEvidence]],
-) -> Callable[[Any, Mapping[str, Any]], list[dict[str, Any]]]:
+) -> PromotionReporter:
     """A ``candidates=`` callable for ``respond_hosted`` (it supplies the grant's digest)."""
-
-    def extract(result: Any, grant: Mapping[str, Any]) -> list[dict[str, Any]]:
-        return [
-            evaluate_candidate(
-                requirement, ev, contract_digest=grant["contract_digest"], tokens=tokens
-            )
-            for ev in evidence_of(result)
-        ]
-
-    return extract
+    return PromotionReporter(requirement, tokens, evidence_of)

@@ -54,6 +54,70 @@ REQUIRED = (
         "test_local_guards_compiler",
         "test_guard_reads_the_compiled_local_artifact[local-v2]",
     ),
+    ("test_promotion_evidence", "test_fingerprint_is_the_canonical_config_digest"),
+    (
+        "test_promotion_evidence",
+        "test_promotable_candidate_carries_the_join_inputs_and_digests",
+    ),
+    (
+        "test_promotion_evidence",
+        "test_join_matches_the_tvl_reference[breached-rejects]",
+    ),
+    (
+        "test_promotion_evidence",
+        "test_join_matches_the_tvl_reference[legacy-reject]",
+    ),
+    (
+        "test_promotion_evidence",
+        "test_join_matches_the_tvl_reference[legacy-nodecision]",
+    ),
+    (
+        "test_promotion_evidence",
+        "test_join_matches_the_tvl_reference[inconclusive]",
+    ),
+    (
+        "test_promotion_evidence",
+        "test_join_matches_the_tvl_reference[absent-counts]",
+    ),
+    (
+        "test_promotion_evidence",
+        "test_join_matches_the_tvl_reference[sdk-spelling]",
+    ),
+    (
+        "test_promotion_evidence",
+        "test_evidence_that_cannot_be_established_is_invalid_with_nothing_else[k-gt-n]",
+    ),
+    (
+        "test_promotion_evidence",
+        "test_evidence_that_cannot_be_established_is_invalid_with_nothing_else[negative]",
+    ),
+    (
+        "test_promotion_evidence",
+        "test_evidence_that_cannot_be_established_is_invalid_with_nothing_else[missing-n]",
+    ),
+    (
+        "test_promotion_evidence",
+        "test_evidence_that_cannot_be_established_is_invalid_with_nothing_else[float-n]",
+    ),
+    ("test_promotion_evidence", "test_unresolved_units_are_unknown_not_met"),
+    ("test_promotion_evidence", "test_unusable_inputs_are_invalid"),
+    (
+        "test_promotion_evidence",
+        "test_gate_digest_binds_contract_candidate_decision_and_verdicts",
+    ),
+    ("test_promotion_evidence", "test_monitor_without_a_token_fails_closed"),
+    (
+        "test_promotion_evidence",
+        "test_reported_through_respond_and_accepted_by_the_strict_contract",
+    ),
+    (
+        "test_promotion_evidence",
+        "test_optimize_to_deploy_end_to_end_through_the_strict_fake",
+    ),
+    (
+        "test_promotion_evidence",
+        "test_deploy_refuses_a_grant_bound_to_a_candidate_that_was_not_promoted",
+    ),
 )
 
 
