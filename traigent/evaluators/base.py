@@ -23,7 +23,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import ExampleResult
 from traigent.evaluators.dataset_registry import (
@@ -166,9 +166,6 @@ def aggregate_measured_metric(metric: str, all_metrics: list[dict[str, Any]]) ->
         )
         logger.warning("%s.", message)
     return sum(measured) / len(measured)
-
-
-_T = TypeVar("_T")
 
 
 class _TaskBoundaryInterrupt:
@@ -1778,13 +1775,13 @@ class BaseEvaluator(ABC):
             execution_budget_lease.finalize()
 
     @staticmethod
-    async def _await_with_sample_lease_cleanup(
-        awaitable: Awaitable[_T],
+    async def _await_with_sample_lease_cleanup[T](
+        awaitable: Awaitable[T],
         sample_lease: SampleBudgetLease | None,
         execution_budget_lease: SampleBudgetLease | None,
         *,
         cleanup_on_cancel: bool = True,
-    ) -> _T:
+    ) -> T:
         """Await one evaluator operation and clean up at its boundary."""
         try:
             return await awaitable

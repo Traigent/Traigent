@@ -661,13 +661,12 @@ class OptimizationLogger:
                     old_run,
                 )
             except OSError:
-                logger.error(
+                logger.exception(
                     "Failed to prune old optimization-log run directory %s "
                     "while enforcing %s=%d",
                     old_run,
                     ENV_OPTIMIZATION_LOG_MAX_RUNS,
                     max_runs,
-                    exc_info=True,
                 )
 
     def _write_log_dir_gitignore(self) -> None:
