@@ -342,9 +342,8 @@ def check(quick: bool) -> None:
         except Exception as e:
             console.print(f"[red]Configuration error: {e}[/red]")
             raise SystemExit(1) from e
-    else:
-        if not quick:
-            console.print("[yellow]No traigent.yml found (using defaults)[/yellow]")
+    elif not quick:
+        console.print("[yellow]No traigent.yml found (using defaults)[/yellow]")
 
 
 @hooks.command()

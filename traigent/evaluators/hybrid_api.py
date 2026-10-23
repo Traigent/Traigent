@@ -412,25 +412,22 @@ class HybridAPIEvaluator(BaseEvaluator):
             )
         elif len(matching) == 1:
             selected = matching[0]
-        else:
-            if selected_dataset_id is not None:
-                candidates = [
-                    e for e in matching if e.dataset_id == selected_dataset_id
-                ]
-                if not candidates:
-                    available = [e.dataset_id for e in matching]
-                    raise ValueError(
-                        f"dataset_id={selected_dataset_id!r} not found among "
-                        f"datasets for tunable_id={tid!r}. "
-                        f"Available: {available}"
-                    )
-                selected = candidates[0]
-            else:
+        elif selected_dataset_id is not None:
+            candidates = [e for e in matching if e.dataset_id == selected_dataset_id]
+            if not candidates:
                 available = [e.dataset_id for e in matching]
                 raise ValueError(
-                    f"Multiple datasets match tunable_id={tid!r}: {available}. "
-                    f"Pass dataset_id= to select one."
+                    f"dataset_id={selected_dataset_id!r} not found among "
+                    f"datasets for tunable_id={tid!r}. "
+                    f"Available: {available}"
                 )
+            selected = candidates[0]
+        else:
+            available = [e.dataset_id for e in matching]
+            raise ValueError(
+                f"Multiple datasets match tunable_id={tid!r}: {available}. "
+                f"Pass dataset_id= to select one."
+            )
 
         self._benchmark_id = selected.benchmark_id
 

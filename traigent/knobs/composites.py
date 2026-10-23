@@ -430,16 +430,15 @@ class StopDecl:
                     "unknown_composite_field",
                     "external_accept stop carries no threshold/signal field",
                 )
-        else:  # EXHAUSTED
-            if (
-                self.threshold is not None
-                or self.signal is not None
-                or self.predicate is not None
-            ):
-                raise _reject(
-                    "unknown_composite_field",
-                    "exhausted stop carries no threshold/signal/predicate field",
-                )
+        elif (
+            self.threshold is not None
+            or self.signal is not None
+            or self.predicate is not None
+        ):
+            raise _reject(
+                "unknown_composite_field",
+                "exhausted stop carries no threshold/signal/predicate field",
+            )
 
 
 # --------------------------------------------------------------------------- #

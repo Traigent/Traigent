@@ -299,3 +299,33 @@ class TestFundsNotVerifiedWarning:
                 with pytest.raises(ProviderValidationError):
                     preflight_run_providers(["openrouter/openai/gpt-4o"])
         assert self._funds_records(caplog) == []
+
+
+class TestOpenRouterFundsNaNHandling:
+    """NaN is "not a number", never a limit or balance (guards the NaN self-comparison)."""
+
+    @staticmethod
+    def _funds(data):
+        from traigent.providers.validation import _openrouter_funds
+
+        return _openrouter_funds(SimpleNamespace(json=lambda: {"data": data}))
+
+    def test_nan_limit_is_unknown(self):
+        assert self._funds({"limit": float("nan"), "limit_remaining": 1}) == "unknown"
+
+    def test_nan_remaining_falls_back_to_usage(self):
+        assert (
+            self._funds({"limit": 5, "limit_remaining": float("nan"), "usage": 6})
+            == "depleted"
+        )
+        assert (
+            self._funds({"limit": 5, "limit_remaining": float("nan"), "usage": 1})
+            == "available"
+        )
+
+    def test_nan_remaining_and_usage_is_unknown(self):
+        data = {"limit": 5, "limit_remaining": float("nan"), "usage": float("nan")}
+        assert self._funds(data) == "unknown"
+
+    def test_infinite_remaining_is_available(self):
+        assert self._funds({"limit": 5, "limit_remaining": float("inf")}) == "available"

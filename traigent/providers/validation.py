@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import os
 import re
 import threading
@@ -408,7 +409,8 @@ def _openrouter_funds(response: object) -> str:
     def _number(value: object) -> float | None:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return None
-        return float(value) if value == value else None  # NaN is not a number
+        number = float(value)
+        return None if math.isnan(number) else number  # NaN is not a number
 
     limit = _number(data.get("limit"))
     if limit is None:

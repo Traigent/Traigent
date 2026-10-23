@@ -227,7 +227,7 @@ def _trial_without_example_content(trial: Any) -> Any:
     trial_copy = copy.copy(trial)
     try:
         trial_copy.metadata = redacted_metadata
-    except (AttributeError, dataclasses.FrozenInstanceError):
+    except AttributeError:
         trial_copy = dataclasses.replace(trial, metadata=redacted_metadata)
     return trial_copy
 

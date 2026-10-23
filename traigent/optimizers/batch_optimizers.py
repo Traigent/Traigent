@@ -897,13 +897,12 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
                     break
                 elif score1 > score2:
                     at_least_one_better = True
-            else:
-                # Lower is better (for cost, latency, etc.)
-                if score1 > score2:
-                    all_better_or_equal = False
-                    break
-                elif score1 < score2:
-                    at_least_one_better = True
+            # Lower is better (for cost, latency, etc.)
+            elif score1 > score2:
+                all_better_or_equal = False
+                break
+            elif score1 < score2:
+                at_least_one_better = True
 
         return all_better_or_equal and at_least_one_better
 

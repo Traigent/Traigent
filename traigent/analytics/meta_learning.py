@@ -407,12 +407,11 @@ class AlgorithmSelector:
                 return AlgorithmType.RANDOM, 0.6
             else:
                 return AlgorithmType.BAYESIAN, 0.8
+        # Large spaces
+        elif any("categorical" in t for t in problem_chars.param_types.values()):
+            return AlgorithmType.GENETIC, 0.6
         else:
-            # Large spaces
-            if any("categorical" in t for t in problem_chars.param_types.values()):
-                return AlgorithmType.GENETIC, 0.6
-            else:
-                return AlgorithmType.BAYESIAN, 0.7
+            return AlgorithmType.BAYESIAN, 0.7
 
     def _score_algorithm(
         self,
