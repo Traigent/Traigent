@@ -285,6 +285,51 @@ fi
 section "spine preflight (spine-trail present)"
 if ! python3 scripts/ci/spine_preflight.py; then FAIL=1; fi
 
+# ── Sonar coverage (changed-scope) ────────────────────────────────────────
+# The scanner only reads sonar.python.coverage.reportPaths (coverage.xml); it
+# never runs tests. Before this step existed the main-bound gate scanned with
+# no report on disk, so the server recorded 0% coverage / 0% new-code coverage.
+# Policy (docs/ci-policy.md): never run the full suite here -- measure only the
+# tests tied to the diff: changed test files plus unit tests that mention a
+# changed traigent module. New-code coverage is then real for the changed
+# lines; overall coverage on this analysis is partial by construction.
+sonar_prepare_coverage() {
+  rm -f coverage.xml
+  local f mod rc
+  local -a tests=() mods=()
+  mapfile -t tests < <(changed_files 'tests/*.py' | grep -E '(^|/)test_[^/]*\.py$' | while read -r f; do [[ -f "$f" ]] && echo "$f"; done)
+  mapfile -t mods < <(changed_files 'traigent/*.py' | while read -r f; do [[ -f "$f" ]] && echo "$f"; done)
+  for f in "${mods[@]}"; do
+    mod="${f%.py}"; mod="${mod//\//.}"; mod="${mod%.__init__}"
+    while IFS= read -r t; do tests+=("$t"); done < <(grep -rlF --include='test_*.py' "$mod" tests/unit 2>/dev/null | head -10)
+  done
+  mapfile -t tests < <(printf '%s\n' "${tests[@]}" | sed '/^$/d' | sort -u | head -60)
+  if [[ "${#tests[@]}" -eq 0 ]]; then
+    echo "  ⚠️  no changed tests / tests importing changed modules: coverage NOT MEASURED for this scan"
+    return 0
+  fi
+  if [[ "${#PYTEST[@]}" -eq 0 ]]; then
+    echo "  ⚠️  pytest unavailable: coverage NOT MEASURED for this scan"
+    return 0
+  fi
+  # relative_files => coverage.xml paths resolve inside the scanner container too.
+  local rcfile; rcfile="$(mktemp "${TMPDIR:-/tmp}/lg-covrc.XXXXXX")"
+  printf '[run]\nrelative_files = True\nsource = traigent\nomit =\n    */tests/*\n    */test_*\n    */demos/*\n    */docs/*\n' >"$rcfile"
+  echo "  • coverage for ${#tests[@]} test file(s) tied to the diff (not the full suite)"
+  rc=0
+  TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true PYTHONPATH=. \
+    "${PYTEST[@]}" -p no:asyncio-cooperative -q --tb=short -n 0 \
+    --cov=traigent --cov-config="$rcfile" --cov-report=xml:coverage.xml "${tests[@]}" || rc=$?
+  rm -f "$rcfile"
+  if [[ ! -s coverage.xml ]]; then
+    echo "  ⚠️  coverage.xml was not produced (pytest rc=$rc): coverage NOT MEASURED for this scan"
+  elif [[ "$rc" -ne 0 ]]; then
+    echo "  ⚠️  coverage tests exited rc=$rc: coverage.xml is PARTIAL (new-code coverage is a lower bound)"
+  else
+    echo "  ✅ coverage.xml written ($(wc -c <coverage.xml) bytes)"
+  fi
+}
+
 # ── 4. SonarQube quality gate (main-bound only) ──────────────────────────
 if [[ "$MAIN_BOUND" == "1" ]] && ! skip sonar; then
   section "SonarQube quality gate (main-bound: $BRANCH)"
@@ -300,6 +345,7 @@ if [[ "$MAIN_BOUND" == "1" ]] && ! skip sonar; then
     FAIL=1
   else
     host="${SONAR_HOST_URL:-http://localhost:9000}"
+    sonar_prepare_coverage
     echo "  🔎 scanning against $host with qualitygate.wait=true …"
     if command -v docker >/dev/null 2>&1; then
       net=""; [[ "$host" == *localhost* || "$host" == *127.0.0.1* ]] && net="--network=host"
