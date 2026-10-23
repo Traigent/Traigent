@@ -159,6 +159,92 @@ def _rebind_imported_names(original: Any, wrapper: Any) -> int:
     return rebound
 
 
+def _is_real_stream(kwargs: dict[str, Any]) -> bool:
+    """True for a streaming call that will reach the provider (not mock mode)."""
+    if not kwargs.get("stream", False):
+        return False
+    from traigent.integrations.utils.mock_adapter import MockAdapter
+
+    return not MockAdapter.is_mock_enabled("litellm")
+
+
+def _completion_once(
+    original: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> Any:
+    """One provider attempt: mock response in mock mode, else the real call."""
+    from traigent.integrations.utils.mock_adapter import MockAdapter
+
+    if MockAdapter.is_mock_enabled("litellm"):
+        mock_data = MockAdapter.get_mock_response(
+            "litellm",
+            model=kwargs.get("model", args[0] if args else "mock-model"),
+        )
+        mock_data.response_time_ms = 0.0
+        capture_langchain_response(mock_data)
+        return mock_data
+
+    note_real_call()
+    start_time = time.perf_counter()
+    with instrumented_provider_call():
+        response = original(*args, **kwargs)
+    return _finish_capture(response, start_time, args, kwargs, "completion")
+
+
+async def _acompletion_once(
+    original: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> Any:
+    """Async twin of :func:`_completion_once`."""
+    from traigent.integrations.utils.mock_adapter import MockAdapter
+
+    if MockAdapter.is_mock_enabled("litellm"):
+        mock_data = MockAdapter.get_mock_response(
+            "litellm",
+            model=kwargs.get("model", args[0] if args else "mock-model"),
+        )
+        mock_data.response_time_ms = 0.0
+        capture_langchain_response(mock_data)
+        return mock_data
+
+    note_real_call()
+    start_time = time.perf_counter()
+    with instrumented_provider_call():
+        response = await original(*args, **kwargs)
+    return _finish_capture(response, start_time, args, kwargs, "acompletion")
+
+
+def _finish_capture(
+    response: Any,
+    start_time: float,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    label: str,
+) -> Any:
+    response_time_ms = (time.perf_counter() - start_time) * 1000
+
+    # Skip capture for streaming responses -- usage is not populated
+    # until the stream is fully consumed in user code after we return.
+    if kwargs.get("stream", False):
+        return response
+
+    # Record timing for the handler chain without mutating a
+    # pydantic response (#1812: races LiteLLM's model_dump thread).
+    record_response_time_ms(response, response_time_ms)
+
+    capture_observed_response(
+        response,
+        provider=_litellm_provider(response),
+        requested_model=kwargs.get("model", args[0] if args else None),
+    )
+    logger.debug(
+        "Captured litellm.%s response: model=%s, tokens=%s, response_time_ms=%.2f",
+        label,
+        getattr(response, "model", "unknown"),
+        getattr(response, "usage", None),
+        response_time_ms,
+    )
+    return response
+
+
 def patch_litellm_for_metadata_capture(
     outcomes: dict[str, str] | None = None,
 ) -> bool:
@@ -230,45 +316,13 @@ def patch_litellm_for_metadata_capture(
 
             def completion_with_capture(*args: Any, **kwargs: Any) -> Any:
                 """Wrapped completion that captures response with timing."""
-                from traigent.integrations.utils.mock_adapter import MockAdapter
+                from traigent.utils.vendor_retry import run_with_vendor_retry
 
-                if MockAdapter.is_mock_enabled("litellm"):
-                    mock_data = MockAdapter.get_mock_response(
-                        "litellm",
-                        model=kwargs.get("model", args[0] if args else "mock-model"),
-                    )
-                    mock_data.response_time_ms = 0.0
-                    capture_langchain_response(mock_data)
-                    return mock_data
-
-                note_real_call()
-                start_time = time.perf_counter()
-                with instrumented_provider_call():
-                    response = original_completion(*args, **kwargs)
-                response_time_ms = (time.perf_counter() - start_time) * 1000
-
-                # Skip capture for streaming responses — usage is not populated
-                # until the stream is fully consumed in user code after we return.
-                if kwargs.get("stream", False):
-                    return response
-
-                # Record timing for the handler chain without mutating a
-                # pydantic response (#1812: races LiteLLM's model_dump thread).
-                record_response_time_ms(response, response_time_ms)
-
-                capture_observed_response(
-                    response,
-                    provider=_litellm_provider(response),
-                    requested_model=kwargs.get("model", args[0] if args else None),
+                # Per-call retry (SDK-41; default budget 0 = single attempt).
+                return run_with_vendor_retry(
+                    lambda: _completion_once(original_completion, args, kwargs),
+                    stream=_is_real_stream(kwargs),
                 )
-                logger.debug(
-                    "Captured litellm.completion response: model=%s, "
-                    "tokens=%s, response_time_ms=%.2f",
-                    getattr(response, "model", "unknown"),
-                    getattr(response, "usage", None),
-                    response_time_ms,
-                )
-                return response
 
             completion_with_capture._traigent_original = original_completion  # type: ignore[attr-defined]
             litellm.completion = completion_with_capture
@@ -287,45 +341,12 @@ def patch_litellm_for_metadata_capture(
 
             async def acompletion_with_capture(*args: Any, **kwargs: Any) -> Any:
                 """Wrapped async completion that captures response with timing."""
-                from traigent.integrations.utils.mock_adapter import MockAdapter
+                from traigent.utils.vendor_retry import run_with_vendor_retry_async
 
-                if MockAdapter.is_mock_enabled("litellm"):
-                    mock_data = MockAdapter.get_mock_response(
-                        "litellm",
-                        model=kwargs.get("model", args[0] if args else "mock-model"),
-                    )
-                    mock_data.response_time_ms = 0.0
-                    capture_langchain_response(mock_data)
-                    return mock_data
-
-                note_real_call()
-                start_time = time.perf_counter()
-                with instrumented_provider_call():
-                    response = await original_acompletion(*args, **kwargs)
-                response_time_ms = (time.perf_counter() - start_time) * 1000
-
-                # Skip capture for streaming responses — usage is not populated
-                # until the stream is fully consumed in user code after we return.
-                if kwargs.get("stream", False):
-                    return response
-
-                # Record timing for the handler chain without mutating a
-                # pydantic response (#1812: races LiteLLM's model_dump thread).
-                record_response_time_ms(response, response_time_ms)
-
-                capture_observed_response(
-                    response,
-                    provider=_litellm_provider(response),
-                    requested_model=kwargs.get("model", args[0] if args else None),
+                return await run_with_vendor_retry_async(
+                    lambda: _acompletion_once(original_acompletion, args, kwargs),
+                    stream=_is_real_stream(kwargs),
                 )
-                logger.debug(
-                    "Captured litellm.acompletion response: model=%s, "
-                    "tokens=%s, response_time_ms=%.2f",
-                    getattr(response, "model", "unknown"),
-                    getattr(response, "usage", None),
-                    response_time_ms,
-                )
-                return response
 
             acompletion_with_capture._traigent_original = original_acompletion  # type: ignore[attr-defined]
             litellm.acompletion = acompletion_with_capture

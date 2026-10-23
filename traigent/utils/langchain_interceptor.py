@@ -63,6 +63,27 @@ class _CaptureBucket:
     observed: dict[tuple[str, str, str | None, str | None], int] = field(
         default_factory=dict
     )
+    #: Provider-call attempt ledger (SDK-41). It lives ONLY on the ROOT
+    #: (outermost) bucket and is guarded by the root's lock: nested scopes
+    #: share their root's ledger, so there is nothing to merge or forward and
+    #: ids are unique across nested and ended scopes. See
+    #: ``traigent.utils.vendor_retry``. Counters are independent of the capped
+    #: record list.
+    root: Any = None
+    vendor_attempts: list[dict[str, Any]] = field(default_factory=list)
+    vendor_call_count: int = 0
+    vendor_attempt_total: int = 0  # counted when an attempt is OPENED
+    vendor_done_total: int = 0  # attempts that reached a final outcome
+    vendor_retry_total: int = 0
+    vendor_known_usage_total: int = 0
+    vendor_records_truncated: bool = False
+    #: Per-example attribution (an example's agent run is a "slot"): attempts
+    #: and known-usage attempts per slot, and the slots whose agent explicitly
+    #: reported its total cost (``with_usage``), which covers all the slot's spend.
+    vendor_slot_count: int = 0
+    vendor_slot_attempts: dict[int, int] = field(default_factory=dict)
+    vendor_slot_known: dict[int, int] = field(default_factory=dict)
+    vendor_reported_slots: set[int] = field(default_factory=set)
 
     def observed_provider_versions(self) -> list[dict[str, Any]]:
         """This trial's observations as an ``ObservedProviderVersionV1`` list."""
@@ -70,6 +91,131 @@ class _CaptureBucket:
 
         with self.lock:
             return observations_payload(dict(self.observed))
+
+
+_MAX_VENDOR_ATTEMPT_RECORDS = 10_000
+
+
+def _root_of(bucket: _CaptureBucket | None) -> _CaptureBucket | None:
+    return None if bucket is None else (bucket.root or bucket)
+
+
+def begin_vendor_call() -> int:
+    """Number a new logical provider call, from the root bucket (0 outside one)."""
+    root = _root_of(_capture_scope.get())
+    if root is None:
+        return 0
+    with root.lock:
+        root.vendor_call_count += 1
+        return root.vendor_call_count
+
+
+def current_capture_bucket() -> _CaptureBucket | None:
+    """The active trial's capture bucket, if any."""
+    return _capture_scope.get()
+
+
+_example_slot: ContextVar[int | None] = ContextVar(
+    "traigent_example_slot", default=None
+)
+
+
+@contextmanager
+def example_slot() -> Iterator[int | None]:
+    """Attribute provider attempts made inside to one example's agent run."""
+    root = _root_of(_capture_scope.get())
+    if root is None:
+        yield None
+        return
+    with root.lock:
+        root.vendor_slot_count += 1
+        slot = root.vendor_slot_count
+    token = _example_slot.set(slot)
+    try:
+        yield slot
+    finally:
+        _example_slot.reset(token)
+
+
+def mark_example_cost_reported(slot: int | None) -> None:
+    """The example's agent reported its own total cost: it covers the slot."""
+    root = _root_of(_capture_scope.get())
+    if root is None or slot is None:
+        return
+    with root.lock:
+        root.vendor_reported_slots.add(slot)
+
+
+class VendorAttemptHandle:
+    """One opened provider-call attempt, updated in place until it finishes."""
+
+    __slots__ = ("root", "record", "done", "slot")
+
+    def __init__(
+        self,
+        root: _CaptureBucket | None,
+        record: dict[str, Any] | None,
+        slot: int | None = None,
+    ):
+        self.root = root
+        self.record = record
+        self.done = False
+        self.slot = slot
+
+
+def open_vendor_attempt(
+    record: dict[str, Any], bucket: _CaptureBucket | None = None
+) -> VendorAttemptHandle:
+    """Count an attempt the moment it is opened (outcome ``in_progress``).
+
+    An attempt that is abandoned (a stream never consumed, a cancelled
+    consumer) therefore stays counted, with unknown usage.
+    """
+    root = _root_of(bucket if bucket is not None else _capture_scope.get())
+    if root is None:
+        return VendorAttemptHandle(None, None)
+    stored: dict[str, Any] | None = None
+    slot = _example_slot.get()
+    with root.lock:
+        root.vendor_attempt_total += 1
+        if slot is not None:
+            root.vendor_slot_attempts[slot] = root.vendor_slot_attempts.get(slot, 0) + 1
+        if len(root.vendor_attempts) < _MAX_VENDOR_ATTEMPT_RECORDS:
+            stored = {"outcome": "in_progress", "usage": None, **record}
+            root.vendor_attempts.append(stored)
+        else:
+            root.vendor_records_truncated = True
+    return VendorAttemptHandle(root, stored, slot)
+
+
+def finish_vendor_attempt(handle: VendorAttemptHandle, **updates: Any) -> None:
+    """Give an opened attempt its final outcome (idempotent, atomic)."""
+    root = handle.root
+    if root is None:
+        return
+    with root.lock:
+        if handle.done:
+            return
+        handle.done = True
+        root.vendor_done_total += 1
+        if updates.get("retried"):
+            root.vendor_retry_total += 1
+        if updates.get("usage_known"):
+            root.vendor_known_usage_total += 1
+            if handle.slot is not None:
+                root.vendor_slot_known[handle.slot] = (
+                    root.vendor_slot_known.get(handle.slot, 0) + 1
+                )
+        if handle.record is not None:
+            handle.record.update(updates)
+
+
+def record_vendor_attempt(record: dict[str, Any]) -> None:
+    """Open and immediately finish one attempt (dropped outside a scope)."""
+    handle = open_vendor_attempt(record)
+    updates = dict(record)
+    updates.setdefault("outcome", "success")
+    finish_vendor_attempt(handle, **updates)
 
 
 #: The capture scope for the trial running in this context, or ``None`` when no
@@ -165,18 +311,41 @@ class capture_scope:
 
     Usable as ``with`` or ``async with``.  Nesting is safe: the innermost scope
     wins and the outer one is restored on exit.
+
+    The provider-call attempt ledger (SDK-41) belongs to the nearest enclosing
+    *ledger owner*. A scope with ``ledger_owner=True`` (the trial scope) starts
+    a fresh ledger with its own lock, so trials started inside another scope
+    never see each other's attempts; a plain nested scope (the evaluator's)
+    shares its nearest owner's ledger. A top-level scope is always an owner.
     """
 
-    __slots__ = ("_token",)
+    __slots__ = ("_token", "_ledger_owner", "_slot_token")
+
+    def __init__(self, ledger_owner: bool = False) -> None:
+        self._ledger_owner = ledger_owner
+        self._slot_token: Any = None
 
     def __enter__(self) -> _CaptureBucket:
+        parent = _capture_scope.get()
         bucket = _CaptureBucket()
+        if parent is None or self._ledger_owner:
+            bucket.root = bucket
+        else:
+            bucket.root = parent.root or parent
         self._token = _capture_scope.set(bucket)
+        if self._ledger_owner:
+            # A new ledger starts a new numbering of example slots: do not
+            # inherit the enclosing example's slot (its ids belong to another
+            # ledger and would wrongly attribute this trial's attempts).
+            self._slot_token = _example_slot.set(None)
         return bucket
 
     def __exit__(self, *exc_info: Any) -> None:
         seal_captured_responses()
         finish_captured_responses(discard=True)
+        if self._slot_token is not None:
+            _example_slot.reset(self._slot_token)
+            self._slot_token = None
         _capture_scope.reset(self._token)
 
     async def __aenter__(self) -> _CaptureBucket:

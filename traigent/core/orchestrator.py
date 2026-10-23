@@ -4,14 +4,12 @@
 
 from __future__ import annotations
 
-import dataclasses
-
 import asyncio
 import copy
+import dataclasses
 import inspect
 import math
 import operator
-import os
 import statistics
 import sys
 import time
@@ -69,7 +67,6 @@ from traigent.core.cost_enforcement import (
     validate_cost_limit,
 )
 from traigent.core.cost_estimator import CostEstimator
-from traigent.core.sigterm_cancellation import sigterm_as_cancellation
 from traigent.core.exception_handler import (
     VendorErrorCategory,
     classify_systematic_provider_failure,
@@ -89,17 +86,17 @@ from traigent.core.execution_policy_runtime import (
     unsupported_backend_smart_algorithm_message,
 )
 from traigent.core.logger_facade import LoggerFacade
+from traigent.core.mandatory_metrics import MandatoryMetricsCollector
 from traigent.core.metadata_helpers import merge_run_metrics_into_session_summary
 from traigent.core.metric_registry import MetricRegistry, MetricSpec
-from traigent.core.mandatory_metrics import MandatoryMetricsCollector
 from traigent.core.metrics_aggregator import (
     aggregate_metrics,
     build_safeguards_telemetry,
 )
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.orchestrator_helpers import (
-    allocate_parallel_ceilings,
     EFFECTIVE_SUBSET_ATTR,
+    allocate_parallel_ceilings,
     constraint_requires_metrics,
     effective_subset_indices,
     normalize_parallel_trials,
@@ -126,6 +123,7 @@ from traigent.core.result_selection import (
 )
 from traigent.core.sample_budget import SampleBudgetManager
 from traigent.core.selection_receipt import build_selection_receipt
+from traigent.core.sigterm_cancellation import sigterm_as_cancellation
 from traigent.core.stat_significance import compute_significance
 from traigent.core.stop_condition_manager import StopConditionManager
 from traigent.core.stop_conditions import StopCondition
@@ -137,17 +135,13 @@ from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.interactive_optimizer import CloudBrainOptimizationComplete
 from traigent.tvl.promotion_gate import PromotionGate
-from traigent.utils.example_id import LOCAL_MARKER_KEY
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
-from traigent.utils.env_config import (  # noqa: F401
-    is_backend_offline as is_backend_offline,
-)
 from traigent.utils.env_config import (
     cost_preflight_mock_exempt,
-    is_mock_llm,
-    skip_provider_validation,
 )
-from traigent.utils.mock_provenance import MockProvenanceRecorder
+from traigent.utils.env_config import is_backend_offline as is_backend_offline  # noqa: F401
+from traigent.utils.env_config import is_mock_llm, skip_provider_validation
+from traigent.utils.example_id import LOCAL_MARKER_KEY
 from traigent.utils.exceptions import (
     ConfigurationError,
     OptimizationError,
@@ -159,6 +153,7 @@ from traigent.utils.function_identity import (
 )
 from traigent.utils.hashing import generate_run_label
 from traigent.utils.logging import get_logger
+from traigent.utils.mock_provenance import MockProvenanceRecorder
 from traigent.utils.objectives import (
     coerce_finite_objective_score,
     is_minimization_objective,
@@ -1263,6 +1258,9 @@ class OptimizationOrchestrator:
         # before the run loop gives up. Cumulative per category so the run always
         # terminates. Opt-in via TRAIGENT_VENDOR_MAX_RETRIES (default 0 = off).
         self._vendor_retry_counts: dict[VendorErrorCategory, int] = {}
+        # SDK-41: attempt ledgers of trials that ended in a vendor pause (no
+        # TrialResult exists for them), kept so run totals include them.
+        self._abandoned_vendor_attempts: list[dict[str, Any]] = []
         self._provider_call_attempts = 0
         self._provider_call_failures = 0
         self._provider_consecutive_call_failures = 0
@@ -1996,12 +1994,21 @@ class OptimizationOrchestrator:
         metadata = trial_result.metadata
         if prefill is None or metadata is None or "resumed_examples_reused" in metadata:
             return
-        from traigent.core.resume import reused_rows_stats
+        from traigent.core.resume import (
+            reused_rows_cost_unmeasured,
+            reused_rows_stats,
+        )
 
         count, cost = reused_rows_stats(trial_result)
         if count:
             metadata["resumed_examples_reused"] = count
             metadata["resumed_examples_reused_cost"] = cost
+            if reused_rows_cost_unmeasured(trial_result) and isinstance(
+                trial_result.metrics, dict
+            ):
+                # Reused rows came from a trial whose cost was uncertain: the
+                # resumed trial inherits the uncertainty (never rankable).
+                trial_result.metrics["cost_unmeasured"] = 1.0
 
     @staticmethod
     def _resumed_reused_count(trial_result: TrialResult) -> int:
@@ -2426,6 +2433,15 @@ class OptimizationOrchestrator:
                 # Dispatched with no result: spend unknown, floor unknown (0).
                 if self._winner_stability_mark_recorded(trial_id):
                     self._winner_stability_unmeasured_reruns += 1
+                # The lifecycle also filed this attempt in the abandoned-attempt
+                # ledger; the stability counter owns it, so the abandoned-cost
+                # reader must not count it a second time.
+                start = getattr(self, "_winner_stability_ledger_start", None)
+                if isinstance(start, int):
+                    for entry in getattr(self, "_abandoned_vendor_attempts", [])[
+                        start:
+                    ]:
+                        entry["counted_as_winner_stability"] = True
                 await self._account_untracked_trial_attempt(
                     trial_id=trial_id,
                     permit=permit,
@@ -3376,6 +3392,11 @@ class OptimizationOrchestrator:
         # intentionally NOT clamped — that clamp was removed with the F1 fix.)
         self._apply_execution_budget()
 
+        # SDK-41: validate the vendor-retry env at run start so a typo fails
+        # here with a clear message instead of silently disabling retries.
+        self._vendor_retry_settings()
+        self._abandoned_vendor_attempts = []
+
         descriptor = resolve_function_descriptor(func)
         self._function_descriptor = descriptor
         self._workflow_trace_manager._function_descriptor = descriptor
@@ -4273,22 +4294,13 @@ class OptimizationOrchestrator:
         Returns ``(max_retries, base_backoff_seconds)``. Defaults to ``0``
         (opt-in) so the documented graceful fail-stop contract is unchanged
         unless the operator sets ``TRAIGENT_VENDOR_MAX_RETRIES``. A malformed
-        value also yields the default.
+        value raises ``ConfigurationError`` (SDK-41; validated at run start).
         """
 
-        def _read(name: str, default: float, *, minimum: float) -> float:
-            raw = os.environ.get(name)
-            if raw is None or not raw.strip():
-                return default
-            try:
-                value = float(raw)
-            except (TypeError, ValueError):
-                return default
-            return value if value >= minimum else default
+        from traigent.utils.vendor_retry import resolve_vendor_retry_settings
 
-        max_retries = int(_read("TRAIGENT_VENDOR_MAX_RETRIES", 0.0, minimum=0.0))
-        base_backoff = _read("TRAIGENT_VENDOR_RETRY_BACKOFF", 1.0, minimum=0.0)
-        return max_retries, base_backoff
+        settings = resolve_vendor_retry_settings()
+        return settings.max_retries, settings.base_backoff_seconds
 
     async def _maybe_auto_retry_vendor_error(self, exc: VendorPauseError) -> str | None:
         """Bounded auto-retry/backoff for transient vendor errors (#1404).
@@ -4323,18 +4335,19 @@ class OptimizationOrchestrator:
             )
             return None
 
-        self._vendor_retry_counts[category] = used + 1
+        # Honor the vendor's requested wait (all header forms) via the shared
+        # helper; a wait beyond its cap is refused: the pause stands.
+        from traigent.utils.vendor_retry import compute_delay
 
-        # Honor a vendor-provided Retry-After when available, else exponential.
-        retry_after = getattr(exc.original_error, "retry_after", None)
-        try:
-            delay = float(retry_after) if retry_after is not None else None
-        except (TypeError, ValueError):
-            delay = None
-        if delay is None or delay < 0:
-            delay = base_backoff * (2**used)
+        delay = compute_delay(exc.original_error or exc, base_backoff, used)
         if delay is None:
-            raise RuntimeError("vendor retry delay fallback did not produce a value")
+            logger.warning(
+                "traigent.vendor_auto_retry refused category=%s: vendor-requested "
+                "wait exceeds the retry cap",
+                category.value,
+            )
+            return None
+        self._vendor_retry_counts[category] = used + 1
         delay_seconds = float(delay)
 
         logger.warning(
@@ -4600,6 +4613,9 @@ class OptimizationOrchestrator:
                                 len(scores),
                             )
                             break
+                    self._winner_stability_ledger_start = len(
+                        getattr(self, "_abandoned_vendor_attempts", [])
+                    )
                     rerun_trial = await self._trial_lifecycle.run_trial(
                         func=func,
                         config=copy.deepcopy(result.best_config),
@@ -6172,6 +6188,7 @@ class OptimizationOrchestrator:
             metadata["artifact_fingerprints"] = dict(artifact_fingerprints)
         if getattr(self, "_resume_summary", None) is not None:
             metadata["resume"] = dict(self._resume_summary or {})
+        metadata.update(self._vendor_attempt_totals())
 
         # Flag offline mode so callbacks can show appropriate hints
         if is_offline_requested(policy_from_config(self.traigent_config)):
@@ -6211,6 +6228,61 @@ class OptimizationOrchestrator:
             metadata["promotion_precondition"] = dict(precondition)
 
         return metadata
+
+    def _apply_abandoned_attempts_cost(self, result: OptimizationResult) -> None:
+        """Abandoned vendor attempts (no usable usage) make the run cost unknown.
+
+        Same mechanism as an unmeasured winner-stability rerun: ``total_cost``
+        becomes ``None``, the known spend is kept as ``cost_floor_usd`` and each
+        abandoned attempt counts once in ``cost_unmeasured_trials``.
+        """
+        unmeasured = sum(
+            1
+            for entry in getattr(self, "_abandoned_vendor_attempts", [])
+            if int(entry.get("vendor_call_unmeasured_attempts") or 0) > 0
+            and not entry.get("counted_as_winner_stability")
+        )
+        if unmeasured:
+            OptimizationOrchestrator._add_winner_stability_cost_to_result(
+                result, 0.0, unmeasured
+            )
+
+    def _vendor_attempt_totals(self) -> dict[str, Any]:
+        """Run-level provider-call attempt totals (SDK-41); empty when none."""
+        attempts = retries = unknown = incomplete = 0
+        truncated = False
+        records: list[dict[str, Any]] = []
+        sources = [
+            (getattr(trial, "trial_id", None), getattr(trial, "metadata", None) or {})
+            for trial in self._trials
+        ]
+        sources += [
+            (entry.get("trial_id"), entry)
+            for entry in getattr(self, "_abandoned_vendor_attempts", [])
+        ]
+        for trial_id, meta in sources:
+            trial_attempts = meta.get("vendor_call_attempts")
+            if not isinstance(trial_attempts, int):
+                continue
+            attempts += trial_attempts
+            retries += int(meta.get("vendor_call_retries") or 0)
+            unknown += int(meta.get("vendor_call_unknown_usage_attempts") or 0)
+            incomplete += int(meta.get("vendor_call_incomplete_attempts") or 0)
+            truncated = truncated or bool(
+                meta.get("vendor_call_attempt_records_truncated")
+            )
+            for record in meta.get("vendor_call_attempt_records") or []:
+                records.append({"trial_id": trial_id, **record})
+        if not attempts:
+            return {}
+        return {
+            "vendor_call_attempts": attempts,
+            "vendor_call_retries": retries,
+            "vendor_call_unknown_usage_attempts": unknown,
+            "vendor_call_incomplete_attempts": incomplete,
+            "vendor_call_attempt_records": records,
+            "vendor_call_attempt_records_truncated": truncated,
+        }
 
     def _create_optimization_result(self) -> OptimizationResult:
         """Create final optimization result.
@@ -6569,6 +6641,9 @@ class OptimizationOrchestrator:
             # Thread the terminal selector's exact eligible set through so
             # post-hoc range normalization shares its basis (issue #1704).
             ranking_eligible_trial_ids=selection.ranking_eligible_trial_ids,
+        )
+        OptimizationOrchestrator._apply_abandoned_attempts_cost(
+            self, optimization_result
         )
         self._selection_receipt_binding = (optimization_result, selection_receipt)
 

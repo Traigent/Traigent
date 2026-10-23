@@ -383,6 +383,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Per-call vendor retry, fault-injection hook, strict retry settings (SDK-41).**
+  With `TRAIGENT_VENDOR_MAX_RETRIES` > 0 the LiteLLM interceptor retries the
+  same provider call on 429/503 (retry_after, else exponential backoff), instead
+  of only moving on to the next configuration. Each trial reports
+  `vendor_call_attempts`, `vendor_call_retries` and per-attempt records
+  (failed attempts have unknown usage, not zero) in `TrialResult.metadata`,
+  totalled on `OptimizationResult.metadata`. New test-only
+  `traigent.testing.inject_vendor_failures(count, kind, per_call)` makes calls
+  fail on purpose (refused in production). Both retry env vars are now parsed
+  strictly: a malformed value raises `ConfigurationError` at run start instead
+  of silently disabling retries.
 - **`compare()` evaluates fixed configs as one experiment (#1952).** `OptimizedFunction.compare(configs, eval_dataset=None, repeats=1)` (and `compare_async`) calls the evaluator `optimize()` builds directly (no orchestrator, backend session, trial submission or `save_to` persistence) for each fully specified config on the same examples, and returns one `ComparisonResult` with per-config mean/spread, per-config cost (unmeasured cost is `None` plus a `cost_lower_bound`, never `0.0`), and a holdout check against the tuning dataset. Configs outside the declared space raise a value-free `ValueError`; cost estimate/approval, cumulative cost limit, strict cost tracking, CI approval, timeout, `max_total_examples` and a shared `ExecutionBudget` apply as in `optimize()` (a reached limit returns a partial result with `stop_reason`); the winner follows the objective's declared orientation; the wrapper's applied config and history are unchanged. See `docs/user-guide/compare_configs.md`.
 
 - **`optimize(resume_from=...)` resumes a local run (#1697).** Pass a prior

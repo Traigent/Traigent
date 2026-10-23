@@ -1710,16 +1710,35 @@ class OptimizationResult:
         """
         from traigent.utils.trial_costs import known_spend_lower_bound  # noqa: PLC0415
 
-        return sum(
+        trial_floor = sum(
             known_spend_lower_bound(
                 getattr(trial, "metrics", None), getattr(trial, "metadata", None)
             )
             for trial in self.trials
         )
+        # The run-level ledger also holds spend with no trial row (abandoned
+        # vendor attempts, winner-stability reruns).
+        ledger_floor = self._run_ledger_number("cost_floor_usd")
+        return max(trial_floor, ledger_floor)
+
+    def _run_ledger_number(self, key: str) -> float:
+        """A finite, non-negative run-level cost-ledger metric, else 0."""
+        value = (self.metrics or {}).get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return 0.0
+        return float(value) if math.isfinite(value) and value > 0 else 0.0
 
     def _cost_unmeasured_trial_count(self) -> int:
-        """Count trials whose cost is flagged unmeasured (Traigent#2517)."""
-        return sum(1 for trial in self.trials if self._trial_cost_unmeasured(trial))
+        """Count trials whose cost is flagged unmeasured (Traigent#2517).
+
+        The run-level ``cost_unmeasured_trials`` also counts uncertainty that
+        has no trial row (an abandoned vendor attempt); the larger of the two
+        counts is used, so nothing is counted twice and none is dropped.
+        """
+        from_trials = sum(
+            1 for trial in self.trials if self._trial_cost_unmeasured(trial)
+        )
+        return max(from_trials, int(self._run_ledger_number("cost_unmeasured_trials")))
 
     def _trial_cost_unmeasured(self, trial: TrialResult) -> bool:
         """True when a trial's cost is flagged, or it ran and none was recorded.

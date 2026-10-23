@@ -2500,7 +2500,9 @@ class BaseEvaluator(ABC):
     # Common evaluation methods to reduce duplication in subclasses
 
     @staticmethod
-    def _unpack_user_metrics(raw: Any) -> tuple[Any, dict[str, float] | None]:
+    def _unpack_user_metrics(
+        raw: Any, *, warn: bool = True
+    ) -> tuple[Any, dict[str, float] | None]:
         """Split a decorated function's return into (output, per-example metrics).
 
         Strict, conservative unpack rule (back-compat is absolute): the return
@@ -2558,31 +2560,33 @@ class BaseEvaluator(ABC):
         # naming the FIRST offender and stating why; behavior is unchanged.
         for key, value in candidate.items():
             if not isinstance(key, str) or not USER_METRIC_KEY_PATTERN.match(key):
-                logger.warning(
-                    "Return value %r looks like an (output, metrics) tuple but "
-                    "key %r is not a wire-valid metric name (must match "
-                    "%s, ASCII); the tuple was NOT treated as (output, metrics) "
-                    "and is passed through as raw output.",
-                    raw,
-                    key,
-                    USER_METRIC_KEY_PATTERN.pattern,
-                )
+                if warn:
+                    logger.warning(
+                        "Return value %r looks like an (output, metrics) tuple but "
+                        "key %r is not a wire-valid metric name (must match "
+                        "%s, ASCII); the tuple was NOT treated as (output, metrics) "
+                        "and is passed through as raw output.",
+                        raw,
+                        key,
+                        USER_METRIC_KEY_PATTERN.pattern,
+                    )
                 return raw, None
             if (
                 isinstance(value, bool)
                 or not isinstance(value, (int, float))
                 or not math.isfinite(float(value))
             ):
-                logger.warning(
-                    "Return value %r looks like an (output, metrics) tuple but "
-                    "value %r for key %r is not a finite number (got %s); the "
-                    "tuple was NOT treated as (output, metrics) and is passed "
-                    "through as raw output.",
-                    raw,
-                    value,
-                    key,
-                    type(value).__name__,
-                )
+                if warn:
+                    logger.warning(
+                        "Return value %r looks like an (output, metrics) tuple but "
+                        "value %r for key %r is not a finite number (got %s); the "
+                        "tuple was NOT treated as (output, metrics) and is passed "
+                        "through as raw output.",
+                        raw,
+                        value,
+                        key,
+                        type(value).__name__,
+                    )
                 return raw, None
         user_metrics = {key: float(value) for key, value in candidate.items()}
         return output, user_metrics
@@ -2887,6 +2891,41 @@ class BaseEvaluator(ABC):
             raise APIKeyError.from_provider_error(error) from error
 
     async def _execute_function(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        input_data: dict[str, Any],
+        executor: Any | None = None,
+        worker_started_callback: Callable[[], None] | None = None,
+        worker_done_callback: Callable[[], None] | None = None,
+        bound_lane_wait: bool = False,
+    ) -> tuple[Any, str | None]:
+        """Run one example's agent call, attributing provider attempts to it.
+
+        Attempts made inside belong to this example (SDK-41); if the agent
+        reports its own total cost (``with_usage``) that report covers them.
+        """
+        from traigent.utils.langchain_interceptor import example_slot
+        from traigent.utils.vendor_retry import mark_if_agent_reported_cost
+
+        with example_slot() as slot:
+            output, error = await self._execute_function_unattributed(
+                func,
+                config,
+                input_data,
+                executor,
+                worker_started_callback,
+                worker_done_callback,
+                bound_lane_wait,
+            )
+            if error is None:
+                # Same unwrap the evaluator applies later, so a supported
+                # ``(with_usage(...), {metrics})`` return is recognised too.
+                unwrapped, _ = self._unpack_user_metrics(output, warn=False)
+                mark_if_agent_reported_cost(slot, unwrapped)
+            return output, error
+
+    async def _execute_function_unattributed(
         self,
         func: Callable[..., Any],
         config: dict[str, Any],

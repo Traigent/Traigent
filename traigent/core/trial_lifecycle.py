@@ -451,7 +451,15 @@ class TrialLifecycle:
                 log_on_success=True,
                 permit=permit,
             )
-        except Exception:
+        except Exception as exc:
+            unmeasured_id = getattr(exc, "unmeasured_trial_id", None)
+            if unmeasured_id is not None and orchestrator.cost_enforcer is not None:
+                # An exhausted vendor call has unknown spend: count it as an
+                # unmeasured trial (releases the permit; strict mode raises
+                # CostTrackingRequiredError) rather than a free no-op.
+                await orchestrator._account_untracked_trial_attempt(
+                    trial_id=unmeasured_id, permit=permit
+                )
             # Release permit on exception to prevent stranding
             if (
                 permit is not None
@@ -598,7 +606,7 @@ class TrialLifecycle:
                 # trial drain -- and be charged for -- another's judge calls
                 # (Traigent#2387). Opened OUTSIDE the evaluator so it spans the
                 # agent's own calls as well as the metric functions'.
-                capture_scope() as capture_bucket,
+                capture_scope(ledger_owner=True) as capture_bucket,
                 TrialContext(
                     trial_id=trial_id,
                     metadata={
@@ -680,6 +688,7 @@ class TrialLifecycle:
             self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_budget_metadata(result, closure, budget_exhausted)
             self._apply_effectuation_metadata(result, func)
+            self._apply_vendor_attempts(result, capture_bucket)
             self._apply_content_identity(
                 result,
                 evaluation_config,
@@ -714,6 +723,7 @@ class TrialLifecycle:
             )
             self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_effectuation_metadata(result, func)
+            self._apply_vendor_attempts(result, capture_bucket)
             self._apply_content_identity(
                 result,
                 evaluation_config,
@@ -738,6 +748,7 @@ class TrialLifecycle:
             )
             self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_effectuation_metadata(result, func)
+            self._apply_vendor_attempts(result, capture_bucket)
             self._apply_content_identity(
                 result, evaluation_config, identity_run, None, capture_bucket
             )
@@ -767,11 +778,17 @@ class TrialLifecycle:
             from traigent.core.exception_handler import classify_vendor_error
 
             category = classify_vendor_error(vendor_exc)
-            raise VendorPauseError(
+            unmeasured = self._note_abandoned_vendor_attempts(trial_id, capture_bucket)
+            pause = VendorPauseError(
                 str(vendor_exc),
                 original_error=vendor_exc,
                 category=category,
-            ) from vendor_exc
+            )
+            if unmeasured:
+                # No TrialResult will exist: the sequential caller accounts the
+                # abandoned attempt as unknown spend (fail closed when strict).
+                pause.unmeasured_trial_id = trial_id
+            raise pause from vendor_exc
 
         except Exception as exc:
             logger.exception("Trial %s execution failed unexpectedly", trial_id)
@@ -786,6 +803,7 @@ class TrialLifecycle:
             )
             self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_effectuation_metadata(result, func)
+            self._apply_vendor_attempts(result, capture_bucket)
             self._apply_content_identity(
                 result, evaluation_config, identity_run, None, capture_bucket
             )
@@ -854,6 +872,57 @@ class TrialLifecycle:
                 getattr(result, "trial_id", "<unknown>"),
                 type(exc).__name__,
             )
+
+    @staticmethod
+    def _apply_vendor_attempts(result: TrialResult, capture_bucket: Any) -> None:
+        """Record per-trial provider-call attempts (SDK-41); no-op when none.
+
+        Any attempt without reported usage (a retried failure, a stream closed
+        early or failed mid-way, an incomplete attempt) has no cost telemetry, so the
+        trial's spend is a lower bound: it is flagged ``cost_unmeasured`` (known
+        spend kept as the floor) and flows through the existing honest-cost
+        machinery, including strict-mode ``CostTrackingRequiredError``.
+        """
+        if capture_bucket is None:
+            return
+        try:
+            from traigent.utils.vendor_retry import summarize_bucket
+
+            summary = summarize_bucket(capture_bucket)
+            if not summary:
+                return
+            result.metadata = {**(result.metadata or {}), **summary}
+            if summary["vendor_call_unmeasured_attempts"] > 0:
+                metrics = result.metrics
+                if isinstance(metrics, dict):
+                    # The floor itself moves to its own wire field at
+                    # submission (session_budgets / backend_session_manager).
+                    metrics["cost_unmeasured"] = 1.0
+        except Exception:  # noqa: BLE001 - accounting must never fail a trial
+            logger.debug("Vendor attempt metadata omitted", exc_info=True)
+
+    def _note_abandoned_vendor_attempts(
+        self, trial_id: str, capture_bucket: Any
+    ) -> bool:
+        """Keep attempts of a trial that ended in a vendor pause in run totals.
+
+        Returns True when any abandoned attempt has no usable usage, i.e. the
+        trial's provider spend is unknown (never scored as free).
+        """
+        if capture_bucket is None:
+            return False
+        try:
+            from traigent.utils.vendor_retry import summarize_bucket
+
+            summary = summarize_bucket(capture_bucket)
+            if summary:
+                self._orchestrator._abandoned_vendor_attempts.append(
+                    {"trial_id": trial_id, **summary}
+                )
+                return int(summary.get("vendor_call_unmeasured_attempts") or 0) > 0
+        except Exception:  # noqa: BLE001
+            logger.debug("Abandoned vendor attempts omitted", exc_info=True)
+        return False
 
     def _apply_effectuation_metadata(
         self,
