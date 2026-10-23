@@ -873,7 +873,6 @@ class TrialLifecycle:
         if capture_bucket is None:
             return
         try:
-            from traigent.utils.trial_costs import lift_flagged_cost_to_floor
             from traigent.utils.vendor_retry import summarize_bucket
 
             summary = summarize_bucket(capture_bucket)
@@ -883,8 +882,9 @@ class TrialLifecycle:
             if summary["vendor_call_unmeasured_attempts"] > 0:
                 metrics = result.metrics
                 if isinstance(metrics, dict):
+                    # The floor itself moves to its own wire field at
+                    # submission (session_budgets / backend_session_manager).
                     metrics["cost_unmeasured"] = 1.0
-                    lift_flagged_cost_to_floor(metrics, metrics)
         except Exception:  # noqa: BLE001 - accounting must never fail a trial
             logger.debug("Vendor attempt metadata omitted", exc_info=True)
 

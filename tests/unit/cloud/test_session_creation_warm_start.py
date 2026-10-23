@@ -379,6 +379,7 @@ class TestResultMetadataWarmStartProvenance:
             _warm_start_from=warm_start_from,
             _function_descriptor=None,
             traigent_config=None,
+            _vendor_attempt_totals=lambda: {},
         )
         return OptimizationOrchestrator._build_result_metadata(
             fake_self,
@@ -871,7 +872,10 @@ class TestResultMetadataMockProvenance:
         monkeypatch.setattr(orch_mod, "is_offline_requested", lambda _policy: False)
         monkeypatch.setattr(orch_mod, "is_mock_llm", lambda: mock_on)
         fake_self = SimpleNamespace(
-            _warm_start_from=None, _function_descriptor=None, traigent_config=None
+            _warm_start_from=None,
+            _function_descriptor=None,
+            traigent_config=None,
+            _vendor_attempt_totals=lambda: {},
         )
         return OptimizationOrchestrator._build_result_metadata(
             fake_self, session_summary=None, safeguards_telemetry={}

@@ -26,10 +26,10 @@ import os
 import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from email.utils import parsedate_to_datetime
-from datetime import UTC, datetime
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
+from typing import Any, cast
 
 from traigent.core.exception_handler import VendorErrorCategory, classify_vendor_error
 from traigent.utils.exceptions import ConfigurationError
@@ -55,7 +55,6 @@ RETRYABLE_CATEGORIES = frozenset(
     {VendorErrorCategory.RATE_LIMIT, VendorErrorCategory.SERVICE_UNAVAILABLE}
 )
 
-T = TypeVar("T")
 
 _INT_RE = re.compile(r"^[+]?\d+$")
 
@@ -253,7 +252,7 @@ def compute_delay(
     requested = vendor_wait_seconds(exc)
     if requested is not None:
         return None if requested > MAX_RETRY_DELAY_SECONDS else requested
-    return min(base_backoff * (2**retry_index), MAX_RETRY_DELAY_SECONDS)
+    return float(min(base_backoff * (2**retry_index), MAX_RETRY_DELAY_SECONDS))
 
 
 def _usage_of(response: Any) -> dict[str, int] | None:
@@ -434,7 +433,7 @@ def _on_failure(
     return delay
 
 
-def run_with_vendor_retry(call: Callable[[], T], *, stream: bool = False) -> T:
+def run_with_vendor_retry[T](call: Callable[[], T], *, stream: bool = False) -> T:
     """Run a single provider call with the per-call retry budget (sync).
 
     With ``stream=True`` only failures raised before the stream object is
@@ -460,12 +459,12 @@ def run_with_vendor_retry(call: Callable[[], T], *, stream: bool = False) -> T:
             _finish(handle, "cancelled")
             raise
         if stream:
-            return _wrap_stream(response, handle, is_async=False)
+            return cast(T, _wrap_stream(response, handle, is_async=False))
         _finish(handle, "success", usage=_usage_of(response))
         return response
 
 
-async def run_with_vendor_retry_async(
+async def run_with_vendor_retry_async[T](
     call: Callable[[], Awaitable[T]], *, stream: bool = False
 ) -> T:
     """Run a single provider call with the per-call retry budget (async)."""
@@ -489,7 +488,7 @@ async def run_with_vendor_retry_async(
             _finish(handle, "cancelled")
             raise
         if stream:
-            return _wrap_stream(response, handle, is_async=True)
+            return cast(T, _wrap_stream(response, handle, is_async=True))
         _finish(handle, "success", usage=_usage_of(response))
         return response
 
