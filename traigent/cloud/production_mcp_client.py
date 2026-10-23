@@ -443,9 +443,8 @@ class ProductionMCPClient:
 
             async def execute_tool_call():
                 """Internal function for tool execution with proper error handling."""
-                if not await self.is_connected():
-                    if not await self.connect():
-                        raise NetworkError("Unable to connect to MCP server") from None
+                if not await self.is_connected() and not await self.connect():
+                    raise NetworkError("Unable to connect to MCP server") from None
 
                 if self._session is None:
                     raise ConnectionError(_MCP_SESSION_UNAVAILABLE)
@@ -575,9 +574,8 @@ class ProductionMCPClient:
             MCP response with available resources
         """
         try:
-            if not await self.is_connected():
-                if not await self.connect():
-                    raise ConnectionError("Unable to connect to MCP server") from None
+            if not await self.is_connected() and not await self.connect():
+                raise ConnectionError("Unable to connect to MCP server") from None
 
             if self._session is None:
                 raise ConnectionError(_MCP_SESSION_UNAVAILABLE)
@@ -602,9 +600,8 @@ class ProductionMCPClient:
             MCP response with resource content
         """
         try:
-            if not await self.is_connected():
-                if not await self.connect():
-                    raise ConnectionError("Unable to connect to MCP server") from None
+            if not await self.is_connected() and not await self.connect():
+                raise ConnectionError("Unable to connect to MCP server") from None
 
             if self._session is None:
                 raise ConnectionError(_MCP_SESSION_UNAVAILABLE)
