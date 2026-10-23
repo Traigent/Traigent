@@ -417,3 +417,120 @@ def test_respond_dispatches_to_the_hosted_path_with_an_agent_ref(
         )
     )
     assert result.attempt_ref and result.result_recorded
+
+
+# --- review follow-ups: post-start lease, reclaim of an unstarted reservation, crashes ------
+
+
+def test_lease_loss_is_judged_by_the_start_receipt_before_any_heartbeat_succeeds(
+    reactive: Reactive,
+) -> None:
+    ref = reactive.approved_optimize()
+    reactive.backend.fail_next("renewTvlReactiveAttemptLease", *["transport"] * 200)
+    cancelled = {"flag": False}
+
+    async def work() -> Any:
+        await asyncio.sleep(0.03)
+        # 3 minutes: past the 2-minute post-start lease, inside the 5-minute reservation.
+        reactive.clock.advance(minutes=3)
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled["flag"] = True
+            raise
+
+    with pytest.raises(RuntimeRequirementError) as err:
+        go(reactive, Fn(reactive, work))
+    assert err.value.path == "lease" and cancelled["flag"]
+    assert reactive.backend.results == []
+    start = reactive.backend.requests_of("startTvlReactiveAttempt")[0]["response"]
+    assert "lease_expires_at" in start  # the deadline comes from the receipt
+    assert reactive.backend.starts_accepted[ref] == 1
+
+
+def test_crash_after_reserve_frees_the_attempt_when_the_reservation_expires(
+    reactive: Reactive,
+) -> None:
+    ref = reactive.approved_optimize()
+    grant = reactive.backend.attempts[ref]["grant_ref"]
+    reactive.client.reserve(ref, grant)  # a controller that then died
+    fn = Fn(reactive)
+    with pytest.raises(RuntimeRequirementError):  # still held: nobody else may take it
+        go(reactive, fn, attempt_ref=ref)
+    reactive.clock.advance(
+        minutes=6
+    )  # the reservation expired unstarted: it simply frees
+    # The first refusal happened at reserve, before any local cache entry existed.
+    result = go(reactive, fn, attempt_ref=ref)
+    assert result.reservation_generation == 2 and result.result_recorded
+    assert reactive.backend.starts_accepted[ref] == 1
+
+
+def test_crash_after_start_accepted_never_allows_a_second_start_but_keeps_the_result_path(
+    reactive: Reactive,
+) -> None:
+    ref = reactive.approved_optimize()
+    grant = reactive.backend.attempts[ref]["grant_ref"]
+    dead = reactive.client.reserve(ref, grant)
+    reactive.client.start(dead)  # started, then the process died before optimize
+    fn = Fn(reactive)
+    for _ in range(2):  # before and after the lease lapses
+        with pytest.raises(RuntimeRequirementError) as err:
+            go(reactive, fn, attempt_ref=ref)
+        assert err.value.code == E_NO_APPROVED_ATTEMPT
+        reactive.clock.advance(minutes=10)
+    assert fn.calls == [] and reactive.backend.starts_accepted[ref] == 1
+    assert reactive.backend.attempts[ref]["state"] == "lapsed"
+    # The original holder (once restarted with its handle) may still report the true result.
+    reactive.client.report_finished(dead, completion="normal", candidates=[])
+    assert reactive.backend.attempts[ref]["state"] == "finished"
+
+
+def test_crash_after_optimize_before_results_leaves_the_result_reportable(
+    reactive: Reactive,
+) -> None:
+    ref = reactive.approved_optimize()
+    reactive.backend.fail_next(
+        "reportTvlReactiveAttemptResult", "transport", "transport", "transport"
+    )
+    with pytest.raises(RuntimeRequirementError) as err:
+        go(reactive, Fn(reactive))
+    assert err.value.path == "result_unreported"
+    assert reactive.backend.attempts[ref]["state"] == "started"
+    reactive.clock.advance(minutes=10)  # lapsed meanwhile
+    res = reactive.backend.reservations[
+        reactive.backend.attempts[ref]["reservation_ref"]
+    ]
+    from traigent.runtime.hosted import ReservationHandle
+
+    handle = ReservationHandle(
+        res["reservation_ref"], res["generation"], ref, "optimize", res["expires_at"]
+    )
+    assert reactive.client.report_finished(handle, completion="normal", candidates=[])[
+        "recorded"
+    ]
+    assert reactive.backend.starts_accepted[ref] == 1
+
+
+def test_attempt_ref_without_agent_ref_is_a_usage_error(user_module: Any) -> None:
+    from click.testing import CliRunner
+
+    from traigent.cli.main import cli
+
+    out = CliRunner().invoke(
+        cli,
+        [
+            "requirements",
+            "respond",
+            __file__,
+            "--function",
+            "answer",
+            "--project-id",
+            "p",
+            "--agent-id",
+            "a",
+            "--attempt-ref",
+            "attemptref_" + "0" * 32,
+        ],
+    )
+    assert out.exit_code == 2 and "--attempt-ref requires --agent-ref" in out.output

@@ -505,6 +505,7 @@ class _HostedLease:
         *,
         clock: Callable[[], datetime],
         skew: timedelta,
+        lease_expires_at: str,
     ) -> None:
         self.client, self.reservation, self.clock, self.skew = (
             client,
@@ -512,8 +513,9 @@ class _HostedLease:
             clock,
             skew,
         )
-        #: The last instant the Backend verifiably vouched for (its stamp minus skew).
-        self.verified_until = _parse_ts(reservation.expires_at) - skew
+        #: The last instant the Backend verifiably vouched for (its stamp minus skew):
+        #: the post-start lease from the start receipt, never the pre-start reservation expiry.
+        self.verified_until = _parse_ts(lease_expires_at) - skew
         self.lost = False
 
     def beat(self) -> bool:
@@ -679,7 +681,7 @@ async def respond_hosted(
     )
     cache.begin()
     try:
-        await _bounded(
+        started = await _bounded(
             lambda key: api.start(reservation, key=key), sleep=sleep, delay=retry_delay
         )
     except ReactiveError as exc:
@@ -690,7 +692,17 @@ async def respond_hosted(
         raise
     cache.started()
 
-    lease = _HostedLease(api, reservation, clock=clock, skew=skew)
+    lease = _HostedLease(
+        api,
+        reservation,
+        clock=clock,
+        skew=skew,
+        lease_expires_at=started["lease_expires_at"],
+    )
+    if not clock() < lease.verified_until:
+        # The vouched deadline has already passed: no work under a lease we cannot rely on.
+        cache.update(lease_lost=True)
+        raise RuntimeRequirementError(E_HOLD, "lease")
     beat = asyncio.create_task(
         _heartbeat_loop(lease, heartbeat_interval.total_seconds())
     )

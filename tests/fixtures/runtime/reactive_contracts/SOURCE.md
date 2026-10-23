@@ -8,6 +8,13 @@ update the pins, and say so in the PR.
 Source: Traigent/TraigentSchema origin/develop, root `traigent_schema/schemas/`.
 commit sha1: 334643498ad477886fd719c4fc67eef24fb14c4a
 
+## Local patch (remove when TraigentSchema merges its follow-up)
+
+`tvl_reactive_authority_schema.json` is NOT byte-exact: `StartReceipt` gains the required
+`lease_expires_at` (Timestamp), mirroring the Schema follow-up that adds it (coordinator
+ruling after review of 13548a328). Its sha256 below is the patched file; the upstream hash
+is listed for the re-vendor.
+
 ## Files
 
 execution/best_config_agent_head_config_endpoints.json sha256: d498125b69bd6262214c4dd0154565ece336b6b3c1709bf6098e80e7ca83ae2e
@@ -20,7 +27,8 @@ optimization/best_config_schema.json sha256: 9ea432e7559f3d2c28e343d6b9dcc44517d
 optimization/best_config_v2_schema.json sha256: 4c1dc43868823f18aa597bc2c67bd24e25c8431073930eb61edfa735370c01ec
 optimization/hybrid_api_options_schema.json sha256: 56f5b08b2ac68a424ed4f180fc4805fe676b2309c6d49a5072ff0b6a97f44b47
 optimization/optimization_strategy_schema.json sha256: dca307773a0ca77358c37220f92140617078a8e3718a41419d3447c7b26ff642
-optimization/tvl_reactive_authority_schema.json sha256: 31c986ba04b2f10a4589ce1c68e4a88589c2509078b61d4ed4dd3961be79493a
+optimization/tvl_reactive_authority_schema.json sha256: 761cd1fdd457c78bd20fe49552c24b82d389d4313ab5b30169f0e478656e6536
+optimization/tvl_reactive_authority_schema.json upstream-sha256 at that commit: 31c986ba04b2f10a4589ce1c68e4a88589c2509078b61d4ed4dd3961be79493a
 optimization/tvl_reactive_common_schema.json sha256: bf1903530d55c2b8e511af76cd82fa1053094dd2a895c28f2e3c2446c09d8fce
 optimization/tvl_reactive_endpoints.json sha256: 4ed7e8f4bedf8926e8ffb4037a42d3b9e29d9e7cedb0153811d3cbaeaa59e8af
 optimization/tvl_reactive_facts_schema.json sha256: b5be81fda32fb608c4b80029aded6f8a4feedebcbaaa3f149fc74982132b6848

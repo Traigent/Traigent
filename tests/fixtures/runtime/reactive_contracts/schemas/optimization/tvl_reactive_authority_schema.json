@@ -567,7 +567,8 @@
         "effect",
         "fact",
         "started_at",
-        "replayed"
+        "replayed",
+        "lease_expires_at"
       ],
       "properties": {
         "schema_version": {
@@ -595,6 +596,10 @@
           "x-content-class": "closed_enum",
           "type": "boolean",
           "description": "An accepted retry returns the original receipt; it never authorizes another start."
+        },
+        "lease_expires_at": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Timestamp",
+          "description": "Server-vouched lease deadline after the accepted start (renewed by heartbeats)."
         }
       },
       "description": "Receipt of an accepted start."

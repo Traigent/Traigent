@@ -345,6 +345,8 @@ def respond_cmd(
     attempt_ref: str | None,
 ) -> None:
     """Start a human-approved fix (an optimize run) for an open breach. Never deploys."""
+    if attempt_ref is not None and agent_ref is None:
+        raise click.UsageError("--attempt-ref requires --agent-ref")
 
     def confirm(facts: dict[str, Any]) -> bool:
         click.echo("Open breach, restore requested:")

@@ -428,6 +428,7 @@ _PARSERS: dict[str, Check] = {
             "effect": _enum(*EFFECTS),
             "fact": _enum("started", "deploy_started"),
             "started_at": _ts,
+            "lease_expires_at": _ts,
             "replayed": _bool,
         }
     ),

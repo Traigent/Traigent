@@ -402,6 +402,16 @@ class StrictBackend:
         res = self.reservations.get(attempt.get("reservation_ref", ""))
         if (
             res
+            and attempt["state"] == "reserved"
+            and _parse(res["expires_at"]) <= self.clock()
+        ):
+            # Plan 7.1: a reservation that expires before start means nothing started
+            # and simply frees; the attempt is approvable/reservable again.
+            attempt["state"] = "approved"
+            res["released"] = True
+            return
+        if (
+            res
             and attempt["state"] == "started"
             and _parse(res["lease_expires_at"]) <= self.clock()
         ):
@@ -483,7 +493,11 @@ class StrictBackend:
         if attempt is None:
             return 404, refusal("reference_not_found")
         existing = self.reservations.get(attempt.get("reservation_ref", ""))
-        if existing and existing["reservation_key"] == body["reservation_key"]:
+        if (
+            existing
+            and not existing.get("released")
+            and existing["reservation_key"] == body["reservation_key"]
+        ):
             return 201, self._reservation_doc(existing, replayed=True)
         if attempt["state"] != "approved":
             return 409, refusal(
@@ -569,6 +583,7 @@ class StrictBackend:
             "effect": attempt["effect"],
             "fact": fact,
             "started_at": res["started_at"],
+            "lease_expires_at": res["lease_expires_at"],
             "replayed": replayed,
         }
 
