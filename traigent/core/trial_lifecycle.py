@@ -451,7 +451,15 @@ class TrialLifecycle:
                 log_on_success=True,
                 permit=permit,
             )
-        except Exception:
+        except Exception as exc:
+            unmeasured_id = getattr(exc, "unmeasured_trial_id", None)
+            if unmeasured_id is not None and orchestrator.cost_enforcer is not None:
+                # An exhausted vendor call has unknown spend: count it as an
+                # unmeasured trial (releases the permit; strict mode raises
+                # CostTrackingRequiredError) rather than a free no-op.
+                await orchestrator._account_untracked_trial_attempt(
+                    trial_id=unmeasured_id, permit=permit
+                )
             # Release permit on exception to prevent stranding
             if (
                 permit is not None
@@ -770,12 +778,17 @@ class TrialLifecycle:
             from traigent.core.exception_handler import classify_vendor_error
 
             category = classify_vendor_error(vendor_exc)
-            self._note_abandoned_vendor_attempts(trial_id, capture_bucket)
-            raise VendorPauseError(
+            unmeasured = self._note_abandoned_vendor_attempts(trial_id, capture_bucket)
+            pause = VendorPauseError(
                 str(vendor_exc),
                 original_error=vendor_exc,
                 category=category,
-            ) from vendor_exc
+            )
+            if unmeasured:
+                # No TrialResult will exist: the sequential caller accounts the
+                # abandoned attempt as unknown spend (fail closed when strict).
+                pause.unmeasured_trial_id = trial_id
+            raise pause from vendor_exc
 
         except Exception as exc:
             logger.exception("Trial %s execution failed unexpectedly", trial_id)
@@ -890,10 +903,14 @@ class TrialLifecycle:
 
     def _note_abandoned_vendor_attempts(
         self, trial_id: str, capture_bucket: Any
-    ) -> None:
-        """Keep attempts of a trial that ended in a vendor pause in run totals."""
+    ) -> bool:
+        """Keep attempts of a trial that ended in a vendor pause in run totals.
+
+        Returns True when any abandoned attempt has no usable usage, i.e. the
+        trial's provider spend is unknown (never scored as free).
+        """
         if capture_bucket is None:
-            return
+            return False
         try:
             from traigent.utils.vendor_retry import summarize_bucket
 
@@ -902,8 +919,10 @@ class TrialLifecycle:
                 self._orchestrator._abandoned_vendor_attempts.append(
                     {"trial_id": trial_id, **summary}
                 )
+                return int(summary.get("vendor_call_unmeasured_attempts") or 0) > 0
         except Exception:  # noqa: BLE001
             logger.debug("Abandoned vendor attempts omitted", exc_info=True)
+        return False
 
     def _apply_effectuation_metadata(
         self,

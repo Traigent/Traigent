@@ -4,10 +4,9 @@
 
 from __future__ import annotations
 
-import dataclasses
-
 import asyncio
 import copy
+import dataclasses
 import inspect
 import math
 import operator
@@ -68,7 +67,6 @@ from traigent.core.cost_enforcement import (
     validate_cost_limit,
 )
 from traigent.core.cost_estimator import CostEstimator
-from traigent.core.sigterm_cancellation import sigterm_as_cancellation
 from traigent.core.exception_handler import (
     VendorErrorCategory,
     classify_systematic_provider_failure,
@@ -88,17 +86,17 @@ from traigent.core.execution_policy_runtime import (
     unsupported_backend_smart_algorithm_message,
 )
 from traigent.core.logger_facade import LoggerFacade
+from traigent.core.mandatory_metrics import MandatoryMetricsCollector
 from traigent.core.metadata_helpers import merge_run_metrics_into_session_summary
 from traigent.core.metric_registry import MetricRegistry, MetricSpec
-from traigent.core.mandatory_metrics import MandatoryMetricsCollector
 from traigent.core.metrics_aggregator import (
     aggregate_metrics,
     build_safeguards_telemetry,
 )
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.orchestrator_helpers import (
-    allocate_parallel_ceilings,
     EFFECTIVE_SUBSET_ATTR,
+    allocate_parallel_ceilings,
     constraint_requires_metrics,
     effective_subset_indices,
     normalize_parallel_trials,
@@ -125,6 +123,7 @@ from traigent.core.result_selection import (
 )
 from traigent.core.sample_budget import SampleBudgetManager
 from traigent.core.selection_receipt import build_selection_receipt
+from traigent.core.sigterm_cancellation import sigterm_as_cancellation
 from traigent.core.stat_significance import compute_significance
 from traigent.core.stop_condition_manager import StopConditionManager
 from traigent.core.stop_conditions import StopCondition
@@ -136,17 +135,13 @@ from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.interactive_optimizer import CloudBrainOptimizationComplete
 from traigent.tvl.promotion_gate import PromotionGate
-from traigent.utils.example_id import LOCAL_MARKER_KEY
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
-from traigent.utils.env_config import (  # noqa: F401
-    is_backend_offline as is_backend_offline,
-)
 from traigent.utils.env_config import (
     cost_preflight_mock_exempt,
-    is_mock_llm,
-    skip_provider_validation,
 )
-from traigent.utils.mock_provenance import MockProvenanceRecorder
+from traigent.utils.env_config import is_backend_offline as is_backend_offline  # noqa: F401
+from traigent.utils.env_config import is_mock_llm, skip_provider_validation
+from traigent.utils.example_id import LOCAL_MARKER_KEY
 from traigent.utils.exceptions import (
     ConfigurationError,
     OptimizationError,
@@ -158,6 +153,7 @@ from traigent.utils.function_identity import (
 )
 from traigent.utils.hashing import generate_run_label
 from traigent.utils.logging import get_logger
+from traigent.utils.mock_provenance import MockProvenanceRecorder
 from traigent.utils.objectives import (
     coerce_finite_objective_score,
     is_minimization_objective,
@@ -1998,12 +1994,21 @@ class OptimizationOrchestrator:
         metadata = trial_result.metadata
         if prefill is None or metadata is None or "resumed_examples_reused" in metadata:
             return
-        from traigent.core.resume import reused_rows_stats
+        from traigent.core.resume import (
+            reused_rows_cost_unmeasured,
+            reused_rows_stats,
+        )
 
         count, cost = reused_rows_stats(trial_result)
         if count:
             metadata["resumed_examples_reused"] = count
             metadata["resumed_examples_reused_cost"] = cost
+            if reused_rows_cost_unmeasured(trial_result) and isinstance(
+                trial_result.metrics, dict
+            ):
+                # Reused rows came from a trial whose cost was uncertain: the
+                # resumed trial inherits the uncertainty (never rankable).
+                trial_result.metrics["cost_unmeasured"] = 1.0
 
     @staticmethod
     def _resumed_reused_count(trial_result: TrialResult) -> int:
@@ -6212,6 +6217,23 @@ class OptimizationOrchestrator:
 
         return metadata
 
+    def _apply_abandoned_attempts_cost(self, result: OptimizationResult) -> None:
+        """Abandoned vendor attempts (no usable usage) make the run cost unknown.
+
+        Same mechanism as an unmeasured winner-stability rerun: ``total_cost``
+        becomes ``None``, the known spend is kept as ``cost_floor_usd`` and each
+        abandoned attempt counts once in ``cost_unmeasured_trials``.
+        """
+        unmeasured = sum(
+            1
+            for entry in getattr(self, "_abandoned_vendor_attempts", [])
+            if int(entry.get("vendor_call_unmeasured_attempts") or 0) > 0
+        )
+        if unmeasured:
+            OptimizationOrchestrator._add_winner_stability_cost_to_result(
+                result, 0.0, unmeasured
+            )
+
     def _vendor_attempt_totals(self) -> dict[str, Any]:
         """Run-level provider-call attempt totals (SDK-41); empty when none."""
         attempts = retries = unknown = incomplete = 0
@@ -6606,6 +6628,9 @@ class OptimizationOrchestrator:
             # Thread the terminal selector's exact eligible set through so
             # post-hoc range normalization shares its basis (issue #1704).
             ranking_eligible_trial_ids=selection.ranking_eligible_trial_ids,
+        )
+        OptimizationOrchestrator._apply_abandoned_attempts_cost(
+            self, optimization_result
         )
         self._selection_receipt_binding = (optimization_result, selection_receipt)
 

@@ -410,6 +410,9 @@ class VendorPauseError(TraigentError):
         super().__init__(message)
         self.original_error = original_error
         self.category = category
+        #: Trial id whose abandoned vendor attempts have unknown spend (set by
+        #: the trial lifecycle; the caller accounts it as unmeasured cost).
+        self.unmeasured_trial_id: str | None = None
 
 
 class NetworkError(RetryableError):

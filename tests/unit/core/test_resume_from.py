@@ -719,6 +719,43 @@ def test_unknown_cost_of_reused_examples_stays_unknown(_local: Path) -> None:
     assert sorted(calls) == [("c", "3"), ("c", "4")]
 
 
+def test_partial_trial_cost_uncertainty_flag_reaches_reused_rows(
+    _local: Path,
+) -> None:
+    """A flagged partial trial's reused rows must not look measured (P1-B)."""
+    from traigent.core.resume import RESUMED_EXAMPLE_KEY
+
+    calls: list[tuple[str, str]] = []
+    agent = _agent_rows(calls)  # every row carries a measured cost
+    first = agent.optimize_sync()
+    trial = _make_partial(first)
+    # The trial (not its rows) was flagged: some provider attempt had no usage.
+    trial.metrics = {k: v for k, v in trial.metrics.items() if k != "total_cost"}
+    trial.metrics["cost_unmeasured"] = 1.0
+
+
+    calls.clear()
+
+    resumed = agent.optimize_sync(resume_from=first)
+
+    trial_c = next(t for t in resumed.trials if t.config["v"] == "c")
+    assert sorted(calls) == [("c", "3"), ("c", "4")]
+    assert trial_c.metrics.get("cost_unmeasured")  # not cost-rankable
+    reused = [
+        r
+        for r in trial_c.metadata["example_results"]
+        if (r.metadata if hasattr(r, "metadata") else r["metadata"]).get(
+            RESUMED_EXAMPLE_KEY
+        )
+    ]
+    assert len(reused) == 2
+    for row in reused:
+        metrics = row.metrics if hasattr(row, "metrics") else row["metrics"]
+        assert metrics.get("cost_unmeasured") == 1.0
+        assert "total_cost" not in metrics  # unknown is not a measured number
+        assert metrics["cost_lower_bound"] == pytest.approx(0.01)  # known floor kept
+
+
 def test_reused_whole_trials_do_not_use_the_sample_budget(_local: Path) -> None:
     seen: list[str] = []
     agent = _agent(["a", "b", "c", "d"], seen)
