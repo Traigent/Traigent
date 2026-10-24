@@ -7,18 +7,17 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from traigent.cloud import content_less as content_less_session
-from traigent.cloud.auth import (
-    AuthCredentials,
-    AuthManager,
-    AuthMode,
-)
-from traigent.utils.wire_text import WIRE_ERROR_CODES
 from traigent.cloud.api_key_manager import APIKeyManager
 from traigent.cloud.api_operations import (
     _JSON_CONTENT_TYPE,
     AIOHTTP_AVAILABLE,
     ApiOperations,
     _typed_configuration_space,
+)
+from traigent.cloud.auth import (
+    AuthCredentials,
+    AuthManager,
+    AuthMode,
 )
 from traigent.cloud.client import (
     CloudRemoteExecutionUnavailableError,
@@ -31,6 +30,7 @@ from traigent.cloud.models import (
     SessionCreationRequest,
     TrialResultSubmission,
 )
+from traigent.utils.wire_text import WIRE_ERROR_CODES
 
 # SDK #2033: opt into the connected/backend code paths (see pyproject markers).
 pytestmark = pytest.mark.backend_online
