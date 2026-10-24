@@ -2621,8 +2621,9 @@ class OptimizedFunction[**P, R]:
                     configuration_space=configuration_space,
                     algorithm_kwargs=algorithm_kwargs,
                     execution_budget=budget,
-                    resume_from=resume_from,
-                    allow_unverified_resume=allow_unverified_resume,
+                    resume_source=self._load_resume_source_for_local_run(
+                        resume_from, algorithm, allow_unverified_resume
+                    ),
                     call_dataset=per_call_dataset,
                 )
                 # Inside the run scope: a cost objective that measured no
@@ -4329,8 +4330,7 @@ Remediation:
         configuration_space: dict[str, Any] | None,
         algorithm_kwargs: dict[str, Any],
         execution_budget: ExecutionBudget | None = None,
-        resume_from: OptimizationResult | str | os.PathLike[str] | None = None,
-        allow_unverified_resume: bool = False,
+        resume_source: OptimizationResult | None = None,
         call_dataset: Dataset | None = None,
     ) -> OptimizationResult:
         """Execute optimization assuming objective schema is already resolved.
@@ -4338,9 +4338,6 @@ Remediation:
         This method orchestrates the optimization process by delegating to
         specialized helper methods for each phase of execution.
         """
-        resume_source = self._load_resume_source_for_local_run(
-            resume_from, algorithm, allow_unverified_resume
-        )
         hybrid_auto_discovery_enabled = self._allows_empty_configuration_space()
         effective_privacy_enabled = bool(getattr(self, "privacy_enabled", False))
         hybrid_discovery_state: dict[str, Any] | None = None
