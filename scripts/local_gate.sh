@@ -118,7 +118,11 @@ freshness_preflight() {
       read -r ahead behind <<< "$counts"
       echo "  • $ref@$sha (HEAD ahead $ahead / behind $behind)"
       if [[ "$behind" =~ ^[0-9]+$ && "$behind" -gt 0 ]]; then
-        if [[ "$strict" == "1" ]] || { [[ "$ref" == "origin/main" ]] && [[ "$MAIN_BOUND" == "1" ]]; }; then
+        if [[ "$BRANCH" =~ ^hotfix/ && "$ref" == "origin/develop" && "${LOCAL_GATE_STRICT_FRESHNESS:-0}" != "1" ]]; then
+          # A hotfix is cut from main, so it is always behind develop; the
+          # develop check cannot apply. Still required: not behind origin/main.
+          echo "    ℹ️  HEAD is behind $ref; expected for a hotfix cut from main (not enforced; origin/main freshness still is)"
+        elif [[ "$strict" == "1" ]] || { [[ "$ref" == "origin/main" ]] && [[ "$MAIN_BOUND" == "1" ]]; }; then
           echo "    ❌ HEAD is behind $ref; refresh/rebase before a main-bound gate"
           rc=1
         else

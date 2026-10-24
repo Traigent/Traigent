@@ -7,7 +7,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 LOCAL_GATE = REPO_ROOT / "scripts" / "local_gate.sh"
 
@@ -257,3 +256,72 @@ def test_local_gate_fails_closed_without_a_readable_pin(tmp_path: Path) -> None:
     result = _run_schema_gate(repo, schema)
     assert result.returncode != 0
     assert "cannot read the TraigentSchema pin" in result.stdout + result.stderr
+
+
+def _advance_remote(repo: Path, remote_branch: str) -> None:
+    """Move refs/remotes/origin/<branch> one commit ahead of HEAD."""
+    tree = subprocess.run(
+        ["git", "rev-parse", "HEAD^{tree}"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    new = subprocess.run(
+        ["git", "commit-tree", tree, "-p", head, "-m", f"advance {remote_branch}"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    _run_git(repo, "update-ref", f"refs/remotes/origin/{remote_branch}", new)
+
+
+def _gate_on_branch(
+    tmp_path: Path, branch: str, advanced: str
+) -> subprocess.CompletedProcess[str]:
+    repo, fake_bin = _make_gate_repo(tmp_path)
+    _run_git(repo, "checkout", "-q", "-b", branch)
+    _advance_remote(repo, advanced)
+    return _run_gate(repo, fake_bin, tmp_path / "pytest.log", collection_rc=0)
+
+
+def test_local_gate_hotfix_behind_develop_but_containing_main_passes(
+    tmp_path: Path,
+) -> None:
+    result = _gate_on_branch(tmp_path, "hotfix/x", advanced="develop")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "expected for a hotfix cut from main" in result.stdout
+    assert "❌ HEAD is behind" not in result.stdout
+
+
+def test_local_gate_hotfix_behind_main_fails(tmp_path: Path) -> None:
+    result = _gate_on_branch(tmp_path, "hotfix/x", advanced="main")
+
+    assert result.returncode == 1
+    assert "HEAD is behind origin/main" in result.stdout
+
+
+def test_local_gate_release_behind_develop_still_fails(tmp_path: Path) -> None:
+    result = _gate_on_branch(tmp_path, "release/x", advanced="develop")
+
+    assert result.returncode == 1
+    assert "❌ HEAD is behind origin/develop" in result.stdout
+
+
+def test_local_gate_hotfix_strict_freshness_still_fails_behind_develop(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("LOCAL_GATE_STRICT_FRESHNESS", "1")
+    result = _gate_on_branch(tmp_path, "hotfix/x", advanced="develop")
+
+    assert result.returncode == 1
+    assert "❌ HEAD is behind origin/develop" in result.stdout
