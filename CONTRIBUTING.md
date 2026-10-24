@@ -21,7 +21,11 @@ Additional contributor reference material lives in
 
 Please search existing issues first to avoid duplicates.
 
-## Development setup
+## Getting started
+
+To start contributing, set up a local development environment.
+
+### Development setup
 
 Requirements: Python 3.12 or newer.
 
@@ -37,19 +41,26 @@ If you use `uv`, run `uv sync --all-extras --no-extra deepeval --dev`. The
 `deepeval` extra is opt-in only; installing it alongside `--all-extras` breaks
 test collection (see the Development section of the [README](README.md)).
 
-## Running tests and checks
+## Testing and checks
 
 ```bash
 make test-unit          # unit tests (parallel)
 make test               # full test suite (parallel)
 make lint               # ruff, mypy, bandit
-make format             # black and isort
+make format             # ruff format and isort
 make format-ruff        # ruff format and autofix (matches the CI preflight check)
 make local-gate         # run the local pre-push checks before pushing
 ```
 
 Run the tests related to your change as you work. Continuous integration runs
 the broader suite on every pull request.
+
+## Code style
+
+Python code is formatted and linted with the tools behind `make format`,
+`make format-ruff` and `make lint` (ruff format, isort, ruff, mypy and bandit). Run
+them before pushing; the local gate and continuous integration check the same
+rules, and configuration lives in `pyproject.toml`.
 
 ## Contribution flow
 

@@ -69,6 +69,15 @@ MAIN_BOUND=0
 [[ "$BRANCH" =~ ^(release|hotfix)/ ]] && MAIN_BOUND=1
 [[ "${LOCAL_GATE_SONAR:-0}" == "1" ]] && MAIN_BOUND=1
 
+# Git exports GIT_DIR, GIT_INDEX_FILE, GIT_WORK_TREE and friends into hooks. Any
+# test that builds a temp repo would then act on THIS repo ("remote origin already
+# exists"). Run pytest with git's own list of repository-local variables cleared.
+GIT_ENV_CLEAR=(env)
+while IFS= read -r _gitvar; do
+  [[ -n "$_gitvar" ]] && GIT_ENV_CLEAR+=(-u "$_gitvar")
+done < <(git rev-parse --local-env-vars 2>/dev/null)
+unset _gitvar
+
 # Resolve a ruff entrypoint: the repo venv's first (it carries the pinned
 # version; the pre-push hook does not activate the venv), else PATH ruff, else
 # `python -m ruff`.
@@ -256,7 +265,7 @@ if ! skip pytest; then
     echo "  • ${#CODE_CHANGED[@]} code/test/gate file(s) changed; first verifying whole-suite collection"
     echo "  • TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true PYTHONPATH=. ${PYTEST[*]} ${collection_args[*]}"
     if TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true PYTHONPATH=. \
-      "${PYTEST[@]}" "${collection_args[@]}"; then
+      "${GIT_ENV_CLEAR[@]}" "${PYTEST[@]}" "${collection_args[@]}"; then
       echo "  ✅ whole test suite collects"
       pytest_args=(-p no:asyncio-cooperative -q --tb=short)
       if [[ "${LOCAL_GATE_FULL_UNIT:-0}" == "1" ]]; then
@@ -271,7 +280,7 @@ if ! skip pytest; then
         echo "  • bounded smoke tier selected; set LOCAL_GATE_FULL_UNIT=1 for full tests/unit"
       fi
       echo "  • running ${PYTEST[*]} ${pytest_args[*]}"
-      if PYTHONPATH=. "${PYTEST[@]}" "${pytest_args[@]}"; then echo "  ✅ pytest tier clean"
+      if PYTHONPATH=. "${GIT_ENV_CLEAR[@]}" "${PYTEST[@]}" "${pytest_args[@]}"; then echo "  ✅ pytest tier clean"
       else echo "  ❌ pytest tier failed"; FAIL=1; fi
     else
       echo "  ❌ whole-suite collection failed; smoke/full-unit tier not run"
@@ -336,7 +345,7 @@ sonar_prepare_coverage() {
   echo "  • coverage for ${#tests[@]} test file(s) tied to the diff (not the full suite)"
   rc=0
   TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true PYTHONPATH=. \
-    "${PYTEST[@]}" -p no:asyncio-cooperative -q --tb=short -n 0 \
+    "${GIT_ENV_CLEAR[@]}" "${PYTEST[@]}" -p no:asyncio-cooperative -q --tb=short -n 0 \
     --cov=traigent --cov-config="$rcfile" --cov-report=xml:coverage.xml "${tests[@]}" || rc=$?
   rm -f "$rcfile"
   if [[ ! -s coverage.xml ]]; then
@@ -382,8 +391,18 @@ if [[ "$MAIN_BOUND" == "1" ]] && ! skip sonar; then
       # Mount the repo at the SAME absolute path inside the container so the
       # host paths recorded in coverage.xml resolve (otherwise Sonar logs
       # "Cannot resolve N file paths" and new coverage reads 0.0).
+      #
+      # In a linked worktree `.git` is a file pointing at <common-dir>/worktrees/<n>,
+      # outside the mount, so JGit fails with "Unable to open Git repository" and
+      # SCM blame (new-code detection) is lost. Mount the git common dir at the
+      # same absolute path (read-only) so the pointer resolves.
+      git_mount=()
+      common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+      if [[ -n "$common_dir" && -d "$common_dir" && "$common_dir" != "$PWD/.git" ]]; then
+        git_mount=(-v "$common_dir":"$common_dir":ro)
+      fi
       docker run --rm $net -e SONAR_HOST_URL="$host" -e SONAR_TOKEN \
-        -v "$PWD":"$PWD" -w "$PWD" sonarsource/sonar-scanner-cli:latest \
+        -v "$PWD":"$PWD" ${git_mount[@]+"${git_mount[@]}"} -w "$PWD" sonarsource/sonar-scanner-cli:latest \
         -Dsonar.projectBaseDir="$PWD" \
         -Dsonar.projectKey=Traigent_Traigent \
         -Dsonar.projectVersion="$sonar_version" \

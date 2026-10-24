@@ -328,9 +328,18 @@ def test_local_gate_hotfix_strict_freshness_still_fails_behind_develop(
 
 
 def _run_sonar_gate(
-    tmp_path: Path, *, with_docker: bool, version_line: str = 'version = "9.8.7"'
+    tmp_path: Path,
+    *,
+    with_docker: bool,
+    version_line: str = 'version = "9.8.7"',
+    extra_env: dict[str, str] | None = None,
+    as_worktree: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], list[str], Path]:
     repo, fake_bin = _make_gate_repo(tmp_path)
+    if as_worktree:
+        wt = tmp_path / "linked-worktree"
+        _run_git(repo, "worktree", "add", "-q", "--detach", str(wt))
+        repo = wt
     (repo / "pyproject.toml").write_text(
         f'[build-system]\nrequires = []\n\n[project]\nname = "x"\n{version_line}\n'
         '\n[tool.other]\nversion = "0.0.1"\n',
@@ -355,6 +364,7 @@ def _run_sonar_gate(
             "FAKE_SCANNER_LOG": str(scanner_log),
         }
     )
+    env.update(extra_env or {})
     if not with_docker:
         # Shadow the system tools without docker so the gate falls back to
         # the stubbed sonar-scanner even on machines that have docker.
@@ -404,6 +414,29 @@ def test_local_gate_sonar_docker_passes_version_and_same_path_mount(
     assert "-Dsonar.qualitygate.wait=true" in args
 
 
+def test_local_gate_sonar_docker_mounts_git_common_dir_in_a_worktree(
+    tmp_path: Path,
+) -> None:
+    """A linked worktree's .git file points outside the project mount."""
+    result, calls, repo = _run_sonar_gate(tmp_path, with_docker=True, as_worktree=True)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert len(calls) == 1
+    args = calls[0].split()
+    mounts = [args[i + 1] for i, a in enumerate(args) if a == "-v"]
+    common = str((tmp_path / "repo" / ".git").resolve())
+    assert f"{common}:{common}:ro" in mounts
+    assert (repo / ".git").is_file()
+
+
+def test_local_gate_sonar_docker_adds_no_git_mount_in_a_plain_checkout(
+    tmp_path: Path,
+) -> None:
+    result, calls, _ = _run_sonar_gate(tmp_path, with_docker=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls[0].split().count("-v") == 1
+
+
 def test_local_gate_sonar_local_scanner_passes_version(tmp_path: Path) -> None:
     result, calls, _ = _run_sonar_gate(tmp_path, with_docker=False)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -421,3 +454,70 @@ def test_local_gate_sonar_fails_without_a_readable_project_version(
     assert result.returncode == 1
     assert calls == []
     assert "could not read [project].version" in result.stdout
+
+
+def test_local_gate_pytest_steps_clear_git_hook_environment(tmp_path: Path) -> None:
+    """Git exports GIT_DIR & co. into hooks; pytest must not inherit them.
+
+    Otherwise tests that build temp repos act on the real repository. Both the
+    smoke tier and the sonar coverage step run pytest, so both are checked.
+    """
+    env_log = tmp_path / "git-env.log"
+    hook_env = {"GIT_PREFIX": "", "FAKE_GIT_ENV_LOG": str(env_log)}
+    # Replace the stub pytest with one that records any git-local variable left
+    # in its environment (collect-only still succeeds).
+    probe = (
+        "#!/usr/bin/env bash\n"
+        'echo "run:$*" >> "$FAKE_GIT_ENV_LOG"\n'
+        "for v in $(git rev-parse --local-env-vars); do\n"
+        '  if [[ -n "${!v+x}" ]]; then echo "LEAK:$v" >> "$FAKE_GIT_ENV_LOG"; fi\n'
+        "done\n"
+        "exit 0\n"
+    )
+    repo, fake_bin = _make_gate_repo(tmp_path)
+    (fake_bin / "pytest").write_text(probe, encoding="utf-8")
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "x"\nversion = "1.0.0"\n', encoding="utf-8"
+    )
+    stub = "#!/usr/bin/env bash\nexit 0\n"
+    (fake_bin / "sonar-scanner").write_text(stub, encoding="utf-8")
+    (fake_bin / "sonar-scanner").chmod(0o755)
+    env = os.environ.copy()
+    env.update(hook_env)
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "LOCAL_GATE_SKIP": "schema-types",
+            "LOCAL_GATE_SONAR": "1",
+            "SONAR_TOKEN": "dummy",
+            "SONAR_HOST_URL": "https://sonar.example.invalid",
+            "GIT_DIR": str(repo / ".git"),
+            "GIT_INDEX_FILE": str(repo / ".git" / "index"),
+            "GIT_WORK_TREE": str(repo),
+            "GIT_OBJECT_DIRECTORY": str(repo / ".git" / "objects"),
+        }
+    )
+    # No docker on PATH: shadow system tools so the stub sonar-scanner is used.
+    nodocker = tmp_path / "nodocker-bin"
+    nodocker.mkdir()
+    for sysdir in ("/usr/bin", "/bin"):
+        for tool in Path(sysdir).iterdir():
+            link = nodocker / tool.name
+            if tool.name.startswith("docker") or link.exists():
+                continue
+            link.symlink_to(tool)
+    env["PATH"] = f"{fake_bin}:{nodocker}"
+    result = subprocess.run(
+        ["bash", "scripts/local_gate.sh"],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    log = env_log.read_text(encoding="utf-8").splitlines()
+    assert any("--cov=traigent" in line for line in log), log
+    assert any(line.startswith("run:") and "--cov" not in line for line in log), log
+    assert [line for line in log if line.startswith("LEAK:")] == []
