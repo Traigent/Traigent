@@ -5113,6 +5113,25 @@ Remediation:
         self._validate_dataset_spec(source)
         return self._dataset_from_source(source)
 
+    @staticmethod
+    def _combine_dataset_paths(paths: list[str]) -> Dataset:
+        """Load every JSONL path and combine the examples into one dataset."""
+        all_examples = []
+        for path in paths:
+            try:
+                dataset = Dataset.from_jsonl(path)
+                all_examples.extend(dataset.examples)
+            except Exception as e:
+                raise ConfigurationError(
+                    f"Failed to load dataset from {path}: {e}"
+                ) from e
+
+        return Dataset(
+            examples=all_examples,
+            name="combined_dataset",
+            description=f"Combined dataset from {len(paths)} files",
+        )
+
     def _dataset_from_source(self, source: Any) -> Dataset:
         """Resolve a dataset spec (Dataset, path, paths, inline examples)."""
         if isinstance(source, Dataset):
@@ -5129,21 +5148,7 @@ Remediation:
         elif isinstance(source, list):
             if all(isinstance(item, str) for item in source):
                 # Multiple datasets - combine them
-                all_examples = []
-                for path in source:
-                    try:
-                        dataset = Dataset.from_jsonl(path)
-                        all_examples.extend(dataset.examples)
-                    except Exception as e:
-                        raise ConfigurationError(
-                            f"Failed to load dataset from {path}: {e}"
-                        ) from e
-
-                return Dataset(
-                    examples=all_examples,
-                    name="combined_dataset",
-                    description=f"Combined dataset from {len(source)} files",
-                )
+                return self._combine_dataset_paths(source)
 
             if all(isinstance(item, (dict, EvaluationExample)) for item in source):
                 try:
