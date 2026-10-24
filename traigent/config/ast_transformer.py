@@ -480,10 +480,10 @@ class SafeASTCompiler:
             return compile(tree, filename, "exec")
 
         except SyntaxError as e:
-            logger.exception(f"Syntax error in source: {e}")
+            logger.error(f"Syntax error in source: {e}")
             return None
         except Exception as e:
-            logger.exception(f"Error compiling source: {e}")
+            logger.error(f"Error compiling source: {e}")
             return None
 
     @classmethod

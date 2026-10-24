@@ -753,7 +753,7 @@ class PluginRegistry:
             self.register_plugin(plugin)
 
         except Exception as e:
-            logger.exception(
+            logger.error(
                 f"Failed to load plugin from {module_path}.{plugin_class_name}: {e}"
             )
             raise

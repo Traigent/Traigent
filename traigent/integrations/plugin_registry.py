@@ -136,7 +136,7 @@ class PluginRegistry:
             except ImportError as e:
                 logger.debug(f"Plugin {class_name} not available: {e}")
             except Exception as e:
-                logger.exception(f"Failed to load plugin {class_name}: {e}")
+                logger.error(f"Failed to load plugin {class_name}: {e}")
 
     def register(self, plugin: "IntegrationPlugin") -> None:
         """Register a plugin with the registry.
@@ -483,7 +483,7 @@ class PluginRegistry:
                             logger.info(f"Discovered plugin: {plugin.metadata.name}")
 
                 except Exception as e:
-                    logger.exception(f"Failed to load plugin from {py_file}: {e}")
+                    logger.error(f"Failed to load plugin from {py_file}: {e}")
 
         return loaded
 

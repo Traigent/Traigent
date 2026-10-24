@@ -250,7 +250,7 @@ class OptimizationHistory:
         except FileNotFoundError:
             logger.info("No existing optimization history found")
         except Exception as e:
-            logger.exception(f"Error loading optimization history: {e}")
+            logger.error(f"Error loading optimization history: {e}")
 
     def _save_record(self, record: OptimizationRecord) -> None:
         """Save single record to storage."""
