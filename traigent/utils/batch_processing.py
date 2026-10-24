@@ -397,10 +397,10 @@ class BatchCheckpointer:
             yield checkpoint_data
         finally:
             # Final checkpoint
-            await self._save_checkpoint(job_id, checkpoint_data)
+            self._save_checkpoint(job_id, checkpoint_data)
             self.cleanup()
 
-    async def _save_checkpoint(self, job_id: str, data: dict[str, Any]) -> None:
+    def _save_checkpoint(self, job_id: str, data: dict[str, Any]) -> None:
         """Save checkpoint data."""
         # In a real implementation, this would save to persistent storage
         logger.debug(

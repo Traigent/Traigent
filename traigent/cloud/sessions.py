@@ -695,12 +695,10 @@ class SessionManager:
         history = self._trial_history.get(session_id, [])
 
         # Generate configuration based on history
-        config = await self._suggest_configuration(session, history)
+        config = self._suggest_configuration(session, history)
 
         # Generate dataset subset indices
-        subset_indices = await self._suggest_subset_indices(
-            session, history, dataset_size
-        )
+        subset_indices = self._suggest_subset_indices(session, history, dataset_size)
 
         # Create trial suggestion
         trial_number = session.completed_trials + 1
@@ -842,7 +840,7 @@ class SessionManager:
             "early_stopping": True,
         }
 
-    async def _suggest_configuration(
+    def _suggest_configuration(
         self, session: OptimizationSession, history: list[TrialResultSubmission]
     ) -> dict[str, Any]:
         """Suggest next configuration based on history.
@@ -868,7 +866,7 @@ class SessionManager:
 
         return config
 
-    async def _suggest_subset_indices(
+    def _suggest_subset_indices(
         self,
         session: OptimizationSession,
         history: list[TrialResultSubmission],

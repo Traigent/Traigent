@@ -8,7 +8,7 @@ SonarQube S7497 requires CancelledError to always propagate.
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -74,7 +74,7 @@ async def test_start_optimization_integration_propagates_cancelled_error():
     with patch.object(
         mgr,
         "_start_local_integration",
-        new_callable=AsyncMock,
+        new_callable=Mock,
         side_effect=asyncio.CancelledError,
     ):
         with pytest.raises(asyncio.CancelledError):
