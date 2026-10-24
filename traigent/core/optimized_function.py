@@ -123,7 +123,10 @@ from traigent.integrations.framework_override import override_context
 from traigent.optimizers import get_optimizer
 from traigent.tvl.options import TVLOptions
 from traigent.tvl.spec_loader import load_tvl_spec
-from traigent.utils.artifact_fingerprints import build_artifact_fingerprints
+from traigent.utils.artifact_fingerprints import (
+    build_artifact_fingerprints,
+    effective_evaluator_code_identity,
+)
 from traigent.utils.cost_calculator import (
     UnknownModelError,
     find_models_missing_price_coverage,
@@ -2913,7 +2916,7 @@ class OptimizedFunction[**P, R]:
                 algorithm_kwargs = self._prepare_algorithm_kwargs({})
                 evaluator = self._create_effective_evaluator(
                     timeout=None,
-                    custom_evaluator=None,
+                    custom_evaluator=self._resolve_effective_custom_evaluator(None),
                     effective_batch_size=None,
                     effective_thread_workers=None,
                     effective_privacy_enabled=bool(
@@ -3472,6 +3475,34 @@ class OptimizedFunction[**P, R]:
             ),
         }
 
+    def _resolve_effective_custom_evaluator(
+        self, runtime_custom_evaluator: Callable[..., Any] | None
+    ) -> Callable[..., Any] | None:
+        """The ONE custom evaluator this run uses: runtime override over decorator.
+
+        Called once per optimize() entry; the result feeds both the evaluator
+        that executes (``_create_effective_evaluator``) and the code identity
+        sent to the backend, so identity can never name code that does not run.
+        """
+        return runtime_custom_evaluator or self.custom_evaluator
+
+    def _evaluator_code_digest_for_wire(
+        self, artifact_fingerprint_payload: Mapping[str, Any]
+    ) -> str | None:
+        """The ``evaluator_code_digest`` to send, or None.
+
+        Sent only for origin ``code`` and never next to a declared evaluator id
+        (the schema makes the two mutually exclusive: an id could carry a
+        customer label beside a code identity).
+        """
+        if self.evaluator_definition_id:
+            return None
+        identity = artifact_fingerprint_payload.get("evaluator_code_identity")
+        if not isinstance(identity, Mapping) or identity.get("origin") != "code":
+            return None
+        digest = identity.get("digest")
+        return digest if isinstance(digest, str) else None
+
     def _create_effective_evaluator(
         self,
         timeout: float | None,
@@ -3527,7 +3558,7 @@ class OptimizedFunction[**P, R]:
         elif getattr(self, "external_service_evaluator", None) is not None:
             external = getattr(self, "external_service_evaluator", None)
 
-        return cast(
+        payload = cast(
             dict[str, dict[str, Any]],
             build_artifact_fingerprints(
                 dataset=dataset,
@@ -3539,6 +3570,17 @@ class OptimizedFunction[**P, R]:
                 configuration_space=configuration_space,
             ),
         )
+        # Separate from fp1 (which stays byte-identical): identity of the
+        # scorer that actually runs. ``custom_evaluator`` is the already
+        # resolved single value; nothing here re-reads decorator state.
+        payload["evaluator_code_identity"] = effective_evaluator_code_identity(
+            custom_evaluator=custom_evaluator,
+            scoring_function=self.scoring_function,
+            metric_functions=self.metric_functions,
+            objectives=self.objectives,
+            external=external,
+        )
+        return payload
 
     def _build_optimization_orchestrator(
         self,
@@ -3623,6 +3665,9 @@ class OptimizedFunction[**P, R]:
             "fingerprint_meta"
         )
         orchestrator.evaluator_definition_id = self.evaluator_definition_id
+        orchestrator.evaluator_code_digest = self._evaluator_code_digest_for_wire(
+            artifact_fingerprint_payload
+        )
         orchestrator.task_type = self.task_type
         orchestrator.dataset_id = self.dataset_id
         orchestrator.head_environment = self._csm.best_config_environment
@@ -3998,6 +4043,7 @@ class OptimizedFunction[**P, R]:
         save_to: str | None,
         requested_algorithm: str | None = None,
         execution_budget: ExecutionBudget | None = None,
+        custom_evaluator: Callable[..., Any] | None = None,
     ) -> OptimizationResult | None:
         """Try cloud-brain execution, returning None for allowed local fallback."""
 
@@ -4081,6 +4127,14 @@ class OptimizedFunction[**P, R]:
                 ),
                 fingerprint_meta=artifact_fingerprint_payload.get("fingerprint_meta"),
                 evaluator_definition_id=self.evaluator_definition_id,
+                # Withheld in privacy mode, like content identity.
+                evaluator_code_digest=(
+                    None
+                    if effective_privacy_enabled
+                    else self._evaluator_code_digest_for_wire(
+                        artifact_fingerprint_payload
+                    )
+                ),
                 task_type=self.task_type,
                 dataset_id=self.dataset_id,
                 context=traigent_config,
@@ -4088,7 +4142,7 @@ class OptimizedFunction[**P, R]:
             )
             evaluator = self._create_effective_evaluator(
                 timeout=timeout,
-                custom_evaluator=None,
+                custom_evaluator=custom_evaluator,
                 effective_batch_size=None,
                 effective_thread_workers=None,
                 effective_privacy_enabled=effective_privacy_enabled,
@@ -4430,6 +4484,9 @@ Remediation:
         This method orchestrates the optimization process by delegating to
         specialized helper methods for each phase of execution.
         """
+        # Single resolution point (runtime override over decorator), shared by
+        # execution and code identity on every path below.
+        custom_evaluator = self._resolve_effective_custom_evaluator(custom_evaluator)
         hybrid_auto_discovery_enabled = self._allows_empty_configuration_space()
         effective_privacy_enabled = bool(getattr(self, "privacy_enabled", False))
         hybrid_discovery_state: dict[str, Any] | None = None
@@ -4627,6 +4684,7 @@ Remediation:
             save_to,
             requested_algorithm=algorithm,
             execution_budget=execution_budget,
+            custom_evaluator=custom_evaluator,
         )
         if cloud_result is not None:
             return cloud_result

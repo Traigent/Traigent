@@ -586,6 +586,9 @@ class OptimizationOrchestrator:
         self.artifact_fingerprints: dict[str, str | None] | None = None
         self.fingerprint_meta: dict[str, Any] | None = None
         self.evaluator_definition_id: str | None = None
+        # ecd1 digest of the scorer that actually runs; set by OptimizedFunction
+        # only for origin ``code`` (see traigent.utils.artifact_fingerprints).
+        self.evaluator_code_digest: str | None = None
         # Explicit stable dataset identity (EvaluationOptions.dataset_id), set by
         # OptimizedFunction after construction like evaluator_definition_id.
         self.dataset_id: str | None = None
@@ -3447,6 +3450,7 @@ class OptimizationOrchestrator:
             objectives=objectives_payload,
             default_config=default_config_payload,
             **self._session_content_identity_kwargs(default_config_payload),
+            **self._session_code_digest_kwargs(),
             promotion_policy=wire_policy,
             tvl_governance=wire_governance,
             experiment_display_name=experiment_display_name,
@@ -3650,6 +3654,7 @@ class OptimizationOrchestrator:
                 task_type=getattr(self, "task_type", None),
                 dataset_id=getattr(self, "dataset_id", None),
                 **self._session_content_identity_kwargs(None, privacy_filter=True),
+                **self._session_code_digest_kwargs(privacy_filter=True),
             )
             session_id = self.backend_session_manager.handle_session_creation_result(
                 self.backend_session_manager.normalize_session_creation_result(
@@ -3720,6 +3725,31 @@ class OptimizationOrchestrator:
                 type(exc).__name__,
             )
             return None
+
+    def _session_code_digest_kwargs(
+        self, *, privacy_filter: bool = False
+    ) -> dict[str, Any]:
+        """``{"evaluator_code_digest": ...}`` for session create, or ``{}``.
+
+        Empty unless the effective scorer is user code, in privacy mode and in
+        content-less mode, so the call keeps its exact shape for every other run.
+        """
+        digest = getattr(self, "evaluator_code_digest", None)
+        if not digest:
+            return {}
+        from traigent.cloud import content_less as _content_less
+
+        options = getattr(self, "_content_less", None)
+        # Gate on the RESOLVED mode (explicit flag, else env), never on the mere
+        # presence of an options object: content_less=False or an
+        # environment-only object still means a standard run.
+        if _content_less.is_enabled(
+            options if isinstance(options, _content_less.ContentLessOptions) else None
+        ):
+            return {}
+        if privacy_filter and getattr(self.traigent_config, "privacy_enabled", False):
+            return {}
+        return {"evaluator_code_digest": digest}
 
     def _session_content_identity_kwargs(
         self, default_config: dict[str, Any] | None, *, privacy_filter: bool = False
