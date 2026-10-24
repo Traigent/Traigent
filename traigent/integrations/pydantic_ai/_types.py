@@ -106,8 +106,10 @@ class PydanticAIHandlerMetrics:
             f"{prefix}run_count": self.run_count,
         }
         if self.cost_unmeasured:
-            # Some run's spend is unknown: no total is claimed (#2517).
+            # Some run's spend is unknown: no total is claimed (#2517). The
+            # priced part is sent as an explicit floor (SDK-40), never $0.
             measures[f"{prefix}cost_unmeasured"] = 1.0
+            measures[f"{prefix}cost_lower_bound"] = self.total_cost
         else:
             measures[f"{prefix}total_cost"] = self.total_cost
         return measures
