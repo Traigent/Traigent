@@ -721,19 +721,20 @@ class TrialLifecycle:
                 prune_error,
                 is_pruned=True,
             )
-            self._mark_backend_trial_id_acquired(result, backend_trial_id)
-            self._apply_effectuation_metadata(result, func)
-            self._apply_vendor_attempts(result, capture_bucket)
-            self._apply_content_identity(
+            self._finalize_error_trial(
                 result,
-                evaluation_config,
-                identity_run,
-                prune_error.example_results,
-                capture_bucket,
+                func=func,
+                trial_id=trial_id,
+                backend_trial_id=backend_trial_id,
+                evaluation_config=evaluation_config,
+                identity_run=identity_run,
+                example_results=prune_error.example_results,
+                capture_bucket=capture_bucket,
+                span=span,
+                start_time=start_time,
+                status="pruned",
+                error=prune_error,
             )
-            record_trial_result(span, status="pruned", error=str(prune_error))
-            end_time = time.time()
-            self._collect_workflow_span(trial_id, result, start_time, end_time)
             return result
 
         except TVLConstraintError as constraint_error:
@@ -746,15 +747,20 @@ class TrialLifecycle:
                 optuna_trial_id,
                 constraint_error,
             )
-            self._mark_backend_trial_id_acquired(result, backend_trial_id)
-            self._apply_effectuation_metadata(result, func)
-            self._apply_vendor_attempts(result, capture_bucket)
-            self._apply_content_identity(
-                result, evaluation_config, identity_run, None, capture_bucket
+            self._finalize_error_trial(
+                result,
+                func=func,
+                trial_id=trial_id,
+                backend_trial_id=backend_trial_id,
+                evaluation_config=evaluation_config,
+                identity_run=identity_run,
+                example_results=None,
+                capture_bucket=capture_bucket,
+                span=span,
+                start_time=start_time,
+                status="failed",
+                error=constraint_error,
             )
-            record_trial_result(span, status="failed", error=str(constraint_error))
-            end_time = time.time()
-            self._collect_workflow_span(trial_id, result, start_time, end_time)
             return result
 
         except APIKeyError:
@@ -775,20 +781,9 @@ class TrialLifecycle:
             # Re-raise as VendorPauseError so the orchestrator can prompt
             # the user to resume or stop, instead of silently failing.
             # classify_vendor_error is guaranteed to match for these types.
-            from traigent.core.exception_handler import classify_vendor_error
-
-            category = classify_vendor_error(vendor_exc)
-            unmeasured = self._note_abandoned_vendor_attempts(trial_id, capture_bucket)
-            pause = VendorPauseError(
-                str(vendor_exc),
-                original_error=vendor_exc,
-                category=category,
-            )
-            if unmeasured:
-                # No TrialResult will exist: the sequential caller accounts the
-                # abandoned attempt as unknown spend (fail closed when strict).
-                pause.unmeasured_trial_id = trial_id
-            raise pause from vendor_exc
+            raise self._build_vendor_pause(
+                vendor_exc, trial_id, capture_bucket
+            ) from vendor_exc
 
         except Exception as exc:
             logger.exception("Trial %s execution failed unexpectedly", trial_id)
@@ -801,20 +796,71 @@ class TrialLifecycle:
                 optuna_trial_id,
                 exc,
             )
-            self._mark_backend_trial_id_acquired(result, backend_trial_id)
-            self._apply_effectuation_metadata(result, func)
-            self._apply_vendor_attempts(result, capture_bucket)
-            self._apply_content_identity(
-                result, evaluation_config, identity_run, None, capture_bucket
+            self._finalize_error_trial(
+                result,
+                func=func,
+                trial_id=trial_id,
+                backend_trial_id=backend_trial_id,
+                evaluation_config=evaluation_config,
+                identity_run=identity_run,
+                example_results=None,
+                capture_bucket=capture_bucket,
+                span=span,
+                start_time=start_time,
+                status="failed",
+                error=exc,
             )
-            record_trial_result(span, status="failed", error=str(exc))
-            end_time = time.time()
-            self._collect_workflow_span(trial_id, result, start_time, end_time)
             return result
 
         finally:
             if lease is not None and closure is None:
                 closure = self._finalize_budget_lease(lease)
+
+    def _build_vendor_pause(
+        self, vendor_exc: Exception, trial_id: str, capture_bucket: Any
+    ) -> VendorPauseError:
+        """Wrap a vendor failure so the orchestrator can prompt resume or stop."""
+        from traigent.core.exception_handler import classify_vendor_error
+
+        category = classify_vendor_error(vendor_exc)
+        unmeasured = self._note_abandoned_vendor_attempts(trial_id, capture_bucket)
+        pause = VendorPauseError(
+            str(vendor_exc),
+            original_error=vendor_exc,
+            category=category,
+        )
+        if unmeasured:
+            # No TrialResult will exist: the sequential caller accounts the
+            # abandoned attempt as unknown spend (fail closed when strict).
+            pause.unmeasured_trial_id = trial_id
+        return pause
+
+    def _finalize_error_trial(
+        self,
+        result: TrialResult,
+        *,
+        func: Callable[..., Any],
+        trial_id: str,
+        backend_trial_id: str | None,
+        evaluation_config: dict[str, Any],
+        identity_run: Any,
+        example_results: Any,
+        capture_bucket: Any,
+        span: Any,
+        start_time: float,
+        status: str,
+        error: BaseException,
+    ) -> None:
+        """Annotate a pruned/failed trial result and close its tracing records."""
+        self._mark_backend_trial_id_acquired(result, backend_trial_id)
+        self._apply_effectuation_metadata(result, func)
+        self._apply_vendor_attempts(result, capture_bucket)
+        self._apply_content_identity(
+            result, evaluation_config, identity_run, example_results, capture_bucket
+        )
+        record_trial_result(span, status=status, error=str(error))
+        end_time = time.time()
+        self._collect_workflow_span(trial_id, result, start_time, end_time)
 
     @staticmethod
     def _mark_backend_trial_id_acquired(
