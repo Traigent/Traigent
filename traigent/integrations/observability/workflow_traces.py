@@ -923,7 +923,7 @@ class WorkflowTracesClient:
             response.raise_for_status()
             return TraceIngestionResponse.from_dict(response.json())
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to ingest traces: {e}")
+            logger.exception(f"Failed to ingest traces: {e}")
             return TraceIngestionResponse(success=False, error=str(e))
 
     async def ingest_traces_async(
@@ -999,7 +999,7 @@ class WorkflowTracesClient:
                     data = await response.json()
                     return TraceIngestionResponse.from_dict(data)
         except aiohttp.ClientError as e:
-            logger.error(f"Failed to ingest traces: {e}")
+            logger.exception(f"Failed to ingest traces: {e}")
             return TraceIngestionResponse(success=False, error=str(e))
 
 
@@ -1145,7 +1145,7 @@ if OTEL_AVAILABLE:
                         logger.warning(f"Failed to export spans: {response.error}")
                         all_success = False
                 except Exception as e:
-                    logger.error(f"Error exporting spans: {e}")
+                    logger.exception(f"Error exporting spans: {e}")
                     all_success = False
 
             return SpanExportResult.SUCCESS if all_success else SpanExportResult.FAILURE

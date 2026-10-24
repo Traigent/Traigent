@@ -233,7 +233,7 @@ class LocalInvoker(BaseInvoker):
                     logger.warning(f"Batch item {i} failed: {result.error}")
 
             except Exception as e:
-                logger.error(f"Batch item {i} raised exception: {e}")
+                logger.exception(f"Batch item {i} raised exception: {e}")
                 results.append(
                     InvocationResult(
                         error=str(e),

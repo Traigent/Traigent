@@ -488,7 +488,7 @@ class OpenAIAgentExecutor(AgentExecutor):
             return None
 
         except Exception as e:
-            logger.error(f"Failed to get platform API key: {e}")
+            logger.exception(f"Failed to get platform API key: {e}")
             return None
 
     async def _execute_agent(
@@ -561,7 +561,7 @@ class OpenAIAgentExecutor(AgentExecutor):
         except Exception as e:
             # Check if it's an authentication error and log appropriately
             if "authentication" in str(e).lower() or "api_key" in str(e).lower():
-                logger.error(f"OpenAI authentication failed: {e}")
+                logger.exception(f"OpenAI authentication failed: {e}")
                 raise AgentExecutionError(f"OpenAI authentication error: {e}") from e
             else:
                 raise AgentExecutionError(f"OpenAI API error: {e}") from e

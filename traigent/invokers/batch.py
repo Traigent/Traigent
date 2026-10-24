@@ -131,7 +131,7 @@ class BatchInvoker(LocalInvoker):
             ]
 
         except Exception as e:
-            logger.error(f"Batch processing failed: {e}")
+            logger.exception(f"Batch processing failed: {e}")
             # Return error results for all items
             return [
                 InvocationResult(

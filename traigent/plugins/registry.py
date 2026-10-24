@@ -459,7 +459,7 @@ class PluginRegistry:
             )
 
         except Exception as e:
-            logger.error(f"Failed to register plugin '{plugin_name}': {e}")
+            logger.exception(f"Failed to register plugin '{plugin_name}': {e}")
             raise
 
     def unregister_plugin(self, plugin_name: str) -> None:
@@ -753,7 +753,7 @@ class PluginRegistry:
             self.register_plugin(plugin)
 
         except Exception as e:
-            logger.error(
+            logger.exception(
                 f"Failed to load plugin from {module_path}.{plugin_class_name}: {e}"
             )
             raise

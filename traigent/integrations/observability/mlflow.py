@@ -428,7 +428,7 @@ class TraigentMLflowTracker:
                 }
 
             except Exception as e:
-                logger.error(f"Failed to get run {run_id}: {e}")
+                logger.exception(f"Failed to get run {run_id}: {e}")
                 comparison_data[run_id] = {"error": str(e)}
 
         return comparison_data
@@ -479,7 +479,7 @@ class TraigentMLflowTracker:
             }
 
         except Exception as e:
-            logger.error(f"Failed to get best run: {e}")
+            logger.exception(f"Failed to get best run: {e}")
             return None
 
 

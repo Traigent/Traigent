@@ -236,7 +236,7 @@ class SessionState:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to update session status: {e}")
+            logger.exception(f"Failed to update session status: {e}")
             return False
 
     def update_best_results(
@@ -281,7 +281,7 @@ class SessionState:
             return False
 
         except Exception as e:
-            logger.error(f"Failed to update best results: {e}")
+            logger.exception(f"Failed to update best results: {e}")
             return False
 
     def increment_completed_trials(self) -> None:

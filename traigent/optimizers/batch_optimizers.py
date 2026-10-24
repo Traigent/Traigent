@@ -274,7 +274,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
                             break
 
                     except Exception as e:
-                        logger.error(f"Trial failed for config {config}: {e}")
+                        logger.exception(f"Trial failed for config {config}: {e}")
                         # Create failed trial
                         failed_trial = BatchTrial(
                             configuration=config,
@@ -400,7 +400,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
             )
 
         except Exception as e:
-            logger.error(f"Trial failed for config {config}: {e}")
+            logger.exception(f"Trial failed for config {config}: {e}")
             return BatchTrial(
                 configuration=config,
                 score=float("-inf"),
@@ -710,7 +710,7 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
             )
 
         except Exception as e:
-            logger.error(f"Multi-objective trial {trial_idx} failed: {e}")
+            logger.exception(f"Multi-objective trial {trial_idx} failed: {e}")
             return BatchTrial(
                 configuration=config,
                 score=float("-inf"),
@@ -1134,7 +1134,7 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
             )
 
         except Exception as e:
-            logger.error(f"Adaptive trial {trial_idx} failed: {e}")
+            logger.exception(f"Adaptive trial {trial_idx} failed: {e}")
             return BatchTrial(
                 configuration=config,
                 score=float("-inf"),

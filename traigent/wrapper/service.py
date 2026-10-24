@@ -1065,7 +1065,7 @@ class TraigentService:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.error(f"Execute failed for {example_id}: {e}")
+                logger.exception(f"Execute failed for {example_id}: {e}")
                 failed_example_ids.append(example_id)
                 # A handler that raised may have spent before it did: a
                 # failure alone does not establish zero cost.
@@ -1230,7 +1230,7 @@ class TraigentService:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.error(f"Evaluate failed for {example_id}: {e}")
+                logger.exception(f"Evaluate failed for {example_id}: {e}")
                 failed_example_ids.append(example_id)
                 results.append(
                     {"example_id": example_id, "metrics": {}, "error": str(e)}

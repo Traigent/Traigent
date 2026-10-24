@@ -21,8 +21,6 @@ from random import SystemRandom
 from typing import Any, cast
 
 from traigent.api.types import TrialResult
-from traigent.config.types import TraigentConfig
-from traigent.evaluators.base import EvaluationExample
 
 # Single source of truth for session status (issue #1302 AC4): reuse the
 # canonical ``OptimizationSessionStatus`` from ``traigent.cloud.models`` rather
@@ -30,6 +28,8 @@ from traigent.evaluators.base import EvaluationExample
 # (it carries INITIALIZING plus PENDING/CREATED/UNKNOWN), so every member this
 # module uses (INITIALIZING/ACTIVE/PAUSED/COMPLETED/FAILED/CANCELLED) resolves.
 from traigent.cloud.models import OptimizationSessionStatus as OptimizationSessionStatus
+from traigent.config.types import TraigentConfig
+from traigent.evaluators.base import EvaluationExample
 from traigent.utils.exceptions import OptimizationError, ServiceError
 from traigent.utils.logging import get_logger
 
@@ -592,7 +592,7 @@ class RemoteOptimizationService(ABC):
             try:
                 await self.report_trial_result(session_id, trial_result)
             except Exception as e:
-                logger.error(
+                logger.exception(
                     f"Failed to report trial result {trial_result.trial_id}: {e}"
                 )
 

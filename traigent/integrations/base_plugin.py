@@ -411,7 +411,7 @@ class IntegrationPlugin(ABC):
             logger.info(f"Loaded configuration overrides from {config_path}")
 
         except Exception as e:
-            logger.error(f"Failed to load configuration from {config_path}: {e}")
+            logger.exception(f"Failed to load configuration from {config_path}: {e}")
 
     def is_compatible(self, package_name: str, version: str | None = None) -> bool:
         """Check if this plugin is compatible with a given package/version.

@@ -250,7 +250,7 @@ class OptimizationHistory:
         except FileNotFoundError:
             logger.info("No existing optimization history found")
         except Exception as e:
-            logger.error(f"Error loading optimization history: {e}")
+            logger.exception(f"Error loading optimization history: {e}")
 
     def _save_record(self, record: OptimizationRecord) -> None:
         """Save single record to storage."""
@@ -258,7 +258,7 @@ class OptimizationHistory:
             with open(self.storage_path, "a") as f:
                 f.write(json.dumps(record.to_dict()) + "\n")
         except Exception as e:
-            logger.error(f"Error saving optimization record: {e}")
+            logger.exception(f"Error saving optimization record: {e}")
 
 
 class AlgorithmSelector:

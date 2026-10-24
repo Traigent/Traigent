@@ -358,7 +358,7 @@ class TraigentClient:
                         completed_trials += 1
 
                     except Exception as e:
-                        logger.error(f"Trial {trial_id} failed: {str(e)}")
+                        logger.exception(f"Trial {trial_id} failed: {str(e)}")
                         # Continue with next trial
 
                 # Finalize and get results. If the backend is unreachable at

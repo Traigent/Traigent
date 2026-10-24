@@ -160,11 +160,10 @@ def _safe_deepcopy_or_default(value: Any, default: Any, *, context: str) -> Any:
     try:
         return copy.deepcopy(value)
     except Exception:
-        logger.error(
+        logger.exception(
             "Observability intake deep-copy failed for %s; withholding it "
             "rather than raising into the caller's application.",
             context,
-            exc_info=True,
         )
         return default
 
@@ -179,11 +178,10 @@ def _safe_str(value: Any) -> str:
     try:
         return str(value)
     except Exception:
-        logger.error(
+        logger.exception(
             "Observability failed to stringify a value (broken __str__); "
             "using a placeholder instead of raising into the caller's "
             "application.",
-            exc_info=True,
         )
         return "<unstringifiable value>"
 
@@ -505,10 +503,9 @@ def _safe_allowlisted_snapshot_or_static_fallback(
         try:
             return _safe_allowlisted_snapshot(payload, state=state)
         except Exception:
-            logger.error(
+            logger.exception(
                 "Observability safe-snapshot fallback itself failed; sending "
                 "a static minimal snapshot instead of the caller's payload.",
-                exc_info=True,
             )
     # #2588: no "status" here -- it is trace status, and a snapshot-builder
     # failure says nothing about whether the traced operation failed.
@@ -567,11 +564,10 @@ def _redact_trace_payload(
             ),
         )
     except Exception:
-        logger.error(
+        logger.exception(
             "Observability content redaction failed; sending a minimal "
             "safe-allowlisted snapshot for this trace/observation payload "
             "rather than sending it unredacted.",
-            exc_info=True,
         )
         return _safe_allowlisted_snapshot_or_static_fallback(payload, state=state)
 
@@ -869,12 +865,11 @@ def _capture_trace_snapshot(
     try:
         payload = state.to_payload()
     except Exception:
-        logger.error(
+        logger.exception(
             "Observability trace/observation serialization failed for "
             "trace '%s'; sending a minimal safe-allowlisted snapshot rather "
             "than raising into the caller's code path.",
             state.trace.id,
-            exc_info=True,
         )
         return (
             _safe_allowlisted_snapshot_or_static_fallback(
@@ -3151,10 +3146,9 @@ class ObservabilityClient:
             try:
                 gated_content = redact_sensitive_text(gated_content)
             except Exception:
-                logger.error(
+                logger.exception(
                     "Comment secret scrubbing failed; sending the redaction "
                     "placeholder rather than the unscrubbed comment.",
-                    exc_info=True,
                 )
                 gated_content = "[REDACTED]"
         payload = self._request_json(
@@ -3199,10 +3193,9 @@ class ObservabilityClient:
             try:
                 gated_comment = redact_sensitive_text(gated_comment)
             except Exception:
-                logger.error(
+                logger.exception(
                     "Feedback comment secret scrubbing failed; withholding "
                     "comment content rather than sending it unscrubbed.",
-                    exc_info=True,
                 )
                 gated_comment = None
 
@@ -3223,11 +3216,10 @@ class ObservabilityClient:
                     correction_output, effective_content_mode
                 )
             except Exception:
-                logger.error(
+                logger.exception(
                     "Feedback correction_output failed JSON-serializability "
                     "validation; withholding it rather than raising into "
                     "the caller's application.",
-                    exc_info=True,
                 )
                 gated_correction_output = None
             if (
@@ -3239,10 +3231,9 @@ class ObservabilityClient:
                         gated_correction_output, redact_credential_keys=True
                     )
                 except Exception:
-                    logger.error(
+                    logger.exception(
                         "Feedback correction_output secret scrubbing failed; "
                         "withholding it rather than sending it unscrubbed.",
-                        exc_info=True,
                     )
                     gated_correction_output = None
 
@@ -3914,10 +3905,9 @@ class ObservabilityClient:
                 return None
             return SessionDTO(**copied_dict)
         except Exception:
-            logger.error(
+            logger.exception(
                 "Observability session coercion failed; withholding the "
                 "session rather than raising into the caller's application.",
-                exc_info=True,
             )
             return None
 
@@ -3947,10 +3937,9 @@ class ObservabilityClient:
                 return None
             return CorrelationIds(**copied_dict)
         except Exception:
-            logger.error(
+            logger.exception(
                 "Observability correlation_ids coercion failed; withholding "
                 "it rather than raising into the caller's application.",
-                exc_info=True,
             )
             return None
 
@@ -3978,11 +3967,10 @@ class ObservabilityClient:
                 return None
             return PromptReferenceDTO(**copied_dict)
         except Exception:
-            logger.error(
+            logger.exception(
                 "Observability prompt_reference coercion failed; "
                 "withholding it rather than raising into the caller's "
                 "application.",
-                exc_info=True,
             )
             return None
 

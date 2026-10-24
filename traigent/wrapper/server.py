@@ -249,7 +249,7 @@ def create_app(service: TraigentService) -> Callable[..., Any]:
             )
 
         except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in request: {e}")
+            logger.exception(f"Invalid JSON in request: {e}")
             await send_json_response(
                 send,
                 400,
@@ -258,7 +258,7 @@ def create_app(service: TraigentService) -> Callable[..., Any]:
             )
 
         except ValueError as e:
-            logger.error(f"Request error: {e}")
+            logger.exception(f"Request error: {e}")
             error_headers = _response_headers_with_request_id(
                 trace_headers,
                 request.get("request_id") if request else None,
@@ -271,7 +271,7 @@ def create_app(service: TraigentService) -> Callable[..., Any]:
             )
 
         except Exception as e:
-            logger.error(f"Internal error: {e}")
+            logger.exception(f"Internal error: {e}")
             error_headers = _response_headers_with_request_id(
                 trace_headers,
                 request.get("request_id") if request else None,

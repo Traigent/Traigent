@@ -809,7 +809,7 @@ class MetricsTracker:
             median_val = statistics.median(clean_values)
             std_val = statistics.stdev(clean_values) if len(clean_values) > 1 else 0.0
         except Exception as e:
-            logger.error(f"Error calculating statistics: {e}")
+            logger.exception(f"Error calculating statistics: {e}")
             return {"mean": 0.0, "median": 0.0, "std": 0.0}
 
         return {
@@ -957,7 +957,7 @@ class MetricsTracker:
         try:
             aggregated = self.aggregate_metrics()
         except Exception as e:
-            logger.error(f"Error aggregating metrics: {e}")
+            logger.exception(f"Error aggregating metrics: {e}")
             return self._empty_backend_format()
 
         strict_nulls = os.environ.get("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
@@ -2423,13 +2423,12 @@ def _calculate_cost_for_metrics(
                 metrics.tokens.output_tokens,
             )
     except Exception as e:
-        logger.error(
+        logger.exception(
             "Cost calculation failed for model %s: %s (tokens: in=%d, out=%d)",
             model_name,
             e,
             metrics.tokens.input_tokens,
             metrics.tokens.output_tokens,
-            exc_info=True,
         )
         if (
             strict_cost_accounting

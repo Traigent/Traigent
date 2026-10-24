@@ -665,7 +665,7 @@ def migrate_legacy_files(run_path: Path, dry_run: bool = True) -> dict[str, Any]
                     error_info = migration_info.copy()
                     error_info["error"] = str(e)
                     report["errors"].append(error_info)
-                    logger.error(f"Failed to migrate {old_name}: {e}")
+                    logger.exception(f"Failed to migrate {old_name}: {e}")
 
     # Handle special cases (trial files with IDs)
     trial_pattern = re.compile(r"trial_([^_]+)\.json")
@@ -696,6 +696,6 @@ def migrate_legacy_files(run_path: Path, dry_run: bool = True) -> dict[str, Any]
                     error_info = migration_info.copy()
                     error_info["error"] = str(e)
                     report["errors"].append(error_info)
-                    logger.error(f"Failed to migrate {trial_file.name}: {e}")
+                    logger.exception(f"Failed to migrate {trial_file.name}: {e}")
 
     return report

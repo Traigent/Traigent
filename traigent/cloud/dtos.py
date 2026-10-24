@@ -634,7 +634,7 @@ class ExperimentDTO:
 
             return False
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "DTO validation failed",
                 extra={
                     "dto_class": "ExperimentDTO",

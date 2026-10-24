@@ -1798,7 +1798,7 @@ class OptimizationOrchestrator:
                 # Gate exception fails CLOSED in strict modes (Rule 1: a
                 # failing policy surface denies; it never silently degrades
                 # to the permissive simple comparison).
-                logger.error(
+                logger.exception(
                     "PromotionGate evaluation failed in strict evidence "
                     "mode; promotion withheld: %s",
                     e,
@@ -4971,7 +4971,7 @@ class OptimizationOrchestrator:
                     )
                 else:
                     result.metadata["persistence_error"] = str(exc)
-                    logger.error(
+                    logger.exception(
                         "Backend persistence failed after optimization; backend "
                         "session left RUNNING. Check the portal for this session "
                         "id to confirm whether it was finalized; do not run "
