@@ -391,8 +391,18 @@ if [[ "$MAIN_BOUND" == "1" ]] && ! skip sonar; then
       # Mount the repo at the SAME absolute path inside the container so the
       # host paths recorded in coverage.xml resolve (otherwise Sonar logs
       # "Cannot resolve N file paths" and new coverage reads 0.0).
+      #
+      # In a linked worktree `.git` is a file pointing at <common-dir>/worktrees/<n>,
+      # outside the mount, so JGit fails with "Unable to open Git repository" and
+      # SCM blame (new-code detection) is lost. Mount the git common dir at the
+      # same absolute path (read-only) so the pointer resolves.
+      git_mount=()
+      common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+      if [[ -n "$common_dir" && -d "$common_dir" && "$common_dir" != "$PWD/.git" ]]; then
+        git_mount=(-v "$common_dir":"$common_dir":ro)
+      fi
       docker run --rm $net -e SONAR_HOST_URL="$host" -e SONAR_TOKEN \
-        -v "$PWD":"$PWD" -w "$PWD" sonarsource/sonar-scanner-cli:latest \
+        -v "$PWD":"$PWD" ${git_mount[@]+"${git_mount[@]}"} -w "$PWD" sonarsource/sonar-scanner-cli:latest \
         -Dsonar.projectBaseDir="$PWD" \
         -Dsonar.projectKey=Traigent_Traigent \
         -Dsonar.projectVersion="$sonar_version" \

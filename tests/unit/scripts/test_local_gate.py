@@ -333,8 +333,13 @@ def _run_sonar_gate(
     with_docker: bool,
     version_line: str = 'version = "9.8.7"',
     extra_env: dict[str, str] | None = None,
+    as_worktree: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], list[str], Path]:
     repo, fake_bin = _make_gate_repo(tmp_path)
+    if as_worktree:
+        wt = tmp_path / "linked-worktree"
+        _run_git(repo, "worktree", "add", "-q", "--detach", str(wt))
+        repo = wt
     (repo / "pyproject.toml").write_text(
         f'[build-system]\nrequires = []\n\n[project]\nname = "x"\n{version_line}\n'
         '\n[tool.other]\nversion = "0.0.1"\n',
@@ -407,6 +412,29 @@ def test_local_gate_sonar_docker_passes_version_and_same_path_mount(
     assert f"-Dsonar.projectBaseDir={host_path}" in args
     assert "-Dsonar.projectKey=Traigent_Traigent" in args
     assert "-Dsonar.qualitygate.wait=true" in args
+
+
+def test_local_gate_sonar_docker_mounts_git_common_dir_in_a_worktree(
+    tmp_path: Path,
+) -> None:
+    """A linked worktree's .git file points outside the project mount."""
+    result, calls, repo = _run_sonar_gate(tmp_path, with_docker=True, as_worktree=True)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert len(calls) == 1
+    args = calls[0].split()
+    mounts = [args[i + 1] for i, a in enumerate(args) if a == "-v"]
+    common = str((tmp_path / "repo" / ".git").resolve())
+    assert f"{common}:{common}:ro" in mounts
+    assert (repo / ".git").is_file()
+
+
+def test_local_gate_sonar_docker_adds_no_git_mount_in_a_plain_checkout(
+    tmp_path: Path,
+) -> None:
+    result, calls, _ = _run_sonar_gate(tmp_path, with_docker=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls[0].split().count("-v") == 1
 
 
 def test_local_gate_sonar_local_scanner_passes_version(tmp_path: Path) -> None:
