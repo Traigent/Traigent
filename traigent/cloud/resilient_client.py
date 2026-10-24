@@ -245,6 +245,20 @@ class ResilientClient:
 
         return delay
 
+    def _record_attempt_start(self, attempt: int, op_name: str, op_hash: str) -> None:
+        """Count and log a retry attempt (without sensitive data)."""
+        if attempt > 0:
+            self._retry_stats["total_retries"] += 1
+            logger.info(f"Retry {attempt}/{self.max_retries} for {op_name} [{op_hash}]")
+
+    def _record_attempt_success(self, attempt: int, op_name: str, op_hash: str) -> None:
+        """Count and log a successful attempt."""
+        if attempt > 0:
+            self._retry_stats["retry_successes"] += 1
+            logger.info(f"Retry successful for {op_name} [{op_hash}]")
+
+        self._retry_stats["successful_requests"] += 1
+
     async def execute_with_retry[T](
         self,
         operation: Callable[..., Awaitable[T]],
@@ -274,22 +288,12 @@ class ResilientClient:
 
         for attempt in range(self.max_retries + 1):
             try:
-                # Log attempt (without sensitive data)
-                if attempt > 0:
-                    self._retry_stats["total_retries"] += 1
-                    logger.info(
-                        f"Retry {attempt}/{self.max_retries} for {op_name} [{op_hash}]"
-                    )
+                self._record_attempt_start(attempt, op_name, op_hash)
 
                 # Execute operation
                 result = await operation(*args, **kwargs)
 
-                # Success
-                if attempt > 0:
-                    self._retry_stats["retry_successes"] += 1
-                    logger.info(f"Retry successful for {op_name} [{op_hash}]")
-
-                self._retry_stats["successful_requests"] += 1
+                self._record_attempt_success(attempt, op_name, op_hash)
                 return result
 
             except Exception as e:
