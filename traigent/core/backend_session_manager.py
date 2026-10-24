@@ -1597,6 +1597,7 @@ class BackendSessionManager:
         task_type: str | None = None,
         dataset_id: str | None = None,
         content_identity: dict[str, Any] | None = None,
+        evaluator_code_digest: str | None = None,
         head_environment: str | None = None,
         head_environment_explicit: bool | None = None,
         content_less: Any = None,
@@ -1832,6 +1833,9 @@ class BackendSessionManager:
             identity_kwargs = self._content_identity_kwargs(content_identity)
             if content_less is not None:
                 identity_kwargs["content_less"] = content_less
+            if evaluator_code_digest and content_less is None:
+                if not getattr(self._traigent_config, "privacy_enabled", False):
+                    identity_kwargs["evaluator_code_digest"] = evaluator_code_digest
             raw_result = self._backend_client.create_session(
                 function_name=portal_name,
                 agent_key=declared_agent_key,

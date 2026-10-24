@@ -4480,9 +4480,9 @@ class TestQuotaRefusalThroughManager:
 
     @staticmethod
     def _manager(traigent_config, objective_schema, mock_optimizer, create_via_api):
+        from tests.unit.cloud.test_session_operations_validation import FakeClient
         from traigent.cloud.session_operations import SessionOperations
         from traigent.config.types import resolve_execution_policy
-        from tests.unit.cloud.test_session_operations_validation import FakeClient
 
         client = FakeClient()
         client._create_traigent_session_via_api = create_via_api
@@ -4601,3 +4601,51 @@ class TestQuotaRefusalThroughManager:
         assert "quota_exceeded" in blob
         assert not session_failure_is_connectivity(result)
         assert not session_failure_is_session_create_400(result)
+
+
+class TestEvaluatorCodeDigestForwarding:
+    """``evaluator_code_digest`` reaches the backend create call only when set."""
+
+    DIGEST = "sha256:" + "ab" * 32
+
+    def _create(self, manager, dataset, **extra):
+        def func(x):
+            return x
+
+        func.__name__ = "test_func"
+        manager.create_session(
+            func=func,
+            dataset=dataset,
+            function_descriptor=resolve_function_descriptor(func),
+            max_trials=10,
+            start_time=1234567890.0,
+            **extra,
+        )
+
+    def test_forwarded_when_present(
+        self, backend_session_manager, mock_dataset, mock_backend_client
+    ):
+        self._create(
+            backend_session_manager, mock_dataset, evaluator_code_digest=self.DIGEST
+        )
+        kwargs = mock_backend_client.create_session.call_args[1]
+        assert kwargs["evaluator_code_digest"] == self.DIGEST
+
+    def test_absent_keeps_the_exact_call_shape(
+        self, backend_session_manager, mock_dataset, mock_backend_client
+    ):
+        self._create(backend_session_manager, mock_dataset)
+        kwargs = mock_backend_client.create_session.call_args[1]
+        assert "evaluator_code_digest" not in kwargs
+
+    def test_withheld_in_content_less_mode(
+        self, backend_session_manager, mock_dataset, mock_backend_client
+    ):
+        self._create(
+            backend_session_manager,
+            mock_dataset,
+            evaluator_code_digest=self.DIGEST,
+            content_less=object(),
+        )
+        kwargs = mock_backend_client.create_session.call_args[1]
+        assert "evaluator_code_digest" not in kwargs

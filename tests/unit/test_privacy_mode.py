@@ -196,6 +196,12 @@ class TestPrivacyCompliance:
             # such; the wire only gets `capabilities`, a closed `environment` enum and
             # opaque `*_ref` values (tests/unit/cloud/test_content_less_session.py).
             "content_less",
+            # ecd1 digest of the user-code scorer (SHA-256, domain-separated). It
+            # identifies code, never content: no source, comment, name or literal
+            # crosses. The dataclass always lists the field; it is None here
+            # because the SDK withholds it in privacy mode and content-less mode
+            # (tests/unit/cloud/test_code_evaluator_payload.py).
+            "evaluator_code_digest",
         }
 
         for req in dummy_server.received_data:

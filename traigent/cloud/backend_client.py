@@ -2079,6 +2079,7 @@ class BackendIntegratedClient:
         evaluator_id_source: EvaluatorIdSource | None = None,
         content_identity: dict[str, Any] | None = None,
         content_less: Any = None,
+        evaluator_code_digest: str | None = None,
     ) -> SessionCreationResult:
         """Synchronous wrapper for creating a session.
         Delegates to session_operations module. Phase 8: objectives are
@@ -2109,6 +2110,7 @@ class BackendIntegratedClient:
             evaluator_id_source=evaluator_id_source,
             content_identity=content_identity,
             content_less=content_less,
+            evaluator_code_digest=evaluator_code_digest,
         )
 
     async def create_hybrid_session(
