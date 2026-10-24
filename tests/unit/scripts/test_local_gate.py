@@ -337,9 +337,7 @@ def _run_sonar_gate(
         encoding="utf-8",
     )
     scanner_log = tmp_path / "scanner.log"
-    stub = (
-        '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$FAKE_SCANNER_LOG"\nexit 0\n'
-    )
+    stub = '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$FAKE_SCANNER_LOG"\nexit 0\n'
     for name in ("docker", "sonar-scanner"):
         if name == "docker" and not with_docker:
             continue
