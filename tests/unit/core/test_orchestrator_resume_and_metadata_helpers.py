@@ -7,6 +7,7 @@ import pytest
 import traigent.core.orchestrator as orch_mod
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators.base import Dataset, EvaluationExample
+from traigent.identity.examples import result_identity_fields
 
 
 def _trial(timed_out):
@@ -65,3 +66,10 @@ def test_resume_example_ids_follow_example_order():
     assert len(ids) == 3
     assert len(set(ids)) == 3
     assert all(isinstance(i, str) for i in ids)
+    # Order: position i must carry the id of example i (positional fallback or
+    # content id, whichever identity mode is active).
+    expected = [
+        str(result_identity_fields(ex, f"example_{i}")["example_id"])
+        for i, ex in enumerate(dataset.examples)
+    ]
+    assert ids == expected
