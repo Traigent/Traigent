@@ -967,7 +967,7 @@ class SyncManager:
             except Exception as e:
                 sync_result["status"] = "error"
                 sync_result["errors"].append(f"Sync failed: {str(e)}")
-                logger.error(f"Failed to sync session {session_id}: {e}")
+                logger.exception(f"Failed to sync session {session_id}: {e}")
 
             # Record the outcome on EVERY non-trivial exit (success, partial, or
             # error) so a retry can reuse the cloud ids a prior attempt created

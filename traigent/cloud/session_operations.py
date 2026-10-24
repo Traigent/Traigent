@@ -1173,7 +1173,7 @@ class SessionOperations:
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("create_hybrid_session network error")
-            logger.error(f"Network error creating hybrid session: {e}")
+            logger.exception(f"Network error creating hybrid session: {e}")
             raise CloudServiceError(f"Network error: {e}") from None
 
     async def get_hybrid_session_status(self, session_id: str) -> dict[str, Any]:
@@ -1223,7 +1223,7 @@ class SessionOperations:
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("get_hybrid_session_status network error")
-            logger.error(f"Network error getting session status: {e}")
+            logger.exception(f"Network error getting session status: {e}")
             raise CloudServiceError(f"Network error: {e}") from None
 
     async def finalize_hybrid_session(self, session_id: str) -> dict[str, Any]:
@@ -1278,7 +1278,7 @@ class SessionOperations:
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("finalize_hybrid_session network error")
-            logger.error(f"Network error finalizing session: {e}")
+            logger.exception(f"Network error finalizing session: {e}")
             raise CloudServiceError(f"Network error: {e}") from None
 
     async def finalize_session(
@@ -1821,7 +1821,7 @@ class SessionOperations:
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("delete_session network error")
-            logger.error(f"Network error deleting session: {e}")
+            logger.exception(f"Network error deleting session: {e}")
             raise CloudServiceError(f"Network error: {e}") from None
 
     def finalize_session_sync(

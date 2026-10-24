@@ -3249,7 +3249,7 @@ class BackendSessionManager:
             return update_count
 
         except Exception as exc:  # pragma: no cover - defensive logging
-            logger.error("Error updating weighted scores: %s", exc)
+            logger.exception("Error updating weighted scores: %s", exc)
             return 0
 
     def build_session_aggregation_payload(

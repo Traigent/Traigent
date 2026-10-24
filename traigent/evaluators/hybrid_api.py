@@ -1065,7 +1065,7 @@ class HybridAPIEvaluator(BaseEvaluator):
                 )
 
         except TransportError as e:
-            logger.error(f"Batch execution failed: {e}")
+            logger.exception(f"Batch execution failed: {e}")
             # Return error results for all examples
             return self._batch_error_results(batch, inputs, str(e))
 

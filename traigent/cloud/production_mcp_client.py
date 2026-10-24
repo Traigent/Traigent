@@ -382,7 +382,7 @@ class ProductionMCPClient:
                 await self._cleanup_connection()
                 raise
             except Exception as e:
-                logger.error(f"Failed to connect to MCP server: {e}")
+                logger.exception(f"Failed to connect to MCP server: {e}")
                 await self._cleanup_connection()
                 return False
 
@@ -1008,7 +1008,7 @@ class ProductionMCPClient:
             return str(agent_id or ""), str(experiment_id), str(experiment_run_id or "")
 
         except Exception as e:
-            logger.error(f"Failed to create optimization workflow: {e}")
+            logger.exception(f"Failed to create optimization workflow: {e}")
             raise RuntimeError(f"Workflow creation failed: {e}") from None
 
     # Fallback Operations

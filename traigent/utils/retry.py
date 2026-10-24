@@ -599,7 +599,7 @@ def ErrorContext(operation: str, retryable: bool = True):
     try:
         yield
     except Exception as e:
-        logger.error(f"Error during {operation}: {e}")
+        logger.exception(f"Error during {operation}: {e}")
         if retryable and not isinstance(e, (RetryableError, NonRetryableError)):
             # Wrap in RetryableError to hint it should be retried
             raise RetryableError(f"Error during {operation}: {e}") from e

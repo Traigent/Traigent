@@ -304,7 +304,7 @@ class BackendSynchronizer:
             except Exception as e:
                 with self._stats_lock:
                     self._stats["failed_syncs"] += 1
-                logger.error(f"Failed to sync trials for session {session_id}: {e}")
+                logger.exception(f"Failed to sync trials for session {session_id}: {e}")
 
                 return SyncResult(
                     success=False,
@@ -435,7 +435,7 @@ class BackendSynchronizer:
                 logger.info("Background sync cancelled")
                 raise
             except Exception as e:
-                logger.error(f"Background sync error: {e}")
+                logger.exception(f"Background sync error: {e}")
                 # Continue loop despite errors
 
     async def _process_sync_queue(self) -> None:

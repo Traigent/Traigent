@@ -619,7 +619,7 @@ class CostOptimizationAI:
         except Exception as e:
             result["status"] = "failed"
             notes.append(f"Error: {str(e)}")
-            logger.error(f"Failed to execute action {action.action_id}: {e}")
+            logger.exception(f"Failed to execute action {action.action_id}: {e}")
 
         # Store result with bounds checking
         if len(self.optimization_results) >= self._max_optimization_results:

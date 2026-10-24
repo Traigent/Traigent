@@ -500,7 +500,7 @@ class UsageTracker:
             # executors across many short-lived asyncio.run() calls in tests/CLI usage.
             _write_json_file(self.storage_path, data)
         except Exception as e:
-            logger.error(f"Failed to save usage data: {e}")
+            logger.exception(f"Failed to save usage data: {e}")
 
 
 class BillingManager:
@@ -1209,7 +1209,7 @@ class CostTracker:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.error(f"Sync loop error: {e}")
+                logger.exception(f"Sync loop error: {e}")
                 await asyncio.sleep(5)  # Wait before retrying
 
     async def _sync_with_server(self) -> bool:
@@ -1268,7 +1268,7 @@ class CostTracker:
                     return False
 
             except Exception as e:
-                logger.error(f"Cost sync failed: {e}")
+                logger.exception(f"Cost sync failed: {e}")
                 self._stats["failed_syncs"] += 1
                 return False
 

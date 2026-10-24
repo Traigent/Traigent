@@ -704,7 +704,7 @@ class OptimizationLogger:
                 json.dump(sanitized, handle, indent=2, default=str, ensure_ascii=False)
             temp_path.replace(file_path)
         except Exception as exc:
-            logger.error(f"Failed to write {file_path}: {exc}")
+            logger.exception(f"Failed to write {file_path}: {exc}")
             raise
         finally:
             if temp_path.exists():

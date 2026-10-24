@@ -258,7 +258,7 @@ class OptimizationHistory:
             with open(self.storage_path, "a") as f:
                 f.write(json.dumps(record.to_dict()) + "\n")
         except Exception as e:
-            logger.error(f"Error saving optimization record: {e}")
+            logger.exception(f"Error saving optimization record: {e}")
 
 
 class AlgorithmSelector:
