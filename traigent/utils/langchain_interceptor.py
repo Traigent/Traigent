@@ -1170,7 +1170,7 @@ def patch_langchain_for_metadata_capture(
             logger.debug("ChatAnthropic not available, skipping")
     except Exception as e:
         out["anthropic"] = INSTALL_FAILED
-        logger.error(f"Failed to patch ChatAnthropic: {e}")
+        logger.exception(f"Failed to patch ChatAnthropic: {e}")
     patched_any = patched_any or before
 
     # Patch ChatOpenAI
@@ -1274,7 +1274,7 @@ def patch_langchain_for_metadata_capture(
             logger.debug("ChatOpenAI not available, skipping")
     except Exception as e:
         out["openai"] = INSTALL_FAILED
-        logger.error(f"Failed to patch ChatOpenAI: {e}")
+        logger.exception(f"Failed to patch ChatOpenAI: {e}")
     patched_any = patched_any or before
 
     # Patch langchain_aws Bedrock chat models
@@ -1301,7 +1301,7 @@ def patch_langchain_for_metadata_capture(
             logger.debug("langchain_aws not available, skipping Bedrock")
     except Exception as e:
         out["bedrock"] = INSTALL_FAILED
-        logger.error(f"Failed to patch langchain_aws Bedrock models: {e}")
+        logger.exception(f"Failed to patch langchain_aws Bedrock models: {e}")
     patched_any = patched_any or before
 
     if not patched_any:

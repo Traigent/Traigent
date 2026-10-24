@@ -644,6 +644,220 @@ def _detector_stat(
     )
 
 
+def _collect_trial_families(
+    trials: list[dict[str, Any]],
+) -> tuple[dict[str, str], set[str]]:
+    """Map trial_id -> family and collect the distinct KNOWN families present."""
+    trial_family: dict[str, str] = {}
+    known_families: set[str] = set()
+    for column in trials:
+        trial_id = column.get("trial_id")
+        family = model_family(_config_model(column.get("config")))
+        if trial_id is not None:
+            trial_family[str(trial_id)] = family
+        if family != UNKNOWN_FAMILY:
+            known_families.add(family)
+    return trial_family, known_families
+
+
+def _base_error_rate(examples: list[dict[str, Any]], success_threshold: float) -> float:
+    """Base error rate across all determinable cells (drives D1/D7 lift nulls)."""
+    wrong_cells = 0
+    total_cells = 0
+    for example in examples:
+        for cell in (example.get("cells") or {}).values():
+            correct = cell_is_correct(cell, success_threshold)
+            if correct is None:
+                continue
+            total_cells += 1
+            if not correct:
+                wrong_cells += 1
+    return wrong_cells / total_cells if total_cells else 0.0
+
+
+def _example_outcomes(
+    cells: dict[str, Any],
+    trial_family: dict[str, str],
+    success_threshold: float,
+) -> tuple[list[bool], list[int], dict[str, set[str]], dict[str, Any]]:
+    """Per-example outcomes, correct-cell token totals and D7 wrong-answer maps."""
+    outcomes: list[bool] = []
+    correct_token_totals: list[int] = []
+    # answer_key -> set of families that produced that WRONG answer
+    wrong_answer_families: dict[str, set[str]] = {}
+    wrong_answer_value: dict[str, Any] = {}
+
+    for trial_id, cell in cells.items():
+        correct = cell_is_correct(cell, success_threshold)
+        if correct is None:
+            continue
+        outcomes.append(correct)
+        if correct:
+            tokens = _cell_total_tokens(cell)
+            if tokens is not None:
+                correct_token_totals.append(tokens)
+        else:
+            # Collect for D7: which families produced which wrong answer.
+            family = trial_family.get(str(trial_id), UNKNOWN_FAMILY)
+            if family == UNKNOWN_FAMILY:
+                continue
+            key = _answer_key(cell.get("predicted"))
+            if key is None:
+                continue
+            wrong_answer_families.setdefault(key, set()).add(family)
+            wrong_answer_value.setdefault(key, cell.get("predicted"))
+    return outcomes, correct_token_totals, wrong_answer_families, wrong_answer_value
+
+
+def _consensus_on_wrong_flag(
+    example_id: str,
+    wrong_answer_families: dict[str, set[str]],
+    wrong_answer_value: dict[str, Any],
+) -> EvalAuditFlag | None:
+    """D7 flag for the first wrong answer shared by >=2 distinct known families."""
+    from traigent.api.types import EvalAuditFlag
+
+    for key, families in wrong_answer_families.items():
+        if len(families) >= 2:
+            return EvalAuditFlag(
+                example_id=example_id,
+                detectors=["cross-family-consensus-on-wrong"],
+                suggested_answer=wrong_answer_value.get(key),
+            )
+    return None
+
+
+def _scan_examples(
+    examples: list[dict[str, Any]],
+    trial_family: dict[str, str],
+    d7_active: bool,
+    success_threshold: float,
+) -> tuple[
+    dict[str, EvalAuditFlag],
+    dict[str, EvalAuditFlag],
+    int,
+    list[tuple[str, float]],
+]:
+    """D1 never-correct + D7 consensus-on-wrong (single pass over rows).
+
+    Returns ``(d1_flags, d7_flags, d1_eligible, always_correct)``.
+    """
+    from traigent.api.types import EvalAuditFlag
+
+    d1_flags: dict[str, EvalAuditFlag] = {}
+    d7_flags: dict[str, EvalAuditFlag] = {}
+    d1_eligible = 0
+    always_correct: list[tuple[str, float]] = []  # (example_id, mean tokens)
+
+    for example in examples:
+        example_id = str(example.get("example_id"))
+        cells = example.get("cells") or {}
+        (
+            outcomes,
+            correct_token_totals,
+            wrong_answer_families,
+            wrong_answer_value,
+        ) = _example_outcomes(cells, trial_family, success_threshold)
+
+        # D1: eligible when the example ran (with a determinable outcome) in >=2
+        # columns; flagged when wrong in all of them.
+        if len(outcomes) >= 2:
+            d1_eligible += 1
+            if not any(outcomes):
+                d1_flags[example_id] = EvalAuditFlag(
+                    example_id=example_id, detectors=["never-correct"]
+                )
+
+        # D3 population: always-correct items carrying token data.
+        if outcomes and all(outcomes) and correct_token_totals:
+            mean_tokens = sum(correct_token_totals) / len(correct_token_totals)
+            always_correct.append((example_id, mean_tokens))
+
+        # D7: a wrong answer shared by >=2 distinct known families.
+        if d7_active:
+            d7_flag = _consensus_on_wrong_flag(
+                example_id, wrong_answer_families, wrong_answer_value
+            )
+            if d7_flag is not None:
+                d7_flags[example_id] = d7_flag
+    return d1_flags, d7_flags, d1_eligible, always_correct
+
+
+def _d3_fence(
+    always_correct: list[tuple[str, float]], token_iqr_k: float
+) -> tuple[float, float]:
+    """Return the D3 upper fence and the cohort median."""
+    values = sorted(v for _, v in always_correct)
+    q1 = _quantile(values, 0.25)
+    q3 = _quantile(values, 0.75)
+    iqr = q3 - q1
+    median = _quantile(values, 0.5)
+    if iqr > 0:
+        # Normal path: Tukey upper fence over a cohort with real spread.
+        fence = q3 + token_iqr_k * iqr
+    else:
+        # Degenerate cohort (Q1 == Q3 -> IQR == 0): tokens are clustered on a
+        # single value, so the Tukey fence would sit exactly on that value and
+        # a genuine outlier (e.g. [100,100,100,100,1000]) would be dropped
+        # even though it is a clear token leak. Fall back to a median-multiple
+        # rule so a clear outlier over a zero-spread cohort is still caught.
+        fence = median * D3_DEGENERATE_MEDIAN_MULTIPLE
+    return fence, median
+
+
+def _token_leak_detector(
+    always_correct: list[tuple[str, float]], token_iqr_k: float
+) -> tuple[dict[str, EvalAuditFlag], int, str | None, float | None]:
+    """D3 token-leak (outlier among the always-correct cohort).
+
+    Returns ``(d3_flags, d3_eligible, d3_note, d3_lift)``.
+    """
+    from traigent.api.types import EvalAuditFlag
+
+    d3_flags: dict[str, EvalAuditFlag] = {}
+    d3_eligible = len(always_correct)
+    d3_note: str | None = None
+    d3_lift: float | None = None
+    if d3_eligible < _MIN_D3_POPULATION:
+        d3_note = (
+            f"skipped: only {d3_eligible} always-correct item(s) carry token "
+            f"data (need >= {_MIN_D3_POPULATION} for a robust IQR)"
+        )
+    else:
+        fence, median = _d3_fence(always_correct, token_iqr_k)
+        burn_multiples: list[float] = []
+        for example_id, mean_tokens in always_correct:
+            if mean_tokens > fence:
+                d3_flags[example_id] = EvalAuditFlag(
+                    example_id=example_id, detectors=["token-leak"]
+                )
+                if median > 0:
+                    burn_multiples.append(mean_tokens / median)
+        if burn_multiples:
+            d3_lift = sum(burn_multiples) / len(burn_multiples)
+    return d3_flags, d3_eligible, d3_note, d3_lift
+
+
+def _merge_detector_flags(
+    sources: tuple[dict[str, EvalAuditFlag], ...],
+) -> dict[str, EvalAuditFlag]:
+    """Merge per-detector flags into one flag per example."""
+    from traigent.api.types import EvalAuditFlag
+
+    merged: dict[str, EvalAuditFlag] = {}
+    for source in sources:
+        for example_id, flag in source.items():
+            if example_id not in merged:
+                merged[example_id] = EvalAuditFlag(
+                    example_id=example_id, detectors=[], suggested_answer=None
+                )
+            existing = merged[example_id]
+            existing.detectors.extend(flag.detectors)
+            if flag.suggested_answer is not None and existing.suggested_answer is None:
+                existing.suggested_answer = flag.suggested_answer
+    return merged
+
+
 def compute_eval_audit(
     matrix: dict[str, Any] | None,
     *,
@@ -681,7 +895,7 @@ def compute_eval_audit(
         (columns). The <2-config case is the "not requested / nothing to audit"
         signal: never-correct and consensus are meaningless on a single column.
     """
-    from traigent.api.types import EvalAudit, EvalAuditFlag, EvalAuditSummary
+    from traigent.api.types import EvalAudit, EvalAuditSummary
 
     if not matrix:
         return None
@@ -690,130 +904,23 @@ def compute_eval_audit(
     if not examples or len(trials) < 2:
         return None
 
-    # trial_id -> family, and the set of distinct KNOWN families present.
-    trial_family: dict[str, str] = {}
-    known_families: set[str] = set()
-    for column in trials:
-        trial_id = column.get("trial_id")
-        family = model_family(_config_model(column.get("config")))
-        if trial_id is not None:
-            trial_family[str(trial_id)] = family
-        if family != UNKNOWN_FAMILY:
-            known_families.add(family)
+    trial_family, known_families = _collect_trial_families(trials)
     family_count = len(known_families)
     d7_active = family_count >= 2
 
     example_count = len(examples)
 
-    # Base error rate across all determinable cells (drives D1/D7 lift nulls).
-    wrong_cells = 0
-    total_cells = 0
-    for example in examples:
-        for cell in (example.get("cells") or {}).values():
-            correct = cell_is_correct(cell, success_threshold)
-            if correct is None:
-                continue
-            total_cells += 1
-            if not correct:
-                wrong_cells += 1
-    p_wrong = wrong_cells / total_cells if total_cells else 0.0
+    p_wrong = _base_error_rate(examples, success_threshold)
 
     # --- D1 never-correct + D7 consensus-on-wrong (single pass over rows) -----
-    d1_flags: dict[str, EvalAuditFlag] = {}
-    d7_flags: dict[str, EvalAuditFlag] = {}
-    d1_eligible = 0
-    always_correct: list[tuple[str, float]] = []  # (example_id, mean tokens)
-
-    for example in examples:
-        example_id = str(example.get("example_id"))
-        cells = example.get("cells") or {}
-        outcomes: list[bool] = []
-        correct_token_totals: list[int] = []
-        # answer_key -> set of families that produced that WRONG answer
-        wrong_answer_families: dict[str, set[str]] = {}
-        wrong_answer_value: dict[str, Any] = {}
-
-        for trial_id, cell in cells.items():
-            correct = cell_is_correct(cell, success_threshold)
-            if correct is None:
-                continue
-            outcomes.append(correct)
-            if correct:
-                tokens = _cell_total_tokens(cell)
-                if tokens is not None:
-                    correct_token_totals.append(tokens)
-            else:
-                # Collect for D7: which families produced which wrong answer.
-                family = trial_family.get(str(trial_id), UNKNOWN_FAMILY)
-                if family == UNKNOWN_FAMILY:
-                    continue
-                key = _answer_key(cell.get("predicted"))
-                if key is None:
-                    continue
-                wrong_answer_families.setdefault(key, set()).add(family)
-                wrong_answer_value.setdefault(key, cell.get("predicted"))
-
-        # D1: eligible when the example ran (with a determinable outcome) in >=2
-        # columns; flagged when wrong in all of them.
-        if len(outcomes) >= 2:
-            d1_eligible += 1
-            if not any(outcomes):
-                d1_flags[example_id] = EvalAuditFlag(
-                    example_id=example_id, detectors=["never-correct"]
-                )
-
-        # D3 population: always-correct items carrying token data.
-        if outcomes and all(outcomes) and correct_token_totals:
-            mean_tokens = sum(correct_token_totals) / len(correct_token_totals)
-            always_correct.append((example_id, mean_tokens))
-
-        # D7: a wrong answer shared by >=2 distinct known families.
-        if d7_active:
-            for key, families in wrong_answer_families.items():
-                if len(families) >= 2:
-                    d7_flags[example_id] = EvalAuditFlag(
-                        example_id=example_id,
-                        detectors=["cross-family-consensus-on-wrong"],
-                        suggested_answer=wrong_answer_value.get(key),
-                    )
-                    break
+    d1_flags, d7_flags, d1_eligible, always_correct = _scan_examples(
+        examples, trial_family, d7_active, success_threshold
+    )
 
     # --- D3 token-leak (outlier among the always-correct cohort) -------------
-    d3_flags: dict[str, EvalAuditFlag] = {}
-    d3_eligible = len(always_correct)
-    d3_note: str | None = None
-    d3_lift: float | None = None
-    if d3_eligible < _MIN_D3_POPULATION:
-        d3_note = (
-            f"skipped: only {d3_eligible} always-correct item(s) carry token "
-            f"data (need >= {_MIN_D3_POPULATION} for a robust IQR)"
-        )
-    else:
-        values = sorted(v for _, v in always_correct)
-        q1 = _quantile(values, 0.25)
-        q3 = _quantile(values, 0.75)
-        iqr = q3 - q1
-        median = _quantile(values, 0.5)
-        if iqr > 0:
-            # Normal path: Tukey upper fence over a cohort with real spread.
-            fence = q3 + token_iqr_k * iqr
-        else:
-            # Degenerate cohort (Q1 == Q3 -> IQR == 0): tokens are clustered on a
-            # single value, so the Tukey fence would sit exactly on that value and
-            # a genuine outlier (e.g. [100,100,100,100,1000]) would be dropped
-            # even though it is a clear token leak. Fall back to a median-multiple
-            # rule so a clear outlier over a zero-spread cohort is still caught.
-            fence = median * D3_DEGENERATE_MEDIAN_MULTIPLE
-        burn_multiples: list[float] = []
-        for example_id, mean_tokens in always_correct:
-            if mean_tokens > fence:
-                d3_flags[example_id] = EvalAuditFlag(
-                    example_id=example_id, detectors=["token-leak"]
-                )
-                if median > 0:
-                    burn_multiples.append(mean_tokens / median)
-        if burn_multiples:
-            d3_lift = sum(burn_multiples) / len(burn_multiples)
+    d3_flags, d3_eligible, d3_note, d3_lift = _token_leak_detector(
+        always_correct, token_iqr_k
+    )
 
     # --- Lift for D1 / D7 (enrichment over an independence null) -------------
     column_count = len(trials)
@@ -825,17 +932,7 @@ def compute_eval_audit(
     )
 
     # --- Merge flags across detectors ----------------------------------------
-    merged: dict[str, EvalAuditFlag] = {}
-    for source in (d1_flags, d3_flags, d7_flags):
-        for example_id, flag in source.items():
-            if example_id not in merged:
-                merged[example_id] = EvalAuditFlag(
-                    example_id=example_id, detectors=[], suggested_answer=None
-                )
-            existing = merged[example_id]
-            existing.detectors.extend(flag.detectors)
-            if flag.suggested_answer is not None and existing.suggested_answer is None:
-                existing.suggested_answer = flag.suggested_answer
+    merged = _merge_detector_flags((d1_flags, d3_flags, d7_flags))
 
     flagged = [merged[example_id] for example_id in sorted(merged)]
 

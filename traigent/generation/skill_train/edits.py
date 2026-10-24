@@ -183,6 +183,87 @@ def _invalid_record(edit: EditOp, reason: str) -> EditApplyRecord:
     )
 
 
+def _evaluate_edit(
+    current: str, edit: EditOp, protected: list[tuple[int, int]]
+) -> tuple[EditStatus, str | None, str]:
+    """Compute (status, reason, candidate text) for one edit against ``current``."""
+    if edit.op == "append":
+        return _evaluate_append(current, edit, protected)
+    if edit.op == "insert_after":
+        return _evaluate_insert_after(current, edit, protected)
+    if edit.op == "replace":
+        return _evaluate_replace(current, edit, protected)
+    if edit.op == "delete":
+        return _evaluate_delete(current, edit, protected)
+    return "skipped_invalid", "unknown edit op", current
+
+
+def _evaluate_append(
+    current: str, edit: EditOp, protected: list[tuple[int, int]]
+) -> tuple[EditStatus, str | None, str]:
+    insertion = _terminal_slow_update_start(current)
+    if insertion is None:
+        insertion = len(current)
+    if _point_inside(insertion, protected):
+        return "skipped_protected_region", None, current
+    candidate = current[:insertion] + (edit.content or "") + current[insertion:]
+    return "applied", None, candidate
+
+
+def _evaluate_insert_after(
+    current: str, edit: EditOp, protected: list[tuple[int, int]]
+) -> tuple[EditStatus, str | None, str]:
+    target = edit.target or ""
+    start = current.find(target)
+    if start == -1:
+        return "skipped_target_not_found", None, current
+    end = start + len(target)
+    if _range_intersects(start, end, protected) or _point_inside(end, protected):
+        return "skipped_protected_region", None, current
+    return "applied", None, current[:end] + (edit.content or "") + current[end:]
+
+
+def _evaluate_replace(
+    current: str, edit: EditOp, protected: list[tuple[int, int]]
+) -> tuple[EditStatus, str | None, str]:
+    target = edit.target or ""
+    start = current.find(target)
+    if start == -1:
+        return "skipped_target_not_found", None, current
+    end = start + len(target)
+    if _range_intersects(start, end, protected):
+        return "skipped_protected_region", None, current
+    return "applied", None, current[:start] + (edit.content or "") + current[end:]
+
+
+def _evaluate_delete(
+    current: str, edit: EditOp, protected: list[tuple[int, int]]
+) -> tuple[EditStatus, str | None, str]:
+    target = edit.target or ""
+    start = current.find(target)
+    if start == -1:
+        return "skipped_target_not_found", None, current
+    end = start + len(target)
+    if _range_intersects(start, end, protected):
+        return "skipped_protected_region", None, current
+    return "applied", None, current[:start] + current[end:]
+
+
+def _overflow_records(
+    edit: EditOp, ops: list[EditOp], index: int
+) -> list[EditApplyRecord]:
+    """Records for the overflowing edit and every edit after it (all invalid)."""
+    out = [_invalid_record(edit, f"MAX_DOC_CHARS {MAX_DOC_CHARS} exceeded")]
+    for remaining in ops[index + 1 :]:
+        out.append(
+            _invalid_record(
+                remaining,
+                f"stopped after MAX_DOC_CHARS {MAX_DOC_CHARS} would be exceeded",
+            )
+        )
+    return out
+
+
 def apply_edits(text: str, ops: list[EditOp]) -> tuple[str, list[EditApplyRecord]]:
     """Apply structured edits using exact first-occurrence anchors."""
 
@@ -202,73 +283,10 @@ def apply_edits(text: str, ops: list[EditOp]) -> tuple[str, list[EditApplyRecord
                 continue
 
         protected = find_protected_regions(current)
-        status: EditStatus = "applied"
-        reason: str | None = None
-        candidate = current
-
-        if edit.op == "append":
-            insertion = _terminal_slow_update_start(current)
-            if insertion is None:
-                insertion = len(current)
-            if _point_inside(insertion, protected):
-                status = "skipped_protected_region"
-            else:
-                candidate = (
-                    current[:insertion] + (edit.content or "") + current[insertion:]
-                )
-
-        elif edit.op == "insert_after":
-            target = edit.target or ""
-            start = current.find(target)
-            if start == -1:
-                status = "skipped_target_not_found"
-            else:
-                end = start + len(target)
-                if _range_intersects(start, end, protected) or _point_inside(
-                    end, protected
-                ):
-                    status = "skipped_protected_region"
-                else:
-                    candidate = current[:end] + (edit.content or "") + current[end:]
-
-        elif edit.op == "replace":
-            target = edit.target or ""
-            start = current.find(target)
-            if start == -1:
-                status = "skipped_target_not_found"
-            else:
-                end = start + len(target)
-                if _range_intersects(start, end, protected):
-                    status = "skipped_protected_region"
-                else:
-                    candidate = current[:start] + (edit.content or "") + current[end:]
-
-        elif edit.op == "delete":
-            target = edit.target or ""
-            start = current.find(target)
-            if start == -1:
-                status = "skipped_target_not_found"
-            else:
-                end = start + len(target)
-                if _range_intersects(start, end, protected):
-                    status = "skipped_protected_region"
-                else:
-                    candidate = current[:start] + current[end:]
-        else:
-            status = "skipped_invalid"
-            reason = "unknown edit op"
+        status, reason, candidate = _evaluate_edit(current, edit, protected)
 
         if status == "applied" and len(candidate) > MAX_DOC_CHARS:
-            records.append(
-                _invalid_record(edit, f"MAX_DOC_CHARS {MAX_DOC_CHARS} exceeded")
-            )
-            for remaining in ops[index + 1 :]:
-                records.append(
-                    _invalid_record(
-                        remaining,
-                        f"stopped after MAX_DOC_CHARS {MAX_DOC_CHARS} would be exceeded",
-                    )
-                )
+            records.extend(_overflow_records(edit, ops, index))
             break
 
         records.append(EditApplyRecord(edit, 0, 0, status, None, None, reason))

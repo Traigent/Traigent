@@ -263,7 +263,7 @@ class MemoryEfficientBatchProcessor:
                 yield batch_results, progress
 
             except Exception as e:
-                logger.error(f"Batch {batch_idx} processing failed: {e}")
+                logger.exception(f"Batch {batch_idx} processing failed: {e}")
                 # Create error results for the batch
                 error_results = [
                     InvocationResult(
@@ -551,7 +551,7 @@ async def process_with_retry_and_recovery(
             )
 
     except Exception as e:
-        logger.error(f"Batch processing failed after {max_retries} retries: {e}")
+        logger.exception(f"Batch processing failed after {max_retries} retries: {e}")
         # Continue to fill remaining None results with errors
 
     # Fill any remaining None results with error results

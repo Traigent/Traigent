@@ -125,7 +125,7 @@ class LocalExecutionAdapter(ExecutionAdapter):
                         )
 
                 except Exception as e:
-                    logger.error(f"Failed to execute example {idx}: {str(e)}")
+                    logger.exception(f"Failed to execute example {idx}: {str(e)}")
                     results.append(
                         {
                             "success": False,
@@ -155,7 +155,7 @@ class LocalExecutionAdapter(ExecutionAdapter):
             }
 
         except Exception as e:
-            logger.error(f"Local execution failed: {str(e)}")
+            logger.exception(f"Local execution failed: {str(e)}")
             raise
 
     async def get_execution_mode(self) -> str:
@@ -512,7 +512,7 @@ class HybridPlatformAdapter(ExecutionAdapter):
                 local_adapter.agent_builder = original_builder
 
         except Exception as e:
-            logger.error(f"Hybrid platform execution failed: {str(e)}")
+            logger.exception(f"Hybrid platform execution failed: {str(e)}")
             raise
 
     async def get_execution_mode(self) -> str:

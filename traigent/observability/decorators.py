@@ -396,12 +396,11 @@ class ObserveContext:
                             redact_output=self.redact_output,
                         )
                 except Exception:
-                    logger.error(
+                    logger.exception(
                         "Observability decorator finish failed for trace "
                         "'%s'; the traced call's own result/exception is "
                         "unaffected.",
                         self._trace_id,
-                        exc_info=True,
                     )
         finally:
             # M4: restore context on finish failure too -- without this

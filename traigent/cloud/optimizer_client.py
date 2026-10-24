@@ -231,7 +231,7 @@ class OptimizerDirectClient:
                 return cast(dict[str, Any], await response.json())
 
         except aiohttp.ClientError as e:
-            logger.error(f"Failed to get next configuration: {str(e)}")
+            logger.exception(f"Failed to get next configuration: {str(e)}")
             raise
 
     async def get_session_status(self, session_id: str) -> dict[str, Any]:
@@ -265,7 +265,7 @@ class OptimizerDirectClient:
                 return cast(dict[str, Any], await response.json())
 
         except aiohttp.ClientError as e:
-            logger.error(f"Failed to get session status: {str(e)}")
+            logger.exception(f"Failed to get session status: {str(e)}")
             raise
 
     async def flush(self) -> None:
@@ -308,7 +308,7 @@ class OptimizerDirectClient:
 
             except Exception as e:
                 transient = _is_transient_submission_error(e)
-                logger.error(
+                logger.exception(
                     "Failed to submit metrics for session %s (%s): %s",
                     session_id,
                     "will retry" if transient else "permanent, discarding",
@@ -500,7 +500,7 @@ class OptimizerDirectClient:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.error(f"Periodic flush failed: {str(e)}")
+                logger.exception(f"Periodic flush failed: {str(e)}")
                 # Continue running even if flush fails
 
     def set_batch_size(self, size: int) -> None:

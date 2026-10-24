@@ -24,35 +24,35 @@ from traigent.evaluators.base import (
     EvaluationResult,
     _accuracy_matches_after_unwrap,
     _accuracy_value_for_example,
-    coercion_log_scope,
     _example_correlation_key,
     _is_empty_expected_output,
+    coercion_log_scope,
 )
 from traigent.evaluators.metrics_tracker import (
     COST_SOURCE_MIXED,
-    CostMetrics,
-    TokenMetrics,
     COST_SOURCE_SELF_REPORTED,
     EMPTY_OUTPUT_RATE_WARNING_THRESHOLD,
+    CostMetrics,
     ExampleMetrics,
     MetricsCalculator,
     MetricsTracker,
     ResponseHandlerFactory,
+    TokenMetrics,
     compute_empty_output_rate,
     compute_truncated_output_rate,
-    enforce_user_metric_ceiling,
     enforce_unknown_cost_invariant,
+    enforce_user_metric_ceiling,
     extract_llm_metrics,
 )
 from traigent.utils.exceptions import EvaluationError
 from traigent.utils.langchain_interceptor import (
     capture_scope,
-    get_captured_response_by_key,
     drain_captured_responses,
-    seal_captured_responses,
     finish_captured_responses,
-    snapshot_captured_responses,
+    get_captured_response_by_key,
     patch_langchain_for_metadata_capture,
+    seal_captured_responses,
+    snapshot_captured_responses,
 )
 from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
 from traigent.utils.logging import get_logger
@@ -1979,7 +1979,7 @@ class LocalEvaluator(BaseEvaluator):
                     logger.warning(f"Negative {key} clamped: {val} → 0")
                 setattr(metrics.tokens, attr, max(0, val))
             except Exception as e:
-                logger.error(f"Failed to inject {key}: {e}", extra={"usage": usage})
+                logger.exception(f"Failed to inject {key}: {e}", extra={"usage": usage})
 
         # Recompute total_tokens if any token counts were injected
         if "input_tokens" in usage or "output_tokens" in usage:
@@ -1988,7 +1988,7 @@ class LocalEvaluator(BaseEvaluator):
                     metrics.tokens.input_tokens + metrics.tokens.output_tokens
                 )
             except Exception as e:
-                logger.error(f"Failed to compute total_tokens: {e}")
+                logger.exception(f"Failed to compute total_tokens: {e}")
 
         # Inject response_time_ms if provided
         if "response_time_ms" not in usage:
@@ -2001,7 +2001,7 @@ class LocalEvaluator(BaseEvaluator):
                 )
             metrics.response.response_time_ms = max(0.0, float(response_time))
         except Exception as e:
-            logger.error(f"Failed to inject response_time_ms: {e}")
+            logger.exception(f"Failed to inject response_time_ms: {e}")
 
     @staticmethod
     def _inject_cache_usage_from_meta(
@@ -2087,7 +2087,7 @@ class LocalEvaluator(BaseEvaluator):
                     }
                 )
             except Exception as e:
-                logger.error(
+                logger.exception(
                     f"Failed to inject call breakdown entry: {e}", extra={"call": call}
                 )
 
@@ -2198,7 +2198,7 @@ class LocalEvaluator(BaseEvaluator):
 
                 _reconcile_reported_cost_with_tokens(metrics, model_name)
         except Exception as e:
-            logger.error(f"Failed to inject total_cost: {e}")
+            logger.exception(f"Failed to inject total_cost: {e}")
 
         # Recompute derived metrics
         try:
@@ -2207,7 +2207,7 @@ class LocalEvaluator(BaseEvaluator):
             else:
                 MetricsCalculator.calculate_tokens_per_second(metrics)
         except Exception as e:
-            logger.error(f"Failed to recompute tokens_per_second: {e}")
+            logger.exception(f"Failed to recompute tokens_per_second: {e}")
 
         logger.debug(
             f"Injected cost=${metrics.cost.total_cost:.4f}, "

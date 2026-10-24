@@ -873,7 +873,7 @@ class AlertManager:
             try:
                 callback(anomaly)
             except Exception as e:
-                logger.error(f"Notification callback failed: {e}")
+                logger.exception(f"Notification callback failed: {e}")
 
         logger.info(
             f"Alert processed: {anomaly.anomaly_type.value} for {anomaly.metric_name}"

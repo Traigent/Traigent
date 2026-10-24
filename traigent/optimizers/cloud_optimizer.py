@@ -184,7 +184,7 @@ class CloudOptimizer(BaseOptimizer):
             return session
 
         except Exception as e:
-            logger.error(f"Failed to initialize remote session: {e}")
+            logger.exception(f"Failed to initialize remote session: {e}")
             self._handle_remote_failure("session_creation", e)
 
             if not self.fallback_optimizer:
@@ -275,7 +275,7 @@ class CloudOptimizer(BaseOptimizer):
                 return cast(dict[str, Any], config)
 
             except Exception as e:
-                logger.error(f"Fallback suggestion also failed: {e}")
+                logger.exception(f"Fallback suggestion also failed: {e}")
                 raise OptimizationError(
                     f"Both remote and fallback suggestions failed: {e}"
                 ) from e
@@ -370,7 +370,7 @@ class CloudOptimizer(BaseOptimizer):
                 return suggestion
 
             except Exception as e:
-                logger.error(f"Fallback smart suggestion also failed: {e}")
+                logger.exception(f"Fallback smart suggestion also failed: {e}")
                 raise OptimizationError(
                     f"Both remote and fallback smart suggestions failed: {e}"
                 ) from e
@@ -559,7 +559,7 @@ class CloudOptimizer(BaseOptimizer):
                 return cast(list[dict[str, Any]], candidates)
 
             except Exception as e:
-                logger.error(f"Fallback candidate generation also failed: {e}")
+                logger.exception(f"Fallback candidate generation also failed: {e}")
                 raise OptimizationError(
                     f"Both remote and fallback candidate generation failed: {e}"
                 ) from e

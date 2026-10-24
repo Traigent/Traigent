@@ -200,7 +200,7 @@ class AgentLifecycleManager:
                 logger.debug("Heartbeat loop cancelled")
                 raise
             except Exception as e:
-                logger.error(f"Error in heartbeat loop: {e}")
+                logger.exception(f"Error in heartbeat loop: {e}")
                 # Continue running despite errors
                 await asyncio.sleep(1.0)
 

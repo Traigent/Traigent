@@ -353,12 +353,12 @@ class InteractiveOptimizer(BaseOptimizer):
 
             if isinstance(e, SessionQuotaRefusedError):
                 # Typed, content-free refusal: status + closed code only (#2550).
-                logger.error(
+                logger.exception(
                     "Failed to initialize session: plan quota refused "
                     f"(status={e.status_code}, error_code={e.error_code})"
                 )
                 raise
-            logger.error(f"Failed to initialize session: {e}")
+            logger.exception(f"Failed to initialize session: {e}")
             raise OptimizationError(f"Session initialization failed: {e}") from None
 
     async def get_next_suggestion(
@@ -396,7 +396,7 @@ class InteractiveOptimizer(BaseOptimizer):
                 self.remote_service.get_next_trial(request),
             )
         except Exception as e:
-            logger.error(f"Failed to get next suggestion: {e}")
+            logger.exception(f"Failed to get next suggestion: {e}")
             raise OptimizationError(f"Failed to get suggestion: {e}") from e
 
         # Update local session status
@@ -541,7 +541,7 @@ class InteractiveOptimizer(BaseOptimizer):
             )
 
         except Exception as e:
-            logger.error(f"Failed to report results: {e}")
+            logger.exception(f"Failed to report results: {e}")
             raise OptimizationError(f"Failed to report results: {e}") from None
 
     async def get_optimization_status(self) -> dict[str, Any]:
@@ -620,7 +620,7 @@ class InteractiveOptimizer(BaseOptimizer):
             return response
 
         except Exception as e:
-            logger.error(f"Failed to finalize session: {e}")
+            logger.exception(f"Failed to finalize session: {e}")
             raise OptimizationError(f"Failed to finalize: {e}") from None
 
     # BaseOptimizer interface methods (for compatibility)

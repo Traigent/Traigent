@@ -12,11 +12,11 @@ from rich.console import Console
 from traigent.api.types import TrialResult, TrialStatus
 from traigent.cli.validation_types import OptimizedFunction, ValidationResult
 from traigent.config.types import resolve_execution_policy
+from traigent.core.objective_directions import resolve_objective_orientation
 from traigent.evaluators.local import LocalEvaluator
 from traigent.utils.env_config import is_mock_llm
 from traigent.utils.logging import get_logger
 from traigent.utils.multi_objective import ParetoFrontCalculator, ParetoPoint
-from traigent.core.objective_directions import resolve_objective_orientation
 
 logger = get_logger(__name__)
 console = Console()
@@ -96,7 +96,7 @@ class OptimizationValidator:
             )
 
         except Exception as e:
-            logger.error(f"Validation failed for {func_info.name}: {e}")
+            logger.exception(f"Validation failed for {func_info.name}: {e}")
             return ValidationResult(
                 function_name=func_info.name,
                 baseline_metrics={},
@@ -200,7 +200,7 @@ class OptimizationValidator:
             return optimized_metrics, optimized_config
 
         except Exception as e:
-            logger.error(f"Optimization failed for {func_info.name}: {e}")
+            logger.exception(f"Optimization failed for {func_info.name}: {e}")
             raise RuntimeError(f"Optimization failed: {e}") from e
 
     def _create_evaluator(

@@ -591,7 +591,7 @@ class DatasetConverter:
             )
 
         except Exception as e:
-            logger.error(f"Failed to upload dataset to backend: {e}")
+            logger.exception(f"Failed to upload dataset to backend: {e}")
             return ConversionResult(
                 success=False,
                 converted_count=0,
@@ -659,7 +659,7 @@ class DatasetConverter:
             return dataset
 
         except Exception as e:
-            logger.error(f"Failed to convert backend example set: {e}")
+            logger.exception(f"Failed to convert backend example set: {e}")
             raise
 
     def backend_examples_to_jsonl(

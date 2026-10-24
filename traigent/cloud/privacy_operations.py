@@ -225,7 +225,7 @@ class PrivacyOperations:
             return session_id, experiment_id, experiment_run_id
 
         except Exception as e:
-            logger.error(f"Failed to create privacy optimization session: {e}")
+            logger.exception(f"Failed to create privacy optimization session: {e}")
             raise CloudServiceError(f"Failed to create session: {e}") from None
 
     async def get_next_privacy_trial(
@@ -317,7 +317,7 @@ class PrivacyOperations:
             # "no suggestion" sentinel. Anything that should be visible at
             # the public boundary should have a typed CloudServiceError
             # subclass and propagate via the branches above.
-            logger.error(f"Failed to get next trial for session {session_id}: {e}")
+            logger.exception(f"Failed to get next trial for session {session_id}: {e}")
             return None
 
     async def submit_privacy_trial_results(
@@ -412,5 +412,5 @@ class PrivacyOperations:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to submit trial results: {e}")
+            logger.exception(f"Failed to submit trial results: {e}")
             return False

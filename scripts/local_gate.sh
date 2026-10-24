@@ -198,17 +198,17 @@ fi
 # staged/unstaged/untracked, so an about-to-be-pushed edit is covered.
 changed_files() {
   local pathspec=("$@")
-  { if git rev-parse --verify --quiet "$base_ref" >/dev/null; then
-      mb="$(git merge-base "$base_ref" HEAD 2>/dev/null || true)"
-      if [[ -n "$mb" ]]; then
-        git diff --name-only --diff-filter=ACMRT "${mb}...HEAD" -- "${pathspec[@]}"
-      else
-        git diff --name-only --diff-filter=ACMRT "$base_ref" HEAD -- "${pathspec[@]}"
-      fi
-    fi
-    git diff --name-only --diff-filter=ACMRT HEAD -- "${pathspec[@]}"
-    git ls-files --others --exclude-standard -- "${pathspec[@]}"
-  } | sort -u
+  local out mb all=""
+  if git rev-parse --verify --quiet "$base_ref" >/dev/null; then
+    mb="$(git merge-base "$base_ref" HEAD 2>/dev/null)" || { echo "git merge-base $base_ref HEAD failed" >&2; return 1; }
+    out="$(git diff --name-only --diff-filter=ACMRT "${mb}...HEAD" -- "${pathspec[@]}")" || { echo "git diff vs merge-base failed" >&2; return 1; }
+    all+="$out"$'\n'
+  fi
+  out="$(git diff --name-only --diff-filter=ACMRT HEAD -- "${pathspec[@]}")" || { echo "git diff HEAD failed" >&2; return 1; }
+  all+="$out"$'\n'
+  out="$(git ls-files --others --exclude-standard -- "${pathspec[@]}")" || { echo "git ls-files failed" >&2; return 1; }
+  all+="$out"
+  printf '%s\n' "$all" | sort -u
 }
 
 # ── 1. ruff (changed-file format-check + lint) ────────────────────────────
@@ -285,6 +285,69 @@ fi
 section "spine preflight (spine-trail present)"
 if ! python3 scripts/ci/spine_preflight.py; then FAIL=1; fi
 
+# ── Sonar coverage (changed-scope) ────────────────────────────────────────
+# The scanner only reads sonar.python.coverage.reportPaths (coverage.xml); it
+# never runs tests. Before this step existed the main-bound gate scanned with
+# no report on disk, so the server recorded 0% coverage / 0% new-code coverage.
+# Policy (docs/ci-policy.md): never run the full suite here -- measure only the
+# tests tied to the diff: changed test files plus unit tests that mention a
+# changed traigent module. New-code coverage is then real for the changed
+# lines; overall coverage on this analysis is partial by construction.
+sonar_prepare_coverage() {
+  rm -f coverage.xml
+  local f mod rc out sel_rc g_rc
+  local -a tests=() mods=()
+  # Capture selector output + status explicitly: `mapfile < <(...)` would hide a
+  # selector failure and look like "nothing selected".
+  out="$(changed_files 'tests/*.py')"; sel_rc=$?
+  if [[ "$sel_rc" -ne 0 ]]; then
+    echo "  ❌ changed-test selector failed (rc=$sel_rc): cannot decide which tests to measure"; FAIL=1; return 0
+  fi
+  mapfile -t tests < <(printf '%s\n' "$out" | grep -E '(^|/)test_[^/]*\.py$' | while read -r f; do [[ -f "$f" ]] && echo "$f"; done)
+  out="$(changed_files 'traigent/*.py')"; sel_rc=$?
+  if [[ "$sel_rc" -ne 0 ]]; then
+    echo "  ❌ changed-module selector failed (rc=$sel_rc): cannot decide which tests to measure"; FAIL=1; return 0
+  fi
+  mapfile -t mods < <(printf '%s\n' "$out" | while read -r f; do [[ -n "$f" && -f "$f" ]] && echo "$f"; done)
+  for f in "${mods[@]}"; do
+    mod="${f%.py}"; mod="${mod//\//.}"; mod="${mod%.__init__}"
+    out="$(grep -rlF --include='test_*.py' "$mod" tests/unit 2>/dev/null)"; g_rc=$?
+    if [[ "$g_rc" -gt 1 ]]; then
+      echo "  ❌ related-test search failed for $mod (grep rc=$g_rc)"; FAIL=1; return 0
+    fi
+    while IFS= read -r t; do [[ -n "$t" ]] && tests+=("$t"); done < <(printf '%s\n' "$out" | head -10)
+  done
+  mapfile -t tests < <(printf '%s\n' "${tests[@]}" | sed '/^$/d' | sort -u | head -60)
+  if [[ "${#tests[@]}" -eq 0 ]]; then
+    echo "  ⚠️  no changed tests / tests importing changed modules: coverage NOT MEASURED for this scan"
+    return 0
+  fi
+  if [[ "${#PYTEST[@]}" -eq 0 ]]; then
+    echo "  ⚠️  pytest unavailable: coverage NOT MEASURED for this scan"
+    return 0
+  fi
+  # relative_files => coverage.xml paths resolve inside the scanner container too.
+  local rcfile; rcfile="$(mktemp "${TMPDIR:-/tmp}/lg-covrc.XXXXXX")"
+  printf '[run]\nrelative_files = True\nsource = traigent\nomit =\n    */tests/*\n    */test_*\n    */demos/*\n    */docs/*\n' >"$rcfile"
+  echo "  • coverage for ${#tests[@]} test file(s) tied to the diff (not the full suite)"
+  rc=0
+  TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true PYTHONPATH=. \
+    "${PYTEST[@]}" -p no:asyncio-cooperative -q --tb=short -n 0 \
+    --cov=traigent --cov-config="$rcfile" --cov-report=xml:coverage.xml "${tests[@]}" || rc=$?
+  rm -f "$rcfile"
+  if [[ ! -s coverage.xml ]]; then
+    echo "  ⚠️  coverage.xml was not produced (pytest rc=$rc): coverage NOT MEASURED for this scan"
+  fi
+  # pyproject sets no coverage fail-under, so a nonzero pytest rc is a real
+  # test failure (or collection error) in the selected tests: fail the gate.
+  if [[ "$rc" -ne 0 ]]; then
+    echo "  ❌ selected tests FAILED (pytest rc=$rc): fix them; coverage.xml (if any) is PARTIAL"
+    FAIL=1
+  elif [[ -s coverage.xml ]]; then
+    echo "  ✅ coverage.xml written ($(wc -c <coverage.xml) bytes)"
+  fi
+}
+
 # ── 4. SonarQube quality gate (main-bound only) ──────────────────────────
 if [[ "$MAIN_BOUND" == "1" ]] && ! skip sonar; then
   section "SonarQube quality gate (main-bound: $BRANCH)"
@@ -300,6 +363,7 @@ if [[ "$MAIN_BOUND" == "1" ]] && ! skip sonar; then
     FAIL=1
   else
     host="${SONAR_HOST_URL:-http://localhost:9000}"
+    sonar_prepare_coverage
     echo "  🔎 scanning against $host with qualitygate.wait=true …"
     if command -v docker >/dev/null 2>&1; then
       net=""; [[ "$host" == *localhost* || "$host" == *127.0.0.1* ]] && net="--network=host"
