@@ -3735,7 +3735,17 @@ class OptimizationOrchestrator:
         content-less mode, so the call keeps its exact shape for every other run.
         """
         digest = getattr(self, "evaluator_code_digest", None)
-        if not digest or getattr(self, "_content_less", None):
+        if not digest:
+            return {}
+        from traigent.cloud import content_less as _content_less
+
+        options = getattr(self, "_content_less", None)
+        # Gate on the RESOLVED mode (explicit flag, else env), never on the mere
+        # presence of an options object: content_less=False or an
+        # environment-only object still means a standard run.
+        if _content_less.is_enabled(
+            options if isinstance(options, _content_less.ContentLessOptions) else None
+        ):
             return {}
         if privacy_filter and getattr(self.traigent_config, "privacy_enabled", False):
             return {}

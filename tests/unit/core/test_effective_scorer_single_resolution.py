@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from traigent.api.types import ExampleResult, OptimizationResult, OptimizationStatus
+from traigent.cloud.content_less import ContentLessOptions
 from traigent.config.types import (
     ExecutionIntent,
     ExecutionMode,
@@ -267,4 +268,62 @@ def test_resolver_precedence_and_identity_helper_reads_no_instance_state() -> No
     assert _function()._resolve_effective_custom_evaluator(None) is None
     assert "self.custom_evaluator" not in inspect.getsource(
         effective_evaluator_code_identity
+    )
+
+
+# ------------------------------------- content-less gate is the RESOLVED mode
+
+
+def _orchestrator_stub(options):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        evaluator_code_digest="sha256:" + "cd" * 32,
+        _content_less=options,
+        traigent_config=SimpleNamespace(privacy_enabled=False),
+    )
+
+
+@pytest.mark.parametrize(
+    "options,expected_sent",
+    [
+        (None, True),
+        (ContentLessOptions(enabled=False), True),
+        (ContentLessOptions(environment="staging"), True),
+        (ContentLessOptions(enabled=True), False),
+    ],
+)
+def test_orchestrator_gate_follows_resolved_content_less_mode(
+    options, expected_sent, monkeypatch
+) -> None:
+    from traigent.core.orchestrator import OptimizationOrchestrator
+
+    monkeypatch.delenv("TRAIGENT_CONTENT_LESS", raising=False)
+    sent = OptimizationOrchestrator._session_code_digest_kwargs(
+        _orchestrator_stub(options)
+    )
+    assert bool(sent) is expected_sent
+
+
+def test_orchestrator_gate_honours_env_opt_in(monkeypatch) -> None:
+    from traigent.core.orchestrator import OptimizationOrchestrator
+
+    monkeypatch.setenv("TRAIGENT_CONTENT_LESS", "1")
+    assert (
+        OptimizationOrchestrator._session_code_digest_kwargs(_orchestrator_stub(None))
+        == {}
+    )
+
+
+def test_orchestrator_privacy_filter_withholds_the_digest(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from traigent.core.orchestrator import OptimizationOrchestrator
+
+    monkeypatch.delenv("TRAIGENT_CONTENT_LESS", raising=False)
+    stub = _orchestrator_stub(None)
+    stub.traigent_config = SimpleNamespace(privacy_enabled=True)
+    assert (
+        OptimizationOrchestrator._session_code_digest_kwargs(stub, privacy_filter=True)
+        == {}
     )

@@ -424,6 +424,8 @@ class DummyPrivacyServer:
                 "metadata": request_dict.get("dataset_metadata", {}),
                 "content_identity_sent": request_dict.get("content_identity")
                 is not None,
+                "evaluator_code_digest_sent": request_dict.get("evaluator_code_digest")
+                is not None,
             }
         )
 

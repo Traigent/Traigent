@@ -34,7 +34,7 @@ from traigent.utils.artifact_fingerprints import (
 CANARY_COMMENT = "cnryComment_Kq4V-8nTz2Lm"
 CANARY_LITERAL = "cnryLiteral_Bw7R-1xYd5Hc"
 CANARY_DOC = "cnryDocstring_Fp9S-3gJu6Ne"
-CANARY_IDENT = "cnryIdent_Zt2M-6aVq8Rb"
+CANARY_IDENT = "cnryIdent_Zt2M_6aVq8Rb"
 CANARY_ALIAS = "cnryAlias_Hx5D-9wKc1Pf"
 CANARY_ROW = "cnryRow_Qe3N-7yLs4Vj"
 CANARY_OBJECTIVE = "cnryObjective_Ua6T-2dMo9Gz"  # pragma: allowlist secret
@@ -109,6 +109,14 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path))
+
+
+def test_canaries_are_really_in_the_scorer_source() -> None:
+    import inspect
+
+    source = inspect.getsource(scorer)
+    for token in (CANARY_COMMENT, CANARY_LITERAL, CANARY_DOC, CANARY_IDENT):
+        assert token in source
 
 
 def _digest() -> str:

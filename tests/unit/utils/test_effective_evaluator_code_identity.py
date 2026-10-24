@@ -6,6 +6,7 @@ Separate from legacy fp1 (which must stay byte-identical, pinned by a golden).
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 
 from traigent.utils import artifact_fingerprints as af
@@ -207,3 +208,54 @@ def test_helper_reads_no_instance_state() -> None:
     source = inspect.getsource(af.effective_evaluator_code_identity)
     assert "self." not in source
     assert "custom_evaluator" in source  # parameter only
+
+
+def _hand_digest(kind: str, members: list[list[str]]) -> str:
+    """Independent ecd1 preimage, written out literally from the spec."""
+    preimage = json.dumps(
+        {"v": "ecd1", "kind": kind, "members": members},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(preimage).hexdigest()
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def test_ecd1_custom_vector_matches_hand_built_preimage() -> None:
+    import inspect
+
+    expected = _hand_digest("custom", [["", _sha(inspect.getsource(custom_one))]])
+    assert _digest(custom_evaluator=custom_one, objectives=[]) == expected
+
+
+def test_ecd1_metric_map_vector_matches_hand_built_preimage() -> None:
+    import inspect
+
+    expected = _hand_digest(
+        "metric_map",
+        [
+            ["accuracy", _sha(inspect.getsource(score_a))],
+            ["latency", _sha(inspect.getsource(score_b))],
+        ],
+    )
+    got = _digest(
+        metric_functions={"latency": score_b, "accuracy": score_a},
+        objectives=["accuracy", "latency"],
+    )
+    assert got == expected
+
+
+def test_ecd1_fixed_literal_vector() -> None:
+    """A pinned literal: any change to the preimage form changes this."""
+    members = [["accuracy", "11" * 32]]
+    assert _hand_digest("metric_map", members) == (
+        "sha256:"
+        + hashlib.sha256(
+            b'{"kind":"metric_map","members":[["accuracy","'
+            + b"11" * 32
+            + b'"]],"v":"ecd1"}'
+        ).hexdigest()
+    )

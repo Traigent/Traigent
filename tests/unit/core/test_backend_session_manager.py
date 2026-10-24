@@ -19,6 +19,7 @@ from traigent.api.types import (
     TrialResult,
     TrialStatus,
 )
+from traigent.cloud.content_less import ContentLessOptions
 from traigent.cloud.session_types import (
     SessionCreationFailureReason,
     SessionCreationResult,
@@ -4645,7 +4646,26 @@ class TestEvaluatorCodeDigestForwarding:
             backend_session_manager,
             mock_dataset,
             evaluator_code_digest=self.DIGEST,
-            content_less=object(),
+            content_less=ContentLessOptions(enabled=True),
         )
         kwargs = mock_backend_client.create_session.call_args[1]
         assert "evaluator_code_digest" not in kwargs
+
+    @pytest.mark.parametrize(
+        "options",
+        [
+            ContentLessOptions(enabled=False),
+            ContentLessOptions(environment="staging"),
+        ],
+    )
+    def test_sent_when_options_object_does_not_enable_content_less(
+        self, backend_session_manager, mock_dataset, mock_backend_client, options
+    ):
+        self._create(
+            backend_session_manager,
+            mock_dataset,
+            evaluator_code_digest=self.DIGEST,
+            content_less=options,
+        )
+        kwargs = mock_backend_client.create_session.call_args[1]
+        assert kwargs["evaluator_code_digest"] == self.DIGEST

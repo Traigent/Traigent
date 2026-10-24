@@ -1833,7 +1833,13 @@ class BackendSessionManager:
             identity_kwargs = self._content_identity_kwargs(content_identity)
             if content_less is not None:
                 identity_kwargs["content_less"] = content_less
-            if evaluator_code_digest and content_less is None:
+            from traigent.cloud import content_less as _content_less
+
+            if evaluator_code_digest and not _content_less.is_enabled(
+                content_less
+                if isinstance(content_less, _content_less.ContentLessOptions)
+                else None
+            ):
                 if not getattr(self._traigent_config, "privacy_enabled", False):
                     identity_kwargs["evaluator_code_digest"] = evaluator_code_digest
             raw_result = self._backend_client.create_session(

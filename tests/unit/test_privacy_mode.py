@@ -208,6 +208,7 @@ class TestPrivacyCompliance:
             if req["request_type"] == "SessionCreationRequest":
                 assert set(req["fields"]).issubset(allowed_fields)
                 assert req["content_identity_sent"] is False
+                assert req["evaluator_code_digest_sent"] is False
 
     @pytest.mark.asyncio
     async def test_only_indices_in_suggestions(self, privacy_optimizer, dummy_server):
