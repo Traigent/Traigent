@@ -47,7 +47,7 @@ test collection (see the Development section of the [README](README.md)).
 make test-unit          # unit tests (parallel)
 make test               # full test suite (parallel)
 make lint               # ruff, mypy, bandit
-make format             # black and isort
+make format             # ruff format and isort
 make format-ruff        # ruff format and autofix (matches the CI preflight check)
 make local-gate         # run the local pre-push checks before pushing
 ```
@@ -58,7 +58,7 @@ the broader suite on every pull request.
 ## Code style
 
 Python code is formatted and linted with the tools behind `make format`,
-`make format-ruff` and `make lint` (black, isort, ruff, mypy and bandit). Run
+`make format-ruff` and `make lint` (ruff format, isort, ruff, mypy and bandit). Run
 them before pushing; the local gate and continuous integration check the same
 rules, and configuration lives in `pyproject.toml`.
 

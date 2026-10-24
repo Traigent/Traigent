@@ -950,8 +950,9 @@ class TextDocument(Choices[str]):
         """Create a text-document parameter seeded with its initial text.
 
         Args:
-            initial_text: The starting document text; it is the only choice and
-                the default until training proposes alternatives.
+            initial_text: The single starting document value; it is the only
+                choice until training proposes alternatives. It does not set
+                ``default``, which stays ``None``.
             name: Optional parameter name.
         """
         super().__init__((initial_text,), name=name)

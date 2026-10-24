@@ -417,8 +417,9 @@ class ExecutionOptions(BaseModel):
         """Read-only view of the captured legacy execution option values.
 
         Returns:
-            A copy of the legacy option values captured at construction time;
-            mutating it does not affect this object.
+            A shallow copy of the legacy option values captured at construction
+            time. Adding, removing or replacing top-level entries does not affect
+            this object; mutable values inside the copy remain shared with it.
         """
         return dict(self._legacy_options)
 
@@ -1565,7 +1566,8 @@ def _build_settings_recorder(
             None. The shared settings and source maps are updated in place.
 
         Raises:
-            TypeError: If ``key`` is a removed parameter.
+            TypeError: If ``key`` is a removed parameter, or if ``key`` was
+                already supplied from another source with a different value.
         """
         if key in _REMOVED_PARAMETERS:
             raise TypeError(_removed_parameter_message(key))
