@@ -1050,6 +1050,49 @@ class TestBuildTrialErrorResult:
 # =============================================================================
 
 
+class TestTraceStatusPerOutcome:
+    """The tracing span records the matching status for each trial outcome."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("raised", "expected_status", "expected_trial_status"),
+        [
+            (TrialPrunedError("pruned early", step=2), "pruned", TrialStatus.PRUNED),
+            (RuntimeError("boom"), "failed", TrialStatus.FAILED),
+        ],
+    )
+    async def test_error_outcome_records_matching_span_status(
+        self, raised, expected_status, expected_trial_status
+    ):
+        orchestrator = MockOrchestrator()
+        lifecycle = TrialLifecycle(orchestrator)
+
+        async def mock_func(input_data):
+            return "result"
+
+        with (
+            patch.object(
+                orchestrator.evaluator,
+                "evaluate",
+                new_callable=AsyncMock,
+                side_effect=raised,
+            ),
+            patch("traigent.core.trial_lifecycle.record_trial_result") as record,
+        ):
+            result = await lifecycle.run_trial(
+                func=mock_func,
+                config={"temp": 0.5},
+                dataset=create_mock_dataset(),
+                trial_number=0,
+                session_id=None,
+            )
+
+        assert result.status == expected_trial_status
+        assert record.call_count == 1
+        assert record.call_args.kwargs["status"] == expected_status
+        assert record.call_args.kwargs["error"] == str(raised)
+
+
 class TestRunTrial:
     """Test run_trial method (integration)."""
 

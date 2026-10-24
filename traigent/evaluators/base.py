@@ -2499,6 +2499,53 @@ class BaseEvaluator(ABC):
     # Common evaluation methods to reduce duplication in subclasses
 
     @staticmethod
+    def _first_invalid_user_metric(
+        candidate: Mapping[Any, Any],
+    ) -> tuple[Any, Any, bool] | None:
+        """Return ``(key, value, key_invalid)`` for the first entry breaking the wire rule.
+
+        ``key_invalid`` is True when the key is not a wire-valid metric name, False
+        when the key is fine but the value is not a finite non-bool number.
+        """
+        for key, value in candidate.items():
+            if not isinstance(key, str) or not USER_METRIC_KEY_PATTERN.match(key):
+                return key, value, True
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+            ):
+                return key, value, False
+        return None
+
+    @staticmethod
+    def _warn_rejected_user_metric(
+        raw: Any, key: Any, value: Any, key_invalid: bool
+    ) -> None:
+        """Log the single near-miss warning for a rejected ``(output, metrics)`` tuple."""
+        if key_invalid:
+            logger.warning(
+                "Return value %r looks like an (output, metrics) tuple but "
+                "key %r is not a wire-valid metric name (must match "
+                "%s, ASCII); the tuple was NOT treated as (output, metrics) "
+                "and is passed through as raw output.",
+                raw,
+                key,
+                USER_METRIC_KEY_PATTERN.pattern,
+            )
+            return
+        logger.warning(
+            "Return value %r looks like an (output, metrics) tuple but "
+            "value %r for key %r is not a finite number (got %s); the "
+            "tuple was NOT treated as (output, metrics) and is passed "
+            "through as raw output.",
+            raw,
+            value,
+            key,
+            type(value).__name__,
+        )
+
+    @staticmethod
     def _unpack_user_metrics(
         raw: Any, *, warn: bool = True
     ) -> tuple[Any, dict[str, float] | None]:
@@ -2557,36 +2604,11 @@ class BaseEvaluator(ABC):
         # back-compat — but that silently poisons the user's accuracy (the raw
         # tuple becomes the output) with zero signal. Surface exactly ONE warning
         # naming the FIRST offender and stating why; behavior is unchanged.
-        for key, value in candidate.items():
-            if not isinstance(key, str) or not USER_METRIC_KEY_PATTERN.match(key):
-                if warn:
-                    logger.warning(
-                        "Return value %r looks like an (output, metrics) tuple but "
-                        "key %r is not a wire-valid metric name (must match "
-                        "%s, ASCII); the tuple was NOT treated as (output, metrics) "
-                        "and is passed through as raw output.",
-                        raw,
-                        key,
-                        USER_METRIC_KEY_PATTERN.pattern,
-                    )
-                return raw, None
-            if (
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or not math.isfinite(float(value))
-            ):
-                if warn:
-                    logger.warning(
-                        "Return value %r looks like an (output, metrics) tuple but "
-                        "value %r for key %r is not a finite number (got %s); the "
-                        "tuple was NOT treated as (output, metrics) and is passed "
-                        "through as raw output.",
-                        raw,
-                        value,
-                        key,
-                        type(value).__name__,
-                    )
-                return raw, None
+        violation = BaseEvaluator._first_invalid_user_metric(candidate)
+        if violation is not None:
+            if warn:
+                BaseEvaluator._warn_rejected_user_metric(raw, *violation)
+            return raw, None
         user_metrics = {key: float(value) for key, value in candidate.items()}
         return output, user_metrics
 
@@ -3149,33 +3171,20 @@ class BaseEvaluator(ABC):
                     exhausted = True
                     break
 
-                if detailed:
-                    result = await self._evaluate_single_detailed(
-                        func,
-                        config,
-                        example,
-                        i,
-                        dataset,
-                        executor=None,
-                        progress_callback=progress_callback,
-                        sample_lease=sample_lease,
-                        execution_budget_lease=execution_budget_lease,
-                    )
-                    example_results.append(result)
-                    outputs.append(result.actual_output)
-                    errors.append(result.error_message)
-                else:
-                    output, error = await self._evaluate_single_non_detailed(
-                        func,
-                        config,
-                        example,
-                        i,
-                        progress_callback,
-                        sample_lease,
-                        execution_budget_lease,
-                    )
-                    outputs.append(output)
-                    errors.append(error)
+                await self._evaluate_sequential_example(
+                    func,
+                    config,
+                    example,
+                    i,
+                    dataset,
+                    sample_lease,
+                    detailed,
+                    progress_callback,
+                    execution_budget_lease,
+                    outputs,
+                    errors,
+                    example_results,
+                )
 
                 consumed += 1
         except TrialPrunedError as e:
@@ -3187,6 +3196,50 @@ class BaseEvaluator(ABC):
             raise
 
         return outputs, errors, example_results, consumed, exhausted
+
+    async def _evaluate_sequential_example(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        example: EvaluationExample,
+        index: int,
+        dataset: Dataset,
+        sample_lease: SampleBudgetLease | None,
+        detailed: bool,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+        execution_budget_lease: SampleBudgetLease | None,
+        outputs: list[Any],
+        errors: list[str | None],
+        example_results: list[ExampleResult | None],
+    ) -> None:
+        """Evaluate one example of the sequential path and record its outcome."""
+        if detailed:
+            result = await self._evaluate_single_detailed(
+                func,
+                config,
+                example,
+                index,
+                dataset,
+                executor=None,
+                progress_callback=progress_callback,
+                sample_lease=sample_lease,
+                execution_budget_lease=execution_budget_lease,
+            )
+            example_results.append(result)
+            outputs.append(result.actual_output)
+            errors.append(result.error_message)
+        else:
+            output, error = await self._evaluate_single_non_detailed(
+                func,
+                config,
+                example,
+                index,
+                progress_callback,
+                sample_lease,
+                execution_budget_lease,
+            )
+            outputs.append(output)
+            errors.append(error)
 
     def _create_failed_example_result(
         self,
