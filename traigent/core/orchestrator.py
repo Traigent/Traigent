@@ -5916,50 +5916,45 @@ class OptimizationOrchestrator:
         """
         self._resume_source = prior
 
-    def _apply_resume(self, dataset: Dataset | None = None) -> int:
-        """Seed this run with reusable trials from the resume source (#1697).
+    @staticmethod
+    def _resume_dataset_example_ids(dataset: Dataset | None) -> list[str] | None:
+        """Stable example ids of ``dataset`` for resume matching (None when empty)."""
+        if dataset is None or not dataset.examples:
+            return None
+        from traigent.identity.examples import result_identity_fields
 
-        Reused trials count toward ``max_trials`` and the result, are marked in
-        trial metadata, and are told to the optimizer so it does not propose the
-        same configuration again. Their cost is reported in the result totals but
-        is NOT charged to this run's cost enforcer (this run did not spend it).
-        Unfinished or unknown-status prior trials are neither reused nor retried.
-        Returns the number of trials reused.
-        """
-        prior = getattr(self, "_resume_source", None)
-        if prior is None:
-            return 0
-        from traigent.core.resume import (
-            plan_resume,
-            warn_if_not_reusable,
+        return [
+            str(result_identity_fields(ex, f"example_{i}")["example_id"])
+            for i, ex in enumerate(dataset.examples)
+        ]
+
+    def _exclude_blocked_resume_configs(self, blocked_configs: Any) -> None:
+        """Tell the optimizer never to retry in-flight prior trials (unknown outcome)."""
+        mark = getattr(self.optimizer, "mark_config_evaluated", None)
+        if not callable(mark):
+            return
+        for config in blocked_configs:
+            try:
+                mark(config)
+            except (ValueError, TypeError, KeyError, AttributeError):
+                logger.warning("resume_from: optimizer could not exclude a config")
+
+    @staticmethod
+    def _baseline_already_covered(
+        baseline: dict[str, Any], reusable: Any, blocked_configs: Any
+    ) -> bool:
+        """True when the baseline config is among reused or blocked prior configs."""
+        return any(
+            all(c.get(k) == v for k, v in baseline.items())
+            for c in [t.config for t in reusable] + list(blocked_configs)
         )
 
-        example_ids: list[str] | None = None
-        if dataset is not None and dataset.examples:
-            from traigent.identity.examples import result_identity_fields
-
-            example_ids = [
-                str(result_identity_fields(ex, f"example_{i}")["example_id"])
-                for i, ex in enumerate(dataset.examples)
-            ]
-        space_keys = tuple(getattr(self.optimizer, "config_space", {}) or {})
-        plan = plan_resume(
-            prior,
-            self.artifact_fingerprints,
-            max_trials=self.max_trials,
-            dataset_example_ids=example_ids,
-            config_keys=space_keys,
-        )
-        self._resume_prefill = plan.prefill
-        if plan.prefill is not None:
-            from traigent.evaluators.base import bind_resume_prefill
-
-            self._resume_prefill_token = bind_resume_prefill(plan.prefill)
-        warn_if_not_reusable(plan)
+    def _adopt_reusable_trials(self, reusable: Any) -> tuple[float, int]:
+        """Adopt prior trials into this run; return (known reused cost, unknown-cost count)."""
         reused_cost = 0.0
         unknown_cost_trials = 0
         mark_reused = getattr(self.optimizer, "mark_config_evaluated", None)
-        for trial in plan.reusable:
+        for trial in reusable:
             self._trials.append(trial)
             if is_cost_unmeasured(trial.metrics):
                 unknown_cost_trials += 1
@@ -5979,18 +5974,46 @@ class OptimizationOrchestrator:
                         "configuration (%s)",
                         type(exc).__name__,
                     )
-        mark = getattr(self.optimizer, "mark_config_evaluated", None)
-        if callable(mark):
-            # In-flight prior trials have an unknown outcome: never retry them.
-            for config in plan.blocked_configs:
-                try:
-                    mark(config)
-                except (ValueError, TypeError, KeyError, AttributeError):
-                    logger.warning("resume_from: optimizer could not exclude a config")
+        return reused_cost, unknown_cost_trials
+
+    def _apply_resume(self, dataset: Dataset | None = None) -> int:
+        """Seed this run with reusable trials from the resume source (#1697).
+
+        Reused trials count toward ``max_trials`` and the result, are marked in
+        trial metadata, and are told to the optimizer so it does not propose the
+        same configuration again. Their cost is reported in the result totals but
+        is NOT charged to this run's cost enforcer (this run did not spend it).
+        Unfinished or unknown-status prior trials are neither reused nor retried.
+        Returns the number of trials reused.
+        """
+        prior = getattr(self, "_resume_source", None)
+        if prior is None:
+            return 0
+        from traigent.core.resume import (
+            plan_resume,
+            warn_if_not_reusable,
+        )
+
+        example_ids = self._resume_dataset_example_ids(dataset)
+        space_keys = tuple(getattr(self.optimizer, "config_space", {}) or {})
+        plan = plan_resume(
+            prior,
+            self.artifact_fingerprints,
+            max_trials=self.max_trials,
+            dataset_example_ids=example_ids,
+            config_keys=space_keys,
+        )
+        self._resume_prefill = plan.prefill
+        if plan.prefill is not None:
+            from traigent.evaluators.base import bind_resume_prefill
+
+            self._resume_prefill_token = bind_resume_prefill(plan.prefill)
+        warn_if_not_reusable(plan)
+        reused_cost, unknown_cost_trials = self._adopt_reusable_trials(plan.reusable)
+        self._exclude_blocked_resume_configs(plan.blocked_configs)
         baseline = getattr(self, "_default_config", None)
-        if baseline and any(
-            all(c.get(k) == v for k, v in baseline.items())
-            for c in [t.config for t in plan.reusable] + list(plan.blocked_configs)
+        if baseline and self._baseline_already_covered(
+            baseline, plan.reusable, plan.blocked_configs
         ):
             # The baseline was already evaluated (reused) or is in flight with an
             # unknown outcome (never retried); do not spend a trial on it.
@@ -6202,16 +6225,7 @@ class OptimizationOrchestrator:
 
         # Per-example timeouts across the run (``example_timeout``): count only
         # what trials recorded; absent when no example timed out.
-        timed_out_total = 0
-        for trial in getattr(self, "_trials", None) or ():
-            trial_meta = getattr(trial, "metadata", None)
-            value = (
-                trial_meta.get("timed_out_examples")
-                if isinstance(trial_meta, dict)
-                else None
-            )
-            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
-                timed_out_total += value
+        timed_out_total = OptimizationOrchestrator._timed_out_examples_total(self)
         if timed_out_total:
             metadata["timed_out_examples"] = timed_out_total
 
@@ -6228,6 +6242,20 @@ class OptimizationOrchestrator:
             metadata["promotion_precondition"] = dict(precondition)
 
         return metadata
+
+    def _timed_out_examples_total(self) -> int:
+        """Sum the per-example timeouts the trials recorded (0 when none)."""
+        total = 0
+        for trial in getattr(self, "_trials", None) or ():
+            trial_meta = getattr(trial, "metadata", None)
+            value = (
+                trial_meta.get("timed_out_examples")
+                if isinstance(trial_meta, dict)
+                else None
+            )
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                total += value
+        return total
 
     def _apply_abandoned_attempts_cost(self, result: OptimizationResult) -> None:
         """Abandoned vendor attempts (no usable usage) make the run cost unknown.
