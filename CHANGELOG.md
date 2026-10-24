@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.31.1] - 2026-10-24
+
+### Fixed
+
+- **`traigent certify verify` works on a plain `pip install traigent`: the SDK now declares `traigent-schema==7.0.0` and is aligned with that release.** The published wheel declared no schema dependency, so a clean install had either no verifier or whichever `traigent-schema` happened to be present; with PyPI 7.0.0 it refused the repo's agent-quality fixtures with `NON_CLAIM_SET_MISMATCH` because the non-claim catalog wording changed ("measured" -> "reported by the customer"). The internal pin (`scripts/ci/schema-pin.txt`, the pr-gate schema-types checkout, the certify disposition records) moves to the v7.0.0 commit `7104839`, the agent-quality fixtures are regenerated from the Schema builders, and the previous bundle is kept as a negative fixture that must still be refused. Bundles issued against the old wording are not accepted; they must be re-issued. The economics contract fingerprint is unchanged (recomputed).
+
 ## [0.31.0] - 2026-10-22
 
 ### Changed

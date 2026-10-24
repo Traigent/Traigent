@@ -302,10 +302,10 @@
     "algorithm": "ed25519",
     "issuer_key_ref": "ikey:abcdef0123456789",
     "schema_version": "traigent.agent_quality.signature.v1",
-    "signature": "54x0r+528A1DVmt5YObnDOHKm7NR/jO6aeZg/nv9gPmRoUEAx0SQm4MQxDOc1yJPHpQmlsqtv5G85RV8f+DOBw==",
+    "signature": "iTzvzRUgFpVFZYWnEwWwmUdtFb+JYIHkrpmiQp3Gp5GQxy0vIyuG6rWQ1YwHtod+ogWUzRan5CbjTG/jkG/BBA==",
     "signed_payload": "unsigned_agent_quality_manifest",
     "trust_ring_ref": "ring:abcdef0123456789",
-    "unsigned_manifest_digest": "sha256:3130ad6041bbb0e77cea5ad8122e9aac6e2cba2f986e814d4d95de36150e0194"
+    "unsigned_manifest_digest": "sha256:a917a0e51bf4491a2fa50db3ca3e7afdc8afd3f3ddb5dce7c8030167b3131b1c"
   },
   "split_derivation": {
     "canonicalization_profile": "jcs_v1",
@@ -372,7 +372,7 @@
     "measurement_contract_ref": "measurement:mmmmmmmm",
     "non_certified_selection_estimates_digest": "sha256:3909f30099497364bbfa0c122f800a0e4a6e261cf7a7adacf08737d623e65e0e",
     "non_claim_catalog": {
-      "catalog_digest": "sha256:4c3ee7a0d9da234675bb18d83d6b0195252fee20abcee0efa2949de5b2faf31d",
+      "catalog_digest": "sha256:04eadf52ccab454a22b12541a3528f314753de7fbe3ae99c6e6a313d488d1cd0",
       "catalog_id": "traigent.agent_quality.non_claim_catalog.v1",
       "catalog_version": "1.0.0"
     },

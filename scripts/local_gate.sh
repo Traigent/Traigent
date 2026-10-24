@@ -118,7 +118,11 @@ freshness_preflight() {
       read -r ahead behind <<< "$counts"
       echo "  • $ref@$sha (HEAD ahead $ahead / behind $behind)"
       if [[ "$behind" =~ ^[0-9]+$ && "$behind" -gt 0 ]]; then
-        if [[ "$strict" == "1" ]] || { [[ "$ref" == "origin/main" ]] && [[ "$MAIN_BOUND" == "1" ]]; }; then
+        if [[ "$BRANCH" =~ ^hotfix/ && "$ref" == "origin/develop" && "${LOCAL_GATE_STRICT_FRESHNESS:-0}" != "1" ]]; then
+          # A hotfix is cut from main, so it is always behind develop; the
+          # develop check cannot apply. Still required: not behind origin/main.
+          echo "    ℹ️  HEAD is behind $ref; expected for a hotfix cut from main (not enforced; origin/main freshness still is)"
+        elif [[ "$strict" == "1" ]] || { [[ "$ref" == "origin/main" ]] && [[ "$MAIN_BOUND" == "1" ]]; }; then
           echo "    ❌ HEAD is behind $ref; refresh/rebase before a main-bound gate"
           rc=1
         else
@@ -270,20 +274,35 @@ if [[ "$MAIN_BOUND" == "1" ]] && ! skip sonar; then
     FAIL=1
   else
     host="${SONAR_HOST_URL:-http://localhost:9000}"
-    echo "  🔎 scanning against $host with qualitygate.wait=true …"
+    # Release version from pyproject.toml [project].version, so the server's
+    # PREVIOUS_VERSION new-code period compares against the last analysed
+    # release instead of the stale version pinned in sonar-project.properties.
+    sonar_version="$(awk '/^\[project\]/{p=1;next} /^\[/{p=0} p&&/^version[[:space:]]*=/{gsub(/^[^"]*"|".*$/,"");print;exit}' pyproject.toml)"
+    if [[ -z "$sonar_version" ]]; then
+      echo "  ❌ could not read [project].version from pyproject.toml for sonar.projectVersion"
+      FAIL=1
+    else
+    echo "  🔎 scanning against $host (sonar.projectVersion=$sonar_version) with qualitygate.wait=true …"
     if command -v docker >/dev/null 2>&1; then
       net=""; [[ "$host" == *localhost* || "$host" == *127.0.0.1* ]] && net="--network=host"
+      # Mount the repo at the SAME absolute path inside the container so the
+      # host paths recorded in coverage.xml resolve (otherwise Sonar logs
+      # "Cannot resolve N file paths" and new coverage reads 0.0).
       docker run --rm $net -e SONAR_HOST_URL="$host" -e SONAR_TOKEN \
-        -v "$PWD":/usr/src sonarsource/sonar-scanner-cli:latest \
+        -v "$PWD":"$PWD" -w "$PWD" sonarsource/sonar-scanner-cli:latest \
+        -Dsonar.projectBaseDir="$PWD" \
         -Dsonar.projectKey=Traigent_Traigent \
+        -Dsonar.projectVersion="$sonar_version" \
         -Dsonar.qualitygate.wait=true -Dsonar.qualitygate.timeout=300
     else
       sonar-scanner -Dsonar.host.url="$host" \
         -Dsonar.projectKey=Traigent_Traigent \
+        -Dsonar.projectVersion="$sonar_version" \
         -Dsonar.qualitygate.wait=true -Dsonar.qualitygate.timeout=300
     fi
     if [[ $? -eq 0 ]]; then echo "  ✅ SonarQube quality gate passed"
     else echo "  ❌ SonarQube quality gate FAILED — fix locally before the main PR"; FAIL=1; fi
+    fi
   fi
 else
   hr; echo "ℹ️  SonarQube step skipped (not a release/hotfix branch). For main-bound"

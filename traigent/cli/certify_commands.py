@@ -70,8 +70,12 @@ EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY = "EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY
 # feature-pick-2026-10-20-sdk-verifier-revision-rerecord, answered A.
 # Pin moved to d5d0cb6 (commitment-linkage reader, C1 step 1) with verifier_revision
 # UNCHANGED for both evaluator-quality and agent-quality (recomputed on both installs).
+# Pin moved to 7104839 (= PyPI traigent-schema 7.0.0, tag v7.0.0): evaluator-quality
+# verifier_revision UNCHANGED (recomputed); agent-quality verifier_revision changed
+# because the agent-quality non-claim catalog wording changed ("measured" -> "reported
+# by the customer", same catalog version 1.0.0, new digest).
 EVALUATOR_QUALITY_POLICY_DISPOSITION = {
-    "schema_pin": "d5d0cb6d1caf0cf0b90983afc312412e82b79a42",
+    "schema_pin": "7104839ae6d748e852b1cb584312cf86d1f0f2db",
     "verifier_revision": "887114f799459df27269463cb73e1bc1ff9c4a948d73dddb83db4b88cc3e831f",
     "reviewed_by": "maintainers",
     "date": "2026-10-20",
@@ -148,10 +152,10 @@ def evaluator_quality_verifier_revision(files: list[Path] | None = None) -> str:
 # the verifier module (behaviour-preserving). Owner card
 # feature-pick-2026-10-20-sdk-verifier-revision-rerecord, answered A.
 AGENT_QUALITY_POLICY_DISPOSITION = {
-    "schema_pin": "d5d0cb6d1caf0cf0b90983afc312412e82b79a42",
-    "verifier_revision": "18ce9e7d7576b0eccc1dcbbcbf1e7d7643dae72ff2a5077c20fdd0f4b90d02de",
+    "schema_pin": "7104839ae6d748e852b1cb584312cf86d1f0f2db",
+    "verifier_revision": "37d4c5e891283f85a8b17be385b81ae1eef0c980092fb0a2b2555b0627be24b1",
     "reviewed_by": "maintainers",
-    "date": "2026-10-20",
+    "date": "2026-10-23",
 }
 
 
@@ -215,10 +219,9 @@ def agent_quality_verifier_revision(files: list[Path] | None = None) -> str:
 def _load_certification_schema() -> SimpleNamespace:
     """Lazily import traigent_schema.certification, called only inside `verify`.
 
-    traigent-schema is deliberately not a declared dependency (PyPI rejects a
-    direct-URL git dependency; see scripts/ci/schema-pin.txt), so importing it
-    at module import time would break `traigent --help` for anyone who
-    installed the SDK the supported way (plain `pip install`).
+    traigent-schema is a declared core dependency (exact PyPI pin), but it is
+    still imported lazily so `traigent --help` and the other subcommands do not
+    pay the import cost or break in an environment where it was removed.
     """
     try:
         from traigent_schema.certification import (
@@ -714,9 +717,9 @@ def _open_commitments(record_bundle: dict[str, Any], commitments_path: Path) -> 
     COMMITMENT_UNAVAILABLE rather than guessed.
     """
     from traigent.cloud.process_record_linkage import (
+        BUNDLE_SCHEMA,
         DISCLOSURE_LINE,
         OPENING_ROLES,
-        BUNDLE_SCHEMA,
     )
 
     try:
@@ -870,14 +873,13 @@ def finalize(
     POSIX-only for now: every invocation writes a client bundle, so on other
     platforms it refuses with LINKAGE_UNSUPPORTED_PLATFORM before doing any work.
     """
+    # finalize always writes a client bundle (--bundle is mandatory), so the
+    # POSIX guard applies to every invocation, not only --link-commitments.
     from traigent.cloud.process_record_linkage import (
         CommitmentLinkageClientError,
         finalize_process_record,
+        require_posix_platform,
     )
-
-    # finalize always writes a client bundle (--bundle is mandatory), so the
-    # POSIX guard applies to every invocation, not only --link-commitments.
-    from traigent.cloud.process_record_linkage import require_posix_platform
 
     try:
         require_posix_platform()

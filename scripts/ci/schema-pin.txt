@@ -1,7 +1,14 @@
 # Pinned TraigentSchema build for internal lanes (CI + internal development).
 #
-# WHY THIS IS NOT IN pyproject.toml
-# ---------------------------------
+# WHY THIS FILE EXISTS ALONGSIDE THE pyproject.toml PIN
+# -----------------------------------------------------
+# pyproject.toml declares the PUBLISHED dependency `traigent-schema==7.0.0` (a
+# normal PyPI requirement, which is what `pip install traigent` pulls). That
+# release is TraigentSchema tag v7.0.0 = the commit below, and its package
+# contents are byte-identical to this commit's traigent_schema/ tree. This file
+# keeps the internal lanes on the exact commit, and it must never reference a
+# direct URL from pyproject.toml, because:
+#
 # PyPI rejects any distribution whose core metadata contains a direct URL
 # reference (PEP 508 `name @ url`), and it rejects it even when the reference
 # sits inside an optional extra. Uploading traigent 0.26.0 with this pin in an
@@ -25,17 +32,17 @@
 # the requirement line at the bottom of this file (the single source of truth).
 # Current compatibility target (checked against the requirement line when this
 # comment was last refreshed): TraigentSchema commit
-# d5d0cb6d1caf0cf0b90983afc312412e82b79a42. The same SHA is recorded in the
+# 7104839ae6d748e852b1cb584312cf86d1f0f2db. The same SHA is recorded in the
 # disposition dicts in traigent/cli/certify_commands.py; if you bump the pin,
 # change all three together. It is an intentional compatibility baseline
 # for the economics/certification contract, not a "latest major" target:
 # major-version age alone is not a reason to bump,
-# and a bump is an owner-selected, reviewed commit (#2494). It is not on PyPI.
+# and a bump is an owner-selected, reviewed commit (#2494). A bump moves
+# pyproject.toml's `traigent-schema==X.Y.Z` too, in the same PR.
 # Bumping the pin means recomputing EXPECTED_ECONOMICS_SCHEMA_FINGERPRINT in
 # traigent/economics/schema.py against the newly pinned build (see that
 # module's docstring) -- a byte-exact mismatch fails closed even when the
-# contract itself did not change in substance. Until a reconciled contract is
-# published to PyPI, the exact commit is the only correct source.
+# contract itself did not change in substance.
 #
 # HOW IT IS CONSUMED
 # ------------------
@@ -46,7 +53,6 @@
 # file directly. Do not reintroduce a token in the URL — pip echoes the
 # requirement string on failure and caches it, and Dependabot PRs never receive
 # org secrets, so a token here breaks them. This file is the single source of
-# truth for the pin — update it here only. uv.lock does not reference
-# traigent-schema (the pin is not a declared dependency), so there is nothing
-# to keep in step there.
-traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@d5d0cb6d1caf0cf0b90983afc312412e82b79a42
+# truth for the commit pin. uv.lock records the PyPI pin from pyproject.toml
+# (regenerate it with `uv lock` when that pin changes).
+traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@7104839ae6d748e852b1cb584312cf86d1f0f2db
