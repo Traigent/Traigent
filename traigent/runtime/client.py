@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
+from traigent.cloud.url_security import is_plain_http_origin_parts
 from traigent.config.backend_config import BackendConfig
 from traigent.runtime.model import (
     E_BACKEND,
     E_EGRESS,
+    E_INVALID,
     E_NO_CREDENTIALS,
     RuntimeRequirementError,
 )
@@ -51,6 +53,24 @@ KNOWN_CODES = frozenset(
 )
 
 
+def _validated_origin(raw: str) -> str:
+    """Return ``raw`` without a trailing slash, or raise a closed error.
+
+    Structural check only (http(s), a host, no userinfo/params/query/fragment,
+    no whitespace or control characters); the URL is never echoed.
+    """
+    if any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in raw):
+        raise RuntimeRequirementError(E_INVALID, "backend_url")
+    try:
+        parsed = urlparse(raw)
+        ok = is_plain_http_origin_parts(parsed) and bool(parsed.hostname)
+    except ValueError:
+        ok = False
+    if not ok:
+        raise RuntimeRequirementError(E_INVALID, "backend_url")
+    return str(raw).rstrip("/")
+
+
 def _closed_code(status: int, body: Any) -> str:
     if isinstance(body, dict):
         code = body.get("error_code")
@@ -81,7 +101,7 @@ class RuntimeClient:
         api_key: str | None = None,
     ) -> None:
         self.project_id = project_id
-        self._origin = (base_url or BackendConfig.get_backend_url()).rstrip("/")
+        self._origin = _validated_origin(base_url or BackendConfig.get_backend_url())
         self._api_key = api_key or BackendConfig.get_api_key()
 
     def _url(self, suffix: str) -> str:
