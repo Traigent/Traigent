@@ -214,7 +214,7 @@ class DiverseSampling(BaseSubsetSelector):
         # Select one example from each cluster
         selected_indices = []
         for cluster_id in range(n_clusters):
-            cluster_indices = np.where(cluster_labels == cluster_id)[0]
+            cluster_indices = np.nonzero(cluster_labels == cluster_id)[0]
             if len(cluster_indices) > 0:
                 # Select example closest to cluster center
                 cluster_features = feature_matrix[cluster_indices]

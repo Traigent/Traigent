@@ -5067,7 +5067,7 @@ Remediation:
 
             values = getattr(spec, "values", None)
             if values is not None and len(values) == 1:
-                pinned[name] = list(values)[0]
+                pinned[name] = next(iter(values))
                 continue
             if isinstance(spec, (list, tuple)) and len(spec) == 1:
                 pinned[name] = spec[0]
