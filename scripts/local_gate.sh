@@ -316,7 +316,7 @@ sonar_prepare_coverage() {
   fi
   # Fail closed on missing plugins: a silent serial or un-timed run would
   # either take hours or hang the push.
-  local help_out; help_out="$(timeout 120 "${PYTEST[@]}" --help 2>/dev/null)"
+  local help_out; help_out="$(timeout -k 10 120 "${PYTEST[@]}" --help 2>/dev/null)"
   local -a par=(-n 0)
   if [[ "$workers" != "0" ]]; then par=(-n "$workers" --dist loadgroup); fi
   if ! grep -q -- '--timeout' <<<"$help_out" || ! grep -q -- '--cov' <<<"$help_out" \
@@ -332,12 +332,18 @@ sonar_prepare_coverage() {
   # relative_files => coverage.xml paths resolve inside the scanner container too.
   rcfile="$(mktemp "${TMPDIR:-/tmp}/lg-covrc.XXXXXX")"
   printf '[run]\nrelative_files = True\nsource = traigent\nomit =\n    */tests/*\n    */test_*\n    */demos/*\n    */docs/*\n' >"$rcfile"
-  trap 'rm -rf "$home_dir" "$rcfile"; trap - INT TERM; exit 130' INT TERM
+  local pid=""
+  trap '[[ -n "$pid" ]] && { kill -TERM "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; }; rm -rf "$home_dir" "$rcfile"; trap - INT TERM; exit 130' INT TERM
   echo "  • coverage with the FULL tests/unit suite (${par[*]}); this takes a while"
+  # Background + wait so an interrupt reaches the trap immediately and the
+  # whole run (timeout -> pytest) is stopped and reaped before cleanup.
   TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true HOME="$home_dir" PYTHONPATH=. \
     "${GIT_ENV_CLEAR[@]}" timeout -k 60 "${LOCAL_GATE_COVERAGE_TIMEOUT:-3600}" "${PYTEST[@]}" -p no:asyncio-cooperative -p no:cacheprovider -q --tb=short \
     "${par[@]}" --timeout=30 \
-    --cov=traigent --cov-config="$rcfile" --cov-report=xml:coverage.xml tests/unit/ || rc=$?
+    --cov=traigent --cov-config="$rcfile" --cov-report=xml:coverage.xml tests/unit/ &
+  pid=$!
+  wait "$pid" || rc=$?
+  pid=""
   rm -f "$rcfile"; rm -rf "$home_dir"; trap - INT TERM
   if [[ ! -s coverage.xml ]]; then
     echo "  ❌ coverage.xml was not produced (pytest rc=$rc): coverage NOT MEASURED"; FAIL=1; return 0

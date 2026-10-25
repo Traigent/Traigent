@@ -551,7 +551,7 @@ def test_local_gate_main_bound_coverage_fails_closed_without_timeout_plugin(
     repo, fake_bin = _make_gate_repo(tmp_path)
     (fake_bin / "pytest").write_text(
         "#!/usr/bin/env bash\n"
-        'if [[ " $* " == *" --help "* ]]; then echo "  --dist=DISTMODE"; exit 0; fi\n'
+        'if [[ " $* " == *" --help "* ]]; then echo "  --dist=DISTMODE --cov=SOURCE"; exit 0; fi\n'
         "exit 0\n",
         encoding="utf-8",
     )
