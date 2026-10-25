@@ -2550,8 +2550,8 @@ def _translate_expression(expression: str) -> str:
     """
 
     def _rewrite_segment(segment: str) -> str:
-        segment = re.sub(r"&&", " and ", segment)
-        segment = re.sub(r"\|\|", " or ", segment)
+        segment = segment.replace("&&", " and ")
+        segment = segment.replace("||", " or ")
         segment = re.sub(r"(?<![=!<>])!(?![=])", " not ", segment)
         segment = re.sub(r"\btrue\b", "True", segment, flags=re.IGNORECASE)
         segment = re.sub(r"\bfalse\b", "False", segment, flags=re.IGNORECASE)
