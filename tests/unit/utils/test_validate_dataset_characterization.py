@@ -394,3 +394,21 @@ class TestSinglePathContent:
         args, kwargs = opener.call_args
         assert args == (f.resolve(), f.resolve().parent)
         assert kwargs == {"mode": "r", "encoding": "utf-8"}
+
+
+class _LatePath(str):
+    """str subclass whose startswith() raises, to detect which paths get inspected."""
+
+    def startswith(self, *args, **kwargs):  # type: ignore[override]
+        raise RuntimeError("late path inspected")
+
+
+def test_list_inspects_every_path_even_after_a_relative_one(tmp_path: Path) -> None:
+    # Every entry is examined eagerly, so a later entry that misbehaves
+    # surfaces even though an earlier one is already relative. The base
+    # directory does not exist, so only the up-front scan can raise.
+    with pytest.raises(RuntimeError, match="late path inspected"):
+        Validators.validate_dataset(
+            ["relative.jsonl", _LatePath("/absolute.jsonl")],
+            base_dir=tmp_path / "missing",
+        )

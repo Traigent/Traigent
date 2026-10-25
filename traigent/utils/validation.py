@@ -1045,7 +1045,8 @@ def _validate_dataset_list(
         return
 
     dataset_base: Path | None = None
-    if any(not Path(path).is_absolute() for path in dataset_path):
+    relative_paths = [path for path in dataset_path if not Path(path).is_absolute()]
+    if relative_paths:
         dataset_base = _resolve_dataset_base(result, base_dir)
         if dataset_base is None:
             return
