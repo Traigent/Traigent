@@ -989,16 +989,24 @@ def _validate_dataset_file(
     Returns ``None`` when the path could not be resolved (error already
     recorded), otherwise the resolved path and its path-validation result.
     """
+    # Keep the original sequence of is_absolute() calls on the path object:
+    # one before resolution, one inside resolution, one after.
+    allowed_base: Path | None = None
+    if not raw_path.is_absolute():
+        if dataset_base is None:
+            result.add_error(
+                "dataset",
+                "Dataset base directory is required for a relative path",
+                error_code="SECURITY_ERROR",
+            )
+            return None
+        allowed_base = dataset_base
     resolved = _resolve_dataset_path(result, raw_path, dataset_base)
     if resolved is None:
         return None
-    # A relative path only resolves when dataset_base is set, so the
-    # parent fallback is reached for absolute paths only.
-    allowed_base = (
-        resolved.parent
-        if raw_path.is_absolute() or dataset_base is None
-        else dataset_base
-    )
+    if raw_path.is_absolute():
+        allowed_base = resolved.parent
+    assert allowed_base is not None
     path_result = Validators.validate_path(
         resolved,
         field_name,

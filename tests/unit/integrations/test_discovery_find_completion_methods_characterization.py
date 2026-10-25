@@ -458,4 +458,4 @@ def test_is_completion_method_lowercases_once_per_attempted_keyword():
     # Original semantics: lower() is evaluated per keyword attempted, so the
     # second keyword sees the changed value and the method is accepted.
     assert discovery_module._is_completion_method(StatefulName("x"), fn) is True
-    assert len(calls) >= 2
+    assert len(calls) == 2

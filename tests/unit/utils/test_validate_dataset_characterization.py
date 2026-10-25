@@ -412,3 +412,39 @@ def test_list_inspects_every_path_even_after_a_relative_one(tmp_path: Path) -> N
             ["relative.jsonl", _LatePath("/absolute.jsonl")],
             base_dir=tmp_path / "missing",
         )
+
+
+class _CountingPath(str):
+    """str subclass counting startswith() calls and raising on the Nth."""
+
+    def __new__(cls, value: str, fail_on: int | None = None):
+        obj = super().__new__(cls, value)
+        obj.calls = 0
+        obj.fail_on = fail_on
+        return obj
+
+    def startswith(self, *args, **kwargs):  # type: ignore[override]
+        self.calls += 1
+        if self.fail_on is not None and self.calls == self.fail_on:
+            raise RuntimeError("nth startswith")
+        return super().startswith(*args, **kwargs)
+
+
+def test_single_path_call_sequence_on_path_object(tmp_path: Path) -> None:
+    missing = str(tmp_path / "missing.jsonl")
+    probe = _CountingPath(missing)
+    result = Validators.validate_dataset(probe)
+    assert [e.error_code for e in result.errors] == ["NOT_FOUND"]
+    assert probe.calls == 4  # original pre-resolution is_absolute() retained
+    with pytest.raises(RuntimeError, match="nth startswith"):
+        Validators.validate_dataset(_CountingPath(missing, fail_on=4))
+
+
+def test_path_list_call_sequence_on_path_object(tmp_path: Path) -> None:
+    missing = str(tmp_path / "missing.jsonl")
+    probe = _CountingPath(missing)
+    result = Validators.validate_dataset([probe])
+    assert [e.error_code for e in result.errors] == ["NOT_FOUND"]
+    assert probe.calls == 4
+    with pytest.raises(RuntimeError, match="nth startswith"):
+        Validators.validate_dataset([_CountingPath(missing, fail_on=4)])
