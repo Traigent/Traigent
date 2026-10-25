@@ -450,7 +450,7 @@ class TrialOperations:
                 registration_payload = oo_egress.project_for_send(
                     oo_egress.PHASE_RESULTS,
                     registration_payload,
-                    explicit=oo_egress.explicit_of(self.client),
+                    explicit=oo_egress.policy_of(self.client, headers, url),
                     session_id=session_id,
                 )
                 async with session.post(
@@ -605,7 +605,7 @@ class TrialOperations:
                 request_body = oo_egress.project_for_send(
                     oo_egress.PHASE_NEXT_TRIAL,
                     {"session_id": session_id, "previous_results": []},
-                    explicit=oo_egress.explicit_of(self.client),
+                    explicit=oo_egress.policy_of(self.client, headers, url),
                     session_id=session_id,
                 )
                 async with session.post(
@@ -1137,7 +1137,7 @@ class TrialOperations:
                 wire_result = oo_egress.project_for_send(
                     oo_egress.PHASE_RESULTS,
                     self._sanitize_for_json(result_data),
-                    explicit=oo_egress.explicit_of(self.client),
+                    explicit=oo_egress.policy_of(self.client, headers, url),
                     session_id=session_id,
                 )
 
@@ -1349,7 +1349,7 @@ class TrialOperations:
                 wire_submission = oo_egress.project_for_send(
                     oo_egress.PHASE_SUMMARY_SUBMISSION,
                     self._sanitize_for_json(submission_data),
-                    explicit=oo_egress.explicit_of(self.client),
+                    explicit=oo_egress.policy_of(self.client, headers, url),
                     session_id=session_id,
                 )
                 async with session.post(
@@ -1456,7 +1456,7 @@ class TrialOperations:
                 request_data = oo_egress.project_for_send(
                     oo_egress.PHASE_CONFIGURATION_RUN,
                     {"summary_stats": summary_stats_data},
-                    explicit=oo_egress.explicit_of(self.client),
+                    explicit=oo_egress.policy_of(self.client, headers, url),
                 )
 
                 try:

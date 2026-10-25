@@ -313,21 +313,52 @@ def _refuse_redirect() -> TransportGateRefusal:
     return TransportGateRefusal("redirect_refused", {"violation": 1})
 
 
-async def _latch_aiohttp(response: Any) -> None:
-    """Latch optimization_only mode on the server's closed 403 (best effort, never raises)."""
+async def _latch_aiohttp(response: Any, url: Any = "", headers: Any = None) -> None:
+    """Latch optimization_only mode, for the request's credential, on the server's closed
+    403 (best effort, never raises)."""
     try:
         if response.status == 403:
-            oo_egress.note_response(403, await response.read())
+            oo_egress.note_response(
+                403,
+                await response.read(),
+                oo_egress.credential_scope(url, headers),
+            )
     except Exception:  # noqa: BLE001 - observation must never break the request
         return
 
 
 def _latch_sync(response: Any, status_attr: str, body_attr: str) -> None:
+    """requests / httpx response: scope comes from the response's own request."""
     try:
         if getattr(response, status_attr) == 403:
-            oo_egress.note_response(403, getattr(response, body_attr))
+            request = getattr(response, "request", None)
+            oo_egress.note_response(
+                403,
+                getattr(response, body_attr),
+                oo_egress.credential_scope(
+                    getattr(request, "url", "") or getattr(response, "url", ""),
+                    getattr(request, "headers", None),
+                ),
+            )
     except Exception:  # noqa: BLE001 - observation must never break the request
         return
+
+
+def observe_requests_response(response: Any) -> None:
+    """Observe a module-level ``requests`` response (``requests.post(...)`` etc.), which
+    ``preflight_requests`` cannot see. Safe to call on any object."""
+    _latch_sync(response, "status_code", "content")
+
+
+def _effective_headers(session: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Session default headers overlaid with the per-request ones (for credential scope)."""
+    merged: dict[str, Any] = {}
+    for source in (getattr(session, "headers", None), kwargs.get("headers")):
+        try:
+            merged.update(dict(source or {}))
+        except (TypeError, ValueError):
+            continue
+    return merged
 
 
 def _build_aiohttp(base: type) -> type:
@@ -385,14 +416,14 @@ def _build_aiohttp(base: type) -> type:
                 )
             if not _refuses_redirects(self, url):
                 response = await super()._request(method, str_or_url, **kwargs)
-                await _latch_aiohttp(response)
+                await _latch_aiohttp(response, url, _effective_headers(self, kwargs))
                 return response
             kwargs["allow_redirects"] = False
             response = await super()._request(method, str_or_url, **kwargs)
             if _is_redirect_status(response.status):
                 response.release()
                 raise _refuse_redirect()
-            await _latch_aiohttp(response)
+            await _latch_aiohttp(response, url, _effective_headers(self, kwargs))
             return response
 
     GatedClientSession.__name__ = f"Gated{base.__name__}"
@@ -439,6 +470,24 @@ def _httpx_body(request: Any) -> tuple[bytes | None, bool]:
         return None, True
 
 
+def _latch_httpx_sync(response: Any) -> None:
+    try:
+        if response.status_code == 403:
+            response.read()  # a 403 body is small; makes ``.content`` available
+    except Exception:  # noqa: BLE001 - observation must never break the request
+        return
+    _latch_sync(response, "status_code", "content")
+
+
+async def _latch_httpx_async(response: Any) -> None:
+    try:
+        if response.status_code == 403:
+            await response.aread()
+    except Exception:  # noqa: BLE001 - observation must never break the request
+        return
+    _latch_sync(response, "status_code", "content")
+
+
 def _build_httpx_sync(base: type) -> type:
     class GatedHttpxClient(base):  # type: ignore[valid-type, misc]
         _traigent_gated = True
@@ -454,12 +503,15 @@ def _build_httpx_sync(base: type) -> type:
                 extra_origins=_instance_origins(self),
             )
             if not _refuses_redirects(self, str(request.url)):
-                return super().send(request, **kwargs)
+                response = super().send(request, **kwargs)
+                _latch_httpx_sync(response)
+                return response
             kwargs["follow_redirects"] = False
             response = super().send(request, **kwargs)
             if _is_redirect_status(response.status_code):
                 response.close()
                 raise _refuse_redirect()
+            _latch_httpx_sync(response)
             return response
 
     GatedHttpxClient.__name__ = f"Gated{base.__name__}"
@@ -481,12 +533,15 @@ def _build_httpx_async(base: type) -> type:
                 extra_origins=_instance_origins(self),
             )
             if not _refuses_redirects(self, str(request.url)):
-                return await super().send(request, **kwargs)
+                response = await super().send(request, **kwargs)
+                await _latch_httpx_async(response)
+                return response
             kwargs["follow_redirects"] = False
             response = await super().send(request, **kwargs)
             if _is_redirect_status(response.status_code):
                 await response.aclose()
                 raise _refuse_redirect()
+            await _latch_httpx_async(response)
             return response
 
     GatedHttpxAsyncClient.__name__ = f"Gated{base.__name__}"

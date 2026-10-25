@@ -2347,6 +2347,18 @@ class BackendAnalyticsClient:
             )
         return self._client
 
+    def _optimization_only_policy(
+        self, client: Any, request_headers: dict[str, str]
+    ) -> oo_egress.Policy:
+        """Policy inputs for one request: the client's default headers carry the credential."""
+        try:
+            merged = {**dict(client.headers), **request_headers}
+        except Exception:  # noqa: BLE001 - silent-ok: unattributable, env/explicit only
+            merged = dict(request_headers)
+        return oo_egress.Policy(
+            None, oo_egress.credential_scope(self.backend_url, merged)
+        )
+
     def _request_headers(self, headers: dict[str, str] | None = None) -> dict[str, str]:
         """Build a fresh per-request header dict carrying the active trace context.
 
@@ -2405,15 +2417,19 @@ class BackendAnalyticsClient:
         headers: dict[str, str] | None = None,
         envelope: bool = True,
     ) -> dict[str, Any]:
-        if not path.startswith("/api/v1/director/"):
-            # The Director advisory route is the one hosted operation an
-            # optimization_only workspace keeps (its closed menu is enforced elsewhere);
-            # every other analytics request must carry closed values only.
-            oo_egress.assert_closed_body(json_body, "analytics_request")
         client = self._get_client()
-        response = await client.post(
-            path, headers=self._request_headers(headers), json=json_body
-        )
+        final_headers = self._request_headers(headers)
+        policy = self._optimization_only_policy(client, final_headers)
+        if path.startswith("/api/v1/director/"):
+            # The Director advisory route is the one hosted operation an
+            # optimization_only workspace keeps, but only with the backend's own closed
+            # request shape (nested allowlist): nothing else is sent.
+            oo_egress.assert_director_request(path, json_body, explicit=policy)
+        else:
+            oo_egress.assert_closed_body(
+                json_body, "analytics_request", explicit=policy
+            )
+        response = await client.post(path, headers=final_headers, json=json_body)
         response.raise_for_status()
         return _parse_response(response.json(), what=what, envelope=envelope)
 
@@ -2471,12 +2487,17 @@ class BackendAnalyticsClient:
             raise ValueError("compare_runs requires at least two run_ids.")
 
         path = "/api/v1/optimization-comparisons"
-        oo_egress.assert_closed_body({"run_ids": cleaned}, "analytics_request")
         client = self._get_client()
+        final_headers = self._request_headers(self._project_headers(project_id))
+        oo_egress.assert_closed_body(
+            {"run_ids": cleaned},
+            "analytics_request",
+            explicit=self._optimization_only_policy(client, final_headers),
+        )
         response = await client.post(
             path,
             json={"run_ids": cleaned},
-            headers=self._request_headers(self._project_headers(project_id)),
+            headers=final_headers,
         )
         response.raise_for_status()
         return _unwrap_success_data(response.json(), what="run comparison")

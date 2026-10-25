@@ -47,7 +47,8 @@ def test_mode_on_at_init_builds_no_pipeline_and_sends_nothing(
 
 def test_mode_latched_after_init_drops_at_record_and_send_time(collector) -> None:
     handle = _init(collector)
-    oo.latch_on()  # e.g. a closed 403 arrived from the session API
+    # e.g. a closed 403 arrived from the session API for this credential
+    oo.latch_on(handle.exporter.oo_scope)
     with handle.tracer.start_as_current_span("x"):
         pass
     otel.flush(1)

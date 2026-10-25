@@ -132,7 +132,9 @@ class TraigentOTLPExporter(SpanExporter):
         outcome = ExportOutcome()
         if not spans:
             return outcome
-        if is_backend_offline() or oo_egress.is_active():
+        if is_backend_offline() or oo_egress.is_active(
+            scope=getattr(self, "oo_scope", None)
+        ):
             # Send-time recheck, fail closed: spans queued while online are
             # dropped (not held for later) if offline became true since.
             outcome.dropped_offline += len(spans)
@@ -205,7 +207,9 @@ class TraigentOTLPExporter(SpanExporter):
             # optimization_only needs no 403 latch here: the mode disables the exporter
             # (init, processor and these two checks) before anything is sent, so the OTLP
             # receiver's non-JSON 403 body is never reached.
-            if is_backend_offline() or oo_egress.is_active():  # recheck every POST
+            if is_backend_offline() or oo_egress.is_active(
+                scope=getattr(self, "oo_scope", None)
+            ):  # recheck every POST
                 outcome.dropped_offline += count
                 return
             remaining = self._remaining(deadline)

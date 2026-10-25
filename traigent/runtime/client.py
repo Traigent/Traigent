@@ -125,7 +125,10 @@ class RuntimeClient:
         import requests
 
         from traigent.cloud.user_agent import get_sdk_user_agent
-        from traigent.labels.transport_gate import preflight_requests
+        from traigent.labels.transport_gate import (
+            observe_requests_response,
+            preflight_requests,
+        )
 
         url = self._url(suffix)
         headers = {
@@ -146,6 +149,7 @@ class RuntimeClient:
                 allow_redirects=False,
                 **kwargs,
             )
+            observe_requests_response(response)
         except RuntimeRequirementError:
             raise
         except Exception:  # noqa: BLE001 - never surface transport text

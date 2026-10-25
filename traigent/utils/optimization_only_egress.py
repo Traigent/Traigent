@@ -40,8 +40,10 @@ import threading
 import tokenize
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 METADATA_CONTRACT_VERSION = 1
 CONTRACT_VERSION_KEY = "metadata_contract_version"
@@ -1632,7 +1634,8 @@ class OptimizationOnlyRefusal(RuntimeError):
 
 
 _latch_lock = threading.Lock()
-_latched = False
+#: Credential scopes (see :func:`credential_scope`) that received a closed refusal.
+_latched_scopes: set[str] = set()
 
 
 def parse_flag(raw: Any, *, source: str = ENV_VAR) -> bool | None:
@@ -1660,33 +1663,103 @@ def env_setting(environ: Mapping[str, str] | None = None) -> bool | None:
     return parse_flag(env.get(ENV_VAR))
 
 
-def latch_on() -> None:
-    """Pin the mode on for this process (a closed ``403 optimization_only`` was seen)."""
-    global _latched
+_CREDENTIAL_HEADERS = ("x-api-key", "authorization", "x-service-key")
+
+
+def credential_scope(url: Any, headers: Any = None) -> str | None:
+    """Opaque key for "this backend origin + this credential", or None without a credential.
+
+    The key is ``origin|sha256(credential headers)``; the raw credential is never stored or
+    returned. Server-derived policy (a closed ``403 optimization_only``) is bound to this key,
+    so one tenant's refusal cannot restrict a client using another credential.
+    """
+    if headers is None or not hasattr(headers, "items"):
+        return None
+    lowered = {str(k).lower(): v for k, v in headers.items()}
+    material = ""
+    for (
+        name
+    ) in _CREDENTIAL_HEADERS:  # priority order: the first credential present wins
+        value = lowered.get(name)
+        if isinstance(value, str) and value.strip():
+            text = value.strip()
+            if text.lower().startswith("bearer "):
+                text = text[7:].strip()
+            material = f"{name}:{text}"
+            break
+    if not material:
+        return None
+    parts = urlsplit(str(url))
+    origin = f"{parts.scheme.lower()}://{parts.netloc.lower()}"
+    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()
+    return f"{origin}|{digest}"
+
+
+@dataclass(frozen=True)
+class Policy:
+    """The effective policy inputs of one send: explicit setting and credential scope."""
+
+    explicit: bool | None = None
+    scope: str | None = None
+
+
+def _client_url(client: Any) -> str:
+    for owner, names in (
+        (getattr(client, "backend_config", None), ("api_base_url", "backend_base_url")),
+        (client, ("api_base_url", "base_url")),
+    ):
+        for name in names:
+            value = getattr(owner, name, None) if owner is not None else None
+            if isinstance(value, str) and value:
+                return value
+    return ""
+
+
+def policy_of(client: Any, headers: Any = None, url: Any = None) -> Policy:
+    """Effective policy for a send by ``client`` carrying ``headers`` (the final ones)."""
+    return Policy(
+        explicit_of(client),
+        credential_scope(url if url else _client_url(client), headers),
+    )
+
+
+def latch_on(scope: str | None) -> None:
+    """Pin the mode on for ONE credential scope (a closed ``403 optimization_only``).
+
+    ``None`` (a response with no credential to attribute it to) latches nothing.
+    """
+    if scope is None:
+        return
     with _latch_lock:
-        _latched = True
+        _latched_scopes.add(scope)
 
 
-def is_latched() -> bool:
-    return _latched
+def is_latched(scope: str | None = None) -> bool:
+    if scope is None:
+        return False
+    with _latch_lock:
+        return scope in _latched_scopes
 
 
 def reset_latch() -> None:
-    """Test hook: clear the latch and the per-session objective registry."""
-    global _latched
+    """Test hook: clear every latch and the per-session objective registry."""
     with _latch_lock:
-        _latched = False
+        _latched_scopes.clear()
     with _objectives_lock:
         _session_objectives.clear()
 
 
-def is_active(explicit: bool | None = None) -> bool:
+def is_active(explicit: bool | Policy | None = None, scope: str | None = None) -> bool:
     """True when the SDK must behave as an ``optimization_only`` client.
 
-    Precedence: a latched server refusal always wins; otherwise an explicit argument beats
-    the environment; unset means legacy behaviour (the mode is opt-in).
+    Precedence: a refusal latched for THIS credential scope always wins; otherwise an
+    explicit argument beats the environment; unset means legacy behaviour (opt-in).
+    ``explicit`` may be a :class:`Policy` carrying both inputs.
     """
-    if _latched:
+    if isinstance(explicit, Policy):
+        scope = explicit.scope if scope is None else scope
+        explicit = explicit.explicit
+    if scope is not None and is_latched(scope):
         return True
     explicit_value = parse_flag(explicit, source="optimization_only")
     if explicit_value is not None:
@@ -1716,10 +1789,14 @@ def is_closed_refusal(status: int | None, body: Any) -> bool:
     return isinstance(code, str) and code.strip().lower() == OPTIMIZATION_ONLY_CODE
 
 
-def note_response(status: int | None, body: Any) -> bool:
-    """Latch the mode on when a response is the closed refusal. Returns True if it was."""
+def note_response(status: int | None, body: Any, scope: str | None = None) -> bool:
+    """Latch the mode on for ``scope`` when a response is the closed refusal.
+
+    Returns True when the response was the closed refusal (whether or not it could be
+    attributed to a credential scope).
+    """
     if is_closed_refusal(status, body):
-        latch_on()
+        latch_on(scope)
         return True
     return False
 
@@ -1871,7 +1948,6 @@ PHASE_TVAR_OBSERVATION = "tvar_observation"
 #: are covered by SDK-side tests only (documented in the parity README).
 PHASE_NEXT_TRIAL = "next_trial"
 PHASE_OPTIMIZER_METRICS = "optimizer_metrics"
-PHASE_HYBRID_SESSION_CREATE = "hybrid_session_create"
 PHASE_INTERMEDIATE_REPORT = "intermediate_report"
 PHASE_BEST_CONFIG = "best_config"
 
@@ -2020,7 +2096,7 @@ def is_closed_value(value: Any) -> bool:
 
 
 def assert_closed_body(
-    payload: Any, operation: str, *, explicit: bool | None = None
+    payload: Any, operation: str, *, explicit: bool | Policy | None = None
 ) -> None:
     """Mode on: refuse (locally, before any transport call) a request body that carries
     anything beyond closed values. Nothing is rewritten; mode off: no-op."""
@@ -2029,7 +2105,7 @@ def assert_closed_body(
 
 
 def assert_closed_json_bytes(
-    content: bytes | str, operation: str, *, explicit: bool | None = None
+    content: bytes | str, operation: str, *, explicit: bool | Policy | None = None
 ) -> None:
     """``assert_closed_body`` for an already-serialized JSON body (unparseable is refused)."""
     if not is_active(explicit):
@@ -2042,7 +2118,7 @@ def assert_closed_json_bytes(
 
 
 def assert_closed_ids(
-    operation: str, *values: Any, explicit: bool | None = None
+    operation: str, *values: Any, explicit: bool | Policy | None = None
 ) -> None:
     """Mode on: every non-None value (path/query parameter) must be identifier-shaped."""
     if not is_active(explicit):
@@ -2052,6 +2128,79 @@ def assert_closed_ids(
             isinstance(value, str) and ID_RE.fullmatch(value)
         ):
             raise OptimizationOnlyRefusal(operation)
+
+
+# ---- Director request allowlists (port of backend src/services/director/validation.py) ----
+# Pinned at backend 2d5cceda5. ``None`` marks a leaf, a dict an object, a one-element list an
+# array of objects. The backend REJECTS (400) any key not listed, at every depth; it never
+# drops one. The SDK therefore refuses locally. ``RESULT_ALLOWLIST`` is the closed-bridge
+# ``report.result`` shape (src/services/director/closed_bridge.py).
+_DIRECTOR_RESULT_ALLOWLIST: Mapping[str, Any] = {
+    "protocol": None,
+    "judge": None,
+    "orders": None,
+    "verdicts": [{"example_id": None, "verdict": None}],
+}
+DIRECTOR_CREATE_ALLOWLIST: Mapping[str, Any] = {
+    "project_id": None,
+    "workflow_kind": None,
+    "run_ids": None,
+    "agent_id": None,
+    "environment": None,
+}
+DIRECTOR_TURN_ALLOWLIST: Mapping[str, Any] = {
+    "session_revision": None,
+    "intent": None,
+    "report": {
+        "instruction_id": None,
+        "status": None,
+        "run_id": None,
+        "result": _DIRECTOR_RESULT_ALLOWLIST,
+    },
+    "client_report": {
+        "validity_checks": [{"check": None, "status": None, "confidence_label": None}],
+    },
+}
+_DIRECTOR_TURN_PATH_RE = re.compile(r"^/api/v1/director/sessions/[^/]+/turn/?$")
+
+
+def _director_conforms(payload: Any, allowed: Mapping[str, Any]) -> bool:
+    if not isinstance(payload, Mapping) or set(payload) - set(allowed):
+        return False
+    for key, spec in allowed.items():
+        if key not in payload or payload[key] is None:
+            continue
+        value = payload[key]
+        if spec is None:
+            if not is_closed_value(value):
+                return False
+        elif isinstance(spec, Mapping):
+            if not _director_conforms(value, spec):
+                return False
+        elif isinstance(spec, list):
+            if not isinstance(value, list):
+                return False
+            if not all(_director_conforms(item, spec[0]) for item in value):
+                return False
+    return True
+
+
+def assert_director_request(
+    path: str, body: Any, *, explicit: bool | Policy | None = None
+) -> None:
+    """Mode on: a Director request must match the backend's nested allowlist for its route
+    (unknown key at any depth is refused, as the backend would 400) and every leaf must be
+    a closed value. Mode off: no-op."""
+    if not is_active(explicit):
+        return
+    if path.rstrip("/") == "/api/v1/director/sessions":
+        allowed = DIRECTOR_CREATE_ALLOWLIST
+    elif _DIRECTOR_TURN_PATH_RE.match(path):
+        allowed = DIRECTOR_TURN_ALLOWLIST
+    else:
+        raise OptimizationOnlyRefusal("director_request")
+    if not _director_conforms(body, allowed):
+        raise OptimizationOnlyRefusal("director_request")
 
 
 def project_best_config_payload(payload: Any) -> dict[str, Any]:
@@ -2133,7 +2282,6 @@ def declared_from_session_payload(payload: Any) -> list[str]:
 _PROJECTORS: dict[str, Callable[[Any, tuple[str, ...]], Any]] = {
     PHASE_SESSION_CREATE: lambda p, d: project_session_create(p),
     PHASE_SESSION_CREATE_LEGACY: lambda p, d: project_legacy_session_create(p),
-    PHASE_HYBRID_SESSION_CREATE: lambda p, d: project_legacy_session_create(p),
     PHASE_RESULTS: lambda p, d: project_results_payload(p, d),
     PHASE_SUMMARY_SUBMISSION: lambda p, d: project_results_payload(p, d),
     PHASE_OPTIMIZER_METRICS: lambda p, d: project_results_payload(p, d),
@@ -2173,7 +2321,7 @@ def project_for_send(
     phase: str,
     payload: Any,
     *,
-    explicit: bool | None = None,
+    explicit: bool | Policy | None = None,
     declared: Iterable[str] | None = None,
     session_id: str | None = None,
 ) -> Any:
@@ -2188,14 +2336,13 @@ def project_for_send(
         PHASE_SESSION_CREATE,
         PHASE_SESSION_CREATE_LEGACY,
         PHASE_SESSION_CREATE_AUTO,
-        PHASE_HYBRID_SESSION_CREATE,
     ):
         if _payload_embeds_examples(payload):
             raise OptimizationOnlyRefusal("embedded_examples")
     return project_for_phase(phase, payload, declared=declared, session_id=session_id)
 
 
-def refuse_if_active(operation: str, *, explicit: bool | None = None) -> None:
+def refuse_if_active(operation: str, *, explicit: bool | Policy | None = None) -> None:
     """Raise :class:`OptimizationOnlyRefusal` before any transport call when the mode is on.
 
     Used for dataset/example uploads, hosted LLM / hosted agent execution and trace export.
@@ -2204,7 +2351,9 @@ def refuse_if_active(operation: str, *, explicit: bool | None = None) -> None:
         raise OptimizationOnlyRefusal(operation)
 
 
-def refuse_embedded_examples(payload: Any, *, explicit: bool | None = None) -> None:
+def refuse_embedded_examples(
+    payload: Any, *, explicit: bool | Policy | None = None
+) -> None:
     """Refuse (locally) a body that embeds example/dataset text when the mode is on."""
     if is_active(explicit) and _payload_embeds_examples(payload):
         raise OptimizationOnlyRefusal("embedded_examples")

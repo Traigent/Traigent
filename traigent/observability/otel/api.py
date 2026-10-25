@@ -287,6 +287,11 @@ def init(
                 exit_flush_timeout_s=exit_flush_timeout_s,
                 on_drop=on_drop,
             )
+            # bind the exporter and processor to this credential so a closed
+            # ``403 optimization_only`` seen for it (by any SDK client) stops them
+            oo_scope = oo_egress.credential_scope(url, headers)
+            exporter.oo_scope = oo_scope
+            processor.oo_scope = oo_scope
             provider.add_span_processor(processor)
         if set_global:
             trace.set_tracer_provider(provider)

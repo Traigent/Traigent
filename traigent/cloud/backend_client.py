@@ -99,6 +99,7 @@ from traigent.labels.transport_gate import (
     TransportGateRefusal,
     client_origins,
     gate_session,
+    observe_requests_response,
     preflight_requests,
 )
 from traigent.security.session_manager import SessionManager as SecuritySessionManager
@@ -443,6 +444,9 @@ def _retry_after_seconds(headers: Any) -> float | None:
 
 
 def _raise_for_transient_backend_response(response: Any, operation: str) -> None:
+    observe_requests_response(
+        response
+    )  # a closed 403 optimization_only latches its scope
     status_code = getattr(response, "status_code", None)
     if status_code not in _SYNC_BACKEND_TRANSIENT_STATUSES:
         return
@@ -2440,6 +2444,13 @@ class BackendIntegratedClient:
         url = f"{base}/agent-heads/{quote(agent_id, safe='')}"
 
         headers = self._get_sync_auth_headers(target="backend")
+        # second, credential-scoped check now that the final headers are known
+        oo_egress.assert_closed_ids(
+            "agent_head_fetch",
+            agent_id,
+            environment,
+            explicit=oo_egress.policy_of(self, headers, url),
+        )
         params = {"environment": environment} if environment else None
 
         def _get_head() -> Any:
@@ -2767,7 +2778,7 @@ class BackendIntegratedClient:
         payload = oo_egress.project_for_send(
             oo_egress.PHASE_BEST_CONFIG,
             payload,
-            explicit=oo_egress.explicit_of(self),
+            explicit=oo_egress.policy_of(self, headers, url),
         )
         response = self._protected_request(
             "POST",
@@ -2864,7 +2875,7 @@ class BackendIntegratedClient:
         payload = oo_egress.project_for_send(
             oo_egress.PHASE_BEST_CONFIG,
             payload,
-            explicit=oo_egress.explicit_of(self),
+            explicit=oo_egress.policy_of(self, headers, url),
         )
 
         def _post_best_config() -> Any:
@@ -2877,6 +2888,7 @@ class BackendIntegratedClient:
                     timeout=min(self.timeout, 30.0),
                     allow_redirects=False,
                 )
+                observe_requests_response(response)
             except (
                 requests.exceptions.ConnectionError,
                 requests.exceptions.Timeout,
@@ -2971,6 +2983,13 @@ class BackendIntegratedClient:
         headers = self._get_sync_auth_headers(target="backend")
         if etag:
             headers["If-None-Match"] = etag
+        oo_egress.assert_closed_ids(
+            "best_config_fetch",
+            config_id,
+            environment,
+            function_ref,
+            explicit=oo_egress.policy_of(self, headers, url),
+        )
         params = {
             key: value
             for key, value in {
@@ -3088,6 +3107,7 @@ class BackendIntegratedClient:
             timeout=(min(self.timeout, 5.0), min(self.timeout, 10.0)),
             allow_redirects=False,
         )
+        observe_requests_response(response)
         if response.status_code != 200:
             raise PurposeKeyGrantFetchError(
                 response.status_code, _envelope_error_code(response)
@@ -3150,6 +3170,7 @@ class BackendIntegratedClient:
                 timeout=(min(self.timeout, 5.0), self.timeout),
                 allow_redirects=False,
             )
+            observe_requests_response(response)
             status = int(response.status_code)
             if status not in (200, 201):
                 code = _envelope_error_code(response)
@@ -3239,6 +3260,9 @@ class BackendIntegratedClient:
         url = self._build_feature_upload_url(experiment_run_id)
         if not url:
             return False
+        oo_egress.refuse_if_active(
+            "example_feature_upload", explicit=oo_egress.policy_of(self, headers, url)
+        )
         payload = {"feature_kind": feature_kind, "features": features}
 
         def _post_example_features() -> Any:
@@ -3251,6 +3275,7 @@ class BackendIntegratedClient:
                     timeout=min(self.timeout, 30.0),
                     allow_redirects=False,
                 )
+                observe_requests_response(response)
             except (
                 requests.exceptions.ConnectionError,
                 requests.exceptions.Timeout,

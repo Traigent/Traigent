@@ -456,15 +456,23 @@ CLOSED_BODY = {
 }
 
 
-def test_closed_403_latches_the_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+SCOPE_A = "https://backend.example.test|" + "a" * 64
+SCOPE_B = "https://backend.example.test|" + "b" * 64
+
+
+def test_closed_403_latches_the_mode_for_that_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv(oo.ENV_VAR, "0")
-    assert oo.is_active() is False
-    assert oo.note_response(403, json.dumps(CLOSED_BODY)) is True
-    assert oo.is_latched() is True
-    assert oo.is_active() is True
-    assert oo.is_active(False) is True  # even an explicit opt-out cannot undo a latch
+    assert oo.is_active(scope=SCOPE_A) is False
+    assert oo.note_response(403, json.dumps(CLOSED_BODY), SCOPE_A) is True
+    assert oo.is_latched(SCOPE_A) is True
+    assert oo.is_active(scope=SCOPE_A) is True
+    # even an explicit opt-out cannot undo a latch for the SAME credential
+    assert oo.is_active(False, scope=SCOPE_A) is True
+    assert oo.is_active(oo.Policy(False, SCOPE_A)) is True
     with pytest.raises(oo.OptimizationOnlyRefusal):
-        oo.refuse_if_active("dataset_upload", explicit=False)
+        oo.refuse_if_active("dataset_upload", explicit=oo.Policy(False, SCOPE_A))
 
 
 @pytest.mark.parametrize(
@@ -480,8 +488,55 @@ def test_closed_403_latches_the_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     ],
 )
 def test_other_responses_do_not_latch(status: int, body: Any) -> None:
-    assert oo.note_response(status, body) is False
-    assert oo.is_latched() is False
+    assert oo.note_response(status, body, SCOPE_A) is False
+    assert oo.is_latched(SCOPE_A) is False
+
+
+def test_refusal_for_one_credential_does_not_restrict_another() -> None:
+    """Review finding 6: the latch is bound to (origin, credential fingerprint)."""
+    oo.note_response(403, json.dumps(CLOSED_BODY), SCOPE_A)
+    assert oo.is_active(oo.Policy(False, SCOPE_B)) is False  # B's explicit False stands
+    assert oo.is_active(oo.Policy(None, SCOPE_B)) is False
+    assert oo.is_active(oo.Policy(False, SCOPE_A)) is True
+    assert oo.is_active(False) is False  # unattributed calls are never latched
+    # a response with no credential to attribute it to latches nothing
+    assert oo.note_response(403, json.dumps(CLOSED_BODY), None) is True
+    assert oo.is_active(oo.Policy(False, None)) is False
+
+
+def test_credential_scope_binds_origin_and_credential_without_storing_the_key() -> None:
+    key_a, key_b = "uk_" + "a" * 43, "uk_" + "b" * 43
+    a = oo.credential_scope("https://H.example/api/v1/sessions", {"X-API-Key": key_a})
+    assert a == oo.credential_scope("https://h.example", {"x-api-key": key_a})
+    assert a != oo.credential_scope("https://h.example", {"X-API-Key": key_b})
+    assert a != oo.credential_scope("https://other.example", {"X-API-Key": key_a})
+    assert key_a not in (a or "") and key_a[3:] not in (a or "")
+    assert oo.credential_scope("https://h.example", {"Content-Type": "x"}) is None
+    assert oo.credential_scope("https://h.example", None) is None
+    bearer = oo.credential_scope("https://h.example", {"Authorization": "Bearer tok1"})
+    assert bearer == oo.credential_scope("https://h.example", {"Authorization": "tok1"})
+    # X-API-Key wins over Authorization, so a client sending both matches one sending only it
+    assert oo.credential_scope(
+        "https://h.example", {"X-API-Key": key_a, "Authorization": "Bearer t"}
+    ) == oo.credential_scope("https://h.example", {"X-API-Key": key_a})
+
+
+def test_latch_is_thread_safe_across_credentials() -> None:
+    import threading
+
+    scopes = [f"https://h.example|{i:064d}" for i in range(64)]
+    threads = [
+        threading.Thread(
+            target=oo.note_response, args=(403, json.dumps(CLOSED_BODY), s)
+        )
+        for s in scopes
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert all(oo.is_latched(s) for s in scopes)
+    assert not oo.is_latched("https://h.example|" + "f" * 64)
 
 
 def test_closed_403_accepts_bytes_and_error_field() -> None:
@@ -509,7 +564,15 @@ def test_closed_refusal_code_is_registered_with_session_types() -> None:
     assert detail.safe_error_code == "optimization_only"
 
 
-def test_transport_gate_latches_on_closed_403_body() -> None:
+def _closed_resp_kinds() -> tuple[bytes, dict[str, str], str]:
+    return (
+        json.dumps(CLOSED_BODY).encode(),
+        {"X-API-Key": "uk_" + "c" * 43},
+        "https://h.example/api/v1/x",
+    )
+
+
+def test_transport_gate_latches_the_requests_credential_on_closed_403() -> None:
     import asyncio
 
     from traigent.labels.transport_gate import _latch_aiohttp
@@ -522,8 +585,187 @@ def test_transport_gate_latches_on_closed_403_body() -> None:
         async def read(self) -> bytes:
             return self._body
 
-    asyncio.run(_latch_aiohttp(Resp(500, json.dumps(CLOSED_BODY).encode())))
-    asyncio.run(_latch_aiohttp(Resp(403, b'{"error_code": "forbidden"}')))
-    assert oo.is_latched() is False
-    asyncio.run(_latch_aiohttp(Resp(403, json.dumps(CLOSED_BODY).encode())))
-    assert oo.is_latched() is True
+    body, headers, url = _closed_resp_kinds()
+    scope = oo.credential_scope(url, headers)
+    asyncio.run(_latch_aiohttp(Resp(500, body), url, headers))
+    asyncio.run(_latch_aiohttp(Resp(403, b'{"error_code": "forbidden"}'), url, headers))
+    assert oo.is_latched(scope) is False
+    asyncio.run(_latch_aiohttp(Resp(403, body), url, headers))
+    assert oo.is_latched(scope) is True
+    assert oo.is_active(oo.Policy(False, scope)) is True
+    other = oo.credential_scope(url, {"X-API-Key": "uk_" + "d" * 43})
+    assert oo.is_active(oo.Policy(False, other)) is False
+
+
+class _FakeRequest:
+    def __init__(self, url: str, headers: dict[str, str]) -> None:
+        self.url = url
+        self.headers = headers
+        self.method = "POST"
+        self.content = b""
+
+
+class _FakeHttpxResponse:
+    def __init__(self, request: _FakeRequest, status: int, body: bytes) -> None:
+        self.request = request
+        self.status_code = status
+        self._body = body
+        self._read = False
+
+    @property
+    def content(self) -> bytes:
+        if not self._read:
+            raise RuntimeError("ResponseNotRead")
+        return self._body
+
+    def read(self) -> bytes:
+        self._read = True
+        return self._body
+
+    async def aread(self) -> bytes:
+        return self.read()
+
+    def close(self) -> None:
+        return None
+
+
+def test_httpx_sync_and_async_wrappers_latch_on_closed_403() -> None:
+    """Review finding 5: HTTPX responses used to be returned without being observed."""
+    import asyncio
+
+    from traigent.labels import transport_gate as gate
+
+    body, headers, url = _closed_resp_kinds()
+    scope = oo.credential_scope(url, headers)
+
+    class SyncBase:
+        def send(self, request: Any, **kwargs: Any) -> Any:
+            return _FakeHttpxResponse(request, 403, body)
+
+    class AsyncBase:
+        async def send(self, request: Any, **kwargs: Any) -> Any:
+            return _FakeHttpxResponse(request, 403, body)
+
+    sync_client = gate._build_httpx_sync(SyncBase)()
+    sync_client.send(_FakeRequest(url, headers))
+    assert oo.is_latched(scope) is True
+
+    oo.reset_latch()
+    async_client = gate._build_httpx_async(AsyncBase)()
+    asyncio.run(async_client.send(_FakeRequest(url, headers)))
+    assert oo.is_latched(scope) is True
+
+
+def test_module_level_requests_responses_are_observed() -> None:
+    """Review finding 5: ``requests.post(...)`` bypasses the gated session entirely."""
+    from traigent.labels.transport_gate import observe_requests_response
+
+    body, headers, url = _closed_resp_kinds()
+
+    class Resp:
+        status_code = 403
+        content = body
+        request = _FakeRequest(url, headers)
+
+    observe_requests_response(Resp())
+    assert oo.is_latched(oo.credential_scope(url, headers)) is True
+
+
+def test_backend_client_transient_check_observes_the_response() -> None:
+    from traigent.cloud.backend_client import _raise_for_transient_backend_response
+
+    body, headers, url = _closed_resp_kinds()
+
+    class Resp:
+        status_code = 403
+        content = body
+        text = ""
+        request = _FakeRequest(url, headers)
+
+    _raise_for_transient_backend_response(Resp(), "Best-config fetch")
+    assert oo.is_latched(oo.credential_scope(url, headers)) is True
+
+
+# ---------------------------------------------------------------- Director (finding 1)
+
+DIRECTOR_SESSIONS = "/api/v1/director/sessions"
+DIRECTOR_TURN = "/api/v1/director/sessions/s1/turn"
+
+
+def test_director_turn_with_free_text_notes_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(oo.ENV_VAR, "1")
+    leaking = {
+        "session_revision": 1,
+        "report": {
+            "instruction_id": "i1",
+            "status": "completed",
+            "notes": "Alice has diabetes",
+        },
+    }
+    with pytest.raises(oo.OptimizationOnlyRefusal):
+        oo.assert_director_request(DIRECTOR_TURN, leaking)
+
+
+def test_director_allowlist_is_enforced_at_every_depth_and_leaf(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(oo.ENV_VAR, "1")
+    ok_turn = {
+        "session_revision": 2,
+        "intent": "continue",
+        "report": {
+            "instruction_id": "i1",
+            "status": "completed",
+            "run_id": "run_1",
+            "result": {
+                "protocol": "p1",
+                "judge": "j1",
+                "orders": "both",
+                "verdicts": [{"example_id": "e1", "verdict": "a"}],
+            },
+        },
+        "client_report": {
+            "validity_checks": [
+                {"check": "c1", "status": "ok", "confidence_label": "high"}
+            ]
+        },
+    }
+    oo.assert_director_request(DIRECTOR_TURN, ok_turn)
+    oo.assert_director_request(
+        DIRECTOR_SESSIONS,
+        {
+            "project_id": "p1",
+            "workflow_kind": "w",
+            "run_ids": ["r1"],
+            "environment": "dev",
+        },
+    )
+    bad: list[tuple[str, dict[str, Any]]] = [
+        (DIRECTOR_TURN, {**ok_turn, "message": "x"}),
+        (DIRECTOR_TURN, {"report": {**ok_turn["report"], "detail": "x"}}),
+        (
+            DIRECTOR_TURN,
+            {"report": {"result": {**ok_turn["report"]["result"], "rationale": "x"}}},
+        ),
+        (
+            DIRECTOR_TURN,
+            {"report": {"result": {"verdicts": [{"example_id": "e1", "note": "x"}]}}},
+        ),
+        (
+            DIRECTOR_TURN,
+            {"client_report": {"validity_checks": [{"check": "free text"}]}},
+        ),
+        (DIRECTOR_TURN, {"report": {"status": "Alice has diabetes"}}),
+        (DIRECTOR_SESSIONS, {"project_id": "p1", "goal": "x"}),
+        (DIRECTOR_SESSIONS, {"project_id": {"nested": "x y"}}),
+        ("/api/v1/director/other", {"a": 1}),
+    ]
+    for path, body in bad:
+        with pytest.raises(oo.OptimizationOnlyRefusal):
+            oo.assert_director_request(path, body)
+
+
+def test_director_check_is_a_noop_when_mode_off() -> None:
+    oo.assert_director_request(DIRECTOR_TURN, {"report": {"notes": "free text"}})

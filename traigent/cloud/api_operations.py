@@ -917,11 +917,6 @@ class ApiOperations:
         # optimization_only: rebuild the final body from the closed contract before any
         # bytes leave (no-op, same object, when the mode is off).
         declared_metrics = oo_egress.declared_from_session_payload(payload)
-        payload = oo_egress.project_for_send(
-            oo_egress.PHASE_SESSION_CREATE_AUTO,
-            payload,
-            explicit=oo_egress.explicit_of(self.client),
-        )
         content_less_ctx: tuple[Any, ...] | None = None
         if "capabilities" in payload:
             content_less_ctx = getattr(self, "_content_less_ctx", None)
@@ -940,6 +935,13 @@ class ApiOperations:
             )
             url = f"{api_base}/sessions"
             timeout = cast(Any, aiohttp).ClientTimeout(total=30)
+            # Final policy check + projection immediately before the send, with the
+            # headers already resolved (no await between this and the transport call).
+            payload = oo_egress.project_for_send(
+                oo_egress.PHASE_SESSION_CREATE_AUTO,
+                payload,
+                explicit=oo_egress.policy_of(self.client, headers, url),
+            )
 
             async with session.post(
                 url,
@@ -1070,8 +1072,15 @@ class ApiOperations:
                 ),
             )
 
+        policy = oo_egress.policy_of(
+            self.client, await _headers(), f"{api_base}/sessions"
+        )
         await send_session_labels(
-            content_less_session.label_texts(session_request), refs, api_base, _headers
+            content_less_session.label_texts(session_request),
+            refs,
+            api_base,
+            _headers,
+            policy=policy,
         )
 
     @staticmethod
@@ -1108,16 +1117,6 @@ class ApiOperations:
             logger.debug("aiohttp not available, skipping intermediate report")
             return {"prune": False, "prune_reason": None}
         try:
-            wire_payload = oo_egress.project_for_send(
-                oo_egress.PHASE_INTERMEDIATE_REPORT,
-                wire_payload,
-                explicit=oo_egress.explicit_of(self.client),
-            )
-        except oo_egress.MetadataContractViolation:
-            logger.debug("optimization_only: intermediate report not sent")
-            return {"prune": False, "prune_reason": None}
-
-        try:
             headers = await self.client.auth_manager.augment_headers(
                 {"Content-Type": _JSON_CONTENT_TYPE}
             )
@@ -1134,6 +1133,15 @@ class ApiOperations:
                 )
                 url = f"{api_base}/sessions/{session_id}/intermediate-report"
                 timeout = cast(Any, aiohttp).ClientTimeout(total=10)
+                try:
+                    wire_payload = oo_egress.project_for_send(
+                        oo_egress.PHASE_INTERMEDIATE_REPORT,
+                        wire_payload,
+                        explicit=oo_egress.policy_of(self.client, headers, url),
+                    )
+                except oo_egress.MetadataContractViolation:
+                    logger.debug("optimization_only: intermediate report not sent")
+                    return {"prune": False, "prune_reason": None}
                 async with session.post(
                     url,
                     json=wire_payload,
@@ -1280,7 +1288,7 @@ class ApiOperations:
                 status_data = oo_egress.project_for_send(
                     oo_egress.PHASE_CONFIGURATION_RUN,
                     status_data,
-                    explicit=oo_egress.explicit_of(self.client),
+                    explicit=oo_egress.policy_of(self.client, headers, url),
                 )
 
                 async with session.put(
@@ -1471,7 +1479,7 @@ class ApiOperations:
                 measures_data = oo_egress.project_for_send(
                     oo_egress.PHASE_CONFIGURATION_RUN,
                     measures_data,
-                    explicit=oo_egress.explicit_of(self.client),
+                    explicit=oo_egress.policy_of(self.client, headers, url),
                 )
 
                 async with session.put(
@@ -1551,7 +1559,7 @@ class ApiOperations:
                 run_status_body = oo_egress.project_for_send(
                     oo_egress.PHASE_CONFIGURATION_RUN,
                     {"status": backend_status},
-                    explicit=oo_egress.explicit_of(self.client),
+                    explicit=oo_egress.policy_of(self.client, headers, url),
                 )
 
                 async with session.put(

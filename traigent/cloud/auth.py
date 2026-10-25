@@ -33,7 +33,11 @@ from traigent.cloud.session_types import SessionCreationFailureDetail
 from traigent.cloud.token_manager import TokenManager
 from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.cloud.user_agent import get_sdk_user_agent
-from traigent.labels.transport_gate import gate_session, preflight_requests
+from traigent.labels.transport_gate import (
+    gate_session,
+    observe_requests_response,
+    preflight_requests,
+)
 from traigent.security.redaction import redact_sensitive_data
 from traigent.utils.exceptions import AuthenticationError as TraigentAuthenticationError
 
@@ -1852,6 +1856,7 @@ class AuthManager:
                 timeout=15,
                 allow_redirects=False,
             )
+            observe_requests_response(response)
         except requests.Timeout:
             return "backend validation timed out"
         except requests.RequestException as exc:

@@ -26,7 +26,6 @@ pytestmark = pytest.mark.backend_online
 _SESS = r"/sessions/(?P<sid>[^/]+)"
 #: route regex -> (method, phase). Bodies on these routes must be projection fixed points.
 ROUTES: list[tuple[str, str, str]] = [
-    ("POST", r"/hybrid/sessions$", oo.PHASE_HYBRID_SESSION_CREATE),
     ("POST", r"(?<!/hybrid)/sessions$", oo.PHASE_SESSION_CREATE_AUTO),
     ("POST", _SESS + r"/results$", oo.PHASE_RESULTS),
     ("POST", _SESS + r"/next-trial$", oo.PHASE_NEXT_TRIAL),
@@ -114,7 +113,6 @@ def test_every_body_the_sdk_sends_is_already_the_projection(
         oo.PHASE_FINALIZE,
         oo.PHASE_CONFIGURATION_RUN,
         oo.PHASE_INTERMEDIATE_REPORT,
-        oo.PHASE_HYBRID_SESSION_CREATE,
         oo.PHASE_OPTIMIZER_METRICS,
     ):
         assert checked.get(phase, 0) > 0, (phase, checked)
@@ -128,6 +126,12 @@ def test_every_body_the_sdk_sends_is_already_the_projection(
     assert "OptimizationOnlyRefusal" in (
         result.exerciser_outcomes.get("aiohttp_retry_optimize") or ""
     )
+    # Review finding 3: POST /hybrid/sessions is refused by the backend unconditionally for
+    # this workspace, so the SDK must not send it (the exerciser now fails locally).
+    assert "OptimizationOnlyRefusal" in (
+        result.exerciser_outcomes.get("hybrid_session_and_optimizer") or ""
+    )
+    assert [r.route for r in result.requests if "/hybrid/sessions" in r.path] == []
 
 
 # --------------------------------------------------------------- exact bytes, on and off
@@ -171,11 +175,28 @@ def _env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv(k, v)
 
 
-async def _create_session_raw(payload: dict[str, Any]) -> None:
-    client = _client()
+async def _create_session_raw(
+    payload: dict[str, Any], client: Any = None, headers: dict[str, str] | None = None
+) -> None:
+    client = client or _client()
     await client._api_ops._post_session_creation(
-        json.loads(json.dumps(payload)), {"Content-Type": "application/json"}, None
+        json.loads(json.dumps(payload)),
+        headers if headers is not None else {"Content-Type": "application/json"},
+        None,
     )
+
+
+def _real_headers(client: Any) -> dict[str, str]:
+    """The headers the SDK really sends (credential included) for ``client``."""
+    return asyncio.run(
+        client.auth_manager.augment_headers({"Content-Type": "application/json"})
+    )
+
+
+def _scope(client: Any, headers: dict[str, str]) -> str:
+    scope = oo.credential_scope(BACKEND_URL, headers)
+    assert scope is not None, "client headers carry no credential"
+    return scope
 
 
 def _session_posts(cap) -> list[CapturedRequest]:
@@ -253,14 +274,48 @@ def test_closed_403_latches_and_next_send_is_projected(
         "error_code": "optimization_only",
     }
     with capture_egress() as cap:
-        asyncio.run(
-            _create_session_raw(DIRTY_TYPED_SESSION)
-        )  # env says off: legacy bytes
-        assert oo.note_response(403, json.dumps(closed))
-        asyncio.run(_create_session_raw(DIRTY_TYPED_SESSION))  # latched: projected
+        client = _client()
+        headers = _real_headers(client)
+        asyncio.run(_create_session_raw(DIRTY_TYPED_SESSION, client, headers))
+        assert oo.note_response(403, json.dumps(closed), _scope(client, headers))
+        asyncio.run(_create_session_raw(DIRTY_TYPED_SESSION, client, headers))
     first, second = _session_posts(cap)
-    assert json.loads(first.body) == DIRTY_TYPED_SESSION
-    assert "Alice" not in second.body.decode()
+    assert json.loads(first.body) == DIRTY_TYPED_SESSION  # env says off: legacy bytes
+    assert "Alice" not in second.body.decode()  # latched for this credential: projected
+
+
+def test_two_credentials_one_process_refusal_does_not_leak_across(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Review finding 6: tenant A's closed 403 must not restrict tenant B's explicit False."""
+    from traigent.cloud.backend_client import (
+        BackendClientConfig,
+        BackendIntegratedClient,
+    )
+
+    _env(monkeypatch, tmp_path)
+    closed = json.dumps(
+        {"error": "optimization_only", "error_code": "optimization_only"}
+    )
+
+    def make(key: str, **kw: Any) -> BackendIntegratedClient:
+        return BackendIntegratedClient(
+            api_key=key,
+            backend_config=BackendClientConfig(backend_base_url=BACKEND_URL),
+            **kw,
+        )
+
+    with capture_egress() as cap:
+        a = make("uk_" + "a" * 43)
+        b = make("uk_" + "b" * 43, optimization_only=False)
+        ha, hb = _real_headers(a), _real_headers(b)
+        assert _scope(a, ha) != _scope(b, hb)
+        assert oo.note_response(403, closed, _scope(a, ha))
+        asyncio.run(_create_session_raw(DIRTY_TYPED_SESSION, a, ha))
+        asyncio.run(_create_session_raw(DIRTY_TYPED_SESSION, b, hb))
+    sent_a, sent_b = _session_posts(cap)
+    assert "Alice" not in sent_a.body.decode()
+    assert json.loads(sent_b.body) == DIRTY_TYPED_SESSION  # B untouched by A's refusal
 
 
 # --------------------------------------------------------------- forbidden operations
@@ -474,3 +529,250 @@ def test_cloud_client_routes_send_projected_bodies(
     assert sent["finalize"] == oo.project_for_phase(
         oo.PHASE_FINALIZE, legacy["finalize"]
     )
+
+
+# ------------------------------------------- review findings 1, 2, 3, 4 (regressions)
+
+
+def test_hybrid_session_create_is_refused_locally_with_zero_transport(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Finding 3: the backend refuses POST /hybrid/sessions unconditionally; never send it."""
+    _env(monkeypatch, tmp_path)
+    monkeypatch.setenv(oo.ENV_VAR, "1")
+    with capture_egress() as cap:
+        with pytest.raises(oo.OptimizationOnlyRefusal):
+            asyncio.run(
+                _client().create_hybrid_session(
+                    problem_statement="p",
+                    search_space={"m": ["a"]},
+                    optimization_config={"objectives": ["accuracy"]},
+                )
+            )
+    assert [r for r in cap.requests if "/hybrid/" in r.path] == []
+
+
+def test_hybrid_session_create_unchanged_when_mode_off(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _env(monkeypatch, tmp_path)
+    with capture_egress() as cap:
+        asyncio.run(
+            _client().create_hybrid_session(
+                problem_statement="free text statement",
+                search_space={"m": ["a"]},
+                optimization_config={"objectives": ["accuracy"]},
+            )
+        )
+    (post,) = [r for r in cap.requests if r.path.endswith("/hybrid/sessions")]
+    assert json.loads(post.body)["problem_statement"] == "free text statement"
+
+
+def test_director_turn_with_notes_never_reaches_the_transport(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Finding 1: the Director route is allowed, free-text fields on it are not."""
+    from traigent.cloud.analytics_client import BackendAnalyticsClient
+
+    _env(monkeypatch, tmp_path)
+    monkeypatch.setenv(oo.ENV_VAR, "1")
+    with capture_egress() as cap:
+        analytics = BackendAnalyticsClient(BACKEND_URL, api_key=FAKE_API_KEY)
+        with pytest.raises(oo.OptimizationOnlyRefusal):
+            asyncio.run(
+                analytics.director_turn(
+                    "s1",
+                    1,
+                    report={
+                        "instruction_id": "i1",
+                        "status": "completed",
+                        "notes": "Alice has diabetes",
+                    },
+                )
+            )
+        with pytest.raises(oo.OptimizationOnlyRefusal):
+            asyncio.run(
+                analytics.director_turn(
+                    "s1",
+                    1,
+                    client_report={"validity_checks": [{"check": "c", "extra": "x y"}]},
+                )
+            )
+    assert [r for r in cap.requests if "director" in r.path] == []
+
+
+def test_director_turn_with_the_closed_shape_is_still_sent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from traigent.cloud.analytics_client import BackendAnalyticsClient
+
+    _env(monkeypatch, tmp_path)
+    monkeypatch.setenv(oo.ENV_VAR, "1")
+    with capture_egress() as cap:
+        analytics = BackendAnalyticsClient(BACKEND_URL, api_key=FAKE_API_KEY)
+        try:
+            asyncio.run(
+                analytics.director_turn(
+                    "s1",
+                    1,
+                    report={
+                        "instruction_id": "i1",
+                        "status": "completed",
+                        "run_id": "r1",
+                    },
+                )
+            )
+        except Exception:  # noqa: BLE001 - the fake backend's answer is not a turn
+            pass
+    (post,) = [r for r in cap.requests if r.path.endswith("/turn")]
+    assert json.loads(post.body)["report"]["run_id"] == "r1"
+
+
+def test_label_dispatch_honours_the_clients_keyword_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Finding 2: kwarg True with the env unset means the label sender is never built."""
+    from types import SimpleNamespace
+    from unittest import mock
+
+    from traigent.cloud.api_operations import ApiOperations
+
+    async def augment(headers: dict[str, str]) -> dict[str, str]:
+        return {**headers, "X-API-Key": FAKE_API_KEY}
+
+    def stub_client(opt_in: bool | None) -> Any:
+        return SimpleNamespace(
+            optimization_only=opt_in,
+            backend_config=SimpleNamespace(api_base_url=f"{BACKEND_URL}/api/v1"),
+            auth_manager=SimpleNamespace(augment_headers=augment),
+        )
+
+    result = SimpleNamespace(content_less_refs={"agent": "agentref_" + "a1" * 16})
+    sender_from_config = mock.MagicMock(return_value=None)
+    monkeypatch.setattr(
+        "traigent.labels.transport.sender_from_config", sender_from_config
+    )
+    monkeypatch.setattr(
+        "traigent.cloud.content_less.label_texts",
+        lambda _request: {"agent": "Alice's private agent name"},
+    )
+
+    asyncio.run(
+        ApiOperations(stub_client(True))._send_content_less_labels(object(), result)
+    )
+    assert sender_from_config.call_count == 0
+
+    asyncio.run(
+        ApiOperations(stub_client(None))._send_content_less_labels(object(), result)
+    )
+    assert sender_from_config.call_count == 1  # legacy path unchanged when not opted in
+
+
+def test_label_sender_policy_argument_overrides_a_clean_environment() -> None:
+    from unittest import mock
+
+    from traigent.labels import transport
+
+    with mock.patch.object(transport, "sender_from_config") as sender:
+        out = asyncio.run(
+            transport.send_session_labels(
+                {"agent": "Alice's agent"},
+                {"agent": "agentref_" + "a1" * 16},
+                BACKEND_URL,
+                lambda: {},
+                policy=oo.Policy(True, None),
+            )
+        )
+    assert out == {} and sender.call_count == 0
+
+
+def _flip_on_final_header_call(cloud: Any, calls: int) -> None:
+    """Make the latch flip during the ``calls``-th header resolution (the send site's)."""
+    real = cloud._get_headers
+    seen = {"n": 0}
+
+    async def flipping() -> dict[str, str]:
+        headers = await real()
+        seen["n"] += 1
+        if seen["n"] == calls:
+            oo.latch_on(oo.credential_scope(cloud.api_base_url, headers))
+        return headers
+
+    cloud._get_headers = flipping
+
+
+def _count_header_calls(coro_fn) -> int:
+    from traigent.cloud.client import TraigentCloudClient
+
+    async def run() -> int:
+        cloud = TraigentCloudClient(api_key=FAKE_API_KEY, base_url=BACKEND_URL)
+        real = cloud._get_headers
+        n = {"n": 0}
+
+        async def counting() -> dict[str, str]:
+            n["n"] += 1
+            return await real()
+
+        cloud._get_headers = counting
+        await coro_fn(cloud)
+        return n["n"]
+
+    return asyncio.run(run())
+
+
+async def _submit_with_undeclared_metric(cloud: Any) -> None:
+    await cloud.submit_trial_result(
+        "sess-oo-1", "trial-oo-1", {"accuracy": 0.5, "patient_diabetes": 1.0}, 0.1
+    )
+
+
+async def _next_trial_with_previous_result(cloud: Any) -> None:
+    from traigent.cloud.models import TrialResultSubmission, TrialStatus
+
+    previous = TrialResultSubmission(
+        session_id="sess-oo-1",
+        trial_id="trial-oo-0",
+        metrics={"accuracy": 0.5, "patient_diabetes": 1.0},
+        duration=0.1,
+        status=TrialStatus.COMPLETED,
+        metadata={},
+    )
+    try:
+        await cloud.get_next_trial("sess-oo-1", previous_results=[previous])
+    except Exception:  # noqa: BLE001 - the fake answer shape is irrelevant here
+        pass
+
+
+@pytest.mark.parametrize(
+    ("operation", "route"),
+    [
+        (_submit_with_undeclared_metric, "results"),
+        (_next_trial_with_previous_result, "next-trial"),
+    ],
+)
+def test_latch_flipping_during_the_header_await_still_projects_the_body(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, operation: Any, route: str
+) -> None:
+    """Finding 4 (TOCTOU): policy is decided AFTER headers are resolved, right before send."""
+    from traigent.cloud.client import TraigentCloudClient
+
+    _env(monkeypatch, tmp_path)
+    with capture_egress():
+        calls = _count_header_calls(operation)
+    oo.reset_latch()
+
+    async def interleaved() -> None:
+        cloud = TraigentCloudClient(api_key=FAKE_API_KEY, base_url=BACKEND_URL)
+        _flip_on_final_header_call(cloud, calls)
+        await operation(cloud)
+
+    with capture_egress() as cap:
+        asyncio.run(interleaved())
+    assert oo.is_active(
+        scope=oo.credential_scope(BACKEND_URL, {"X-API-Key": FAKE_API_KEY})
+    )
+    (post,) = [r for r in cap.requests if r.path.endswith("/" + route)]
+    body = json.loads(post.body)
+    sent = body["previous_results"][0] if route == "next-trial" else body
+    assert sent["metrics"] == {"accuracy": 0.5}
+    assert "patient_diabetes" not in post.body.decode()

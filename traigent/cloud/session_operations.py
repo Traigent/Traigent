@@ -1098,6 +1098,11 @@ class SessionOperations:
 
         logger.info("Creating hybrid execution session")
         self._raise_if_backend_egress_disabled("create hybrid session")
+        # The backend refuses POST /hybrid/sessions for an optimization_only workspace
+        # unconditionally (hybrid_routes.py require_not_optimization_only): never send it.
+        oo_egress.refuse_if_active(
+            "hybrid_session_create", explicit=oo_egress.explicit_of(self.client)
+        )
 
         session = await self.client._ensure_session()
 
@@ -1107,9 +1112,9 @@ class SessionOperations:
                 self.client.backend_config.api_base_url
                 or BackendConfig.get_backend_api_url()
             )
-            hybrid_body = oo_egress.project_for_send(
-                oo_egress.PHASE_HYBRID_SESSION_CREATE,
-                {
+            async with session.post(
+                f"{api_base}/hybrid/sessions",
+                json={
                     "problem_statement": problem_statement,
                     "search_space": search_space,
                     "optimization_config": optimization_config,
@@ -1117,11 +1122,6 @@ class SessionOperations:
                         filter_wire_metadata(metadata) if metadata is not None else None
                     ),
                 },
-                explicit=oo_egress.explicit_of(self.client),
-            )
-            async with session.post(
-                f"{api_base}/hybrid/sessions",
-                json=hybrid_body,
                 headers=await self.client.auth_manager.auth.get_headers(),
             ) as response:
                 if response.status != 201:
@@ -1682,7 +1682,7 @@ class SessionOperations:
                 finalize_body = oo_egress.project_for_send(
                     oo_egress.PHASE_FINALIZE,
                     finalize_body,
-                    explicit=oo_egress.explicit_of(self.client),
+                    explicit=oo_egress.policy_of(self.client, headers, url),
                 )
                 async with session.post(
                     url,

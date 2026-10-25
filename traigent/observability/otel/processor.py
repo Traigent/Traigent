@@ -173,7 +173,11 @@ class TraigentSpanProcessor(SpanProcessor):
                 started_offline = True
         # _offline_overflow is never auto-cleared: an empty tracked set does
         # not prove the untracked offline spans have ended.
-        if started_offline or is_backend_offline() or oo_egress.is_active():
+        if (
+            started_offline
+            or is_backend_offline()
+            or oo_egress.is_active(scope=getattr(self, "oo_scope", None))
+        ):
             # Offline (offline=True run or the offline env vars) is checked at
             # record time, not only at init: a pipeline initialised online must
             # not queue spans recorded while offline. Dropped, never queued.

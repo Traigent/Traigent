@@ -1817,7 +1817,7 @@ class TraigentCloudClient(BaseTraigentClient):
             request_data = oo_egress.project_for_send(
                 oo_egress.PHASE_SESSION_CREATE_AUTO,
                 request_data,
-                explicit=oo_egress.explicit_of(self),
+                explicit=oo_egress.policy_of(self, headers, url),
             )
             async with self._aio_session.post(
                 url, json=request_data, headers=headers
@@ -1834,6 +1834,7 @@ class TraigentCloudClient(BaseTraigentClient):
                                 issued,
                                 self.api_base_url,
                                 self._get_headers,
+                                policy=oo_egress.policy_of(self, headers, url),
                             )
                     result = self._deserialize_session_response(data)
                     oo_egress.register_session_objectives(
@@ -1910,15 +1911,18 @@ class TraigentCloudClient(BaseTraigentClient):
             raise CloudServiceError(_CLIENT_SESSION_NOT_INITIALIZED)
         try:
             url = f"{self.api_base_url}/sessions/{session_id}/next-trial"
+            # Resolve headers FIRST: the policy check and projection must be the last
+            # step before the send, after every await that could change the policy.
+            headers = await self._get_headers()
             request_data = oo_egress.project_for_send(
                 oo_egress.PHASE_NEXT_TRIAL,
                 self._serialize_next_trial_request(request),
-                explicit=oo_egress.explicit_of(self),
+                explicit=oo_egress.policy_of(self, headers, url),
                 session_id=session_id,
             )
 
             async with self._aio_session.post(
-                url, json=request_data, headers=await self._get_headers()
+                url, json=request_data, headers=headers
             ) as response:
                 if response.status == 200:
                     data = await response.json()
@@ -2001,15 +2005,16 @@ class TraigentCloudClient(BaseTraigentClient):
                 logger=logger,
             )
             lift_cost_floor_to_body(request_data)
+            headers = await self._get_headers()  # before the final policy check
             request_data = oo_egress.project_for_send(
                 oo_egress.PHASE_RESULTS,
                 request_data,
-                explicit=oo_egress.explicit_of(self),
+                explicit=oo_egress.policy_of(self, headers, url),
                 session_id=session_id,
             )
 
             async with self._aio_session.post(
-                url, json=request_data, headers=await self._get_headers()
+                url, json=request_data, headers=headers
             ) as response:
                 if response.status == 403:
                     error_text = await response.text()
@@ -2055,14 +2060,15 @@ class TraigentCloudClient(BaseTraigentClient):
             raise CloudServiceError(_CLIENT_SESSION_NOT_INITIALIZED)
         try:
             url = f"{self.api_base_url}/sessions/{session_id}/finalize"
+            headers = await self._get_headers()  # before the final policy check
             request_data = oo_egress.project_for_send(
                 oo_egress.PHASE_FINALIZE,
                 self._serialize_finalization_request(request),
-                explicit=oo_egress.explicit_of(self),
+                explicit=oo_egress.policy_of(self, headers, url),
             )
 
             async with self._aio_session.post(
-                url, json=request_data, headers=await self._get_headers()
+                url, json=request_data, headers=headers
             ) as response:
                 if response.status == 200:
                     data = await response.json()
