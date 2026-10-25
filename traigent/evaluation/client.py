@@ -35,6 +35,10 @@ from traigent.evaluation.dtos import (
     ScoreRecordListResponse,
     TypedMeasureDTO,
 )
+from traigent.evaluation.target_filters import (
+    TargetFilters,
+    validate_target_filters,
+)
 from traigent.utils.env_config import raise_if_backend_offline
 from traigent.utils.exceptions import (
     AuthenticationError,
@@ -134,13 +138,14 @@ class EvaluationClient:
         judge_config: JudgeConfigDTO | dict[str, Any],
         description: str | None = None,
         sampling_rate: float = 1.0,
-        target_filters: dict[str, Any] | None = None,
+        target_filters: TargetFilters | dict[str, Any] | None = None,
         is_active: bool = True,
     ) -> EvaluatorDefinitionDTO:
         if isinstance(target_type, str):
             target_type = EvaluationTargetType(target_type)
         if isinstance(judge_config, dict):
             judge_config = JudgeConfigDTO.from_dict(judge_config)
+        validated_filters = validate_target_filters(target_filters)
         payload = self._request_json(
             "POST",
             "/evaluators",
@@ -151,7 +156,7 @@ class EvaluationClient:
                 "target_type": target_type.value,
                 "judge_config": judge_config.to_dict(),
                 "sampling_rate": sampling_rate,
-                "target_filters": dict(target_filters or {}),
+                "target_filters": validated_filters,
                 "is_active": is_active,
             },
         )
@@ -165,6 +170,10 @@ class EvaluationClient:
         **fields: Any,
     ) -> EvaluatorDefinitionDTO:
         payload = dict(fields)
+        if payload.get("target_filters") is not None:
+            payload["target_filters"] = validate_target_filters(
+                payload["target_filters"]
+            )
         if "target_type" in payload and isinstance(
             payload["target_type"], EvaluationTargetType
         ):
