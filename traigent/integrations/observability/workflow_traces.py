@@ -870,7 +870,9 @@ class WorkflowTracesClient:
         from traigent.utils import optimization_only_egress as oo_egress
         from traigent.utils.env_config import is_backend_offline
 
-        if oo_egress.is_active():
+        if oo_egress.is_active(
+            oo_egress.policy_from_headers(self.backend_url, self._get_headers())
+        ):
             return TraceIngestionResponse(success=False, error="optimization_only")
         if is_backend_offline():
             return TraceIngestionResponse(success=False, error="offline")
@@ -955,7 +957,9 @@ class WorkflowTracesClient:
         from traigent.utils import optimization_only_egress as oo_egress
         from traigent.utils.env_config import is_backend_offline
 
-        if oo_egress.is_active():
+        if oo_egress.is_active(
+            oo_egress.policy_from_headers(self.backend_url, self._get_headers())
+        ):
             return TraceIngestionResponse(success=False, error="optimization_only")
         if is_backend_offline():
             return TraceIngestionResponse(success=False, error="offline")

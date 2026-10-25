@@ -714,6 +714,24 @@ class AuthManager:
     # API key state delegators (backward compatibility)
     # ------------------------------------------------------------------
 
+    def configured_credential_headers(self) -> dict[str, str]:
+        """Header carrying the configured credential, with no network call or refresh.
+
+        Used only to name the credential (for scoping a server refusal); never sent.
+        """
+        credentials = self._credentials
+        if credentials is not None and credentials.jwt_token:
+            return {"Authorization": f"Bearer {credentials.jwt_token}"}
+        token = self._api_key_token
+        if token is not None:
+            try:
+                return {"X-API-Key": token.get_value()}
+            except Exception:  # noqa: BLE001 - silent-ok: expired/cleared token
+                pass
+        if credentials is not None and credentials.api_key:
+            return {"X-API-Key": credentials.api_key}
+        return {}
+
     @property
     def _api_key_token(self) -> SecureToken | None:
         """Delegate to APIKeyManager for backward compatibility."""

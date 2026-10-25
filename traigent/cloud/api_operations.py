@@ -1072,9 +1072,9 @@ class ApiOperations:
                 ),
             )
 
-        policy = oo_egress.policy_of(
-            self.client, await _headers(), f"{api_base}/sessions"
-        )
+        # no header await here: a refresh failure must not fail a created session, and
+        # mode off must cost nothing; the scope comes from the configured credential
+        policy = oo_egress.policy_of(self.client, None, f"{api_base}/sessions")
         await send_session_labels(
             content_less_session.label_texts(session_request),
             refs,

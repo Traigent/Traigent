@@ -2351,6 +2351,8 @@ class BackendAnalyticsClient:
         self, client: Any, request_headers: dict[str, str]
     ) -> oo_egress.Policy:
         """Policy inputs for one request: the client's default headers carry the credential."""
+        if not oo_egress.scope_required(None):
+            return oo_egress.Policy()
         try:
             merged = {**dict(client.headers), **request_headers}
         except Exception:  # noqa: BLE001 - silent-ok: unattributable, env/explicit only

@@ -150,6 +150,10 @@ class SyncManager:
         """Public access to the HTTP session for testing."""
         return self._session
 
+    def _optimization_only_policy(self) -> oo_egress.Policy:
+        """Policy for this sync client's credential (its API key header)."""
+        return oo_egress.policy_from_headers(self.base_url, self.headers)
+
     def _raise_if_backend_egress_disabled(self, operation: str) -> None:
         """Fail closed before local-to-backend sync transport."""
 
@@ -1274,7 +1278,9 @@ class SyncManager:
         try:
             declared_metrics = oo_egress.declared_from_session_payload(session_create)
             session_create = oo_egress.project_for_send(
-                oo_egress.PHASE_SESSION_CREATE_AUTO, session_create
+                oo_egress.PHASE_SESSION_CREATE_AUTO,
+                session_create,
+                explicit=self._optimization_only_policy(),
             )
             response = self._session.post(
                 f"{self.base_url}/sessions",
@@ -1382,6 +1388,7 @@ class SyncManager:
                 json=oo_egress.project_for_send(
                     oo_egress.PHASE_NEXT_TRIAL,
                     {"session_id": session_id, "previous_results": []},
+                    explicit=self._optimization_only_policy(),
                     session_id=session_id,
                 ),
                 timeout=self._request_timeout,
@@ -1487,7 +1494,10 @@ class SyncManager:
                 result_payload["measures"] = configuration_run["example_measures"]
             try:
                 result_payload = oo_egress.project_for_send(
-                    oo_egress.PHASE_RESULTS, result_payload, session_id=session_id
+                    oo_egress.PHASE_RESULTS,
+                    result_payload,
+                    explicit=self._optimization_only_policy(),
+                    session_id=session_id,
                 )
                 response = self._session.post(
                     f"{self.base_url}/sessions/{session_id}/results",
@@ -1538,7 +1548,9 @@ class SyncManager:
             if experiment_run_id is not None:
                 finalize_body["experiment_run_id"] = experiment_run_id
             finalize_body = oo_egress.project_for_send(
-                oo_egress.PHASE_FINALIZE, finalize_body
+                oo_egress.PHASE_FINALIZE,
+                finalize_body,
+                explicit=self._optimization_only_policy(),
             )
             response = self._session.post(
                 f"{self.base_url}/sessions/{session_id}/finalize",

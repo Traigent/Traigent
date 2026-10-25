@@ -515,10 +515,68 @@ def test_credential_scope_binds_origin_and_credential_without_storing_the_key() 
     assert oo.credential_scope("https://h.example", None) is None
     bearer = oo.credential_scope("https://h.example", {"Authorization": "Bearer tok1"})
     assert bearer == oo.credential_scope("https://h.example", {"Authorization": "tok1"})
-    # X-API-Key wins over Authorization, so a client sending both matches one sending only it
-    assert oo.credential_scope(
-        "https://h.example", {"X-API-Key": key_a, "Authorization": "Bearer t"}
-    ) == oo.credential_scope("https://h.example", {"X-API-Key": key_a})
+
+
+def test_jwt_takes_precedence_like_the_backend_authenticator() -> None:
+    """Review 2 / P2: the backend tries JWT before the API key, so the scope follows it."""
+    url = "https://h.example"
+    jwt_a, jwt_b, key = "jwt-a." + "a" * 30, "jwt-b." + "b" * 30, "uk_" + "k" * 43
+    a_with_key = oo.credential_scope(
+        url, {"Authorization": f"Bearer {jwt_a}", "X-API-Key": key}
+    )
+    b_with_key = oo.credential_scope(
+        url, {"Authorization": f"Bearer {jwt_b}", "X-API-Key": key}
+    )
+    assert a_with_key != b_with_key  # same API key, different JWTs: no collision
+    # an irrelevant API-key header neither changes nor loses a JWT's scope
+    jwt_only = oo.credential_scope(url, {"Authorization": f"Bearer {jwt_a}"})
+    assert a_with_key == jwt_only
+    assert (
+        oo.credential_scope(
+            url, {"Authorization": f"Bearer {jwt_a}", "X-API-Key": "uk_" + "z" * 43}
+        )
+        == jwt_only
+    )
+    # API-key-only and JWT-only clients stay distinct, and the key alone still scopes
+    assert oo.credential_scope(url, {"X-API-Key": key}) not in (jwt_only, None)
+    oo.note_response(403, json.dumps(CLOSED_BODY), a_with_key)
+    assert oo.is_active(oo.Policy(False, jwt_only)) is True
+    assert oo.is_active(oo.Policy(False, b_with_key)) is False
+
+
+def test_scope_resolution_is_free_when_nothing_is_latched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review 2 / P3: mode off, nothing latched: no header resolution, no hashing."""
+    calls: list[str] = []
+
+    class Auth:
+        def configured_credential_headers(self) -> dict[str, str]:
+            calls.append("configured")
+            return {"X-API-Key": "uk_" + "a" * 43}
+
+    class Client:
+        optimization_only = None
+        auth = Auth()
+        api_base_url = "https://h.example/api/v1"
+
+    monkeypatch.setattr(
+        oo, "credential_scope", lambda *a, **k: calls.append("hash") or None
+    )
+    for policy in (
+        oo.policy_of(Client(), {"X-API-Key": "uk_" + "b" * 43}),
+        oo.policy_of(Client()),
+        oo.policy_from_headers("https://h.example", {"X-API-Key": "k"}),
+        oo.policy_from_environment("https://h.example"),
+        oo.policy_of(type("C", (), {"optimization_only": True, "auth": Auth()})()),
+    ):
+        assert policy.scope is None
+    assert calls == []
+    assert oo.scope_required(None) is False and oo.scope_required(True) is False
+    oo.note_response(403, json.dumps(CLOSED_BODY), SCOPE_A)
+    assert oo.scope_required(None) is True and oo.scope_required(True) is False
+    oo.policy_of(Client())
+    assert calls == ["hash", "configured", "hash"]
 
 
 def test_latch_is_thread_safe_across_credentials() -> None:

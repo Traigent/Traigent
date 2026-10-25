@@ -2431,7 +2431,7 @@ class BackendIntegratedClient:
             "agent_head_fetch",
             agent_id,
             environment,
-            explicit=oo_egress.explicit_of(self),
+            explicit=oo_egress.policy_of(self),
         )
         try:
             import requests
@@ -2969,7 +2969,7 @@ class BackendIntegratedClient:
             config_id,
             environment,
             function_ref,
-            explicit=oo_egress.explicit_of(self),
+            explicit=oo_egress.policy_of(self),
         )
         try:
             import requests
@@ -3216,7 +3216,7 @@ class BackendIntegratedClient:
         self._raise_if_backend_egress_disabled("upload example features")
         # Per-example features describe the dataset: not available in this mode.
         oo_egress.refuse_if_active(
-            "example_feature_upload", explicit=oo_egress.explicit_of(self)
+            "example_feature_upload", explicit=oo_egress.policy_of(self)
         )
         if not experiment_run_id or not feature_kind or not features:
             return False

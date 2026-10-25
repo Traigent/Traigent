@@ -1101,7 +1101,7 @@ class SessionOperations:
         # The backend refuses POST /hybrid/sessions for an optimization_only workspace
         # unconditionally (hybrid_routes.py require_not_optimization_only): never send it.
         oo_egress.refuse_if_active(
-            "hybrid_session_create", explicit=oo_egress.explicit_of(self.client)
+            "hybrid_session_create", explicit=oo_egress.policy_of(self.client)
         )
 
         session = await self.client._ensure_session()

@@ -67,7 +67,9 @@ def test_mode_on_blocks_post_and_request_paths_directly(monkeypatch) -> None:
 
 def test_latched_refusal_also_stops_exporter(monkeypatch) -> None:
     client = _client()
-    oo.latch_on(client._optimization_only_policy().scope)
+    oo.latch_on(
+        oo.credential_scope(client.config.backend_origin, client.config.build_headers())
+    )
     _run_trace(client)
     assert client._http_opener.open.call_count == 0
 

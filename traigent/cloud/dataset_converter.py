@@ -523,7 +523,10 @@ class DatasetConverter:
             Conversion result. When ``strict`` is False and rows were dropped,
             the drops are reported in ``errors`` and counted in ``error_count``.
         """
-        oo_egress.refuse_if_active("dataset_upload")
+        oo_egress.refuse_if_active(
+            "dataset_upload",
+            explicit=oo_egress.policy_from_environment(self.backend_base_url),
+        )
         logger.info(f"Uploading SDK dataset to backend (privacy={privacy_mode})")
 
         conversion_errors: list[dict[str, Any]] = []
@@ -991,7 +994,10 @@ class DatasetConverter:
         self._raise_if_backend_egress_disabled(
             "create backend example set", no_egress=no_egress
         )
-        oo_egress.refuse_if_active("dataset_upload")
+        oo_egress.refuse_if_active(
+            "dataset_upload",
+            explicit=oo_egress.policy_from_environment(self.backend_base_url),
+        )
         if not self._session:
             raise RuntimeError(_SESSION_NOT_INITIALIZED) from None
 
@@ -1024,7 +1030,10 @@ class DatasetConverter:
         self._raise_if_backend_egress_disabled(
             "upload backend examples", no_egress=no_egress
         )
-        oo_egress.refuse_if_active("dataset_upload")
+        oo_egress.refuse_if_active(
+            "dataset_upload",
+            explicit=oo_egress.policy_from_environment(self.backend_base_url),
+        )
         if not self._session:
             raise RuntimeError(_SESSION_NOT_INITIALIZED)
 

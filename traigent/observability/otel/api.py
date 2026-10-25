@@ -226,7 +226,14 @@ def init(
         offline = (
             is_backend_offline()
             or is_truthy(os.getenv("TRAIGENT_DISABLE_TELEMETRY"))
-            or oo_egress.is_active()
+            or oo_egress.is_active(
+                oo_egress.policy_from_headers(
+                    endpoint or BackendConfig.get_backend_url(),
+                    {"X-API-Key": api_key}
+                    if api_key
+                    else {"X-API-Key": BackendConfig.get_api_key()},
+                )
+            )
         )
         if tracer_provider is not None and not hasattr(
             tracer_provider, "add_span_processor"

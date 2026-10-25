@@ -200,7 +200,13 @@ class OptimizationPlanClient:
         if offline is not None:
             body["offline"] = offline
 
-        oo_egress.assert_closed_body(body, "optimization_plan_request")
+        oo_egress.assert_closed_body(
+            body,
+            "optimization_plan_request",
+            explicit=oo_egress.policy_from_headers(
+                self.backend_url, _build_auth_headers(self.api_key)
+            ),
+        )
         client = self._get_client()
         response = await client.post("/api/v1/optimization/plan", json=body)
         response.raise_for_status()

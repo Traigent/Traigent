@@ -1226,7 +1226,7 @@ class TraigentCloudClient(BaseTraigentClient):
         """Submit optimization request to the reserved remote service."""
         self._raise_if_backend_egress_disabled("submit optimization")
         oo_egress.refuse_if_active(
-            "hosted_optimization", explicit=oo_egress.explicit_of(self)
+            "hosted_optimization", explicit=oo_egress.policy_of(self)
         )
         await self._ensure_session()
         if self._aio_session is None:
@@ -2392,7 +2392,7 @@ class TraigentCloudClient(BaseTraigentClient):
         """
         self._raise_if_backend_egress_disabled("start agent optimization")
         oo_egress.refuse_if_active(
-            "hosted_agent_optimization", explicit=oo_egress.explicit_of(self)
+            "hosted_agent_optimization", explicit=oo_egress.policy_of(self)
         )
         await self._ensure_session()
 
@@ -2478,7 +2478,7 @@ class TraigentCloudClient(BaseTraigentClient):
         """
         self._raise_if_backend_egress_disabled("execute agent")
         oo_egress.refuse_if_active(
-            "hosted_agent_execution", explicit=oo_egress.explicit_of(self)
+            "hosted_agent_execution", explicit=oo_egress.policy_of(self)
         )
         await self._ensure_session()
 

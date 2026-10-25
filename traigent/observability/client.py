@@ -3463,6 +3463,8 @@ class ObservabilityClient:
 
     def _optimization_only_policy(self) -> oo_egress.Policy:
         """Policy inputs for this client's credential (no explicit setting of its own)."""
+        if not oo_egress.scope_required(None):
+            return oo_egress.Policy()
         try:
             headers = self.config.build_headers()
             origin = self.config.backend_origin

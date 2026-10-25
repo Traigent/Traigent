@@ -124,7 +124,11 @@ class OptimizerDirectClient:
             oo_egress.project_for_send(
                 oo_egress.PHASE_OPTIMIZER_METRICS,
                 _wire_submission(submission),
-                explicit=self.optimization_only,
+                explicit=oo_egress.policy_from_headers(
+                    self.endpoint,
+                    {"Authorization": f"Bearer {self.token}"},
+                    self.optimization_only,
+                ),
                 session_id=session_id,
             ),
         )

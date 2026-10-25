@@ -1663,7 +1663,10 @@ def env_setting(environ: Mapping[str, str] | None = None) -> bool | None:
     return parse_flag(env.get(ENV_VAR))
 
 
-_CREDENTIAL_HEADERS = ("x-api-key", "authorization", "x-service-key")
+#: Precedence of the credential that actually authenticates a request. The backend tries
+#: JWT (``Authorization: Bearer``) before the API key (``src/security/unified_auth.py``
+#: ``authenticate``: ``[AuthMethod.JWT, AuthMethod.API_KEY]``), so the scope follows it.
+_CREDENTIAL_HEADERS = ("authorization", "x-api-key", "x-service-key")
 
 
 def credential_scope(url: Any, headers: Any = None) -> str | None:
@@ -1673,7 +1676,7 @@ def credential_scope(url: Any, headers: Any = None) -> str | None:
     returned. Server-derived policy (a closed ``403 optimization_only``) is bound to this key,
     so one tenant's refusal cannot restrict a client using another credential.
     """
-    if headers is None or not hasattr(headers, "items"):
+    if not isinstance(headers, Mapping):
         return None
     lowered = {str(k).lower(): v for k, v in headers.items()}
     material = ""
@@ -1715,12 +1718,69 @@ def _client_url(client: Any) -> str:
     return ""
 
 
+def scope_required(explicit: bool | None) -> bool:
+    """Fast path: a credential scope matters only if some scope is latched and the client
+    has not opted in outright. Otherwise nothing is resolved, hashed or awaited."""
+    return bool(_latched_scopes) and explicit is not True
+
+
+def _configured_headers(client: Any) -> Mapping[str, str] | None:
+    """Credential headers of the client's CONFIGURED credential (no network, no refresh)."""
+    auth_manager = getattr(client, "auth_manager", None)
+    for owner in (
+        getattr(client, "auth", None),
+        getattr(auth_manager, "auth", None),
+        auth_manager,
+    ):
+        method = getattr(owner, "configured_credential_headers", None)
+        if callable(method):
+            try:
+                found = method()
+            except Exception:  # noqa: BLE001 - silent-ok: unattributable, no scope
+                continue
+            if isinstance(found, Mapping) and found:
+                return found
+    return None
+
+
 def policy_of(client: Any, headers: Any = None, url: Any = None) -> Policy:
-    """Effective policy for a send by ``client`` carrying ``headers`` (the final ones)."""
-    return Policy(
-        explicit_of(client),
-        credential_scope(url if url else _client_url(client), headers),
-    )
+    """THE resolver: effective policy for a send by ``client``.
+
+    ``headers`` are the final request headers when the caller has them; otherwise the scope
+    comes from the client's configured credential, so no call site can forget it.
+    """
+    explicit = explicit_of(client)
+    if not scope_required(explicit):
+        return Policy(explicit, None)
+    target = url if url else _client_url(client)
+    scope = credential_scope(target, headers)
+    if scope is None:
+        scope = credential_scope(target, _configured_headers(client))
+    return Policy(explicit, scope)
+
+
+def policy_from_headers(
+    url: Any, headers: Any = None, explicit: bool | None = None
+) -> Policy:
+    """Resolver for senders that are not SDK clients (economics, plan, runtime, sync, traces
+    ...): the headers they send (or the credential they hold, as headers) fix the scope."""
+    if not scope_required(explicit):
+        return Policy(explicit, None)
+    return Policy(explicit, credential_scope(url, headers))
+
+
+def policy_from_environment(url: Any, explicit: bool | None = None) -> Policy:
+    """Resolver for senders that carry no credential of their own: the process's configured
+    API key (``TRAIGENT_API_KEY`` / credential store) names the scope."""
+    if not scope_required(explicit):
+        return Policy(explicit, None)
+    try:
+        from traigent.utils.env_config import get_api_key
+
+        key = get_api_key("traigent")
+    except Exception:  # noqa: BLE001 - silent-ok: no configured credential, no scope
+        key = None
+    return Policy(explicit, credential_scope(url, {"X-API-Key": key} if key else None))
 
 
 def latch_on(scope: str | None) -> None:

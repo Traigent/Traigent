@@ -119,7 +119,13 @@ class RuntimeClient:
         if not self._api_key:
             raise RuntimeRequirementError(E_NO_CREDENTIALS)
         try:
-            oo_egress.assert_closed_body(body, "production_requirements_request")
+            oo_egress.assert_closed_body(
+                body,
+                "production_requirements_request",
+                explicit=oo_egress.policy_from_headers(
+                    self._origin, {"X-API-Key": self._api_key}
+                ),
+            )
         except oo_egress.OptimizationOnlyRefusal:
             raise RuntimeRequirementError(E_EGRESS) from None
         import requests

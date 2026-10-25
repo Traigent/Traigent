@@ -484,7 +484,13 @@ class EconomicsTelemetryClient:
         # optimization_only: telemetry is not part of the optimization loop. It is already
         # schema-validated, but it is only sent when the whole body is closed values
         # (identifier keys; identifier/digest/number leaves); otherwise refused locally.
-        oo_egress.assert_closed_json_bytes(content, "economics_telemetry")
+        oo_egress.assert_closed_json_bytes(
+            content,
+            "economics_telemetry",
+            explicit=oo_egress.policy_from_headers(
+                self.backend_url, self._auth_headers()
+            ),
+        )
         # Fail-safe gate, checked immediately before the only transport call in
         # this class: never send an economics telemetry request without a
         # credential attached. A missing credential is not a reason to POST and
