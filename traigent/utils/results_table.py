@@ -601,6 +601,194 @@ def _trials_all_failed(trials: list) -> bool:
 # ---------------------------------------------------------------------------
 
 
+# Box-drawing characters
+_H, _V = "─", "│"
+_TL, _TR, _BL, _BR = "┌", "┐", "└", "┘"
+_BT, _LT, _RT, _XT = "┴", "├", "┤", "┼"
+
+
+def _table_column_widths(
+    trials: list,
+    param_names: list[str],
+    metric_names: list[str],
+    metric_overrides: dict[str, list[float]] | None,
+    example_counts: list[tuple[int, int] | None],
+    show_examples: bool,
+) -> dict[str, int]:
+    """Width of every column: the widest of its header and rendered cells."""
+    col_widths: dict[str, int] = {"#": 4}
+    for param in param_names:
+        max_len = max(
+            len(_format_config_value(getattr(t, "config", {}).get(param, "?")))
+            for t in trials
+        )
+        col_widths[param] = max(len(param), max_len) + 1
+    for metric in metric_names:
+        max_len = max(
+            len(
+                _render_metric_cell(
+                    metric, _get_metric_value(t, metric, i, metric_overrides), t
+                )
+            )
+            for i, t in enumerate(trials)
+        )
+        col_widths[metric] = max(len(metric), max_len) + 1
+    if show_examples:
+        max_len = max(
+            len(f"{count[0]}/{count[1]}") if count is not None else 1
+            for count in example_counts
+        )
+        col_widths["examples"] = max(len("examples"), max_len) + 1
+    return col_widths
+
+
+def _print_title_bar(
+    colors: Any, trial_count: int, mode_label: str | None, total_width: int
+) -> None:
+    C = colors
+    label_prefix = f"{mode_label.strip()} - " if mode_label else ""
+    title = f" Trial Results ({label_prefix}{trial_count} trials) "
+    padding = (total_width - len(title)) // 2
+
+    _safe_table_print("")
+    _safe_table_print(f"{C.BOLD}{_TL}{_H * total_width}{_TR}{C.RESET}")
+    _safe_table_print(
+        f"{C.BOLD}{_V}{' ' * padding}{title}"
+        f"{' ' * (total_width - padding - len(title))}{_V}{C.RESET}"
+    )
+    _safe_table_print(f"{C.BOLD}{_LT}{_H * total_width}{_RT}{C.RESET}")
+
+
+def _print_column_headers(
+    colors: Any,
+    col_widths: dict[str, int],
+    param_names: list[str],
+    metric_names: list[str],
+    show_examples: bool,
+    all_cols: list[str],
+) -> None:
+    C = colors
+    header_parts = [f"{C.BOLD}{'#':^{col_widths['#']}}{C.RESET}"]
+    header_parts.extend(f"{C.CYAN}{p:^{col_widths[p]}}{C.RESET}" for p in param_names)
+    header_parts.extend(
+        f"{C.YELLOW}{m:^{col_widths[m]}}{C.RESET}" for m in metric_names
+    )
+    if show_examples:
+        header_parts.append(
+            f"{C.YELLOW}{'examples':^{col_widths['examples']}}{C.RESET}"
+        )
+    _safe_table_print(f"{_V} " + f" {_V} ".join(header_parts) + f" {_V}")
+
+    # Separator
+    _safe_table_print(
+        f"{_LT}" + _XT.join(_H * (col_widths[c] + 2) for c in all_cols) + f"{_RT}"
+    )
+
+
+def _table_data_row(
+    colors: Any,
+    index: int,
+    trial: Any,
+    col_widths: dict[str, int],
+    param_names: list[str],
+    metric_names: list[str],
+    metric_overrides: dict[str, list[float]] | None,
+    *,
+    best_trial_index: int | None,
+    all_failed: bool,
+    best_per_objective: dict[str, set[int]],
+    show_examples: bool,
+    example_counts: list[tuple[int, int] | None],
+) -> str:
+    C = colors
+    config = getattr(trial, "config", {})
+    is_overall_best = index == best_trial_index and not all_failed
+
+    prefix = f"{C.GREEN}★{C.RESET}" if is_overall_best else " "
+    row_parts = [f"{prefix}{index + 1:>{col_widths['#'] - 1}}"]
+
+    for param in param_names:
+        val = _format_config_value(config.get(param, "?"))
+        row_parts.append(f"{val:^{col_widths[param]}}")
+
+    for metric in metric_names:
+        raw_metric_val = _get_metric_value(trial, metric, index, metric_overrides)
+        formatted = _render_metric_cell(metric, raw_metric_val, trial)
+        if not all_failed and index in best_per_objective.get(metric, set()):
+            cell = f"{C.GREEN}{C.BOLD}{formatted:^{col_widths[metric]}}{C.RESET}"
+        else:
+            cell = f"{formatted:^{col_widths[metric]}}"
+        row_parts.append(cell)
+
+    if show_examples:
+        counts = example_counts[index]
+        formatted_counts = f"{counts[0]}/{counts[1]}" if counts is not None else "?"
+        row_parts.append(f"{formatted_counts:^{col_widths['examples']}}")
+
+    return f"{_V} " + f" {_V} ".join(row_parts) + f" {_V}"
+
+
+def _print_table_legend(
+    colors: Any,
+    trials: list,
+    metric_names: list[str],
+    *,
+    best_trial_index: int | None,
+    all_failed: bool,
+    show_best: bool,
+) -> None:
+    """Legend (or "all failed" / "no winner" banner) under the table."""
+    C = colors
+    if all_failed:
+        _safe_table_print(
+            f"{C.YELLOW}⚠ All trials failed — no examples succeeded. "
+            f"Inspect per-example errors in "
+            f".traigent/optimization_logs/experiments/.../runs/{C.RESET}"
+        )
+    elif not show_best:
+        # Plumbing run: no winner framing, so no legend or "no winner" notice.
+        pass
+    elif best_trial_index is None and _all_eligible_cost_unmeasured(
+        trials, metric_names
+    ):
+        _safe_table_print(
+            f"{C.YELLOW}⚠ No measured winner — every candidate's cost is "
+            f"unmeasured, so no trial is starred.{C.RESET}"
+        )
+    elif best_trial_index is None:
+        _safe_table_print(
+            f"{C.YELLOW}⚠ No overall best could be determined, so no trial "
+            f"is starred.{C.RESET}"
+        )
+    else:
+        legend = [f"{C.GREEN}★{C.RESET} Overall Best"]
+        legend.extend(f"{C.GREEN}{C.BOLD}{m}{C.RESET} = Best {m}" for m in metric_names)
+        _safe_table_print(f"{C.DIM}Legend: {', '.join(legend)}{C.RESET}")
+
+
+def _print_run_notices(colors: Any, results: Any) -> None:
+    """Stop-limit, mock-run and local-fallback caveats printed under the table."""
+    C = colors
+    # A run cut short by a limit says which one (issue #2518).
+    stop_detail = (getattr(results, "metadata", None) or {}).get("stop_detail")
+    if isinstance(stop_detail, str) and stop_detail:
+        _safe_table_print(f"{C.YELLOW}⚠ {stop_detail}{C.RESET}")
+
+    # A mock run says so next to the numbers it produced (issue #2516): the
+    # calls never reached a provider, so scores are canned and any cost is a
+    # synthetic estimate, not spend. The notice comes from provenance recorded
+    # on the result when the run was built, never from current process state.
+    mock_notice = _mock_run_notice(results)
+    if mock_notice:
+        _safe_table_print(f"{C.YELLOW}⚠ {mock_notice}{C.RESET}")
+
+    # Provenance caveat (issue #2024): a local-fallback run must say so next to
+    # the number it produced, not only in a startup log line.
+    fallback_notice = _local_fallback_notice(results)
+    if fallback_notice:
+        _safe_table_print(f"{C.YELLOW}⚠ {fallback_notice}{C.RESET}")
+
+
 def print_results_table(
     results: OptimizationResult,
     config_space: dict[str, list[Any]],
@@ -658,146 +846,55 @@ def print_results_table(
     example_counts = [_example_success_counts(trial) for trial in trials]
     show_examples = any(count is not None for count in example_counts)
 
-    # Column widths
-    col_widths: dict[str, int] = {"#": 4}
-    for param in param_names:
-        max_len = max(
-            len(_format_config_value(getattr(t, "config", {}).get(param, "?")))
-            for t in trials
-        )
-        col_widths[param] = max(len(param), max_len) + 1
-    for metric in metric_names:
-        max_len = max(
-            len(
-                _render_metric_cell(
-                    metric, _get_metric_value(t, metric, i, metric_overrides), t
-                )
-            )
-            for i, t in enumerate(trials)
-        )
-        col_widths[metric] = max(len(metric), max_len) + 1
-    if show_examples:
-        max_len = max(
-            len(f"{count[0]}/{count[1]}") if count is not None else 1
-            for count in example_counts
-        )
-        col_widths["examples"] = max(len("examples"), max_len) + 1
+    col_widths = _table_column_widths(
+        trials,
+        param_names,
+        metric_names,
+        metric_overrides,
+        example_counts,
+        show_examples,
+    )
 
     all_cols = (
         ["#"] + param_names + metric_names + (["examples"] if show_examples else [])
     )
     total_width = sum(col_widths[c] for c in all_cols) + len(all_cols) * 3 - 1
 
-    # Box-drawing characters
-    H, V = "─", "│"
-    TL, TR, BL, BR = "┌", "┐", "└", "┘"
-    BT, LT, RT, XT = "┴", "├", "┤", "┼"
-
-    # Title bar
-    label_prefix = f"{mode_label.strip()} - " if mode_label else ""
-    title = f" Trial Results ({label_prefix}{len(trials)} trials) "
-    padding = (total_width - len(title)) // 2
-
-    _safe_table_print("")
-    _safe_table_print(f"{C.BOLD}{TL}{H * total_width}{TR}{C.RESET}")
-    _safe_table_print(
-        f"{C.BOLD}{V}{' ' * padding}{title}"
-        f"{' ' * (total_width - padding - len(title))}{V}{C.RESET}"
-    )
-    _safe_table_print(f"{C.BOLD}{LT}{H * total_width}{RT}{C.RESET}")
-
-    # Column headers
-    header_parts = [f"{C.BOLD}{'#':^{col_widths['#']}}{C.RESET}"]
-    header_parts.extend(f"{C.CYAN}{p:^{col_widths[p]}}{C.RESET}" for p in param_names)
-    header_parts.extend(
-        f"{C.YELLOW}{m:^{col_widths[m]}}{C.RESET}" for m in metric_names
-    )
-    if show_examples:
-        header_parts.append(
-            f"{C.YELLOW}{'examples':^{col_widths['examples']}}{C.RESET}"
-        )
-    _safe_table_print(f"{V} " + f" {V} ".join(header_parts) + f" {V}")
-
-    # Separator
-    _safe_table_print(
-        f"{LT}" + XT.join(H * (col_widths[c] + 2) for c in all_cols) + f"{RT}"
+    _print_title_bar(C, len(trials), mode_label, total_width)
+    _print_column_headers(
+        C, col_widths, param_names, metric_names, show_examples, all_cols
     )
 
     # Data rows
     for i, trial in enumerate(trials):
-        config = getattr(trial, "config", {})
-        is_overall_best = i == best_trial_index and not all_failed
-
-        prefix = f"{C.GREEN}★{C.RESET}" if is_overall_best else " "
-        row_parts = [f"{prefix}{i + 1:>{col_widths['#'] - 1}}"]
-
-        for param in param_names:
-            val = _format_config_value(config.get(param, "?"))
-            row_parts.append(f"{val:^{col_widths[param]}}")
-
-        for metric in metric_names:
-            raw_metric_val = _get_metric_value(trial, metric, i, metric_overrides)
-            formatted = _render_metric_cell(metric, raw_metric_val, trial)
-            if not all_failed and i in best_per_objective.get(metric, set()):
-                cell = f"{C.GREEN}{C.BOLD}{formatted:^{col_widths[metric]}}{C.RESET}"
-            else:
-                cell = f"{formatted:^{col_widths[metric]}}"
-            row_parts.append(cell)
-
-        if show_examples:
-            counts = example_counts[i]
-            formatted_counts = f"{counts[0]}/{counts[1]}" if counts is not None else "?"
-            row_parts.append(f"{formatted_counts:^{col_widths['examples']}}")
-
-        _safe_table_print(f"{V} " + f" {V} ".join(row_parts) + f" {V}")
+        _safe_table_print(
+            _table_data_row(
+                C,
+                i,
+                trial,
+                col_widths,
+                param_names,
+                metric_names,
+                metric_overrides,
+                best_trial_index=best_trial_index,
+                all_failed=all_failed,
+                best_per_objective=best_per_objective,
+                show_examples=show_examples,
+                example_counts=example_counts,
+            )
+        )
 
     # Bottom border
     _safe_table_print(
-        f"{BL}" + BT.join(H * (col_widths[c] + 2) for c in all_cols) + f"{BR}"
+        f"{_BL}" + _BT.join(_H * (col_widths[c] + 2) for c in all_cols) + f"{_BR}"
     )
 
-    # Legend (or "all failed" banner when no trial succeeded)
-    if all_failed:
-        _safe_table_print(
-            f"{C.YELLOW}⚠ All trials failed — no examples succeeded. "
-            f"Inspect per-example errors in "
-            f".traigent/optimization_logs/experiments/.../runs/{C.RESET}"
-        )
-    elif not show_best:
-        # Plumbing run: no winner framing, so no legend or "no winner" notice.
-        pass
-    elif best_trial_index is None and _all_eligible_cost_unmeasured(
-        trials, metric_names
-    ):
-        _safe_table_print(
-            f"{C.YELLOW}⚠ No measured winner — every candidate's cost is "
-            f"unmeasured, so no trial is starred.{C.RESET}"
-        )
-    elif best_trial_index is None:
-        _safe_table_print(
-            f"{C.YELLOW}⚠ No overall best could be determined, so no trial "
-            f"is starred.{C.RESET}"
-        )
-    else:
-        legend = [f"{C.GREEN}★{C.RESET} Overall Best"]
-        legend.extend(f"{C.GREEN}{C.BOLD}{m}{C.RESET} = Best {m}" for m in metric_names)
-        _safe_table_print(f"{C.DIM}Legend: {', '.join(legend)}{C.RESET}")
-
-    # A run cut short by a limit says which one (issue #2518).
-    stop_detail = (getattr(results, "metadata", None) or {}).get("stop_detail")
-    if isinstance(stop_detail, str) and stop_detail:
-        _safe_table_print(f"{C.YELLOW}⚠ {stop_detail}{C.RESET}")
-
-    # A mock run says so next to the numbers it produced (issue #2516): the
-    # calls never reached a provider, so scores are canned and any cost is a
-    # synthetic estimate, not spend. The notice comes from provenance recorded
-    # on the result when the run was built, never from current process state.
-    mock_notice = _mock_run_notice(results)
-    if mock_notice:
-        _safe_table_print(f"{C.YELLOW}⚠ {mock_notice}{C.RESET}")
-
-    # Provenance caveat (issue #2024): a local-fallback run must say so next to
-    # the number it produced, not only in a startup log line.
-    fallback_notice = _local_fallback_notice(results)
-    if fallback_notice:
-        _safe_table_print(f"{C.YELLOW}⚠ {fallback_notice}{C.RESET}")
+    _print_table_legend(
+        C,
+        trials,
+        metric_names,
+        best_trial_index=best_trial_index,
+        all_failed=all_failed,
+        show_best=show_best,
+    )
+    _print_run_notices(C, results)
