@@ -442,6 +442,22 @@ _DEFAULT_NORMALIZATION = next(
 )
 
 
+@dataclasses.dataclass
+class _WinnerStabilityAttempt:
+    """Mutable per-rerun state shared by the winner-stability helpers."""
+
+    trial_id: str
+    permit: Permit | None = None
+    trial: TrialResult | None = None
+    dispatched: bool = False
+    accounted: bool = False
+    accounting_task: asyncio.Task[float | None] | None = None
+
+    def mark_dispatched(self) -> None:
+        """Record the lifecycle's actual evaluator-dispatch boundary."""
+        self.dispatched = True
+
+
 class OptimizationOrchestrator:
     """Orchestrates the optimization process.
 
@@ -4490,6 +4506,371 @@ class OptimizationOrchestrator:
         decision = await self._handle_vendor_pause(exc)
         return decision == "break"
 
+    def _winner_stability_reps(self) -> int:
+        """Requested stability replicates; 0 when unset, malformed or non-positive."""
+        try:
+            return int(self.config.get("winner_stability_reps", 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _winner_stability_primary_objective(
+        self, result: OptimizationResult, reps: int
+    ) -> str | None:
+        """Return the objective to measure, or ``None`` after logging a skip."""
+        # #2421: ``no_usage_captured`` is terminal. The run is about to fail
+        # closed with UnknownModelError; reruns would add spend and any usage
+        # they capture could suppress that error. Keep the partial result.
+        if self._stop_reason == "no_usage_captured" or (
+            getattr(result, "stop_reason", None) == "no_usage_captured"
+        ):
+            logger.info(
+                "winner_stability_reps=%d skipped: the run stopped with "
+                "no_usage_captured.",
+                reps,
+            )
+            return None
+        if not result.best_config:
+            logger.info(
+                "winner_stability_reps=%d requested but the run selected no "
+                "winner; skipping the stability rerun.",
+                reps,
+            )
+            return None
+        primary_objective: str | None = (
+            self.optimizer.objectives[0] if self.optimizer.objectives else None
+        )
+        if not primary_objective:
+            logger.warning(
+                "winner_stability_reps=%d requested but the run declares no "
+                "primary objective to measure; skipping the stability rerun.",
+                reps,
+            )
+            return None
+        return primary_objective
+
+    def _winner_stability_budget_denied(
+        self, index: int, reps: int, measured: int
+    ) -> bool:
+        """True (after logging) when the shared execution budget bars a rerun."""
+        budget = getattr(self, "execution_budget", None)
+        if budget is None:
+            return False
+        snapshot = budget.snapshot()
+        exhausted_dimension = snapshot.exhausted_dimension
+        if (
+            exhausted_dimension is None
+            and self.cost_enforcer is not None
+            and snapshot.remaining_cost
+            < self.cost_enforcer.get_status().estimated_cost_per_trial
+        ):
+            exhausted_dimension = "cost"
+        if exhausted_dimension is None:
+            return False
+        logger.info(
+            "Winner-stability rerun %d/%d denied by the "
+            "shared execution budget (%s); stopping with "
+            "%d measured score(s).",
+            index + 1,
+            reps,
+            exhausted_dimension,
+            measured,
+        )
+        return True
+
+    async def _winner_stability_acquire_permit(
+        self,
+        attempt: _WinnerStabilityAttempt,
+        index: int,
+        reps: int,
+        measured: int,
+    ) -> bool:
+        """Acquire the cost permit for a rerun; False (after logging) if denied."""
+        if self.cost_enforcer is None:
+            return True
+        attempt.permit = await self.cost_enforcer.acquire_permit_async()
+        if attempt.permit.is_granted:
+            return True
+        logger.info(
+            "Winner-stability rerun %d/%d denied by the "
+            "cost limit; stopping with %d measured score(s).",
+            index + 1,
+            reps,
+            measured,
+        )
+        return False
+
+    def _create_winner_stability_accounting_task(
+        self, attempt: _WinnerStabilityAttempt
+    ) -> asyncio.Task[float | None]:
+        return asyncio.create_task(
+            self._account_winner_stability_rerun_attempt(
+                rerun_trial=attempt.trial,
+                rerun_dispatched=attempt.dispatched,
+                permit=attempt.permit,
+                trial_id=attempt.trial_id,
+            )
+        )
+
+    def _ensure_winner_stability_accounting_task(
+        self, attempt: _WinnerStabilityAttempt
+    ) -> None:
+        """Create the accounting task for an attempt that has spent but not booked."""
+        if (
+            not attempt.accounted
+            and attempt.accounting_task is None
+            and (attempt.trial is not None or attempt.dispatched)
+        ):
+            attempt.accounting_task = self._create_winner_stability_accounting_task(
+                attempt
+            )
+
+    @staticmethod
+    async def _finish_winner_stability_accounting_after_cancellation(
+        task: asyncio.Task[float | None],
+    ) -> float | None:
+        """Drain only the accounting task before preserving cancellation."""
+        while True:
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError:  # NOSONAR
+                # A repeated cancellation must not strand a paid or
+                # unknown attempt after the lifecycle has dispatched it.
+                # The enclosing handler always re-raises the original
+                # cancellation after this accounting task finishes.
+                continue
+
+    async def _execute_winner_stability_rerun(
+        self,
+        attempt: _WinnerStabilityAttempt,
+        *,
+        index: int,
+        result: OptimizationResult,
+        func: Callable[..., Any],
+        dataset: Dataset,
+        session_id: str | None,
+    ) -> None:
+        """Run one rerun through the trial lifecycle and book its accounting."""
+        self._winner_stability_ledger_start = len(
+            getattr(self, "_abandoned_vendor_attempts", [])
+        )
+        attempt.trial = await self._trial_lifecycle.run_trial(
+            func=func,
+            config=copy.deepcopy(result.best_config),  # type: ignore[arg-type]
+            dataset=dataset,
+            trial_number=len(self._trials) + index + 1,
+            session_id=session_id,
+            on_evaluation_dispatch=attempt.mark_dispatched,
+        )
+        attempt.accounting_task = self._create_winner_stability_accounting_task(attempt)
+        await asyncio.shield(attempt.accounting_task)
+        attempt.accounted = True
+
+    async def _winner_stability_on_cancelled(
+        self,
+        attempt: _WinnerStabilityAttempt,
+        *,
+        index: int,
+        reps: int,
+        result: OptimizationResult,
+    ) -> None:
+        """Account a dispatched-but-unbooked rerun before cancellation propagates.
+
+        Once the lifecycle reached the evaluator-dispatch seam, account the
+        attempt; pre-dispatch cancellation only releases its reservation and
+        never invents an attempt.
+        """
+        self._ensure_winner_stability_accounting_task(attempt)
+        if attempt.accounting_task is None:
+            return
+        try:
+            trial_cost = (
+                await self._finish_winner_stability_accounting_after_cancellation(
+                    attempt.accounting_task
+                )
+            )
+            attempt.accounted = True
+            if trial_cost is not None:
+                # The outer cancellation handler constructs a
+                # fresh result, but keep this in-flight result
+                # consistent too before propagating control flow.
+                self._add_winner_stability_cost_to_result(
+                    result,
+                    self._winner_stability_accounted_cost,
+                    getattr(self, "_winner_stability_unmeasured_reruns", 0),
+                )
+        except Exception:
+            logger.warning(
+                "Failed to account the cancelled winner-stability attempt %d/%d.",
+                index + 1,
+                reps,
+                exc_info=True,
+            )
+
+    async def _winner_stability_on_failed(
+        self,
+        attempt: _WinnerStabilityAttempt,
+        *,
+        index: int,
+        reps: int,
+        measured: int,
+    ) -> None:
+        """Book a hard execution failure as an untracked attempt, then log it.
+
+        Keeps whatever was already measured, stops spending, and records the
+        attempt as an untracked lower bound rather than inventing zero cost.
+        """
+        self._ensure_winner_stability_accounting_task(attempt)
+        if attempt.accounting_task is not None:
+            try:
+                await asyncio.shield(attempt.accounting_task)
+                attempt.accounted = True
+            except Exception:
+                logger.warning(
+                    "Failed to account the untracked winner-stability attempt %d/%d.",
+                    index + 1,
+                    reps,
+                    exc_info=True,
+                )
+        logger.warning(
+            "Winner-stability rerun %d/%d failed to execute; "
+            "stopping the rerun with %d measured score(s). "
+            "Optimization results are unaffected.",
+            index + 1,
+            reps,
+            measured,
+            exc_info=True,
+        )
+
+    async def _run_winner_stability_attempt(
+        self,
+        attempt: _WinnerStabilityAttempt,
+        *,
+        index: int,
+        reps: int,
+        measured: int,
+        result: OptimizationResult,
+        func: Callable[..., Any],
+        dataset: Dataset,
+        session_id: str | None,
+    ) -> bool:
+        """Run one guarded rerun; False means stop the rerun loop."""
+        try:
+            if self._winner_stability_budget_denied(index, reps, measured):
+                return False
+            if not await self._winner_stability_acquire_permit(
+                attempt, index, reps, measured
+            ):
+                return False
+            await self._execute_winner_stability_rerun(
+                attempt,
+                index=index,
+                result=result,
+                func=func,
+                dataset=dataset,
+                session_id=session_id,
+            )
+            return True
+        except asyncio.CancelledError:
+            # Cancellation is a control-flow signal and must reach the
+            # outer optimize() handler.
+            await self._winner_stability_on_cancelled(
+                attempt, index=index, reps=reps, result=result
+            )
+            raise
+        except Exception:
+            # Hard execution failure (e.g. a vendor pause rethrown
+            # before a TrialResult exists).
+            await self._winner_stability_on_failed(
+                attempt, index=index, reps=reps, measured=measured
+            )
+            return False
+        finally:
+            # This is intentionally synchronous: cancellation can
+            # interrupt an await in this block, while release_permit
+            # mutates the reservation under the same lock immediately.
+            permit = attempt.permit
+            if permit is not None and permit.active and self.cost_enforcer is not None:
+                self.cost_enforcer.release_permit(permit)
+
+    async def _collect_winner_stability_scores(
+        self,
+        result: OptimizationResult,
+        func: Callable[..., Any],
+        dataset: Dataset,
+        session_id: str | None,
+        *,
+        primary_objective: str,
+        reps: int,
+    ) -> list[float]:
+        """Run up to ``reps`` reruns and return the finite primary-objective scores."""
+        scores: list[float] = []
+        for index in range(reps):
+            attempt = _WinnerStabilityAttempt(
+                trial_id=f"winner_stability_{self._optimization_id}_{index + 1}"
+            )
+            proceed = await self._run_winner_stability_attempt(
+                attempt,
+                index=index,
+                reps=reps,
+                measured=len(scores),
+                result=result,
+                func=func,
+                dataset=dataset,
+                session_id=session_id,
+            )
+            if not proceed:
+                break
+            rerun_trial = attempt.trial
+            if rerun_trial is None:
+                continue
+            score = (
+                coerce_finite_objective_score(rerun_trial.get_metric(primary_objective))
+                if rerun_trial.is_successful
+                else None
+            )
+            if score is None:
+                logger.warning(
+                    "Winner-stability rerun %d/%d produced no finite "
+                    "'%s' score; skipping it.",
+                    index + 1,
+                    reps,
+                    primary_objective,
+                )
+                continue
+            scores.append(float(score))
+        return scores
+
+    def _build_winner_stability_block(
+        self, result: OptimizationResult, scores: list[float]
+    ) -> dict[str, Any]:
+        """Assemble the ``winner_stability`` metadata block from measured scores."""
+        block: dict[str, Any] = {
+            "reps": len(scores),
+            "mean": statistics.fmean(scores),
+        }
+        # SAMPLE standard deviation (ddof=1), shown whenever it is
+        # computable — per the C3/C5 rulings there is NO small-replicate
+        # suppression (it is undefined for a single replicate, the only
+        # case where it is omitted); small-sample values are descriptive
+        # only, with the note logged adjacent to the measurement.
+        if len(scores) >= 2:
+            block["std"] = statistics.stdev(scores)
+            if len(scores) < 5:
+                logger.info(
+                    "winner_stability: sample SD computed from only %d "
+                    "replicate(s); descriptive only.",
+                    len(scores),
+                )
+        else:
+            logger.info(
+                "winner_stability: sample SD is undefined for a single "
+                "replicate; recording mean and the one score only."
+            )
+        block["scores"] = list(scores)
+        block["config_hash"] = self._get_config_hash(result.best_config)
+        block["evaluated_at"] = datetime.now(UTC).isoformat()
+        return block
+
     async def _maybe_run_winner_stability(
         self,
         result: OptimizationResult,
@@ -4515,239 +4896,22 @@ class OptimizationOrchestrator:
         if prefill is not None:
             # Reruns must re-measure, never replay reused example results.
             prefill.active = False
-        try:
-            reps = int(self.config.get("winner_stability_reps", 0) or 0)
-        except (TypeError, ValueError):
-            return
+        reps = self._winner_stability_reps()
         if reps <= 0:
             return
-        # #2421: ``no_usage_captured`` is terminal. The run is about to fail
-        # closed with UnknownModelError; reruns would add spend and any usage
-        # they capture could suppress that error. Keep the partial result.
-        if self._stop_reason == "no_usage_captured" or (
-            getattr(result, "stop_reason", None) == "no_usage_captured"
-        ):
-            logger.info(
-                "winner_stability_reps=%d skipped: the run stopped with "
-                "no_usage_captured.",
-                reps,
-            )
-            return
-        if not result.best_config:
-            logger.info(
-                "winner_stability_reps=%d requested but the run selected no "
-                "winner; skipping the stability rerun.",
-                reps,
-            )
-            return
-        primary_objective = (
-            self.optimizer.objectives[0] if self.optimizer.objectives else None
-        )
+        primary_objective = self._winner_stability_primary_objective(result, reps)
         if not primary_objective:
-            logger.warning(
-                "winner_stability_reps=%d requested but the run declares no "
-                "primary objective to measure; skipping the stability rerun.",
-                reps,
-            )
             return
 
         try:
-            scores: list[float] = []
-            for index in range(reps):
-                permit: Permit | None = None
-                rerun_trial: TrialResult | None = None
-                rerun_dispatched = False
-                rerun_accounted = False
-                accounting_task: asyncio.Task[float | None] | None = None
-                rerun_trial_id = f"winner_stability_{self._optimization_id}_{index + 1}"
-
-                def mark_rerun_dispatched() -> None:
-                    """Record the lifecycle's actual evaluator-dispatch boundary."""
-                    nonlocal rerun_dispatched
-                    rerun_dispatched = True
-
-                async def finish_accounting_after_cancellation(
-                    task: asyncio.Task[float | None],
-                ) -> float | None:
-                    """Drain only the accounting task before preserving cancellation."""
-                    while True:
-                        try:
-                            return await asyncio.shield(task)
-                        except asyncio.CancelledError:  # NOSONAR
-                            # A repeated cancellation must not strand a paid or
-                            # unknown attempt after the lifecycle has dispatched it.
-                            # The enclosing handler always re-raises the original
-                            # cancellation after this accounting task finishes.
-                            continue
-
-                try:
-                    if (budget := getattr(self, "execution_budget", None)) is not None:
-                        snapshot = budget.snapshot()
-                        exhausted_dimension = snapshot.exhausted_dimension
-                        if (
-                            exhausted_dimension is None
-                            and self.cost_enforcer is not None
-                            and snapshot.remaining_cost
-                            < self.cost_enforcer.get_status().estimated_cost_per_trial
-                        ):
-                            exhausted_dimension = "cost"
-                        if exhausted_dimension is not None:
-                            logger.info(
-                                "Winner-stability rerun %d/%d denied by the "
-                                "shared execution budget (%s); stopping with "
-                                "%d measured score(s).",
-                                index + 1,
-                                reps,
-                                exhausted_dimension,
-                                len(scores),
-                            )
-                            break
-                    if self.cost_enforcer is not None:
-                        permit = await self.cost_enforcer.acquire_permit_async()
-                        if not permit.is_granted:
-                            logger.info(
-                                "Winner-stability rerun %d/%d denied by the "
-                                "cost limit; stopping with %d measured score(s).",
-                                index + 1,
-                                reps,
-                                len(scores),
-                            )
-                            break
-                    self._winner_stability_ledger_start = len(
-                        getattr(self, "_abandoned_vendor_attempts", [])
-                    )
-                    rerun_trial = await self._trial_lifecycle.run_trial(
-                        func=func,
-                        config=copy.deepcopy(result.best_config),
-                        dataset=dataset,
-                        trial_number=len(self._trials) + index + 1,
-                        session_id=session_id,
-                        on_evaluation_dispatch=mark_rerun_dispatched,
-                    )
-                    accounting_task = asyncio.create_task(
-                        self._account_winner_stability_rerun_attempt(
-                            rerun_trial=rerun_trial,
-                            rerun_dispatched=rerun_dispatched,
-                            permit=permit,
-                            trial_id=rerun_trial_id,
-                        )
-                    )
-                    await asyncio.shield(accounting_task)
-                    rerun_accounted = True
-                except asyncio.CancelledError:
-                    # Cancellation is a control-flow signal and must reach the
-                    # outer optimize() handler. Once the lifecycle reached the
-                    # evaluator-dispatch seam, account the attempt before
-                    # propagating; pre-dispatch cancellation only releases its
-                    # reservation and never invents an attempt.
-                    if (
-                        not rerun_accounted
-                        and accounting_task is None
-                        and (rerun_trial is not None or rerun_dispatched)
-                    ):
-                        accounting_task = asyncio.create_task(
-                            self._account_winner_stability_rerun_attempt(
-                                rerun_trial=rerun_trial,
-                                rerun_dispatched=rerun_dispatched,
-                                permit=permit,
-                                trial_id=rerun_trial_id,
-                            )
-                        )
-                    if accounting_task is not None:
-                        try:
-                            trial_cost = await finish_accounting_after_cancellation(
-                                accounting_task
-                            )
-                            rerun_accounted = True
-                            if trial_cost is not None:
-                                # The outer cancellation handler constructs a
-                                # fresh result, but keep this in-flight result
-                                # consistent too before propagating control flow.
-                                self._add_winner_stability_cost_to_result(
-                                    result,
-                                    self._winner_stability_accounted_cost,
-                                    getattr(
-                                        self, "_winner_stability_unmeasured_reruns", 0
-                                    ),
-                                )
-                        except Exception:
-                            logger.warning(
-                                "Failed to account the cancelled winner-stability "
-                                "attempt %d/%d.",
-                                index + 1,
-                                reps,
-                                exc_info=True,
-                            )
-                    raise
-                except Exception:
-                    # Hard execution failure (e.g. a vendor pause rethrown
-                    # before a TrialResult exists): keep whatever was already
-                    # measured, stop spending, and record the attempt as an
-                    # untracked lower bound rather than inventing zero cost.
-                    if (
-                        not rerun_accounted
-                        and accounting_task is None
-                        and (rerun_trial is not None or rerun_dispatched)
-                    ):
-                        accounting_task = asyncio.create_task(
-                            self._account_winner_stability_rerun_attempt(
-                                rerun_trial=rerun_trial,
-                                rerun_dispatched=rerun_dispatched,
-                                permit=permit,
-                                trial_id=rerun_trial_id,
-                            )
-                        )
-                    if accounting_task is not None:
-                        try:
-                            await asyncio.shield(accounting_task)
-                            rerun_accounted = True
-                        except Exception:
-                            logger.warning(
-                                "Failed to account the untracked winner-stability "
-                                "attempt %d/%d.",
-                                index + 1,
-                                reps,
-                                exc_info=True,
-                            )
-                    logger.warning(
-                        "Winner-stability rerun %d/%d failed to execute; "
-                        "stopping the rerun with %d measured score(s). "
-                        "Optimization results are unaffected.",
-                        index + 1,
-                        reps,
-                        len(scores),
-                        exc_info=True,
-                    )
-                    break
-                finally:
-                    # This is intentionally synchronous: cancellation can
-                    # interrupt an await in this block, while release_permit
-                    # mutates the reservation under the same lock immediately.
-                    if (
-                        permit is not None
-                        and permit.active
-                        and self.cost_enforcer is not None
-                    ):
-                        self.cost_enforcer.release_permit(permit)
-                if rerun_trial is None:
-                    continue
-                score = (
-                    coerce_finite_objective_score(
-                        rerun_trial.get_metric(primary_objective)
-                    )
-                    if rerun_trial.is_successful
-                    else None
-                )
-                if score is None:
-                    logger.warning(
-                        "Winner-stability rerun %d/%d produced no finite "
-                        "'%s' score; skipping it.",
-                        index + 1,
-                        reps,
-                        primary_objective,
-                    )
-                    continue
-                scores.append(float(score))
+            scores = await self._collect_winner_stability_scores(
+                result,
+                func,
+                dataset,
+                session_id,
+                primary_objective=primary_objective,
+                reps=reps,
+            )
 
             self._add_winner_stability_cost_to_result(
                 result,
@@ -4770,37 +4934,14 @@ class OptimizationOrchestrator:
                     reps,
                 )
 
-            block: dict[str, Any] = {
-                "reps": len(scores),
-                "mean": statistics.fmean(scores),
-            }
-            # SAMPLE standard deviation (ddof=1), shown whenever it is
-            # computable — per the C3/C5 rulings there is NO small-replicate
-            # suppression (it is undefined for a single replicate, the only
-            # case where it is omitted); small-sample values are descriptive
-            # only, with the note logged adjacent to the measurement.
-            if len(scores) >= 2:
-                block["std"] = statistics.stdev(scores)
-                if len(scores) < 5:
-                    logger.info(
-                        "winner_stability: sample SD computed from only %d "
-                        "replicate(s); descriptive only.",
-                        len(scores),
-                    )
-            else:
-                logger.info(
-                    "winner_stability: sample SD is undefined for a single "
-                    "replicate; recording mean and the one score only."
-                )
-            block["scores"] = list(scores)
-            block["config_hash"] = self._get_config_hash(result.best_config)
-            block["evaluated_at"] = datetime.now(UTC).isoformat()
             # Measured-only wiring (C3/C5): this block must never feed
             # contrast selection or any noise floor. Its consumer is the S2
             # verdict path — absent stability evidence the affected metric
             # verdict is INDETERMINATE; a single execution may still be
             # reported descriptively.
-            result.metadata["winner_stability"] = block
+            result.metadata["winner_stability"] = self._build_winner_stability_block(
+                result, scores
+            )
         except Exception:
             logger.warning(
                 "Winner-stability rerun failed; optimization results are unaffected",
