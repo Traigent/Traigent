@@ -314,10 +314,16 @@ sonar_prepare_coverage() {
   if [[ "${#PYTEST[@]}" -eq 0 ]]; then
     echo "  ❌ pytest unavailable: cannot measure coverage for the main-bound scan"; FAIL=1; return 0
   fi
+  # Fail closed on missing plugins: a silent serial or un-timed run would
+  # either take hours or hang the push.
+  local help_out; help_out="$(timeout 120 "${PYTEST[@]}" --help 2>/dev/null)"
   local -a par=(-n 0)
-  if [[ "$workers" != "0" ]]; then
-    if "${PYTEST[@]}" --help 2>/dev/null | grep -q -- '--dist'; then par=(-n "$workers" --dist loadgroup)
-    else echo "  ⚠️  pytest-xdist not installed: running serially (slow)"; fi
+  if [[ "$workers" != "0" ]]; then par=(-n "$workers" --dist loadgroup); fi
+  if ! grep -q -- '--timeout' <<<"$help_out" || ! grep -q -- '--cov' <<<"$help_out" \
+     || { [[ "$workers" != "0" ]] && ! grep -q -- '--dist' <<<"$help_out"; }; then
+    echo "  ❌ pytest-timeout, pytest-cov and (unless LOCAL_GATE_COVERAGE_WORKERS=0) pytest-xdist are required"
+    echo "     for the main-bound coverage run: pip install pytest-timeout pytest-cov pytest-xdist"
+    FAIL=1; return 0
   fi
   # Fresh HOME: a developer's real ~/.traigent can hold tens of thousands of
   # session files that make local runs hang, and a few tests assert the
@@ -326,12 +332,13 @@ sonar_prepare_coverage() {
   # relative_files => coverage.xml paths resolve inside the scanner container too.
   rcfile="$(mktemp "${TMPDIR:-/tmp}/lg-covrc.XXXXXX")"
   printf '[run]\nrelative_files = True\nsource = traigent\nomit =\n    */tests/*\n    */test_*\n    */demos/*\n    */docs/*\n' >"$rcfile"
+  trap 'rm -rf "$home_dir" "$rcfile"; trap - INT TERM; exit 130' INT TERM
   echo "  • coverage with the FULL tests/unit suite (${par[*]}); this takes a while"
   TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true HOME="$home_dir" PYTHONPATH=. \
-    "${GIT_ENV_CLEAR[@]}" timeout "${LOCAL_GATE_COVERAGE_TIMEOUT:-3600}" "${PYTEST[@]}" -p no:asyncio-cooperative -p no:cacheprovider -q --tb=short \
+    "${GIT_ENV_CLEAR[@]}" timeout -k 60 "${LOCAL_GATE_COVERAGE_TIMEOUT:-3600}" "${PYTEST[@]}" -p no:asyncio-cooperative -p no:cacheprovider -q --tb=short \
     "${par[@]}" --timeout=30 \
     --cov=traigent --cov-config="$rcfile" --cov-report=xml:coverage.xml tests/unit/ || rc=$?
-  rm -f "$rcfile"; rm -rf "$home_dir"
+  rm -f "$rcfile"; rm -rf "$home_dir"; trap - INT TERM
   if [[ ! -s coverage.xml ]]; then
     echo "  ❌ coverage.xml was not produced (pytest rc=$rc): coverage NOT MEASURED"; FAIL=1; return 0
   fi

@@ -50,7 +50,7 @@ def _make_gate_repo(tmp_path: Path) -> tuple[Path, Path]:
         "printf '%s|%s|%s|%s\\n' \"${TRAIGENT_MOCK_LLM:-}\" "
         '"${TRAIGENT_OFFLINE_MODE:-}" "${PYTHONPATH:-}" "$*" '
         '>> "$FAKE_PYTEST_LOG"\n'
-        'if [[ " $* " == *" --help "* ]]; then echo "  --dist=DISTMODE"; exit 0; fi\n'
+        'if [[ " $* " == *" --help "* ]]; then echo "  --dist=DISTMODE --timeout=T --cov=SOURCE"; exit 0; fi\n'
         'for a in "$@"; do\n'
         '  [[ "$a" == --cov-report=xml:* ]] && echo "<coverage/>" > "${a#--cov-report=xml:}"\n'
         "done\n"
@@ -472,7 +472,7 @@ def test_local_gate_pytest_steps_clear_git_hook_environment(tmp_path: Path) -> N
     # in its environment (collect-only still succeeds).
     probe = (
         "#!/usr/bin/env bash\n"
-        'if [[ " $* " == *" --help "* ]]; then echo "  --dist=DISTMODE"; exit 0; fi\n'
+        'if [[ " $* " == *" --help "* ]]; then echo "  --dist=DISTMODE --timeout=T --cov=SOURCE"; exit 0; fi\n'
         'echo "run:$*" >> "$FAKE_GIT_ENV_LOG"\n'
         'for a in "$@"; do\n'
         '  [[ "$a" == --cov-report=xml:* ]] && echo "<coverage/>" > "${a#--cov-report=xml:}"\n'
@@ -542,3 +542,39 @@ def test_local_gate_main_bound_coverage_runs_full_unit_suite(tmp_path: Path) -> 
     assert "--timeout=30" in cov[0]
     assert "-p no:cacheprovider" in cov[0]
     assert cov[0].startswith("true|true|")
+
+
+def test_local_gate_main_bound_coverage_fails_closed_without_timeout_plugin(
+    tmp_path: Path,
+) -> None:
+    """A pytest lacking pytest-timeout must fail the gate, not run un-timed."""
+    repo, fake_bin = _make_gate_repo(tmp_path)
+    (fake_bin / "pytest").write_text(
+        "#!/usr/bin/env bash\n"
+        'if [[ " $* " == *" --help "* ]]; then echo "  --dist=DISTMODE"; exit 0; fi\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "x"\nversion = "1.0.0"\n', encoding="utf-8"
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "LOCAL_GATE_SKIP": "schema-types,pytest",
+            "LOCAL_GATE_SONAR": "1",
+            "SONAR_TOKEN": "dummy",
+            "SONAR_HOST_URL": "https://sonar.example.invalid",
+        }
+    )
+    result = subprocess.run(
+        ["bash", "scripts/local_gate.sh"],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+    assert "pytest-timeout" in result.stdout
