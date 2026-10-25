@@ -226,8 +226,9 @@ def _dict_cardinality(definition: dict[Any, Any]) -> int | None:
     param_type, has_range, has_categorical_values = _dict_param_shape(definition)
 
     if _is_categorical_shape(param_type, has_range, has_categorical_values):
+        choices = _categorical_choices(definition)
         try:
-            return len(_categorical_choices(definition))
+            return len(choices)
         except TypeError:
             return None
 

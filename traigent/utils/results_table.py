@@ -643,11 +643,11 @@ def _table_column_widths(
 
 
 def _print_title_bar(
-    colors: Any, trial_count: int, mode_label: str | None, total_width: int
+    colors: Any, trials: list, mode_label: str | None, total_width: int
 ) -> None:
     C = colors
     label_prefix = f"{mode_label.strip()} - " if mode_label else ""
-    title = f" Trial Results ({label_prefix}{trial_count} trials) "
+    title = f" Trial Results ({label_prefix}{len(trials)} trials) "
     padding = (total_width - len(title)) // 2
 
     _safe_table_print("")
@@ -860,29 +860,28 @@ def print_results_table(
     )
     total_width = sum(col_widths[c] for c in all_cols) + len(all_cols) * 3 - 1
 
-    _print_title_bar(C, len(trials), mode_label, total_width)
+    _print_title_bar(C, trials, mode_label, total_width)
     _print_column_headers(
         C, col_widths, param_names, metric_names, show_examples, all_cols
     )
 
     # Data rows
     for i, trial in enumerate(trials):
-        _safe_table_print(
-            _table_data_row(
-                C,
-                i,
-                trial,
-                col_widths,
-                param_names,
-                metric_names,
-                metric_overrides,
-                best_trial_index=best_trial_index,
-                all_failed=all_failed,
-                best_per_objective=best_per_objective,
-                show_examples=show_examples,
-                example_counts=example_counts,
-            )
+        row = _table_data_row(
+            C,
+            i,
+            trial,
+            col_widths,
+            param_names,
+            metric_names,
+            metric_overrides,
+            best_trial_index=best_trial_index,
+            all_failed=all_failed,
+            best_per_objective=best_per_objective,
+            show_examples=show_examples,
+            example_counts=example_counts,
         )
+        _safe_table_print(row)
 
     # Bottom border
     _safe_table_print(

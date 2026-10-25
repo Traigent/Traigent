@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from traigent.utils import discrete_domains as dd
 from traigent.utils.discrete_domains import (
     discrete_cardinality_for_config_param,
     discrete_values_for_config_param,
@@ -73,7 +74,7 @@ def oracle_cardinality(definition: Any) -> int | None:
                     return None
                 if step_i <= 0 or low_i > high_i:
                     return None
-                return stepped_int_cardinality(low_i, high_i, step_i)
+                return dd.stepped_int_cardinality(low_i, high_i, step_i)
 
             step = definition.get("step")
             if step is None:
@@ -86,7 +87,7 @@ def oracle_cardinality(definition: Any) -> int | None:
                 return None
             if step_f <= 0 or low_f > high_f:
                 return None
-            return stepped_float_cardinality(low_f, high_f, step_f)
+            return dd.stepped_float_cardinality(low_f, high_f, step_f)
 
         return 1
 
@@ -142,7 +143,7 @@ def oracle_values(definition: Any) -> tuple[Any, ...] | None:
                     return None
                 if step_i <= 0 or low_i > high_i:
                     return ()
-                return stepped_int_values(low_i, high_i, step_i)
+                return dd.stepped_int_values(low_i, high_i, step_i)
 
             step = definition.get("step")
             if step is None:
@@ -155,7 +156,7 @@ def oracle_values(definition: Any) -> tuple[Any, ...] | None:
                 return None
             if step_f <= 0 or low_f > high_f:
                 return ()
-            return stepped_float_values(low_f, high_f, step_f)
+            return dd.stepped_float_values(low_f, high_f, step_f)
 
         return (definition,)
 
@@ -200,19 +201,58 @@ class _Num:
 
 
 def _run(fn, definition_factory):
+    """Run ``fn`` on a fresh definition, recording stepped-helper calls too."""
     log: list = []
-    definition = definition_factory(log)
-    try:
-        result = ("ok", repr(fn(definition)))
-    except Exception as exc:  # noqa: BLE001 - characterizing any exception
-        result = ("err", type(exc).__name__)
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        for name in (
+            "stepped_int_cardinality",
+            "stepped_float_cardinality",
+            "stepped_int_values",
+            "stepped_float_values",
+        ):
+            real = getattr(dd, name)
+
+            def wrapper(*args, _real=real, _name=name):
+                log.append(("call", _name, args))
+                return _real(*args)
+
+            monkeypatch.setattr(dd, name, wrapper)
+        definition = definition_factory(log)
+        try:
+            result = ("ok", repr(fn(definition)))
+        except Exception as exc:  # noqa: BLE001 - characterizing any exception
+            result = ("err", type(exc).__name__)
     return result, log
+
+
+class _RaisingRead(dict):
+    """dict whose read of one key raises, to pin where each read happens."""
+
+    def __init__(self, data, log, key, error):
+        super().__init__(data)
+        self._log = log
+        self._key = key
+        self._error = error
+
+    def __getitem__(self, key):
+        self._log.append(("item", key))
+        if key == self._key:
+            raise self._error
+        return super().__getitem__(key)
+
+    def get(self, key, *default):
+        self._log.append(("get", key) + tuple(default))
+        if key == self._key:
+            raise self._error
+        return super().get(key, *default)
 
 
 _ABSENT = object()
 _TYPES = [
     _ABSENT,
     None,
+    0,
+    False,
     "",
     "int",
     "Integer",
@@ -365,3 +405,35 @@ def test_documented_examples(definition, cardinality, values):
     assert stepped_int_values(0, 10, 4) == (0, 4, 8, 10)
     assert stepped_float_cardinality(0, 1, 0.5) == 3
     assert stepped_float_values(0, 1, 0.5) == (0.0, 0.5, 1.0)
+
+
+@pytest.mark.parametrize(
+    ("new", "oracle"),
+    [
+        (discrete_cardinality_for_config_param, oracle_cardinality),
+        (discrete_values_for_config_param, oracle_values),
+    ],
+    ids=["cardinality", "values"],
+)
+@pytest.mark.parametrize(
+    "error", [TypeError("boom"), ValueError("boom"), KeyError("k")]
+)
+@pytest.mark.parametrize(
+    "key", ["choices", "values", "type", "low", "high", "step", "value"]
+)
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"type": "choice", "choices": [1, 2]},
+        {"choices": [1, 2], "values": (3,)},
+        {"values": (3,)},
+        {"type": "fixed", "value": 1, "default": 2},
+        {"type": "int", "low": 0, "high": 9, "step": 3},
+        {"type": "float", "low": 0, "high": 1, "step": 0.5},
+    ],
+)
+def test_exceptions_raised_by_reads_surface_identically(new, oracle, data, key, error):
+    def factory(log):
+        return _RaisingRead(data, log, key, error)
+
+    assert _run(new, factory) == _run(oracle, factory)

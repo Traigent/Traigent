@@ -256,6 +256,12 @@ _TRIAL_SETS = {
         {"error": None, "config": {"a": 1, "b": 2}},
     ],
     "empty": [],
+    "falsy_errors": [
+        {"error": "", "config": {"a": 1, "b": 2}},
+        {"error": 0, "config": {"a": 1, "b": 2}},
+        {"error": False, "config": {"a": 1, "b": 2}},
+        {"error": [], "config": {"a": 1, "b": 2}},
+    ],
 }
 _INFOS = [
     {
@@ -298,6 +304,18 @@ _INFOS = [
         "loaded": True,
     },
     {"fn": "fn", "meta": {"evaluation_set": "ds"}, "trials": "mixed", "loaded": True},
+    {
+        "fn": "fn",
+        "meta": {"evaluation_set": "ds"},
+        "trials": "falsy_errors",
+        "loaded": True,
+    },
+    {
+        "fn": "fn",
+        "meta": {"evaluation_set": 0, "dataset_name": "ds"},
+        "trials": "match",
+        "loaded": True,
+    },
 ]
 _CONFIGS = [_SAME, {}, {"a": 1, 5: 2, "_x": 1}, {"a": 1, "b": 2, "_x": 9}]
 _KEYS = [None, [], ["a"], ["a", "_x"], ["b", 3], ["a", "b", "c"]]

@@ -360,6 +360,7 @@ def _trial_sets():
         "unsuccessful": unsuccessful,
         "missing_metrics": missing_metrics,
         "single": good[:1],
+        "printer_swap": [_trial("a", {"model": _PrinterSwap()}, {"accuracy": 0.5})],
     }
 
 
@@ -400,6 +401,32 @@ _RESULT_VARIANTS = {
 }
 
 
+class _ClearingLabel(str):
+    """Label whose ``strip()`` empties the trials list, pinning read order."""
+
+    def __new__(cls, text, trials):
+        obj = super().__new__(cls, text)
+        obj._trials = trials
+        return obj
+
+    def strip(self, *args):
+        self._trials.clear()
+        return str.strip(self, *args)
+
+
+class _PrinterSwap:
+    """Config value that swaps the module printer when rendered the second time."""
+
+    calls = 0
+    swap = None
+
+    def __str__(self):
+        type(self).calls += 1
+        if type(self).calls == 2 and type(self).swap is not None:
+            type(self).swap()
+        return "swap"
+
+
 def _install_recorders(monkeypatch, log, colors):
     for name in _WRAPPED:
         real = getattr(rt, name)
@@ -430,12 +457,22 @@ def _run(fn, trials, results_kwargs, config_space, objectives, kwargs, colors):
     log: list = []
     with pytest.MonkeyPatch.context() as monkeypatch:
         _install_recorders(monkeypatch, log, colors)
+        _PrinterSwap.calls = 0
+        _PrinterSwap.swap = lambda: monkeypatch.setattr(
+            rt, "_safe_table_print", lambda text, **kw: log.append(("print2", text))
+        )
         results = _results(list(trials), **results_kwargs)
+        resolved = {
+            key: value(results.trials) if callable(value) else value
+            for key, value in kwargs.items()
+        }
         try:
-            fn(results, config_space, objectives, **kwargs)
+            fn(results, config_space, objectives, **resolved)
             outcome = "ok"
         except Exception as exc:  # noqa: BLE001 - characterizing any exception
             outcome = ("err", type(exc).__name__)
+        finally:
+            _PrinterSwap.swap = None
     return outcome, log
 
 
@@ -449,6 +486,8 @@ def test_matches_oracle_across_scenarios():
     kwarg_sets = [
         {},
         {"mode_label": "MOCK"},
+        {"mode_label": ""},
+        {"mode_label": lambda trials: _ClearingLabel("clear", trials)},
         {"mode_label": "  padded  ", "show_best": False},
         {"metric_overrides": {"accuracy": [0.1, 0.9]}},
         {"show_best": False},
