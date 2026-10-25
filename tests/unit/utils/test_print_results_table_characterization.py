@@ -9,8 +9,11 @@ the full sequence of helper calls (arguments and order).
 from __future__ import annotations
 
 import itertools
+import re
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
+
+import pytest
 
 from traigent.utils import results_table as rt
 from traigent.utils.results_table import print_results_table
@@ -238,6 +241,8 @@ _WRAPPED = (
     "_local_fallback_notice",
 )
 
+_ADDRESS = re.compile(r"0x[0-9a-f]+")
+
 _ANSI = ("\033[1m", "\033[92m", "\033[93m", "\033[96m", "\033[2m", "\033[0m")
 
 
@@ -376,6 +381,8 @@ _OBJECTIVES = {
 _RESULT_VARIANTS = {
     "plain": {},
     "stop_detail": {"metadata": {"stop_detail": "Stopped at the trial limit."}},
+    "stop_empty": {"metadata": {"stop_detail": ""}},
+    "stop_not_str": {"metadata": {"stop_detail": 5}},
     "mock": {"metadata": {"mock_llm_run": True}},
     "mock_mixed": {"metadata": {"mock_llm_run": True, "mock_llm_mixed": True}},
     "not_mock": {"metadata": {"mock_llm_run": False}},
@@ -399,7 +406,8 @@ def _install_recorders(monkeypatch, log, colors):
 
         def wrapper(*args, _real=real, _name=name, **kwargs):
             outcome = _real(*args, **kwargs)
-            log.append((_name, repr(args), repr(sorted(kwargs.items())), repr(outcome)))
+            rendered = (repr(args), repr(sorted(kwargs.items())), repr(outcome))
+            log.append((_name, *(_ADDRESS.sub("0x", text) for text in rendered)))
             return outcome
 
         monkeypatch.setattr(rt, name, wrapper)
@@ -417,21 +425,21 @@ def _install_recorders(monkeypatch, log, colors):
         monkeypatch.setattr(rt._Colors, attr, value)
 
 
-def _run(
-    fn, trials, results_kwargs, config_space, objectives, kwargs, colors, monkeypatch
-):
+def _run(fn, trials, results_kwargs, config_space, objectives, kwargs, colors):
+    """Run ``fn`` with fresh recorders; the patches are undone on exit."""
     log: list = []
-    _install_recorders(monkeypatch, log, colors)
-    results = _results(list(trials), **results_kwargs)
-    try:
-        fn(results, config_space, objectives, **kwargs)
-        outcome = "ok"
-    except Exception as exc:  # noqa: BLE001 - characterizing any exception
-        outcome = ("err", type(exc).__name__)
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        _install_recorders(monkeypatch, log, colors)
+        results = _results(list(trials), **results_kwargs)
+        try:
+            fn(results, config_space, objectives, **kwargs)
+            outcome = "ok"
+        except Exception as exc:  # noqa: BLE001 - characterizing any exception
+            outcome = ("err", type(exc).__name__)
     return outcome, log
 
 
-def test_matches_oracle_across_scenarios(monkeypatch):
+def test_matches_oracle_across_scenarios():
     sets = _trial_sets()
     spaces = [
         {},
@@ -465,7 +473,6 @@ def test_matches_oracle_across_scenarios(monkeypatch):
             objectives,
             kwargs,
             colors,
-            monkeypatch,
         )
         want = _run(
             oracle_print_results_table,
@@ -475,7 +482,6 @@ def test_matches_oracle_across_scenarios(monkeypatch):
             objectives,
             kwargs,
             colors,
-            monkeypatch,
         )
         checked += 1
         if got != want:
