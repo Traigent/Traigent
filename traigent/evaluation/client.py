@@ -170,7 +170,7 @@ class EvaluationClient:
         **fields: Any,
     ) -> EvaluatorDefinitionDTO:
         payload = dict(fields)
-        if "target_filters" in payload:
+        if payload.get("target_filters") is not None:
             payload["target_filters"] = validate_target_filters(
                 payload["target_filters"]
             )
