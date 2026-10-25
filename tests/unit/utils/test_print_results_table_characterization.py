@@ -496,7 +496,7 @@ def test_representative_output_is_stable(monkeypatch):
     trials = _trial_sets()["good"]
     log: list = []
     _install_recorders(monkeypatch, log, ("",) * 6)
-    results = _results(trials, metadata={"best_trial_id": "b"})
+    results = _results(trials, metadata={"best_trial_id": "b", "mock_llm_run": False})
     print_results_table(results, {"model": ["x"]}, ["accuracy"])
     printed = [entry[1] for entry in log if entry[0] == "print"]
     assert printed[0] == ""
