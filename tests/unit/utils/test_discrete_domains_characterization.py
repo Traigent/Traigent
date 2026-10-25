@@ -9,6 +9,7 @@ pinned, not just the return value).
 from __future__ import annotations
 
 import itertools
+import sys
 from typing import Any
 
 import pytest
@@ -437,3 +438,44 @@ def test_exceptions_raised_by_reads_surface_identically(new, oracle, data, key, 
         return _RaisingRead(data, log, key, error)
 
     assert _run(new, factory) == _run(oracle, factory)
+
+
+class _ShadowingChoices(dict):
+    """Reading ``choices`` rebinds the module-level ``tuple`` and ``len`` names."""
+
+    def __init__(self, data, log, monkeypatch):
+        super().__init__(data)
+        self._log = log
+        self._monkeypatch = monkeypatch
+
+    def __getitem__(self, key):
+        self._log.append(("item", key))
+        if key == "choices":
+            for module in (dd, sys.modules[__name__]):
+                self._monkeypatch.setattr(
+                    module, "tuple", lambda items: ("shadowed",), raising=False
+                )
+                self._monkeypatch.setattr(
+                    module, "len", lambda items: -1, raising=False
+                )
+        return super().__getitem__(key)
+
+
+@pytest.mark.parametrize(
+    ("new", "oracle"),
+    [
+        (discrete_cardinality_for_config_param, oracle_cardinality),
+        (discrete_values_for_config_param, oracle_values),
+    ],
+    ids=["cardinality", "values"],
+)
+def test_builtin_lookup_happens_after_choices_are_read(new, oracle):
+    results = []
+    for fn in (new, oracle):
+        log: list = []
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            definition = _ShadowingChoices(
+                {"type": "choice", "choices": [1, 2]}, log, monkeypatch
+            )
+            results.append((repr(fn(definition)), log))
+    assert results[0] == results[1]

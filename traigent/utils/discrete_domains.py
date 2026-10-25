@@ -245,7 +245,8 @@ def _dict_values(definition: dict[Any, Any]) -> tuple[Any, ...] | None:
     param_type, has_range, has_categorical_values = _dict_param_shape(definition)
 
     if _is_categorical_shape(param_type, has_range, has_categorical_values):
-        return tuple(_categorical_choices(definition))
+        choices = _categorical_choices(definition)
+        return tuple(choices)
 
     if param_type in _FIXED_TYPES:
         return _fixed_values(definition)
