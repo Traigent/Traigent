@@ -22,19 +22,19 @@ except ImportError:
     class wandb:  # type: ignore[no-redef]
         @staticmethod
         def init(*args, **kwargs) -> None:
-            pass
+            """Stand-in used when wandb is not installed: intentionally a no-op."""
 
         @staticmethod
         def log(*args, **kwargs) -> None:
-            pass
+            """Stand-in used when wandb is not installed: intentionally a no-op."""
 
         @staticmethod
         def finish(*args, **kwargs) -> None:
-            pass
+            """Stand-in used when wandb is not installed: intentionally a no-op."""
 
         @staticmethod
         def save(*args, **kwargs) -> None:
-            pass
+            """Stand-in used when wandb is not installed: intentionally a no-op."""
 
 
 from ...api.types import OptimizationResult, TrialResult

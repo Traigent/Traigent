@@ -74,27 +74,27 @@ except ImportError:
 
         @staticmethod
         def end_run(*args, **kwargs) -> None:
-            pass
+            """Stand-in used when mlflow is not installed: intentionally a no-op."""
 
         @staticmethod
         def log_param(*args, **kwargs) -> None:
-            pass
+            """Stand-in used when mlflow is not installed: intentionally a no-op."""
 
         @staticmethod
         def log_metric(*args, **kwargs) -> None:
-            pass
+            """Stand-in used when mlflow is not installed: intentionally a no-op."""
 
         @staticmethod
         def log_artifact(*args, **kwargs) -> None:
-            pass
+            """Stand-in used when mlflow is not installed: intentionally a no-op."""
 
         @staticmethod
         def log_dict(*args, **kwargs) -> None:
-            pass
+            """Stand-in used when mlflow is not installed: intentionally a no-op."""
 
         @staticmethod
         def set_tag(*args, **kwargs) -> None:
-            pass
+            """Stand-in used when mlflow is not installed: intentionally a no-op."""
 
 else:
     _mlflow_module: Any = None
