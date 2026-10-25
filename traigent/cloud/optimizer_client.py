@@ -14,6 +14,7 @@ from traigent.cloud.client import raise_if_cloud_egress_disabled
 from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.core.session_types import safe_http_error_summary
 from traigent.labels.transport_gate import gate_session
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.wire_text import filter_wire_metadata
 
 _SESSION_ID_REQUIRED = "session_id must be a non-empty string"
@@ -64,14 +65,26 @@ def _wire_submission(submission: dict[str, Any]) -> dict[str, Any]:
 class OptimizerDirectClient:
     """Direct client for optimizer metric submission in hybrid mode."""
 
-    def __init__(self, endpoint: str, token: str, *, no_egress: bool = False) -> None:
+    def __init__(
+        self,
+        endpoint: str,
+        token: str,
+        *,
+        no_egress: bool = False,
+        optimization_only: bool | None = None,
+    ) -> None:
         """Initialize optimizer direct client.
 
         Args:
             endpoint: Optimizer endpoint URL
             token: JWT token for authentication
             no_egress: Runtime policy flag that forbids backend transport
+            optimization_only: Explicit optimization-only egress setting (None defers
+                to ``TRAIGENT_OPTIMIZATION_ONLY``; unset = legacy behaviour)
         """
+        self.optimization_only = oo_egress.parse_flag(
+            optimization_only, source="optimization_only"
+        )
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError(
                 "aiohttp is required for OptimizerDirectClient. Install the optional dependency."
@@ -101,6 +114,20 @@ class OptimizerDirectClient:
         # batch-size trigger so a backlog cannot re-arm it on every trial.
         self._retained_count = 0
         self._flush_task: asyncio.Task[None] | None = None
+
+    def _wire_submission(
+        self, submission: dict[str, Any], session_id: str
+    ) -> dict[str, Any]:
+        """The exact body sent for one metric submission (projected when opted in)."""
+        return cast(
+            dict[str, Any],
+            oo_egress.project_for_send(
+                oo_egress.PHASE_OPTIMIZER_METRICS,
+                _wire_submission(submission),
+                explicit=self.optimization_only,
+                session_id=session_id,
+            ),
+        )
 
     def _raise_if_backend_egress_disabled(self, operation: str) -> None:
         """Fail closed before optimizer backend transport."""
@@ -418,7 +445,8 @@ class OptimizerDirectClient:
             raise RuntimeError(_SESSION_NOT_INITIALIZED)
         try:
             async with self.session.post(
-                f"{self.endpoint}/{session_id}", json=_wire_submission(submission)
+                f"{self.endpoint}/{session_id}",
+                json=self._wire_submission(submission, session_id),
             ) as response:
                 if response.status == 403:
                     error_text = await response.text()
@@ -459,7 +487,11 @@ class OptimizerDirectClient:
         try:
             async with self.session.post(
                 f"{self.endpoint}/{session_id}/batch",
-                json={"submissions": [_wire_submission(s) for s in submissions]},
+                json={
+                    "submissions": [
+                        self._wire_submission(s, session_id) for s in submissions
+                    ]
+                },
             ) as response:
                 if response.status == 403:
                     error_text = await response.text()

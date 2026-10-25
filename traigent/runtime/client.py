@@ -20,6 +20,7 @@ from traigent.runtime.model import (
     E_NO_CREDENTIALS,
     RuntimeRequirementError,
 )
+from traigent.utils import optimization_only_egress as oo_egress
 
 API_PREFIX = "/api/v1beta/projects"
 _TIMEOUT = (5.0, 30.0)
@@ -117,6 +118,10 @@ class RuntimeClient:
             raise RuntimeRequirementError(E_EGRESS)
         if not self._api_key:
             raise RuntimeRequirementError(E_NO_CREDENTIALS)
+        try:
+            oo_egress.assert_closed_body(body, "production_requirements_request")
+        except oo_egress.OptimizationOnlyRefusal:
+            raise RuntimeRequirementError(E_EGRESS) from None
         import requests
 
         from traigent.cloud.user_agent import get_sdk_user_agent

@@ -43,6 +43,7 @@ from traigent.cloud.smart_pruning import normalize_smart_pruning_options
 from traigent.config.backend_config import BackendConfig
 from traigent.core.session_types import safe_http_error_summary
 from traigent.labels.transport_gate import client_origins, gate_session
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
@@ -1106,9 +1107,9 @@ class SessionOperations:
                 self.client.backend_config.api_base_url
                 or BackendConfig.get_backend_api_url()
             )
-            async with session.post(
-                f"{api_base}/hybrid/sessions",
-                json={
+            hybrid_body = oo_egress.project_for_send(
+                oo_egress.PHASE_HYBRID_SESSION_CREATE,
+                {
                     "problem_statement": problem_statement,
                     "search_space": search_space,
                     "optimization_config": optimization_config,
@@ -1116,6 +1117,11 @@ class SessionOperations:
                         filter_wire_metadata(metadata) if metadata is not None else None
                     ),
                 },
+                explicit=oo_egress.explicit_of(self.client),
+            )
+            async with session.post(
+                f"{api_base}/hybrid/sessions",
+                json=hybrid_body,
                 headers=await self.client.auth_manager.auth.get_headers(),
             ) as response:
                 if response.status != 201:
@@ -1673,6 +1679,11 @@ class SessionOperations:
                     )
                     if sanitized_aggregation is not None:
                         finalize_body["session_aggregation"] = sanitized_aggregation
+                finalize_body = oo_egress.project_for_send(
+                    oo_egress.PHASE_FINALIZE,
+                    finalize_body,
+                    explicit=oo_egress.explicit_of(self.client),
+                )
                 async with session.post(
                     url,
                     json=finalize_body,

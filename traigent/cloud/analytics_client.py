@@ -69,6 +69,7 @@ from traigent.cloud.dtos import (
 from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.labels.transport_gate import gate_session
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -2404,6 +2405,11 @@ class BackendAnalyticsClient:
         headers: dict[str, str] | None = None,
         envelope: bool = True,
     ) -> dict[str, Any]:
+        if not path.startswith("/api/v1/director/"):
+            # The Director advisory route is the one hosted operation an
+            # optimization_only workspace keeps (its closed menu is enforced elsewhere);
+            # every other analytics request must carry closed values only.
+            oo_egress.assert_closed_body(json_body, "analytics_request")
         client = self._get_client()
         response = await client.post(
             path, headers=self._request_headers(headers), json=json_body
@@ -2465,6 +2471,7 @@ class BackendAnalyticsClient:
             raise ValueError("compare_runs requires at least two run_ids.")
 
         path = "/api/v1/optimization-comparisons"
+        oo_egress.assert_closed_body({"run_ids": cleaned}, "analytics_request")
         client = self._get_client()
         response = await client.post(
             path,

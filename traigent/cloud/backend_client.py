@@ -102,8 +102,10 @@ from traigent.labels.transport_gate import (
     preflight_requests,
 )
 from traigent.security.session_manager import SessionManager as SecuritySessionManager
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.exceptions import RetryableError
 from traigent.utils.logging import get_logger
+from traigent.utils.optimization_only_egress import parse_flag
 from traigent.utils.retry import RetryConfig, RetryHandler
 
 # Type alias for aiohttp session, falling back to Any at runtime if unavailable
@@ -984,6 +986,7 @@ class BackendIntegratedClient:
         rate_limit_period: float = 60.0,
         local_storage_path: str | None = None,
         no_egress: bool = False,
+        optimization_only: bool | None = None,
     ) -> None:
         """Initialize backend integrated client.
 
@@ -998,7 +1001,12 @@ class BackendIntegratedClient:
             rate_limit_calls: Maximum calls within rate limit period
             rate_limit_period: Rate limit period in seconds
             no_egress: Runtime policy flag that forbids backend transport
+            optimization_only: Opt in (True) or out (False) of optimization-only egress;
+                None defers to ``TRAIGENT_OPTIMIZATION_ONLY`` (unset = legacy behaviour).
         """
+        self.optimization_only = parse_flag(
+            optimization_only, source="optimization_only"
+        )
         if isinstance(api_key, BackendClientConfig) and backend_config is None:
             backend_config = api_key
             api_key = None
@@ -2415,6 +2423,12 @@ class BackendIntegratedClient:
     ) -> int:
         """Read an agent's current head generation (0 if never promoted)."""
         self._raise_if_backend_egress_disabled("fetch agent head")
+        oo_egress.assert_closed_ids(
+            "agent_head_fetch",
+            agent_id,
+            environment,
+            explicit=oo_egress.explicit_of(self),
+        )
         try:
             import requests
         except ImportError as exc:  # pragma: no cover - requests is required
@@ -2750,6 +2764,11 @@ class BackendIntegratedClient:
         payload: dict[str, Any] = {"spec": spec}
         if environment:
             payload["environment"] = environment
+        payload = oo_egress.project_for_send(
+            oo_egress.PHASE_BEST_CONFIG,
+            payload,
+            explicit=oo_egress.explicit_of(self),
+        )
         response = self._protected_request(
             "POST",
             url,
@@ -2842,6 +2861,11 @@ class BackendIntegratedClient:
         payload: dict[str, Any] = {"spec": spec}
         if environment:
             payload["environment"] = environment
+        payload = oo_egress.project_for_send(
+            oo_egress.PHASE_BEST_CONFIG,
+            payload,
+            explicit=oo_egress.explicit_of(self),
+        )
 
         def _post_best_config() -> Any:
             try:
@@ -2928,6 +2952,13 @@ class BackendIntegratedClient:
     ) -> dict[str, Any] | None:
         """Fetch the current backend best config, returning None on 304/404."""
         self._raise_if_backend_egress_disabled("fetch best config")
+        oo_egress.assert_closed_ids(
+            "best_config_fetch",
+            config_id,
+            environment,
+            function_ref,
+            explicit=oo_egress.explicit_of(self),
+        )
         try:
             import requests
         except ImportError as exc:  # pragma: no cover - requests is required
@@ -3162,6 +3193,10 @@ class BackendIntegratedClient:
     ) -> bool:
         """Upload per-run example features for backend-side analytics."""
         self._raise_if_backend_egress_disabled("upload example features")
+        # Per-example features describe the dataset: not available in this mode.
+        oo_egress.refuse_if_active(
+            "example_feature_upload", explicit=oo_egress.explicit_of(self)
+        )
         if not experiment_run_id or not feature_kind or not features:
             return False
 

@@ -61,6 +61,7 @@ from traigent.observability.dtos import (
     utc_now,
 )
 from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.exceptions import (
     AuthenticationError,
     ClientError,
@@ -3473,10 +3474,15 @@ class ObservabilityClient:
         SDK never authenticates, so it keeps working in both cases.
         """
         return (
-            self.config.offline_mode or self._credential_egress_disabled
+            self.config.offline_mode
+            or self._credential_egress_disabled
+            or oo_egress.is_active()
         ) and not self._has_custom_trace_sender
 
     def _post_batch_sync(self, traces: list[dict[str, Any]]) -> dict[str, Any] | None:
+        if oo_egress.is_active():
+            # optimization_only: the server refuses trace ingest; nothing is sent.
+            return None
         if self.config.offline_mode or self._credential_egress_disabled:
             self._log_offline_mode_once()
             return None
@@ -3505,6 +3511,7 @@ class ObservabilityClient:
                 return self._parse_ingest_response(body)
         except error.HTTPError as exc:
             body = self._read_http_error_body(exc)
+            oo_egress.note_response(exc.code, body)
             if exc.code in {401, 403}:
                 raise AuthenticationError(
                     f"Observability ingest rejected with status {exc.code}"
@@ -3568,6 +3575,7 @@ class ObservabilityClient:
             return cast(
                 dict[str, Any], self._request_sender_override(method, path, payload)
             )
+        oo_egress.refuse_if_active("observability_request")
         if self._credential_egress_disabled:
             raise ClientError(
                 "Observability backend request skipped: no credential resolved "
@@ -3606,6 +3614,7 @@ class ObservabilityClient:
                 return parsed
         except error.HTTPError as exc:
             body = self._read_http_error_body(exc)
+            oo_egress.note_response(exc.code, body)
             if exc.code in {401, 403}:
                 raise AuthenticationError(
                     f"Observability request rejected with status {exc.code}"

@@ -25,6 +25,7 @@ from traigent.cloud.client import raise_if_cloud_egress_disabled
 from traigent.cloud.url_security import validate_always_blocked_cloud_url
 from traigent.config.backend_config import DEFAULT_CLOUD_URL
 from traigent.labels.transport_gate import gate_session
+from traigent.utils import optimization_only_egress as oo_egress
 
 # Optional dependency for HTTP client
 try:
@@ -522,6 +523,7 @@ class DatasetConverter:
             Conversion result. When ``strict`` is False and rows were dropped,
             the drops are reported in ``errors`` and counted in ``error_count``.
         """
+        oo_egress.refuse_if_active("dataset_upload")
         logger.info(f"Uploading SDK dataset to backend (privacy={privacy_mode})")
 
         conversion_errors: list[dict[str, Any]] = []
@@ -989,6 +991,7 @@ class DatasetConverter:
         self._raise_if_backend_egress_disabled(
             "create backend example set", no_egress=no_egress
         )
+        oo_egress.refuse_if_active("dataset_upload")
         if not self._session:
             raise RuntimeError(_SESSION_NOT_INITIALIZED) from None
 
@@ -1021,6 +1024,7 @@ class DatasetConverter:
         self._raise_if_backend_egress_disabled(
             "upload backend examples", no_egress=no_egress
         )
+        oo_egress.refuse_if_active("dataset_upload")
         if not self._session:
             raise RuntimeError(_SESSION_NOT_INITIALIZED)
 

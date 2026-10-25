@@ -34,6 +34,7 @@ from collections.abc import Iterable
 from typing import Any
 from urllib.parse import urlencode, urlsplit
 
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.logging import get_logger
 
 from .content_classes import BLOCKING, classify_request, get_table
@@ -312,6 +313,23 @@ def _refuse_redirect() -> TransportGateRefusal:
     return TransportGateRefusal("redirect_refused", {"violation": 1})
 
 
+async def _latch_aiohttp(response: Any) -> None:
+    """Latch optimization_only mode on the server's closed 403 (best effort, never raises)."""
+    try:
+        if response.status == 403:
+            oo_egress.note_response(403, await response.read())
+    except Exception:  # noqa: BLE001 - observation must never break the request
+        return
+
+
+def _latch_sync(response: Any, status_attr: str, body_attr: str) -> None:
+    try:
+        if getattr(response, status_attr) == 403:
+            oo_egress.note_response(403, getattr(response, body_attr))
+    except Exception:  # noqa: BLE001 - observation must never break the request
+        return
+
+
 def _build_aiohttp(base: type) -> type:
     from aiohttp import payload
 
@@ -366,12 +384,15 @@ def _build_aiohttp(base: type) -> type:
                     extra_origins=extra,
                 )
             if not _refuses_redirects(self, url):
-                return await super()._request(method, str_or_url, **kwargs)
+                response = await super()._request(method, str_or_url, **kwargs)
+                await _latch_aiohttp(response)
+                return response
             kwargs["allow_redirects"] = False
             response = await super()._request(method, str_or_url, **kwargs)
             if _is_redirect_status(response.status):
                 response.release()
                 raise _refuse_redirect()
+            await _latch_aiohttp(response)
             return response
 
     GatedClientSession.__name__ = f"Gated{base.__name__}"
@@ -396,12 +417,15 @@ def _build_requests(base: type) -> type:
                 extra_origins=_instance_origins(self),
             )
             if not _refuses_redirects(self, str(request.url)):
-                return super().send(request, **kwargs)
+                response = super().send(request, **kwargs)
+                _latch_sync(response, "status_code", "content")
+                return response
             kwargs["allow_redirects"] = False
             response = super().send(request, **kwargs)
             if _is_redirect_status(response.status_code):
                 response.close()
                 raise _refuse_redirect()
+            _latch_sync(response, "status_code", "content")
             return response
 
     GatedRequestsSession.__name__ = f"Gated{base.__name__}"

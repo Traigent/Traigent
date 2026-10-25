@@ -1,0 +1,62 @@
+{
+  "agent": {
+    "agent_id": "qa_agent",
+    "build_digest": "sha256:9d218e95efa390710cd921539f9d516604634b53dc8118ef29dcc81555f1996c",
+    "manifest": {
+      "agent_id": "qa_agent",
+      "applied_config_digest": "sha256:2b3ecdc83926c52c6f63a6e4e06fd4527ed021a44f567109ae017ad574a80279",
+      "asset_digests": {
+        "helper_modules": {
+          "fixture_gen.py": "sha256:231ead47159b61ea1753aa436e719b59a16d20663adfab07e5f167162c0e42d9",
+          "qa_agent_mod.py": "sha256:a7170d7ee2f703671293c3556d252f9ca2e7988eb2509b359e2d2ef936a5ee08"
+        },
+        "prompts": {},
+        "tool_definitions": {}
+      },
+      "coverage": "partial",
+      "manifest_version": 1,
+      "runtime": {
+        "language": "python",
+        "language_version": "3.13.14",
+        "sdk_version": "0.31.0.dev0"
+      },
+      "source_digest": "sha256:e6e92d640266159366713b6502d557120388439f9976576be1455feb72730f0d"
+    }
+  },
+  "agent_id_source": "declared",
+  "dataset": {
+    "conflicting_example_ids": [],
+    "dataset_root": "msr1:k0123456789abcdef:5e2680ec34260e8a749704ce20cc8ccf81b4a45fc03f4ebf07f03c3748036ad0",
+    "distinct_count": 3,
+    "key_id": "k0123456789abcdef",
+    "members": [
+      {
+        "count": 1,
+        "example_id": "ex1:k0123456789abcdef:23d05d0a5d9bcc94a5faba25833366b6fa622b4094f362b3106cbae9550b9a77",
+        "example_version": "exv1:k0123456789abcdef:82609750615e882b8fb5316fbd400682ff7a11bccfa6e99a88320214b58e4e87"
+      },
+      {
+        "count": 1,
+        "example_id": "ex1:k0123456789abcdef:297732cd3c56f4662f4058bedd24aa00e04bd96846676726943544bb95e5a9a8",
+        "example_version": "exv1:k0123456789abcdef:3032df0c8451e804bba4c595a730d3326dcb9c449308652cbb21cfc238053e80"
+      },
+      {
+        "count": 1,
+        "example_id": "ex1:k0123456789abcdef:8aea6107c5ea180c25ab1d9ce1d813c8f7b641cf61ba488255c00f49523ff135",
+        "example_version": "exv1:k0123456789abcdef:6673c9251c38c87fc2fe1c0c3ca8d2566e978366b21c2023e0bc7ac3f2485bcd"
+      }
+    ],
+    "record_state": "draft",
+    "scheme": "traigent.content_identity.v1",
+    "total_count": 3
+  },
+  "evaluator": null,
+  "evaluator_id_source": null,
+  "key_id": "k0123456789abcdef",
+  "key_status": "available",
+  "provenance": "declared",
+  "scheme": "traigent.content_identity.v1",
+  "unavailable": {
+    "evaluator": "evaluator_manifest_unavailable"
+  }
+}
