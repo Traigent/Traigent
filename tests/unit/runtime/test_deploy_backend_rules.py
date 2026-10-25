@@ -125,10 +125,10 @@ def test_sdk_publish_body_is_exactly_the_closed_request(reactive: Reactive) -> N
     assert json.dumps(sent["body"]).count("schema_version") == 1
 
 
-def test_unserved_reads_are_the_only_documented_gap(reactive: Reactive) -> None:
+def test_attempt_read_is_served_not_a_documented_gap(reactive: Reactive) -> None:
     ref = approved_deploy(reactive)
-    reactive.client.get_attempt(ref)
-    assert reactive.backend.unserved_calls == ["getTvlReactiveAttempt"]
+    assert reactive.client.get_attempt(ref)["attempt_ref"] == ref
+    assert reactive.backend.violations == []
 
 
 def test_zero_native_import_returns_a_reactive_receipt() -> None:

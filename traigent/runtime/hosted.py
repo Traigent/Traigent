@@ -365,6 +365,43 @@ _NOTIFICATION = _obj(
     },
     {"attempt_ref": _ATTEMPT_C},
 )
+_DEPLOY_ONLY_APPROVAL = (
+    "candidate_fingerprint",
+    "gate_result_digest",
+    "optimization_start_generation",
+    "current_head_generation",
+    "head_moved_since_optimization_start",
+)
+_APPROVAL_CONTEXT_BASE = _obj(
+    {
+        "schema_version": _VERSION,
+        "attempt_ref": _ATTEMPT_C,
+        "policy_revision_ref": _POLICY_C,
+        "effect": _enum(*EFFECTS),
+        "state": _enum(*ATTEMPT_STATES),
+        "contract_digest": _DIGEST_C,
+    },
+    {
+        "candidate_fingerprint": _DIGEST_C,
+        "gate_result_digest": _DIGEST_C,
+        "optimization_start_generation": _GEN,
+        "current_head_generation": _GEN,
+        "head_moved_since_optimization_start": _bool,
+    },
+)
+
+
+def _parse_approval_context(value: Any) -> Any:
+    """``ApprovalContext`` is ``oneOf`` by effect: deploy carries all the binding fields."""
+    doc = _APPROVAL_CONTEXT_BASE(value)
+    present = [k for k in _DEPLOY_ONLY_APPROVAL if k in doc]
+    if doc["effect"] == "optimize" and present:
+        raise _Bad
+    if doc["effect"] == "deploy" and len(present) != len(_DEPLOY_ONLY_APPROVAL):
+        raise _Bad
+    return doc
+
+
 _ACCEPTED = _int(0, 256)
 _PARSERS: dict[str, Check] = {
     "grant": _GRANT,
@@ -1004,8 +1041,7 @@ class ReactiveClient:
             raise ReactiveError(E_BACKEND, "response", ambiguous=True)
         return receipt
 
-    # -- attempts / grants (read) -- OPEN GAP: documented in the schema, but the final
-    # Backend (6ee39655b) registers none of these GET routes; see reactive_fake.UNSERVED_READS. -----------------------------------------------------------
+    # -- attempts / grants / notifications (read-only GETs; closed shapes) --------------------
     def list_attempts(
         self, *, limit: int = 50, after: int | None = None
     ) -> dict[str, Any]:
@@ -1061,6 +1097,20 @@ class ReactiveClient:
         )
         if doc["notification_ref"] != notification_ref:
             raise ReactiveError(E_BACKEND, "response", ambiguous=True)
+        return doc
+
+    def get_approval_context(self, attempt_ref: str) -> dict[str, Any]:
+        """What a portal approver sees for one attempt (read-only).
+
+        P-human only: an SDK API key is answered ``forbidden`` (a closed refusal).
+        """
+        _need(_ATTEMPT_REF, attempt_ref, "attempt_ref")
+        doc: dict[str, Any] = self._call(
+            "GET",
+            self._path(f"/attempts/{attempt_ref}/approval-context"),
+            _parse_approval_context,
+        )
+        self._same_attempt(doc, attempt_ref)
         return doc
 
     # -- authority: reserve / start / heartbeat / results / cancel --------------------------
@@ -1267,8 +1317,7 @@ class ReactiveClient:
     def get_pinned_config(self) -> PinnedConfig:
         """The spec of EXACTLY the version the head pins, with its generation and version.
 
-        OPEN GAP: the final Backend registers no ``GET .../config`` route; the agent_head
-        source still reads it until the head read is re-pointed (tracked in the report).
+        ``GET /best-configs/agent-heads/{agent_ref}/config`` (ETag = generation).
         """
         doc = self._call("GET", self._head_path("/config"), _parse_pinned)
         return PinnedConfig(doc["generation"], doc["version"], doc["spec"])

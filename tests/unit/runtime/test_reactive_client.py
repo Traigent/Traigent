@@ -369,3 +369,115 @@ def test_canary_is_in_no_request_of_any_call(reactive: Reactive) -> None:
     reactive.client.report_finished(res, completion="normal", candidates=[])
     for sent in reactive.backend.log:
         assert CANARY not in json.dumps(sent)
+
+
+# --- read-only GETs: attempts, grants, approval context, notifications ----------------------
+
+
+def test_list_attempts_pages_with_after_and_next_after(reactive: Reactive) -> None:
+    refs = [reactive.approved_optimize() for _ in range(3)]
+    first = reactive.client.list_attempts(limit=2)
+    assert [a["attempt_ref"] for a in first["items"]] == refs[::-1][:2]
+    assert first["next_after"] == 2
+    last = reactive.client.list_attempts(limit=2, after=first["next_after"])
+    assert [a["attempt_ref"] for a in last["items"]] == [refs[0]]
+    assert last["next_after"] is None
+    with pytest.raises(RuntimeRequirementError):
+        reactive.client.list_attempts(limit=0)
+    with pytest.raises(RuntimeRequirementError):
+        reactive.client.list_attempts(after=-1)
+
+
+def test_unknown_attempt_and_grant_are_closed_404s(reactive: Reactive) -> None:
+    for call, ref in (
+        (reactive.client.get_attempt, make_ref("attempt", 99)),
+        (reactive.client.get_grant, make_ref("grant", 99)),
+        (reactive.client.get_approval_context, make_ref("attempt", 99)),
+    ):
+        reactive.backend.principal_kind = "human"
+        with pytest.raises(ReactiveError) as err:
+            call(ref)
+        assert err.value.code == "reference_not_found" and not err.value.ambiguous
+        assert err.value.status == 404
+    with pytest.raises(RuntimeRequirementError):
+        reactive.client.get_attempt("not-a-ref")
+    assert reactive.backend.violations == []
+
+
+def test_approval_context_is_human_only(reactive: Reactive) -> None:
+    ref = reactive.approved_optimize()
+    with pytest.raises(ReactiveError) as err:  # an SDK key is never a person
+        reactive.client.get_approval_context(ref)
+    assert err.value.code == "forbidden" and err.value.status == 403
+    reactive.backend.principal_kind = "human"
+    ctx = reactive.client.get_approval_context(ref)
+    assert ctx["attempt_ref"] == ref and ctx["effect"] == "optimize"
+    assert "candidate_fingerprint" not in ctx
+
+
+def test_approval_context_for_deploy_carries_the_binding(reactive: Reactive) -> None:
+    ref = reactive.attempt("deploy")
+    reactive.backend.principal_kind = "human"
+    reactive.backend.approval_facts[ref] = {
+        "candidate_fingerprint": "c" * 64,
+        "gate_result_digest": "d" * 64,
+        "optimization_start_generation": 3,
+        "current_head_generation": 4,
+        "head_moved_since_optimization_start": True,
+    }
+    ctx = reactive.client.get_approval_context(ref)
+    assert ctx["effect"] == "deploy" and ctx["current_head_generation"] == 4
+    assert ctx["head_moved_since_optimization_start"] is True
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda d: {**d, "candidate_fingerprint": "c" * 64},  # optimize forbids it
+        lambda d: {**d, "extra": 1},  # closed
+        lambda d: {**d, "effect": "deploy"},  # deploy requires the whole binding
+        lambda d: {**d, "contract_digest": "short"},
+    ],
+)
+def test_approval_context_response_is_closed(reactive: Reactive, mutate: Any) -> None:
+    ref = reactive.approved_optimize()
+    reactive.backend.principal_kind = "human"
+    good = reactive.client.get_approval_context(ref)
+    client = ReactiveClient(
+        reactive.agent_ref,
+        reactive.tokens,
+        transport=lambda *_a: (200, mutate(good), {}),
+    )
+    with pytest.raises(ReactiveError) as err:
+        client.get_approval_context(ref)
+    assert err.value.code == E_BACKEND and err.value.ambiguous
+
+
+def test_notifications_list_get_filter_and_page(reactive: Reactive) -> None:
+    b = reactive.backend
+    refs = [b.add_notification() for _ in range(3)]
+    suppressed = b.add_notification(decision="suppressed")
+    page = reactive.client.list_notifications(limit=3)
+    assert len(page["items"]) == 3 and page["next_after"] == 3
+    rest = reactive.client.list_notifications(limit=3, after=page["next_after"])
+    assert len(rest["items"]) == 1 and rest["next_after"] is None
+    only = reactive.client.list_notifications(decision="suppressed")["items"]
+    assert [n["notification_ref"] for n in only] == [suppressed]
+    got = reactive.client.get_notification(refs[0])
+    assert got["notification_ref"] == refs[0] and got["decision"] == "delivered"
+    with pytest.raises(RuntimeRequirementError):
+        reactive.client.list_notifications(decision="maybe")
+    with pytest.raises(ReactiveError) as nf:
+        reactive.client.get_notification(make_ref("notification", 999))
+    assert nf.value.code == "reference_not_found" and nf.value.status == 404
+
+
+def test_notification_for_another_ref_is_refused(reactive: Reactive) -> None:
+    b = reactive.backend
+    one, two = b.add_notification(), b.add_notification()
+    doc = reactive.client.get_notification(one)
+    client = ReactiveClient(
+        reactive.agent_ref, reactive.tokens, transport=lambda *_a: (200, doc, {})
+    )
+    with pytest.raises(ReactiveError):
+        client.get_notification(two)

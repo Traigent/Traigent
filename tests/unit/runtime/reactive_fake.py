@@ -84,9 +84,9 @@ class Route:
     param_names: list[str]
 
 
-#: Operations the final Backend (TraigentBackend 6ee39655b, ``production_reactive_routes.py``)
-#: serves.  The vendored endpoint files also document reads and a deploy-publications branch
-#: the Backend does not register; calling one is a violation, so the SDK cannot rely on it.
+#: Operations the Backend serves (``production_reactive_routes.py`` incl. the read routes
+#: ``feature/traig101-reactive-reads``).  Anything else the vendored endpoint files document
+#: is a violation if called, so the SDK cannot rely on it.
 SERVED = frozenset(
     {
         "stageTvlReactiveEvaluation",
@@ -99,15 +99,8 @@ SERVED = frozenset(
         "cancelTvlReactiveAttempt",
         "publishTvlDeployResult",
         "finalizeTvlDeployPublishResult",
-        # Open gap: the agent_head source still reads this; the Backend has no such route.
         "getAgentHeadPinnedConfig",
-    }
-)
-#: Read routes the schema documents but Backend 6ee39655b does not register.  The SDK's hosted
-#: respond path still calls them; every call is recorded in ``unserved_calls`` and asserted
-#: in tests so the gap stays visible until the Backend serves them or the SDK stops reading.
-UNSERVED_READS = frozenset(
-    {
+        # read-only GETs, closed shapes
         "listTvlReactiveAttempts",
         "getTvlReactiveAttempt",
         "getTvlReactiveGrant",
@@ -142,7 +135,7 @@ def _load_routes() -> list[Route]:
             names = re.findall(r"\{([a-z_]+)\}", path)
             pattern = re.sub(r"\{[a-z_]+\}", r"([^/]+)", path)
             for method, op in methods.items():
-                if op["operationId"] not in SERVED | UNSERVED_READS:
+                if op["operationId"] not in SERVED:
                     continue
                 routes.append(
                     Route(
@@ -241,7 +234,8 @@ class StrictBackend:
         self.agent_ref = agent_ref
         self.principal = "ingest-key-1"  # the calling ingest key (P-ingest)
         self.principal_kind = "ingest"  # "human" for a portal session
-        self.unserved_calls: list[str] = []
+        self.notifications: list[dict[str, Any]] = []
+        self.approval_facts: dict[str, dict[str, Any]] = {}
         self.best_configs: dict[tuple[str, int], dict[str, Any]] = {}
         self.clock = clock or Clock()
         self.log: list[dict[str, Any]] = []
@@ -398,8 +392,6 @@ class StrictBackend:
             return self._answer(
                 entry, route, 429, refusal("rate_limited"), {"Retry-After": "2"}
             )
-        if route.operation in UNSERVED_READS:
-            self.unserved_calls.append(route.operation)
         if route.operation in HOLDER_OPS:
             held = self._attempt(values["attempt_ref"])
             res = self.reservations.get((held or {}).get("reservation_ref", ""))
@@ -799,14 +791,57 @@ class StrictBackend:
             "replayed": False,
         }
 
+    def add_notification(
+        self,
+        *,
+        event: str = "episode_opened",
+        decision: str = "delivered",
+        attempt_ref: str | None = None,
+    ) -> str:
+        """A recorded notification (the Backend writes these; the SDK only reads them)."""
+        ref = make_ref("notification", self._next())
+        doc: dict[str, Any] = {
+            "schema_version": 1,
+            "notification_ref": ref,
+            "policy_revision_ref": make_ref("policyrevision", 1),
+            "response": "t" + "r" * 16,
+            "rule": "t" + "u" * 16,
+            "event": event,
+            "scope": "t" + "s" * 16,
+            "occurrence_index": 1,
+            "repeat_index": 0,
+            "evaluation_instant": 3,
+            "decision": decision,
+            "guards": [],
+            "evidence_source": "backend_native",
+            "producers_missing": False,
+            "recorded_at": _iso(self.clock()),
+        }
+        if attempt_ref is not None:
+            doc["attempt_ref"] = attempt_ref
+        self.notifications.append(doc)
+        return ref
+
     def _op_listTvlReactiveNotifications(
         self, v: dict, q: dict, body: Any
     ) -> tuple[int, Any]:
-        return 200, {"schema_version": 1, "items": [], "next_after": None}
+        items = [
+            copy.deepcopy(n)
+            for n in reversed(self.notifications)
+            if q.get("decision") in (None, n["decision"])
+        ]
+        limit = int(q.get("limit", 50))
+        after = int(q.get("after", 0))
+        page = items[after : after + limit]
+        nxt = after + limit if after + limit < len(items) else None
+        return 200, {"schema_version": 1, "items": page, "next_after": nxt}
 
     def _op_getTvlReactiveNotification(
         self, v: dict, q: dict, body: Any
     ) -> tuple[int, Any]:
+        for n in self.notifications:
+            if n["notification_ref"] == v["notification_ref"]:
+                return 200, copy.deepcopy(n)
         return 404, refusal("reference_not_found")
 
     def _op_cancelTvlReactiveAttempt(
@@ -822,7 +857,25 @@ class StrictBackend:
     def _op_getTvlReactiveApprovalContext(
         self, v: dict, q: dict, body: Any
     ) -> tuple[int, Any]:
-        return 403, refusal("forbidden")
+        if self.principal_kind != "human":
+            return 403, refusal("forbidden")  # P-human only: an SDK key is refused
+        attempt = self._attempt(v["attempt_ref"])
+        if attempt is None:
+            return 404, refusal("reference_not_found")
+        doc: dict[str, Any] = {
+            "schema_version": 1,
+            "attempt_ref": attempt["attempt_ref"],
+            "policy_revision_ref": attempt["policy_revision_ref"],
+            "effect": attempt["effect"],
+            "state": attempt["state"],
+            "contract_digest": "a" * 64,
+        }
+        if attempt["effect"] == "deploy":
+            facts = self.approval_facts.get(attempt["attempt_ref"])
+            if facts is None:
+                return 404, refusal("reference_not_found")
+            doc.update(facts)
+        return 200, doc
 
     # deploy -----------------------------------------------------------------------------
     def add_best_config(self, best_config_id: str, version: int, config: dict) -> None:
