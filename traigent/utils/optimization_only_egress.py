@@ -2308,6 +2308,185 @@ def project_best_config_payload(payload: Any) -> dict[str, Any]:
     return out
 
 
+# ---- transport backstop: default-deny route allowlist --------------------------------------
+# The per-site guards above produce good bodies, but a site can forget a guard or resolve a
+# credential late. The transport gate therefore calls :func:`enforce_outgoing` with the FINAL
+# method, URL, headers and body of every request to the Traigent backend. When the mode is
+# active only the optimization-loop routes below may pass, and a body-carrying route passes
+# only if its body is already a fixed point of its phase projector.
+
+_API_PREFIX = r"^(?:/api/v\d+(?:beta\d*)?)?"
+#: Marker for a body the gate cannot read (multipart, stream): never allowed on a body route.
+UNREADABLE_BODY = object()
+
+
+@dataclass(frozen=True)
+class Route:
+    method: str
+    pattern: re.Pattern[str]
+    phase: str | None = None  # fixed-point phase for the body (None = no body allowed)
+    kind: str = "projected"  # projected | director | auth | read
+
+
+def _route(
+    method: str, tail: str, phase: str | None = None, kind: str = "projected"
+) -> Route:
+    return Route(method, re.compile(_API_PREFIX + tail + r"/?$"), phase, kind)
+
+
+ALLOWED_ROUTES: tuple[Route, ...] = (
+    _route("POST", r"/sessions", PHASE_SESSION_CREATE_AUTO),
+    _route("POST", r"/sessions/[^/]+/results", PHASE_RESULTS),
+    _route("POST", r"/sessions/[^/]+/next-trial", PHASE_NEXT_TRIAL),
+    _route("POST", r"/sessions/[^/]+/finalize", PHASE_FINALIZE),
+    _route("POST", r"/sessions/[^/]+/intermediate-report", PHASE_INTERMEDIATE_REPORT),
+    _route("DELETE", r"/sessions/[^/]+", None, "read"),
+    _route("GET", r"/sessions(?:/[^/]+(?:/[^/]+)?)?", None, "read"),
+    _route(
+        "PUT",
+        r"/configuration-runs/[^/]+/(?:status|measures|summary-stats)",
+        PHASE_CONFIGURATION_RUN,
+    ),
+    _route("PUT", r"/experiment-runs/runs/[^/]+", PHASE_CONFIGURATION_RUN),
+    _route(
+        "GET",
+        r"/(?:experiment-runs|configuration-runs|experiments)(?:/.*)?",
+        None,
+        "read",
+    ),
+    _route("POST", r"/experiments/[^/]+/runs", PHASE_PARENT_RUN),
+    _route("POST", r"/best-configs", PHASE_BEST_CONFIG),
+    _route("GET", r"/best-configs(?:/.*)?", None, "read"),
+    _route("POST", r"/director/sessions", None, "director"),
+    _route("POST", r"/director/sessions/[^/]+/turn", None, "director"),
+    _route("GET", r"/director/sessions/[^/]+/state", None, "read"),
+    _route("POST", r"/hybrid/optimizer/[^/]+", PHASE_OPTIMIZER_METRICS),
+    _route("POST", r"/hybrid/optimizer/[^/]+/batch", PHASE_OPTIMIZER_METRICS),
+    _route("GET", r"/hybrid/optimizer/[^/]+/(?:next|status)", None, "read"),
+    # credentials only, no customer content
+    _route("POST", r"/keys/validate", None, "auth"),
+    _route("POST", r"/auth/(?:login|refresh)", None, "auth"),
+    _route("POST", r"/oauth/token", None, "auth"),
+)
+
+
+def outgoing_may_be_active(explicit: bool | Policy | None = None) -> bool:
+    """Cheap pre-check for the transport hook: False means "nothing to enforce, add no work".
+
+    True when the client opted in outright, any credential scope is latched, or the
+    environment opts in.
+    """
+    if isinstance(explicit, Policy):
+        explicit = explicit.explicit
+    if explicit is True or _latched_scopes:
+        return True
+    return env_setting() is True
+
+
+def _canonical(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=True)
+
+
+def _is_fixed_point(phase: str, body: Any, session_id: str | None) -> bool:
+    try:
+        projected = project_for_phase(phase, body, session_id=session_id)
+    except (MetadataContractViolation, ValueError):
+        return False
+    if (
+        phase in (PHASE_SESSION_CREATE_AUTO, PHASE_SESSION_CREATE)
+        and isinstance(body, dict)
+        and isinstance(projected, dict)
+        and re.fullmatch(r"cr_[0-9a-f]{16}", str(body.get("code_revision", "")))
+    ):
+        # A ``code_revision`` label tokenizes to ``cr_<hash>``, which is not revision-shaped,
+        # so projecting it again re-tokenizes (a backend property): ignore that one field.
+        body = {k: v for k, v in body.items() if k != "code_revision"}
+        projected = {k: v for k, v in projected.items() if k != "code_revision"}
+    return _canonical(projected) == _canonical(body)
+
+
+def enforce_outgoing(
+    method: str,
+    url: Any,
+    headers: Any,
+    body: Any,
+    *,
+    explicit: bool | Policy | None = None,
+) -> None:
+    """Transport backstop for one request to the Traigent backend (FINAL url/headers/body).
+
+    Mode inactive for the request's credential: returns at once. Mode active: DEFAULT-DENY.
+    Only :data:`ALLOWED_ROUTES` pass; a body route passes only if its JSON body is a fixed
+    point of its phase projector (Director bodies must pass
+    :func:`assert_director_request`); query values must be identifier-shaped. Anything else
+    raises :class:`OptimizationOnlyRefusal` before a byte is sent.
+    """
+    headers_scope = credential_scope(url, headers) if scope_required(None) else None
+    base = explicit.explicit if isinstance(explicit, Policy) else explicit
+    if not is_active(Policy(base, headers_scope)):
+        return
+    parts = urlsplit(str(url))
+    path = parts.path
+    verb = str(method).upper()
+    route = next(
+        (r for r in ALLOWED_ROUTES if r.method == verb and r.pattern.match(path)), None
+    )
+    if route is None:
+        raise OptimizationOnlyRefusal("route_not_allowed")
+    if parts.query:
+        from urllib.parse import parse_qsl
+
+        for key, value in parse_qsl(parts.query, keep_blank_values=True):
+            if ID_RE.fullmatch(key) is None or (
+                value and ID_RE.fullmatch(value) is None
+            ):
+                raise OptimizationOnlyRefusal("query_not_closed")
+    has_body = body is not None and body != b"" and body != ""
+    if route.kind in ("read", "auth") and route.phase is None:
+        if route.kind == "read" and has_body:
+            raise OptimizationOnlyRefusal("body_not_allowed")
+        return
+    if body is UNREADABLE_BODY:
+        raise OptimizationOnlyRefusal("body_unreadable")
+    parsed = body
+    if isinstance(body, (bytes, bytearray, str)):
+        try:
+            parsed = json.loads(body) if body else None
+        except ValueError:
+            raise OptimizationOnlyRefusal("body_not_json") from None
+    if route.kind == "director":
+        if not _director_conforms(
+            parsed,
+            DIRECTOR_CREATE_ALLOWLIST
+            if path.rstrip("/").endswith("/director/sessions")
+            else DIRECTOR_TURN_ALLOWLIST,
+        ):
+            raise OptimizationOnlyRefusal("director_request")
+        return
+    if route.phase is None:
+        return
+    if parsed is None or not isinstance(parsed, (dict, list)):
+        raise OptimizationOnlyRefusal("body_missing")
+    session_id = session_id_from_url(path)
+    if route.phase == PHASE_OPTIMIZER_METRICS:
+        items = (
+            parsed.get("submissions")
+            if isinstance(parsed, dict) and "submissions" in parsed
+            else [parsed]
+        )
+        if not isinstance(items, list):
+            raise OptimizationOnlyRefusal("body_not_projected")
+        segs = path.rstrip("/").split("/")
+        session_id = segs[-2] if segs[-1] == "batch" else segs[-1]
+        if not all(_is_fixed_point(route.phase, item, session_id) for item in items):
+            raise OptimizationOnlyRefusal("body_not_projected")
+        return
+    if not _is_fixed_point(route.phase, parsed, session_id):
+        raise OptimizationOnlyRefusal("body_not_projected")
+    if route.phase == PHASE_SESSION_CREATE_AUTO and _payload_embeds_examples(parsed):
+        raise OptimizationOnlyRefusal("embedded_examples")
+
+
 def explicit_of(client: Any) -> bool | None:
     """The explicit ``optimization_only`` setting held by a client object, if it is a bool.
 

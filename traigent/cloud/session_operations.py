@@ -42,7 +42,7 @@ from traigent.cloud.session_types import (
 from traigent.cloud.smart_pruning import normalize_smart_pruning_options
 from traigent.config.backend_config import BackendConfig
 from traigent.core.session_types import safe_http_error_summary
-from traigent.labels.transport_gate import client_origins, gate_session
+from traigent.labels.transport_gate import client_origins, gate_session, mark_explicit
 from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.exceptions import ValidationError as ValidationException
@@ -1642,6 +1642,7 @@ class SessionOperations:
                 ),
                 origins=client_origins(self.client),
             ) as session:
+                mark_explicit(session, oo_egress.explicit_of(self.client))
                 api_base = (
                     self.client.backend_config.api_base_url
                     or BackendConfig.get_backend_api_url()

@@ -8,7 +8,11 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from traigent.observability.client import _NoRedirectHandler, _parse_retry_after
+from traigent.observability.client import (
+    _gate_opener,
+    _NoRedirectHandler,
+    _parse_retry_after,
+)
 
 
 class TransportError(Exception):
@@ -34,7 +38,7 @@ class UrllibTransport:
         self._url = url
         self._headers = dict(headers)
         self._gzip = gzip_body
-        self._opener = urllib.request.build_opener(_NoRedirectHandler)
+        self._opener = _gate_opener(urllib.request.build_opener(_NoRedirectHandler))
 
     def post(self, body: bytes, *, timeout: float) -> TransportResponse:
         headers = {"Content-Type": "application/x-protobuf", **self._headers}

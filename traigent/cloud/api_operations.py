@@ -927,6 +927,7 @@ class ApiOperations:
                 trust_env=True,
             ),
             origins=self._gate_origins(),
+            optimization_only=oo_egress.explicit_of(self.client),
             strict=content_less_ctx is not None,
         ) as session:
             api_base = (
@@ -1126,6 +1127,7 @@ class ApiOperations:
                     trust_env=True,
                 ),
                 origins=self._gate_origins(),
+                optimization_only=oo_egress.explicit_of(self.client),
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -1275,6 +1277,7 @@ class ApiOperations:
                     trust_env=True,
                 ),
                 origins=self._gate_origins(),
+                optimization_only=oo_egress.explicit_of(self.client),
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -1470,6 +1473,7 @@ class ApiOperations:
                     trust_env=True,
                 ),
                 origins=self._gate_origins(),
+                optimization_only=oo_egress.explicit_of(self.client),
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -1550,6 +1554,7 @@ class ApiOperations:
                     trust_env=True,
                 ),
                 origins=self._gate_origins(),
+                optimization_only=oo_egress.explicit_of(self.client),
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url

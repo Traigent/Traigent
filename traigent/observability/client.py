@@ -103,6 +103,13 @@ class _ClientErrorWithRetryAfter(ClientError):
         self.retry_after = retry_after
 
 
+def _gate_opener(opener: Any) -> Any:
+    """Route this module's urllib opener through the optimization_only transport backstop."""
+    from traigent.labels.transport_gate import gate_opener
+
+    return gate_opener(opener)
+
+
 class _NoRedirectHandler(request.HTTPRedirectHandler):
     """Prevent credentialed observability requests from replaying headers elsewhere."""
 
@@ -2052,7 +2059,7 @@ class ObservabilityClient:
         self._offline_notice_logged = False
         self._missing_generation_usage_notice_logged = False
         self._credential_egress_disabled = False
-        self._http_opener = request.build_opener(_NoRedirectHandler)
+        self._http_opener = _gate_opener(request.build_opener(_NoRedirectHandler))
         self._transport = self._create_transport()
         self._disable_egress_if_credential_missing()
 

@@ -1716,6 +1716,7 @@ class BackendIntegratedClient:
                     trust_env=True,
                 ),
                 origins=client_origins(self),
+                optimization_only=oo_egress.explicit_of(self),
             )
             self._register_session_finalizer(self._session)
         return self
@@ -1773,6 +1774,7 @@ class BackendIntegratedClient:
                 trust_env=True,
             ),
             origins=client_origins(self),
+            optimization_only=oo_egress.explicit_of(self),
         )
 
     def _loop_pools(self) -> dict[int, tuple[weakref.ref[Any], Any]]:

@@ -378,6 +378,7 @@ class TrialOperations:
         async with gate_session(
             aiohttp.ClientSession(trust_env=True),
             origins=client_origins(self.client),
+            optimization_only=oo_egress.explicit_of(self.client),
         ) as session:
             yield session
 

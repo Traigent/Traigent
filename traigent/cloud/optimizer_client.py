@@ -150,6 +150,7 @@ class OptimizerDirectClient:
                 trust_env=True,
             ),
             origins=[self.endpoint],
+            optimization_only=self.optimization_only,
         )
         # Start background flush task
         self._flush_task = asyncio.create_task(self._periodic_flush())

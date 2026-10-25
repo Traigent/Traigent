@@ -285,26 +285,96 @@ GUARDS = frozenset(
 )
 
 
-def _guard_calls_without_scope(source: str) -> list[int]:
-    missing: list[int] = []
-    for node in ast.walk(ast.parse(source)):
-        if not isinstance(node, ast.Call):
-            continue
+_POLICY_FACTORIES = frozenset(
+    {
+        "policy_of",
+        "policy_from_headers",
+        "policy_from_environment",
+        "Policy",
+        "_optimization_only_policy",
+    }
+)
+
+
+def _is_policy_expr(node: ast.AST, policy_names: set[str]) -> bool:
+    """A real Policy-typed argument: a factory call, or a variable bound from one."""
+    if isinstance(node, ast.Call):
         func = node.func
         name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-        if name not in GUARDS:
-            continue
-        if isinstance(func, ast.Attribute) and not (
-            isinstance(func.value, ast.Name) and func.value.id == "oo_egress"
-        ):
-            continue
-        args = [*node.args, *(kw.value for kw in node.keywords)]
-        if not any(
-            "policy" in ast.unparse(a).lower() or "scope" in ast.unparse(a).lower()
-            for a in args
-        ):
-            missing.append(node.lineno)
-    return missing
+        return name in _POLICY_FACTORIES
+    return isinstance(node, ast.Name) and node.id in policy_names
+
+
+def _policy_names(fn: ast.AST) -> set[str]:
+    names: set[str] = set()
+    if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        for arg in [*fn.args.args, *fn.args.kwonlyargs]:
+            if arg.annotation is not None and "Policy" in ast.unparse(arg.annotation):
+                names.add(arg.arg)
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Assign) and _is_policy_expr(node.value, names):
+                names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    return names
+
+
+class _GuardVisitor(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.missing: list[int] = []
+        self._names: list[set[str]] = [set()]
+
+    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        names = set(self._names[-1])
+        for arg in [*node.args.args, *node.args.kwonlyargs]:
+            if arg.annotation is not None and "Policy" in ast.unparse(arg.annotation):
+                names.add(arg.arg)
+        self._names.append(names)
+        self.generic_visit(node)
+        self._names.pop()
+
+    visit_FunctionDef = _visit_function  # noqa: N815
+    visit_AsyncFunctionDef = _visit_function  # noqa: N815
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        if _is_policy_expr(node.value, self._names[-1]):
+            self._names[-1].update(
+                t.id for t in node.targets if isinstance(t, ast.Name)
+            )
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        is_guard = name in GUARDS and (
+            not isinstance(func, ast.Attribute)
+            or (isinstance(func.value, ast.Name) and func.value.id == "oo_egress")
+        )
+        if is_guard:
+            names = self._names[-1]
+            ok = any(_is_policy_expr(a, names) for a in node.args) or any(
+                (kw.arg == "scope" and not _is_none(kw.value))
+                or (
+                    kw.arg in ("explicit", "policy")
+                    and _is_policy_expr(kw.value, names)
+                )
+                for kw in node.keywords
+            )
+            if not ok:
+                self.missing.append(node.lineno)
+        self.generic_visit(node)
+
+
+def _guard_calls_without_scope(source: str) -> list[int]:
+    """Guard calls with no real Policy argument: a policy factory call, a variable bound
+    from one (or a parameter annotated ``Policy``), or a non-None ``scope=``. Aliased imports
+    of the module are not followed. This is a lexical aid; the default-deny transport
+    backstop is what actually guarantees coverage."""
+    visitor = _GuardVisitor()
+    visitor.visit(ast.parse(source))
+    return sorted(set(visitor.missing))
+
+
+def _is_none(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and node.value is None
 
 
 def test_no_guard_call_in_the_sdk_omits_the_credential_scope() -> None:
@@ -324,6 +394,26 @@ def test_no_guard_call_in_the_sdk_omits_the_credential_scope() -> None:
 
 def test_the_scope_checker_catches_an_unscoped_guard() -> None:
     assert _guard_calls_without_scope("oo_egress.refuse_if_active('x')") == [1]
+    # a string that merely contains "scope" or "policy" no longer counts
+    assert _guard_calls_without_scope("oo_egress.refuse_if_active('scope policy')") == [
+        1
+    ]
+    assert _guard_calls_without_scope(
+        "oo_egress.refuse_if_active('x', explicit=policy)"
+    ) == [1]
+    assert _guard_calls_without_scope("oo_egress.is_active(scope=None)") == [1]
+    assert (
+        _guard_calls_without_scope(
+            "def f(policy: oo_egress.Policy):\n    oo_egress.is_active(policy)"
+        )
+        == []
+    )
+    assert (
+        _guard_calls_without_scope(
+            "def f(self):\n    p = oo_egress.policy_of(self)\n    oo_egress.refuse_if_active('x', explicit=p)"
+        )
+        == []
+    )
     assert _guard_calls_without_scope(
         "oo_egress.refuse_if_active('x', explicit=p)"
     ) == [1]

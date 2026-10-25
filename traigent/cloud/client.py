@@ -882,6 +882,7 @@ class TraigentCloudClient(BaseTraigentClient):
                 trust_env=True,
             ),
             origins=client_origins(self),
+            optimization_only=oo_egress.explicit_of(self),
         )
         self._register_session_finalizer(self._aio_session)
         return self
@@ -936,6 +937,7 @@ class TraigentCloudClient(BaseTraigentClient):
                     trust_env=True,
                 ),
                 origins=client_origins(self),
+                optimization_only=oo_egress.explicit_of(self),
             )
             self._register_session_finalizer(self._aio_session)
             return self._aio_session
