@@ -1363,3 +1363,56 @@ def test_update_evaluator_validates_target_filters():
     with pytest.raises(ValueError, match="target_filters"):
         client.update_evaluator("e1", target_filters={"environment": "production"})
     assert len(calls) == 1
+
+
+def _update_with_filters(**fields):
+    calls: list = []
+
+    def request_sender(method: str, path: str, payload: dict | None):
+        calls.append((method, path, payload))
+        return {"data": {"id": "e1", "target_type": "observability_trace"}}
+
+    client = EvaluationClient(request_sender=request_sender)
+    client.update_evaluator("e1", **fields)
+    return calls
+
+
+def test_update_evaluator_omitted_target_filters_is_not_sent():
+    calls = _update_with_filters(sampling_rate=0.5)
+    assert calls[0][2] == {"sampling_rate": 0.5}
+    assert "target_filters" not in calls[0][2]
+
+
+def test_update_evaluator_none_target_filters_passes_null_through():
+    calls = _update_with_filters(target_filters=None)
+    assert calls[0][2] == {"target_filters": None}
+
+
+def test_update_evaluator_empty_target_filters_clears_filters():
+    calls = _update_with_filters(target_filters={})
+    assert calls[0][2] == {"target_filters": {}}
+
+
+def test_target_filters_accept_exact_boundaries_on_update():
+    at_limits = {
+        "environment": ["e" * 64],
+        "release": ["r" * 128],
+        "name": ["n" * 255] + [f"n{i}" for i in range(1, 20)],
+        "tags": ["t" * 128],
+    }
+    assert len(at_limits["name"]) == 20
+    assert len(at_limits["name"][0]) == 255
+    calls = _update_with_filters(target_filters=at_limits)
+    assert calls[0][2]["target_filters"] == at_limits
+
+
+def test_target_filters_accept_exact_boundaries_on_create():
+    at_limits = {
+        "environment": ["e" * 64],
+        "release": ["r" * 128],
+        "name": ["n" * 255] + [f"n{i}" for i in range(1, 20)],
+        "tags": ["t" * 128],
+    }
+    calls: list = []
+    _create_with_filters(at_limits, calls)
+    assert calls[0][2]["target_filters"] == at_limits
