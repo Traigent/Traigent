@@ -6453,6 +6453,325 @@ class OptimizationOrchestrator:
             "vendor_call_attempt_records_truncated": truncated,
         }
 
+    def _certified_selection_inputs(
+        self, strict_mode: bool
+    ) -> tuple[dict[str, Any] | None, float | None]:
+        """Return the (certified_config, certified_score) pair for strict runs."""
+        if not (
+            strict_mode
+            and self._best_trial_cached is not None
+            and self._certified_promotions > 0
+        ):
+            return None, None
+        # Only an incumbent that won at least one explicit gate
+        # promotion is a certified winner. The FIRST trial seeds the
+        # incumbent as comparison initialization, NOT as certification —
+        # a strict run with zero gate promotions returns
+        # NO_CERTIFIED_SELECTION (review finding: first-incumbent
+        # overclaim).
+        config_space_keys = set(getattr(self.optimizer, "config_space", {}).keys())
+        incumbent = self._best_trial_cached
+        certified_config = {
+            key: value
+            for key, value in (incumbent.config or {}).items()
+            if not config_space_keys or key in config_space_keys
+        }
+        primary = self.optimizer.objectives[0] if self.optimizer.objectives else None
+        certified_score = (
+            incumbent.get_metric(primary)
+            if primary and hasattr(incumbent, "get_metric")
+            else None
+        )
+        return certified_config, certified_score
+
+    def _declared_objective_orientations(self) -> dict[str, str] | None:
+        """Build objective orientation map from ObjectiveSchema when available.
+
+        (F-B fix: honour declared orientation, not name-pattern heuristics).
+        """
+        if self.objective_schema and self.objective_schema.objectives:
+            return {
+                obj.name: str(obj.orientation)
+                for obj in self.objective_schema.objectives
+            }
+        return None
+
+    @staticmethod
+    def _log_statistical_tie(selection: Any, best_config_margin: Any) -> None:
+        """Surface a statistical-tie winner once per run (issue #1866).
+
+        When the winner-vs-runner-up margin is not significant, the "adopt
+        best_config" action is being taken on noise — name both configs, the
+        objective, and the p-value so the user can prefer the cheaper/faster
+        config or add examples. Additive: best_config itself is unchanged.
+        """
+        if not (
+            isinstance(best_config_margin, dict)
+            and best_config_margin.get("verdict") == "statistical_tie"
+        ):
+            return
+        logger.warning(
+            "best_config is a STATISTICAL TIE on '%s': winner (trial %s) vs "
+            "runner-up (trial %s) delta=%.4g, p=%.4g (alpha=%s). The winner "
+            "is statistically interchangeable with the runner-up on the "
+            "primary objective; prefer the cheaper/faster config or add "
+            "examples rather than treating the margin as a decision.",
+            best_config_margin.get("primary_objective"),
+            selection.best_trial_id,
+            best_config_margin.get("runner_up_trial_id"),
+            best_config_margin.get("delta"),
+            best_config_margin.get("p_value"),
+            best_config_margin.get("alpha"),
+        )
+
+    @staticmethod
+    def _copy_session_summary(
+        session_summary: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Return a fresh mutable copy of the session summary."""
+        if session_summary is None:
+            return {}
+        return dict(session_summary)
+
+    def _fail_if_completed(
+        self, result_status: OptimizationStatus
+    ) -> OptimizationStatus:
+        """Downgrade COMPLETED to FAILED (also on self); keep other statuses."""
+        if result_status == OptimizationStatus.COMPLETED:
+            result_status = OptimizationStatus.FAILED
+            self._status = result_status
+        return result_status
+
+    def _apply_unmatched_objective(
+        self,
+        selection: Any,
+        primary_objective: str | None,
+        session_summary: dict[str, Any] | None,
+        result_status: OptimizationStatus,
+        result_warnings: list[str],
+        result_warning_codes: list[str],
+    ) -> tuple[dict[str, Any] | None, OptimizationStatus]:
+        """Record the unmatched-objective warning, summary and status downgrade."""
+        if not (
+            primary_objective
+            and selection.reason_code == NO_RANKING_ELIGIBLE_TRIALS
+            and _objective_metric_never_measured(self._trials, primary_objective)
+        ):
+            return session_summary, result_status
+        available_metric_names = _successful_trial_metric_names(self._trials)
+        warning, suggestion = _format_unmatched_objective_warning(
+            primary_objective,
+            available_metric_names,
+        )
+        result_warnings.append(warning)
+        result_warning_codes.append(_OBJECTIVE_UNMATCHED_WARNING_CODE)
+        session_summary = self._copy_session_summary(session_summary)
+        session_summary["reason"] = warning
+        session_summary["reason_code"] = selection.reason_code
+        session_summary["unmatched_objective"] = primary_objective
+        session_summary["available_metrics"] = list(available_metric_names)
+        if suggestion:
+            session_summary["did_you_mean"] = suggestion
+        return session_summary, self._fail_if_completed(result_status)
+
+    def _apply_all_trials_failed(
+        self,
+        result_status: OptimizationStatus,
+        result_warnings: list[str],
+        result_warning_codes: list[str],
+    ) -> OptimizationStatus:
+        """Downgrade a run whose executed trials all failed (issue #2477).
+
+        Mirrors the #1691 downgrade: a run that executed trials where none
+        succeeded is not COMPLETED, whatever the stop reason (budget stops
+        included; the stop_reason value itself is unchanged). Statuses already
+        set by a stop cause (e.g. CANCELLED) are kept; no exception is raised.
+        """
+        if not (
+            self._trials
+            and not any(t.is_successful for t in self._trials)
+            and any(t.status == TrialStatus.FAILED for t in self._trials)
+        ):
+            return result_status
+        failed_count = sum(1 for t in self._trials if t.status == TrialStatus.FAILED)
+        result_warnings.append(
+            f"All trials failed: {failed_count} of {len(self._trials)} trial(s) "
+            "failed and none succeeded; no best_config was selected. See "
+            "per-trial error messages."
+        )
+        result_warning_codes.append(_ALL_TRIALS_FAILED_WARNING_CODE)
+        return self._fail_if_completed(result_status)
+
+    def _apply_partial_coverage(
+        self,
+        selection: Any,
+        primary_objective: str | None,
+        result_warnings: list[str],
+        result_warning_codes: list[str],
+    ) -> None:
+        """Append the partial-metric-coverage warning when applicable."""
+        if not primary_objective:
+            return
+        partial = _partial_coverage_trials(self._trials, primary_objective)
+        if partial:
+            result_warnings.append(
+                _format_partial_coverage_warning(
+                    partial,
+                    primary_objective,
+                    selection.reason_code,
+                    selection.best_config,
+                    selection.ranking_eligible_trial_ids,
+                )
+            )
+            result_warning_codes.append(_METRIC_PARTIAL_COVERAGE_WARNING_CODE)
+
+    def _apply_custom_evaluator_failed_rows(
+        self,
+        session_summary: dict[str, Any] | None,
+        result_warnings: list[str],
+        result_warning_codes: list[str],
+    ) -> dict[str, Any] | None:
+        """Warn about trials whose custom evaluator raised on some rows."""
+        failed_row_counts = {
+            str(trial.trial_id): int(count)
+            for trial in self._trials
+            if isinstance(
+                count := (getattr(trial, "metadata", None) or {}).get(
+                    "custom_evaluator_failed_rows"
+                ),
+                int,
+            )
+            and not isinstance(count, bool)
+            and count > 0
+        }
+        if not failed_row_counts:
+            return session_summary
+        result_warnings.append(
+            f"{len(failed_row_counts)} trial(s) had rows where the "
+            "custom_evaluator raised; those rows scored 0.0 on quality "
+            "metrics. See trial metadata 'custom_evaluator_failed_rows'."
+        )
+        result_warning_codes.append(_CUSTOM_EVALUATOR_ROWS_FAILED_WARNING_CODE)
+        session_summary = self._copy_session_summary(session_summary)
+        session_summary["custom_evaluator_failed_rows_by_trial"] = failed_row_counts
+        return session_summary
+
+    def _apply_inert_constant_objectives(
+        self,
+        selection: Any,
+        session_summary: dict[str, Any] | None,
+        result_warnings: list[str],
+        result_warning_codes: list[str],
+    ) -> dict[str, Any] | None:
+        """Warn when a weighted, matched objective is uniformly constant.
+
+        Issue #1832 (sibling of #1691): the declared, weighted, matched
+        objective is constant across the ranking-eligible trials so its weight
+        is a silent no-op. Warning-only — selection math, status, and
+        cost/latency binding are untouched; real priced runs with varying
+        cost/latency never trigger this.
+        """
+        weighted_selection_schema = resolve_weighted_selection_schema(
+            self.objective_schema
+        )
+        if not (
+            weighted_selection_schema is not None
+            and selection.ranking_eligible_trial_ids
+        ):
+            return session_summary
+        eligible_ids = set(selection.ranking_eligible_trial_ids)
+        eligible_trials = [
+            trial for trial in self._trials if trial.trial_id in eligible_ids
+        ]
+        inert_objectives = _detect_inert_constant_objectives(
+            eligible_trials, weighted_selection_schema
+        )
+        if not inert_objectives:
+            return session_summary
+        all_objective_names = [obj.name for obj in weighted_selection_schema.objectives]
+        constant_value = (
+            coerce_finite_objective_score(
+                eligible_trials[0].get_metric(inert_objectives[0])
+            )
+            or 0.0
+        )
+        inert_warning = _format_inert_objective_warning(
+            inert_objectives, all_objective_names, constant_value
+        )
+        result_warnings.append(inert_warning)
+        result_warning_codes.append(_OBJECTIVE_INERT_CONSTANT_WARNING_CODE)
+        logger.warning(inert_warning)
+        session_summary = self._copy_session_summary(session_summary)
+        session_summary["inert_constant_objectives"] = list(inert_objectives)
+        return session_summary
+
+    def _run_label_func_name(self) -> str:
+        """Return the function name used to generate the run label."""
+        func_name = "run"
+        if self._function_descriptor is not None:
+            func_name = (
+                self._function_descriptor.display_name
+                or self._function_descriptor.identifier
+                or "run"
+            )
+        return func_name
+
+    def _add_provenance_metadata(
+        self, result_metadata: dict[str, Any], source: str
+    ) -> None:
+        """Record source, fallback and persistence provenance in the metadata."""
+        result_metadata["source"] = source
+        fallback_reason = (
+            getattr(self.traigent_config, "fallback_reason", None)
+            or self.backend_session_manager.fallback_reason
+        )
+        if source == SOURCE_LOCAL_FALLBACK and fallback_reason:
+            result_metadata["fallback_reason"] = fallback_reason
+            # Typed counterpart, so reporting can pick the right remedy without
+            # pattern-matching the backend-controlled reason text (#2024).
+            # Same two sources as the reason above: the run's config may be a
+            # different object from the one the session manager stamped.
+            fallback_reason_code = (
+                getattr(self.traigent_config, "fallback_reason_code", None)
+                or self.backend_session_manager.fallback_reason_code
+            )
+            if fallback_reason_code:
+                result_metadata["fallback_reason_code"] = fallback_reason_code
+        rejection_reason = (
+            self.backend_session_manager.backend_rejection_reason
+            or getattr(self.traigent_config, "persistence_rejection_reason", None)
+        )
+        if rejection_reason:
+            result_metadata["persistence_reason"] = "rejected"
+            result_metadata["persistence_rejected"] = True
+            result_metadata["persistence_rejection_reason"] = rejection_reason
+        if getattr(self.traigent_config, "persistence_status", None):
+            result_metadata["persistence_status"] = (
+                self.traigent_config.persistence_status
+            )
+
+    def _log_session_end_for_result(
+        self, optimization_result: OptimizationResult
+    ) -> None:
+        """Log optimization completion when a run logger is attached."""
+        if not self._logger:
+            return
+        weighted_results = None
+        if len(self.optimizer.objectives) > 1:
+            # Thread the declared schema (same reason as
+            # BackendSessionManager.update_weighted_scores): without it,
+            # minimize orientations fall back to name-pattern autodetect
+            # and the logged weighted results can contradict terminal
+            # best_config (#1846 follow-up).
+            weighted_results = optimization_result.calculate_weighted_scores(
+                objective_schema=self.objective_schema
+            )
+
+        self._logger_facade.log_session_end(
+            optimization_result=optimization_result,
+            weighted_results=weighted_results,
+        )
+
     def _create_optimization_result(self) -> OptimizationResult:
         """Create final optimization result.
 
@@ -6460,42 +6779,10 @@ class OptimizationOrchestrator:
             OptimizationResult with all trial data
         """
         strict_mode = self._is_strict_evidence_mode()
-        certified_config: dict[str, Any] | None = None
-        certified_score: float | None = None
-        if (
+        certified_config, certified_score = self._certified_selection_inputs(
             strict_mode
-            and self._best_trial_cached is not None
-            and self._certified_promotions > 0
-        ):
-            # Only an incumbent that won at least one explicit gate
-            # promotion is a certified winner. The FIRST trial seeds the
-            # incumbent as comparison initialization, NOT as certification —
-            # a strict run with zero gate promotions returns
-            # NO_CERTIFIED_SELECTION (review finding: first-incumbent
-            # overclaim).
-            config_space_keys = set(getattr(self.optimizer, "config_space", {}).keys())
-            incumbent = self._best_trial_cached
-            certified_config = {
-                key: value
-                for key, value in (incumbent.config or {}).items()
-                if not config_space_keys or key in config_space_keys
-            }
-            primary = (
-                self.optimizer.objectives[0] if self.optimizer.objectives else None
-            )
-            certified_score = (
-                incumbent.get_metric(primary)
-                if primary and hasattr(incumbent, "get_metric")
-                else None
-            )
-        # Build objective orientation map from ObjectiveSchema when available
-        # (F-B fix: honour declared orientation, not name-pattern heuristics).
-        _obj_orientations: dict[str, str] | None = None
-        if self.objective_schema and self.objective_schema.objectives:
-            _obj_orientations = {
-                obj.name: str(obj.orientation)
-                for obj in self.objective_schema.objectives
-            }
+        )
+        _obj_orientations = self._declared_objective_orientations()
         primary_objective = (
             self.optimizer.objectives[0] if self.optimizer.objectives else None
         )
@@ -6529,160 +6816,31 @@ class OptimizationOrchestrator:
         # R3: the finalize selection receipt is projected from THIS selection
         # (never a recomputed ranking) and bound to the result built below.
         selection_receipt = build_selection_receipt(selection)
-        # Issue #1866: surface a statistical-tie winner once per run. When the
-        # winner-vs-runner-up margin is not significant, the "adopt best_config"
-        # action is being taken on noise — name both configs, the objective, and
-        # the p-value so the user can prefer the cheaper/faster config or add
-        # examples. Additive: best_config itself is unchanged.
-        if (
-            isinstance(best_config_margin, dict)
-            and best_config_margin.get("verdict") == "statistical_tie"
-        ):
-            logger.warning(
-                "best_config is a STATISTICAL TIE on '%s': winner (trial %s) vs "
-                "runner-up (trial %s) delta=%.4g, p=%.4g (alpha=%s). The winner "
-                "is statistically interchangeable with the runner-up on the "
-                "primary objective; prefer the cheaper/faster config or add "
-                "examples rather than treating the margin as a decision.",
-                best_config_margin.get("primary_objective"),
-                selection.best_trial_id,
-                best_config_margin.get("runner_up_trial_id"),
-                best_config_margin.get("delta"),
-                best_config_margin.get("p_value"),
-                best_config_margin.get("alpha"),
-            )
+        self._log_statistical_tie(selection, best_config_margin)
         session_summary = selection.session_summary
         result_status = self._status
         result_warnings: list[str] = []
         result_warning_codes: list[str] = []
-        if (
-            primary_objective
-            and selection.reason_code == NO_RANKING_ELIGIBLE_TRIALS
-            and _objective_metric_never_measured(self._trials, primary_objective)
-        ):
-            available_metric_names = _successful_trial_metric_names(self._trials)
-            warning, suggestion = _format_unmatched_objective_warning(
-                primary_objective,
-                available_metric_names,
-            )
-            result_warnings.append(warning)
-            result_warning_codes.append(_OBJECTIVE_UNMATCHED_WARNING_CODE)
-            if session_summary is None:
-                session_summary = {}
-            else:
-                session_summary = dict(session_summary)
-            session_summary["reason"] = warning
-            session_summary["reason_code"] = selection.reason_code
-            session_summary["unmatched_objective"] = primary_objective
-            session_summary["available_metrics"] = list(available_metric_names)
-            if suggestion:
-                session_summary["did_you_mean"] = suggestion
-            if result_status == OptimizationStatus.COMPLETED:
-                result_status = OptimizationStatus.FAILED
-                self._status = result_status
-
-        # Issue #2477 (mirrors the #1691 downgrade above): a run that executed
-        # trials where none succeeded is not COMPLETED, whatever the stop reason
-        # (budget stops included; the stop_reason value itself is unchanged).
-        # Statuses already set by a stop cause (e.g. CANCELLED) are kept; no
-        # exception is raised.
-        if (
-            self._trials
-            and not any(t.is_successful for t in self._trials)
-            and any(t.status == TrialStatus.FAILED for t in self._trials)
-        ):
-            failed_count = sum(
-                1 for t in self._trials if t.status == TrialStatus.FAILED
-            )
-            result_warnings.append(
-                f"All trials failed: {failed_count} of {len(self._trials)} trial(s) "
-                "failed and none succeeded; no best_config was selected. See "
-                "per-trial error messages."
-            )
-            result_warning_codes.append(_ALL_TRIALS_FAILED_WARNING_CODE)
-            if result_status == OptimizationStatus.COMPLETED:
-                result_status = OptimizationStatus.FAILED
-                self._status = result_status
-
-        if primary_objective:
-            partial = _partial_coverage_trials(self._trials, primary_objective)
-            if partial:
-                result_warnings.append(
-                    _format_partial_coverage_warning(
-                        partial,
-                        primary_objective,
-                        selection.reason_code,
-                        selection.best_config,
-                        selection.ranking_eligible_trial_ids,
-                    )
-                )
-                result_warning_codes.append(_METRIC_PARTIAL_COVERAGE_WARNING_CODE)
-
-        failed_row_counts = {
-            str(trial.trial_id): int(count)
-            for trial in self._trials
-            if isinstance(
-                count := (getattr(trial, "metadata", None) or {}).get(
-                    "custom_evaluator_failed_rows"
-                ),
-                int,
-            )
-            and not isinstance(count, bool)
-            and count > 0
-        }
-        if failed_row_counts:
-            result_warnings.append(
-                f"{len(failed_row_counts)} trial(s) had rows where the "
-                "custom_evaluator raised; those rows scored 0.0 on quality "
-                "metrics. See trial metadata 'custom_evaluator_failed_rows'."
-            )
-            result_warning_codes.append(_CUSTOM_EVALUATOR_ROWS_FAILED_WARNING_CODE)
-            if session_summary is None:
-                session_summary = {}
-            else:
-                session_summary = dict(session_summary)
-            session_summary["custom_evaluator_failed_rows_by_trial"] = failed_row_counts
-
-        # Issue #1832 (sibling of #1691): warn when a declared, weighted,
-        # matched objective is uniformly constant across the ranking-eligible
-        # trials so its weight is a silent no-op. Warning-only — selection math,
-        # status, and cost/latency binding are untouched; real priced runs with
-        # varying cost/latency never trigger this.
-        weighted_selection_schema = resolve_weighted_selection_schema(
-            self.objective_schema
+        session_summary, result_status = self._apply_unmatched_objective(
+            selection,
+            primary_objective,
+            session_summary,
+            result_status,
+            result_warnings,
+            result_warning_codes,
         )
-        if (
-            weighted_selection_schema is not None
-            and selection.ranking_eligible_trial_ids
-        ):
-            eligible_ids = set(selection.ranking_eligible_trial_ids)
-            eligible_trials = [
-                trial for trial in self._trials if trial.trial_id in eligible_ids
-            ]
-            inert_objectives = _detect_inert_constant_objectives(
-                eligible_trials, weighted_selection_schema
-            )
-            if inert_objectives:
-                all_objective_names = [
-                    obj.name for obj in weighted_selection_schema.objectives
-                ]
-                constant_value = (
-                    coerce_finite_objective_score(
-                        eligible_trials[0].get_metric(inert_objectives[0])
-                    )
-                    or 0.0
-                )
-                inert_warning = _format_inert_objective_warning(
-                    inert_objectives, all_objective_names, constant_value
-                )
-                result_warnings.append(inert_warning)
-                result_warning_codes.append(_OBJECTIVE_INERT_CONSTANT_WARNING_CODE)
-                logger.warning(inert_warning)
-                if session_summary is None:
-                    session_summary = {}
-                else:
-                    session_summary = dict(session_summary)
-                session_summary["inert_constant_objectives"] = list(inert_objectives)
+        result_status = self._apply_all_trials_failed(
+            result_status, result_warnings, result_warning_codes
+        )
+        self._apply_partial_coverage(
+            selection, primary_objective, result_warnings, result_warning_codes
+        )
+        session_summary = self._apply_custom_evaluator_failed_rows(
+            session_summary, result_warnings, result_warning_codes
+        )
+        session_summary = self._apply_inert_constant_objectives(
+            selection, session_summary, result_warnings, result_warning_codes
+        )
 
         # Calculate duration
         duration = time.time() - self._start_time if self._start_time else 0.0
@@ -6721,13 +6879,7 @@ class OptimizationOrchestrator:
         )
 
         # Generate human-readable run label
-        func_name = "run"
-        if self._function_descriptor is not None:
-            func_name = (
-                self._function_descriptor.display_name
-                or self._function_descriptor.identifier
-                or "run"
-            )
+        func_name = self._run_label_func_name()
         now = datetime.now(UTC)
         run_label = generate_run_label(func_name, self._optimization_id, now)
 
@@ -6754,35 +6906,7 @@ class OptimizationOrchestrator:
         # stayed healthy; "local" when an intentionally-local mode ran or a
         # backend-tracking run degraded to local-only mid-flight.
         source = self.backend_session_manager.result_source(len(self._trials))
-        result_metadata["source"] = source
-        fallback_reason = (
-            getattr(self.traigent_config, "fallback_reason", None)
-            or self.backend_session_manager.fallback_reason
-        )
-        if source == SOURCE_LOCAL_FALLBACK and fallback_reason:
-            result_metadata["fallback_reason"] = fallback_reason
-            # Typed counterpart, so reporting can pick the right remedy without
-            # pattern-matching the backend-controlled reason text (#2024).
-            # Same two sources as the reason above: the run's config may be a
-            # different object from the one the session manager stamped.
-            fallback_reason_code = (
-                getattr(self.traigent_config, "fallback_reason_code", None)
-                or self.backend_session_manager.fallback_reason_code
-            )
-            if fallback_reason_code:
-                result_metadata["fallback_reason_code"] = fallback_reason_code
-        rejection_reason = (
-            self.backend_session_manager.backend_rejection_reason
-            or getattr(self.traigent_config, "persistence_rejection_reason", None)
-        )
-        if rejection_reason:
-            result_metadata["persistence_reason"] = "rejected"
-            result_metadata["persistence_rejected"] = True
-            result_metadata["persistence_rejection_reason"] = rejection_reason
-        if getattr(self.traigent_config, "persistence_status", None):
-            result_metadata["persistence_status"] = (
-                self.traigent_config.persistence_status
-            )
+        self._add_provenance_metadata(result_metadata, source)
 
         # Create optimization result
         optimization_result = OptimizationResult(
@@ -6818,22 +6942,6 @@ class OptimizationOrchestrator:
         )
         self._selection_receipt_binding = (optimization_result, selection_receipt)
 
-        # Log optimization completion
-        if self._logger:
-            weighted_results = None
-            if len(self.optimizer.objectives) > 1:
-                # Thread the declared schema (same reason as
-                # BackendSessionManager.update_weighted_scores): without it,
-                # minimize orientations fall back to name-pattern autodetect
-                # and the logged weighted results can contradict terminal
-                # best_config (#1846 follow-up).
-                weighted_results = optimization_result.calculate_weighted_scores(
-                    objective_schema=self.objective_schema
-                )
-
-            self._logger_facade.log_session_end(
-                optimization_result=optimization_result,
-                weighted_results=weighted_results,
-            )
+        self._log_session_end_for_result(optimization_result)
 
         return optimization_result
