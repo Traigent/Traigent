@@ -558,9 +558,10 @@ def test_local_gate_main_bound_coverage_fails_closed_without_timeout_plugin(
     (repo / "pyproject.toml").write_text(
         '[project]\nname = "x"\nversion = "1.0.0"\n', encoding="utf-8"
     )
-    scanner = fake_bin / "sonar-scanner"
-    scanner.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-    scanner.chmod(0o755)
+    for tool in ("sonar-scanner", "docker"):
+        stub_tool = fake_bin / tool
+        stub_tool.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        stub_tool.chmod(0o755)
     env = os.environ.copy()
     env.update(
         {
