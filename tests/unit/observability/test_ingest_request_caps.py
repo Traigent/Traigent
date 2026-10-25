@@ -258,10 +258,29 @@ def test_custom_sender_is_not_bound_by_the_backend_caps(_small_observation_cap):
     for index in range(150):
         client.start_trace("trace", trace_id=f"trace_{index}")
 
+    # A prebuilt trace over the REAL backend cap (no per-call snapshotting, so
+    # cheap): a custom sender must carry it whole, and its transport must hold no
+    # backend cap at all, so a lowered test cap cannot mask a retained default.
+    assert client._transport.max_traces_per_request is None
+    assert client._transport.max_observations_per_request is None
+    assert client._transport.submit(
+        "trace_real_cap",
+        _trace("trace_real_cap", INGEST_MAX_OBSERVATIONS_PER_REQUEST + 1),
+    )
+
     result = client.close()
 
     assert result.items_dropped == 0
     assert client._transport.get_stats()["dropped_by_reason"] == {}
+    real_cap_trace = next(
+        trace
+        for request in sender.requests
+        for trace in request
+        if trace["id"] == "trace_real_cap"
+    )
+    assert (
+        _observation_total([real_cap_trace]) == INGEST_MAX_OBSERVATIONS_PER_REQUEST + 1
+    )
     delivered = {trace["id"] for request in sender.requests for trace in request}
     assert "trace_big" in delivered
     big_trace = next(

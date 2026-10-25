@@ -11,9 +11,10 @@ Key invariants tested:
 - I5: double-release returns False
 - I6: denied permits have id=-1, amount=0
 - I7: permit IDs are monotonically increasing
-- I9: a granted permit's amount is >= 0, and > 0 unless a zero-cost trial has
-  been tracked since the last reset (the estimate is the mean of observed trial
-  costs, so a $0.00 trial can legitimately pull it to exactly 0.0)
+- I9: a granted permit's amount is >= 0, and once trial costs have been tracked
+  since the last reset it equals their mean (independently tracked here); the
+  mean is exactly 0.0 only when every tracked cost was $0.00, so the amount is
+  positive otherwise
 - I8: sum(permit.amount for permit in active_permits) == reserved_cost
 
 Note: We do NOT test "accumulated + reserved <= limit" as an invariant because
@@ -27,6 +28,7 @@ from __future__ import annotations
 
 import os
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, invariant, rule
@@ -71,9 +73,9 @@ class CostEnforcerStateMachine(RuleBasedStateMachine):
         self.model_last_permit_id: int = -1
         # Track permits orphaned by reset - active Permit objects not in enforcer registry
         self.model_orphaned_permits: set[int] = set()
-        # True once a $0.00 trial was tracked since the last reset: the mean cost
-        # estimate (and so a later permit's amount) may then be exactly 0.0.
-        self.model_zero_cost_tracked: bool = False
+        # Independent model of the mean cost estimate since the last reset.
+        self.model_tracked_cost_sum: float = 0.0
+        self.model_tracked_cost_count: int = 0
 
     # === OPERATIONS ===
 
@@ -91,10 +93,19 @@ class CostEnforcerStateMachine(RuleBasedStateMachine):
             # Verify permit properties
             assert permit.active is True
             assert permit.amount >= 0
-            if not self.model_zero_cost_tracked:
+            if self.model_tracked_cost_count > 0:
+                expected_mean = (
+                    self.model_tracked_cost_sum / self.model_tracked_cost_count
+                )
+                assert permit.amount == pytest.approx(expected_mean, abs=1e-9), (
+                    f"permit amount {permit.amount} != mean of tracked costs "
+                    f"{expected_mean}"
+                )
+                if self.model_tracked_cost_sum > 0:
+                    assert permit.amount > 0
+            else:
                 assert permit.amount > 0, (
-                    "permit amount must be positive when no zero-cost trial "
-                    "has been tracked"
+                    "permit amount must be positive before any cost is tracked"
                 )
             assert permit.id > 0
         else:
@@ -161,8 +172,8 @@ class CostEnforcerStateMachine(RuleBasedStateMachine):
 
         # track_cost doesn't return bool, it just processes
         self.enforcer.track_cost(cost, permit=permit)
-        if cost == 0.0:
-            self.model_zero_cost_tracked = True
+        self.model_tracked_cost_sum += cost
+        self.model_tracked_cost_count += 1
 
         if was_active:
             self.model_active_permits.discard(permit.id)
@@ -181,7 +192,8 @@ class CostEnforcerStateMachine(RuleBasedStateMachine):
         self.model_orphaned_permits.update(self.model_active_permits)
         self.model_active_permits.clear()
         # reset() discards the observed-cost history, so the estimate is fresh
-        self.model_zero_cost_tracked = False
+        self.model_tracked_cost_sum = 0.0
+        self.model_tracked_cost_count = 0
         # NOTE: Do NOT clear model_released_permits - once a permit is released
         # (Permit.active=False), it stays released even across resets
         # NOTE: Do NOT reset model_last_permit_id - permit counter continues across
