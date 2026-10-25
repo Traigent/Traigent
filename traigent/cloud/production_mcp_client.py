@@ -87,6 +87,8 @@ from traigent.utils.wire_text import error_code_for_wire, filter_wire_metadata
 from .backend_bridges import bridge
 from .models import AgentSpecification, OptimizationRequest
 
+_MCP_CONNECT_ERROR = "Unable to connect to MCP server"
+
 logger = get_logger(__name__)
 
 # Error message constants
@@ -107,7 +109,7 @@ def resolve_default_mcp_server_module() -> str:
     for module_name in _DEFAULT_MCP_SERVER_CANDIDATES:
         try:
             spec = importlib.util.find_spec(module_name)
-        except (ImportError, ModuleNotFoundError, ValueError):
+        except (ImportError, ValueError):
             spec = None
         if spec is not None:
             return module_name
@@ -380,7 +382,7 @@ class ProductionMCPClient:
                 await self._cleanup_connection()
                 raise
             except Exception as e:
-                logger.error(f"Failed to connect to MCP server: {e}")
+                logger.exception(f"Failed to connect to MCP server: {e}")
                 await self._cleanup_connection()
                 return False
 
@@ -443,9 +445,8 @@ class ProductionMCPClient:
 
             async def execute_tool_call():
                 """Internal function for tool execution with proper error handling."""
-                if not await self.is_connected():
-                    if not await self.connect():
-                        raise NetworkError("Unable to connect to MCP server") from None
+                if not await self.is_connected() and not await self.connect():
+                    raise NetworkError(_MCP_CONNECT_ERROR) from None
 
                 if self._session is None:
                     raise ConnectionError(_MCP_SESSION_UNAVAILABLE)
@@ -546,9 +547,7 @@ class ProductionMCPClient:
 
                 if self.enable_fallback:
                     # Attempt fallback operation
-                    fallback_response = await self._fallback_operation(
-                        tool_name, arguments
-                    )
+                    fallback_response = self._fallback_operation(tool_name, arguments)
                     fallback_response.request_id = operation_id
                     if (
                         not fallback_response.success
@@ -575,9 +574,8 @@ class ProductionMCPClient:
             MCP response with available resources
         """
         try:
-            if not await self.is_connected():
-                if not await self.connect():
-                    raise ConnectionError("Unable to connect to MCP server") from None
+            if not await self.is_connected() and not await self.connect():
+                raise ConnectionError(_MCP_CONNECT_ERROR) from None
 
             if self._session is None:
                 raise ConnectionError(_MCP_SESSION_UNAVAILABLE)
@@ -602,9 +600,8 @@ class ProductionMCPClient:
             MCP response with resource content
         """
         try:
-            if not await self.is_connected():
-                if not await self.connect():
-                    raise ConnectionError("Unable to connect to MCP server") from None
+            if not await self.is_connected() and not await self.connect():
+                raise ConnectionError(_MCP_CONNECT_ERROR) from None
 
             if self._session is None:
                 raise ConnectionError(_MCP_SESSION_UNAVAILABLE)
@@ -690,24 +687,16 @@ class ProductionMCPClient:
         # Prefer the real backend IDs returned by upstream create_agent /
         # upload_dataset calls. Fall back to bridge-generated IDs only when
         # the caller did not supply them (e.g. standalone create_experiment).
-        resolved_agent_id = (
-            agent_id
-            if agent_id is not None
-            else (
-                backend_request.agent_data.get("agent_id")
-                if hasattr(backend_request, "agent_data")
-                else None
+        resolved_agent_id = agent_id
+        if resolved_agent_id is None and hasattr(backend_request, "agent_data"):
+            resolved_agent_id = backend_request.agent_data.get("agent_id")
+        resolved_example_set_id = example_set_id
+        if resolved_example_set_id is None and hasattr(
+            backend_request, "example_set_data"
+        ):
+            resolved_example_set_id = backend_request.example_set_data.get(
+                "example_set_id"
             )
-        )
-        resolved_example_set_id = (
-            example_set_id
-            if example_set_id is not None
-            else (
-                backend_request.example_set_data.get("example_set_id")
-                if hasattr(backend_request, "example_set_data")
-                else None
-            )
-        )
 
         arguments = {
             "name": backend_request.name,
@@ -1017,12 +1006,12 @@ class ProductionMCPClient:
             return str(agent_id or ""), str(experiment_id), str(experiment_run_id or "")
 
         except Exception as e:
-            logger.error(f"Failed to create optimization workflow: {e}")
+            logger.exception(f"Failed to create optimization workflow: {e}")
             raise RuntimeError(f"Workflow creation failed: {e}") from None
 
     # Fallback Operations
 
-    async def _fallback_operation(
+    def _fallback_operation(
         self, tool_name: str, arguments: dict[str, Any]
     ) -> MCPResponse:
         """Fallback operation when MCP server unavailable.

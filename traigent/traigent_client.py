@@ -358,7 +358,7 @@ class TraigentClient:
                         completed_trials += 1
 
                     except Exception as e:
-                        logger.error(f"Trial {trial_id} failed: {str(e)}")
+                        logger.exception(f"Trial {trial_id} failed: {str(e)}")
                         # Continue with next trial
 
                 # Finalize and get results. If the backend is unreachable at
@@ -370,7 +370,7 @@ class TraigentClient:
                     )
                     final_results.setdefault("source", "cloud_brain")
                     final_results.setdefault("persistence_status", "succeeded")
-                except (CloudServiceError, ConnectionError, OSError, TimeoutError) as e:
+                except (CloudServiceError, OSError) as e:
                     logger.warning(
                         "⚠️  Traigent backend unreachable at finalize (%s); "
                         "returning computed results with persistence_status='failed'. "
@@ -668,7 +668,7 @@ class TraigentClient:
                 trial_id=trial_id,
             )
         except Exception as exc:
-            logger.error("Local trial %s failed: %s", trial_id, exc, exc_info=True)
+            logger.exception("Local trial %s failed: %s", trial_id, exc)
             return self._build_local_trial_result(
                 trial_id=trial_id,
                 config=config,

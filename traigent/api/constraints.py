@@ -1266,7 +1266,7 @@ def check_constraints_conflict(
     # (for mutually exclusive constraints, each config violates different ones)
     if all_violations and len(constraints) > 1:
         # Find the config that violates the most constraints for best diagnostics
-        worst_config, worst_violations = max(all_violations, key=lambda x: len(x[1]))
+        worst_config, _ = max(all_violations, key=lambda x: len(x[1]))
 
         # For mutually exclusive constraints, aggregate all violated constraints
         # across configs to show the full conflict

@@ -10,7 +10,6 @@ import dataclasses
 import inspect
 import math
 import operator
-import os
 import statistics
 import sys
 import time
@@ -590,6 +589,9 @@ class OptimizationOrchestrator:
         self.artifact_fingerprints: dict[str, str | None] | None = None
         self.fingerprint_meta: dict[str, Any] | None = None
         self.evaluator_definition_id: str | None = None
+        # ecd1 digest of the scorer that actually runs; set by OptimizedFunction
+        # only for origin ``code`` (see traigent.utils.artifact_fingerprints).
+        self.evaluator_code_digest: str | None = None
         # Explicit stable dataset identity (EvaluationOptions.dataset_id), set by
         # OptimizedFunction after construction like evaluator_definition_id.
         self.dataset_id: str | None = None
@@ -1262,6 +1264,9 @@ class OptimizationOrchestrator:
         # before the run loop gives up. Cumulative per category so the run always
         # terminates. Opt-in via TRAIGENT_VENDOR_MAX_RETRIES (default 0 = off).
         self._vendor_retry_counts: dict[VendorErrorCategory, int] = {}
+        # SDK-41: attempt ledgers of trials that ended in a vendor pause (no
+        # TrialResult exists for them), kept so run totals include them.
+        self._abandoned_vendor_attempts: list[dict[str, Any]] = []
         self._provider_call_attempts = 0
         self._provider_call_failures = 0
         self._provider_consecutive_call_failures = 0
@@ -1816,7 +1821,7 @@ class OptimizationOrchestrator:
                 # Gate exception fails CLOSED in strict modes (Rule 1: a
                 # failing policy surface denies; it never silently degrades
                 # to the permissive simple comparison).
-                logger.error(
+                logger.exception(
                     "PromotionGate evaluation failed in strict evidence "
                     "mode; promotion withheld: %s",
                     e,
@@ -2014,12 +2019,21 @@ class OptimizationOrchestrator:
         metadata = trial_result.metadata
         if prefill is None or metadata is None or "resumed_examples_reused" in metadata:
             return
-        from traigent.core.resume import reused_rows_stats
+        from traigent.core.resume import (
+            reused_rows_cost_unmeasured,
+            reused_rows_stats,
+        )
 
         count, cost = reused_rows_stats(trial_result)
         if count:
             metadata["resumed_examples_reused"] = count
             metadata["resumed_examples_reused_cost"] = cost
+            if reused_rows_cost_unmeasured(trial_result) and isinstance(
+                trial_result.metrics, dict
+            ):
+                # Reused rows came from a trial whose cost was uncertain: the
+                # resumed trial inherits the uncertainty (never rankable).
+                trial_result.metrics["cost_unmeasured"] = 1.0
 
     @staticmethod
     def _resumed_reused_count(trial_result: TrialResult) -> int:
@@ -2444,6 +2458,15 @@ class OptimizationOrchestrator:
                 # Dispatched with no result: spend unknown, floor unknown (0).
                 if self._winner_stability_mark_recorded(trial_id):
                     self._winner_stability_unmeasured_reruns += 1
+                # The lifecycle also filed this attempt in the abandoned-attempt
+                # ledger; the stability counter owns it, so the abandoned-cost
+                # reader must not count it a second time.
+                start = getattr(self, "_winner_stability_ledger_start", None)
+                if isinstance(start, int):
+                    for entry in getattr(self, "_abandoned_vendor_attempts", [])[
+                        start:
+                    ]:
+                        entry["counted_as_winner_stability"] = True
                 await self._account_untracked_trial_attempt(
                     trial_id=trial_id,
                     permit=permit,
@@ -2949,7 +2972,7 @@ class OptimizationOrchestrator:
         for descriptor, sample_ceiling in zip(
             trial_descriptors, ceilings, strict=False
         ):
-            cfg, cfg_eval, ds_for_trial, optuna_id = descriptor
+            cfg, _, ds_for_trial, optuna_id = descriptor
             if sample_ceiling is not None and sample_ceiling <= 0:
                 logger.debug(
                     "Skipping parallel trial due to zero sample ceiling (config=%s)",
@@ -3394,6 +3417,11 @@ class OptimizationOrchestrator:
         # intentionally NOT clamped — that clamp was removed with the F1 fix.)
         self._apply_execution_budget()
 
+        # SDK-41: validate the vendor-retry env at run start so a typo fails
+        # here with a clear message instead of silently disabling retries.
+        self._vendor_retry_settings()
+        self._abandoned_vendor_attempts = []
+
         descriptor = resolve_function_descriptor(func)
         self._function_descriptor = descriptor
         self._workflow_trace_manager._function_descriptor = descriptor
@@ -3444,6 +3472,7 @@ class OptimizationOrchestrator:
             objectives=objectives_payload,
             default_config=default_config_payload,
             **self._session_content_identity_kwargs(default_config_payload),
+            **self._session_code_digest_kwargs(),
             promotion_policy=wire_policy,
             tvl_governance=wire_governance,
             experiment_display_name=experiment_display_name,
@@ -3647,6 +3676,7 @@ class OptimizationOrchestrator:
                 task_type=getattr(self, "task_type", None),
                 dataset_id=getattr(self, "dataset_id", None),
                 **self._session_content_identity_kwargs(None, privacy_filter=True),
+                **self._session_code_digest_kwargs(privacy_filter=True),
             )
             session_id = self.backend_session_manager.handle_session_creation_result(
                 self.backend_session_manager.normalize_session_creation_result(
@@ -3717,6 +3747,31 @@ class OptimizationOrchestrator:
                 type(exc).__name__,
             )
             return None
+
+    def _session_code_digest_kwargs(
+        self, *, privacy_filter: bool = False
+    ) -> dict[str, Any]:
+        """``{"evaluator_code_digest": ...}`` for session create, or ``{}``.
+
+        Empty unless the effective scorer is user code, in privacy mode and in
+        content-less mode, so the call keeps its exact shape for every other run.
+        """
+        digest = getattr(self, "evaluator_code_digest", None)
+        if not digest:
+            return {}
+        from traigent.cloud import content_less as _content_less
+
+        options = getattr(self, "_content_less", None)
+        # Gate on the RESOLVED mode (explicit flag, else env), never on the mere
+        # presence of an options object: content_less=False or an
+        # environment-only object still means a standard run.
+        if _content_less.is_enabled(
+            options if isinstance(options, _content_less.ContentLessOptions) else None
+        ):
+            return {}
+        if privacy_filter and getattr(self.traigent_config, "privacy_enabled", False):
+            return {}
+        return {"evaluator_code_digest": digest}
 
     def _session_content_identity_kwargs(
         self, default_config: dict[str, Any] | None, *, privacy_filter: bool = False
@@ -4291,22 +4346,13 @@ class OptimizationOrchestrator:
         Returns ``(max_retries, base_backoff_seconds)``. Defaults to ``0``
         (opt-in) so the documented graceful fail-stop contract is unchanged
         unless the operator sets ``TRAIGENT_VENDOR_MAX_RETRIES``. A malformed
-        value also yields the default.
+        value raises ``ConfigurationError`` (SDK-41; validated at run start).
         """
 
-        def _read(name: str, default: float, *, minimum: float) -> float:
-            raw = os.environ.get(name)
-            if raw is None or not raw.strip():
-                return default
-            try:
-                value = float(raw)
-            except (TypeError, ValueError):
-                return default
-            return value if value >= minimum else default
+        from traigent.utils.vendor_retry import resolve_vendor_retry_settings
 
-        max_retries = int(_read("TRAIGENT_VENDOR_MAX_RETRIES", 0.0, minimum=0.0))
-        base_backoff = _read("TRAIGENT_VENDOR_RETRY_BACKOFF", 1.0, minimum=0.0)
-        return max_retries, base_backoff
+        settings = resolve_vendor_retry_settings()
+        return settings.max_retries, settings.base_backoff_seconds
 
     async def _maybe_auto_retry_vendor_error(self, exc: VendorPauseError) -> str | None:
         """Bounded auto-retry/backoff for transient vendor errors (#1404).
@@ -4341,18 +4387,19 @@ class OptimizationOrchestrator:
             )
             return None
 
-        self._vendor_retry_counts[category] = used + 1
+        # Honor the vendor's requested wait (all header forms) via the shared
+        # helper; a wait beyond its cap is refused: the pause stands.
+        from traigent.utils.vendor_retry import compute_delay
 
-        # Honor a vendor-provided Retry-After when available, else exponential.
-        retry_after = getattr(exc.original_error, "retry_after", None)
-        try:
-            delay = float(retry_after) if retry_after is not None else None
-        except (TypeError, ValueError):
-            delay = None
-        if delay is None or delay < 0:
-            delay = base_backoff * (2**used)
+        delay = compute_delay(exc.original_error or exc, base_backoff, used)
         if delay is None:
-            raise RuntimeError("vendor retry delay fallback did not produce a value")
+            logger.warning(
+                "traigent.vendor_auto_retry refused category=%s: vendor-requested "
+                "wait exceeds the retry cap",
+                category.value,
+            )
+            return None
+        self._vendor_retry_counts[category] = used + 1
         delay_seconds = float(delay)
 
         logger.warning(
@@ -4618,6 +4665,9 @@ class OptimizationOrchestrator:
                                 len(scores),
                             )
                             break
+                    self._winner_stability_ledger_start = len(
+                        getattr(self, "_abandoned_vendor_attempts", [])
+                    )
                     rerun_trial = await self._trial_lifecycle.run_trial(
                         func=func,
                         config=copy.deepcopy(result.best_config),
@@ -4973,7 +5023,7 @@ class OptimizationOrchestrator:
                     )
                 else:
                     result.metadata["persistence_error"] = str(exc)
-                    logger.error(
+                    logger.exception(
                         "Backend persistence failed after optimization; backend "
                         "session left RUNNING. Check the portal for this session "
                         "id to confirm whether it was finalized; do not run "
@@ -5918,50 +5968,45 @@ class OptimizationOrchestrator:
         """
         self._resume_source = prior
 
-    def _apply_resume(self, dataset: Dataset | None = None) -> int:
-        """Seed this run with reusable trials from the resume source (#1697).
+    @staticmethod
+    def _resume_dataset_example_ids(dataset: Dataset | None) -> list[str] | None:
+        """Stable example ids of ``dataset`` for resume matching (None when empty)."""
+        if dataset is None or not dataset.examples:
+            return None
+        from traigent.identity.examples import result_identity_fields
 
-        Reused trials count toward ``max_trials`` and the result, are marked in
-        trial metadata, and are told to the optimizer so it does not propose the
-        same configuration again. Their cost is reported in the result totals but
-        is NOT charged to this run's cost enforcer (this run did not spend it).
-        Unfinished or unknown-status prior trials are neither reused nor retried.
-        Returns the number of trials reused.
-        """
-        prior = getattr(self, "_resume_source", None)
-        if prior is None:
-            return 0
-        from traigent.core.resume import (
-            plan_resume,
-            warn_if_not_reusable,
+        return [
+            str(result_identity_fields(ex, f"example_{i}")["example_id"])
+            for i, ex in enumerate(dataset.examples)
+        ]
+
+    def _exclude_blocked_resume_configs(self, blocked_configs: Any) -> None:
+        """Tell the optimizer never to retry in-flight prior trials (unknown outcome)."""
+        mark = getattr(self.optimizer, "mark_config_evaluated", None)
+        if not callable(mark):
+            return
+        for config in blocked_configs:
+            try:
+                mark(config)
+            except (ValueError, TypeError, KeyError, AttributeError):
+                logger.warning("resume_from: optimizer could not exclude a config")
+
+    @staticmethod
+    def _baseline_already_covered(
+        baseline: dict[str, Any], reusable: Any, blocked_configs: Any
+    ) -> bool:
+        """True when the baseline config is among reused or blocked prior configs."""
+        return any(
+            all(c.get(k) == v for k, v in baseline.items())
+            for c in [t.config for t in reusable] + list(blocked_configs)
         )
 
-        example_ids: list[str] | None = None
-        if dataset is not None and dataset.examples:
-            from traigent.identity.examples import result_identity_fields
-
-            example_ids = [
-                str(result_identity_fields(ex, f"example_{i}")["example_id"])
-                for i, ex in enumerate(dataset.examples)
-            ]
-        space_keys = tuple(getattr(self.optimizer, "config_space", {}) or {})
-        plan = plan_resume(
-            prior,
-            self.artifact_fingerprints,
-            max_trials=self.max_trials,
-            dataset_example_ids=example_ids,
-            config_keys=space_keys,
-        )
-        self._resume_prefill = plan.prefill
-        if plan.prefill is not None:
-            from traigent.evaluators.base import bind_resume_prefill
-
-            self._resume_prefill_token = bind_resume_prefill(plan.prefill)
-        warn_if_not_reusable(plan)
+    def _adopt_reusable_trials(self, reusable: Any) -> tuple[float, int]:
+        """Adopt prior trials into this run; return (known reused cost, unknown-cost count)."""
         reused_cost = 0.0
         unknown_cost_trials = 0
         mark_reused = getattr(self.optimizer, "mark_config_evaluated", None)
-        for trial in plan.reusable:
+        for trial in reusable:
             self._trials.append(trial)
             if is_cost_unmeasured(trial.metrics):
                 unknown_cost_trials += 1
@@ -5981,18 +6026,46 @@ class OptimizationOrchestrator:
                         "configuration (%s)",
                         type(exc).__name__,
                     )
-        mark = getattr(self.optimizer, "mark_config_evaluated", None)
-        if callable(mark):
-            # In-flight prior trials have an unknown outcome: never retry them.
-            for config in plan.blocked_configs:
-                try:
-                    mark(config)
-                except (ValueError, TypeError, KeyError, AttributeError):
-                    logger.warning("resume_from: optimizer could not exclude a config")
+        return reused_cost, unknown_cost_trials
+
+    def _apply_resume(self, dataset: Dataset | None = None) -> int:
+        """Seed this run with reusable trials from the resume source (#1697).
+
+        Reused trials count toward ``max_trials`` and the result, are marked in
+        trial metadata, and are told to the optimizer so it does not propose the
+        same configuration again. Their cost is reported in the result totals but
+        is NOT charged to this run's cost enforcer (this run did not spend it).
+        Unfinished or unknown-status prior trials are neither reused nor retried.
+        Returns the number of trials reused.
+        """
+        prior = getattr(self, "_resume_source", None)
+        if prior is None:
+            return 0
+        from traigent.core.resume import (
+            plan_resume,
+            warn_if_not_reusable,
+        )
+
+        example_ids = self._resume_dataset_example_ids(dataset)
+        space_keys = tuple(getattr(self.optimizer, "config_space", {}) or {})
+        plan = plan_resume(
+            prior,
+            self.artifact_fingerprints,
+            max_trials=self.max_trials,
+            dataset_example_ids=example_ids,
+            config_keys=space_keys,
+        )
+        self._resume_prefill = plan.prefill
+        if plan.prefill is not None:
+            from traigent.evaluators.base import bind_resume_prefill
+
+            self._resume_prefill_token = bind_resume_prefill(plan.prefill)
+        warn_if_not_reusable(plan)
+        reused_cost, unknown_cost_trials = self._adopt_reusable_trials(plan.reusable)
+        self._exclude_blocked_resume_configs(plan.blocked_configs)
         baseline = getattr(self, "_default_config", None)
-        if baseline and any(
-            all(c.get(k) == v for k, v in baseline.items())
-            for c in [t.config for t in plan.reusable] + list(plan.blocked_configs)
+        if baseline and self._baseline_already_covered(
+            baseline, plan.reusable, plan.blocked_configs
         ):
             # The baseline was already evaluated (reused) or is in flight with an
             # unknown outcome (never retried); do not spend a trial on it.
@@ -6190,6 +6263,7 @@ class OptimizationOrchestrator:
             metadata["artifact_fingerprints"] = dict(artifact_fingerprints)
         if getattr(self, "_resume_summary", None) is not None:
             metadata["resume"] = dict(self._resume_summary or {})
+        metadata.update(self._vendor_attempt_totals())
 
         # Flag offline mode so callbacks can show appropriate hints
         if is_offline_requested(policy_from_config(self.traigent_config)):
@@ -6203,16 +6277,7 @@ class OptimizationOrchestrator:
 
         # Per-example timeouts across the run (``example_timeout``): count only
         # what trials recorded; absent when no example timed out.
-        timed_out_total = 0
-        for trial in getattr(self, "_trials", None) or ():
-            trial_meta = getattr(trial, "metadata", None)
-            value = (
-                trial_meta.get("timed_out_examples")
-                if isinstance(trial_meta, dict)
-                else None
-            )
-            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
-                timed_out_total += value
+        timed_out_total = OptimizationOrchestrator._timed_out_examples_total(self)
         if timed_out_total:
             metadata["timed_out_examples"] = timed_out_total
 
@@ -6229,6 +6294,75 @@ class OptimizationOrchestrator:
             metadata["promotion_precondition"] = dict(precondition)
 
         return metadata
+
+    def _timed_out_examples_total(self) -> int:
+        """Sum the per-example timeouts the trials recorded (0 when none)."""
+        total = 0
+        for trial in getattr(self, "_trials", None) or ():
+            trial_meta = getattr(trial, "metadata", None)
+            value = (
+                trial_meta.get("timed_out_examples")
+                if isinstance(trial_meta, dict)
+                else None
+            )
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                total += value
+        return total
+
+    def _apply_abandoned_attempts_cost(self, result: OptimizationResult) -> None:
+        """Abandoned vendor attempts (no usable usage) make the run cost unknown.
+
+        Same mechanism as an unmeasured winner-stability rerun: ``total_cost``
+        becomes ``None``, the known spend is kept as ``cost_floor_usd`` and each
+        abandoned attempt counts once in ``cost_unmeasured_trials``.
+        """
+        unmeasured = sum(
+            1
+            for entry in getattr(self, "_abandoned_vendor_attempts", [])
+            if int(entry.get("vendor_call_unmeasured_attempts") or 0) > 0
+            and not entry.get("counted_as_winner_stability")
+        )
+        if unmeasured:
+            OptimizationOrchestrator._add_winner_stability_cost_to_result(
+                result, 0.0, unmeasured
+            )
+
+    def _vendor_attempt_totals(self) -> dict[str, Any]:
+        """Run-level provider-call attempt totals (SDK-41); empty when none."""
+        attempts = retries = unknown = incomplete = 0
+        truncated = False
+        records: list[dict[str, Any]] = []
+        sources = [
+            (getattr(trial, "trial_id", None), getattr(trial, "metadata", None) or {})
+            for trial in self._trials
+        ]
+        sources += [
+            (entry.get("trial_id"), entry)
+            for entry in getattr(self, "_abandoned_vendor_attempts", [])
+        ]
+        for trial_id, meta in sources:
+            trial_attempts = meta.get("vendor_call_attempts")
+            if not isinstance(trial_attempts, int):
+                continue
+            attempts += trial_attempts
+            retries += int(meta.get("vendor_call_retries") or 0)
+            unknown += int(meta.get("vendor_call_unknown_usage_attempts") or 0)
+            incomplete += int(meta.get("vendor_call_incomplete_attempts") or 0)
+            truncated = truncated or bool(
+                meta.get("vendor_call_attempt_records_truncated")
+            )
+            for record in meta.get("vendor_call_attempt_records") or []:
+                records.append({"trial_id": trial_id, **record})
+        if not attempts:
+            return {}
+        return {
+            "vendor_call_attempts": attempts,
+            "vendor_call_retries": retries,
+            "vendor_call_unknown_usage_attempts": unknown,
+            "vendor_call_incomplete_attempts": incomplete,
+            "vendor_call_attempt_records": records,
+            "vendor_call_attempt_records_truncated": truncated,
+        }
 
     def _create_optimization_result(self) -> OptimizationResult:
         """Create final optimization result.
@@ -6466,11 +6600,13 @@ class OptimizationOrchestrator:
 
         # Create convergence info
         successful_trials = [t for t in self._trials if t.is_successful]
-        success_rate = (
-            0.0
-            if _OBJECTIVE_UNMATCHED_WARNING_CODE in result_warning_codes
-            else (len(successful_trials) / len(self._trials) if self._trials else 0.0)
-        )
+        if (
+            _OBJECTIVE_UNMATCHED_WARNING_CODE in result_warning_codes
+            or not self._trials
+        ):
+            success_rate = 0.0
+        else:
+            success_rate = len(successful_trials) / len(self._trials)
         convergence_info = {
             "total_trials": len(self._trials),
             "successful_trials": len(successful_trials),
@@ -6588,6 +6724,9 @@ class OptimizationOrchestrator:
             # post-hoc range normalization shares its basis (issue #1704).
             ranking_eligible_trial_ids=selection.ranking_eligible_trial_ids,
             promotion_decisions=dict(getattr(self, "_promotion_decisions", {})),
+        )
+        OptimizationOrchestrator._apply_abandoned_attempts_cost(
+            self, optimization_result
         )
         self._selection_receipt_binding = (optimization_result, selection_receipt)
 

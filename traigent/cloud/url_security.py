@@ -280,6 +280,23 @@ _PRIVATE_BACKEND_HINT = (
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
+def is_plain_http_origin_parts(parsed: ParseResult) -> bool:
+    """Structural check: http(s) scheme, a host, no userinfo/params/query/fragment.
+
+    Pure shape validation (no host policy, no DNS); callers layer their own
+    host policy on top.
+    """
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return False
+    return not (
+        parsed.username
+        or parsed.password
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+    )
+
+
 def _has_invalid_port(parsed: ParseResult) -> bool:
     """Return True when an explicit port is out of range or is ``0``.
 

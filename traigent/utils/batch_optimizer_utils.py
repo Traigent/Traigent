@@ -140,7 +140,7 @@ class BatchOptimizationHelper:
                 logger.debug(f"Evaluated config {i + 1}/{len(configurations)}")
 
             except Exception as e:
-                logger.error(f"Failed to evaluate configuration {i}: {e}")
+                logger.exception(f"Failed to evaluate configuration {i}: {e}")
                 self.stats.failed_evaluations += 1
                 # Add empty result to maintain list alignment
                 results.append(None)
@@ -237,7 +237,7 @@ class BatchOptimizationHelper:
             return evaluation_result  # type: ignore[return-value]
 
         except Exception as e:
-            logger.error(f"Configuration evaluation failed: {e}")
+            logger.exception(f"Configuration evaluation failed: {e}")
             return None
 
     def _get_current_batch_size(self, total_items: int) -> int:

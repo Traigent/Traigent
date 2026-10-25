@@ -45,11 +45,10 @@ import math
 import os
 import statistics
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
-from collections.abc import Sequence
-from typing import TYPE_CHECKING
 
 from traigent.utils.env_config import (
     is_strict_cost_accounting,
@@ -57,9 +56,6 @@ from traigent.utils.env_config import (
     strict_cost_accounting_origin,
 )
 from traigent.utils.exceptions import ConfigurationError, CostLimitExceeded
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 

@@ -408,6 +408,13 @@ class ObservationDTO:
             raise ValueError("event observations cannot have children")
 
     def to_dict(self) -> dict[str, Any]:
+        total_tokens = self.total_tokens
+        if (
+            total_tokens is None
+            and self.input_tokens is not None
+            and self.output_tokens is not None
+        ):
+            total_tokens = self.input_tokens + self.output_tokens
         payload = {
             "id": self.id,
             "type": self.type.value,
@@ -419,15 +426,7 @@ class ObservationDTO:
             "latency_ms": self.latency_ms,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
-            "total_tokens": (
-                self.total_tokens
-                if self.total_tokens is not None
-                else (
-                    self.input_tokens + self.output_tokens
-                    if self.input_tokens is not None and self.output_tokens is not None
-                    else None
-                )
-            ),
+            "total_tokens": total_tokens,
             "cost_usd": self.cost_usd,
             "model_name": self.model_name,
             "tool_name": self.tool_name,

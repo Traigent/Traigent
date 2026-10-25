@@ -491,7 +491,7 @@ class LangfuseClient:
                     logger.error(f"Failed to get trace {trace_id}: v2 404")
                     return None
             except requests.exceptions.RequestException as e:
-                logger.error(f"Failed to get trace {trace_id}: {e}")
+                logger.exception(f"Failed to get trace {trace_id}: {e}")
                 return None
             else:
                 return self._trace_from_observation_rows(
@@ -519,7 +519,7 @@ class LangfuseClient:
             result: dict[str, Any] = response.json()
             return result if include_io else self._strip_io(result)
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to get trace {trace_id}: {e}")
+            logger.exception(f"Failed to get trace {trace_id}: {e}")
             return None
 
     # ---- v2 helpers -------------------------------------------------------
@@ -837,7 +837,9 @@ class LangfuseClient:
                     self._observations_partial_by_trace[trace_id] = True
                     return []
             except requests.exceptions.RequestException as e:
-                logger.error(f"Failed to get observations for trace {trace_id}: {e}")
+                logger.exception(
+                    f"Failed to get observations for trace {trace_id}: {e}"
+                )
                 self._observations_partial_by_trace[trace_id] = True
                 return []
             else:
@@ -904,7 +906,7 @@ class LangfuseClient:
 
             return observations
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to get observations for trace {trace_id}: {e}")
+            logger.exception(f"Failed to get observations for trace {trace_id}: {e}")
             self._observations_partial_by_trace[trace_id] = True
             return observations  # Return what we have so far
 
@@ -966,7 +968,7 @@ class LangfuseClient:
                     logger.error(f"Failed to get trace {trace_id}: v2 404")
                     return None
             except (TimeoutError, aiohttp.ClientError) as e:
-                logger.error(f"Failed to get trace {trace_id}: {e}")
+                logger.exception(f"Failed to get trace {trace_id}: {e}")
                 return None
             else:
                 return self._trace_from_observation_rows(
@@ -992,7 +994,7 @@ class LangfuseClient:
                     result: dict[str, Any] = await response.json()
                     return result if include_io else self._strip_io(result)
         except (TimeoutError, aiohttp.ClientError) as e:
-            logger.error(f"Failed to get trace {trace_id}: {e}")
+            logger.exception(f"Failed to get trace {trace_id}: {e}")
             return None
 
     async def get_trace_metrics_async(
@@ -1032,7 +1034,9 @@ class LangfuseClient:
                     self._observations_partial_by_trace[trace_id] = True
                     return []
             except (TimeoutError, aiohttp.ClientError) as e:
-                logger.error(f"Failed to get observations for trace {trace_id}: {e}")
+                logger.exception(
+                    f"Failed to get observations for trace {trace_id}: {e}"
+                )
                 self._observations_partial_by_trace[trace_id] = True
                 return []
             else:
@@ -1090,7 +1094,7 @@ class LangfuseClient:
 
             return observations
         except (TimeoutError, aiohttp.ClientError) as e:
-            logger.error(f"Failed to get observations for trace {trace_id}: {e}")
+            logger.exception(f"Failed to get observations for trace {trace_id}: {e}")
             self._observations_partial_by_trace[trace_id] = True
             return observations  # Return what we have so far
 

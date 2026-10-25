@@ -207,22 +207,87 @@ def test_backend_sender_requests_are_capped_with_large_batch_size(monkeypatch):
     assert delivered == {f"trace_{index}" for index in range(200)}
 
 
+# Recording an observation snapshots the whole trace (redaction plus an
+# immutable copy), so building a trace with the real 1,000-observation cap costs
+# quadratic time. The behaviour under test does not depend on the cap's value, so
+# these two tests lower the cap the client hands its transport (the real value is
+# pinned by test_caps_match_the_backend_ingest_contract and by the transport
+# tests above) and cross it by one.
+_SMALL_OBSERVATION_CAP = 25
+
+
+@pytest.fixture
+def _small_observation_cap(monkeypatch):
+    monkeypatch.setattr(
+        "traigent.observability.client.INGEST_MAX_OBSERVATIONS_PER_REQUEST",
+        _SMALL_OBSERVATION_CAP,
+    )
+    return _SMALL_OBSERVATION_CAP
+
+
 @pytest.mark.usefixtures("_online")
-def test_custom_sender_is_not_bound_by_the_backend_caps():
+def test_backend_sender_enforces_the_observation_cap_control(
+    monkeypatch, _small_observation_cap
+):
+    """Control for the test below: with the same lowered cap, the SDK's own
+    ingest path refuses a trace over the cap, so the cap override is live."""
+    sender = _RecordingSender()
+    client = ObservabilityClient(_client_config())
+    monkeypatch.setattr(client, "_post_batch_sync", sender)
+    big = client.start_trace("big", trace_id="trace_big")
+    for index in range(_small_observation_cap + 1):
+        client.record_observation(big, name="step", observation_id=f"obs_{index}")
+
+    client.close()
+
+    delivered = {trace["id"] for request in sender.requests for trace in request}
+    assert "trace_big" not in delivered
+    for request in sender.requests:
+        assert _observation_total(request) <= _small_observation_cap
+
+
+@pytest.mark.usefixtures("_online")
+def test_custom_sender_is_not_bound_by_the_backend_caps(_small_observation_cap):
     """A custom sender's sink is not the Traigent backend: no trace is dropped
     or split on the backend's behalf."""
     sender = _RecordingSender()
     client = ObservabilityClient(_client_config(), sender=sender)
     big = client.start_trace("big", trace_id="trace_big")
-    for index in range(INGEST_MAX_OBSERVATIONS_PER_REQUEST + 1):
+    for index in range(_small_observation_cap + 1):
         client.record_observation(big, name="step", observation_id=f"obs_{index}")
     for index in range(150):
         client.start_trace("trace", trace_id=f"trace_{index}")
+
+    # A prebuilt trace over the REAL backend cap (no per-call snapshotting, so
+    # cheap): a custom sender must carry it whole, and its transport must hold no
+    # backend cap at all, so a lowered test cap cannot mask a retained default.
+    assert client._transport.max_traces_per_request is None
+    assert client._transport.max_observations_per_request is None
+    assert client._transport.submit(
+        "trace_real_cap",
+        _trace("trace_real_cap", INGEST_MAX_OBSERVATIONS_PER_REQUEST + 1),
+    )
 
     result = client.close()
 
     assert result.items_dropped == 0
     assert client._transport.get_stats()["dropped_by_reason"] == {}
+    real_cap_trace = next(
+        trace
+        for request in sender.requests
+        for trace in request
+        if trace["id"] == "trace_real_cap"
+    )
+    assert (
+        _observation_total([real_cap_trace]) == INGEST_MAX_OBSERVATIONS_PER_REQUEST + 1
+    )
     delivered = {trace["id"] for request in sender.requests for trace in request}
     assert "trace_big" in delivered
+    big_trace = next(
+        trace
+        for request in sender.requests
+        for trace in request
+        if trace["id"] == "trace_big"
+    )
+    assert _observation_total([big_trace]) > _small_observation_cap
     assert max(len(request) for request in sender.requests) > 100

@@ -247,7 +247,7 @@ def effective_subset_indices(requested: Any, dataset_size: int) -> list[Any]:
     addresses row 1 -- and the caller falls back to the full dataset on the
     exception. Use :func:`operator.index` on the kept values for the rows.
     """
-    return [j for j in list(requested or []) if 0 <= j < dataset_size]
+    return [j for j in (requested or []) if 0 <= j < dataset_size]
 
 
 def subset_indices_of_dataset(dataset: Any) -> list[int] | None:

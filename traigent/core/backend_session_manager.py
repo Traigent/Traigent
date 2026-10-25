@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent._version import get_version
-from traigent.utils.wire_text import filter_agent_configuration
 from traigent.api.types import (
     AgentConfiguration,
     OptimizationResult,
@@ -26,6 +25,7 @@ from traigent.api.types import (
     TrialStatus,
 )
 from traigent.config.types import ExecutionIntent, TraigentConfig, _read_bool_env
+from traigent.utils.wire_text import filter_agent_configuration
 
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
@@ -78,10 +78,12 @@ from traigent.utils.trial_costs import (
     COST_FLOOR_WIRE_KEY,
     TRIAL_COST_FIELDS,
     extract_trial_cost_metric,
-    move_flagged_cost_to_floor_field,
     is_cost_unmeasured,
     is_finite_numeric_cost,
+    move_flagged_cost_to_floor_field,
 )
+
+_TRIAL_SUBMISSION = "trial submission"
 
 logger = get_logger(__name__)
 
@@ -1595,6 +1597,7 @@ class BackendSessionManager:
         task_type: str | None = None,
         dataset_id: str | None = None,
         content_identity: dict[str, Any] | None = None,
+        evaluator_code_digest: str | None = None,
         head_environment: str | None = None,
         head_environment_explicit: bool | None = None,
         content_less: Any = None,
@@ -1683,15 +1686,12 @@ class BackendSessionManager:
         if self._backend_client:
             evaluation_set_name = getattr(dataset, "name", None) or "default_evaluation"
             self._warn_if_dataset_unlinked(dataset, dataset_id)
-            effective_smart_pruning = (
-                dict(smart_pruning)
-                if smart_pruning is not None
-                else (
-                    dict(self._smart_pruning)
-                    if self._smart_pruning is not None
-                    else None
-                )
-            )
+            if smart_pruning is not None:
+                effective_smart_pruning = dict(smart_pruning)
+            elif self._smart_pruning is not None:
+                effective_smart_pruning = dict(self._smart_pruning)
+            else:
+                effective_smart_pruning = None
 
             # #2049: do NOT substitute a plausible number here. An unset max_trials
             # used to be stamped as a literal 10, which is indistinguishable on disk
@@ -1833,6 +1833,15 @@ class BackendSessionManager:
             identity_kwargs = self._content_identity_kwargs(content_identity)
             if content_less is not None:
                 identity_kwargs["content_less"] = content_less
+            from traigent.cloud import content_less as _content_less
+
+            if evaluator_code_digest and not _content_less.is_enabled(
+                content_less
+                if isinstance(content_less, _content_less.ContentLessOptions)
+                else None
+            ):
+                if not getattr(self._traigent_config, "privacy_enabled", False):
+                    identity_kwargs["evaluator_code_digest"] = evaluator_code_digest
             raw_result = self._backend_client.create_session(
                 function_name=portal_name,
                 agent_key=declared_agent_key,
@@ -2907,7 +2916,7 @@ class BackendSessionManager:
                 # withhold for this incumbent (never attest an unbound winner).
                 # A missing slot in a tracking-enabled run is the first symptom
                 # of a backend outage — degrade to local-only (issue #1265).
-                self._flag_backend_degraded("trial submission")
+                self._flag_backend_degraded(_TRIAL_SUBMISSION)
                 logger.warning(
                     "No backend trial slot acquired for session %s "
                     "(client trial %s); skipping submission (fail closed)",
@@ -2962,7 +2971,7 @@ class BackendSessionManager:
                 # Required cloud tracking cannot tolerate an unacknowledged
                 # write, so it raises instead (#2510).
                 if policy_requires_cloud(policy_from_config(self._traigent_config)):
-                    self._flag_backend_degraded("trial submission")
+                    self._flag_backend_degraded(_TRIAL_SUBMISSION)
             elif not submitted:
                 # False covers a real backend rejection (non-2xx that is not a
                 # transient not-found) or a network failure; degrade to local-only
@@ -2973,7 +2982,7 @@ class BackendSessionManager:
                         or "backend returned a permanent 4xx rejection"
                     )
                     self._flag_backend_degraded(
-                        "trial submission", rejection_reason=rejection_reason
+                        _TRIAL_SUBMISSION, rejection_reason=rejection_reason
                     )
                     logger.warning(
                         "Backend session endpoint rejected trial %s for session %s "
@@ -2982,7 +2991,7 @@ class BackendSessionManager:
                         session_id,
                     )
                 else:
-                    self._flag_backend_degraded("trial submission")
+                    self._flag_backend_degraded(_TRIAL_SUBMISSION)
                     logger.warning(
                         "Backend session endpoint did not accept trial %s for session %s",
                         backend_trial_id,
@@ -3006,7 +3015,7 @@ class BackendSessionManager:
             # A raised error here is a backend interaction failure; the run is
             # no longer cloud-tracked for this trial, so degrade to local-only
             # (issue #1265) rather than retrying the backend every trial.
-            self._flag_backend_degraded("trial submission")
+            self._flag_backend_degraded(_TRIAL_SUBMISSION)
             logger.warning(
                 "Failed to submit trial %s for session %s to backend: %s",
                 trial_result.trial_id,
@@ -3250,7 +3259,7 @@ class BackendSessionManager:
             return update_count
 
         except Exception as exc:  # pragma: no cover - defensive logging
-            logger.error("Error updating weighted scores: %s", exc)
+            logger.exception("Error updating weighted scores: %s", exc)
             return 0
 
     def build_session_aggregation_payload(

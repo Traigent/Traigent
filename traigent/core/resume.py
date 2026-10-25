@@ -228,6 +228,27 @@ def _row_completed(row: Mapping[str, Any]) -> bool:
     )
 
 
+def _flag_row_cost_uncertain(row: Mapping[str, Any]) -> dict[str, Any]:
+    """Copy of a completed row marked cost-unmeasured, keeping its known spend as
+    the floor (unknown is not $0 and a partial number is not the cost)."""
+    from traigent.evaluators.metrics_tracker import enforce_unknown_cost_invariant
+
+    flagged = dict(row)
+    metrics = dict(flagged.get("metrics") or {})
+    known = _known_row_spend(metrics)
+    enforce_unknown_cost_invariant(metrics, unknown=True, floor=known)
+    flagged["metrics"] = metrics
+    return flagged
+
+
+def _known_row_spend(metrics: Mapping[str, Any]) -> float:
+    for key in ("total_cost", "cost", "cost_lower_bound"):
+        value = coerce_finite_cost(metrics.get(key))
+        if value is not None and value > 0:
+            return value
+    return 0.0
+
+
 class ResumePrefill:
     """Completed example results of partially-run prior trials, by config.
 
@@ -266,6 +287,28 @@ class ResumePrefill:
 
     def configs(self) -> int:
         return len(self._pool)
+
+
+def reused_rows_cost_unmeasured(trial: TrialResult) -> bool:
+    """True when any row this trial reused from a prior run is cost-unmeasured."""
+    metadata = trial.metadata or {}
+    raw = metadata.get("example_results")
+    if not isinstance(raw, list) or not raw:
+        evaluation = metadata.get("evaluation_result")
+        raw = (
+            evaluation.get("example_results")
+            if isinstance(evaluation, Mapping)
+            else getattr(evaluation, "example_results", None)
+        )
+    for item in raw if isinstance(raw, list) else []:
+        row = _row_dict(item)
+        if (
+            row is not None
+            and (row.get("metadata") or {}).get(RESUMED_EXAMPLE_KEY)
+            and is_cost_unmeasured(row.get("metrics"))
+        ):
+            return True
+    return False
 
 
 def reused_rows_stats(trial: TrialResult) -> tuple[int, float]:
@@ -386,8 +429,15 @@ def plan_resume(
                 # runs again; the trial itself is not counted.
                 partial += 1
                 slot = pool.setdefault(config_key(trial.config, config_keys), {})
+                # A trial flagged ``cost_unmeasured`` has an uncertain spend
+                # even where its rows look priced (an abandoned or usage-less
+                # attempt is not in any row): its reused rows must carry the
+                # flag, never present a fully measured, cost-rankable trial.
+                uncertain = is_cost_unmeasured(trial.metrics or {})
                 for example_id, row in done.items():
-                    slot.setdefault(example_id, row)
+                    slot.setdefault(
+                        example_id, _flag_row_cost_uncertain(row) if uncertain else row
+                    )
                 continue
         if (
             rows is None

@@ -258,7 +258,7 @@ class OptimizationHistory:
             with open(self.storage_path, "a") as f:
                 f.write(json.dumps(record.to_dict()) + "\n")
         except Exception as e:
-            logger.error(f"Error saving optimization record: {e}")
+            logger.exception(f"Error saving optimization record: {e}")
 
 
 class AlgorithmSelector:
@@ -513,9 +513,7 @@ class PerformancePredictor:
 
         # Find similar historical optimizations
         similar_records = []
-        target_chars = self._get_problem_characteristics(
-            function_name, configuration_space
-        )
+        target_chars = self._get_problem_characteristics(configuration_space)
 
         for record in self.history.records:
             if (
@@ -605,7 +603,7 @@ class PerformancePredictor:
         return curve
 
     def _get_problem_characteristics(
-        self, function_name: str, configuration_space: dict[str, Any]
+        self, configuration_space: dict[str, Any]
     ) -> ProblemCharacteristics:
         """Get problem characteristics for similarity comparison."""
         config_size = len(configuration_space)

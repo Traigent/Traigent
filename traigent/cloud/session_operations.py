@@ -536,6 +536,7 @@ class SessionOperations:
         evaluator_id_source: EvaluatorIdSource | None = None,
         content_identity: dict[str, Any] | None = None,
         content_less: Any = None,
+        evaluator_code_digest: str | None = None,
     ) -> SessionCreationResult:
         """Create a session with backend metadata submission.
 
@@ -729,6 +730,7 @@ class SessionOperations:
                 task_type=task_type,
                 dataset_id=dataset_id,
                 content_less=content_less,
+                evaluator_code_digest=evaluator_code_digest,
             )
 
             try:
@@ -909,7 +911,7 @@ class SessionOperations:
                     intends_cloud_egress,
                 )
 
-            except (TimeoutError, CloudServiceError, OSError) as e:
+            except (CloudServiceError, OSError) as e:
                 await self._reset_client_session("create_session fallback")
                 self._raise_if_quota_refusal(e)
                 self._raise_if_closed_refusal(e)
@@ -1007,7 +1009,7 @@ class SessionOperations:
                 intends_cloud_egress,
             )
 
-        except (TimeoutError, CloudServiceError, OSError) as exc:
+        except (CloudServiceError, OSError) as exc:
             self._raise_if_quota_refusal(exc)
             self._raise_if_closed_refusal(exc)
             if _must_fail_loud(exc):
@@ -1173,7 +1175,7 @@ class SessionOperations:
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("create_hybrid_session network error")
-            logger.error(f"Network error creating hybrid session: {e}")
+            logger.exception(f"Network error creating hybrid session: {e}")
             raise CloudServiceError(f"Network error: {e}") from None
 
     async def get_hybrid_session_status(self, session_id: str) -> dict[str, Any]:
@@ -1223,7 +1225,7 @@ class SessionOperations:
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("get_hybrid_session_status network error")
-            logger.error(f"Network error getting session status: {e}")
+            logger.exception(f"Network error getting session status: {e}")
             raise CloudServiceError(f"Network error: {e}") from None
 
     async def finalize_hybrid_session(self, session_id: str) -> dict[str, Any]:
@@ -1278,7 +1280,7 @@ class SessionOperations:
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("finalize_hybrid_session network error")
-            logger.error(f"Network error finalizing session: {e}")
+            logger.exception(f"Network error finalizing session: {e}")
             raise CloudServiceError(f"Network error: {e}") from None
 
     async def finalize_session(
@@ -1458,15 +1460,12 @@ class SessionOperations:
         create_warm_start_transfer = (
             session.metadata.get("warm_start_transfer") if session else None
         )
-        effective_warm_start_transfer = (
-            backend_warm_start_transfer
-            if isinstance(backend_warm_start_transfer, dict)
-            else (
-                create_warm_start_transfer
-                if isinstance(create_warm_start_transfer, dict)
-                else None
-            )
-        )
+        if isinstance(backend_warm_start_transfer, dict):
+            effective_warm_start_transfer = backend_warm_start_transfer
+        elif isinstance(create_warm_start_transfer, dict):
+            effective_warm_start_transfer = create_warm_start_transfer
+        else:
+            effective_warm_start_transfer = None
 
         summary_fields: list[str] = []
 
@@ -1531,11 +1530,12 @@ class SessionOperations:
         if isinstance(backend_convergence_history, list):
             summary_fields.append("convergence_history")
 
-        response_full_history = (
-            backend_full_history
-            if include_full_history and isinstance(backend_full_history, list)
-            else ([] if include_full_history else None)
-        )
+        if include_full_history and isinstance(backend_full_history, list):
+            response_full_history = backend_full_history
+        elif include_full_history:
+            response_full_history = []
+        else:
+            response_full_history = None
         if include_full_history and isinstance(backend_full_history, list):
             summary_fields.append("full_history")
 
@@ -1823,7 +1823,7 @@ class SessionOperations:
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("delete_session network error")
-            logger.error(f"Network error deleting session: {e}")
+            logger.exception(f"Network error deleting session: {e}")
             raise CloudServiceError(f"Network error: {e}") from None
 
     def finalize_session_sync(

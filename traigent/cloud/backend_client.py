@@ -83,6 +83,7 @@ from traigent.cloud.trial_operations import (
 )
 from traigent.cloud.url_security import (
     CloudUrlUnreachableError,
+    is_plain_http_origin_parts,
     validate_cloud_base_url,
 )
 from traigent.cloud.user_agent import get_sdk_user_agent
@@ -2079,6 +2080,7 @@ class BackendIntegratedClient:
         evaluator_id_source: EvaluatorIdSource | None = None,
         content_identity: dict[str, Any] | None = None,
         content_less: Any = None,
+        evaluator_code_digest: str | None = None,
     ) -> SessionCreationResult:
         """Synchronous wrapper for creating a session.
         Delegates to session_operations module. Phase 8: objectives are
@@ -2109,6 +2111,7 @@ class BackendIntegratedClient:
             evaluator_id_source=evaluator_id_source,
             content_identity=content_identity,
             content_less=content_less,
+            evaluator_code_digest=evaluator_code_digest,
         )
 
     async def create_hybrid_session(
@@ -3069,15 +3072,7 @@ class BackendIntegratedClient:
     def _process_records_url(self, suffix: str) -> str | None:
         """URL under ``<api base>/certification/process-records``, or ``None`` if unusable."""
         parsed = urlparse(self.api_base_url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            return None
-        if (
-            parsed.username
-            or parsed.password
-            or parsed.params
-            or parsed.query
-            or parsed.fragment
-        ):
+        if not is_plain_http_origin_parts(parsed):
             return None
         path = f"{parsed.path.rstrip('/')}/certification/process-records{suffix}"
         return cast(
@@ -3148,13 +3143,15 @@ class BackendIntegratedClient:
     ) -> dict[str, Any]:
         """``POST /certification/process-records/<id>/finalize``; returns the full envelope."""
         return self._process_records_request_sync(
-            "POST", f"/{build_session_row_id}/finalize", payload
+            "POST",
+            f"/{quote(str(build_session_row_id), safe='')}/finalize",
+            payload,
         )
 
     def get_process_record_sync(self, build_session_row_id: str) -> dict[str, Any]:
         """``GET /certification/process-records/<id>``; returns the full envelope."""
         return self._process_records_request_sync(
-            "GET", f"/{build_session_row_id}", None
+            "GET", f"/{quote(str(build_session_row_id), safe='')}", None
         )
 
     def upload_example_features(

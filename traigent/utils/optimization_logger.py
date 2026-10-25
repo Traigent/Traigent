@@ -388,8 +388,8 @@ def _serialize_example_result(ex: Any, *, log_content: bool = True) -> dict[str,
         return {
             "example_id": ex.get("example_id"),
             "query": (
-                (actual.get("query") if isinstance(actual, dict) else None)
-                if log_content
+                actual.get("query")
+                if log_content and isinstance(actual, dict)
                 else None
             ),
             "response": _extract_output_text(actual) if log_content else None,
@@ -410,9 +410,7 @@ def _serialize_example_result(ex: Any, *, log_content: bool = True) -> dict[str,
     return {
         "example_id": getattr(ex, "example_id", None),
         "query": (
-            (actual.get("query") if isinstance(actual, dict) else None)
-            if log_content
-            else None
+            actual.get("query") if log_content and isinstance(actual, dict) else None
         ),
         "response": _extract_output_text(actual) if log_content else None,
         "expected": getattr(ex, "expected_output", None) if log_content else None,
@@ -663,13 +661,12 @@ class OptimizationLogger:
                     old_run,
                 )
             except OSError:
-                logger.error(
+                logger.exception(
                     "Failed to prune old optimization-log run directory %s "
                     "while enforcing %s=%d",
                     old_run,
                     ENV_OPTIMIZATION_LOG_MAX_RUNS,
                     max_runs,
-                    exc_info=True,
                 )
 
     def _write_log_dir_gitignore(self) -> None:
@@ -707,7 +704,7 @@ class OptimizationLogger:
                 json.dump(sanitized, handle, indent=2, default=str, ensure_ascii=False)
             temp_path.replace(file_path)
         except Exception as exc:
-            logger.error(f"Failed to write {file_path}: {exc}")
+            logger.exception(f"Failed to write {file_path}: {exc}")
             raise
         finally:
             if temp_path.exists():

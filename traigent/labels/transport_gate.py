@@ -541,10 +541,17 @@ def preflight_requests(method: str, url: str, **kwargs: Any) -> None:
         ).prepare()
         body = prepared.body
         readable = body is None or isinstance(body, (bytes, str, bytearray))
+        outgoing_body: bytes | None
+        if isinstance(body, str):
+            outgoing_body = body.encode()
+        elif body:
+            outgoing_body = bytes(body)
+        else:
+            outgoing_body = None
         inspect_outgoing(
             method,
             str(prepared.url),
-            body.encode() if isinstance(body, str) else (bytes(body) if body else None),
+            outgoing_body,
             body_present=None if readable else True,
         )
     except TransportGateRefusal:

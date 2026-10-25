@@ -10,7 +10,7 @@ import time
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 from urllib.parse import urlparse
 
-from traigent.labels.transport_gate import gate_session
+from traigent.cloud import content_less as content_less_session
 from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.client import (
     CloudEgressBlockedError,
@@ -19,8 +19,6 @@ from traigent.cloud.client import (
     SessionContractError,
     raise_if_cloud_egress_disabled,
 )
-from traigent.cloud import content_less as content_less_session
-from traigent.utils.wire_text import filter_wire_metadata
 from traigent.cloud.governance import promotion_policy_to_wire, tvl_governance_to_wire
 from traigent.cloud.models import (
     AgentExecutionRequest,
@@ -51,6 +49,7 @@ from traigent.core.session_types import (
     SessionCreationHTTPError,
     safe_http_error_summary,
 )
+from traigent.labels.transport_gate import gate_session
 from traigent.utils.artifact_fingerprints import (
     artifact_fingerprints_to_wire,
     fingerprint_meta_to_wire,
@@ -59,6 +58,7 @@ from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import MetricExtractionError
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import validate_numeric_metric
+from traigent.utils.wire_text import filter_wire_metadata
 
 # Optional aiohttp dependency handling
 try:
@@ -1306,7 +1306,7 @@ class ApiOperations:
                         trial_id=config_run_id,
                     )
                 except MetricExtractionError as e:
-                    logger.error(
+                    logger.exception(
                         f"Invalid 'accuracy' metric for config run {config_run_id}: {e.message}",
                         extra={
                             "hint": "Ensure your evaluation function returns numeric values for 'accuracy'. "
@@ -1326,7 +1326,7 @@ class ApiOperations:
                         trial_id=config_run_id,
                     )
                 except MetricExtractionError as e:
-                    logger.error(
+                    logger.exception(
                         f"Invalid 'score' metric for config run {config_run_id}: {e.message}",
                         extra={
                             "hint": "Ensure your evaluation function returns numeric values for 'score'. "
@@ -1359,7 +1359,7 @@ class ApiOperations:
                             trial_id=config_run_id,
                         )
                     except MetricExtractionError as e:
-                        logger.error(
+                        logger.exception(
                             f"Invalid '{key}' metric for config run {config_run_id}: {e.message}",
                             extra={
                                 "hint": f"Ensure your evaluation function returns numeric values for '{key}'. "
@@ -1381,7 +1381,7 @@ class ApiOperations:
                             trial_id=config_run_id,
                         )
                     except MetricExtractionError as e:
-                        logger.error(
+                        logger.exception(
                             f"Invalid '{key}' metric for config run {config_run_id}: {e.message}",
                             extra={
                                 "hint": f"Ensure your evaluation function returns numeric values for '{key}'. "

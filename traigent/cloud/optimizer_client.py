@@ -9,12 +9,14 @@ from typing import Any, cast
 
 import backoff
 
-from traigent.labels.transport_gate import gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.client import raise_if_cloud_egress_disabled
 from traigent.cloud.url_security import validate_cloud_base_url
-from traigent.utils.wire_text import filter_wire_metadata
 from traigent.core.session_types import safe_http_error_summary
+from traigent.labels.transport_gate import gate_session
+from traigent.utils.wire_text import filter_wire_metadata
+
+_SESSION_ID_REQUIRED = "session_id must be a non-empty string"
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +176,7 @@ class OptimizerDirectClient:
         }
 
         if not isinstance(session_id, str) or not session_id.strip():
-            raise ValueError("session_id must be a non-empty string")
+            raise ValueError(_SESSION_ID_REQUIRED)
         if not isinstance(trial_id, str) or not trial_id.strip():
             raise ValueError("trial_id must be a non-empty string")
         session_id = session_id.strip()
@@ -211,7 +213,7 @@ class OptimizerDirectClient:
         if self.session is None:
             raise RuntimeError(_SESSION_NOT_INITIALIZED)
         if not isinstance(session_id, str) or not session_id.strip():
-            raise ValueError("session_id must be a non-empty string")
+            raise ValueError(_SESSION_ID_REQUIRED)
         session_id = session_id.strip()
         try:
             async with self.session.get(
@@ -229,7 +231,7 @@ class OptimizerDirectClient:
                 return cast(dict[str, Any], await response.json())
 
         except aiohttp.ClientError as e:
-            logger.error(f"Failed to get next configuration: {str(e)}")
+            logger.exception(f"Failed to get next configuration: {str(e)}")
             raise
 
     async def get_session_status(self, session_id: str) -> dict[str, Any]:
@@ -245,7 +247,7 @@ class OptimizerDirectClient:
         if self.session is None:
             raise RuntimeError(_SESSION_NOT_INITIALIZED)
         if not isinstance(session_id, str) or not session_id.strip():
-            raise ValueError("session_id must be a non-empty string")
+            raise ValueError(_SESSION_ID_REQUIRED)
         session_id = session_id.strip()
         try:
             async with self.session.get(
@@ -263,7 +265,7 @@ class OptimizerDirectClient:
                 return cast(dict[str, Any], await response.json())
 
         except aiohttp.ClientError as e:
-            logger.error(f"Failed to get session status: {str(e)}")
+            logger.exception(f"Failed to get session status: {str(e)}")
             raise
 
     async def flush(self) -> None:
@@ -306,7 +308,7 @@ class OptimizerDirectClient:
 
             except Exception as e:
                 transient = _is_transient_submission_error(e)
-                logger.error(
+                logger.exception(
                     "Failed to submit metrics for session %s (%s): %s",
                     session_id,
                     "will retry" if transient else "permanent, discarding",
@@ -498,7 +500,7 @@ class OptimizerDirectClient:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.error(f"Periodic flush failed: {str(e)}")
+                logger.exception(f"Periodic flush failed: {str(e)}")
                 # Continue running even if flush fails
 
     def set_batch_size(self, size: int) -> None:

@@ -45,5 +45,5 @@ if [ "${TRAIGENT_INSTALL_LOCKED:-}" = "1" ]; then
 fi
 
 if [ "$#" -gt 0 ]; then
-  python -m pip install "${constraint_args[@]}" "$@"
+  python -m pip install ${constraint_args[@]+"${constraint_args[@]}"} "$@"
 fi

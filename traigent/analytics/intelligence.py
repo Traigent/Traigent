@@ -619,7 +619,7 @@ class CostOptimizationAI:
         except Exception as e:
             result["status"] = "failed"
             notes.append(f"Error: {str(e)}")
-            logger.error(f"Failed to execute action {action.action_id}: {e}")
+            logger.exception(f"Failed to execute action {action.action_id}: {e}")
 
         # Store result with bounds checking
         if len(self.optimization_results) >= self._max_optimization_results:
@@ -1694,13 +1694,18 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
                 + risk * criteria["risk_weight"]
             )
 
+            if score > 0.7:
+                priority_rank = "high"
+            elif score > 0.4:
+                priority_rank = "medium"
+            else:
+                priority_rank = "low"
+
             prioritized.append(
                 {
                     **rec,
                     "priority_score": score,
-                    "priority_rank": (
-                        "high" if score > 0.7 else "medium" if score > 0.4 else "low"
-                    ),
+                    "priority_rank": priority_rank,
                 }
             )
 

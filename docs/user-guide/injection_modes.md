@@ -105,7 +105,7 @@ Traigent automatically injects configuration values into simple variable assignm
 @traigent.optimize(
     injection_mode="seamless",
     configuration_space={
-        "model": ["claude-sonnet-4-6", "gpt-4o", "gemini-1.5-pro"],
+        "model": ["claude-sonnet-4-6", "gpt-4o", "gemini-3.7-flash"],
         "max_retries": [1, 3, 5],
         "timeout": [10, 30, 60]
     }

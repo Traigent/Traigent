@@ -20,27 +20,27 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from traigent.labels.transport_gate import client_origins, gate_session
 from traigent._version import get_version
 from traigent.cloud.client import (
     CloudEgressBlockedError,
     raise_if_cloud_egress_disabled,
 )
 from traigent.cloud.dtos import MeasuresDict
-from traigent.utils.wire_text import (
-    filter_summary_stats,
-    filter_summary_stats_metadata,
-    filter_wire_metadata,
-)
 from traigent.cloud.session_budgets import (
     ensure_cost_metric_for_budgeted_completed_submission,
 )
 from traigent.cloud.validators import validate_configuration_run_submission
 from traigent.config.backend_config import BackendConfig
 from traigent.core.session_types import safe_http_error_summary
+from traigent.labels.transport_gate import client_origins, gate_session
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.logging import get_logger
 from traigent.utils.trial_costs import is_cost_unmeasured, lift_cost_floor_to_body
+from traigent.utils.wire_text import (
+    filter_summary_stats,
+    filter_summary_stats_metadata,
+    filter_wire_metadata,
+)
 
 # HTTP Content-Type header constant
 _JSON_CONTENT_TYPE_HEADER = {"Content-Type": "application/json"}
@@ -1043,7 +1043,7 @@ class TrialOperations:
             try:
                 validated_metrics: dict[str, Any] = dict(MeasuresDict(clean_metrics))
             except (TypeError, ValueError) as validation_error:
-                logger.error(
+                logger.exception(
                     "Invalid trial metrics for trial %s: %s. Rejecting submission "
                     "(measures contract violation).",
                     trial_id,
@@ -1085,7 +1085,7 @@ class TrialOperations:
             try:
                 validate_configuration_run_submission(result_data)
             except ValueError as e:
-                logger.error(f"Invalid configuration run submission: {e}")
+                logger.exception(f"Invalid configuration run submission: {e}")
                 return False
 
             if error_message:
@@ -1306,7 +1306,7 @@ class TrialOperations:
                 validate_configuration_run_submission(submission_data)
                 logger.debug("✅ Summary stats submission validated successfully")
             except ValueError as e:
-                logger.error(f"Invalid summary stats submission: {e}")
+                logger.exception(f"Invalid summary stats submission: {e}")
                 return False
 
             logger.debug(

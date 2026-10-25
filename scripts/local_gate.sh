@@ -69,6 +69,15 @@ MAIN_BOUND=0
 [[ "$BRANCH" =~ ^(release|hotfix)/ ]] && MAIN_BOUND=1
 [[ "${LOCAL_GATE_SONAR:-0}" == "1" ]] && MAIN_BOUND=1
 
+# Git exports GIT_DIR, GIT_INDEX_FILE, GIT_WORK_TREE and friends into hooks. Any
+# test that builds a temp repo would then act on THIS repo ("remote origin already
+# exists"). Run pytest with git's own list of repository-local variables cleared.
+GIT_ENV_CLEAR=(env)
+while IFS= read -r _gitvar; do
+  [[ -n "$_gitvar" ]] && GIT_ENV_CLEAR+=(-u "$_gitvar")
+done < <(git rev-parse --local-env-vars 2>/dev/null)
+unset _gitvar
+
 # Resolve a ruff entrypoint: the repo venv's first (it carries the pinned
 # version; the pre-push hook does not activate the venv), else PATH ruff, else
 # `python -m ruff`.
@@ -118,7 +127,11 @@ freshness_preflight() {
       read -r ahead behind <<< "$counts"
       echo "  • $ref@$sha (HEAD ahead $ahead / behind $behind)"
       if [[ "$behind" =~ ^[0-9]+$ && "$behind" -gt 0 ]]; then
-        if [[ "$strict" == "1" ]] || { [[ "$ref" == "origin/main" ]] && [[ "$MAIN_BOUND" == "1" ]]; }; then
+        if [[ "$BRANCH" =~ ^hotfix/ && "$ref" == "origin/develop" && "${LOCAL_GATE_STRICT_FRESHNESS:-0}" != "1" ]]; then
+          # A hotfix is cut from main, so it is always behind develop; the
+          # develop check cannot apply. Still required: not behind origin/main.
+          echo "    ℹ️  HEAD is behind $ref; expected for a hotfix cut from main (not enforced; origin/main freshness still is)"
+        elif [[ "$strict" == "1" ]] || { [[ "$ref" == "origin/main" ]] && [[ "$MAIN_BOUND" == "1" ]]; }; then
           echo "    ❌ HEAD is behind $ref; refresh/rebase before a main-bound gate"
           rc=1
         else
@@ -198,17 +211,17 @@ fi
 # staged/unstaged/untracked, so an about-to-be-pushed edit is covered.
 changed_files() {
   local pathspec=("$@")
-  { if git rev-parse --verify --quiet "$base_ref" >/dev/null; then
-      mb="$(git merge-base "$base_ref" HEAD 2>/dev/null || true)"
-      if [[ -n "$mb" ]]; then
-        git diff --name-only --diff-filter=ACMRT "${mb}...HEAD" -- "${pathspec[@]}"
-      else
-        git diff --name-only --diff-filter=ACMRT "$base_ref" HEAD -- "${pathspec[@]}"
-      fi
-    fi
-    git diff --name-only --diff-filter=ACMRT HEAD -- "${pathspec[@]}"
-    git ls-files --others --exclude-standard -- "${pathspec[@]}"
-  } | sort -u
+  local out mb all=""
+  if git rev-parse --verify --quiet "$base_ref" >/dev/null; then
+    mb="$(git merge-base "$base_ref" HEAD 2>/dev/null)" || { echo "git merge-base $base_ref HEAD failed" >&2; return 1; }
+    out="$(git diff --name-only --diff-filter=ACMRT "${mb}...HEAD" -- "${pathspec[@]}")" || { echo "git diff vs merge-base failed" >&2; return 1; }
+    all+="$out"$'\n'
+  fi
+  out="$(git diff --name-only --diff-filter=ACMRT HEAD -- "${pathspec[@]}")" || { echo "git diff HEAD failed" >&2; return 1; }
+  all+="$out"$'\n'
+  out="$(git ls-files --others --exclude-standard -- "${pathspec[@]}")" || { echo "git ls-files failed" >&2; return 1; }
+  all+="$out"
+  printf '%s\n' "$all" | sort -u
 }
 
 # ── 1. ruff (changed-file format-check + lint) ────────────────────────────
@@ -252,7 +265,7 @@ if ! skip pytest; then
     echo "  • ${#CODE_CHANGED[@]} code/test/gate file(s) changed; first verifying whole-suite collection"
     echo "  • TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true PYTHONPATH=. ${PYTEST[*]} ${collection_args[*]}"
     if TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true PYTHONPATH=. \
-      "${PYTEST[@]}" "${collection_args[@]}"; then
+      "${GIT_ENV_CLEAR[@]}" "${PYTEST[@]}" "${collection_args[@]}"; then
       echo "  ✅ whole test suite collects"
       pytest_args=(-p no:asyncio-cooperative -q --tb=short)
       if [[ "${LOCAL_GATE_FULL_UNIT:-0}" == "1" ]]; then
@@ -267,7 +280,7 @@ if ! skip pytest; then
         echo "  • bounded smoke tier selected; set LOCAL_GATE_FULL_UNIT=1 for full tests/unit"
       fi
       echo "  • running ${PYTEST[*]} ${pytest_args[*]}"
-      if PYTHONPATH=. "${PYTEST[@]}" "${pytest_args[@]}"; then echo "  ✅ pytest tier clean"
+      if PYTHONPATH=. "${GIT_ENV_CLEAR[@]}" "${PYTEST[@]}" "${pytest_args[@]}"; then echo "  ✅ pytest tier clean"
       else echo "  ❌ pytest tier failed"; FAIL=1; fi
     else
       echo "  ❌ whole-suite collection failed; smoke/full-unit tier not run"
@@ -285,6 +298,67 @@ fi
 section "spine preflight (spine-trail present)"
 if ! python3 scripts/ci/spine_preflight.py; then FAIL=1; fi
 
+# ── Sonar coverage (full unit suite) ──────────────────────────────────────
+# The scanner only reads sonar.python.coverage.reportPaths (coverage.xml); it
+# never runs tests. This step runs only for main-bound pushes (the Sonar step
+# below), and measures coverage with the FULL tests/unit suite, the same
+# command the hosted coverage lane runs. A changed-scope subset under-reports
+# new-code coverage (a release push once read ~22% from a subset where the full
+# suite measures ~90%), because the lines a subset never executes count as
+# uncovered. Develop-bound pushes never reach this step and keep the cheap
+# smoke tier above (docs/ci-policy.md). The 80% new-code threshold is unchanged.
+# Workers default to 4 (LOCAL_GATE_COVERAGE_WORKERS=0 forces a serial run).
+sonar_prepare_coverage() {
+  rm -f coverage.xml
+  local rc=0 workers="${LOCAL_GATE_COVERAGE_WORKERS:-4}" home_dir rcfile
+  if [[ "${#PYTEST[@]}" -eq 0 ]]; then
+    echo "  ❌ pytest unavailable: cannot measure coverage for the main-bound scan"; FAIL=1; return 0
+  fi
+  # Fail closed on missing plugins: a silent serial or un-timed run would
+  # either take hours or hang the push.
+  local help_out; help_out="$(timeout -k 10 120 "${PYTEST[@]}" --help 2>/dev/null)"
+  local -a par=(-n 0)
+  if [[ "$workers" != "0" ]]; then par=(-n "$workers" --dist loadgroup); fi
+  if ! grep -q -- '--timeout' <<<"$help_out" || ! grep -q -- '--cov' <<<"$help_out" \
+     || { [[ "$workers" != "0" ]] && ! grep -q -- '--dist' <<<"$help_out"; }; then
+    echo "  ❌ pytest-timeout, pytest-cov and (unless LOCAL_GATE_COVERAGE_WORKERS=0) pytest-xdist are required"
+    echo "     for the main-bound coverage run: pip install pytest-timeout pytest-cov pytest-xdist"
+    FAIL=1; return 0
+  fi
+  # Fresh HOME: a developer's real ~/.traigent can hold tens of thousands of
+  # session files that make local runs hang, and a few tests assert the
+  # default ~/.traigent location, so redirect HOME rather than the results dir.
+  home_dir="$(mktemp -d "${TMPDIR:-/tmp}/lg-home.XXXXXX")"
+  # relative_files => coverage.xml paths resolve inside the scanner container too.
+  rcfile="$(mktemp "${TMPDIR:-/tmp}/lg-covrc.XXXXXX")"
+  printf '[run]\nrelative_files = True\nsource = traigent\nomit =\n    */tests/*\n    */test_*\n    */demos/*\n    */docs/*\n' >"$rcfile"
+  local pid=""
+  trap '[[ -n "$pid" ]] && { kill -TERM "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; }; rm -rf "$home_dir" "$rcfile"; trap - INT TERM; exit 130' INT TERM
+  echo "  • coverage with the FULL tests/unit suite (${par[*]}); this takes a while"
+  # Background + wait so an interrupt reaches the trap immediately and the
+  # whole run (timeout -> pytest) is stopped and reaped before cleanup.
+  TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true HOME="$home_dir" PYTHONPATH=. \
+    "${GIT_ENV_CLEAR[@]}" timeout -k 60 "${LOCAL_GATE_COVERAGE_TIMEOUT:-3600}" "${PYTEST[@]}" -p no:asyncio-cooperative -p no:cacheprovider -q --tb=short \
+    "${par[@]}" --timeout=30 \
+    --cov=traigent --cov-config="$rcfile" --cov-report=xml:coverage.xml tests/unit/ &
+  pid=$!
+  wait "$pid" || rc=$?
+  pid=""
+  rm -f "$rcfile"; rm -rf "$home_dir"; trap - INT TERM
+  if [[ ! -s coverage.xml ]]; then
+    echo "  ❌ coverage.xml was not produced (pytest rc=$rc): coverage NOT MEASURED"; FAIL=1; return 0
+  fi
+  # pyproject sets no coverage fail-under, so a nonzero pytest rc is a real
+  # test failure (or collection error): fail the gate rather than scan a
+  # partial report.
+  if [[ "$rc" -ne 0 ]]; then
+    echo "  ❌ unit suite FAILED (pytest rc=$rc): fix it; coverage.xml is PARTIAL"
+    FAIL=1
+  else
+    echo "  ✅ coverage.xml written ($(wc -c <coverage.xml) bytes)"
+  fi
+}
+
 # ── 4. SonarQube quality gate (main-bound only) ──────────────────────────
 if [[ "$MAIN_BOUND" == "1" ]] && ! skip sonar; then
   section "SonarQube quality gate (main-bound: $BRANCH)"
@@ -300,20 +374,46 @@ if [[ "$MAIN_BOUND" == "1" ]] && ! skip sonar; then
     FAIL=1
   else
     host="${SONAR_HOST_URL:-http://localhost:9000}"
-    echo "  🔎 scanning against $host with qualitygate.wait=true …"
+    # Release version from pyproject.toml [project].version, so the server's
+    # PREVIOUS_VERSION new-code period compares against the last analysed
+    # release instead of the stale version pinned in sonar-project.properties.
+    sonar_version="$(awk '/^\[project\]/{p=1;next} /^\[/{p=0} p&&/^version[[:space:]]*=/{gsub(/^[^"]*"|".*$/,"");print;exit}' pyproject.toml)"
+    if [[ -z "$sonar_version" ]]; then
+      echo "  ❌ could not read [project].version from pyproject.toml for sonar.projectVersion"
+      FAIL=1
+    else
+    sonar_prepare_coverage
+    echo "  🔎 scanning against $host (sonar.projectVersion=$sonar_version) with qualitygate.wait=true …"
     if command -v docker >/dev/null 2>&1; then
       net=""; [[ "$host" == *localhost* || "$host" == *127.0.0.1* ]] && net="--network=host"
+      # Mount the repo at the SAME absolute path inside the container so the
+      # host paths recorded in coverage.xml resolve (otherwise Sonar logs
+      # "Cannot resolve N file paths" and new coverage reads 0.0).
+      #
+      # In a linked worktree `.git` is a file pointing at <common-dir>/worktrees/<n>,
+      # outside the mount, so JGit fails with "Unable to open Git repository" and
+      # SCM blame (new-code detection) is lost. Mount the git common dir at the
+      # same absolute path (read-only) so the pointer resolves.
+      git_mount=()
+      common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+      if [[ -n "$common_dir" && -d "$common_dir" && "$common_dir" != "$PWD/.git" ]]; then
+        git_mount=(-v "$common_dir":"$common_dir":ro)
+      fi
       docker run --rm $net -e SONAR_HOST_URL="$host" -e SONAR_TOKEN \
-        -v "$PWD":/usr/src sonarsource/sonar-scanner-cli:latest \
+        -v "$PWD":"$PWD" ${git_mount[@]+"${git_mount[@]}"} -w "$PWD" sonarsource/sonar-scanner-cli:latest \
+        -Dsonar.projectBaseDir="$PWD" \
         -Dsonar.projectKey=Traigent_Traigent \
+        -Dsonar.projectVersion="$sonar_version" \
         -Dsonar.qualitygate.wait=true -Dsonar.qualitygate.timeout=300
     else
       sonar-scanner -Dsonar.host.url="$host" \
         -Dsonar.projectKey=Traigent_Traigent \
+        -Dsonar.projectVersion="$sonar_version" \
         -Dsonar.qualitygate.wait=true -Dsonar.qualitygate.timeout=300
     fi
     if [[ $? -eq 0 ]]; then echo "  ✅ SonarQube quality gate passed"
     else echo "  ❌ SonarQube quality gate FAILED — fix locally before the main PR"; FAIL=1; fi
+    fi
   fi
 else
   hr; echo "ℹ️  SonarQube step skipped (not a release/hotfix branch). For main-bound"

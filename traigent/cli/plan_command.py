@@ -17,6 +17,8 @@ from rich.table import Table
 from traigent.analytics.optimization_plan import OptimizationPlanClient
 from traigent.config.backend_config import DEFAULT_LOCAL_URL, BackendConfig
 
+_STYLE_BOLD_MAGENTA = "bold magenta"
+
 console = Console(width=120)
 
 
@@ -211,7 +213,7 @@ def _print_objectives_table(objectives: list[dict[str, Any]]) -> None:
     if not objectives:
         return
 
-    table = Table(show_header=True, header_style="bold magenta")
+    table = Table(show_header=True, header_style=_STYLE_BOLD_MAGENTA)
     table.add_column("Objective", style="cyan", no_wrap=True)
     table.add_column("Weight", justify="right", no_wrap=True)
     table.add_column("Orientation", no_wrap=True)
@@ -229,7 +231,7 @@ def _print_models_table(models: list[str]) -> None:
     if not models:
         return
 
-    table = Table(show_header=True, header_style="bold magenta")
+    table = Table(show_header=True, header_style=_STYLE_BOLD_MAGENTA)
     table.add_column("Models", style="cyan")
     for model in models:
         table.add_row(str(model))
@@ -241,7 +243,7 @@ def _print_knobs_table(knobs: list[dict[str, Any]]) -> None:
     if not knobs:
         return
 
-    table = Table(show_header=True, header_style="bold magenta")
+    table = Table(show_header=True, header_style=_STYLE_BOLD_MAGENTA)
     table.add_column("Knob", style="cyan", no_wrap=True)
     table.add_column("Values", overflow="fold")
     for knob in knobs:
@@ -256,7 +258,7 @@ def _print_steps_table(steps: list[dict[str, Any]]) -> None:
         console.print("\n[yellow]No steps were returned by the backend.[/yellow]")
         return
 
-    table = Table(show_header=True, header_style="bold magenta")
+    table = Table(show_header=True, header_style=_STYLE_BOLD_MAGENTA)
     table.add_column("Step", style="cyan", no_wrap=True)
     table.add_column("Label", overflow="fold")
     table.add_column("Command", overflow="fold")

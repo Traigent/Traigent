@@ -254,7 +254,7 @@ class SecureString:
                         0,  # aikido-ignore: false-positive — memset wipe of secure buffer
                         len(self._value),
                     )
-                except (ImportError, AttributeError, Exception):
+                except Exception:
                     pass  # Already cleared above
 
             self._locked = True

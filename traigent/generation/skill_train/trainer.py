@@ -168,128 +168,21 @@ class SkillTrainer:
                 "rejected": 0,
                 "applied_records": 0,
             }
-            for step in range(options.steps_per_epoch):
-                if self._stop_reason is not None:
-                    break
-
-                budget = edit_budget_for_step(
-                    edit_budget=options.edit_budget,
-                    edit_budget_floor=options.edit_budget_floor,
-                    schedule=options.edit_budget_schedule,
-                    step_index=epoch * options.steps_per_epoch + step,
-                    total_steps=total_steps,
-                )
-                batch = self._sample_batch(train, rng, epoch, step)
-                _, rollouts = self._evaluate_cached(current, batch)
-                failures, successes = self._partition_rollouts(rollouts)
-
-                failure_edits = self._analyze_batches(
-                    current, failures, "failure", budget
-                )
-                success_edits = self._analyze_batches(
-                    current, successes, "success", budget
-                )
-                if self._stop_reason is not None:
-                    break
-
-                deduped = self._dedupe_edits([*failure_edits, *success_edits])
-                merged = self._merge_edits(
-                    failure_edits=deduped["failure"],
-                    success_edits=deduped["success"],
-                    max_edits=budget,
-                )
-                if self._stop_reason is not None:
-                    break
-
-                ranked = sorted(
-                    self._dedupe_edits(merged)["all"],
-                    key=lambda op: (
-                        0 if op.source_type == "failure" else 1,
-                        -op.support_count,
-                        op.edit_id,
-                    ),
-                )[:budget]
-                candidate_text, records = apply_edits(current.text, ranked)
-                for record in records:
-                    record.epoch = epoch
-                    record.step = step
-                    record.selection_score_before = current_selection_score
-                all_edit_records.extend(records)
-                applied = [record for record in records if record.status == "applied"]
-                epoch_summary["applied_records"] += len(applied)
-                if not applied:
-                    continue
-
-                if self._gate_limit_reached(epoch_summary):
-                    break
-
-                candidate = SkillDocument(
-                    candidate_text,
-                    version=current.version + 1,
-                    parent_hash=current.doc_hash,
-                )
-                candidate_score, _ = self._evaluate_cached(candidate, selection)
-                self._gate_evaluations += 1
-                for record in records:
-                    record.selection_score_after = candidate_score
-
-                selection_delta = self._selection_delta(
-                    candidate_score, current_selection_score
-                )
-                accepted = self._is_improvement(
-                    candidate_score, current_selection_score
-                )
-                decision = "accepted" if accepted else "rejected"
-                history.append(
-                    {
-                        "doc_hash": candidate.doc_hash,
-                        "split": selection.name,
-                        "score": candidate_score,
-                        "decision": decision,
-                    }
-                )
-                logger.info(
-                    "Skill train gate %s: candidate=%s current=%s",
-                    decision,
-                    candidate_score,
-                    current_selection_score,
-                )
-                if accepted:
-                    current = candidate
-                    current_selection_score = candidate_score
-                    accepted_edits.extend(applied)
-                    epoch_summary["accepted"] += 1
-                    self._record_history(
-                        self._accept_history, applied, selection_delta, epoch, step
-                    )
-                else:
-                    for record in applied:
-                        record.status = "rejected_gate"
-                    epoch_summary["rejected"] += 1
-                    self._record_gate_rejection(applied, selection_delta, epoch, step)
-
-            if (
-                self._stop_reason is None
-                and previous_epoch_best is not None
-                and slow_probe is not None
-                and epoch >= 1
-            ):
-                current, current_selection_score = self._maybe_apply_slow_update(
-                    previous_epoch_best=previous_epoch_best,
-                    current=current,
-                    current_selection_score=current_selection_score,
-                    slow_probe=slow_probe,
-                    selection=selection,
-                    epoch=epoch,
-                    accepted_edits=accepted_edits,
-                    all_edit_records=all_edit_records,
-                    history=history,
-                    epoch_summary=epoch_summary,
-                )
-            if self._stop_reason is None:
-                self._update_meta_skill(epoch_summary)
-            if self._stop_reason is not None:
-                epoch_summary["stop_reason"] = self._stop_reason
+            current, current_selection_score = self._run_epoch(
+                epoch=epoch,
+                train=train,
+                selection=selection,
+                rng=rng,
+                total_steps=total_steps,
+                current=current,
+                current_selection_score=current_selection_score,
+                previous_epoch_best=previous_epoch_best,
+                slow_probe=slow_probe,
+                accepted_edits=accepted_edits,
+                all_edit_records=all_edit_records,
+                history=history,
+                epoch_summary=epoch_summary,
+            )
             logger.info("Skill train epoch summary: %s", epoch_summary)
             epoch_summaries.append(epoch_summary)
             previous_epoch_best = current
@@ -320,6 +213,204 @@ class SkillTrainer:
             },
         )
 
+        self._write_result_artifacts(result, initial_document, history)
+        return result
+
+    def _run_epoch(
+        self,
+        *,
+        epoch: int,
+        train: Dataset,
+        selection: Dataset,
+        rng: random.Random,
+        total_steps: int,
+        current: SkillDocument,
+        current_selection_score: float,
+        previous_epoch_best: SkillDocument | None,
+        slow_probe: Dataset | None,
+        accepted_edits: list[EditApplyRecord],
+        all_edit_records: list[EditApplyRecord],
+        history: list[dict[str, Any]],
+        epoch_summary: dict[str, Any],
+    ) -> tuple[SkillDocument, float]:
+        """Run one epoch's steps, then the slow update and meta-skill update."""
+        options = self._options
+        for step in range(options.steps_per_epoch):
+            if self._stop_reason is not None:
+                break
+
+            ranked = self._propose_ranked_edits(
+                current, train, rng, epoch, step, total_steps
+            )
+            if ranked is None:
+                break
+            current, current_selection_score, should_stop = self._apply_and_gate(
+                current=current,
+                current_selection_score=current_selection_score,
+                ranked=ranked,
+                selection=selection,
+                epoch=epoch,
+                step=step,
+                accepted_edits=accepted_edits,
+                all_edit_records=all_edit_records,
+                history=history,
+                epoch_summary=epoch_summary,
+            )
+            if should_stop:
+                break
+
+        if (
+            self._stop_reason is None
+            and previous_epoch_best is not None
+            and slow_probe is not None
+            and epoch >= 1
+        ):
+            current, current_selection_score = self._maybe_apply_slow_update(
+                previous_epoch_best=previous_epoch_best,
+                current=current,
+                current_selection_score=current_selection_score,
+                slow_probe=slow_probe,
+                selection=selection,
+                epoch=epoch,
+                accepted_edits=accepted_edits,
+                all_edit_records=all_edit_records,
+                history=history,
+                epoch_summary=epoch_summary,
+            )
+        if self._stop_reason is None:
+            self._update_meta_skill(epoch_summary)
+        if self._stop_reason is not None:
+            epoch_summary["stop_reason"] = self._stop_reason
+        return current, current_selection_score
+
+    def _propose_ranked_edits(
+        self,
+        current: SkillDocument,
+        train: Dataset,
+        rng: random.Random,
+        epoch: int,
+        step: int,
+        total_steps: int,
+    ) -> list[EditOp] | None:
+        """Sample, analyze, merge and rank edits; ``None`` means stop the epoch."""
+        options = self._options
+        budget = edit_budget_for_step(
+            edit_budget=options.edit_budget,
+            edit_budget_floor=options.edit_budget_floor,
+            schedule=options.edit_budget_schedule,
+            step_index=epoch * options.steps_per_epoch + step,
+            total_steps=total_steps,
+        )
+        batch = self._sample_batch(train, rng, epoch, step)
+        _, rollouts = self._evaluate_cached(current, batch)
+        failures, successes = self._partition_rollouts(rollouts)
+
+        failure_edits = self._analyze_batches(current, failures, "failure", budget)
+        success_edits = self._analyze_batches(current, successes, "success", budget)
+        if self._stop_reason is not None:
+            return None
+
+        deduped = self._dedupe_edits([*failure_edits, *success_edits])
+        merged = self._merge_edits(
+            failure_edits=deduped["failure"],
+            success_edits=deduped["success"],
+            max_edits=budget,
+        )
+        if self._stop_reason is not None:
+            return None
+
+        return sorted(
+            self._dedupe_edits(merged)["all"],
+            key=lambda op: (
+                0 if op.source_type == "failure" else 1,
+                -op.support_count,
+                op.edit_id,
+            ),
+        )[:budget]
+
+    def _apply_and_gate(
+        self,
+        *,
+        current: SkillDocument,
+        current_selection_score: float,
+        ranked: list[EditOp],
+        selection: Dataset,
+        epoch: int,
+        step: int,
+        accepted_edits: list[EditApplyRecord],
+        all_edit_records: list[EditApplyRecord],
+        history: list[dict[str, Any]],
+        epoch_summary: dict[str, Any],
+    ) -> tuple[SkillDocument, float, bool]:
+        """Apply ranked edits and gate the candidate.
+
+        Returns ``(current, current_selection_score, should_stop)``.
+        """
+        candidate_text, records = apply_edits(current.text, ranked)
+        for record in records:
+            record.epoch = epoch
+            record.step = step
+            record.selection_score_before = current_selection_score
+        all_edit_records.extend(records)
+        applied = [record for record in records if record.status == "applied"]
+        epoch_summary["applied_records"] += len(applied)
+        if not applied:
+            return current, current_selection_score, False
+
+        if self._gate_limit_reached(epoch_summary):
+            return current, current_selection_score, True
+
+        candidate = SkillDocument(
+            candidate_text,
+            version=current.version + 1,
+            parent_hash=current.doc_hash,
+        )
+        candidate_score, _ = self._evaluate_cached(candidate, selection)
+        self._gate_evaluations += 1
+        for record in records:
+            record.selection_score_after = candidate_score
+
+        selection_delta = self._selection_delta(
+            candidate_score, current_selection_score
+        )
+        accepted = self._is_improvement(candidate_score, current_selection_score)
+        decision = "accepted" if accepted else "rejected"
+        history.append(
+            {
+                "doc_hash": candidate.doc_hash,
+                "split": selection.name,
+                "score": candidate_score,
+                "decision": decision,
+            }
+        )
+        logger.info(
+            "Skill train gate %s: candidate=%s current=%s",
+            decision,
+            candidate_score,
+            current_selection_score,
+        )
+        if accepted:
+            current = candidate
+            current_selection_score = candidate_score
+            accepted_edits.extend(applied)
+            epoch_summary["accepted"] += 1
+            self._record_history(
+                self._accept_history, applied, selection_delta, epoch, step
+            )
+        else:
+            for record in applied:
+                record.status = "rejected_gate"
+            epoch_summary["rejected"] += 1
+            self._record_gate_rejection(applied, selection_delta, epoch, step)
+        return current, current_selection_score, False
+
+    def _write_result_artifacts(
+        self,
+        result: SkillTrainResult,
+        initial_document: str | SkillDocument,
+        history: list[dict[str, Any]],
+    ) -> None:
+        options = self._options
         initial_doc = (
             initial_document
             if isinstance(initial_document, SkillDocument)
@@ -351,7 +442,6 @@ class SkillTrainer:
                 history,
                 containment_root=containment_root,
             )
-        return result
 
     def _resolve_datasets(self) -> tuple[Dataset, Dataset, Dataset | None]:
         options = self._options

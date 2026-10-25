@@ -124,6 +124,8 @@ from traigent.utils.exceptions import (
 )
 from traigent.utils.logging import get_logger
 
+_OFFLINE_MUST_BE_BOOL = "offline must be a bool"
+
 logger = get_logger(__name__)
 
 
@@ -186,13 +188,32 @@ class EvaluationOptions(BaseModel):
     @field_validator("dataset_id", mode="before")
     @classmethod
     def validate_dataset_id(cls, value: Any) -> str | None:
-        """Stripped, non-blank, at most 255 characters; never truncated."""
+        """Normalize a declared dataset id: stripped, non-blank, at most 255 characters.
+
+        The value is never truncated; an invalid value is rejected instead.
+
+        Args:
+            value: The raw ``dataset_id`` supplied by the caller, or ``None``.
+
+        Returns:
+            The normalized dataset id, or ``None`` when no id was declared.
+        """
         from traigent.cloud.models import normalize_declared_dataset_id
 
         return normalize_declared_dataset_id(value)
 
     @model_validator(mode="after")
     def validate_evaluator_identity(self) -> EvaluationOptions:
+        """Validate the evaluator identity fields after model construction.
+
+        Returns:
+            This ``EvaluationOptions`` instance, unchanged.
+
+        Raises:
+            ValueError: If an identity is blank or longer than 200 characters,
+                or if both ``evaluator_id`` and ``evaluator_definition_id``
+                (aliases of each other) are provided.
+        """
         values = [self.evaluator_id, self.evaluator_definition_id]
         for value in values:
             if value is not None and not value.strip():
@@ -238,7 +259,19 @@ class InjectionOptions(BaseModel):
     @field_validator("injection_mode", mode="before")
     @classmethod
     def validate_injection_mode(cls, v: str | InjectionMode) -> str | InjectionMode:
-        """Validate injection_mode and reject removed modes."""
+        """Validate injection_mode and reject removed modes.
+
+        Args:
+            v: The ``injection_mode`` supplied by the caller, as a string or
+                an ``InjectionMode`` member.
+
+        Returns:
+            The value unchanged when it is not a removed mode.
+
+        Raises:
+            ValueError: If ``v`` is a mode removed in v2.x (``"attribute"`` or
+                ``"decorator"``).
+        """
         if isinstance(v, str) and v in ("attribute", "decorator"):
             raise ValueError(
                 f"injection_mode='{v}' has been removed in v2.x. "
@@ -381,7 +414,13 @@ class ExecutionOptions(BaseModel):
 
     @property
     def legacy_option_values(self) -> dict[str, Any]:
-        """Read-only view of the captured legacy execution option values."""
+        """Read-only view of the captured legacy execution option values.
+
+        Returns:
+            A shallow copy of the legacy option values captured at construction
+            time. Adding, removing or replacing top-level entries does not affect
+            this object; mutable values inside the copy remain shared with it.
+        """
         return dict(self._legacy_options)
 
     algorithm: str = "auto"
@@ -500,7 +539,7 @@ class ExecutionOptions(BaseModel):
     @classmethod
     def _validate_offline(cls, v: bool) -> bool:
         if not isinstance(v, bool):
-            raise ValueError("offline must be a bool")
+            raise ValueError(_OFFLINE_MUST_BE_BOOL)
         return v
 
     @field_validator("reps_aggregation")
@@ -1515,7 +1554,21 @@ def _build_settings_recorder(
     """Build a recorder function for merging optimize options."""
 
     def record_option(key: str, value: Any, source: str) -> None:
-        """Record a resolved option and track its configuration source."""
+        """Record a resolved option and track its configuration source.
+
+        Args:
+            key: The option name.
+            value: The resolved value; ``None`` is ignored.
+            source: Where the value came from (for example
+                ``"optimize parameter"``), used to detect conflicting settings.
+
+        Returns:
+            None. The shared settings and source maps are updated in place.
+
+        Raises:
+            TypeError: If ``key`` is a removed parameter, or if ``key`` was
+                already supplied from another source with a different value.
+        """
         if key in _REMOVED_PARAMETERS:
             raise TypeError(_removed_parameter_message(key))
         if value is None:
@@ -2966,7 +3019,14 @@ def optimize(  # NOSONAR(S107)
         def passthrough_decorator(
             func: Callable[_P, _R],
         ) -> OptimizedFunction[_P, _R]:
-            """No-op decorator that returns the function unchanged when Traigent is disabled."""
+            """No-op decorator that returns the function unchanged when Traigent is disabled.
+
+            Args:
+                func: The function being decorated.
+
+            Returns:
+                ``func`` itself, unwrapped.
+            """
             # Cast so the disabled path satisfies the declared return type without
             # wrapping: the caller only cares that the result is callable with the
             # same signature and exposes .optimize().
@@ -3110,7 +3170,7 @@ def optimize(  # NOSONAR(S107)
     algorithm_value = validate_algorithm_name(combined_settings["algorithm"])
     offline_value = combined_settings["offline"]
     if not isinstance(offline_value, bool):
-        raise TypeError("offline must be a bool")
+        raise TypeError(_OFFLINE_MUST_BE_BOOL)
     evaluator_value = combined_settings["evaluator"]
     legacy_execution_options = {
         key: combined_settings[key]
@@ -3299,7 +3359,7 @@ def optimize(  # NOSONAR(S107)
     algorithm_value = validate_algorithm_name(resolved_execution.algorithm)
     offline_value = resolved_execution.offline
     if not isinstance(offline_value, bool):
-        raise TypeError("offline must be a bool")
+        raise TypeError(_OFFLINE_MUST_BE_BOOL)
     evaluator_value = resolved_execution.evaluator
     local_storage_path = resolved_execution.local_storage_path
     minimal_logging = resolved_execution.minimal_logging

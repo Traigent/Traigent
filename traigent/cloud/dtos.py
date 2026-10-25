@@ -634,7 +634,7 @@ class ExperimentDTO:
 
             return False
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "DTO validation failed",
                 extra={
                     "dto_class": "ExperimentDTO",
@@ -833,17 +833,15 @@ class ExperimentGroupSourceExperimentDTO:
             "metadata",
         }
         experiment_id = str(payload.get("experiment_id") or payload.get("id") or "")
+        if payload.get("experiment_run_id") is not None:
+            experiment_run_id: str | None = str(payload["experiment_run_id"])
+        elif payload.get("run_id") is not None:
+            experiment_run_id = str(payload["run_id"])
+        else:
+            experiment_run_id = None
         return cls(
             experiment_id=experiment_id,
-            experiment_run_id=(
-                str(payload["experiment_run_id"])
-                if payload.get("experiment_run_id") is not None
-                else (
-                    str(payload["run_id"])
-                    if payload.get("run_id") is not None
-                    else None
-                )
-            ),
+            experiment_run_id=experiment_run_id,
             name=str(payload["name"]) if payload.get("name") is not None else None,
             status=(
                 str(payload["status"]) if payload.get("status") is not None else None

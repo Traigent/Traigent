@@ -22,10 +22,10 @@ import click
 from rich.console import Console
 from rich.panel import Panel
 
-from traigent.labels.transport_gate import gate_session
 from traigent.core.backend_session_manager import (
     EDGE_BLOCK_SIGNALS as _SESSION_EDGE_BLOCK_SIGNALS,
 )
+from traigent.labels.transport_gate import gate_session
 
 # Try to import aiohttp for exception handling
 try:
@@ -2216,11 +2216,10 @@ def _print_error_status(
     because the preview is truncated to 220 characters, and an edge block's giveaway
     (a Cloudflare ray id, an Akamai reference) routinely sits past that cut.
     """
-    verdict = (
-        _classify_403(full_body if full_body is not None else body_preview, headers)
-        if status == 403
-        else None
-    )
+    verdict = None
+    if status == 403:
+        classified_body = full_body if full_body is not None else body_preview
+        verdict = _classify_403(classified_body, headers)
     if verdict == "edge_blocked":
         # A Cloudflare/WAF 403 is neither a bad key nor a missing scope, and
         # "request the missing scope" would send the user somewhere useless.

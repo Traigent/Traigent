@@ -347,6 +347,74 @@ def compute_evaluator_fingerprint(
         return None
 
 
+ECD_VERSION = "ecd1"
+EVALUATOR_CODE_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def _code_identity(origin: str, digest: str | None = None) -> dict[str, str | None]:
+    return {"origin": origin, "digest": digest}
+
+
+def effective_evaluator_code_identity(
+    *,
+    custom_evaluator: Callable[..., Any] | None = None,
+    scoring_function: Callable[..., Any] | None = None,
+    metric_functions: Mapping[str, Callable[..., Any]] | None = None,
+    objectives: Iterable[str] | None = None,
+    external: Any = None,
+) -> dict[str, str | None]:
+    """Identify the scorer that ACTUALLY runs, separately from legacy fp1.
+
+    Returns ``{"origin": code|external|builtin|unavailable, "digest": ...}``.
+    ``digest`` (wire form ``sha256:<64 hex>``) is set only for origin ``code``.
+
+    The metric map is the pipeline's own: ``build_metric_functions`` is called
+    with the same ``(metric_functions, scoring_function, objectives)`` the
+    pipeline passes, so a ``scoring_function`` shadowed by an explicit
+    ``metric_functions`` entry never names the wrong code. ``custom_evaluator``
+    must be the ONE resolved value (runtime override over decorator); this
+    helper deliberately reads no instance state.
+
+    The digest is domain-separated (``ecd1`` canonical JSON) so it can never
+    equal an fp1 digest of the same source. Metric names are hash input only.
+    It identifies code; it never validates it and cannot see an LLM call made
+    inside user code.
+    """
+    try:
+        if custom_evaluator is not None:
+            source = _callable_source(custom_evaluator)
+            members = [["", hashlib.sha256(source.encode("utf-8")).hexdigest()]]
+            kind = "custom"
+        else:
+            if external is not None:
+                return _code_identity("external")
+            from traigent.core.optimization_pipeline import build_metric_functions
+
+            metric_map = build_metric_functions(
+                dict(metric_functions) if metric_functions else None,
+                scoring_function,
+                list(objectives or ()),
+            )
+            if not metric_map:
+                return _code_identity("builtin")
+            members = [
+                [
+                    str(name),
+                    hashlib.sha256(
+                        _callable_source(metric_map[name]).encode("utf-8")
+                    ).hexdigest(),
+                ]
+                for name in sorted(metric_map)
+            ]
+            kind = "metric_map"
+        digest = hashlib.sha256(
+            _canonical_json_bytes({"v": ECD_VERSION, "kind": kind, "members": members})
+        ).hexdigest()
+        return _code_identity("code", f"sha256:{digest}")
+    except Exception:
+        return _code_identity("unavailable")
+
+
 def compute_surrogate_fingerprint(
     surrogate_evaluator: Callable[..., Any] | None,
 ) -> str | None:

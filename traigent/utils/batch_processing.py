@@ -263,7 +263,7 @@ class MemoryEfficientBatchProcessor:
                 yield batch_results, progress
 
             except Exception as e:
-                logger.error(f"Batch {batch_idx} processing failed: {e}")
+                logger.exception(f"Batch {batch_idx} processing failed: {e}")
                 # Create error results for the batch
                 error_results = [
                     InvocationResult(
@@ -397,10 +397,10 @@ class BatchCheckpointer:
             yield checkpoint_data
         finally:
             # Final checkpoint
-            await self._save_checkpoint(job_id, checkpoint_data)
+            self._save_checkpoint(job_id, checkpoint_data)
             self.cleanup()
 
-    async def _save_checkpoint(self, job_id: str, data: dict[str, Any]) -> None:
+    def _save_checkpoint(self, job_id: str, data: dict[str, Any]) -> None:
         """Save checkpoint data."""
         # In a real implementation, this would save to persistent storage
         logger.debug(
@@ -551,7 +551,7 @@ async def process_with_retry_and_recovery(
             )
 
     except Exception as e:
-        logger.error(f"Batch processing failed after {max_retries} retries: {e}")
+        logger.exception(f"Batch processing failed after {max_retries} retries: {e}")
         # Continue to fill remaining None results with errors
 
     # Fill any remaining None results with error results

@@ -107,7 +107,12 @@ class ValidationResult:
 
         for metric, value in self.optimized_metrics.items():
             improvement = self.improvement_details.get(metric, 0.0)
-            direction = "↑" if improvement > 0 else "↓" if improvement < 0 else "="
+            if improvement > 0:
+                direction = "↑"
+            elif improvement < 0:
+                direction = "↓"
+            else:
+                direction = "="
             lines.append(
                 f"  {metric}: {value:.3f} ({direction} {abs(improvement):.1f}%)"
             )

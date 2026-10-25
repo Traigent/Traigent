@@ -630,13 +630,13 @@ def snapshot_from_spec(
 
     if expected_environment is not None:
         spec_environment = spec.get("environment")
-        effective = (
-            spec_environment.strip().lower()
-            if isinstance(spec_environment, str)
-            else "default"
-            if spec_environment is None
-            else None
-        )
+        effective: str | None
+        if isinstance(spec_environment, str):
+            effective = spec_environment.strip().lower()
+        elif spec_environment is None:
+            effective = "default"
+        else:
+            effective = None
         if effective != expected_environment.strip().lower():
             raise diag._safe_error(
                 "Best config environment mismatch: the spec is not for the "

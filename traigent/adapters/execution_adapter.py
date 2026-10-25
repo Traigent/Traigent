@@ -11,6 +11,8 @@ from typing import Any, cast
 from traigent.config.types import ExecutionMode
 from traigent.evaluators.base import _accuracy_matches_after_unwrap
 
+_UNKNOWN = "<unknown>"
+
 logger = logging.getLogger(__name__)
 
 
@@ -123,7 +125,7 @@ class LocalExecutionAdapter(ExecutionAdapter):
                         )
 
                 except Exception as e:
-                    logger.error(f"Failed to execute example {idx}: {str(e)}")
+                    logger.exception(f"Failed to execute example {idx}: {str(e)}")
                     results.append(
                         {
                             "success": False,
@@ -153,7 +155,7 @@ class LocalExecutionAdapter(ExecutionAdapter):
             }
 
         except Exception as e:
-            logger.error(f"Local execution failed: {str(e)}")
+            logger.exception(f"Local execution failed: {str(e)}")
             raise
 
     async def get_execution_mode(self) -> str:
@@ -240,8 +242,8 @@ class LocalExecutionAdapter(ExecutionAdapter):
                 "is configured for LocalExecutionAdapter; marking example "
                 "as failed. Provide a scoring_function for semantic scoring. "
                 "trial_id=%s example_index=%s",
-                trial_id or "<unknown>",
-                example_index if example_index is not None else "<unknown>",
+                trial_id or _UNKNOWN,
+                example_index if example_index is not None else _UNKNOWN,
             )
 
         else:
@@ -258,8 +260,8 @@ class LocalExecutionAdapter(ExecutionAdapter):
                 "example as failed and excluding it from accuracy. "
                 "trial_id=%s example_index=%s",
                 eval_type,
-                trial_id or "<unknown>",
-                example_index if example_index is not None else "<unknown>",
+                trial_id or _UNKNOWN,
+                example_index if example_index is not None else _UNKNOWN,
             )
 
         return result
@@ -510,7 +512,7 @@ class HybridPlatformAdapter(ExecutionAdapter):
                 local_adapter.agent_builder = original_builder
 
         except Exception as e:
-            logger.error(f"Hybrid platform execution failed: {str(e)}")
+            logger.exception(f"Hybrid platform execution failed: {str(e)}")
             raise
 
     async def get_execution_mode(self) -> str:

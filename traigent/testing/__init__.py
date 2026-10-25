@@ -37,6 +37,9 @@ Public surface:
   a real one).
 * :func:`is_mock_mode_enabled` — runtime check (in-code flag only;
   use :func:`is_mock_llm` if you also want the env-var fallback).
+* :func:`inject_vendor_failures` — context manager that makes provider calls
+  fail with a retryable 429/503 N times before succeeding (refused in
+  production; no effect when not active).
 
 The module-level flag is process-local; importing the SDK in a fresh
 interpreter starts with mock mode off. Within a single process, a
@@ -51,10 +54,13 @@ from __future__ import annotations
 import logging
 import threading
 
+from traigent.testing.vendor_faults import inject_vendor_failures
+
 __all__ = [
     "enable_mock_mode_for_quickstart",
     "disable_mock_mode",
     "is_mock_mode_enabled",
+    "inject_vendor_failures",
 ]
 
 _logger = logging.getLogger(__name__)
@@ -109,7 +115,6 @@ def _install_mock_interceptors() -> None:
         from traigent.utils.litellm_interceptor import (
             patch_litellm_for_metadata_capture,
         )
-
         from traigent.utils.mock_transport_guard import (
             install_mock_transport_guard,
         )

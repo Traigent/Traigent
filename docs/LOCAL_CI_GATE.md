@@ -21,7 +21,7 @@ anything fails. Fix what it reports, then push.
 | `ruff check` and `ruff format --check` | Run on the Python files your branch changes, like the pull request check. Fix formatting with `ruff format <files>`. |
 | Test collection and a short unit-test smoke run | Runs when SDK code or tests changed. |
 | Pull request tracking-line reminder | Reminds you to keep the tracking line in the pull request description (see the template). |
-| Optional code-quality scan | Only for `release/*` and `hotfix/*` branches, or when `LOCAL_GATE_SONAR=1` is set. Requires your own scanner server and token; pushes to `release/*` and `hotfix/*` branches are blocked without scanner credentials. |
+| Optional code-quality scan | Only for `release/*` and `hotfix/*` branches, or when `LOCAL_GATE_SONAR=1` is set. Requires your own scanner server and token; pushes to `release/*` and `hotfix/*` branches are blocked without scanner credentials. For these main-bound pushes the coverage report fed to the scanner comes from the full `tests/unit` suite (4 parallel workers by default; `LOCAL_GATE_COVERAGE_WORKERS=0` runs serially), the same command the hosted coverage lane runs, so new-code coverage is measured rather than under-reported. Develop-bound pushes keep the short smoke run and never run this step. |
 
 Useful switches:
 

@@ -40,6 +40,8 @@ from traigent.utils.secure_path import (
 from traigent.utils.validation import OptimizationValidator
 from traigent.visualization.plots import create_quick_plot
 
+_OUTPUT_FILE_LABEL = "Output file"
+
 console = Console()
 
 # Style constant for table headers
@@ -704,6 +706,14 @@ def models(
         is_valid = verdict in {"live", "snapshot-only"}
 
     if output_json:
+        note: str | None
+        if normalized_provider == "bedrock":
+            note = (
+                "Bedrock validation lists regional foundation models only; it does "
+                "not invoke a model or prove account entitlement."
+            )
+        else:
+            note = _LIVE_NOTE if verdict == "snapshot-only" else None
         payload = {
             "provider": normalized_provider,
             "region": region if normalized_provider == "bedrock" else None,
@@ -711,12 +721,7 @@ def models(
             "valid": is_valid,
             "verdict": verdict,
             "models": model_ids,
-            "note": (
-                "Bedrock validation lists regional foundation models only; it does "
-                "not invoke a model or prove account entitlement."
-                if normalized_provider == "bedrock"
-                else (_LIVE_NOTE if verdict == "snapshot-only" else None)
-            ),
+            "note": note,
         }
         click.echo(json.dumps(payload, indent=2))
     else:
@@ -1094,7 +1099,7 @@ def report_example_map(
         )
         resolved_output = _resolve_user_cli_path(
             Path(output_path),
-            "Output file",
+            _OUTPUT_FILE_LABEL,
             for_write=True,
         )
         resolved_output.parent.mkdir(parents=True, exist_ok=True)
@@ -2167,7 +2172,9 @@ def export(
         else:
             output_path = Path(output)
 
-        output_path = _resolve_user_cli_path(output_path, "Output file", for_write=True)
+        output_path = _resolve_user_cli_path(
+            output_path, _OUTPUT_FILE_LABEL, for_write=True
+        )
         if output_path.is_dir():
             raise click.ClickException(
                 f"Output file is a directory, not a file path: {output_path}"
@@ -2357,7 +2364,7 @@ def generate(template: str, output: str) -> None:
 
     output_path = _resolve_user_cli_path(
         Path(output),
-        "Output file",
+        _OUTPUT_FILE_LABEL,
         for_write=True,
     )
 

@@ -441,7 +441,7 @@ def install_hooks(repo_path: Path | str | None = None, force: bool = False) -> b
         results = installer.install(force=force)
         return all(results.values())
     except Exception as e:
-        logger.error(f"Failed to install hooks: {e}")
+        logger.exception(f"Failed to install hooks: {e}")
         return False
 
 
@@ -466,5 +466,5 @@ def uninstall_hooks(repo_path: Path | str | None = None) -> bool:
         results = installer.uninstall()
         return all(results.values())
     except Exception as e:
-        logger.error(f"Failed to uninstall hooks: {e}")
+        logger.exception(f"Failed to uninstall hooks: {e}")
         return False

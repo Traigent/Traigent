@@ -20,9 +20,9 @@ There is no fail-open path and no dependence on a generic strict-validation
 toggle. Errors are payload-free (schema digests are public contract hashes, never
 request/response content).
 
-Bumping the fingerprint (only when the exact Git pin in
-``scripts/ci/schema-pin.txt`` changes — it is not in ``pyproject.toml``, because
-PyPI rejects direct URL references in package metadata): install the new pinned
+Bumping the fingerprint (only when the pinned ``traigent-schema`` changes: the
+exact PyPI pin in ``pyproject.toml`` and the commit pin in
+``scripts/ci/schema-pin.txt``, which must stay the same contract): install the new
 ``traigent-schema`` and recompute::
 
     python -c "from traigent.economics.schema import compute_economics_schema_fingerprint as f; print(f())"
@@ -75,7 +75,8 @@ _FINGERPRINT_FILES = (
 #: (history: first computed at TraigentSchema 321d98133645d343297545a155b9549650e3152d;
 #: the installed pin is in scripts/ci/schema-pin.txt). Content-identical to
 #: the prior pin (4b3373925cee6bd57071980285c58044165c90a4) — the digest was
-#: recomputed and did not change. See module docstring for how to recompute when
+#: recomputed and did not change. Recomputed again at 7104839ae6d748e852b1cb584312cf86d1f0f2db
+#: (= PyPI traigent-schema 7.0.0, tag v7.0.0): unchanged. See module docstring for how to recompute when
 #: the exact Git pin changes.
 EXPECTED_ECONOMICS_SCHEMA_FINGERPRINT = (
     "1bed4a1a68f7641b7468f6f85ad8d122f8552213e5fb358aec345fc7ef4e5565"

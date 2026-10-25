@@ -19,6 +19,8 @@ from traigent.core.session_types import (
 from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import OptimizationError
 
+_BACKEND_UNAVAILABLE = "backend unavailable"
+
 SOURCE_CLOUD_BRAIN = "cloud_brain"
 SOURCE_LOCAL_FALLBACK = "local_fallback"
 SOURCE_EXPLICIT_LOCAL = "explicit_local"
@@ -45,7 +47,7 @@ CONNECTIVITY_STATUSES = frozenset({500, 502, 503, 504})
 HARD_FAILURE_STATUSES = frozenset({400, 401, 402, 403, 404, 405, 409, 415, 422, 429})
 
 CONNECTIVITY_PATTERNS = (
-    "backend unavailable",
+    _BACKEND_UNAVAILABLE,
     "service unavailable",
     "health unavailable",
     "health check failed",
@@ -253,7 +255,7 @@ def fallback_reason_from_session_result(result: SessionCreationResult) -> str:
         parts.append(result.failure_response.one_line_summary())
     elif result.failure_detail:
         parts.append(str(result.failure_detail))
-    return ": ".join(parts) or "backend unavailable"
+    return ": ".join(parts) or _BACKEND_UNAVAILABLE
 
 
 def failure_reason_from_code(code: str | None) -> SessionCreationFailureReason | None:
@@ -298,7 +300,7 @@ def local_fallback_notice(
     problem.
     """
 
-    reason_text = (reason or "backend unavailable").strip()
+    reason_text = (reason or _BACKEND_UNAVAILABLE).strip()
     # Never tell a user to set the variable they already set (#2510). With
     # require-cloud on, reaching this notice means the backend was lost after
     # the session started, which the variable does not currently guard.

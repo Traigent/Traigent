@@ -33,6 +33,12 @@ import logging
 import os
 from typing import Literal
 
+_MIXTRAL_MODEL = "mistralai/Mixtral-8x7B-Instruct-v0.1"
+
+_LLAMA3_8B_MODEL = "meta-llama/Meta-Llama-3-8B-Instruct"
+
+_GEMINI_FLASH_MODEL = "gemini-3.8-flash"
+
 logger = logging.getLogger(__name__)
 
 
@@ -79,24 +85,24 @@ _FALLBACK_MODELS: dict[tuple[str | None, str], list[str]] = {
     ("anthropic", "quality"): ["claude-opus-4-8"],
     # Gemini tiers — Gemini 1.5 is deprecated; use current 2.x (#1936).
     ("gemini", "fast"): ["gemini-3.5-flash-lite"],
-    ("gemini", "balanced"): ["gemini-3.8-flash"],
-    ("gemini", "quality"): ["gemini-3.8-flash"],
+    ("gemini", "balanced"): [_GEMINI_FLASH_MODEL],
+    ("gemini", "quality"): [_GEMINI_FLASH_MODEL],
     # Mistral tiers
     ("mistral", "fast"): ["mistral-small-latest"],
     ("mistral", "balanced"): ["mistral-medium-latest"],
     ("mistral", "quality"): ["mistral-large-latest"],
     # HuggingFace tiers — sourced from config/models.yaml known_models
     ("huggingface", "fast"): [
-        "meta-llama/Meta-Llama-3-8B-Instruct",
+        _LLAMA3_8B_MODEL,
         "mistralai/Mistral-7B-Instruct-v0.2",
     ],
     ("huggingface", "balanced"): [
-        "meta-llama/Meta-Llama-3-8B-Instruct",
-        "mistralai/Mixtral-8x7B-Instruct-v0.1",
+        _LLAMA3_8B_MODEL,
+        _MIXTRAL_MODEL,
     ],
     ("huggingface", "quality"): [
         "meta-llama/Meta-Llama-3-70B-Instruct",
-        "mistralai/Mixtral-8x7B-Instruct-v0.1",
+        _MIXTRAL_MODEL,
     ],
     # Nous Portal (Hermes family) — real published names; the exact
     # portal-served ID string is OWNER-confirmed in Phase-0 (see models.yaml).
@@ -138,8 +144,8 @@ _MODEL_TIERS: dict[str, dict[str, list[str]]] = {
     "gemini": {
         # Gemini 1.5 deprecated / gemini-2.0-flash-exp preview retired (#1936).
         "fast": ["gemini-3.5-flash-lite"],
-        "balanced": ["gemini-3.8-flash"],
-        "quality": ["gemini-3.8-flash"],
+        "balanced": [_GEMINI_FLASH_MODEL],
+        "quality": [_GEMINI_FLASH_MODEL],
     },
     "mistral": {
         "fast": ["mistral-small-latest", "open-mistral-7b"],
@@ -149,17 +155,17 @@ _MODEL_TIERS: dict[str, dict[str, list[str]]] = {
     # HuggingFace — sourced from config/models.yaml known_models; tiered by parameter count
     "huggingface": {
         "fast": [
-            "meta-llama/Meta-Llama-3-8B-Instruct",
+            _LLAMA3_8B_MODEL,
             "mistralai/Mistral-7B-Instruct-v0.2",
             "HuggingFaceH4/zephyr-7b-beta",
         ],
         "balanced": [
-            "meta-llama/Meta-Llama-3-8B-Instruct",
-            "mistralai/Mixtral-8x7B-Instruct-v0.1",
+            _LLAMA3_8B_MODEL,
+            _MIXTRAL_MODEL,
         ],
         "quality": [
             "meta-llama/Meta-Llama-3-70B-Instruct",
-            "mistralai/Mixtral-8x7B-Instruct-v0.1",
+            _MIXTRAL_MODEL,
         ],
     },
     # Nous Portal (Hermes family) — sourced from config/models.yaml known_models,

@@ -1216,6 +1216,11 @@ class CallbackManager:
             )
             # Cancel if possible (may not stop already-running threads)
             future.cancel()
+        except (KeyboardInterrupt, SystemExit):
+            # The caller's thread is blocked here: Ctrl-C / sys.exit must stop
+            # the run. Callback-originated failures never reach this branch
+            # because ``_run_callback_safe`` already contains them in the worker.
+            raise
         except BaseException as exc:  # noqa: B036 - future may hold a pyo3 panic.
             self._record_callback_exception(callback_name, method_name, exc)
 
