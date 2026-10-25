@@ -441,3 +441,21 @@ def test_outer_failure_returns_results_collected_so_far(mock_logger):
     mock_logger.debug.assert_called_once_with(
         f"Could not find completion methods for {Api}: flags down"
     )
+
+
+def test_is_completion_method_lowercases_once_per_attempted_keyword():
+    calls = []
+
+    class StatefulName(str):
+        def lower(self):
+            calls.append(1)
+            # first call matches nothing, later calls match "complete"
+            return "zzz" if len(calls) == 1 else "complete"
+
+    def fn():
+        return None
+
+    # Original semantics: lower() is evaluated per keyword attempted, so the
+    # second keyword sees the changed value and the method is accepted.
+    assert discovery_module._is_completion_method(StatefulName("x"), fn) is True
+    assert len(calls) >= 2

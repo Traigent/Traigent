@@ -32,8 +32,7 @@ _DUMMY_VALUES_BY_TYPE: tuple[tuple[type, Any], ...] = (
 
 def _is_completion_method(name: str, attr: Any) -> bool:
     """Return True if name looks like a completion method and attr is callable code."""
-    lowered = name.lower()
-    if not any(keyword in lowered for keyword in _COMPLETION_KEYWORDS):
+    if not any(keyword in name.lower() for keyword in _COMPLETION_KEYWORDS):
         return False
     return inspect.ismethod(attr) or inspect.isfunction(attr)
 
