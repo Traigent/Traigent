@@ -84,6 +84,56 @@ class Route:
     param_names: list[str]
 
 
+#: Operations the final Backend (TraigentBackend 6ee39655b, ``production_reactive_routes.py``)
+#: serves.  The vendored endpoint files also document reads and a deploy-publications branch
+#: the Backend does not register; calling one is a violation, so the SDK cannot rely on it.
+SERVED = frozenset(
+    {
+        "stageTvlReactiveEvaluation",
+        "completeTvlReactiveEvaluationProducer",
+        "createTvlReactiveGrant",
+        "reserveTvlReactiveAttempt",
+        "startTvlReactiveAttempt",
+        "reportTvlReactiveAttemptResult",
+        "renewTvlReactiveAttemptLease",
+        "cancelTvlReactiveAttempt",
+        "publishTvlDeployResult",
+        "finalizeTvlDeployPublishResult",
+        # Open gap: the agent_head source still reads this; the Backend has no such route.
+        "getAgentHeadPinnedConfig",
+    }
+)
+#: Read routes the schema documents but Backend 6ee39655b does not register.  The SDK's hosted
+#: respond path still calls them; every call is recorded in ``unserved_calls`` and asserted
+#: in tests so the gap stays visible until the Backend serves them or the SDK stops reading.
+UNSERVED_READS = frozenset(
+    {
+        "listTvlReactiveAttempts",
+        "getTvlReactiveAttempt",
+        "getTvlReactiveGrant",
+        "listTvlReactiveNotifications",
+        "getTvlReactiveNotification",
+        "getTvlReactiveApprovalContext",
+    }
+)
+HOLDER_OPS = frozenset(
+    {
+        "startTvlReactiveAttempt",
+        "renewTvlReactiveAttemptLease",
+        "reportTvlReactiveAttemptResult",
+    }
+)
+
+
+def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    seen: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in seen:
+            raise ValueError("duplicate key")
+        seen[key] = value
+    return seen
+
+
 def _load_routes() -> list[Route]:
     routes: list[Route] = []
     for name in ENDPOINT_FILES:
@@ -92,6 +142,8 @@ def _load_routes() -> list[Route]:
             names = re.findall(r"\{([a-z_]+)\}", path)
             pattern = re.sub(r"\{[a-z_]+\}", r"([^/]+)", path)
             for method, op in methods.items():
+                if op["operationId"] not in SERVED | UNSERVED_READS:
+                    continue
                 routes.append(
                     Route(
                         method.upper(),
@@ -187,6 +239,10 @@ class StrictBackend:
 
     def __init__(self, agent_ref: str, clock: Clock | None = None) -> None:
         self.agent_ref = agent_ref
+        self.principal = "ingest-key-1"  # the calling ingest key (P-ingest)
+        self.principal_kind = "ingest"  # "human" for a portal session
+        self.unserved_calls: list[str] = []
+        self.best_configs: dict[tuple[str, int], dict[str, Any]] = {}
         self.clock = clock or Clock()
         self.log: list[dict[str, Any]] = []
         self.violations: list[str] = []
@@ -292,7 +348,16 @@ class StrictBackend:
         body: Any,
     ) -> tuple[int, Any, dict[str, str]]:
         # The wire is JSON: round-trip so what the fake sees is what a server would.
-        wire = json.loads(json.dumps(body)) if body is not None else None
+        if isinstance(body, str):  # a pre-serialised body: duplicate keys are refused
+            try:
+                wire = json.loads(body, object_pairs_hook=_no_duplicate_keys)
+            except ValueError:
+                entry_: dict[str, Any] = {"method": method, "path": path, "body": None}
+                entry_["operation"] = "duplicate_keys"
+                self.log.append(entry_)
+                return 400, refusal("invalid_request"), {}
+        else:
+            wire = json.loads(json.dumps(body)) if body is not None else None
         query = dict(params) if params else {}
         route = next(
             (r for r in ROUTES if r.method == method and r.regex.match(path)), None
@@ -333,6 +398,18 @@ class StrictBackend:
             return self._answer(
                 entry, route, 429, refusal("rate_limited"), {"Retry-After": "2"}
             )
+        if route.operation in UNSERVED_READS:
+            self.unserved_calls.append(route.operation)
+        if route.operation in HOLDER_OPS:
+            held = self._attempt(values["attempt_ref"])
+            res = self.reservations.get((held or {}).get("reservation_ref", ""))
+            if res is not None and res["holder"] != self.principal:
+                return self._answer(entry, route, 404, refusal("reference_not_found"))
+        if (
+            route.operation == "cancelTvlReactiveAttempt"
+            and self.principal_kind != "human"
+        ):
+            return self._answer(entry, route, 403, refusal("forbidden"))
         handler = getattr(self, f"_op_{route.operation}")
         status, payload = handler(values, query, wire)
         entry["committed"] = status < 300
@@ -533,6 +610,7 @@ class StrictBackend:
             "expires_at": _iso(self.clock() + self.RESERVATION_TTL),
             "lease_expires_at": _iso(self.clock() + self.RESERVATION_TTL),
             "reservation_key": body["reservation_key"],
+            "holder": self.principal,
         }
         self.reservations[ref] = res
         attempt["reservation_ref"] = ref
@@ -747,52 +825,61 @@ class StrictBackend:
         return 403, refusal("forbidden")
 
     # deploy -----------------------------------------------------------------------------
-    def _op_publishTvlDeploy(self, v: dict, q: dict, body: Any) -> tuple[int, Any]:
-        key = body["idempotency_key"]
-        attempt = self._attempt(body["attempt_ref"])
-        if attempt is None or attempt["effect"] != "deploy":
+    def add_best_config(self, best_config_id: str, version: int, config: dict) -> None:
+        """A server-issued best-config version the publish route can pin onto the head."""
+        self.best_configs[(best_config_id, version)] = {
+            "schema_version": "traigent.best_config.v1",
+            "config_id": best_config_id,
+            "config": copy.deepcopy(config),
+        }
+
+    def _deploy_holder(self, key: str) -> tuple[dict[str, Any] | None, str | None]:
+        """The deploy attempt of ``key`` when the caller is its reservation holder."""
+        attempt = self._attempt(key.split(":")[1])
+        res = self.reservations.get((attempt or {}).get("reservation_ref", ""))
+        if (
+            attempt is None
+            or attempt["effect"] != "deploy"
+            or res is None
+            or res["holder"] != self.principal
+        ):
+            return None, "reference_not_found"
+        return attempt, None
+
+    def _op_publishTvlDeployResult(
+        self, v: dict, q: dict, body: Any
+    ) -> tuple[int, Any]:
+        key = v["key"]
+        attempt, missing = self._deploy_holder(key)
+        if missing or attempt is None:
             return 404, refusal("reference_not_found")
-        stale = self._holder(
-            attempt,
-            {
-                "reservation_ref": body["reservation_ref"],
-                "reservation_generation": body["reservation_generation"],
-            },
-        )
-        if stale:
-            return 409, refusal(stale)
-        grant = self.grants.get(attempt.get("grant_ref", ""))
-        binding = grant["deploy"] if grant else None
-        if binding is None or body["grant_ref"] != attempt["grant_ref"]:
-            return 409, refusal("grant_not_valid")
-        expected_key = f"deploy:{attempt['attempt_ref']}:{binding['candidate_fingerprint']}:{binding['gate_result_digest']}"
-        if (
-            key != expected_key
-            or body["expected_head_generation"] != binding["expected_head_generation"]
-        ):
-            return 409, refusal("idempotency_conflict")
-        # The Backend recomputes the fingerprint from the published spec (TVL canonical form).
-        if (
-            canonical_digest(body["spec"].get("config"))
-            != binding["candidate_fingerprint"]
-        ):
-            return 409, refusal("idempotency_conflict")
-        # Same-key replay answers first, before ANY stale-generation or effect check.
+        # Same-key replay answers first.
         stored = self.publish_results.get(key)
         if stored is not None:
             if stored["state"] == "cancelled":
                 return 409, refusal("publication_cancelled")
             return 200, self._publish_doc(stored)
-        if attempt["state"] not in ("started", "lapsed"):
-            return 409, refusal("attempt_not_open")
-        if not self._grant_valid(body["grant_ref"]):
+        if self.starts_accepted[attempt["attempt_ref"]] < 1 or attempt["state"] not in (
+            "started",
+            "lapsed",
+        ):
+            return 409, refusal("attempt_not_open")  # start-before-publish
+        grant = self.grants.get(attempt.get("grant_ref", ""))
+        binding = grant["deploy"] if grant else None
+        if binding is None or not self._grant_valid(attempt["grant_ref"]):
             return 409, refusal("grant_not_valid")
-        if body["expected_head_generation"] != self.head.generation:
+        expected = f"deploy:{attempt['attempt_ref']}:{binding['candidate_fingerprint']}:{binding['gate_result_digest']}"
+        spec = self.best_configs.get((body["best_config_id"], body["version"]))
+        if key != expected or spec is None:
+            return 409, refusal("idempotency_conflict")
+        if canonical_digest(spec["config"]) != binding["candidate_fingerprint"]:
+            return 409, refusal("idempotency_conflict")
+        if binding["expected_head_generation"] != self.head.generation:
             return 409, refusal("head_generation_stale")
         self.head.generation += 1
         self.head.version += 1
-        self.head.spec = copy.deepcopy(body["spec"])
-        self.publications[key] = copy.deepcopy(body["spec"])
+        self.head.spec = copy.deepcopy(spec)
+        self.publications[key] = copy.deepcopy(spec)
         self.publish_results[key] = {
             "state": "succeeded",
             "idempotency_key": key,
@@ -806,19 +893,14 @@ class StrictBackend:
     def _publish_doc(stored: dict[str, Any]) -> dict[str, Any]:
         return {"schema_version": 1, **stored}
 
-    def _op_getTvlDeployPublishResult(
-        self, v: dict, q: dict, body: Any
-    ) -> tuple[int, Any]:
-        stored = self.publish_results.get(v["key"])
-        if stored is None:
-            return 404, refusal("reference_not_found")
-        return 200, self._publish_doc(stored)
-
     def _op_finalizeTvlDeployPublishResult(
         self, v: dict, q: dict, body: Any
     ) -> tuple[int, Any]:
         if self.finalize_hook:
             self.finalize_hook()
+        _, missing = self._deploy_holder(v["key"])
+        if missing:
+            return 404, refusal("reference_not_found")
         stored = self.publish_results.get(v["key"])
         if stored is None:
             stored = {

@@ -203,7 +203,8 @@
           ]
         },
         "scope": {
-          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken",
+          "description": "Liveness scope token. The first authenticated liveness fact of a monitor may establish its own customer-minted random scope (bound to agent, environment, policy revision and liveness monitor) without a preceding `opened` or `fired` fact; later facts repeat the established scope. This exception does not apply to episode `continued` or `closed` facts, which still need an announced scope."
         }
       },
       "description": "Customer-recorded liveness fact. The Backend computes no liveness; native primaries are refused at import."

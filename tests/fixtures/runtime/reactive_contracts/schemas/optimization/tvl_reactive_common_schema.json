@@ -21,7 +21,7 @@
           "pattern": "^t[A-Za-z0-9_-]{16}$"
         }
       ],
-      "description": "Hosted token minted by the customer-side SDK for a compiled TVL name (response, rule, monitor, scope, environment, requirement): the letter t followed by 16 base64url characters of a random value (never a hash or a name; tvl-token-map/1 entries from the SDK). The Backend validates OWNERSHIP: the token must exist in the stored response-policy revision's refs, or be a scope previously announced by an `opened` or `fired` fact of the same agent; an unknown token is refused without echo. A token that does not have this exact shape is refused at the schema."
+      "description": "Hosted token minted by the customer-side SDK for a compiled TVL name (response, rule, monitor, scope, environment, requirement): the letter t followed by 16 base64url characters of a random value (never a hash or a name; tvl-token-map/1 entries from the SDK). The Backend validates OWNERSHIP: the token must exist in the stored response-policy revision's refs, or be a scope previously announced by an `opened` or `fired` fact of the same agent, with one exception: the first authenticated `stale` or `live_again` liveness fact may establish its own customer-minted scope (a fresh random token), bound to the agent, environment, policy revision and liveness monitor, without a preceding `opened` or `fired` fact, and is authorized through the primary monitor the liveness monitor observes (native primaries stay refused); episode `continued` and `closed` facts still need a scope announced by `opened`; an unknown token is refused without echo. A token that does not have this exact shape is refused at the schema."
     },
     "Digest": {
       "x-content-class": "digest",
@@ -286,7 +286,7 @@
           "description": "Fixed text per code."
         }
       },
-      "description": "Closed error envelope of every TVL reactive route (stage, complete, grants, reservations, start, results, cancel, notifications, attempts, deploy finalize and publish-result). `error` and `error_code` are the same closed code; `message` is the fixed text for that code. Nothing of the request is echoed: no key, value, ref, token, name or digest. While the feature flag is off the routes answer the framework's uniform unknown-route 404, never this envelope. Codes by status: 400 invalid_request; 401 unauthenticated; 403 forbidden; 403 fact_source_not_permitted; 404 reference_not_found; 413 payload_too_large; 409 batch_out_of_order; 409 instant_not_increasing; 409 evaluation_inputs_frozen; 409 instant_sealed; 409 fact_contradicts_record; 409 idempotency_conflict; 409 grant_not_valid; 409 reservation_conflict; 409 reservation_generation_stale; 409 start_refused; 409 attempt_not_open; 409 head_generation_stale; 409 publication_cancelled; 429 rate_limited; 500 internal_error; 503 service_unavailable. Precedence is fixed by each route: authentication and permission first, then body validity, then reference ownership, then record contradictions, then ordering and phase refusals.",
+      "description": "Closed error envelope of every TVL reactive route (stage, complete, grants, reservations, start, results, cancel, notifications, attempts, deploy finalize and publish-result). `error` and `error_code` are the same closed code; `message` is the fixed text for that code. Nothing of the request is echoed: no key, value, ref, token, name or digest. While the feature flag is off every reactive route answers exactly this envelope with 404 reference_not_found {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"}, before authentication and body processing, so a disabled feature is indistinguishable from a missing or inaccessible reference. No other code is used for the disabled state. Codes by status: 400 invalid_request; 401 unauthenticated; 403 forbidden; 403 fact_source_not_permitted; 404 reference_not_found; 413 payload_too_large; 409 batch_out_of_order; 409 instant_not_increasing; 409 evaluation_inputs_frozen; 409 instant_sealed; 409 fact_contradicts_record; 409 idempotency_conflict; 409 grant_not_valid; 409 reservation_conflict; 409 reservation_generation_stale; 409 start_refused; 409 attempt_not_open; 409 head_generation_stale; 409 publication_cancelled; 429 rate_limited; 500 internal_error; 503 service_unavailable. Precedence is fixed by each route: authentication and permission first, then body validity, then reference ownership, then record contradictions, then ordering and phase refusals.",
       "oneOf": [
         {
           "properties": {
@@ -707,6 +707,34 @@
           }
         }
       ]
+    },
+    "MonitorRole": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "native",
+        "customer",
+        "liveness",
+        "promotion"
+      ],
+      "description": "Role of a monitor in a contract. native: Backend backend_v1 latency monitor. customer: customer-recorded window/episode facts on a real schedule. liveness: observes a primary monitor and inherits its environment. promotion: a promotion-gate declaration (phase promotion / evaluation_set); it has no producer, schedule, window or grace and never ingests facts."
+    },
+    "MonitorRoleEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "monitor",
+        "role"
+      ],
+      "properties": {
+        "monitor": {
+          "$ref": "#/definitions/HostedToken"
+        },
+        "role": {
+          "$ref": "#/definitions/MonitorRole"
+        }
+      },
+      "description": "One monitor of a contract: its hosted token and closed role."
     }
   }
 }

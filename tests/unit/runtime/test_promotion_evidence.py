@@ -330,13 +330,22 @@ def test_optimize_to_deploy_end_to_end_through_the_strict_fake(promo: Reactive) 
         },
     )
 
+    b.add_best_config("answer", 1, CONFIG)
+
     async def sleep(_s: float) -> None:
         return None
 
     outcome = asyncio.run(
         DeployController(
             promo.client, state_dir=promo.state, clock=promo.clock, sleep=sleep
-        ).run_promoted(deploy_ref, result, configs=reporter.configs, config_id="answer")
+        ).run_promoted(
+            deploy_ref,
+            result,
+            configs=reporter.configs,
+            grant_ref=b.attempts[deploy_ref]["grant_ref"],
+            best_config_id="answer",
+            version=1,
+        )
     )
     assert outcome.state == DEPLOYED and outcome.result_recorded
     assert b.head.spec["config"] == CONFIG and b.head.generation == 4
@@ -347,8 +356,8 @@ def test_optimize_to_deploy_end_to_end_through_the_strict_fake(promo: Reactive) 
         False,
     )
     assert b.attempts[deploy_ref]["deploy_outcome"] == "deployed"
-    (pub,) = b.requests_of("publishTvlDeploy")
-    assert winner["fingerprint"] in pub["body"]["idempotency_key"]
+    (pub,) = b.requests_of("publishTvlDeployResult")
+    assert winner["fingerprint"] in pub["path"].rsplit("/", 1)[-1]
 
 
 def test_deploy_refuses_a_grant_bound_to_a_candidate_that_was_not_promoted(
@@ -374,7 +383,13 @@ def test_deploy_refuses_a_grant_bound_to_a_candidate_that_was_not_promoted(
             DeployController(
                 promo.client, state_dir=promo.state, clock=promo.clock
             ).run_promoted(
-                deploy_ref, result, configs=reporter.configs, config_id="answer"
+                deploy_ref,
+                result,
+                candidate_fingerprint=canonical_digest({"x": 2}),
+                configs=reporter.configs,
+                grant_ref=b.attempts[deploy_ref]["grant_ref"],
+                best_config_id="answer",
+                version=1,
             )
         )
     assert getattr(err.value, "code", "") == "deploy_binding_mismatch"
@@ -471,12 +486,19 @@ def test_the_fake_backend_refuses_a_publication_whose_spec_does_not_match_the_fi
         asyncio.run(
             DeployController(
                 promo.client, state_dir=promo.state, clock=promo.clock
-            ).run_promoted(deploy_ref, result, configs=tampered, config_id="answer")
+            ).run_promoted(
+                deploy_ref,
+                result,
+                configs=tampered,
+                grant_ref=b.attempts[deploy_ref]["grant_ref"],
+                best_config_id="answer",
+                version=1,
+            )
         )
     assert (
         getattr(err.value, "code", "") == "deploy_binding_mismatch"
     )  # caught before any write
-    assert b.requests_of("publishTvlDeploy") == [] and b.head.generation == 3
+    assert b.requests_of("publishTvlDeployResult") == [] and b.head.generation == 3
     # Bypassing the client-side check, the Backend still recomputes and refuses.
     from traigent.runtime.deploy import DeployHold
 

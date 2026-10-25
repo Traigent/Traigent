@@ -46,18 +46,14 @@ from traigent.runtime.hosted import (
 )
 from traigent.runtime.lease_cache import LeaseCache
 from traigent.runtime.model import (
-    E_APPROVAL_EXPIRED,
-    E_APPROVAL_REQUIRED,
     E_BACKEND,
     E_HOLD,
     RuntimeRequirementError,
 )
 from traigent.runtime.respond import (
     CLOCK_SKEW_MARGIN,
-    E_NO_APPROVED_ATTEMPT,
     RETRY_DELAY_S,
     _bounded,
-    _parse_ts,
     _retryable,
 )
 
@@ -127,45 +123,39 @@ class DeployController:
         attempt_ref: str,
         optimized: Any,
         *,
-        config_id: str,
+        grant_ref: str,
+        best_config_id: str,
+        version: int,
         configs: Mapping[str, Mapping[str, Any]] | None = None,
+        candidate_fingerprint: str | None = None,
     ) -> DeployOutcome:
-        """Deploy the promoted candidate the deploy grant is bound to.
+        """Deploy the one promoted candidate of ``optimized`` under the approved grant.
 
-        ``optimized`` is the :class:`RespondResult` of the optimize attempt; its
-        reported candidates supply the fingerprint and gate-result digest, so the caller
-        passes neither.  The deploy attempt's grant says which one was approved: exactly
-        one promoted candidate must match it, otherwise nothing is reserved.
-        ``configs`` (default: the optimize result's own) maps fingerprint to the
-        configuration, kept customer-side.
+        The backend exposes no attempt or grant read, so the caller names the approved
+        ``grant_ref`` and the server-issued ``best_config_id``/``version`` to publish.
+        ``candidate_fingerprint`` picks among several promoted candidates; the backend
+        refuses a key whose fingerprint and gate digest the grant does not bind.
         """
-        from traigent.runtime.promotion_evidence import candidate_fingerprint, promoted
+        from traigent.runtime.promotion_evidence import candidate_fingerprint as fp_of
+        from traigent.runtime.promotion_evidence import promoted
 
-        attempt = self.client.get_attempt(attempt_ref)
-        if not attempt.get("grant_ref"):
-            raise RuntimeRequirementError(E_NO_APPROVED_ATTEMPT)
-        binding = self.client.get_grant(attempt["grant_ref"]).get("deploy")
-        if not isinstance(binding, dict):
-            raise RuntimeRequirementError(E_APPROVAL_REQUIRED, "grant")
         match = [
             c
             for c in promoted(getattr(optimized, "candidates", ()))
-            if c["fingerprint"] == binding["candidate_fingerprint"]
-            and c["gate_result_digest"] == binding["gate_result_digest"]
+            if candidate_fingerprint is None
+            or c["fingerprint"] == candidate_fingerprint
         ]
         configs = configs if configs is not None else getattr(optimized, "configs", {})
-        config = configs.get(binding["candidate_fingerprint"])
-        if len(match) != 1 or config is None:
+        if len(match) != 1:
             raise RuntimeRequirementError(E_BINDING_MISMATCH)
-        if candidate_fingerprint(config) != match[0]["fingerprint"]:
+        config = configs.get(match[0]["fingerprint"])
+        if config is None or fp_of(config) != match[0]["fingerprint"]:
             raise RuntimeRequirementError(E_BINDING_MISMATCH)
         return await self.run(
             attempt_ref,
-            spec={
-                "schema_version": "traigent.best_config.v1",
-                "config_id": config_id,
-                "config": dict(config),
-            },
+            grant_ref=grant_ref,
+            best_config_id=best_config_id,
+            version=version,
             candidate_fingerprint=match[0]["fingerprint"],
             gate_result_digest=match[0]["gate_result_digest"],
         )
@@ -174,34 +164,13 @@ class DeployController:
         self,
         attempt_ref: str,
         *,
-        spec: Mapping[str, Any],
+        grant_ref: str,
+        best_config_id: str,
+        version: int,
         candidate_fingerprint: str,
         gate_result_digest: str,
     ) -> DeployOutcome:
         api = self.client
-        attempt = api.get_attempt(attempt_ref)
-        if attempt["effect"] != "deploy" or attempt["state"] != "approved":
-            raise RuntimeRequirementError(E_NO_APPROVED_ATTEMPT)
-        if not attempt.get("grant_ref"):
-            raise RuntimeRequirementError(E_NO_APPROVED_ATTEMPT)
-        grant = api.get_grant(attempt["grant_ref"])
-        binding = grant.get("deploy")
-        if (
-            grant["state"] != "granted"
-            or grant["effect"] != "deploy"
-            or grant["attempt_ref"] != attempt_ref
-            or not isinstance(binding, dict)
-        ):
-            raise RuntimeRequirementError(E_APPROVAL_REQUIRED, "grant")
-        if "expires_at" in grant and _parse_ts(grant["expires_at"]) <= self.clock():
-            raise RuntimeRequirementError(E_APPROVAL_EXPIRED)
-        # The grant, not the caller, defines what may be published (nothing is sent if
-        # the candidate in hand is not the approved one).
-        if (
-            binding["candidate_fingerprint"] != candidate_fingerprint
-            or binding["gate_result_digest"] != gate_result_digest
-        ):
-            raise RuntimeRequirementError(E_BINDING_MISMATCH)
         key = deploy_key(attempt_ref, candidate_fingerprint, gate_result_digest)
 
         cache = LeaseCache(
@@ -209,7 +178,7 @@ class DeployController:
         )
         cache.refuse_if_seen()
         reservation = await _bounded(
-            lambda k: api.reserve(attempt_ref, attempt["grant_ref"], key=k),
+            lambda k: api.reserve(attempt_ref, grant_ref, key=k),
             sleep=self.sleep,
             delay=self.retry_delay,
         )
@@ -229,13 +198,7 @@ class DeployController:
             raise RuntimeRequirementError(E_BACKEND, "response")
         cache.started()
 
-        decided = await self._decide(
-            reservation,
-            key,
-            binding["expected_head_generation"],
-            grant["grant_ref"],
-            spec,
-        )
+        decided = await self._decide(reservation, key, best_config_id, version)
         outcome = await self._report(reservation, key, decided)
         cache.update(finished=True)
         return outcome
@@ -245,9 +208,8 @@ class DeployController:
         self,
         reservation: ReservationHandle,
         key: str,
-        expected_generation: int,
-        grant_ref: str,
-        spec: Mapping[str, Any],
+        best_config_id: str,
+        version: int,
     ) -> DeployOutcome:
         """The terminal outcome of the write, or :class:`DeployHold` when it is unknown."""
         api = self.client
@@ -258,11 +220,7 @@ class DeployController:
             attempts += 1
             try:
                 result = api.publish_deploy(
-                    key=key,
-                    reservation=reservation,
-                    grant_ref=grant_ref,
-                    expected_head_generation=expected_generation,
-                    spec=spec,
+                    key=key, best_config_id=best_config_id, version=version
                 )
             except ReactiveError as exc:
                 if exc.code in _REFUSED_CODES and not exc.ambiguous:
@@ -279,13 +237,8 @@ class DeployController:
                 retry_after = (
                     None  # an unexpected success shape is treated as ambiguity
                 )
-            # Ambiguity: the write may have committed.  A lookup can show it; its absence
-            # decides nothing.
-            seen = self._lookup(key)
-            if seen is not None and seen.state == "succeeded":
-                return _deployed(attempt_ref, seen)
-            if seen is not None and seen.state == "cancelled":
-                return await self._finalize(attempt_ref, key)
+            # Ambiguity: the write may have committed.  The same key replays the stored
+            # result, so retry it; only finalize (under the head lock) decides failure.
             delay = (
                 float(retry_after)
                 if retry_after
@@ -298,12 +251,6 @@ class DeployController:
                 return await self._finalize(attempt_ref, key)
             await self.sleep(delay)
             self._renew(reservation)
-
-    def _lookup(self, key: str) -> PublishResult | None:
-        try:
-            return self.client.get_publish_result(key)
-        except ReactiveError:
-            return None  # unknown, never a decision
 
     def _renew(self, reservation: ReservationHandle) -> None:
         """Keep the lease across the retry window; a refusal means it is not ours any more."""

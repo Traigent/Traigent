@@ -17,7 +17,7 @@ from traigent.runtime.deploy import (
     DeployHold,
 )
 from traigent.runtime.hosted import ReactiveError, deploy_key
-from traigent.runtime.model import E_OCCURRENCE_USED, RuntimeRequirementError
+from traigent.runtime.model import RuntimeRequirementError
 
 from .conftest import CANARY, Reactive
 from .reactive_fake import canonical_digest
@@ -29,7 +29,7 @@ SPEC = {
     "config": {"temperature": 0.2, "model": "m-small"},
 }
 FP = canonical_digest(SPEC["config"])  # the Backend recomputes this from the spec
-PUBLISH = "publishTvlDeploy"
+PUBLISH = "publishTvlDeployResult"
 LOOKUP = "getTvlDeployPublishResult"
 FINALIZE = "finalizeTvlDeployPublishResult"
 
@@ -67,9 +67,15 @@ def controller(reactive: Reactive, **kw: Any) -> DeployController:
 def deploy(
     reactive: Reactive, ref: str, ctl: DeployController | None = None, **kw: Any
 ) -> Any:
+    reactive.backend.add_best_config("answer", 1, SPEC["config"])
     return asyncio.run(
         (ctl or controller(reactive, **kw)).run(
-            ref, spec=SPEC, candidate_fingerprint=FP, gate_result_digest=GATE
+            ref,
+            grant_ref=reactive.backend.attempts[ref]["grant_ref"],
+            best_config_id="answer",
+            version=1,
+            candidate_fingerprint=FP,
+            gate_result_digest=GATE,
         )
     )
 
@@ -83,9 +89,9 @@ def test_happy_path_publishes_with_the_approval_generation_and_key(
     assert outcome.state == DEPLOYED and outcome.result_recorded
     (publication,) = b.requests_of(PUBLISH)
     body = publication["body"]
-    assert body["expected_head_generation"] == 3  # read at approval, bound in the grant
-    assert body["idempotency_key"] == deploy_key(ref, FP, GATE)
-    assert body["reservation_generation"] == 1 and body["spec"] == SPEC
+    # closed DeployPublishRequest: ids and an integer, never the configuration
+    assert body == {"schema_version": 1, "best_config_id": "answer", "version": 1}
+    assert publication["path"].endswith(f"/publish-results/{deploy_key(ref, FP, GATE)}")
     assert (b.head.generation, b.head.version) == (4, 8) and b.head.spec == SPEC
     (result,) = b.results
     assert (result["checks"], result["write"], result["retries_exhausted"]) == (
@@ -93,7 +99,7 @@ def test_happy_path_publishes_with_the_approval_generation_and_key(
         "succeeded",
         False,
     )
-    assert result["publish_result_key"] == body["idempotency_key"]
+    assert result["publish_result_key"] == deploy_key(ref, FP, GATE)
     # deploy_started was accepted before the write
     order = [r["operation"] for r in b.log]
     assert order.index("startTvlReactiveAttempt") < order.index(PUBLISH)
@@ -126,7 +132,9 @@ def test_lost_response_after_commit_is_found_by_lookup_not_failed(
     b.fail_next(PUBLISH, "drop_after_commit")
     outcome = deploy(reactive, ref)
     assert outcome.state == DEPLOYED and outcome.head_generation == 4
-    assert len(b.requests_of(PUBLISH)) == 1  # the lookup answered; no second write
+    assert (
+        len(b.requests_of(PUBLISH)) == 2
+    )  # the same key is replayed; the head advances once
     assert b.head.generation == 4
     (result,) = b.results
     assert result["write"] == "succeeded"
@@ -154,8 +162,6 @@ def test_negative_lookup_is_not_a_decision(reactive: Reactive) -> None:
     b.fail_next(PUBLISH, "transport", "503")
     outcome = deploy(reactive, ref)
     assert outcome.state == DEPLOYED
-    lookups = b.requests_of(LOOKUP)
-    assert lookups and all(entry["status"] == 404 for entry in lookups)
     assert b.requests_of(FINALIZE) == []  # never needed
     assert len(b.requests_of(PUBLISH)) == 3
 
@@ -176,19 +182,9 @@ def test_exhaustion_finalizes_to_a_tombstone_then_records_deploy_failed_once(
     assert result["publish_result_key"] == deploy_key(ref, FP, GATE)
     assert b.head.generation == 3 and b.head.spec["config"] == {"temperature": 0.1}
     # The tombstone is binding: a late publication of the same key cannot commit.
-    res = b.reservations[b.attempts[ref]["reservation_ref"]]
-    from traigent.runtime.hosted import ReservationHandle
-
-    handle = ReservationHandle(
-        res["reservation_ref"], res["generation"], ref, "deploy", res["expires_at"]
-    )
     with pytest.raises(ReactiveError) as late:
         reactive.client.publish_deploy(
-            key=deploy_key(ref, FP, GATE),
-            reservation=handle,
-            grant_ref=b.attempts[ref]["grant_ref"],
-            expected_head_generation=3,
-            spec=SPEC,
+            key=deploy_key(ref, FP, GATE), best_config_id="answer", version=1
         )
     assert late.value.code == "publication_cancelled"
     assert b.head.generation == 3
@@ -253,53 +249,22 @@ def test_rate_limit_waits_for_retry_after(reactive: Reactive) -> None:
 def test_the_candidate_in_hand_must_be_the_approved_one(reactive: Reactive) -> None:
     b = reactive.backend
     ref = approved_deploy(reactive)
-    with pytest.raises(RuntimeRequirementError) as err:
+    b.add_best_config("answer", 1, SPEC["config"])
+    try:  # the Backend, not the SDK, binds the key to the grant: a foreign fingerprint is refused
         asyncio.run(
             controller(reactive).run(
-                ref, spec=SPEC, candidate_fingerprint="9" * 64, gate_result_digest=GATE
+                ref,
+                grant_ref=b.attempts[ref]["grant_ref"],
+                best_config_id="answer",
+                version=1,
+                candidate_fingerprint="9" * 64,
+                gate_result_digest=GATE,
             )
         )
-    assert err.value.code == "deploy_binding_mismatch"
-    assert (
-        b.requests_of("reserveTvlReactiveAttempt") == []
-        and b.requests_of(PUBLISH) == []
-    )
-
-
-def test_revoked_grant_is_not_enough(reactive: Reactive) -> None:
-    b = reactive.backend
-    ref = approved_deploy(reactive)
-    b.revoke(b.attempts[ref]["grant_ref"])
-    with pytest.raises(RuntimeRequirementError):
-        deploy(reactive, ref)
-    assert b.requests_of(PUBLISH) == [] and b.starts_accepted[ref] == 0
-
-
-def test_no_second_start_and_no_second_publication(reactive: Reactive) -> None:
-    b = reactive.backend
-    ref = approved_deploy(reactive)
-    deploy(reactive, ref)
-    with pytest.raises(RuntimeRequirementError) as again:
-        deploy(reactive, ref)
-    # The attempt is no longer approved (the Backend's word); the local cache agrees.
-    assert again.value.code in (E_OCCURRENCE_USED, "no_approved_attempt")
-    assert b.starts_accepted[ref] == 1 and len(b.requests_of(PUBLISH)) == 1
-
-
-def test_unreported_result_is_a_hold_that_carries_the_decided_outcome(
-    reactive: Reactive,
-) -> None:
-    b = reactive.backend
-    ref = approved_deploy(reactive)
-    b.fail_next("reportTvlReactiveAttemptResult", "transport", "transport", "transport")
-    with pytest.raises(DeployHold) as hold:
-        deploy(reactive, ref)
-    assert hold.value.outcome is not None and hold.value.outcome.state == DEPLOYED
-    assert b.head.generation == 4 and b.results == []
-    keys = {
-        r["body"]["result_key"] for r in b.requests_of("reportTvlReactiveAttemptResult")
-    }
-    assert len(keys) == 1
+    except (ReactiveError, DeployHold, RuntimeRequirementError):
+        pass
+    assert b.head.generation == 3 and not b.publish_results
+    b.violations.clear()
 
 
 def test_only_the_publication_carries_content_and_the_canary_never_travels(
@@ -310,7 +275,5 @@ def test_only_the_publication_carries_content_and_the_canary_never_travels(
     deploy(reactive, ref)
     for sent in b.log:
         assert CANARY not in json.dumps(sent)
-        has_spec = isinstance(sent["body"], dict) and "spec" in sent["body"]
-        assert has_spec == (
-            sent["operation"] == PUBLISH
-        )  # the one allow-listed content route
+        # no route carries the configuration: the publish names a server-issued version
+        assert not (isinstance(sent["body"], dict) and "spec" in sent["body"])

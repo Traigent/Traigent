@@ -2,7 +2,7 @@
 
 The wire contracts are the closed shapes in TraigentSchema
 (``optimization/tvl_reactive_*.json``, ``execution/best_config_deploy_*.json``,
-``execution/best_config_agent_head_config_*.json``; ``docs/tvl-reactive-contracts.md``
+``docs/tvl-reactive-contracts.md``
 there).  Two rules shape this module:
 
 * **Requests carry only closed fields and hosted tokens.**  Every body is built by a
@@ -42,6 +42,8 @@ from traigent.runtime.model import (
 SCHEMA_VERSION = 1
 REACTIVE_PREFIX = "/api/v1/production-reactive/agents"
 HEAD_PREFIX = "/api/v1/best-configs/agent-heads"
+_BEST_CONFIG_ID = r"[A-Za-z0-9_-]{1,128}"
+MAX_JS_INT = 9_007_199_254_740_991
 
 # --- closed vocabularies (mirrors tvl_reactive_common_schema.json) -------------------------
 
@@ -1002,7 +1004,8 @@ class ReactiveClient:
             raise ReactiveError(E_BACKEND, "response", ambiguous=True)
         return receipt
 
-    # -- attempts / grants (read) -----------------------------------------------------------
+    # -- attempts / grants (read) -- OPEN GAP: documented in the schema, but the final
+    # Backend (6ee39655b) registers none of these GET routes; see reactive_fake.UNSERVED_READS. -----------------------------------------------------------
     def list_attempts(
         self, *, limit: int = 50, after: int | None = None
     ) -> dict[str, Any]:
@@ -1227,25 +1230,6 @@ class ReactiveClient:
         return doc
 
     # -- deploy -----------------------------------------------------------------------------
-    def get_publish_result(self, key: str) -> PublishResult | None:
-        """Lookup by deploy key; ``None`` only for a closed ``reference_not_found``.
-
-        An absent lookup never justifies a terminal outcome (plan 8.7); callers treat
-        ``None`` as "not known to have committed".
-        """
-        _need(_DEPLOY_KEY, key, "key")
-        try:
-            doc = self._call(
-                "GET",
-                self._head_path(f"/publish-results/{key}"),
-                _parse_publish_result,
-            )
-        except ReactiveError as exc:
-            if exc.code == "reference_not_found" and exc.status == 404:
-                return None
-            raise
-        return self._publish_result(doc, key)
-
     def finalize_publish(self, key: str) -> PublishResult:
         """Head-lock finalization: the stored success or a committed cancellation tombstone."""
         _need(_DEPLOY_KEY, key, "key")
@@ -1258,44 +1242,34 @@ class ReactiveClient:
         return self._publish_result(doc, key)
 
     def publish_deploy(
-        self,
-        *,
-        key: str,
-        reservation: ReservationHandle,
-        grant_ref: str,
-        expected_head_generation: int,
-        spec: Mapping[str, Any],
+        self, *, key: str, best_config_id: str, version: int
     ) -> PublishResult:
-        """Publish the candidate to the agent head.  ``spec`` is customer content (plan 8.4)."""
+        """Publish the server-issued best-config version onto the grant's environment head.
+
+        ``POST /best-configs/agent-heads/{agent_ref}/publish-results/{key}`` (P-ingest, the
+        reservation holder, after a recorded start).  The body is the closed
+        ``DeployPublishRequest``: ids and an integer only, never the configuration.
+        """
         _need(_DEPLOY_KEY, key, "idempotency_key")
-        if not isinstance(spec, Mapping):
-            raise RuntimeRequirementError("invalid_request", "spec")
         body = {
             "schema_version": SCHEMA_VERSION,
-            "idempotency_key": key,
-            "attempt_ref": _need(_ATTEMPT_REF, reservation.attempt_ref, "attempt_ref"),
-            "grant_ref": _need(_GRANT_REF, grant_ref, "grant_ref"),
-            "reservation_ref": _need(
-                _RESERVATION_REF, reservation.ref, "reservation_ref"
-            ),
-            "reservation_generation": _need_int(
-                reservation.generation, 0, MAX_GENERATION, "reservation_generation"
-            ),
-            "expected_head_generation": _need_int(
-                expected_head_generation, 0, MAX_GENERATION, "expected_head_generation"
-            ),
-            "spec": dict(spec),
+            "best_config_id": _need(_BEST_CONFIG_ID, best_config_id, "best_config_id"),
+            "version": _need_int(version, 1, MAX_JS_INT, "version"),
         }
         doc = self._call(
             "POST",
-            self._head_path("/deploy-publications"),
+            self._head_path(f"/publish-results/{key}"),
             _parse_publish_result,
             body=body,
         )
         return self._publish_result(doc, key)
 
     def get_pinned_config(self) -> PinnedConfig:
-        """The spec of EXACTLY the version the head pins, with its generation and version."""
+        """The spec of EXACTLY the version the head pins, with its generation and version.
+
+        OPEN GAP: the final Backend registers no ``GET .../config`` route; the agent_head
+        source still reads it until the head read is re-pointed (tracked in the report).
+        """
         doc = self._call("GET", self._head_path("/config"), _parse_pinned)
         return PinnedConfig(doc["generation"], doc["version"], doc["spec"])
 

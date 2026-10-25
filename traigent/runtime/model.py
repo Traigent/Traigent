@@ -153,15 +153,22 @@ class Receipt:
     provenance: str
     status: str
     created: bool | None = None  # True 201, False 200/no-op
+    # Set only for a zero-native contract: the ReactiveImportReceipt carries no head.
+    policy_revision_ref: str | None = None
+    contract_digest: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        doc: dict[str, Any] = {
             "head_id": self.head_id,
             "revision_id": self.revision_id,
             "revision_number": self.revision_number,
             "provenance": self.provenance,
             "status": self.status,
         }
+        if self.policy_revision_ref is not None:
+            doc["policy_revision_ref"] = self.policy_revision_ref
+            doc["contract_digest"] = self.contract_digest
+        return doc
 
 
 @dataclass(frozen=True)

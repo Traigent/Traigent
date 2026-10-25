@@ -147,8 +147,9 @@ def test_every_call_is_accepted_by_the_strict_contract_fake(reactive: Reactive) 
     pinned = c.get_pinned_config()
     assert pinned.generation == 3 and pinned.version == 7
     key = deploy_key(ref, "c" * 64, "d" * 64)
-    assert c.get_publish_result(key) is None
-    assert c.finalize_publish(key).state == "cancelled"
+    with pytest.raises(ReactiveError) as stranger:  # not the holder: no oracle
+        c.finalize_publish(key)
+    assert stranger.value.code == "reference_not_found"
 
 
 def test_names_are_sent_as_hosted_tokens_only(reactive: Reactive) -> None:

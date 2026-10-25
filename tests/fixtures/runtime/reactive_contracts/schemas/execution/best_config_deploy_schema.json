@@ -166,6 +166,38 @@
         }
       },
       "description": "Finalize a deploy publish: under the agent-head lock only (never the best-config row), return the stored success or commit a cancellation tombstone. Body carries only the version; the key is the path."
+    },
+    "DeployPublishRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "best_config_id",
+        "version"
+      ],
+      "properties": {
+        "schema_version": {
+          "x-content-class": "closed_enum",
+          "type": "integer",
+          "const": 1
+        },
+        "best_config_id": {
+          "x-content-class": "key_material",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Server-issued best-config id (base64url token)."
+        },
+        "version": {
+          "x-content-class": "number",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000000,
+          "description": "Configuration version to publish to the agent head."
+        }
+      },
+      "description": "Body of POST /api/v1/best-configs/agent-heads/{agent_ref}/publish-results/{key}: publish the approved configuration version to the environment's agent head. schema_version is the integer 1 (a bool or non-integer number is refused); the key is the path."
     }
   }
 }

@@ -567,8 +567,8 @@
         "effect",
         "fact",
         "started_at",
-        "replayed",
-        "lease_expires_at"
+        "lease_expires_at",
+        "replayed"
       ],
       "properties": {
         "schema_version": {
@@ -592,14 +592,14 @@
         "started_at": {
           "$ref": "./tvl_reactive_common_schema.json#/definitions/Timestamp"
         },
+        "lease_expires_at": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Timestamp",
+          "description": "Server-vouched deadline of the post-start lease of this effect; the SDK uses it until its first heartbeat (which renews it). It replaces the pre-start reservation expiry."
+        },
         "replayed": {
           "x-content-class": "closed_enum",
           "type": "boolean",
           "description": "An accepted retry returns the original receipt; it never authorizes another start."
-        },
-        "lease_expires_at": {
-          "$ref": "./tvl_reactive_common_schema.json#/definitions/Timestamp",
-          "description": "Server-vouched lease deadline after the accepted start (renewed by heartbeats)."
         }
       },
       "description": "Receipt of an accepted start."
