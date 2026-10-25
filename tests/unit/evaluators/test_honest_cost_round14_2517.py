@@ -16,14 +16,13 @@ from unittest.mock import MagicMock
 import pytest
 
 from traigent.api.types import OptimizationResult, TrialResult, TrialStatus
-from traigent.utils.trial_costs import COST_FLOOR_WIRE_KEY
 from traigent.cloud.session_budgets import (
     ensure_cost_metric_for_budgeted_completed_submission as ensure,
 )
 from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
 from traigent.integrations.observability import workflow_traces as wt
 from traigent.observability import add_agent_span
-from traigent.utils.trial_costs import known_spend_lower_bound
+from traigent.utils.trial_costs import COST_FLOOR_WIRE_KEY, known_spend_lower_bound
 
 _SPAN_REQUIRED = {
     "span_id",
@@ -120,15 +119,54 @@ def test_b2_measured_zero_is_untouched() -> None:
 
 
 # --- B3/B4: span payload satisfies the schema contract -----------------------
-def _assert_schema_shape(payload: dict[str, Any]) -> None:
-    schema_file = next(
-        iter(Path(__file__).resolve().parents[3].glob("**/workflow_trace_schema.json")),
-        None,
+def _installed_trace_schema() -> Path | None:
+    """The one intended schema: the copy shipped in the installed schema package.
+
+    Never glob the repo tree: stray or vendored copies elsewhere are not the
+    contract and their relative refs need not resolve.
+    """
+    try:
+        import traigent_schema
+    except ImportError:  # pragma: no cover - schema package not installed
+        return None
+    candidate = (
+        Path(traigent_schema.__file__).resolve().parent
+        / "schemas"
+        / "execution"
+        / "workflow_trace_schema.json"
     )
-    if schema_file is not None:  # pragma: no cover - only when vendored
-        jsonschema = pytest.importorskip("jsonschema")
-        span_schema = json.loads(schema_file.read_text())["definitions"]["SpanPayload"]
-        jsonschema.validate(payload, span_schema)
+    return candidate if candidate.is_file() else None
+
+
+def _validate_against_schema(payload: dict[str, Any], schema_file: Path) -> None:
+    jsonschema = pytest.importorskip("jsonschema")
+    referencing = pytest.importorskip("referencing")
+    from referencing.jsonschema import DRAFT7
+
+    root = schema_file.parent.resolve()
+
+    def retrieve(uri: str) -> Any:
+        # Relative refs such as ../status_schema.json resolve against the
+        # schema's own directory, and may not escape the schema package.
+        target = (root / uri).resolve()
+        target.relative_to(root.parent)
+        return referencing.Resource.from_contents(
+            json.loads(target.read_text()), default_specification=DRAFT7
+        )
+
+    registry = referencing.Registry(retrieve=retrieve)
+    document = json.loads(schema_file.read_text())
+    span_schema = {
+        **document["definitions"]["SpanPayload"],
+        "definitions": document["definitions"],
+    }
+    jsonschema.Draft7Validator(span_schema, registry=registry).validate(payload)
+
+
+def _assert_schema_shape(payload: dict[str, Any]) -> None:
+    schema_file = _installed_trace_schema()
+    if schema_file is not None:
+        _validate_against_schema(payload, schema_file)
     assert _SPAN_REQUIRED <= set(payload), _SPAN_REQUIRED - set(payload)
     assert set(payload) <= _SPAN_ALLOWED, set(payload) - _SPAN_ALLOWED
     assert isinstance(payload["cost_usd"], (int, float))

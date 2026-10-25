@@ -215,7 +215,7 @@ class IntegrationManager:
                     optimization_request, integration_id
                 )
             elif mode == IntegrationMode.LOCAL:
-                result = await self._start_local_integration(
+                result = self._start_local_integration(
                     optimization_request, integration_id
                 )
             elif mode == IntegrationMode.STANDARD:
@@ -253,7 +253,7 @@ class IntegrationManager:
 
             return IntegrationResult(success=False, error_message=str(e))
 
-    async def _start_local_integration(
+    def _start_local_integration(
         self, optimization_request: OptimizationRequest, integration_id: str
     ) -> IntegrationResult:
         """Start local integration with client-side orchestration.
@@ -293,7 +293,7 @@ class IntegrationManager:
         self, optimization_request: OptimizationRequest, integration_id: str
     ) -> IntegrationResult:
         """Deprecated alias for :meth:`_start_local_integration`."""
-        return await self._start_local_integration(optimization_request, integration_id)
+        return self._start_local_integration(optimization_request, integration_id)
 
     async def _start_privacy_integration(
         self, optimization_request: OptimizationRequest, integration_id: str

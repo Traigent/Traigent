@@ -47,6 +47,7 @@ Counts/rates/enums/finite numbers only — never content.
 
 from __future__ import annotations
 
+import functools
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -1259,6 +1260,7 @@ def _neg_key(serialized: str) -> Any:
     return _ReverseStr(serialized)
 
 
+@functools.total_ordering
 @dataclass(frozen=True, slots=True)
 class _ReverseStr:
     """A string wrapper whose ordering is REVERSED, so that under ``max`` the

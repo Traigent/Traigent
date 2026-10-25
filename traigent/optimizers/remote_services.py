@@ -1152,7 +1152,7 @@ class MockRemoteService(RemoteOptimizationService):
                 recent_improvements = 0
                 for i in range(min(5, len(trial_history))):
                     if i > 0 and trial_history[-i].metrics:
-                        primary_obj = list(trial_history[-i].metrics.keys())[0]
+                        primary_obj = next(iter(trial_history[-i].metrics))
                         current_score = trial_history[-i].metrics.get(primary_obj, 0)
                         prev_score = trial_history[-i - 1].metrics.get(primary_obj, 0)
                         if current_score > prev_score:

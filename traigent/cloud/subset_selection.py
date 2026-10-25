@@ -144,11 +144,9 @@ class DiverseSampling(BaseSubsetSelector):
         text_features = self._extract_text_features(dataset.examples)
 
         if use_clustering and len(text_features) > target_size:
-            selected_indices = await self._cluster_based_selection(
-                text_features, target_size
-            )
+            selected_indices = self._cluster_based_selection(text_features, target_size)
         else:
-            selected_indices = await self._similarity_based_selection(
+            selected_indices = self._similarity_based_selection(
                 text_features, target_size
             )
 
@@ -189,7 +187,7 @@ class DiverseSampling(BaseSubsetSelector):
 
         return text_features
 
-    async def _cluster_based_selection(
+    def _cluster_based_selection(
         self, text_features: list[str], target_size: int
     ) -> list[int]:
         """Select examples using k-means clustering for diversity."""
@@ -214,7 +212,7 @@ class DiverseSampling(BaseSubsetSelector):
         # Select one example from each cluster
         selected_indices = []
         for cluster_id in range(n_clusters):
-            cluster_indices = np.where(cluster_labels == cluster_id)[0]
+            cluster_indices = np.nonzero(cluster_labels == cluster_id)[0]
             if len(cluster_indices) > 0:
                 # Select example closest to cluster center
                 cluster_features = feature_matrix[cluster_indices]
@@ -233,7 +231,7 @@ class DiverseSampling(BaseSubsetSelector):
 
         return selected_indices[:target_size]
 
-    async def _similarity_based_selection(
+    def _similarity_based_selection(
         self, text_features: list[str], target_size: int
     ) -> list[int]:
         """Select examples using similarity-based diverse sampling."""

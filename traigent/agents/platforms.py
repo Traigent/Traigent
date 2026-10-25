@@ -99,7 +99,7 @@ class LangChainAgentExecutor(AgentExecutor):
             raise AgentExecutionError("LangChain not available")
 
         if agent_spec.custom_tools:
-            return await self._execute_with_tools(agent_spec.custom_tools)
+            return self._execute_with_tools(agent_spec.custom_tools)
 
         chat_openai_cls, human_message_cls, modern_lc = (
             self._import_langchain_components()
@@ -221,7 +221,7 @@ class LangChainAgentExecutor(AgentExecutor):
             ),
         }
 
-    async def _execute_with_tools(self, tools: list[str]) -> dict[str, Any]:
+    def _execute_with_tools(self, tools: list[str]) -> dict[str, Any]:
         """Reject tool-bearing specs until LangChain tool invocation is implemented."""
         configured_tools = ", ".join(tools)
         detail = f" Configured custom_tools: {configured_tools}." if tools else ""

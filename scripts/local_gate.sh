@@ -298,65 +298,63 @@ fi
 section "spine preflight (spine-trail present)"
 if ! python3 scripts/ci/spine_preflight.py; then FAIL=1; fi
 
-# ── Sonar coverage (changed-scope) ────────────────────────────────────────
+# ── Sonar coverage (full unit suite) ──────────────────────────────────────
 # The scanner only reads sonar.python.coverage.reportPaths (coverage.xml); it
-# never runs tests. Before this step existed the main-bound gate scanned with
-# no report on disk, so the server recorded 0% coverage / 0% new-code coverage.
-# Policy (docs/ci-policy.md): never run the full suite here -- measure only the
-# tests tied to the diff: changed test files plus unit tests that mention a
-# changed traigent module. New-code coverage is then real for the changed
-# lines; overall coverage on this analysis is partial by construction.
+# never runs tests. This step runs only for main-bound pushes (the Sonar step
+# below), and measures coverage with the FULL tests/unit suite, the same
+# command the hosted coverage lane runs. A changed-scope subset under-reports
+# new-code coverage (a release push once read ~22% from a subset where the full
+# suite measures ~90%), because the lines a subset never executes count as
+# uncovered. Develop-bound pushes never reach this step and keep the cheap
+# smoke tier above (docs/ci-policy.md). The 80% new-code threshold is unchanged.
+# Workers default to 4 (LOCAL_GATE_COVERAGE_WORKERS=0 forces a serial run).
 sonar_prepare_coverage() {
   rm -f coverage.xml
-  local f mod rc out sel_rc g_rc
-  local -a tests=() mods=()
-  # Capture selector output + status explicitly: `mapfile < <(...)` would hide a
-  # selector failure and look like "nothing selected".
-  out="$(changed_files 'tests/*.py')"; sel_rc=$?
-  if [[ "$sel_rc" -ne 0 ]]; then
-    echo "  ❌ changed-test selector failed (rc=$sel_rc): cannot decide which tests to measure"; FAIL=1; return 0
-  fi
-  mapfile -t tests < <(printf '%s\n' "$out" | grep -E '(^|/)test_[^/]*\.py$' | while read -r f; do [[ -f "$f" ]] && echo "$f"; done)
-  out="$(changed_files 'traigent/*.py')"; sel_rc=$?
-  if [[ "$sel_rc" -ne 0 ]]; then
-    echo "  ❌ changed-module selector failed (rc=$sel_rc): cannot decide which tests to measure"; FAIL=1; return 0
-  fi
-  mapfile -t mods < <(printf '%s\n' "$out" | while read -r f; do [[ -n "$f" && -f "$f" ]] && echo "$f"; done)
-  for f in "${mods[@]}"; do
-    mod="${f%.py}"; mod="${mod//\//.}"; mod="${mod%.__init__}"
-    out="$(grep -rlF --include='test_*.py' "$mod" tests/unit 2>/dev/null)"; g_rc=$?
-    if [[ "$g_rc" -gt 1 ]]; then
-      echo "  ❌ related-test search failed for $mod (grep rc=$g_rc)"; FAIL=1; return 0
-    fi
-    while IFS= read -r t; do [[ -n "$t" ]] && tests+=("$t"); done < <(printf '%s\n' "$out" | head -10)
-  done
-  mapfile -t tests < <(printf '%s\n' "${tests[@]}" | sed '/^$/d' | sort -u | head -60)
-  if [[ "${#tests[@]}" -eq 0 ]]; then
-    echo "  ⚠️  no changed tests / tests importing changed modules: coverage NOT MEASURED for this scan"
-    return 0
-  fi
+  local rc=0 workers="${LOCAL_GATE_COVERAGE_WORKERS:-4}" home_dir rcfile
   if [[ "${#PYTEST[@]}" -eq 0 ]]; then
-    echo "  ⚠️  pytest unavailable: coverage NOT MEASURED for this scan"
-    return 0
+    echo "  ❌ pytest unavailable: cannot measure coverage for the main-bound scan"; FAIL=1; return 0
   fi
+  # Fail closed on missing plugins: a silent serial or un-timed run would
+  # either take hours or hang the push.
+  local help_out; help_out="$(timeout -k 10 120 "${PYTEST[@]}" --help 2>/dev/null)"
+  local -a par=(-n 0)
+  if [[ "$workers" != "0" ]]; then par=(-n "$workers" --dist loadgroup); fi
+  if ! grep -q -- '--timeout' <<<"$help_out" || ! grep -q -- '--cov' <<<"$help_out" \
+     || { [[ "$workers" != "0" ]] && ! grep -q -- '--dist' <<<"$help_out"; }; then
+    echo "  ❌ pytest-timeout, pytest-cov and (unless LOCAL_GATE_COVERAGE_WORKERS=0) pytest-xdist are required"
+    echo "     for the main-bound coverage run: pip install pytest-timeout pytest-cov pytest-xdist"
+    FAIL=1; return 0
+  fi
+  # Fresh HOME: a developer's real ~/.traigent can hold tens of thousands of
+  # session files that make local runs hang, and a few tests assert the
+  # default ~/.traigent location, so redirect HOME rather than the results dir.
+  home_dir="$(mktemp -d "${TMPDIR:-/tmp}/lg-home.XXXXXX")"
   # relative_files => coverage.xml paths resolve inside the scanner container too.
-  local rcfile; rcfile="$(mktemp "${TMPDIR:-/tmp}/lg-covrc.XXXXXX")"
+  rcfile="$(mktemp "${TMPDIR:-/tmp}/lg-covrc.XXXXXX")"
   printf '[run]\nrelative_files = True\nsource = traigent\nomit =\n    */tests/*\n    */test_*\n    */demos/*\n    */docs/*\n' >"$rcfile"
-  echo "  • coverage for ${#tests[@]} test file(s) tied to the diff (not the full suite)"
-  rc=0
-  TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true PYTHONPATH=. \
-    "${GIT_ENV_CLEAR[@]}" "${PYTEST[@]}" -p no:asyncio-cooperative -q --tb=short -n 0 \
-    --cov=traigent --cov-config="$rcfile" --cov-report=xml:coverage.xml "${tests[@]}" || rc=$?
-  rm -f "$rcfile"
+  local pid=""
+  trap '[[ -n "$pid" ]] && { kill -TERM "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; }; rm -rf "$home_dir" "$rcfile"; trap - INT TERM; exit 130' INT TERM
+  echo "  • coverage with the FULL tests/unit suite (${par[*]}); this takes a while"
+  # Background + wait so an interrupt reaches the trap immediately and the
+  # whole run (timeout -> pytest) is stopped and reaped before cleanup.
+  TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true HOME="$home_dir" PYTHONPATH=. \
+    "${GIT_ENV_CLEAR[@]}" timeout -k 60 "${LOCAL_GATE_COVERAGE_TIMEOUT:-3600}" "${PYTEST[@]}" -p no:asyncio-cooperative -p no:cacheprovider -q --tb=short \
+    "${par[@]}" --timeout=30 \
+    --cov=traigent --cov-config="$rcfile" --cov-report=xml:coverage.xml tests/unit/ &
+  pid=$!
+  wait "$pid" || rc=$?
+  pid=""
+  rm -f "$rcfile"; rm -rf "$home_dir"; trap - INT TERM
   if [[ ! -s coverage.xml ]]; then
-    echo "  ⚠️  coverage.xml was not produced (pytest rc=$rc): coverage NOT MEASURED for this scan"
+    echo "  ❌ coverage.xml was not produced (pytest rc=$rc): coverage NOT MEASURED"; FAIL=1; return 0
   fi
   # pyproject sets no coverage fail-under, so a nonzero pytest rc is a real
-  # test failure (or collection error) in the selected tests: fail the gate.
+  # test failure (or collection error): fail the gate rather than scan a
+  # partial report.
   if [[ "$rc" -ne 0 ]]; then
-    echo "  ❌ selected tests FAILED (pytest rc=$rc): fix them; coverage.xml (if any) is PARTIAL"
+    echo "  ❌ unit suite FAILED (pytest rc=$rc): fix it; coverage.xml is PARTIAL"
     FAIL=1
-  elif [[ -s coverage.xml ]]; then
+  else
     echo "  ✅ coverage.xml written ($(wc -c <coverage.xml) bytes)"
   fi
 }
