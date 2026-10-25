@@ -30,6 +30,7 @@ from traigent.evaluation.dtos import (
     ScoreSource,
     TypedMeasureDTO,
 )
+from traigent.evaluation.target_filters import TargetFilters
 
 __all__ = [
     "EvaluationClient",
@@ -59,5 +60,6 @@ __all__ = [
     "ScoreRecordDTO",
     "ScoreRecordListResponse",
     "ScoreSource",
+    "TargetFilters",
     "TypedMeasureDTO",
 ]

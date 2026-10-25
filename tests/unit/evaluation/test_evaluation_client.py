@@ -124,7 +124,7 @@ def test_evaluation_client_lists_and_mutates_evaluators():
                     },
                 },
                 "sampling_rate": 1.0,
-                "target_filters": {"environment": "production"},
+                "target_filters": {"environment": ["production"]},
                 "is_active": True,
                 "measure": {
                     "id": "quality_score",
@@ -155,7 +155,7 @@ def test_evaluation_client_lists_and_mutates_evaluators():
         target_type=EvaluationTargetType.OBSERVABILITY_TRACE,
         judge_config=judge_config,
         description="Shared judge",
-        target_filters={"environment": "production"},
+        target_filters={"environment": ["production"]},
     )
     detail = client.get_evaluator("evaluator_1")
     updated = client.update_evaluator(
@@ -1276,3 +1276,90 @@ def test_evaluation_request_noop_without_opentelemetry(monkeypatch):
 
     req = captured["request"]
     assert _header_ci(req, "traceparent") is None
+
+
+_EVALUATOR_JUDGE = {"instructions": "Judge quality", "model_id": "gpt-4.1-mini"}
+
+
+def _create_with_filters(target_filters, calls=None):
+    def request_sender(method: str, path: str, payload: dict | None):
+        if calls is not None:
+            calls.append((method, path, payload))
+        return {"data": {"id": "e1", "target_type": "observability_trace"}}
+
+    client = EvaluationClient(request_sender=request_sender)
+    return client.create_evaluator(
+        name="Trace Judge",
+        measure_id="quality_score",
+        target_type=EvaluationTargetType.OBSERVABILITY_TRACE,
+        judge_config=_EVALUATOR_JUDGE,
+        target_filters=target_filters,
+    )
+
+
+def test_create_evaluator_target_filters_round_trip_to_payload():
+    calls: list = []
+    filters = {
+        "environment": ["production", "staging"],
+        "release": ["v1"],
+        "name": ["checkout"],
+        "tags": ["a", "b"],
+    }
+    _create_with_filters(filters, calls)
+    assert calls[0][2]["target_filters"] == filters
+
+
+def test_create_evaluator_target_filters_defaults_to_empty_object():
+    for value in (None, {}):
+        calls: list = []
+        _create_with_filters(value, calls)
+        assert calls[0][2]["target_filters"] == {}
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"status": ["ok"]},
+        {"environment": "production"},
+        {"environment": []},
+        {"environment": [""]},
+        {"environment": ["a", "a"]},
+        {"environment": [1]},
+        {"environment": ["x" * 65]},
+        {"tags": ["x" * 129]},
+        {"name": [f"n{i}" for i in range(21)]},
+    ],
+)
+def test_create_evaluator_rejects_invalid_target_filters(bad):
+    calls: list = []
+    with pytest.raises(ValueError, match="target_filters"):
+        _create_with_filters(bad, calls)
+    assert calls == []
+
+
+def test_target_filter_errors_do_not_echo_user_values():
+    canary = "Alice_has_diabetes"
+    for bad in (
+        {canary: ["x"]},
+        {"environment": canary},
+        {"environment": [canary, canary]},
+        {"environment": [canary * 10]},
+    ):
+        with pytest.raises(ValueError) as excinfo:
+            _create_with_filters(bad)
+        assert canary not in str(excinfo.value)
+
+
+def test_update_evaluator_validates_target_filters():
+    calls: list = []
+
+    def request_sender(method: str, path: str, payload: dict | None):
+        calls.append((method, path, payload))
+        return {"data": {"id": "e1", "target_type": "observability_trace"}}
+
+    client = EvaluationClient(request_sender=request_sender)
+    client.update_evaluator("e1", target_filters={"tags": ["a"]})
+    assert calls[0][2] == {"target_filters": {"tags": ["a"]}}
+    with pytest.raises(ValueError, match="target_filters"):
+        client.update_evaluator("e1", target_filters={"environment": "production"})
+    assert len(calls) == 1
