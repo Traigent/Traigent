@@ -203,6 +203,7 @@ class InteractiveOptimizer(BaseOptimizer):
         *,
         dataset: Any = None,
         dataset_id: str | None = None,
+        evaluator_code_digest: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize interactive optimizer.
@@ -266,6 +267,7 @@ class InteractiveOptimizer(BaseOptimizer):
         self.fingerprint_meta = fingerprint_meta
         self.dataset_id = dataset_id
         self.evaluator_definition_id = evaluator_definition_id
+        self.evaluator_code_digest = evaluator_code_digest
         self.task_type = task_type
         self.optimizer_ready_timeout = _resolve_optimizer_ready_timeout(
             optimizer_ready_timeout
@@ -316,6 +318,7 @@ class InteractiveOptimizer(BaseOptimizer):
                 fingerprint_meta=self.fingerprint_meta,
                 dataset_id=self.dataset_id,
                 evaluator_definition_id=self.evaluator_definition_id,
+                evaluator_code_digest=self.evaluator_code_digest,
                 task_type=self.task_type,
             )
 

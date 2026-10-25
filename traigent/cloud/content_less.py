@@ -84,6 +84,7 @@ LEGACY_TOP_LEVEL = (
     "evaluator_id",
     "evaluator_id_source",
     "evaluator_definition_id",
+    "evaluator_code_digest",
     "user_id",
     "billing_tier",
     "identity_version",

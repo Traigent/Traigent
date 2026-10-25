@@ -25,7 +25,10 @@ from typing import Any, Literal
 from traigent.api.types import TrialStatus as TrialStatus
 from traigent.cloud.smart_pruning import normalize_smart_pruning_options
 from traigent.evaluators.base import Dataset
-from traigent.utils.artifact_fingerprints import artifact_fingerprints_to_wire
+from traigent.utils.artifact_fingerprints import (
+    EVALUATOR_CODE_DIGEST_RE,
+    artifact_fingerprints_to_wire,
+)
 
 
 class OptimizationSessionStatus(Enum):
@@ -609,6 +612,19 @@ def session_identity_v2_to_wire(session_request: Any) -> dict[str, Any]:
     }
     if evaluator_id is not None:
         identity["evaluator_id"] = evaluator_id
+    else:
+        # Code evaluator identity (TraigentSchema evaluator_code_digest): typed
+        # v2 shape only, and only INSTEAD of every evaluator id alias -- an id
+        # could carry a customer label next to a code identity. evaluator_id_source
+        # is then "unknown" (set above), which the schema allows.
+        code_digest = getattr(session_request, "evaluator_code_digest", None)
+        if (
+            isinstance(code_digest, str)
+            and EVALUATOR_CODE_DIGEST_RE.fullmatch(code_digest)
+            and evaluator_id_source == "unknown"
+            and not getattr(session_request, "evaluator_ref", None)
+        ):
+            identity["evaluator_code_digest"] = code_digest
     return identity
 
 
@@ -681,6 +697,10 @@ class SessionCreationRequest:
     # ``optimize(content_less=..., agent_ref=..., environment=...)``. ``None`` = the
     # legacy request, byte for byte, unless TRAIGENT_CONTENT_LESS opts the process in.
     content_less: Any = None
+    # ecd1 digest of the user-code scorer that actually runs (wire form
+    # ``sha256:<64 hex>``); see ``effective_evaluator_code_identity``. Identifies,
+    # never validates. Typed/v2 shape only; content-less drops it.
+    evaluator_code_digest: str | None = None
 
     def __post_init__(self) -> None:
         """Handle default values and alternative parameter names."""
@@ -729,6 +749,11 @@ class SessionCreationRequest:
                     "evaluator_id_source unknown cannot be used with an evaluator id"
                 )
             self.evaluator_id_source = self.evaluator_id_source or "registered"
+        if self.evaluator_code_digest is not None and not (
+            isinstance(self.evaluator_code_digest, str)
+            and EVALUATOR_CODE_DIGEST_RE.fullmatch(self.evaluator_code_digest)
+        ):
+            raise ValueError("evaluator_code_digest must be sha256:<64 lowercase hex>")
         self.dataset_id = normalize_declared_dataset_id(self.dataset_id)
         if self.function_name is None:
             self.function_name = "test_function"
