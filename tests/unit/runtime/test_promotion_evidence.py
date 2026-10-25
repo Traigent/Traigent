@@ -385,7 +385,7 @@ def test_deploy_refuses_a_grant_bound_to_a_candidate_that_was_not_promoted(
             ).run_promoted(
                 deploy_ref,
                 result,
-                candidate_fingerprint=canonical_digest({"x": 2}),
+                candidate_fingerprint=candidate_fingerprint({"x": 2}),
                 configs=reporter.configs,
                 grant_ref=b.attempts[deploy_ref]["grant_ref"],
                 best_config_id="answer",
@@ -499,20 +499,20 @@ def test_the_fake_backend_refuses_a_publication_whose_spec_does_not_match_the_fi
         getattr(err.value, "code", "") == "deploy_binding_mismatch"
     )  # caught before any write
     assert b.requests_of("publishTvlDeployResult") == [] and b.head.generation == 3
-    # Bypassing the client-side check, the Backend still recomputes and refuses.
+    # Bypassing the client-side check, the Backend still recomputes from the stored
+    # best-config version it holds (the publish names it by id+version) and refuses.
     from traigent.runtime.deploy import DeployHold
 
+    b.add_best_config("answer", 1, tampered[winner["fingerprint"]])
     with pytest.raises(DeployHold) as hold:
         asyncio.run(
             DeployController(
                 promo.client, state_dir=promo.state, clock=promo.clock
             ).run(
                 deploy_ref,
-                spec={
-                    "schema_version": "traigent.best_config.v1",
-                    "config_id": "answer",
-                    "config": tampered[winner["fingerprint"]],
-                },
+                grant_ref=b.attempts[deploy_ref]["grant_ref"],
+                best_config_id="answer",
+                version=1,
                 candidate_fingerprint=winner["fingerprint"],
                 gate_result_digest=winner["gate_result_digest"],
             )
