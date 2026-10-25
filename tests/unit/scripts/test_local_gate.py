@@ -50,6 +50,10 @@ def _make_gate_repo(tmp_path: Path) -> tuple[Path, Path]:
         "printf '%s|%s|%s|%s\\n' \"${TRAIGENT_MOCK_LLM:-}\" "
         '"${TRAIGENT_OFFLINE_MODE:-}" "${PYTHONPATH:-}" "$*" '
         '>> "$FAKE_PYTEST_LOG"\n'
+        'if [[ " $* " == *" --help "* ]]; then echo "  --dist=DISTMODE"; exit 0; fi\n'
+        'for a in "$@"; do\n'
+        '  [[ "$a" == --cov-report=xml:* ]] && echo "<coverage/>" > "${a#--cov-report=xml:}"\n'
+        "done\n"
         'if [[ " $* " == *" --collect-only "* ]]; then\n'
         '  exit "${FAKE_COLLECTION_RC:-0}"\n'
         "fi\n"
@@ -468,7 +472,11 @@ def test_local_gate_pytest_steps_clear_git_hook_environment(tmp_path: Path) -> N
     # in its environment (collect-only still succeeds).
     probe = (
         "#!/usr/bin/env bash\n"
+        'if [[ " $* " == *" --help "* ]]; then echo "  --dist=DISTMODE"; exit 0; fi\n'
         'echo "run:$*" >> "$FAKE_GIT_ENV_LOG"\n'
+        'for a in "$@"; do\n'
+        '  [[ "$a" == --cov-report=xml:* ]] && echo "<coverage/>" > "${a#--cov-report=xml:}"\n'
+        "done\n"
         "for v in $(git rev-parse --local-env-vars); do\n"
         '  if [[ -n "${!v+x}" ]]; then echo "LEAK:$v" >> "$FAKE_GIT_ENV_LOG"; fi\n'
         "done\n"
@@ -521,3 +529,16 @@ def test_local_gate_pytest_steps_clear_git_hook_environment(tmp_path: Path) -> N
     assert any("--cov=traigent" in line for line in log), log
     assert any(line.startswith("run:") and "--cov" not in line for line in log), log
     assert [line for line in log if line.startswith("LEAK:")] == []
+
+
+def test_local_gate_main_bound_coverage_runs_full_unit_suite(tmp_path: Path) -> None:
+    """Main-bound coverage must measure the whole unit suite, not a subset."""
+    _, _, _ = _run_sonar_gate(tmp_path, with_docker=True)
+    log = (tmp_path / "pytest.log").read_text(encoding="utf-8").splitlines()
+    cov = [line for line in log if "--cov=traigent" in line]
+    assert len(cov) == 1, log
+    assert "tests/unit/" in cov[0]
+    assert "test_changed.py" not in cov[0]
+    assert "--timeout=30" in cov[0]
+    assert "-p no:cacheprovider" in cov[0]
+    assert cov[0].startswith("true|true|")
