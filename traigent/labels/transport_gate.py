@@ -378,12 +378,40 @@ def _known_traigent_origins() -> set[str]:
     for scheme, host, port in backend_origins():
         shown = f"[{host}]" if ":" in host else host
         known.add(oo_egress.normalised_origin(f"{scheme}://{shown}:{port}"))
+    # The built-in defaults stay known even when another backend is configured (the
+    # configuration accessors REPLACE the default, they do not add to it).
+    from traigent.config.backend_config import DEFAULT_CLOUD_URL, DEFAULT_LOCAL_URL
+
+    known.update(
+        oo_egress.normalised_origin(u) for u in (DEFAULT_CLOUD_URL, DEFAULT_LOCAL_URL)
+    )
     return known
 
 
+def _is_traigent_host(url: Any) -> bool:
+    """``traigent.ai`` and every subdomain (portal-*, api-*, staging, dev ...)."""
+    try:
+        host = (urlsplit(str(url)).hostname or "").lower().rstrip(".")
+    except ValueError:
+        return False
+    return host == "traigent.ai" or host.endswith(".traigent.ai")
+
+
 def _refuse_external_to_traigent(url: Any) -> None:
-    if oo_egress.normalised_origin(url) in _known_traigent_origins():
+    if _is_traigent_host(url) or oo_egress.normalised_origin(url) in (
+        _known_traigent_origins()
+    ):
         raise oo_egress.OptimizationOnlyRefusal("external_session_to_traigent_origin")
+
+
+def _drop_content_length(headers: Any) -> Any:
+    """Copy of ``headers`` without any caller-set Content-Length (the body was replaced)."""
+    try:
+        return {
+            k: v for k, v in dict(headers).items() if str(k).lower() != "content-length"
+        }
+    except (TypeError, ValueError):
+        return headers
 
 
 def enforce_optimization_only(
@@ -480,6 +508,16 @@ class GatedOpenerDirector(urllib.request.OpenerDirector):
             )
             if replacement is not None:
                 fullurl.data = replacement
+                for key in [
+                    k for k in fullurl.headers if k.lower() == "content-length"
+                ]:
+                    del fullurl.headers[key]
+                for key in [
+                    k
+                    for k in fullurl.unredirected_hdrs
+                    if k.lower() == "content-length"
+                ]:
+                    del fullurl.unredirected_hdrs[key]
                 fullurl.add_unredirected_header("Content-length", str(len(replacement)))
                 data = None
         else:
@@ -539,6 +577,8 @@ def _build_aiohttp(base: type) -> type:
             )
             if replacement is not None and kwargs.get("json") is None:
                 kwargs["data"] = replacement  # send exactly what was judged
+                if kwargs.get("headers"):
+                    kwargs["headers"] = _drop_content_length(kwargs["headers"])
             extra = _instance_origins(self)
             body: bytes | None = None
             unreadable = False

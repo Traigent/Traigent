@@ -371,3 +371,112 @@ def test_a_latch_on_the_expanded_ipv6_form_blocks_the_compressed_form() -> None:
                 headers=HEADERS,
             )
     assert cap.requests == []
+
+
+# ------------------------------------------------------------------- round 6
+
+
+def test_default_traigent_cloud_origin_stays_known_when_another_backend_is_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review 6 / P1: configuring a backend must not make portal.traigent.ai a 'customer' host."""
+    from traigent.hybrid.http_transport import HTTPTransport
+    from traigent.hybrid.protocol import HybridExecuteRequest
+    from traigent.labels.transport_gate import _known_traigent_origins
+
+    monkeypatch.setenv(oo.ENV_VAR, "1")
+    monkeypatch.setenv("TRAIGENT_BACKEND_URL", BACKEND_URL)
+    assert "https://portal.traigent.ai" in _known_traigent_origins()
+    request = HybridExecuteRequest(
+        tunable_id="t",
+        config={"m": "a"},
+        examples=[{"example_id": "e1", "input": "Alice has diabetes"}],
+    )
+
+    async def go() -> None:
+        transport = HTTPTransport("https://portal.traigent.ai")
+        try:
+            await transport.execute(request)
+        finally:
+            await transport.close()
+
+    with capture_egress() as cap:
+        with pytest.raises(Exception):  # noqa: B017 - refusal, possibly wrapped
+            asyncio.run(go())
+    assert cap.requests == []
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://api-dev.traigent.ai/x",
+        "https://portal-staging.traigent.ai/x",
+        "https://traigent.ai/x",
+    ],
+)
+def test_every_traigent_host_is_refused_for_external_sessions(
+    monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    import httpx
+
+    from traigent.labels.transport_gate import gate_session
+
+    monkeypatch.setenv(oo.ENV_VAR, "1")
+    with capture_egress() as cap:
+        with pytest.raises(oo.OptimizationOnlyRefusal):
+            gate_session(httpx.Client(), external=True).post(url, json={"a": 1})
+    assert cap.requests == []
+
+
+@pytest.mark.parametrize("kind", ["aiohttp", "requests", "httpx", "urllib"])
+def test_a_caller_set_content_length_is_corrected_when_the_body_is_replaced(
+    monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    monkeypatch.setenv(oo.ENV_VAR, "1")
+    raw = b'{ "reason": "sdk_explicit_finalization",\n  "metadata": {} }'
+    canonical = b'{"reason":"sdk_explicit_finalization","metadata":{}}'
+    bad = {**HEADERS, "Content-Length": str(len(raw))}
+    url = f"{API}/sessions/s1/finalize"
+    with capture_egress() as cap:
+        if kind == "aiohttp":
+            import aiohttp
+
+            from traigent.labels.transport_gate import gate_session
+
+            async def go() -> None:
+                async with gate_session(
+                    aiohttp.ClientSession(), origins=[BACKEND_URL]
+                ) as s:
+                    async with s.post(url, data=raw, headers=bad):
+                        pass
+
+            asyncio.run(go())
+        elif kind == "requests":
+            import requests
+
+            from traigent.labels.transport_gate import gate_session
+
+            gate_session(requests.Session(), origins=[BACKEND_URL]).post(
+                url, data=raw, headers=bad
+            )
+        elif kind == "httpx":
+            import httpx
+
+            from traigent.labels.transport_gate import gate_session
+
+            gate_session(httpx.Client(), origins=[BACKEND_URL]).post(
+                url, content=raw, headers=bad
+            )
+        else:
+            import urllib.request
+
+            from traigent.cloud.url_security import build_no_redirect_opener
+
+            build_no_redirect_opener().open(
+                urllib.request.Request(url, data=raw, headers=bad, method="POST"),
+                timeout=2,
+            )
+    (post,) = [r for r in cap.requests if r.path.endswith("/finalize")]
+    assert post.body == canonical
+    lengths = [v for k, v in post.headers if k.lower() == "content-length"]
+    assert lengths in ([], [str(len(canonical))]), lengths
