@@ -120,7 +120,7 @@ def test_unit_and_agent_only_when_strings(captured):
     assert captured[-1][1] == {"values": [1], "default": None}
 
 
-def test_explicit_enum_resolved_kind_currently_fails_with_unbound_local(captured):
-    # Pins today's behaviour for a literal kind of "enum_resolved".
-    with pytest.raises(UnboundLocalError):
+def test_explicit_enum_resolved_kind_is_unsupported(captured):
+    # A literal "enum_resolved" kind used to raise UnboundLocalError.
+    with pytest.raises(ValueError, match="unsupported domain kind .enum_resolved."):
         _go({"domain": {"kind": "enum_resolved", "values": [1]}})

@@ -318,6 +318,62 @@ class ConfigSpace:
             tvars[name] = cls._spec_entry_to_range(name, entry)
         return tvars
 
+    @staticmethod
+    def _canonical_values_spec(
+        name: str,
+        domain: Mapping[str, Any],
+        entry: Mapping[str, Any],
+        key: str,
+        label: str,
+    ) -> dict[str, Any] | None:
+        """Spec dict for a canonical ``set``/``values`` domain, else ``None``."""
+        if key not in domain:
+            return None
+        members = domain.get(key)
+        if not isinstance(members, list):
+            raise ValueError(f"TVAR '{name}' {label} domain must contain a list")
+        return {"values": list(members), "default": entry.get("default")}
+
+    @classmethod
+    def _mapping_domain_to_spec_dict(
+        cls,
+        name: str,
+        domain: Mapping[str, Any],
+        entry: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Convert a TVL mapping-form domain into a ``_dict_to_range`` spec."""
+        kind = domain.get("kind")
+        if kind is None:
+            # canonical TVL mapping forms have no 'kind' discriminator
+            if "range" in domain:
+                kind = "range"
+            else:
+                for key in ("set", "values"):
+                    canonical = cls._canonical_values_spec(
+                        name, domain, entry, key, key
+                    )
+                    if canonical is not None:
+                        return canonical
+        if kind == "enum":
+            return {
+                "values": list(domain.get("values", [])),
+                "default": entry.get("default"),
+            }
+        if kind == "range":
+            range_values = domain.get("range")
+            if not isinstance(range_values, list) or len(range_values) != 2:
+                raise ValueError(
+                    f"TVAR '{name}' range domain must contain a 2-item list"
+                )
+            return {
+                "low": range_values[0],
+                "high": range_values[1],
+                "step": domain.get("resolution"),
+                "log": bool(domain.get("log", False)),
+                "default": entry.get("default"),
+            }
+        raise ValueError(f"TVAR '{name}' has unsupported domain kind '{kind}'")
+
     @classmethod
     def _spec_entry_to_range(
         cls, name: str, entry: Mapping[str, Any]
@@ -330,55 +386,7 @@ class ConfigSpace:
                 "default": entry.get("default"),
             }
         elif isinstance(domain, Mapping):
-            kind = domain.get("kind")
-            if kind is None:
-                # canonical TVL mapping forms have no 'kind' discriminator
-                if "range" in domain:
-                    kind = "range"
-                elif "set" in domain:
-                    set_values = domain.get("set")
-                    if not isinstance(set_values, list):
-                        raise ValueError(
-                            f"TVAR '{name}' set domain must contain a list"
-                        )
-                    spec_dict = {
-                        "values": list(set_values),
-                        "default": entry.get("default"),
-                    }
-                    kind = "enum_resolved"
-                elif "values" in domain:
-                    enum_values = domain.get("values")
-                    if not isinstance(enum_values, list):
-                        raise ValueError(
-                            f"TVAR '{name}' values domain must contain a list"
-                        )
-                    spec_dict = {
-                        "values": list(enum_values),
-                        "default": entry.get("default"),
-                    }
-                    kind = "enum_resolved"
-            if kind == "enum_resolved":
-                pass  # spec_dict already built from canonical set/values form
-            elif kind == "enum":
-                spec_dict = {
-                    "values": list(domain.get("values", [])),
-                    "default": entry.get("default"),
-                }
-            elif kind == "range":
-                range_values = domain.get("range")
-                if not isinstance(range_values, list) or len(range_values) != 2:
-                    raise ValueError(
-                        f"TVAR '{name}' range domain must contain a 2-item list"
-                    )
-                spec_dict = {
-                    "low": range_values[0],
-                    "high": range_values[1],
-                    "step": domain.get("resolution"),
-                    "log": bool(domain.get("log", False)),
-                    "default": entry.get("default"),
-                }
-            else:
-                raise ValueError(f"TVAR '{name}' has unsupported domain kind '{kind}'")
+            spec_dict = cls._mapping_domain_to_spec_dict(name, domain, entry)
         else:
             raise ValueError(f"TVAR '{name}' domain must be a list or mapping")
 
