@@ -714,6 +714,48 @@ class HybridAPIEvaluator(BaseEvaluator):
         normalized, _ = cls._normalize_example_metrics_with_path(metrics)
         return normalized
 
+    def _collect_quality_metric_values(
+        self,
+        result: HybridExampleResult,
+        metric_values: dict[str, list[float]],
+        accuracy_values: list[float],
+    ) -> None:
+        """Add one successful example's quality metrics to the running lists."""
+        per_example_accuracy = self._derive_accuracy_from_metrics(result.metrics)
+        if per_example_accuracy is not None:
+            accuracy_values.append(float(per_example_accuracy))
+
+        for metric_name, value in result.metrics.items():
+            # Same reservation as the primary aggregator: `setdefault`
+            # below would otherwise hand the payload's key priority over
+            # the computed one.
+            if metric_name in _TRAIGENT_COMPUTED_METRIC_KEYS:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            metric_values.setdefault(metric_name, []).append(float(value))
+
+    def _add_computed_summary_metrics(
+        self,
+        metric_values: dict[str, list[float]],
+        *,
+        results: list[HybridExampleResult],
+        cost_values: list[float],
+        latency_values: list[float],
+        success_values: list[float],
+    ) -> None:
+        """Add Traigent-computed cost/latency/success/score series (no overwrite)."""
+        if cost_values and not self._results_cost_unknown(results):
+            metric_values.setdefault("cost", cost_values)
+            metric_values.setdefault("total_cost", cost_values)
+        if latency_values:
+            metric_values.setdefault("latency", latency_values)
+            metric_values.setdefault("response_time_ms", latency_values)
+        if success_values:
+            metric_values.setdefault("success_rate", success_values)
+        if "score" not in metric_values and "accuracy" in metric_values:
+            metric_values["score"] = list(metric_values["accuracy"])
+
     def _build_summary_stats(
         self,
         results: list[HybridExampleResult],
@@ -751,34 +793,17 @@ class HybridAPIEvaluator(BaseEvaluator):
             if not result.success:
                 continue
 
-            per_example_accuracy = self._derive_accuracy_from_metrics(result.metrics)
-            if per_example_accuracy is not None:
-                accuracy_values.append(float(per_example_accuracy))
-
-            for metric_name, value in result.metrics.items():
-                # Same reservation as the primary aggregator: `setdefault`
-                # below would otherwise hand the payload's key priority over
-                # the computed one.
-                if metric_name in _TRAIGENT_COMPUTED_METRIC_KEYS:
-                    continue
-                if isinstance(value, bool):
-                    continue
-                if not isinstance(value, (int, float)):
-                    continue
-                metric_values.setdefault(metric_name, []).append(float(value))
+            self._collect_quality_metric_values(result, metric_values, accuracy_values)
 
         if accuracy_values and "accuracy" not in metric_values:
             metric_values["accuracy"] = accuracy_values
-        if cost_values and not self._results_cost_unknown(results):
-            metric_values.setdefault("cost", cost_values)
-            metric_values.setdefault("total_cost", cost_values)
-        if latency_values:
-            metric_values.setdefault("latency", latency_values)
-            metric_values.setdefault("response_time_ms", latency_values)
-        if success_values:
-            metric_values.setdefault("success_rate", success_values)
-        if "score" not in metric_values and "accuracy" in metric_values:
-            metric_values["score"] = list(metric_values["accuracy"])
+        self._add_computed_summary_metrics(
+            metric_values,
+            results=results,
+            cost_values=cost_values,
+            latency_values=latency_values,
+            success_values=success_values,
+        )
 
         summary_metrics = {
             metric_name: self._compute_describe_stats(values)
