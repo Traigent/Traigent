@@ -1087,7 +1087,8 @@ class _Candidate:
     key: VoteKey
 
 
-def _collect_candidates(
+def _collect_sampling_candidates(
+    cardinality: str,
     body: EnsembleBody,
     stages: Mapping[str, StageEntry],
     registry: Mapping[str, CompositeNode],
@@ -1096,51 +1097,55 @@ def _collect_candidates(
     signals: Mapping[str, Callable[..., Any]],
     predicates: Mapping[str, Callable[..., Any]],
 ) -> tuple[list[_Candidate], int]:
-    """Run the ensemble arms and collect candidate outputs (§3.2).
-
-    Sampling form (``|arms| = 1``): the single arm runs ``k`` times (``k`` the
-    resolved cardinality). Committee form (``|arms| > 1``): each arm runs once;
-    a committee arm yielding ``no_accept`` is EXCLUDED from the vote (§3.2.1),
-    an arm error propagates (absorbing). Returns the surviving candidates and
-    the count excluded BY ``no_accept`` (NOT by error — error already raised).
-    """
+    """Sampling form (``|arms| = 1``): run the single arm ``k`` times."""
     excluded_no_accept = 0
-    if body.cardinality is not None:  # sampling form
-        k = _resolve_cardinality(body.cardinality, config, calibrated_values)
-        arm = body.arms[0]
-        if isinstance(arm, StageArm):
-            runner = _coerce_stage_runner(stages[arm.name])
-            samples = list(runner.run(config))
-            key_fn = runner.key_fn or (lambda x: x)
-            candidates = [_Candidate(output=s, key=key_fn(s)) for s in samples]
-            # Sampling over a stage produces k outputs; cap the declared vote
-            # denominator at k so margins never exceed 1 (the vote_over contract).
-            if len(candidates) != k:
-                raise ValueError(
-                    f"sampling ensemble arm {arm.name!r} declared k={k} "
-                    f"but produced {len(candidates)} samples"
-                )
-            return candidates, excluded_no_accept
-        # F2: a single-arm SAMPLING ensemble over a nested COMPOSITE runs that
-        # composite k times — each run is ONE candidate (keyed by its output via
-        # the nested run's own selection semantics). A nested error is absorbing;
-        # a nested no_accept excludes that draw (§3.2.1).
-        node = registry[arm.ref]
-        sampled: list[_Candidate] = []
-        for _draw in range(k):
-            inner = _execute_node(
-                node, stages, registry, config, calibrated_values, signals, predicates
+    k = _resolve_cardinality(cardinality, config, calibrated_values)
+    arm = body.arms[0]
+    if isinstance(arm, StageArm):
+        runner = _coerce_stage_runner(stages[arm.name])
+        samples = list(runner.run(config))
+        key_fn = runner.key_fn or (lambda x: x)
+        candidates = [_Candidate(output=s, key=key_fn(s)) for s in samples]
+        # Sampling over a stage produces k outputs; cap the declared vote
+        # denominator at k so margins never exceed 1 (the vote_over contract).
+        if len(candidates) != k:
+            raise ValueError(
+                f"sampling ensemble arm {arm.name!r} declared k={k} "
+                f"but produced {len(candidates)} samples"
             )
-            if inner.result_kind is ResultKind.ERROR:
-                raise RuntimeError(
-                    f"sampling ensemble arm {arm.ref!r} failed: {inner.error}"
-                )
-            if inner.result_kind is ResultKind.NO_ACCEPT:
-                excluded_no_accept += 1
-                continue
-            sampled.append(_Candidate(output=inner.output, key=inner.output))
-        return sampled, excluded_no_accept
+        return candidates, excluded_no_accept
+    # F2: a single-arm SAMPLING ensemble over a nested COMPOSITE runs that
+    # composite k times — each run is ONE candidate (keyed by its output via
+    # the nested run's own selection semantics). A nested error is absorbing;
+    # a nested no_accept excludes that draw (§3.2.1).
+    node = registry[arm.ref]
+    sampled: list[_Candidate] = []
+    for _draw in range(k):
+        inner = _execute_node(
+            node, stages, registry, config, calibrated_values, signals, predicates
+        )
+        if inner.result_kind is ResultKind.ERROR:
+            raise RuntimeError(
+                f"sampling ensemble arm {arm.ref!r} failed: {inner.error}"
+            )
+        if inner.result_kind is ResultKind.NO_ACCEPT:
+            excluded_no_accept += 1
+            continue
+        sampled.append(_Candidate(output=inner.output, key=inner.output))
+    return sampled, excluded_no_accept
 
+
+def _collect_committee_candidates(
+    body: EnsembleBody,
+    stages: Mapping[str, StageEntry],
+    registry: Mapping[str, CompositeNode],
+    config: Mapping[str, Any],
+    calibrated_values: Mapping[str, float | int],
+    signals: Mapping[str, Callable[..., Any]],
+    predicates: Mapping[str, Callable[..., Any]],
+) -> tuple[list[_Candidate], int]:
+    """Committee form (``|arms| > 1``): each arm runs once (§3.2.1)."""
+    excluded_no_accept = 0
     candidates = []  # committee form
     for arm in body.arms:
         if isinstance(arm, StageArm):
@@ -1183,6 +1188,29 @@ def _collect_candidates(
                 continue
             candidates.append(_Candidate(output=inner.output, key=inner.output))
     return candidates, excluded_no_accept
+
+
+def _collect_candidates(
+    body: EnsembleBody,
+    stages: Mapping[str, StageEntry],
+    registry: Mapping[str, CompositeNode],
+    config: Mapping[str, Any],
+    calibrated_values: Mapping[str, float | int],
+    signals: Mapping[str, Callable[..., Any]],
+    predicates: Mapping[str, Callable[..., Any]],
+) -> tuple[list[_Candidate], int]:
+    """Run the ensemble arms and collect candidate outputs (§3.2).
+
+    Sampling form (``|arms| = 1``): the single arm runs ``k`` times (``k`` the
+    resolved cardinality). Committee form (``|arms| > 1``): each arm runs once;
+    a committee arm yielding ``no_accept`` is EXCLUDED from the vote (§3.2.1),
+    an arm error propagates (absorbing). Returns the surviving candidates and
+    the count excluded BY ``no_accept`` (NOT by error — error already raised).
+    """
+    args = (body, stages, registry, config, calibrated_values, signals, predicates)
+    if body.cardinality is not None:  # sampling form
+        return _collect_sampling_candidates(body.cardinality, *args)
+    return _collect_committee_candidates(*args)
 
 
 def _majority_vote(candidates: Sequence[_Candidate]) -> tuple[Any, VoteStats]:
