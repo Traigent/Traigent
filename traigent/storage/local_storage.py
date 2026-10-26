@@ -587,6 +587,22 @@ class LocalStorageManager:
 
         return "score"
 
+    @staticmethod
+    def _find_objective_definition(
+        schema: Any, primary_objective: str
+    ) -> dict[str, Any] | None:
+        """First schema objective definition named ``primary_objective``."""
+        definitions = schema.get("objectives") if isinstance(schema, dict) else None
+        if not isinstance(definitions, list):
+            return None
+        for definition in definitions:
+            if (
+                isinstance(definition, dict)
+                and definition.get("name") == primary_objective
+            ):
+                return definition
+        return None
+
     def _resolve_primary_objective_orientation(
         self,
         optimization_config: dict[str, Any | None] | None,
@@ -595,16 +611,12 @@ class LocalStorageManager:
         if not isinstance(optimization_config, dict):
             return "maximize" if primary_objective == "score" else None
         schema = optimization_config.get("objective_schema")
-        if isinstance(schema, dict):
-            definitions = schema.get("objectives")
-            if isinstance(definitions, list):
-                for definition in definitions:
-                    if (
-                        isinstance(definition, dict)
-                        and definition.get("name") == primary_objective
-                    ):
-                        orientation = definition.get("orientation")
-                        return str(orientation) if orientation is not None else None
+        definition = LocalStorageManager._find_objective_definition(
+            schema, primary_objective
+        )
+        if definition is not None:
+            orientation = definition.get("orientation")
+            return str(orientation) if orientation is not None else None
         orientations = optimization_config.get("objective_orientations")
         if isinstance(orientations, dict) and primary_objective in orientations:
             return str(orientations[primary_objective])
