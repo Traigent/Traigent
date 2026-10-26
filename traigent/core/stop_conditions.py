@@ -738,19 +738,7 @@ class SemanticSaturationStopCondition(StopCondition):
         if self._config.example_score_metrics is not None:
             return self._config.example_score_metrics
 
-        values_by_metric: dict[str, list[float]] = {}
-        for trial in trials:
-            for result in self._example_results_for_trial(trial):
-                metrics = self._read_example_metrics(result)
-                if not isinstance(metrics, Mapping):
-                    continue
-                for metric_name, raw_value in metrics.items():
-                    if not isinstance(metric_name, str):
-                        continue
-                    value = _coerce_numeric_or_bool(raw_value)
-                    if value is None:
-                        continue
-                    values_by_metric.setdefault(metric_name, []).append(value)
+        values_by_metric = self._collect_example_metric_values(trials)
 
         selected: list[str] = []
         for metric_name in sorted(values_by_metric):
@@ -760,6 +748,29 @@ class SemanticSaturationStopCondition(StopCondition):
             if _looks_like_quality_metric(metric_name) or self._all_binary(values):
                 selected.append(metric_name)
         return tuple(selected)
+
+    def _collect_example_metric_values(
+        self, trials: Sequence[TrialResult]
+    ) -> dict[str, list[float]]:
+        values_by_metric: dict[str, list[float]] = {}
+        for trial in trials:
+            for result in self._example_results_for_trial(trial):
+                for metric_name, value in self._numeric_example_metrics(result):
+                    values_by_metric.setdefault(metric_name, []).append(value)
+        return values_by_metric
+
+    def _numeric_example_metrics(self, result: Any) -> list[tuple[str, float]]:
+        metrics = self._read_example_metrics(result)
+        if not isinstance(metrics, Mapping):
+            return []
+        pairs: list[tuple[str, float]] = []
+        for metric_name, raw_value in metrics.items():
+            if not isinstance(metric_name, str):
+                continue
+            value = _coerce_numeric_or_bool(raw_value)
+            if value is not None:
+                pairs.append((metric_name, value))
+        return pairs
 
     @staticmethod
     def _all_binary(values: Sequence[float]) -> bool:
@@ -778,20 +789,30 @@ class SemanticSaturationStopCondition(StopCondition):
                 if metric not in quality_metric_set
             )
 
-        objective_names: list[str] = []
         if self._schema is not None:
-            for objective in self._schema.objectives:
-                name = objective.name
-                if name in quality_metric_set:
-                    continue
-                if _looks_like_quality_metric(
-                    name
-                ) and not _looks_like_continuous_metric(name):
-                    continue
-                objective_names.append(name)
+            objective_names = self._schema_continuous_objectives(quality_metric_set)
             if objective_names:
                 return tuple(objective_names)
 
+        return self._trial_continuous_objectives(trials, quality_metric_set)
+
+    def _schema_continuous_objectives(self, quality_metric_set: set[str]) -> list[str]:
+        objective_names: list[str] = []
+        for objective in self._schema.objectives:  # type: ignore[union-attr]
+            name = objective.name
+            if name in quality_metric_set:
+                continue
+            if _looks_like_quality_metric(name) and not _looks_like_continuous_metric(
+                name
+            ):
+                continue
+            objective_names.append(name)
+        return objective_names
+
+    @staticmethod
+    def _trial_continuous_objectives(
+        trials: Sequence[TrialResult], quality_metric_set: set[str]
+    ) -> tuple[str, ...]:
         aggregate_metric_names: set[str] = set()
         for trial in trials:
             for metric_name, raw_value in (trial.metrics or {}).items():
