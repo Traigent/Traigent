@@ -9,15 +9,16 @@ Extracted from AuthManager to follow Single Responsibility Principle.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from traigent.labels.transport_gate import gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.core.constants import MAX_RETRIES
+from traigent.labels.transport_gate import gate_session
 
 if TYPE_CHECKING:
     from traigent.cloud.auth import (
@@ -404,11 +405,13 @@ class TokenManager:
                     error_message="Token refresh returned no data",
                 )
 
-            self.store_tokens(token_data)
+            # Latch BEFORE committing: the callback refuses (raises) on a flagged manager
+            # that cannot latch, and then neither credentials nor the secure store change.
             updated_credentials = self.build_credentials_from_token_data(token_data)
 
             if self._set_credentials_fn:
                 self._set_credentials_fn(updated_credentials, AuthStatus.AUTHENTICATED)
+            self.store_tokens(token_data)
 
             if self.config.auto_refresh and updated_credentials.refresh_token:
                 self.schedule_refresh(updated_credentials)
@@ -459,10 +462,17 @@ class TokenManager:
     ) -> AuthResult:
         from traigent.cloud.auth import AuthResult, AuthStatus
 
-        credentials.jwt_token = token_data["access_token"]
-        if "refresh_token" in token_data:
-            credentials.refresh_token = token_data["refresh_token"]
-        credentials.expires_at = time.time() + token_data.get("expires_in", 3600)
+        # Build a fresh candidate: ``credentials`` aliases the manager's stored object, which
+        # must stay untouched unless the latch-aware setter accepts the new token.
+        candidate = dataclasses.replace(
+            credentials,
+            scopes=list(credentials.scopes),
+            metadata=dict(credentials.metadata),
+            jwt_token=token_data["access_token"],
+            refresh_token=token_data.get("refresh_token", credentials.refresh_token),
+            expires_at=time.time() + token_data.get("expires_in", 3600),
+        )
+        credentials = candidate
 
         if self._set_credentials_fn:
             self._set_credentials_fn(credentials, AuthStatus.AUTHENTICATED)

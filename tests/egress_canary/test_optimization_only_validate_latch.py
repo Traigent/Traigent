@@ -376,3 +376,126 @@ def test_unflagged_manager_ignores_latch_failure(
     creds = AuthCredentials(mode=AuthMode.JWT_TOKEN, jwt_token="jwt.ok.sig")
     auth._set_credentials_and_status(creds, AuthStatus.AUTHENTICATED)
     assert auth._credentials is creds
+
+
+# ---- refreshed tokens are latched BEFORE they are committed -----------------------------
+
+NEW_JWT = "eyJhbGciOiJIUzI1NiJ9." + "n" * 40 + "." + "s" * 20
+OLD_JWT = "eyJhbGciOiJIUzI1NiJ9." + "o" * 40 + "." + "s" * 20
+OLD_REFRESH = "refresh-old-0123456789"
+
+
+def _refresh_ready(auth: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Store an OLD token + refresh token and make the refresh transport return a NEW one."""
+    from traigent.cloud.auth import AuthCredentials, AuthMode, AuthStatus
+
+    tm = auth._token_manager
+    tm.store_tokens({"access_token": OLD_JWT, "refresh_token": OLD_REFRESH})
+    auth._set_credentials_and_status(
+        AuthCredentials(
+            mode=AuthMode.OAUTH2,
+            jwt_token=OLD_JWT,
+            refresh_token=OLD_REFRESH,
+            client_id="cid",
+            client_secret="csecret",  # pragma: allowlist secret
+        ),
+        AuthStatus.AUTHENTICATED,
+    )
+
+    async def _fake_refresh(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {
+            "access_token": NEW_JWT,
+            "refresh_token": "refresh-new-0123456789",
+            "expires_in": 3600,
+        }
+
+    monkeypatch.setattr(
+        "traigent.cloud.resilient_client.ResilientClient.execute_with_retry",
+        _fake_refresh,
+    )
+    monkeypatch.setattr(
+        "traigent.cloud.client.cloud_backend_egress_disabled", lambda *_a, **_k: False
+    )
+
+    async def _ok_url(url: str, **_k: Any) -> str:
+        return url
+
+    monkeypatch.setattr(
+        "traigent.cloud.token_manager.validate_cloud_base_url_async", _ok_url
+    )
+
+
+def _assert_old_state_only(auth: Any) -> None:
+    tm = auth._token_manager
+    assert auth._credentials.jwt_token == OLD_JWT
+    assert auth._credentials.refresh_token == OLD_REFRESH
+    assert tm.get_authorization_header() == {"Authorization": f"Bearer {OLD_JWT}"}
+    assert tm._refresh_token_secure.get_value() == OLD_REFRESH
+
+
+def test_jwt_refresh_on_flagged_manager_that_cannot_latch_keeps_old_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth = _flagged_manager()
+    _refresh_ready(auth, monkeypatch)
+    monkeypatch.setattr(oo, "latch_on", _boom)
+    result = asyncio.run(auth._token_manager.refresh_jwt_secure(OLD_REFRESH))
+    assert result.success is False
+    _assert_old_state_only(auth)
+    with pytest.raises(oo.OptimizationOnlyRefusal):
+        asyncio.run(auth.get_auth_headers())
+
+
+def test_jwt_refresh_on_unflagged_manager_ignores_latch_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth = _manager()
+    _refresh_ready(auth, monkeypatch)
+    monkeypatch.setattr(oo, "latch_on", _boom)
+    result = asyncio.run(auth._token_manager.refresh_jwt_secure(OLD_REFRESH))
+    assert result.success is True
+    assert auth._credentials.jwt_token == NEW_JWT
+    assert auth._token_manager.get_authorization_header() == {
+        "Authorization": f"Bearer {NEW_JWT}"
+    }
+
+
+def test_oauth_refresh_on_flagged_manager_that_cannot_latch_keeps_old_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth = _flagged_manager()
+    _refresh_ready(auth, monkeypatch)
+    old_object = auth._credentials
+    monkeypatch.setattr(oo, "latch_on", _boom)
+    with pytest.raises(oo.OptimizationOnlyRefusal):
+        asyncio.run(
+            auth._token_manager._apply_oauth2_token_response(
+                old_object,
+                {
+                    "access_token": NEW_JWT,
+                    "refresh_token": "refresh-new-0123456789",
+                    "expires_in": 60,
+                },
+            )
+        )
+    assert auth._credentials is old_object
+    assert old_object.jwt_token == OLD_JWT
+    assert old_object.refresh_token == OLD_REFRESH
+    with pytest.raises(oo.OptimizationOnlyRefusal):
+        asyncio.run(auth.get_auth_headers())
+
+
+def test_oauth_refresh_on_unflagged_manager_ignores_latch_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth = _manager()
+    _refresh_ready(auth, monkeypatch)
+    monkeypatch.setattr(oo, "latch_on", _boom)
+    result = asyncio.run(
+        auth._token_manager._apply_oauth2_token_response(
+            auth._credentials, {"access_token": NEW_JWT, "expires_in": 60}
+        )
+    )
+    assert result.success is True
+    assert auth._credentials.jwt_token == NEW_JWT
+    assert auth._credentials.refresh_token == OLD_REFRESH
