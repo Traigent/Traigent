@@ -719,6 +719,37 @@ def _declared_objective_score(trial: Any, primary_objective: str | None) -> Any:
     return value if value is not None else metrics.get("score")
 
 
+def _parameter_importance_for_values(stats_owner: Any, values: list[Any]) -> float:
+    """Calculate one parameter's between-value score variance."""
+    if len(values) < 2:
+        return 0.0
+
+    # Group scores by parameter value.
+    value_scores: dict[Any, list[float]] = {}
+    for i, value in enumerate(values):
+        if (
+            i < len(stats_owner.stats["scores_by_trial"])
+            and stats_owner.stats["scores_by_trial"][i] is not None
+        ):
+            if value not in value_scores:
+                value_scores[value] = []
+            value_scores[value].append(stats_owner.stats["scores_by_trial"][i])
+
+    if len(value_scores) < 2:
+        return 0.0
+
+    # Calculate variance between different parameter values.
+    group_means = [
+        sum(scores) / len(scores) for scores in value_scores.values() if scores
+    ]
+    if len(group_means) >= 2:
+        overall_mean = sum(group_means) / len(group_means)
+        return sum((mean - overall_mean) ** 2 for mean in group_means) / len(
+            group_means
+        )
+    return 0.0
+
+
 class StatisticsCallback(OptimizationCallback):
     """Callback that collects optimization statistics."""
 
@@ -782,37 +813,7 @@ class StatisticsCallback(OptimizationCallback):
         importance = {}
 
         for param, values in self.stats["parameter_values"].items():
-            if len(values) < 2:
-                importance[param] = 0.0
-                continue
-
-            # Group scores by parameter value
-            value_scores: dict[Any, list[float]] = {}
-            for i, value in enumerate(values):
-                if (
-                    i < len(self.stats["scores_by_trial"])
-                    and self.stats["scores_by_trial"][i] is not None
-                ):
-                    if value not in value_scores:
-                        value_scores[value] = []
-                    value_scores[value].append(self.stats["scores_by_trial"][i])
-
-            if len(value_scores) < 2:
-                importance[param] = 0.0
-                continue
-
-            # Calculate variance between different parameter values
-            group_means = [
-                sum(scores) / len(scores) for scores in value_scores.values() if scores
-            ]
-            if len(group_means) >= 2:
-                overall_mean = sum(group_means) / len(group_means)
-                variance = sum(
-                    (mean - overall_mean) ** 2 for mean in group_means
-                ) / len(group_means)
-                importance[param] = variance
-            else:
-                importance[param] = 0.0
+            importance[param] = _parameter_importance_for_values(self, values)
 
         # Normalize importance scores
         max_importance = max(importance.values()) if importance.values() else 1.0
