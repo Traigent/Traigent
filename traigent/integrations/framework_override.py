@@ -1002,59 +1002,21 @@ class FrameworkOverrideManager(BaseOverrideManager):
 
         @functools.wraps(original_method)
         def resilient_wrapper(*args, **kwargs):
-            # Check if we're in an optimization context
-            if not getattr(override_active, "enabled", False):
+            overridden_kwargs = self._resilient_kwargs(
+                override_active, kwargs, parameter_mapping
+            )
+            if overridden_kwargs is None:
                 return original_method(*args, **kwargs)
-
-            # Get current Traigent configuration
-            config = get_config()
-            if not config:
-                return original_method(*args, **kwargs)
-
-            # Extract configuration values
-            config_dict = self._extract_config_dict(config)
-            if not config_dict:
-                return original_method(*args, **kwargs)
-
-            # Apply overrides with fallback strategies
-            overridden_kwargs = kwargs.copy()
-
-            # Strategy 1: Direct mapping
-            for traigent_param, framework_param in parameter_mapping.items():
-                if traigent_param in config_dict:
-                    overridden_kwargs[framework_param] = config_dict[traigent_param]
-
-            # Strategy 2: Try exact parameter names if not already mapped
-            for param_name, param_value in config_dict.items():
-                if param_name not in overridden_kwargs:
-                    overridden_kwargs[param_name] = param_value
-
             return original_method(*args, **overridden_kwargs)
 
         @functools.wraps(original_method)
         async def async_resilient_wrapper(*args, **kwargs):
             # Async version of the resilient wrapper
-            if not getattr(override_active, "enabled", False):
+            overridden_kwargs = self._resilient_kwargs(
+                override_active, kwargs, parameter_mapping
+            )
+            if overridden_kwargs is None:
                 return await original_method(*args, **kwargs)
-
-            config = get_config()
-            if not config:
-                return await original_method(*args, **kwargs)
-
-            config_dict = self._extract_config_dict(config)
-            if not config_dict:
-                return await original_method(*args, **kwargs)
-
-            overridden_kwargs = kwargs.copy()
-
-            for traigent_param, framework_param in parameter_mapping.items():
-                if traigent_param in config_dict:
-                    overridden_kwargs[framework_param] = config_dict[traigent_param]
-
-            for param_name, param_value in config_dict.items():
-                if param_name not in overridden_kwargs:
-                    overridden_kwargs[param_name] = param_value
-
             return await original_method(*args, **overridden_kwargs)
 
         # Return async version if original is async
@@ -1062,6 +1024,42 @@ class FrameworkOverrideManager(BaseOverrideManager):
             return async_resilient_wrapper
         else:
             return resilient_wrapper
+
+    def _resilient_kwargs(
+        self,
+        override_active: Any,
+        kwargs: dict[str, Any],
+        parameter_mapping: dict[str, str],
+    ) -> dict[str, Any] | None:
+        """Merged kwargs for a resilient override, or None to pass through."""
+        # Check if we're in an optimization context
+        if not getattr(override_active, "enabled", False):
+            return None
+
+        # Get current Traigent configuration
+        config = get_config()
+        if not config:
+            return None
+
+        # Extract configuration values
+        config_dict = self._extract_config_dict(config)
+        if not config_dict:
+            return None
+
+        # Apply overrides with fallback strategies
+        overridden_kwargs = kwargs.copy()
+
+        # Strategy 1: Direct mapping
+        for traigent_param, framework_param in parameter_mapping.items():
+            if traigent_param in config_dict:
+                overridden_kwargs[framework_param] = config_dict[traigent_param]
+
+        # Strategy 2: Try exact parameter names if not already mapped
+        for param_name, param_value in config_dict.items():
+            if param_name not in overridden_kwargs:
+                overridden_kwargs[param_name] = param_value
+
+        return overridden_kwargs
 
     def _extract_config_dict(
         self, config: TraigentConfig | dict[str, Any]
