@@ -434,6 +434,55 @@ def _find_trial_index_by_id(trials: list, trial_id: Any) -> int | None:
     return None
 
 
+def _weighted_best_index(
+    results: OptimizationResult,
+    trials: list,
+    metric_names: list[str],
+    metric_info: list[tuple[str, str]],
+    objectives: Any,
+) -> int | None:
+    """Winner index by weighted scores; None when unavailable or failing."""
+    try:
+        weighted = results.calculate_weighted_scores(objective_schema=objectives)
+        weighted_scores = weighted.get("weighted_scores") or []
+        best_trial = _find_best_trial(
+            trials, metric_names, weighted_scores, metric_info
+        )
+        return _trial_identity_index(trials, best_trial)
+    except Exception as exc:
+        logger.debug(
+            "Falling back from weighted to unweighted results-table ranking: %s",
+            exc,
+            exc_info=True,
+        )
+        return None
+
+
+def _best_config_fallback_index(
+    results: OptimizationResult, trials: list, metric_names: list[str]
+) -> int | None:
+    """Winner index by matching the persisted best config (and score)."""
+    best_config = getattr(results, "best_config", None)
+    best_score = _coerce_float(getattr(results, "best_score", None))
+    primary_metric = metric_names[0] if metric_names else None
+    for index, trial in enumerate(trials):
+        if getattr(trial, "config", {}) != best_config:
+            continue
+        if not _trial_rankable(trial, metric_names):
+            continue
+        if best_score is None or primary_metric is None:
+            return index
+        trial_score = _coerce_float(getattr(trial, "metrics", {}).get(primary_metric))
+        if trial_score is not None and math.isclose(
+            trial_score,
+            best_score,
+            rel_tol=BEST_METRIC_REL_TOL,
+            abs_tol=BEST_METRIC_ABS_TOL,
+        ):
+            return index
+    return None
+
+
 def _find_best_trial_index(
     results: OptimizationResult,
     trials: list,
@@ -460,46 +509,18 @@ def _find_best_trial_index(
     if best_index is not None and _trial_rankable(trials[best_index], metric_names):
         return best_index
 
-    try:
-        weighted = results.calculate_weighted_scores(objective_schema=objectives)
-        weighted_scores = weighted.get("weighted_scores") or []
-        best_trial = _find_best_trial(
-            trials, metric_names, weighted_scores, metric_info
-        )
-        best_index = _trial_identity_index(trials, best_trial)
-        if best_index is not None:
-            return best_index
-    except Exception as exc:
-        logger.debug(
-            "Falling back from weighted to unweighted results-table ranking: %s",
-            exc,
-            exc_info=True,
-        )
+    best_index = _weighted_best_index(
+        results, trials, metric_names, metric_info, objectives
+    )
+    if best_index is not None:
+        return best_index
 
     best_trial = _find_best_trial(trials, metric_names, metric_info=metric_info)
     best_index = _trial_identity_index(trials, best_trial)
     if best_index is not None:
         return best_index
 
-    best_config = getattr(results, "best_config", None)
-    best_score = _coerce_float(getattr(results, "best_score", None))
-    primary_metric = metric_names[0] if metric_names else None
-    for index, trial in enumerate(trials):
-        if getattr(trial, "config", {}) != best_config:
-            continue
-        if not _trial_rankable(trial, metric_names):
-            continue
-        if best_score is None or primary_metric is None:
-            return index
-        trial_score = _coerce_float(getattr(trial, "metrics", {}).get(primary_metric))
-        if trial_score is not None and math.isclose(
-            trial_score,
-            best_score,
-            rel_tol=BEST_METRIC_REL_TOL,
-            abs_tol=BEST_METRIC_ABS_TOL,
-        ):
-            return index
-    return None
+    return _best_config_fallback_index(results, trials, metric_names)
 
 
 def _mock_run_notice(results: Any) -> str | None:
@@ -585,29 +606,25 @@ def _trials_all_failed(trials: list) -> bool:
     Explicit zero-success metadata is authoritative even if a stale or mocked
     metric payload also contains a positive quality score.
     """
-    for trial in trials:
-        if not getattr(trial, "is_successful", False):
-            continue
+    return not any(
+        _trial_reports_success(trial)
+        for trial in trials
+        if getattr(trial, "is_successful", False)
+    )
 
-        metadata = getattr(trial, "metadata", {}) or {}
-        successful = metadata.get("successful_examples")
-        if isinstance(successful, bool):
-            return False
-        if isinstance(successful, (int, float)):
-            if successful > 0:
-                return False
-            continue
-        if successful is not None:
-            try:
-                if float(successful) > 0:
-                    return False
-                continue
-            except (TypeError, ValueError):
-                return False
 
-        return False
-
-    return True
+def _trial_reports_success(trial: Any) -> bool:
+    """False only when the trial explicitly recorded zero successful examples."""
+    metadata = getattr(trial, "metadata", {}) or {}
+    successful = metadata.get("successful_examples")
+    if successful is None or isinstance(successful, bool):
+        return True
+    if not isinstance(successful, (int, float)):
+        try:
+            successful = float(successful)
+        except (TypeError, ValueError):
+            return True
+    return successful > 0
 
 
 # ---------------------------------------------------------------------------
