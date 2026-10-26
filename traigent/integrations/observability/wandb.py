@@ -289,6 +289,40 @@ class TraigentWandBTracker:
         except Exception:  # pragma: no cover - defensive
             return None
 
+    @staticmethod
+    def _add_trial_statistics(
+        summary_data: dict[str, Any], result: OptimizationResult
+    ) -> None:
+        successful_trials = [
+            t
+            for t in result.trials
+            if hasattr(t, "status") and t.status.value == "completed"
+        ]
+        summary_data["optimization/successful_trials"] = len(successful_trials)
+        summary_data["optimization/success_rate"] = len(successful_trials) / len(
+            result.trials
+        )
+
+        # Calculate metric statistics
+        if not (successful_trials and result.best_metrics):
+            return
+        for metric_name in result.best_metrics.keys():
+            metric_values = [
+                t.metrics.get(metric_name, 0)
+                for t in successful_trials
+                if hasattr(t, "metrics") and metric_name in t.metrics
+            ]
+            if not metric_values:
+                continue
+            mean_val = sum(metric_values) / len(metric_values)
+            std_val = (
+                sum((x - mean_val) ** 2 for x in metric_values) / len(metric_values)
+            ) ** 0.5
+            summary_data[f"statistics/{metric_name}_mean"] = mean_val
+            summary_data[f"statistics/{metric_name}_std"] = std_val
+            summary_data[f"statistics/{metric_name}_min"] = min(metric_values)
+            summary_data[f"statistics/{metric_name}_max"] = max(metric_values)
+
     def log_optimization_result(
         self, result: OptimizationResult, dataset_path: str | None = None
     ) -> None:
@@ -320,38 +354,7 @@ class TraigentWandBTracker:
 
         # Calculate trial statistics
         if result.trials:
-            successful_trials = [
-                t
-                for t in result.trials
-                if hasattr(t, "status") and t.status.value == "completed"
-            ]
-            summary_data["optimization/successful_trials"] = len(successful_trials)
-            summary_data["optimization/success_rate"] = len(successful_trials) / len(
-                result.trials
-            )
-
-            # Calculate metric statistics
-            if successful_trials and result.best_metrics:
-                for metric_name in result.best_metrics.keys():
-                    metric_values = [
-                        t.metrics.get(metric_name, 0)
-                        for t in successful_trials
-                        if hasattr(t, "metrics") and metric_name in t.metrics
-                    ]
-                    if metric_values:
-                        mean_val = sum(metric_values) / len(metric_values)
-                        std_val = (
-                            sum((x - mean_val) ** 2 for x in metric_values)
-                            / len(metric_values)
-                        ) ** 0.5
-                        summary_data[f"statistics/{metric_name}_mean"] = mean_val
-                        summary_data[f"statistics/{metric_name}_std"] = std_val
-                        summary_data[f"statistics/{metric_name}_min"] = min(
-                            metric_values
-                        )
-                        summary_data[f"statistics/{metric_name}_max"] = max(
-                            metric_values
-                        )
+            self._add_trial_statistics(summary_data, result)
 
         # Log metadata
         if result.metadata:
