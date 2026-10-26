@@ -299,8 +299,30 @@ class IntegrationPlugin(ABC):
         # Apply parameter mappings
         overridden = kwargs.copy()
 
-        # Get all config values (both direct attributes and custom_params)
-        config_dict = {}
+        config_dict = self._collect_config_values(config_obj)
+        self._guard_system_prompt_params(config_dict)
+
+        # Apply mappings
+        mapped_params: set[str] = set()
+        for traigent_param, framework_param in self._parameter_mappings.items():
+            if traigent_param in config_dict:
+                # Only override if user didn't explicitly provide the framework parameter
+                if framework_param not in kwargs:
+                    overridden[framework_param] = config_dict[traigent_param]
+                mapped_params.add(traigent_param)
+
+        # Pass through custom_params that aren't in mappings (framework-native params)
+        if hasattr(config_obj, "custom_params") and config_obj.custom_params:
+            for param_name, value in config_obj.custom_params.items():
+                if param_name not in mapped_params and param_name not in overridden:
+                    overridden[param_name] = value
+
+        return overridden
+
+    @staticmethod
+    def _collect_config_values(config_obj: "TraigentConfig") -> dict[str, Any]:
+        """Collect direct config attributes and ``custom_params`` into one dict."""
+        config_dict: dict[str, Any] = {}
 
         # Add direct TraigentConfig attributes
         for attr in [
@@ -321,61 +343,48 @@ class IntegrationPlugin(ABC):
         # Add custom params
         if hasattr(config_obj, "custom_params") and config_obj.custom_params:
             config_dict.update(config_obj.custom_params)
+        return config_dict
 
-        # Guard system-prompt parameters (audit log + optional lock)
+    @staticmethod
+    def _guard_system_prompt_params(config_dict: dict[str, Any]) -> None:
+        """Guard system-prompt parameters (audit log + optional lock)."""
         lock_prompt = os.environ.get("TRAIGENT_LOCK_SYSTEM_PROMPT", "").lower() in (
             "true",
             "1",
             "yes",
         )
         prompt_params_in_config = _SYSTEM_PROMPT_PARAMS & config_dict.keys()
-        if prompt_params_in_config:
-            global _system_prompt_warning_emitted  # noqa: PLW0603
-            if not _system_prompt_warning_emitted:
-                logger.info(
-                    "System prompt parameter(s) %s included in optimization "
-                    "config space. Ensure all candidate values are trusted.",
-                    sorted(prompt_params_in_config),
+        if not prompt_params_in_config:
+            return
+
+        global _system_prompt_warning_emitted  # noqa: PLW0603
+        if not _system_prompt_warning_emitted:
+            logger.info(
+                "System prompt parameter(s) %s included in optimization "
+                "config space. Ensure all candidate values are trusted.",
+                sorted(prompt_params_in_config),
+            )
+            _system_prompt_warning_emitted = True
+
+        if lock_prompt:
+            for p in prompt_params_in_config:
+                logger.warning(
+                    "TRAIGENT_LOCK_SYSTEM_PROMPT is set — dropping "
+                    "optimizer-supplied '%s' parameter.",
+                    p,
                 )
-                _system_prompt_warning_emitted = True
+                del config_dict[p]
+            return
 
-            if lock_prompt:
-                for p in prompt_params_in_config:
-                    logger.warning(
-                        "TRAIGENT_LOCK_SYSTEM_PROMPT is set — dropping "
-                        "optimizer-supplied '%s' parameter.",
-                        p,
-                    )
-                    del config_dict[p]
-            else:
-                # Audit-log every time the optimizer changes a prompt param
-                for p in prompt_params_in_config:
-                    val = config_dict[p]
-                    truncated = (
-                        str(val)[:120] + "…" if len(str(val)) > 120 else str(val)
-                    )
-                    logger.warning(
-                        "Optimizer is modifying system prompt param '%s': %s",
-                        p,
-                        truncated,
-                    )
-
-        # Apply mappings
-        mapped_params: set[str] = set()
-        for traigent_param, framework_param in self._parameter_mappings.items():
-            if traigent_param in config_dict:
-                # Only override if user didn't explicitly provide the framework parameter
-                if framework_param not in kwargs:
-                    overridden[framework_param] = config_dict[traigent_param]
-                mapped_params.add(traigent_param)
-
-        # Pass through custom_params that aren't in mappings (framework-native params)
-        if hasattr(config_obj, "custom_params") and config_obj.custom_params:
-            for param_name, value in config_obj.custom_params.items():
-                if param_name not in mapped_params and param_name not in overridden:
-                    overridden[param_name] = value
-
-        return overridden
+        # Audit-log every time the optimizer changes a prompt param
+        for p in prompt_params_in_config:
+            val = config_dict[p]
+            truncated = str(val)[:120] + "…" if len(str(val)) > 120 else str(val)
+            logger.warning(
+                "Optimizer is modifying system prompt param '%s': %s",
+                p,
+                truncated,
+            )
 
     def _load_config_overrides(self, config_path: Path) -> None:
         """Load configuration overrides from YAML or JSON file.
