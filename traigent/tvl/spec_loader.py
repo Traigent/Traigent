@@ -599,41 +599,46 @@ def _validate_configuration_space_domains(
     return issues
 
 
-def _collect_assignment_domains(data: dict[str, Any]) -> dict[str, _AssignmentDomain]:
-    domains: dict[str, _AssignmentDomain] = {}
+def _tvar_assignment_domain(tvar_def: dict[str, Any]) -> _AssignmentDomain:
+    raw_type = tvar_def.get("type")
+    return _AssignmentDomain(
+        raw_type=raw_type if isinstance(raw_type, str) else None,
+        domain=tvar_def.get("domain"),
+    )
 
-    tvars = data.get("tvars")
+
+def _collect_tvar_domains(tvars: Any, domains: dict[str, _AssignmentDomain]) -> None:
     if isinstance(tvars, dict):
         for name, tvar_def in tvars.items():
             if isinstance(name, str) and isinstance(tvar_def, dict):
-                raw_type = tvar_def.get("type")
-                domains[name] = _AssignmentDomain(
-                    raw_type=raw_type if isinstance(raw_type, str) else None,
-                    domain=tvar_def.get("domain"),
-                )
+                domains[name] = _tvar_assignment_domain(tvar_def)
     elif isinstance(tvars, list):
         for tvar_def in tvars:
             if not isinstance(tvar_def, dict):
                 continue
             name = tvar_def.get("name")
-            raw_type = tvar_def.get("type")
             if isinstance(name, str) and name:
-                domains[name] = _AssignmentDomain(
-                    raw_type=raw_type if isinstance(raw_type, str) else None,
-                    domain=tvar_def.get("domain"),
-                )
+                domains[name] = _tvar_assignment_domain(tvar_def)
 
-    config_space = data.get("configuration_space")
-    if isinstance(config_space, dict):
-        for name, definition in config_space.items():
-            if isinstance(name, str) and isinstance(definition, dict):
-                raw_type = _legacy_parameter_type(definition)
-                domains[name] = _AssignmentDomain(
-                    raw_type=raw_type,
-                    domain=definition,
-                    legacy_parameter=True,
-                )
 
+def _collect_legacy_parameter_domains(
+    config_space: Any, domains: dict[str, _AssignmentDomain]
+) -> None:
+    if not isinstance(config_space, dict):
+        return
+    for name, definition in config_space.items():
+        if isinstance(name, str) and isinstance(definition, dict):
+            domains[name] = _AssignmentDomain(
+                raw_type=_legacy_parameter_type(definition),
+                domain=definition,
+                legacy_parameter=True,
+            )
+
+
+def _collect_assignment_domains(data: dict[str, Any]) -> dict[str, _AssignmentDomain]:
+    domains: dict[str, _AssignmentDomain] = {}
+    _collect_tvar_domains(data.get("tvars"), domains)
+    _collect_legacy_parameter_domains(data.get("configuration_space"), domains)
     return domains
 
 
