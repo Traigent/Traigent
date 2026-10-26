@@ -1106,11 +1106,15 @@ class ExecutionBudgetStopCondition(StopCondition):
         Args:
             trials: Trial results (unused — the budget is authoritative).
         """
-        return self._budget.exhausted_dimension is not None
+        return (
+            self._budget.exhausted_dimension is not None or self._budget.debit_exhausted
+        )
 
     def get_reason(self) -> str:
         """Get a descriptive reason naming the exhausted dimension."""
         snapshot = self._budget.snapshot()
+        if snapshot.exhausted_dimension is None and self._budget.debit_exhausted:
+            return "Conservative execution allowance exhausted (actual cost separate)"
         dimension = snapshot.exhausted_dimension or "unknown"
         if dimension == "cost":
             return (

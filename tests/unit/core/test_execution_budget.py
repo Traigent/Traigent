@@ -16,12 +16,152 @@ import pytest
 
 from traigent import ExecutionBudget as PublicExecutionBudget
 from traigent.core.execution_budget import (
+    BudgetDebitExceeded,
+    BudgetDebitLease,
     ExecutionBudget,
     ExecutionBudgetSnapshot,
 )
 from traigent.utils.exceptions import ConfigurationError
 
 INF = float("inf")
+
+
+@pytest.mark.parametrize(
+    "bad", [True, False, 0, -1, INF, -INF, float("nan"), "0.1", 10**1000]
+)
+def test_nominal_allowance_and_reservation_validate(bad: object) -> None:
+    with pytest.raises(ConfigurationError):
+        ExecutionBudget(max_budget_debit_usd=bad)
+    budget = ExecutionBudget(max_budget_debit_usd=1)
+    with pytest.raises(ConfigurationError):
+        budget.reserve_debit(bad)
+
+
+@pytest.mark.parametrize("bad", [True, -1, INF, -INF, float("nan"), "0.1"])
+def test_invalid_settlement_does_not_close_lease(bad: object) -> None:
+    budget = ExecutionBudget(max_budget_debit_usd=1)
+    lease = budget.reserve_debit(0.1)
+    with pytest.raises(ConfigurationError):
+        lease.settle_debit(bad)
+    assert budget.debit_snapshot().reserved_budget_debit_usd == pytest.approx(0.1)
+    lease.settle_debit()
+
+
+def test_debit_requires_an_explicit_allowance() -> None:
+    with pytest.raises(ConfigurationError, match="explicit max_budget_debit_usd"):
+        ExecutionBudget(max_examples=1).reserve_debit(0.1)
+
+
+def test_four_calls_then_refusal_without_poisoning_smaller_phase() -> None:
+    budget = ExecutionBudget(max_budget_debit_usd=0.21)
+    for _ in range(4):
+        budget.reserve_debit(0.05).settle_debit()
+    before = budget.debit_snapshot()
+    with pytest.raises(BudgetDebitExceeded) as refused:
+        budget.reserve_debit(0.05)
+    assert refused.value.budget is budget
+    assert budget.debit_snapshot() == before
+    assert before.consumed_budget_debit_usd == pytest.approx(0.2)
+    assert before.remaining_budget_debit_usd == pytest.approx(0.01)
+    budget.reserve_debit(0.01).settle_debit()
+    assert budget.debit_exhausted
+    # Nominal state neither prices the calls nor extends the established wire view.
+    assert budget.consumed_cost == 0
+    assert not any("debit" in name for name in budget.snapshot().as_dict())
+    assert budget.snapshot().exhausted_dimension is None
+
+
+def test_lease_ownership_and_single_close() -> None:
+    budget = ExecutionBudget(max_budget_debit_usd=1)
+    other = ExecutionBudget(max_budget_debit_usd=1)
+    lease = budget.reserve_debit(0.1)
+    with pytest.raises(ValueError, match="foreign"):
+        other.settle_debit(lease)
+    with pytest.raises(ValueError, match="foreign"):
+        other.release_debit(lease)
+    with pytest.raises(ValueError, match="foreign"):
+        budget.settle_debit(BudgetDebitLease(budget, 0.1))
+    lease.settle_debit()
+    for close in (lease.settle_debit, lease.release_debit):
+        with pytest.raises(ValueError, match="closed"):
+            close()
+
+
+def test_nonbilling_release_zero_and_unclamped_overrun() -> None:
+    budget = ExecutionBudget(max_budget_debit_usd=0.2)
+    lease = budget.reserve_debit(0.2)
+    assert budget.debit_exhausted
+    lease.release_debit()  # caller proved no request was placed
+    with pytest.raises(ValueError):
+        lease.release_debit()
+    budget.reserve_debit(0.2).settle_debit(0)
+    budget.reserve_debit(0.2).settle_debit(0.3)
+    snap = budget.debit_snapshot()
+    assert snap.consumed_budget_debit_usd == pytest.approx(0.3)
+    assert snap.overrun_budget_debit_usd == pytest.approx(0.1)
+    assert snap.reserved_budget_debit_usd == 0
+    with pytest.raises(BudgetDebitExceeded):
+        budget.reserve_debit(0.001)
+    assert budget.consumed_cost == 0  # a settlement is not actual-cost telemetry
+
+
+def test_exact_admission_and_large_overrun_survive_numeric_contexts() -> None:
+    from decimal import localcontext
+
+    budget = ExecutionBudget(max_budget_debit_usd=0.1)
+    with localcontext() as context:
+        context.prec = 1
+        for _ in range(10):
+            budget.reserve_debit(0.01).settle_debit()
+    with pytest.raises(BudgetDebitExceeded):
+        budget.reserve_debit(1e-300)
+    large = ExecutionBudget(max_budget_debit_usd=1)
+    leases = [large.reserve_debit(0.1) for _ in range(2)]
+    for lease in leases:
+        lease.settle_debit(1e308)
+    assert large.debit_exhausted
+    assert large.debit_snapshot().consumed_budget_debit_usd == INF
+    with pytest.raises(BudgetDebitExceeded):
+        large.reserve_debit(0.1)
+
+
+def test_thread_contention_counts_inflight_without_holding_provider_lock() -> None:
+    budget = ExecutionBudget(max_budget_debit_usd=0.2)
+    entered = threading.Barrier(4)
+    admitted = threading.Barrier(4)
+    outcomes: list[bool] = []
+    result_lock = threading.Lock()
+
+    def call() -> None:
+        entered.wait(timeout=5)
+        try:
+            lease = budget.reserve_debit(0.1)
+        except BudgetDebitExceeded:
+            lease = None
+        with result_lock:
+            outcomes.append(lease is not None)
+        # This barrier deadlocks if the budget lock spans provider execution.
+        admitted.wait(timeout=5)
+        if lease is not None:
+            lease.settle_debit()
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(lambda _: call(), range(4)))
+    assert sum(outcomes) == 2
+    assert budget.debit_snapshot().consumed_budget_debit_usd == pytest.approx(0.2)
+    assert budget.debit_snapshot().reserved_budget_debit_usd == 0
+
+
+@pytest.mark.parametrize(
+    "failure", [RuntimeError("billable failure"), KeyboardInterrupt()]
+)
+def test_lease_context_retains_allowance_on_failure(failure: BaseException) -> None:
+    budget = ExecutionBudget(max_budget_debit_usd=0.1)
+    with pytest.raises(type(failure)):
+        with budget.reserve_debit(0.1):
+            raise failure
+    assert budget.debit_snapshot().consumed_budget_debit_usd == pytest.approx(0.1)
+    assert budget.debit_snapshot().reserved_budget_debit_usd == 0
 
 
 # ---------------------------------------------------------------------------

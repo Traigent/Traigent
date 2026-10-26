@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.config.context import TrialContext, WorkflowTraceContext
+from traigent.core.execution_budget import BudgetDebitExceeded
 from traigent.core.optimization_pipeline import (
     build_surrogate_descriptor,
     get_surrogate_evaluator,
@@ -473,6 +474,9 @@ class TrialLifecycle:
                 )
             raise
 
+        if getattr(orchestrator, "_execution_debit_denied", False):
+            orchestrator._stop_reason = "execution_budget"
+            return trial_count, "break"
         return trial_count, "continue"
 
     def _terminal_optimizer_stop_reason(self, error: OptimizationError) -> str | None:
@@ -711,6 +715,14 @@ class TrialLifecycle:
             return result
 
         except TrialPrunedError as prune_error:
+            if isinstance(prune_error, BudgetDebitExceeded):
+                if prune_error.budget is not getattr(
+                    orchestrator, "execution_budget", None
+                ):
+                    raise
+                # Run-local refusal only: do not poison the shared budget when
+                # another phase can still afford a smaller reservation.
+                orchestrator._execution_debit_denied = True
             result = self._build_trial_error_result(
                 trial_id,
                 evaluation_config,
