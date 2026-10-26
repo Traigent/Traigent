@@ -20,6 +20,7 @@ optional dependency (``pip install 'traigent[analytics]'`` or
 from __future__ import annotations
 
 import math
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Literal
 
@@ -114,28 +115,11 @@ def _resolve_axis_metric_key(measures: Any, axis: str) -> str:
     return axis
 
 
-def _render_pareto(plt: Any, payload: dict[str, Any]) -> Any:
-    """Plot a cost/quality scatter from a ``run_pareto`` payload.
-
-    Frontier points are emphasized (the knee is annotated); dominated points are
-    drawn faded. Axes are read straight from each config's ``metrics`` — nothing
-    is recomputed.
-    """
-    measures = payload.get("measures") or {}
-    quality_key = _resolve_axis_metric_key(measures, "quality")
-    cost_key = _resolve_axis_metric_key(measures, "cost")
-
-    fig, ax = plt.subplots(figsize=(7, 5))
-
-    frontier = payload.get("frontier") or []
-    dominated = payload.get("dominated_points") or payload.get("dominated") or []
-
-    plotted_any = False
-    knee_xy: tuple[float, float] | None = None
-
-    front_x: list[float] = []
-    front_y: list[float] = []
-    for point in frontier:
+def _plottable_points(
+    points: Any, cost_key: str, quality_key: str
+) -> Iterator[tuple[dict[str, Any], float, float]]:
+    """Yield ``(point, cost, quality)`` for each point with both numeric axes."""
+    for point in points:
         if not isinstance(point, dict):
             continue
         metrics = point.get("metrics") or {}
@@ -143,35 +127,17 @@ def _render_pareto(plt: Any, payload: dict[str, Any]) -> Any:
         quality = _as_float(metrics.get(quality_key))
         if cost is None or quality is None:
             continue
-        front_x.append(cost)
-        front_y.append(quality)
-        plotted_any = True
-        if point.get("is_knee"):
-            knee_xy = (cost, quality)
-        label = point.get("config_id")
-        if label:
-            ax.annotate(
-                str(label),
-                (cost, quality),
-                textcoords="offset points",
-                xytext=(5, 5),
-                fontsize=7,
-            )
+        yield point, cost, quality
 
-    dom_x: list[float] = []
-    dom_y: list[float] = []
-    for point in dominated:
-        if not isinstance(point, dict):
-            continue
-        metrics = point.get("metrics") or {}
-        cost = _as_float(metrics.get(cost_key))
-        quality = _as_float(metrics.get(quality_key))
-        if cost is None or quality is None:
-            continue
-        dom_x.append(cost)
-        dom_y.append(quality)
-        plotted_any = True
 
+def _draw_pareto_series(
+    ax: Any,
+    front_x: list[float],
+    front_y: list[float],
+    dom_x: list[float],
+    dom_y: list[float],
+    knee_xy: tuple[float, float] | None,
+) -> None:
     if dom_x:
         ax.scatter(dom_x, dom_y, c="#bbbbbb", marker="x", label="dominated", zorder=2)
     if front_x:
@@ -195,6 +161,61 @@ def _render_pareto(plt: Any, payload: dict[str, Any]) -> Any:
             zorder=5,
         )
 
+
+def _pareto_title(payload: dict[str, Any]) -> str:
+    run_id = payload.get("run_id") or "run"
+    shape = payload.get("shape")
+    title = f"Pareto frontier — {run_id}"
+    if shape:
+        title = f"{title} ({shape})"
+    return title
+
+
+def _render_pareto(plt: Any, payload: dict[str, Any]) -> Any:
+    """Plot a cost/quality scatter from a ``run_pareto`` payload.
+
+    Frontier points are emphasized (the knee is annotated); dominated points are
+    drawn faded. Axes are read straight from each config's ``metrics`` — nothing
+    is recomputed.
+    """
+    measures = payload.get("measures") or {}
+    quality_key = _resolve_axis_metric_key(measures, "quality")
+    cost_key = _resolve_axis_metric_key(measures, "cost")
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+
+    frontier = payload.get("frontier") or []
+    dominated = payload.get("dominated_points") or payload.get("dominated") or []
+
+    knee_xy: tuple[float, float] | None = None
+
+    front_x: list[float] = []
+    front_y: list[float] = []
+    for point, cost, quality in _plottable_points(frontier, cost_key, quality_key):
+        front_x.append(cost)
+        front_y.append(quality)
+        if point.get("is_knee"):
+            knee_xy = (cost, quality)
+        label = point.get("config_id")
+        if label:
+            ax.annotate(
+                str(label),
+                (cost, quality),
+                textcoords="offset points",
+                xytext=(5, 5),
+                fontsize=7,
+            )
+
+    dom_x: list[float] = []
+    dom_y: list[float] = []
+    for _point, cost, quality in _plottable_points(dominated, cost_key, quality_key):
+        dom_x.append(cost)
+        dom_y.append(quality)
+
+    plotted_any = bool(front_x or dom_x)
+
+    _draw_pareto_series(ax, front_x, front_y, dom_x, dom_y, knee_xy)
+
     if not plotted_any:
         raise ChartRenderError(
             "run_pareto payload had no plottable points "
@@ -206,11 +227,7 @@ def _render_pareto(plt: Any, payload: dict[str, Any]) -> Any:
     cost_meta = measures.get(cost_key) if isinstance(measures, dict) else None
     ax.set_xlabel(_axis_label("cost", cost_meta))
     ax.set_ylabel(_axis_label("quality", quality_meta))
-    run_id = payload.get("run_id") or "run"
-    shape = payload.get("shape")
-    title = f"Pareto frontier — {run_id}"
-    if shape:
-        title = f"{title} ({shape})"
+    title = _pareto_title(payload)
     ax.set_title(title)
     ax.legend(loc="best", fontsize=8)
     ax.grid(True, linestyle=":", alpha=0.4)
