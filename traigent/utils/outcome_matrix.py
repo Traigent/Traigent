@@ -555,6 +555,26 @@ def _winner_column_ids(
     return selected
 
 
+def _row_id_and_cells(position: int, row: Any) -> tuple[str, dict[str, Any]]:
+    """Validate one matrix example row; return its id and string-keyed cells."""
+    if not isinstance(row, Mapping):
+        raise ValueError(
+            f"Malformed outcome matrix: examples[{position}] must be an object"
+        )
+    example_id = row.get("example_id")
+    if not isinstance(example_id, str):
+        raise ValueError(
+            f"Malformed outcome matrix: examples[{position}].example_id must "
+            f"be a string, got {example_id!r}"
+        )
+    cells = row.get("cells")
+    if not isinstance(cells, Mapping):
+        raise ValueError(
+            f"Malformed outcome matrix: examples[{position}].cells must be an object"
+        )
+    return example_id, {str(key): value for key, value in cells.items()}
+
+
 def select_failing_example_ids(
     matrix: Mapping[str, Any],
     *,
@@ -620,23 +640,7 @@ def select_failing_example_ids(
     seen: set[str] = set()
     has_signal = False
     for position, row in enumerate(examples):
-        if not isinstance(row, Mapping):
-            raise ValueError(
-                f"Malformed outcome matrix: examples[{position}] must be an object"
-            )
-        example_id = row.get("example_id")
-        if not isinstance(example_id, str):
-            raise ValueError(
-                f"Malformed outcome matrix: examples[{position}].example_id must "
-                f"be a string, got {example_id!r}"
-            )
-        cells = row.get("cells")
-        if not isinstance(cells, Mapping):
-            raise ValueError(
-                f"Malformed outcome matrix: examples[{position}].cells must be "
-                "an object"
-            )
-        cells_by_id = {str(key): value for key, value in cells.items()}
+        example_id, cells_by_id = _row_id_and_cells(position, row)
         verdicts = [
             _classify_cell(cells_by_id.get(trial_id), threshold)
             for trial_id in selected_ids
