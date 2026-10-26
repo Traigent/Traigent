@@ -27,6 +27,7 @@ from traigent.cloud.models import (
 from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.core.session_types import safe_http_error_summary
 from traigent.labels.transport_gate import gate_session
+from traigent.utils import optimization_only_egress as oo_egress
 
 try:
     import aiohttp  # noqa: F401 - Import check only
@@ -148,6 +149,10 @@ class SyncManager:
     def session(self):
         """Public access to the HTTP session for testing."""
         return self._session
+
+    def _optimization_only_policy(self) -> oo_egress.Policy:
+        """Policy for this sync client's credential (its API key header)."""
+        return oo_egress.policy_from_headers(self.base_url, self.headers)
 
     def _raise_if_backend_egress_disabled(self, operation: str) -> None:
         """Fail closed before local-to-backend sync transport."""
@@ -1271,6 +1276,12 @@ class SyncManager:
         """
         self._raise_if_backend_egress_disabled("sync session create")
         try:
+            declared_metrics = oo_egress.declared_from_session_payload(session_create)
+            session_create = oo_egress.project_for_send(
+                oo_egress.PHASE_SESSION_CREATE_AUTO,
+                session_create,
+                explicit=self._optimization_only_policy(),
+            )
             response = self._session.post(
                 f"{self.base_url}/sessions",
                 json=session_create,
@@ -1296,6 +1307,7 @@ class SyncManager:
                     "error": "Session create response did not include session_id",
                 }
             session_id = str(session_id)
+            oo_egress.register_session_objectives(session_id, declared_metrics)
             metadata = payload.get("metadata")
             if not isinstance(metadata, Mapping):
                 metadata = {}
@@ -1373,7 +1385,12 @@ class SyncManager:
         try:
             response = self._session.post(
                 f"{self.base_url}/sessions/{session_id}/next-trial",
-                json={"session_id": session_id, "previous_results": []},
+                json=oo_egress.project_for_send(
+                    oo_egress.PHASE_NEXT_TRIAL,
+                    {"session_id": session_id, "previous_results": []},
+                    explicit=self._optimization_only_policy(),
+                    session_id=session_id,
+                ),
                 timeout=self._request_timeout,
             )
         except Exception as exc:
@@ -1476,6 +1493,12 @@ class SyncManager:
                 # Same top-level ``measures`` list the live path submits.
                 result_payload["measures"] = configuration_run["example_measures"]
             try:
+                result_payload = oo_egress.project_for_send(
+                    oo_egress.PHASE_RESULTS,
+                    result_payload,
+                    explicit=self._optimization_only_policy(),
+                    session_id=session_id,
+                )
                 response = self._session.post(
                     f"{self.base_url}/sessions/{session_id}/results",
                     json=result_payload,
@@ -1524,6 +1547,11 @@ class SyncManager:
             finalize_body: dict[str, Any] = {"reason": "offline_sync_finalization"}
             if experiment_run_id is not None:
                 finalize_body["experiment_run_id"] = experiment_run_id
+            finalize_body = oo_egress.project_for_send(
+                oo_egress.PHASE_FINALIZE,
+                finalize_body,
+                explicit=self._optimization_only_policy(),
+            )
             response = self._session.post(
                 f"{self.base_url}/sessions/{session_id}/finalize",
                 json=finalize_body,

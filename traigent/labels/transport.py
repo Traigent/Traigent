@@ -38,6 +38,7 @@ from typing import Any, NoReturn
 
 import yaml
 
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.logging import get_logger
 
 from . import token_store
@@ -844,6 +845,7 @@ async def send_session_labels(
     config_path: Path | None = None,
     *,
     token_store_: token_store.TokenStore | None = None,
+    policy: oo_egress.Policy | bool | None = None,
 ) -> dict[str, int]:
     """Best-effort: send the human names of a session's agent / dataset / evaluator.
 
@@ -851,8 +853,15 @@ async def send_session_labels(
     references the Backend issued. Without a configured trust anchor nothing is sent.
     ``token_store_`` is the exact issuance journal for token-kind refs; when given it wins
     over the one derived from the session's ``agent`` reference.
+    ``policy`` is the calling client's effective optimization_only policy (explicit
+    setting + credential scope); the environment and latch are consulted too.
     Never raises: any failure means "label not sent" (closed code logged at debug).
     """
+    if oo_egress.is_active(policy):
+        # optimization_only: these are the customer's own agent / dataset / evaluator
+        # names (sealed to the project key, but still customer text, not a closed
+        # value). "Label not sent" is the documented best-effort outcome.
+        return {}
     labels = {
         refs[kind]: ("label", text)
         for kind, text in texts.items()

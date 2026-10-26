@@ -20,6 +20,7 @@ from traigent.runtime.model import (
     E_NO_CREDENTIALS,
     RuntimeRequirementError,
 )
+from traigent.utils import optimization_only_egress as oo_egress
 
 API_PREFIX = "/api/v1beta/projects"
 _TIMEOUT = (5.0, 30.0)
@@ -134,10 +135,23 @@ class RuntimeClient:
             raise RuntimeRequirementError(E_EGRESS)
         if not self._api_key:
             raise RuntimeRequirementError(E_NO_CREDENTIALS)
+        try:
+            oo_egress.assert_closed_body(
+                body,
+                "production_requirements_request",
+                explicit=oo_egress.policy_from_headers(
+                    self._origin, {"X-API-Key": self._api_key}
+                ),
+            )
+        except oo_egress.OptimizationOnlyRefusal:
+            raise RuntimeRequirementError(E_EGRESS) from None
         import requests
 
         from traigent.cloud.user_agent import get_sdk_user_agent
-        from traigent.labels.transport_gate import preflight_requests
+        from traigent.labels.transport_gate import (
+            observe_requests_response,
+            preflight_requests,
+        )
 
         headers = {
             "X-API-Key": self._api_key,
@@ -159,6 +173,7 @@ class RuntimeClient:
                 allow_redirects=False,
                 **kwargs,
             )
+            observe_requests_response(response)
         except RuntimeRequirementError:
             raise
         except Exception:  # noqa: BLE001 - never surface transport text

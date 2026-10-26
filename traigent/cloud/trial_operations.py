@@ -33,6 +33,7 @@ from traigent.cloud.validators import validate_configuration_run_submission
 from traigent.config.backend_config import BackendConfig
 from traigent.core.session_types import safe_http_error_summary
 from traigent.labels.transport_gate import client_origins, gate_session
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.logging import get_logger
 from traigent.utils.trial_costs import is_cost_unmeasured, lift_cost_floor_to_body
@@ -377,6 +378,7 @@ class TrialOperations:
         async with gate_session(
             aiohttp.ClientSession(trust_env=True),
             origins=client_origins(self.client),
+            optimization_only=oo_egress.explicit_of(self.client),
         ) as session:
             yield session
 
@@ -446,6 +448,12 @@ class TrialOperations:
                     or BackendConfig.get_backend_api_url()
                 )
                 url = f"{api_base}/sessions/{session_id}/results"
+                registration_payload = oo_egress.project_for_send(
+                    oo_egress.PHASE_RESULTS,
+                    registration_payload,
+                    explicit=oo_egress.policy_of(self.client, headers, url),
+                    session_id=session_id,
+                )
                 async with session.post(
                     url,
                     json=registration_payload,
@@ -595,7 +603,12 @@ class TrialOperations:
                     or BackendConfig.get_backend_api_url()
                 )
                 url = f"{api_base}/sessions/{session_id}/next-trial"
-                request_body = {"session_id": session_id, "previous_results": []}
+                request_body = oo_egress.project_for_send(
+                    oo_egress.PHASE_NEXT_TRIAL,
+                    {"session_id": session_id, "previous_results": []},
+                    explicit=oo_egress.policy_of(self.client, headers, url),
+                    session_id=session_id,
+                )
                 async with session.post(
                     url,
                     json=request_body,
@@ -1120,10 +1133,18 @@ class TrialOperations:
                     or BackendConfig.get_backend_api_url()
                 )
                 url = f"{api_base}/sessions/{session_id}/results"
+                # optimization_only: project the exact body about to be sent (no-op when
+                # the mode is off); the same projected copy is what every attempt sends.
+                wire_result = oo_egress.project_for_send(
+                    oo_egress.PHASE_RESULTS,
+                    self._sanitize_for_json(result_data),
+                    explicit=oo_egress.policy_of(self.client, headers, url),
+                    session_id=session_id,
+                )
 
                 async with session.post(
                     url,
-                    json=self._sanitize_for_json(result_data),
+                    json=wire_result,
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as response:
@@ -1326,9 +1347,15 @@ class TrialOperations:
                     or BackendConfig.get_backend_api_url()
                 )
                 url = f"{api_base}/sessions/{session_id}/results"
+                wire_submission = oo_egress.project_for_send(
+                    oo_egress.PHASE_SUMMARY_SUBMISSION,
+                    self._sanitize_for_json(submission_data),
+                    explicit=oo_egress.policy_of(self.client, headers, url),
+                    session_id=session_id,
+                )
                 async with session.post(
                     url,
-                    json=self._sanitize_for_json(submission_data),
+                    json=wire_submission,
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as response:
@@ -1427,7 +1454,11 @@ class TrialOperations:
                 url = f"{api_base}/configuration-runs/{trial_id}/summary-stats"
 
                 # Prepare request data
-                request_data = {"summary_stats": summary_stats_data}
+                request_data = oo_egress.project_for_send(
+                    oo_egress.PHASE_CONFIGURATION_RUN,
+                    {"summary_stats": summary_stats_data},
+                    explicit=oo_egress.policy_of(self.client, headers, url),
+                )
 
                 try:
                     async with session.put(

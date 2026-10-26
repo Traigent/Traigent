@@ -412,7 +412,9 @@ class _RefuseRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 def build_no_redirect_opener() -> urllib.request.OpenerDirector:
     """An opener for credential-carrying urllib requests that refuses every redirect."""
-    return urllib.request.build_opener(_RefuseRedirectHandler)
+    from traigent.labels.transport_gate import gate_opener
+
+    return gate_opener(urllib.request.build_opener(_RefuseRedirectHandler))
 
 
 def open_no_redirect(req: urllib.request.Request, *, timeout: float) -> Any:

@@ -393,7 +393,9 @@ def _request_new_token(
     # the "refresh_token" field name) was not confirmed against the live service;
     # Nous may expect grant_type=refresh_token form-encoding instead. Same status
     # as the token URL, auth.json schema and model-id spellings noted above.
-    preflight_requests("POST", token_url, json={"refresh_token": refresh_token})
+    preflight_requests(
+        "POST", token_url, external=True, json={"refresh_token": refresh_token}
+    )
     response = requests.post(
         token_url,
         json={"refresh_token": refresh_token},
