@@ -1,0 +1,1635 @@
+{
+ "empty_evidence": {
+  "hypotheses": [
+   {
+    "category": "analysis_completeness",
+    "assessment": "unverified",
+    "statement": "Trace derivation is incomplete; structural conclusions may be missing.",
+    "evidence": {
+     "analysis_status": null,
+     "failure_code": null
+    }
+   }
+  ],
+  "recommendations": [
+   {
+    "action": "restore_trace_derivation",
+    "rationale": "Complete structural evidence is required before attributing a failure.",
+    "verification": "Re-run this brief after analysis_status becomes completed."
+   },
+   {
+    "action": "improve_trace_instrumentation",
+    "rationale": "No content-free observation projection was available for this trace.",
+    "verification": "Emit typed observations with terminal status and stable tool_name, then rebuild the brief."
+   }
+  ]
+ },
+ "analysis_not_a_dict": {
+  "hypotheses": [
+   {
+    "category": "analysis_completeness",
+    "assessment": "unverified",
+    "statement": "Trace derivation is incomplete; structural conclusions may be missing.",
+    "evidence": {
+     "analysis_status": null,
+     "failure_code": null
+    }
+   }
+  ],
+  "recommendations": [
+   {
+    "action": "restore_trace_derivation",
+    "rationale": "Complete structural evidence is required before attributing a failure.",
+    "verification": "Re-run this brief after analysis_status becomes completed."
+   }
+  ]
+ },
+ "analysis_incomplete_with_failure_code": {
+  "hypotheses": [
+   {
+    "category": "analysis_completeness",
+    "assessment": "unverified",
+    "statement": "Trace derivation is incomplete; structural conclusions may be missing.",
+    "evidence": {
+     "analysis_status": "failed",
+     "failure_code": "E1"
+    }
+   }
+  ],
+  "recommendations": [
+   {
+    "action": "restore_trace_derivation",
+    "rationale": "Complete structural evidence is required before attributing a failure.",
+    "verification": "Re-run this brief after analysis_status becomes completed."
+   }
+  ]
+ },
+ "completed_nothing_else": {
+  "hypotheses": [
+   {
+    "category": "insufficient_evidence",
+    "assessment": "unverified",
+    "statement": "The available content-free evidence does not identify a concrete failure mechanism.",
+    "evidence": {}
+   }
+  ],
+  "recommendations": []
+ },
+ "tool_summaries_mixed": {
+  "hypotheses": [
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-1",
+     "attempt_count": 3,
+     "failure_count": 2,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-3",
+     "attempt_count": 3,
+     "failure_count": 0,
+     "retry_count": 1,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-8",
+     "attempt_count": 3,
+     "failure_count": 0,
+     "retry_count": 0,
+     "fallback_count": 1
+    }
+   }
+  ],
+  "recommendations": [
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-1",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-3",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-8",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   }
+  ]
+ },
+ "tool_summaries_capped_at_20": {
+  "hypotheses": [
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-0",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-1",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-2",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-3",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-4",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-5",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-6",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-7",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-8",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-9",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-10",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-11",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-12",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-13",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-14",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-15",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-16",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-17",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-18",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-19",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   }
+  ],
+  "recommendations": [
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-0",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-1",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-2",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-3",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-4",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-5",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-6",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-7",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-8",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-9",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-10",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-11",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-12",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-13",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-14",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-15",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-16",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-17",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-18",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-19",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   }
+  ]
+ },
+ "tool_summaries_not_a_list": {
+  "hypotheses": [
+   {
+    "category": "insufficient_evidence",
+    "assessment": "unverified",
+    "statement": "The available content-free evidence does not identify a concrete failure mechanism.",
+    "evidence": {}
+   }
+  ],
+  "recommendations": []
+ },
+ "repeat_groups": {
+  "hypotheses": [
+   {
+    "category": "loop_control",
+    "assessment": "unverified",
+    "statement": "Repeated structural subsequences may indicate ineffective retry or planning control.",
+    "evidence": {
+     "repeat_group_ids": [
+      "g1",
+      "g2",
+      null
+     ]
+    }
+   }
+  ],
+  "recommendations": [
+   {
+    "action": "test_loop_guard",
+    "rationale": "The trace contains server-derived repeated subsequences.",
+    "verification": "Compare retry_rate, latency_ms, cost_usd, and quality_score on matched cohorts."
+   }
+  ]
+ },
+ "repeat_groups_capped": {
+  "hypotheses": [
+   {
+    "category": "loop_control",
+    "assessment": "unverified",
+    "statement": "Repeated structural subsequences may indicate ineffective retry or planning control.",
+    "evidence": {
+     "repeat_group_ids": [
+      "g0",
+      "g1",
+      "g2",
+      "g3",
+      "g4",
+      "g5",
+      "g6",
+      "g7",
+      "g8",
+      "g9",
+      "g10",
+      "g11",
+      "g12",
+      "g13",
+      "g14",
+      "g15",
+      "g16",
+      "g17",
+      "g18",
+      "g19"
+     ]
+    }
+   }
+  ],
+  "recommendations": [
+   {
+    "action": "test_loop_guard",
+    "rationale": "The trace contains server-derived repeated subsequences.",
+    "verification": "Compare retry_rate, latency_ms, cost_usd, and quality_score on matched cohorts."
+   }
+  ]
+ },
+ "repeat_groups_empty_ignored": {
+  "hypotheses": [
+   {
+    "category": "insufficient_evidence",
+    "assessment": "unverified",
+    "statement": "The available content-free evidence does not identify a concrete failure mechanism.",
+    "evidence": {}
+   }
+  ],
+  "recommendations": []
+ },
+ "issue_ids": {
+  "hypotheses": [
+   {
+    "category": "insufficient_evidence",
+    "assessment": "unverified",
+    "statement": "The available content-free evidence does not identify a concrete failure mechanism.",
+    "evidence": {}
+   }
+  ],
+  "recommendations": [
+   {
+    "action": "inspect_recurring_issues",
+    "target_ids": [
+     "i0",
+     "i1",
+     "i2",
+     "i3",
+     "i4",
+     "i5",
+     "i6",
+     "i7",
+     "i8",
+     "i9",
+     "i10",
+     "i11",
+     "i12",
+     "i13",
+     "i14",
+     "i15",
+     "i16",
+     "i17",
+     "i18",
+     "i19"
+    ],
+    "rationale": "Durable issue occurrences connect this trace to repeated behavior.",
+    "verification": "Use observability_get_issue for immutable occurrence evidence before changing code."
+   }
+  ]
+ },
+ "issue_ids_empty_ignored": {
+  "hypotheses": [
+   {
+    "category": "insufficient_evidence",
+    "assessment": "unverified",
+    "statement": "The available content-free evidence does not identify a concrete failure mechanism.",
+    "evidence": {}
+   }
+  ],
+  "recommendations": []
+ },
+ "lineage_links": {
+  "hypotheses": [
+   {
+    "category": "change_attribution",
+    "assessment": "unverified",
+    "statement": "Linked releases, prompts, configurations, or toolsets are candidate variables, not established causes.",
+    "evidence": {
+     "candidate_changes": [
+      {
+       "resource_type": "prompt",
+       "resource_id": "p1",
+       "resource_version": "3"
+      },
+      {
+       "resource_type": "release",
+       "resource_id": null,
+       "resource_version": null
+      }
+     ]
+    }
+   }
+  ],
+  "recommendations": []
+ },
+ "lineage_not_a_dict": {
+  "hypotheses": [
+   {
+    "category": "insufficient_evidence",
+    "assessment": "unverified",
+    "statement": "The available content-free evidence does not identify a concrete failure mechanism.",
+    "evidence": {}
+   }
+  ],
+  "recommendations": []
+ },
+ "lineage_empty_links": {
+  "hypotheses": [
+   {
+    "category": "insufficient_evidence",
+    "assessment": "unverified",
+    "statement": "The available content-free evidence does not identify a concrete failure mechanism.",
+    "evidence": {}
+   }
+  ],
+  "recommendations": []
+ },
+ "conformance_with_alternates": {
+  "hypotheses": [
+   {
+    "category": "structural_conformance",
+    "assessment": "descriptive_non_causal",
+    "statement": "Alternate structures differ from the dominant observed variant; the baseline is descriptive, not an intended-workflow assertion.",
+    "evidence": {
+     "baseline_type": "dominant",
+     "baseline_variant_id": "v1",
+     "sampled_trace_count": 10,
+     "conformance_rate": 0.7,
+     "alternate_trace_count": 3,
+     "alternate_rate": 0.3,
+     "alternate_variant_count": 2,
+     "sample_truncated": false
+    }
+   }
+  ],
+  "recommendations": []
+ },
+ "conformance_zero_alternates_ignored": {
+  "hypotheses": [
+   {
+    "category": "insufficient_evidence",
+    "assessment": "unverified",
+    "statement": "The available content-free evidence does not identify a concrete failure mechanism.",
+    "evidence": {}
+   }
+  ],
+  "recommendations": []
+ },
+ "conformance_bool_alternates_ignored": {
+  "hypotheses": [
+   {
+    "category": "insufficient_evidence",
+    "assessment": "unverified",
+    "statement": "The available content-free evidence does not identify a concrete failure mechanism.",
+    "evidence": {}
+   }
+  ],
+  "recommendations": []
+ },
+ "aggregate_recommendations": {
+  "hypotheses": [
+   {
+    "category": "insufficient_evidence",
+    "assessment": "unverified",
+    "statement": "The available content-free evidence does not identify a concrete failure mechanism.",
+    "evidence": {}
+   }
+  ],
+  "recommendations": [
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-1",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-1",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 1
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-4",
+    "category": "retry_policy",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-4",
+    "rationale": "Measured retry behavior indicates a bounded retry-policy change should be tested.",
+    "evidence": {
+     "n": 4
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-5",
+    "category": "tool_routing",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-5",
+    "rationale": "Measured tool outcomes indicate a routing change should be tested.",
+    "evidence": {
+     "n": 5
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-6",
+    "category": "recurring_issue",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-6",
+    "rationale": "Repeated issue evidence indicates a targeted remediation should be tested.",
+    "evidence": {
+     "n": 6
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-7",
+    "category": "behavioral_variation",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-7",
+    "rationale": "Observed structural variation indicates a control change should be tested.",
+    "evidence": {
+     "n": 7
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   }
+  ]
+ },
+ "aggregate_recommendations_capped": {
+  "hypotheses": [
+   {
+    "category": "insufficient_evidence",
+    "assessment": "unverified",
+    "statement": "The available content-free evidence does not identify a concrete failure mechanism.",
+    "evidence": {}
+   }
+  ],
+  "recommendations": [
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-0",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-0",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 0
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-1",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-1",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 1
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-2",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-2",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 2
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-3",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-3",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 3
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-4",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-4",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 4
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-5",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-5",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 5
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-6",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-6",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 6
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-7",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-7",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 7
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-8",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-8",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 8
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-9",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-9",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 9
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-10",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-10",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 10
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-11",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-11",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 11
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-12",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-12",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 12
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-13",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-13",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 13
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-14",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-14",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 14
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-15",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-15",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 15
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-16",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-16",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 16
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-17",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-17",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 17
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-18",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-18",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 18
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-19",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-19",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 19
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   }
+  ]
+ },
+ "insights_not_a_dict": {
+  "hypotheses": [
+   {
+    "category": "insufficient_evidence",
+    "assessment": "unverified",
+    "statement": "The available content-free evidence does not identify a concrete failure mechanism.",
+    "evidence": {}
+   }
+  ],
+  "recommendations": []
+ },
+ "cohort_present": {
+  "hypotheses": [
+   {
+    "category": "insufficient_evidence",
+    "assessment": "unverified",
+    "statement": "The available content-free evidence does not identify a concrete failure mechanism.",
+    "evidence": {}
+   }
+  ],
+  "recommendations": [
+   {
+    "action": "review_measured_cohort_deltas",
+    "rationale": "A bounded before/after comparison is included in this brief.",
+    "verification": "Accept a change only when selected quality/reliability metrics improve without violating cost or latency constraints."
+   }
+  ]
+ },
+ "cohort_not_a_dict": {
+  "hypotheses": [
+   {
+    "category": "insufficient_evidence",
+    "assessment": "unverified",
+    "statement": "The available content-free evidence does not identify a concrete failure mechanism.",
+    "evidence": {}
+   }
+  ],
+  "recommendations": []
+ },
+ "no_projection_items": {
+  "hypotheses": [
+   {
+    "category": "insufficient_evidence",
+    "assessment": "unverified",
+    "statement": "The available content-free evidence does not identify a concrete failure mechanism.",
+    "evidence": {}
+   }
+  ],
+  "recommendations": [
+   {
+    "action": "improve_trace_instrumentation",
+    "rationale": "No content-free observation projection was available for this trace.",
+    "verification": "Emit typed observations with terminal status and stable tool_name, then rebuild the brief."
+   }
+  ]
+ },
+ "projection_not_a_dict": {
+  "hypotheses": [
+   {
+    "category": "insufficient_evidence",
+    "assessment": "unverified",
+    "statement": "The available content-free evidence does not identify a concrete failure mechanism.",
+    "evidence": {}
+   }
+  ],
+  "recommendations": [
+   {
+    "action": "improve_trace_instrumentation",
+    "rationale": "No content-free observation projection was available for this trace.",
+    "verification": "Emit typed observations with terminal status and stable tool_name, then rebuild the brief."
+   }
+  ]
+ },
+ "everything_and_caps": {
+  "hypotheses": [
+   {
+    "category": "analysis_completeness",
+    "assessment": "unverified",
+    "statement": "Trace derivation is incomplete; structural conclusions may be missing.",
+    "evidence": {
+     "analysis_status": "partial",
+     "failure_code": "E9"
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-0",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-1",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-2",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-3",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-4",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-5",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-6",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-7",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-8",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-9",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-10",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-11",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-12",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-13",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-14",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-15",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-16",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-17",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-18",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "tool_execution_reliability",
+    "assessment": "unverified",
+    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+    "evidence": {
+     "normalized_tool_id": "tool-19",
+     "attempt_count": 3,
+     "failure_count": 1,
+     "retry_count": 0,
+     "fallback_count": 0
+    }
+   },
+   {
+    "category": "loop_control",
+    "assessment": "unverified",
+    "statement": "Repeated structural subsequences may indicate ineffective retry or planning control.",
+    "evidence": {
+     "repeat_group_ids": [
+      "g"
+     ]
+    }
+   },
+   {
+    "category": "change_attribution",
+    "assessment": "unverified",
+    "statement": "Linked releases, prompts, configurations, or toolsets are candidate variables, not established causes.",
+    "evidence": {
+     "candidate_changes": [
+      {
+       "resource_type": "toolset",
+       "resource_id": null,
+       "resource_version": null
+      }
+     ]
+    }
+   },
+   {
+    "category": "structural_conformance",
+    "assessment": "descriptive_non_causal",
+    "statement": "Alternate structures differ from the dominant observed variant; the baseline is descriptive, not an intended-workflow assertion.",
+    "evidence": {
+     "baseline_type": null,
+     "baseline_variant_id": null,
+     "sampled_trace_count": null,
+     "conformance_rate": null,
+     "alternate_trace_count": 2,
+     "alternate_rate": null,
+     "alternate_variant_count": null,
+     "sample_truncated": null
+    }
+   }
+  ],
+  "recommendations": [
+   {
+    "action": "restore_trace_derivation",
+    "rationale": "Complete structural evidence is required before attributing a failure.",
+    "verification": "Re-run this brief after analysis_status becomes completed."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-0",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-1",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-2",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-3",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-4",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-5",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-6",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-7",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-8",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-9",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-10",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-11",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-12",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-13",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-14",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-15",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-16",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-17",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-18",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_tool_contract_change",
+    "target_id": "tool-19",
+    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change."
+   },
+   {
+    "action": "test_loop_guard",
+    "rationale": "The trace contains server-derived repeated subsequences.",
+    "verification": "Compare retry_rate, latency_ms, cost_usd, and quality_score on matched cohorts."
+   },
+   {
+    "action": "inspect_recurring_issues",
+    "target_ids": [
+     "a",
+     "b"
+    ],
+    "rationale": "Durable issue occurrences connect this trace to repeated behavior.",
+    "verification": "Use observability_get_issue for immutable occurrence evidence before changing code."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-0",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-0",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 0
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   },
+   {
+    "action": "evaluate_aggregate_recommendation",
+    "target_id": "rec-1",
+    "category": "tool_reliability",
+    "priority": "high",
+    "confidence": 0.8,
+    "subject": "subject-1",
+    "rationale": "Measured tool failures indicate a reliability change should be tested.",
+    "evidence": {
+     "n": 1
+    },
+    "verification": "compare error_rate",
+    "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change."
+   }
+  ]
+ }
+}
