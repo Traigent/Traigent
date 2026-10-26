@@ -2219,6 +2219,64 @@ def _resolve_algorithm(optimization_section: Any) -> str | None:
     return mapping.get(normalized, normalized)
 
 
+def _compile_conditional_constraint(
+    entry: dict[str, Any], constraint_id: Any, path: Path
+) -> tuple[Callable[..., bool], bool]:
+    when_expr = entry.get("when")
+    then_expr = entry.get("then")
+    if not isinstance(when_expr, str) or not isinstance(then_expr, str):
+        raise TVLValidationError(
+            f"Conditional constraint '{constraint_id}' requires 'when' and 'then' expressions"
+        )
+    when_compiled = compile_constraint_expression(
+        when_expr, label=f"{path}:{constraint_id}:when"
+    )
+    then_compiled = compile_constraint_expression(
+        then_expr, label=f"{path}:{constraint_id}:then"
+    )
+    requires_metrics = _METRICS_PREFIX in when_expr or _METRICS_PREFIX in then_expr
+
+    def _conditional(
+        config: dict[str, Any],
+        metrics: dict[str, Any] | None = None,
+        *,
+        _when: Callable[..., Any] = when_compiled,
+        _then: Callable[..., Any] = then_compiled,
+    ) -> bool:
+        if not _when(config, metrics):
+            return True
+        return bool(_then(config, metrics))
+
+    return _conditional, requires_metrics
+
+
+def _compile_rule_constraint(
+    entry: dict[str, Any], constraint_id: Any, constraint_type: str, path: Path
+) -> tuple[Callable[..., bool], bool]:
+    rule_expr = entry.get("rule")
+    if not isinstance(rule_expr, str):
+        raise TVLValidationError(
+            f"Constraint '{constraint_id}' requires a string 'rule' expression"
+        )
+    requires_metrics = _METRICS_PREFIX in rule_expr
+    compiled_rule = compile_constraint_expression(
+        rule_expr, label=f"{path}:{constraint_id}:rule"
+    )
+
+    if constraint_type != "forbidden":
+        return compiled_rule, requires_metrics
+
+    def _forbidden(
+        config: dict[str, Any],
+        metrics: dict[str, Any] | None = None,
+        *,
+        _rule: Callable[..., Any] = compiled_rule,
+    ) -> bool:
+        return not bool(_rule(config, metrics))
+
+    return _forbidden, requires_metrics
+
+
 def _compile_constraints(
     entries: list[Any],
     path: Path,
@@ -2232,62 +2290,15 @@ def _compile_constraints(
         error_message = (
             entry.get("error_message") or f"Constraint {constraint_id} violated"
         )
-        requires_metrics = False
 
         if constraint_type == "conditional":
-            when_expr = entry.get("when")
-            then_expr = entry.get("then")
-            if not isinstance(when_expr, str) or not isinstance(then_expr, str):
-                raise TVLValidationError(
-                    f"Conditional constraint '{constraint_id}' requires 'when' and 'then' expressions"
-                )
-            when_compiled = compile_constraint_expression(
-                when_expr, label=f"{path}:{constraint_id}:when"
+            evaluator, requires_metrics = _compile_conditional_constraint(
+                entry, constraint_id, path
             )
-            then_compiled = compile_constraint_expression(
-                then_expr, label=f"{path}:{constraint_id}:then"
-            )
-            requires_metrics = (
-                _METRICS_PREFIX in when_expr or _METRICS_PREFIX in then_expr
-            )
-
-            def _conditional(
-                config: dict[str, Any],
-                metrics: dict[str, Any] | None = None,
-                *,
-                _when: Callable[..., Any] = when_compiled,
-                _then: Callable[..., Any] = then_compiled,
-            ) -> bool:
-                if not _when(config, metrics):
-                    return True
-                return bool(_then(config, metrics))
-
-            evaluator = _conditional
-
         else:
-            rule_expr = entry.get("rule")
-            if not isinstance(rule_expr, str):
-                raise TVLValidationError(
-                    f"Constraint '{constraint_id}' requires a string 'rule' expression"
-                )
-            requires_metrics = _METRICS_PREFIX in rule_expr
-            compiled_rule = compile_constraint_expression(
-                rule_expr, label=f"{path}:{constraint_id}:rule"
+            evaluator, requires_metrics = _compile_rule_constraint(
+                entry, constraint_id, constraint_type, path
             )
-
-            if constraint_type == "forbidden":
-
-                def _forbidden(
-                    config: dict[str, Any],
-                    metrics: dict[str, Any] | None = None,
-                    *,
-                    _rule: Callable[..., Any] = compiled_rule,
-                ) -> bool:
-                    return not bool(_rule(config, metrics))
-
-                evaluator = _forbidden  # type: ignore[assignment]
-            else:
-                evaluator = compiled_rule  # type: ignore[assignment]
 
         compiled.append(
             CompiledConstraint(
