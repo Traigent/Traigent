@@ -389,39 +389,10 @@ class ProgressBarCallback(OptimizationCallback):
         """Called when optimization completes."""
         # Draw final 100% progress bar (throttle may have skipped the last update)
         if self._last_progress is not None:
-            bar = "█" * self.width
-            elapsed = time.strftime(
-                "%M:%S", time.gmtime(self._last_progress.elapsed_time)
-            )
-            best_score_str = (
-                f"{self._last_progress.best_score:.3f}"
-                if self._last_progress.best_score is not None
-                else "N/A"
-            )
-            total = self._last_progress.total_trials
-            # Using print for final progress display output
-            _safe_print(
-                f"\r[{bar}] 100.0% "
-                f"({total}/{total}) "
-                f"✅ {self._last_progress.successful_trials} "
-                f"❌ {self._last_progress.failed_trials} "
-                f"{self._timeout_segment()}"
-                f"⏱️  {elapsed}"
-                + (f" 🏆 {best_score_str}" if self._table_show_best else ""),
-                flush=True,
-            )
+            self._print_final_progress_bar(self._last_progress)
 
         _safe_print("\n")
-        if _is_user_cancelled(result):
-            _safe_print("🛑 Optimization CANCELLED BY USER; results are partial.")
-        elif result.stop_reason == "timeout" or result.status == "cancelled":
-            timeout_value = None
-            if isinstance(result.metadata, dict):
-                timeout_value = result.metadata.get("timeout")
-            timeout_hint = f" ({timeout_value}s)" if timeout_value else ""
-            _safe_print(f"⚠️ Optimization stopped: timeout reached{timeout_hint}.")
-        else:
-            _safe_print("✅ Optimization complete!")
+        self._print_completion_status(result)
         best_score_str = (
             f"{result.best_score:.3f}" if result.best_score is not None else "N/A"
         )
@@ -433,6 +404,47 @@ class ProgressBarCallback(OptimizationCallback):
         if result.stop_reason and result.stop_reason != "timeout":
             _safe_print(f"🛑 Stop reason: {result.stop_reason}")
 
+        self._print_run_links(result)
+
+        self._print_results_table(result)
+
+    def _print_final_progress_bar(self, progress: ProgressInfo) -> None:
+        """Print the closing 100% progress line from the last recorded progress."""
+        bar = "█" * self.width
+        elapsed = time.strftime("%M:%S", time.gmtime(progress.elapsed_time))
+        best_score_str = (
+            f"{progress.best_score:.3f}" if progress.best_score is not None else "N/A"
+        )
+        total = progress.total_trials
+        # Using print for final progress display output
+        _safe_print(
+            f"\r[{bar}] 100.0% "
+            f"({total}/{total}) "
+            f"✅ {progress.successful_trials} "
+            f"❌ {progress.failed_trials} "
+            f"{self._timeout_segment()}"
+            f"⏱️  {elapsed}"
+            + (f" 🏆 {best_score_str}" if self._table_show_best else ""),
+            flush=True,
+        )
+
+    @staticmethod
+    def _print_completion_status(result: OptimizationResult) -> None:
+        """Print the headline outcome line (cancelled, timeout or complete)."""
+        if _is_user_cancelled(result):
+            _safe_print("🛑 Optimization CANCELLED BY USER; results are partial.")
+        elif result.stop_reason == "timeout" or result.status == "cancelled":
+            timeout_value = None
+            if isinstance(result.metadata, dict):
+                timeout_value = result.metadata.get("timeout")
+            timeout_hint = f" ({timeout_value}s)" if timeout_value else ""
+            _safe_print(f"⚠️ Optimization stopped: timeout reached{timeout_hint}.")
+        else:
+            _safe_print("✅ Optimization complete!")
+
+    @staticmethod
+    def _print_run_links(result: OptimizationResult) -> None:
+        """Print the run label and where to view (or sync) the run."""
         if result.run_label:
             _safe_print(f"🔖 Run: {result.run_label}")
         if result.cloud_url:
@@ -443,8 +455,6 @@ class ProgressBarCallback(OptimizationCallback):
             and result.metadata.get("offline_mode")
         ):
             _safe_print("   Run locally — sync to cloud with `traigent sync`")
-
-        self._print_results_table(result)
 
     def _print_results_table(self, result: OptimizationResult) -> None:
         """Render the canonical optimization results table when enough context exists."""
