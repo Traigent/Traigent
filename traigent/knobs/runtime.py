@@ -621,57 +621,25 @@ def _drive_cascade(
     - a gated nested majority_vote ensemble's OWN vote feeds the gate (F1a);
     - an ``error`` is absorbing (propagates to the cascade error).
     """
-    gates: list[Gate] = []
-    for gate in body.gates:
-        if gate.kind is not IRGateKind.MARGIN_BELOW:  # pragma: no cover - IR-guarded
-            return _error(
-                f"composite-runtime: post-cascade gate kind {gate.kind.value!r} "
-                "is not executable (margin_below only)"
-            )
-        gates.append(
-            Gate(
-                kind=GateKind.MARGIN_BELOW,
-                threshold_ref=_build_threshold_ref(gate.threshold, calibrated_values),
-            )
-        )
+    gates, gate_error = _build_runtime_gates(body, calibrated_values)
+    if gate_error is not None:
+        return gate_error
 
     escalations = 0
     last = len(body.arms) - 1
     for index, arm in enumerate(body.arms):
         is_last = index == last
         try:
-            if isinstance(arm, StageArm):
-                outcome = _evaluate_stage_arm(
-                    arm, stages, gated=not is_last, config=config
-                )
-            elif is_last:
-                # A terminal nested arm: any composite kind; no vote needed.
-                inner = _execute_node(
-                    registry[arm.ref],
-                    stages,
-                    registry,
-                    config,
-                    calibrated_values,
-                    signals,
-                    predicates,
-                )
-                outcome = _ArmOutcome(
-                    output=inner.output,
-                    vote=None,
-                    kind=inner.result_kind,
-                    error=inner.error,
-                )
-            else:
-                # A GATED nested arm MUST be a majority_vote ensemble (F1a).
-                outcome = _run_nested_majority_vote(
-                    registry[arm.ref],
-                    stages,
-                    registry,
-                    config,
-                    calibrated_values,
-                    signals,
-                    predicates,
-                )
+            outcome = _evaluate_cascade_arm(
+                arm,
+                is_last,
+                stages,
+                registry,
+                config,
+                calibrated_values,
+                signals,
+                predicates,
+            )
         except Exception as exc:  # noqa: BLE001 - error is absorbing (§3.2.1)
             return _error(f"composite-runtime: {type(exc).__name__}: {exc}")
 
@@ -682,59 +650,122 @@ def _drive_cascade(
             )
 
         if is_last:
-            step = CascadeStep(
-                stage_index=index,
-                stage_name="",
-                output=outcome.output,
-                representative=outcome.output,
-                vote=outcome.vote,
-                escalations=escalations,
-            )
-            if outcome.kind is ResultKind.NO_ACCEPT:
-                # Only the terminal arm's no_accept becomes the cascade's (F1b).
-                return _no_accept(_cascade_measures(step, body))
-            return CompositeRunResult(
-                output=outcome.output,
-                result_kind=ResultKind.OUTPUT,
-                measures=_cascade_measures(step, body),
-                error=None,
-            )
+            return _decided_cascade_result(outcome, index, escalations, body)
 
         # A non-terminal (gated) arm.
-        if outcome.kind is ResultKind.NO_ACCEPT:
-            # F1b: a gated arm's no_accept ESCALATES to the next stage.
-            escalations += 1
-            continue
-        runtime_gate = gates[index]
-        if outcome.vote is None:  # pragma: no cover - guarded above for stages
-            return _error(
-                f"composite-runtime: gated cascade arm {index} has no vote to "
-                "feed the gate (margin-bearing arm required)"
-            )
-        try:
-            escalate = runtime_gate.should_escalate(outcome.vote)
-        except Exception as exc:  # noqa: BLE001 - non-finite/unset threshold
-            return _error(f"composite-runtime: {type(exc).__name__}: {exc}")
+        escalate = _gated_arm_escalates(outcome, gates[index], index)
+        if isinstance(escalate, CompositeRunResult):
+            return escalate
         if escalate:
             escalations += 1
             continue
-        step = CascadeStep(
-            stage_index=index,
-            stage_name="",
-            output=outcome.output,
-            representative=outcome.output,
-            vote=outcome.vote,
-            escalations=escalations,
-        )
-        return CompositeRunResult(
-            output=outcome.output,
-            result_kind=ResultKind.OUTPUT,
-            measures=_cascade_measures(step, body),
-            error=None,
-        )
+        return _decided_cascade_result(outcome, index, escalations, body)
 
     return _error(  # pragma: no cover - the loop always returns at the last arm
         "composite-runtime: cascade driver reached an unreachable terminal state"
+    )
+
+
+def _gated_arm_escalates(
+    outcome: _ArmOutcome, gate: Gate, index: int
+) -> bool | CompositeRunResult:
+    """Whether a non-terminal arm escalates; an ``error`` result on a gate fault."""
+    if outcome.kind is ResultKind.NO_ACCEPT:
+        # F1b: a gated arm's no_accept ESCALATES to the next stage.
+        return True
+    if outcome.vote is None:  # pragma: no cover - guarded above for stages
+        return _error(
+            f"composite-runtime: gated cascade arm {index} has no vote to "
+            "feed the gate (margin-bearing arm required)"
+        )
+    try:
+        return bool(gate.should_escalate(outcome.vote))
+    except Exception as exc:  # noqa: BLE001 - non-finite/unset threshold
+        return _error(f"composite-runtime: {type(exc).__name__}: {exc}")
+
+
+def _build_runtime_gates(
+    body: CascadeBody, calibrated_values: Mapping[str, float | int]
+) -> tuple[list[Gate], CompositeRunResult | None]:
+    """Build the live gates; a non-margin gate kind yields an ``error`` result."""
+    gates: list[Gate] = []
+    for gate in body.gates:
+        if gate.kind is not IRGateKind.MARGIN_BELOW:  # pragma: no cover - IR-guarded
+            return gates, _error(
+                f"composite-runtime: post-cascade gate kind {gate.kind.value!r} "
+                "is not executable (margin_below only)"
+            )
+        gates.append(
+            Gate(
+                kind=GateKind.MARGIN_BELOW,
+                threshold_ref=_build_threshold_ref(gate.threshold, calibrated_values),
+            )
+        )
+    return gates, None
+
+
+def _evaluate_cascade_arm(
+    arm: Arm,
+    is_last: bool,
+    stages: Mapping[str, StageEntry],
+    registry: Mapping[str, CompositeNode],
+    config: Mapping[str, Any],
+    calibrated_values: Mapping[str, float | int],
+    signals: Mapping[str, Callable[..., Any]],
+    predicates: Mapping[str, Callable[..., Any]],
+) -> _ArmOutcome:
+    """Evaluate one arm for the manual driver (may raise; the caller absorbs)."""
+    if isinstance(arm, StageArm):
+        return _evaluate_stage_arm(arm, stages, gated=not is_last, config=config)
+    if is_last:
+        # A terminal nested arm: any composite kind; no vote needed.
+        inner = _execute_node(
+            registry[arm.ref],
+            stages,
+            registry,
+            config,
+            calibrated_values,
+            signals,
+            predicates,
+        )
+        return _ArmOutcome(
+            output=inner.output,
+            vote=None,
+            kind=inner.result_kind,
+            error=inner.error,
+        )
+    # A GATED nested arm MUST be a majority_vote ensemble (F1a).
+    return _run_nested_majority_vote(
+        registry[arm.ref],
+        stages,
+        registry,
+        config,
+        calibrated_values,
+        signals,
+        predicates,
+    )
+
+
+def _decided_cascade_result(
+    outcome: _ArmOutcome, index: int, escalations: int, body: CascadeBody
+) -> CompositeRunResult:
+    """The cascade result once arm ``index`` is the deciding arm."""
+    step = CascadeStep(
+        stage_index=index,
+        stage_name="",
+        output=outcome.output,
+        representative=outcome.output,
+        vote=outcome.vote,
+        escalations=escalations,
+    )
+    if index == len(body.arms) - 1 and outcome.kind is ResultKind.NO_ACCEPT:
+        # Only the terminal arm's no_accept becomes the cascade's (F1b).
+        return _no_accept(_cascade_measures(step, body))
+    return CompositeRunResult(
+        output=outcome.output,
+        result_kind=ResultKind.OUTPUT,
+        measures=_cascade_measures(step, body),
+        error=None,
     )
 
 
