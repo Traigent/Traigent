@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import inspect
 import json
 import math
@@ -2832,7 +2833,7 @@ class BaseEvaluator(ABC):
                 """Observe worker failures and release its evaluator lane."""
                 try:
                     done_future.exception()
-                except BaseException:
+                except (asyncio.CancelledError, concurrent.futures.CancelledError):
                     # The result is observed here; callers that were still
                     # awaiting the wrapped Future receive the same failure.
                     pass
@@ -2856,7 +2857,7 @@ class BaseEvaluator(ABC):
                 """Prevent a timed-out worker exception from becoming unobserved."""
                 try:
                     done_future.exception()
-                except BaseException:
+                except (asyncio.CancelledError, concurrent.futures.CancelledError):
                     pass
 
             async_future.add_done_callback(consume_late_result)
