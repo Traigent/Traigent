@@ -96,6 +96,20 @@ def _headers_to_lower_dict(headers: Any | None) -> dict[str, str]:
     return {str(key).lower(): str(value).lower() for key, value in items()}
 
 
+def _latch_key_validation(url: str, headers: dict[str, str], data: Any) -> None:
+    """Latch optimization_only for this credential when ``/keys/validate`` says so.
+
+    Runs before the validation result is returned, so the first content-bearing send
+    after authentication is already judged under the mode. Never raises.
+    """
+    try:
+        from traigent.utils import optimization_only_egress as oo_egress
+
+        oo_egress.note_key_validation(data, oo_egress.credential_scope(url, headers))
+    except Exception:  # noqa: BLE001 - observation must never break authentication
+        return
+
+
 def _parse_validation_payload(data: Any | None, raw_body: str | None) -> dict[str, Any]:
     if isinstance(data, dict):
         return data
@@ -1726,6 +1740,7 @@ class AuthManager:
                             data = await response.json(content_type=None)
                         except Exception:
                             return "backend returned non-JSON success body"
+                        _latch_key_validation(url, headers, data)
                         return self._interpret_backend_key_validation_response(
                             response.status,
                             data,
@@ -1897,6 +1912,7 @@ class AuthManager:
                 data = response.json()
             except Exception:
                 return "backend returned non-JSON success body"
+            _latch_key_validation(url, headers, data)
             return self._interpret_backend_key_validation_response(
                 status,
                 data,
