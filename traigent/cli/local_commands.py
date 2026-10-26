@@ -509,6 +509,81 @@ def manage_config(show: bool, set_path: str | None, reset: bool) -> None:
         sys.exit(1)
 
 
+def _echo_sync_status(status: dict[str, Any]) -> None:
+    click.echo("\n📊 Sync Status")
+    click.echo("=" * 30)
+    click.echo(f"Total sessions: {status['total_sessions']}")
+    click.echo(f"Completed sessions: {status['completed_sessions']}")
+    click.echo(f"Sync eligible: {status['sync_eligible']}")
+    click.echo(f"Total trials: {status['total_trials']}")
+
+
+def _sync_single_session(
+    sync_manager: SyncManager, session_id: str, dry_run: bool
+) -> None:
+    click.echo(f"\n🔄 Syncing session: {session_id}")
+    result = sync_manager.sync_session_to_cloud(session_id, dry_run)
+
+    if result["status"] != "success":
+        click.echo("❌ Sync failed:")
+        for error in result["errors"]:
+            click.echo(f"   • {error}")
+        return
+    click.echo("✅ Session synced successfully!")
+    if not dry_run:
+        click.echo(f"   Portal URL: {result.get('cloud_url', 'N/A')}")
+
+
+def _sync_all_sessions(
+    sync_manager: SyncManager,
+    status: dict[str, Any],
+    dry_run: bool,
+    cleanup: bool,
+) -> bool:
+    """Sync every eligible session; return False when the user cancelled."""
+    click.echo(f"\n🔄 Syncing all {status['sync_eligible']} eligible sessions...")
+
+    if not dry_run and not click.confirm("Continue with portal sync?"):
+        click.echo("Sync cancelled.")
+        return False
+
+    result = sync_manager.sync_all_sessions(dry_run)
+
+    click.echo("\n📈 Sync Results:")
+    click.echo(f"   Total sessions: {result['total_sessions']}")
+    click.echo(f"   Synced successfully: {result['synced_successfully']}")
+    click.echo(f"   Errors: {result['sync_errors']}")
+
+    if result["sync_errors"] > 0:
+        click.echo("\n❌ Sessions with errors:")
+        for session_result in result["session_results"]:
+            if session_result["status"] != "success":
+                click.echo(
+                    f"   • {session_result['session_id']}: {session_result.get('errors', ['Unknown error'])}"
+                )
+
+    # Cleanup if requested and successful
+    if cleanup and not dry_run and result["synced_successfully"] > 0:
+        _cleanup_synced_sessions(sync_manager, result)
+    return True
+
+
+def _cleanup_synced_sessions(sync_manager: SyncManager, result: dict[str, Any]) -> None:
+    successful_sessions = [
+        r["session_id"] for r in result["session_results"] if r["status"] == "success"
+    ]
+
+    if successful_sessions and click.confirm(
+        f"\nClean up {len(successful_sessions)} successfully synced local sessions?"
+    ):
+        cleanup_result = sync_manager.cleanup_after_sync(
+            successful_sessions, keep_backup=True
+        )
+        click.echo(
+            f"✅ Cleaned up {cleanup_result['sessions_deleted']} sessions (backed up first)"
+        )
+
+
 @local_commands.command(name="sync")
 @click.option("--api-key", help="API key for portal sync")
 @click.option("--session-id", help="Sync specific session (if not provided, syncs all)")
@@ -547,12 +622,7 @@ def sync_to_cloud(
 
         # Show sync status first
         status = sync_manager.get_sync_status()
-        click.echo("\n📊 Sync Status")
-        click.echo("=" * 30)
-        click.echo(f"Total sessions: {status['total_sessions']}")
-        click.echo(f"Completed sessions: {status['completed_sessions']}")
-        click.echo(f"Sync eligible: {status['sync_eligible']}")
-        click.echo(f"Total trials: {status['total_trials']}")
+        _echo_sync_status(status)
 
         if status["sync_eligible"] == 0:
             click.echo(
@@ -565,60 +635,9 @@ def sync_to_cloud(
 
         # Sync sessions
         if session_id:
-            # Sync specific session
-            click.echo(f"\n🔄 Syncing session: {session_id}")
-            result = sync_manager.sync_session_to_cloud(session_id, dry_run)
-
-            if result["status"] == "success":
-                click.echo("✅ Session synced successfully!")
-                if not dry_run:
-                    click.echo(f"   Portal URL: {result.get('cloud_url', 'N/A')}")
-            else:
-                click.echo("❌ Sync failed:")
-                for error in result["errors"]:
-                    click.echo(f"   • {error}")
-        else:
-            # Sync all sessions
-            click.echo(
-                f"\n🔄 Syncing all {status['sync_eligible']} eligible sessions..."
-            )
-
-            if not dry_run and not click.confirm("Continue with portal sync?"):
-                click.echo("Sync cancelled.")
-                return
-
-            result = sync_manager.sync_all_sessions(dry_run)
-
-            click.echo("\n📈 Sync Results:")
-            click.echo(f"   Total sessions: {result['total_sessions']}")
-            click.echo(f"   Synced successfully: {result['synced_successfully']}")
-            click.echo(f"   Errors: {result['sync_errors']}")
-
-            if result["sync_errors"] > 0:
-                click.echo("\n❌ Sessions with errors:")
-                for session_result in result["session_results"]:
-                    if session_result["status"] != "success":
-                        click.echo(
-                            f"   • {session_result['session_id']}: {session_result.get('errors', ['Unknown error'])}"
-                        )
-
-            # Cleanup if requested and successful
-            if cleanup and not dry_run and result["synced_successfully"] > 0:
-                successful_sessions = [
-                    r["session_id"]
-                    for r in result["session_results"]
-                    if r["status"] == "success"
-                ]
-
-                if successful_sessions and click.confirm(
-                    f"\nClean up {len(successful_sessions)} successfully synced local sessions?"
-                ):
-                    cleanup_result = sync_manager.cleanup_after_sync(
-                        successful_sessions, keep_backup=True
-                    )
-                    click.echo(
-                        f"✅ Cleaned up {cleanup_result['sessions_deleted']} sessions (backed up first)"
-                    )
+            _sync_single_session(sync_manager, session_id, dry_run)
+        elif not _sync_all_sessions(sync_manager, status, dry_run, cleanup):
+            return
 
         # Show portal analytics preview
         if not dry_run and status["sync_eligible"] > 0:
