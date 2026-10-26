@@ -9,6 +9,7 @@ import logging
 import traceback
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -82,7 +83,9 @@ class StoreConformance:
 
     def test_repr_is_locator(self, store: Any) -> None:
         assert repr(store) == store.locator()
-        assert "?" not in store.locator() and "@" not in store.locator()
+        locator = urlsplit(store.locator())
+        assert "?" not in store.locator() and locator.username is None
+        assert locator.password is None
 
     def test_error_hygiene(
         self,

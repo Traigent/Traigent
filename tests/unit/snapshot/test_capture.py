@@ -393,6 +393,58 @@ def test_dirty_diff_too_large(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert reason(snapshot, "agent/git_diff.patch") == "TOO_LARGE"
 
 
+def test_dirty_diff_reader_stops_early_instead_of_reading_it_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The diff is streamed and git is stopped at the cap, not read to the end."""
+    import subprocess
+
+    from traigent.identity import agent_build
+
+    repo, _ = helpers.make_git_agent(tmp_path, "snapagent_stream")
+    sys.modules.pop("snapagent_stream", None)
+    (repo / "snapagent_stream.py").write_text("x = 1\n" * 800_000, encoding="utf-8")
+    full = helpers.git(repo, "diff", "HEAD")
+    assert len(full) > 4_000_000
+
+    read_bytes: list[int] = []
+    real_popen = subprocess.Popen
+
+    class CountingStream:
+        def __init__(self, stream: Any) -> None:
+            self._stream = stream
+
+        def read(self, size: int) -> bytes:
+            data = self._stream.read(size)
+            read_bytes.append(len(data))
+            return data
+
+        def close(self) -> None:
+            self._stream.close()
+
+    def counting_popen(*args: Any, **kwargs: Any) -> Any:
+        process = real_popen(*args, **kwargs)
+        process.stdout = CountingStream(process.stdout)
+        return process
+
+    monkeypatch.setattr(agent_build.subprocess, "Popen", counting_popen)
+    with pytest.raises(agent_build.GitOutputTooLarge):
+        agent_build.git_output_bounded(repo, "diff", "HEAD", max_bytes=100_000)
+    assert 100_000 < sum(read_bytes) <= 100_000 + 65536  # stopped within one chunk
+
+
+def test_bounded_git_reader_returns_small_output_and_none_on_failure(
+    tmp_path: Path,
+) -> None:
+    from traigent.identity import agent_build
+
+    repo, _ = helpers.make_git_agent(tmp_path, "snapagent_small")
+    sys.modules.pop("snapagent_small", None)
+    head = agent_build.git_output_bounded(repo, "rev-parse", "HEAD", max_bytes=1000)
+    assert head is not None and len(head.strip()) == 40
+    assert agent_build.git_output_bounded(repo, "no-such-verb", max_bytes=1000) is None
+
+
 def test_git_metadata_can_be_disabled(tmp_path: Path) -> None:
     _, agent = helpers.make_git_agent(tmp_path, "snapagent_nogit")
     try:

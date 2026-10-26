@@ -280,6 +280,16 @@ snapshot-s3 = [
     "boto3>=1.28.0",
 ]
 
+# Execution-snapshot store on Google Cloud Storage (traigent.snapshot.backends.GCSStore).
+snapshot-gcs = [
+    "google-cloud-storage>=3.0.0",
+]
+
+# Execution-snapshot store on Azure Blob Storage (traigent.snapshot.backends.AzureBlobStore).
+snapshot-azure = [
+    "azure-storage-blob>=12.20.0",
+]
+
 # Recommended bundle for end users — everything needed to run optimizations
 # out of the box without dev/test/docs overhead
 recommended = [

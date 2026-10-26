@@ -4,7 +4,8 @@ An execution snapshot is one verifiable bundle of everything an optimization
 used: the evaluation dataset rows, the configuration and configuration space,
 the agent's source, the evaluator's source, and (only if you ask) your
 uncommitted git changes. You write it to storage **you own** (a local
-directory or an S3 bucket) and can verify it later.
+directory, an S3, Google Cloud Storage or Azure Blob container, or a private GitHub
+repository) and can verify it later.
 
 Nothing in `traigent.snapshot` contacts Traigent. The snapshot is built and
 stored on your side.
@@ -24,7 +25,7 @@ somewhere you trust.
 from traigent.snapshot import (
     EvaluatorInputs, build_execution_snapshot, publish_snapshot, verify_snapshot,
 )
-from traigent.snapshot.backends import LocalDirStore  # or S3Store
+from traigent.snapshot.backends import LocalDirStore  # or S3Store, GCSStore, AzureBlobStore, GitHubStore
 
 snapshot = build_execution_snapshot(
     dataset=examples,                      # a list / dataset object, not a generator
@@ -60,6 +61,73 @@ the first write, that the endpoint honours conditional writes
 check are supported. Plain `http://` is refused unless you pass
 `allow_insecure_local=True` **and** the host is `localhost`, `127.0.0.1` or
 `::1`.
+
+### Backends
+
+| Backend | Install | Destination | Atomic create |
+|---------|---------|-------------|---------------|
+| `LocalDirStore(root)` | none | `file://<root>` | hard link, no clobber |
+| `S3Store(bucket, prefix)` | `traigent[snapshot-s3]` | `s3://<bucket>/<prefix>` | `If-None-Match: *` |
+| `GCSStore(bucket, prefix)` | `traigent[snapshot-gcs]` | `gs://<bucket>/<prefix>` | `if_generation_match=0` |
+| `AzureBlobStore(container_client, prefix)` or `AzureBlobStore.from_account(account_url, container, credential, prefix)` | `traigent[snapshot-azure]` | `azblob://<account host>/<container>/<prefix>` | `upload_blob(overwrite=False)` |
+| `GitHubStore(repo, branch, prefix)` | none (uses `requests`) | `github://<owner>/<repo>@<branch>/<prefix>` | Contents API `PUT` without `sha` |
+
+Every backend refuses to overwrite: if the object already exists with the same
+bytes the write is a no-op, with different bytes it raises `CONFLICT`. Locators
+never contain a query string, user name or token; for Azure any SAS token in
+the URL is dropped from the locator and from the store's own attributes (the
+credential stays inside the `ContainerClient`). Custom GCS emulator endpoints and
+Azure account URLs follow the same HTTPS rule as S3 (plain `http://` only for
+loopback with `allow_insecure_local=True`).
+
+```python
+from traigent.snapshot.backends import AzureBlobStore, GCSStore
+
+gcs = GCSStore("my-bucket", "traigent/snapshots")  # Application Default Credentials
+azure = AzureBlobStore.from_account(
+    "https://myaccount.blob.core.windows.net", "snapshots", credential, "traigent"
+)
+```
+
+S3-compatible services are supported only if they pass the conditional-write
+probe described above; the probe creates and deletes one `<prefix>/.probe/<id>`
+object on first write, so the credential needs `DeleteObject` there (a failed
+delete is ignored and leaves that one small object).
+
+### GitHub repository store
+
+```python
+from traigent.snapshot.backends import GitHubStore
+
+store = GitHubStore("my-org/eval-snapshots", branch="main", prefix="traigent")
+# the token is read from the GITHUB_TOKEN environment variable (token_env=...) on every call
+```
+
+Safety rules:
+
+- **Private repositories only by default.** The repository's visibility is
+  checked once, before the first request that touches content; a public repository
+  raises `UNSAFE_DESTINATION` unless you pass `allow_public=True` (and then
+  anyone can read the snapshot, including your source and dataset rows).
+- **The branch must already exist.** A missing branch, or an empty repository
+  with no commits, raises `NOT_FOUND`. Create the branch (one initial commit)
+  first; the store never creates branches or repositories.
+- **Append-only.** Objects are created with the Contents API without a `sha`, so
+  GitHub refuses to replace a file; an existing file is read and compared. Each
+  object is one commit on the branch, writes are serialized, and a branch-advance
+  conflict (409) is retried at most 3 times with 1, 2 and 4 second backoff.
+- **50 MiB per part.** The SDK refuses any part over 50 MiB before writing
+  anything (GitHub warns above 50 MiB and rejects above 100 MiB). Each snapshot
+  is a handful of small commits, so GitHub suits small snapshots; use S3, GCS or
+  Azure for large datasets.
+- **Rate limits.** `Retry-After` and `x-ratelimit-reset` are honoured; waits
+  total at most 60 seconds, after which `BACKEND_UNAVAILABLE` is raised. Every
+  request has a 30 second timeout.
+- **The token goes only to the API host.** Redirects are followed only within
+  the same scheme and host as `api_url`; a redirect anywhere else raises
+  `UNSAFE_DESTINATION` and the token is not sent. The token is never stored, shown
+  in `repr` or put in an error. For GitHub Enterprise pass
+  `api_url="https://<host>/api/v3"` (HTTPS required).
 
 ## What each part contains
 
@@ -97,7 +165,8 @@ snapshot = build_execution_snapshot(agent=my_agent, capture_dirty_diff=True)
 
 It is `git diff --no-ext-diff --no-textconv --binary HEAD` for the agent's
 project (staged and unstaged changes against `HEAD`), capped at 10 MiB
-(`TOO_LARGE` beyond that). Untracked files are never included, only counted.
+(`TOO_LARGE` beyond that). The diff is read as a stream and git is stopped as
+soon as the cap is crossed, so a huge diff never sits in memory. Untracked files are never included, only counted.
 
 ## Verify levels
 

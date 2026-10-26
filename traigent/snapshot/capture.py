@@ -18,10 +18,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from traigent.identity.agent_build import (
+    GitOutputTooLarge,
     agent_bound_state,
     candidate_agent_version,
     collect_agent_build_base,
     git_output,
+    git_output_bounded,
     innermost_callable,
     sdk_version,
     survey_agent_sources,
@@ -217,21 +219,23 @@ def _capture_git(
     if not capture_dirty_diff:
         parts.skip(GIT_DIFF_PATH, UnavailableReason.NOT_REQUESTED)
         return
-    diff = git_output(
-        root,
-        "diff",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--binary",
-        "HEAD",
-        "--",
-        ".",
-        binary=True,
-    )
+    try:
+        diff = git_output_bounded(
+            root,
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--binary",
+            "HEAD",
+            "--",
+            ".",
+            max_bytes=MAX_DIRTY_DIFF_BYTES,
+        )
+    except GitOutputTooLarge:
+        parts.skip(GIT_DIFF_PATH, UnavailableReason.TOO_LARGE)
+        return
     if not isinstance(diff, bytes):
         parts.skip(GIT_DIFF_PATH, UnavailableReason.GIT_UNAVAILABLE)
-    elif len(diff) > MAX_DIRTY_DIFF_BYTES:
-        parts.skip(GIT_DIFF_PATH, UnavailableReason.TOO_LARGE)
     else:
         parts.add(GIT_DIFF_PATH, diff, PartMediaType.PATCH)
 

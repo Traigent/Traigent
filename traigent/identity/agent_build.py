@@ -48,6 +48,7 @@ import re
 import subprocess  # nosec B404 - fixed argv, no shell, see _git
 import sys
 import textwrap
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -67,8 +68,10 @@ logger = get_logger(__name__)
 __all__ = [
     "AgentBuildBase",
     "AgentSourceSurvey",
+    "GitOutputTooLarge",
     "agent_bound_state",
     "git_output",
+    "git_output_bounded",
     "survey_agent_sources",
     "afp2_source_digest",
     "candidate_agent_version",
@@ -360,6 +363,55 @@ def _git(cwd: Path, *args: str, binary: bool = False) -> Any:
 def git_output(cwd: Path, *args: str, binary: bool = False) -> Any:
     """Public wrapper over the module's single fixed-argv git runner."""
     return _git(cwd, *args, binary=binary)
+
+
+class GitOutputTooLarge(Exception):
+    """A git command produced more than the allowed number of output bytes."""
+
+
+def git_output_bounded(cwd: Path, *args: str, max_bytes: int) -> bytes | None:
+    """Raw git stdout, read as a stream and never past ``max_bytes``.
+
+    Raises :class:`GitOutputTooLarge` as soon as more than ``max_bytes`` have
+    been read: git is killed there, so memory stays bounded by the cap even
+    when the output is enormous. ``None`` on any other failure.
+    """
+    try:
+        process = subprocess.Popen(
+            ["git", "-C", str(cwd), *args],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    timer = threading.Timer(_GIT_TIMEOUT_SECONDS, process.kill)
+    timer.start()
+    chunks: list[bytes] = []
+    total = 0
+    overflow = False
+    try:
+        stream = process.stdout
+        while stream is not None:
+            chunk = stream.read(65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                overflow = True
+                break
+            chunks.append(chunk)
+    finally:
+        timer.cancel()
+        if overflow or process.poll() is None:
+            process.kill()
+        if process.stdout is not None:
+            process.stdout.close()
+        process.wait()
+    if overflow:
+        raise GitOutputTooLarge
+    if process.returncode != 0:
+        return None
+    return b"".join(chunks)
 
 
 def _git_state(start: Path) -> tuple[Path, str, set[str]] | None:
