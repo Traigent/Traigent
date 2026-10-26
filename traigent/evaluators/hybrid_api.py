@@ -1502,35 +1502,25 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         return results
 
-    def _build_comparability_info(
-        self,
-        results: list[HybridExampleResult],
-        metric_counts: dict[str, int],
-        *,
-        primary_objective: str = "accuracy",
-    ) -> dict[str, Any]:
-        """Build comparability metadata from per-example results."""
-        total_examples = len(results)
-        mode = self._get_comparability_mode()
-        if total_examples <= 0:
-            return ComparabilityInfo(
-                primary_objective=primary_objective,
-                warning_codes=["MCI-001"],
-                ranking_eligible=False,
-            ).to_dict()
-
-        successful_results = [result for result in results if result.success]
+    @staticmethod
+    def _resolve_evaluation_mode(successful_results: list[HybridExampleResult]) -> str:
+        """Single evaluation mode of the successful rows, ``mixed`` or ``unknown``."""
         evaluation_modes = {
             str(result.metadata.get("evaluation_mode", "unknown"))
             for result in successful_results
         }
         if not evaluation_modes:
-            evaluation_mode = "unknown"
-        elif len(evaluation_modes) == 1:
-            evaluation_mode = next(iter(evaluation_modes))
-        else:
-            evaluation_mode = "mixed"
+            return "unknown"
+        if len(evaluation_modes) == 1:
+            return next(iter(evaluation_modes))
+        return "mixed"
 
+    def _scan_primary_metric_coverage(
+        self,
+        results: list[HybridExampleResult],
+        primary_objective: str,
+    ) -> tuple[int, list[str], list[str], set[tuple[str, ...]]]:
+        """Count rows carrying the primary metric and collect derivation facts."""
         examples_with_primary_metric = 0
         missing_example_ids: list[str] = []
         derivation_paths: list[str] = []
@@ -1561,6 +1551,70 @@ class HybridAPIEvaluator(BaseEvaluator):
                 derivation_paths.append(derivation_path or "none")
             else:
                 missing_example_ids.append(result.example_id)
+        return (
+            examples_with_primary_metric,
+            missing_example_ids,
+            derivation_paths,
+            split_key_sets,
+        )
+
+    @staticmethod
+    def _comparability_warning_codes(
+        results: list[HybridExampleResult],
+        *,
+        examples_with_primary_metric: int,
+        coverage_ratio: float,
+        objective_class: str,
+        evaluation_mode: str,
+        non_none_paths: list[str],
+        split_key_sets: set[tuple[str, ...]],
+    ) -> list[str]:
+        """Ordered, de-duplicated ``MCI-*`` warning codes for a trial."""
+        warning_codes: list[str] = []
+        if examples_with_primary_metric == 0:
+            warning_codes.append("MCI-004")
+        elif coverage_ratio < 1.0:
+            warning_codes.append("MCI-002")
+
+        if objective_class == "quality" and evaluation_mode != "evaluated":
+            warning_codes.append("MCI-004")
+
+        if len(set(non_none_paths)) > 1:
+            warning_codes.append("MCI-003")
+        if "split_mean" in non_none_paths:
+            warning_codes.append("MCI-005")
+        if len(split_key_sets) > 1:
+            warning_codes.append("MCI-006")
+        if not all(result.success for result in results):
+            warning_codes.append("MCI-007")
+        return list(dict.fromkeys(warning_codes))
+
+    def _build_comparability_info(
+        self,
+        results: list[HybridExampleResult],
+        metric_counts: dict[str, int],
+        *,
+        primary_objective: str = "accuracy",
+    ) -> dict[str, Any]:
+        """Build comparability metadata from per-example results."""
+        total_examples = len(results)
+        mode = self._get_comparability_mode()
+        if total_examples <= 0:
+            return ComparabilityInfo(
+                primary_objective=primary_objective,
+                warning_codes=["MCI-001"],
+                ranking_eligible=False,
+            ).to_dict()
+
+        successful_results = [result for result in results if result.success]
+        evaluation_mode = self._resolve_evaluation_mode(successful_results)
+
+        (
+            examples_with_primary_metric,
+            missing_example_ids,
+            derivation_paths,
+            split_key_sets,
+        ) = self._scan_primary_metric_coverage(results, primary_objective)
 
         coverage_ratio = examples_with_primary_metric / total_examples
         per_metric_coverage = {
@@ -1572,26 +1626,17 @@ class HybridAPIEvaluator(BaseEvaluator):
             for metric_name, count in metric_counts.items()
         }
 
-        warning_codes: list[str] = []
-        if examples_with_primary_metric == 0:
-            warning_codes.append("MCI-004")
-        elif coverage_ratio < 1.0:
-            warning_codes.append("MCI-002")
-
         objective_class = classify_objective(primary_objective)
-        if objective_class == "quality" and evaluation_mode != "evaluated":
-            warning_codes.append("MCI-004")
-
         non_none_paths = [p for p in derivation_paths if p and p != "none"]
-        if len(set(non_none_paths)) > 1:
-            warning_codes.append("MCI-003")
-        if "split_mean" in non_none_paths:
-            warning_codes.append("MCI-005")
-        if len(split_key_sets) > 1:
-            warning_codes.append("MCI-006")
-        if not all(result.success for result in results):
-            warning_codes.append("MCI-007")
-        warning_codes = list(dict.fromkeys(warning_codes))
+        warning_codes = self._comparability_warning_codes(
+            results,
+            examples_with_primary_metric=examples_with_primary_metric,
+            coverage_ratio=coverage_ratio,
+            objective_class=objective_class,
+            evaluation_mode=evaluation_mode,
+            non_none_paths=non_none_paths,
+            split_key_sets=split_key_sets,
+        )
 
         # In warn/strict modes we default to conservative ranking-eligibility.
         has_full_primary_coverage = (
