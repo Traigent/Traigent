@@ -11,12 +11,33 @@ from traigent.api.decorators import (
 
 
 @pytest.mark.parametrize(
-    ("func_name", "objectives", "configuration_space", "max_knobs", "max_total_length", "expected"),
+    (
+        "func_name",
+        "objectives",
+        "configuration_space",
+        "max_knobs",
+        "max_total_length",
+        "expected",
+    ),
     [
         ("worker", None, None, 4, 120, "worker"),
         ("worker", ["accuracy"], None, 4, 120, "worker[accuracy]"),
-        ("worker", None, {"model": [], "temperature": []}, 4, 120, "worker[model,temperature]"),
-        ("worker", None, {"a": [], "b": [], "c": [], "d": [], "e": []}, 4, 120, "worker[a,b,c,d,...]"),
+        (
+            "worker",
+            None,
+            {"model": [], "temperature": []},
+            4,
+            120,
+            "worker[model,temperature]",
+        ),
+        (
+            "worker",
+            None,
+            {"a": [], "b": [], "c": [], "d": [], "e": []},
+            4,
+            120,
+            "worker[a,b,c,d,...]",
+        ),
         ("abc", None, None, 4, 3, "abc"),
         ("abc", None, None, 4, 2, "a~"),
         ("abc", None, None, 4, 1, "a"),

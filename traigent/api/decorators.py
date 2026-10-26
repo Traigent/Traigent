@@ -2629,15 +2629,17 @@ def _build_default_experiment_name(
                 return combined
         return obj_suffix[:max_total_length]
 
-    # Fit the function name into the remaining budget, marking any cut with "~".
-    if len(func_name) <= func_budget:
-        func_part = func_name
-    elif func_budget >= 2:
-        func_part = func_name[: func_budget - 1] + "~"
-    else:
-        func_part = func_name[:func_budget]
-
+    func_part = _fit_default_experiment_name_prefix(func_name, func_budget)
     return func_part + suffix
+
+
+def _fit_default_experiment_name_prefix(func_name: str, func_budget: int) -> str:
+    """Fit a function name into a positive budget, marking cuts with ``~``."""
+    if len(func_name) <= func_budget:
+        return func_name
+    if func_budget >= 2:
+        return func_name[: func_budget - 1] + "~"
+    return func_name[:func_budget]
 
 
 def optimize(  # NOSONAR(S107)
