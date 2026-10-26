@@ -424,6 +424,16 @@ class FileRegistryResolver:
         return [i for i in items if i.get(field) in values]
 
     @staticmethod
+    def _unquote_comparison_value(value: str) -> str | None:
+        """Strip matching outer quotes; None when the quotes are unbalanced."""
+        if value[0] in {"'", '"'}:
+            quote = value[0]
+            if len(value) < 2 or not value.endswith(quote):
+                return None
+            return value[1:-1]
+        return value
+
+    @staticmethod
     def _parse_comparison_filter(filter_expr: str) -> tuple[str, str, str] | None:
         """Parse a comparison filter without regex backtracking risk."""
         expr = filter_expr.strip()
@@ -442,16 +452,15 @@ class FileRegistryResolver:
 
         remainder = expr[field_end:].lstrip()
         for op in (">=", "<=", ">", "<"):
-            if remainder.startswith(op):
-                value = remainder[len(op) :].strip()
-                if not value:
-                    return None
-                if value[0] in {"'", '"'}:
-                    quote = value[0]
-                    if len(value) < 2 or not value.endswith(quote):
-                        return None
-                    value = value[1:-1]
-                return field, op, value
+            if not remainder.startswith(op):
+                continue
+            value = remainder[len(op) :].strip()
+            if not value:
+                return None
+            unquoted = FileRegistryResolver._unquote_comparison_value(value)
+            if unquoted is None:
+                return None
+            return field, op, unquoted
 
         return None
 
