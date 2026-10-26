@@ -27,6 +27,72 @@ logger = get_logger(__name__)
 _TVL_SUFFIXES = (".tvl.yml", ".tvl.yaml")
 
 
+def _loads_cleanly(file_path: Path) -> bool:
+    """Run the full loader; report and return False on any load failure."""
+    try:
+        load_tvl_spec(spec_path=str(file_path))
+    except TVLValidationError as e:
+        print(f"FAILED: {file_path}", file=sys.stderr)
+        print(f"  - {e}", file=sys.stderr)
+        return False
+    except Exception as e:
+        print(f"FAILED: {file_path}", file=sys.stderr)
+        print(f"  - Load error: {e}", file=sys.stderr)
+        return False
+    return True
+
+
+def _validate_one_tvl_file(file_path: Path, *, strict: bool, verbose: bool) -> bool:
+    """Validate a single TVL file, reporting to stderr/stdout; True when it passes."""
+    # Resolve to absolute path for consistent handling
+    resolved_path = file_path.resolve()
+
+    if not resolved_path.exists():
+        print(f"ERROR: File not found: {file_path}", file=sys.stderr)
+        return False
+
+    try:
+        # First validate schema (early validation)
+        import yaml
+
+        # nosec - CLI tool intentionally reads user-specified files for
+        # TVL validation; resolved_path is the user-provided argument.
+        with open(resolved_path, encoding="utf-8") as f:
+            raw_data = yaml.safe_load(f)
+
+        if raw_data is None:
+            print(f"ERROR: Empty TVL spec: {file_path}", file=sys.stderr)
+            return False
+
+        # Schema errors fail in every mode: load_tvl_spec rejects the same
+        # messages, so a spec the SDK cannot load must not pass the gate
+        # (#2678). --strict additionally fails on warning-severity issues.
+        issues = validate_tvl_schema(raw_data, include_warnings=strict)
+
+        if issues:
+            print(f"FAILED: {file_path}", file=sys.stderr)
+            for issue in issues:
+                print(f"  - {issue}", file=sys.stderr)
+            return False
+
+        # Try full loading to catch deeper issues
+        if not _loads_cleanly(file_path):
+            return False
+
+        if verbose:
+            print(f"OK: {file_path}")
+        return True
+
+    except yaml.YAMLError as e:
+        print(f"FAILED: {file_path}", file=sys.stderr)
+        print(f"  - Invalid YAML: {e}", file=sys.stderr)
+        return False
+    except Exception as e:
+        print(f"FAILED: {file_path}", file=sys.stderr)
+        print(f"  - Unexpected error: {e}", file=sys.stderr)
+        return False
+
+
 def validate_tvl_files(
     files: list[Path],
     *,
@@ -48,65 +114,9 @@ def validate_tvl_files(
     failed = 0
 
     for file_path in files:
-        # Resolve to absolute path for consistent handling
-        resolved_path = file_path.resolve()
-
-        if not resolved_path.exists():
-            print(f"ERROR: File not found: {file_path}", file=sys.stderr)
-            failed += 1
-            continue
-
-        try:
-            # First validate schema (early validation)
-            import yaml
-
-            # nosec - CLI tool intentionally reads user-specified files for
-            # TVL validation; resolved_path is the user-provided argument.
-            with open(resolved_path, encoding="utf-8") as f:
-                raw_data = yaml.safe_load(f)
-
-            if raw_data is None:
-                print(f"ERROR: Empty TVL spec: {file_path}", file=sys.stderr)
-                failed += 1
-                continue
-
-            # Schema errors fail in every mode: load_tvl_spec rejects the same
-            # messages, so a spec the SDK cannot load must not pass the gate
-            # (#2678). --strict additionally fails on warning-severity issues.
-            issues = validate_tvl_schema(raw_data, include_warnings=strict)
-
-            if issues:
-                print(f"FAILED: {file_path}", file=sys.stderr)
-                for issue in issues:
-                    print(f"  - {issue}", file=sys.stderr)
-                failed += 1
-                continue
-
-            # Try full loading to catch deeper issues
-            try:
-                load_tvl_spec(spec_path=str(file_path))
-            except TVLValidationError as e:
-                print(f"FAILED: {file_path}", file=sys.stderr)
-                print(f"  - {e}", file=sys.stderr)
-                failed += 1
-                continue
-            except Exception as e:
-                print(f"FAILED: {file_path}", file=sys.stderr)
-                print(f"  - Load error: {e}", file=sys.stderr)
-                failed += 1
-                continue
-
+        if _validate_one_tvl_file(file_path, strict=strict, verbose=verbose):
             passed += 1
-            if verbose:
-                print(f"OK: {file_path}")
-
-        except yaml.YAMLError as e:
-            print(f"FAILED: {file_path}", file=sys.stderr)
-            print(f"  - Invalid YAML: {e}", file=sys.stderr)
-            failed += 1
-        except Exception as e:
-            print(f"FAILED: {file_path}", file=sys.stderr)
-            print(f"  - Unexpected error: {e}", file=sys.stderr)
+        else:
             failed += 1
 
     return passed, failed
