@@ -1864,6 +1864,34 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
             "timestamp": time.time(),
         }
 
+    @staticmethod
+    def _typed_pattern_recommendation(pattern, pattern_type):
+        """Recommendation for a typed time pattern, or ``None``."""
+        if pattern_type == "weekly" and pattern.get("pattern") == "workweek_heavy":
+            return "Consider implementing weekend scaling to reduce workweek costs"
+        if pattern_type == "daily" and pattern.get("pattern") == "business_hours":
+            return "Peak usage during business hours - consider off-hours scheduling for batch jobs"
+        if pattern_type == "seasonal" and pattern.get("pattern") == "holiday_peaks":
+            return "Holiday season cost spikes detected - plan capacity scaling for peak periods"
+        return None
+
+    @staticmethod
+    def _legacy_pattern_recommendations(pattern):
+        """Recommendations for the legacy pattern format (cost fields)."""
+        recommendations = []
+        if "avg_cost" in pattern and pattern["avg_cost"] > 0.1:
+            model = pattern.get("model", "unknown")
+            recommendations.append(
+                f"Consider optimizing {model} usage - avg cost ${pattern['avg_cost']:.3f}"
+            )
+
+        if pattern.get("cost_trend") == "increasing":
+            model = pattern.get("model", "service")
+            recommendations.append(
+                f"Cost trend increasing for {model} - review usage patterns"
+            )
+        return recommendations
+
     def _generate_basic_recommendations(self, patterns):
         """Generate basic recommendations from patterns."""
         recommendations = []
@@ -1871,35 +1899,10 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
         for pattern in patterns:
             pattern_type = pattern.get("type", "unknown")
 
-            if pattern_type == "weekly":
-                if pattern.get("pattern") == "workweek_heavy":
-                    recommendations.append(
-                        "Consider implementing weekend scaling to reduce workweek costs"
-                    )
+            typed = self._typed_pattern_recommendation(pattern, pattern_type)
+            if typed is not None:
+                recommendations.append(typed)
 
-            elif pattern_type == "daily":
-                if pattern.get("pattern") == "business_hours":
-                    recommendations.append(
-                        "Peak usage during business hours - consider off-hours scheduling for batch jobs"
-                    )
-
-            elif pattern_type == "seasonal":
-                if pattern.get("pattern") == "holiday_peaks":
-                    recommendations.append(
-                        "Holiday season cost spikes detected - plan capacity scaling for peak periods"
-                    )
-
-            # Legacy support for old pattern format
-            if "avg_cost" in pattern and pattern["avg_cost"] > 0.1:
-                model = pattern.get("model", "unknown")
-                recommendations.append(
-                    f"Consider optimizing {model} usage - avg cost ${pattern['avg_cost']:.3f}"
-                )
-
-            if pattern.get("cost_trend") == "increasing":
-                model = pattern.get("model", "service")
-                recommendations.append(
-                    f"Cost trend increasing for {model} - review usage patterns"
-                )
+            recommendations.extend(self._legacy_pattern_recommendations(pattern))
 
         return recommendations
