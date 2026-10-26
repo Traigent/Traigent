@@ -314,6 +314,19 @@ class ParameterDiscovery:
         return completion_methods
 
     @staticmethod
+    def _type_category(type_name: str) -> str:
+        """Map a type name to its coarse category."""
+        if type_name in ("str", "string"):
+            return "string"
+        if type_name in ("int", "float", "number"):
+            return "number"
+        if type_name in ("bool", "boolean"):
+            return "boolean"
+        if type_name in ("list", "dict", "tuple"):
+            return "collection"
+        return "other"
+
+    @staticmethod
     def analyze_parameter_types(cls: type) -> dict[str, Any]:
         """Analyze parameter types across framework.
 
@@ -332,25 +345,9 @@ class ParameterDiscovery:
                 param_type = ParameterDiscovery.infer_parameter_type(param)
                 if param_type:
                     type_name = getattr(param_type, "__name__", str(param_type))
-                    if type_name not in by_type:
-                        by_type[type_name] = []
-                    by_type[type_name].append(name)
-
-                    # Categorize types
-                    if type_name in ["str", "string"]:
-                        category = "string"
-                    elif type_name in ["int", "float", "number"]:
-                        category = "number"
-                    elif type_name in ["bool", "boolean"]:
-                        category = "boolean"
-                    elif type_name in ["list", "dict", "tuple"]:
-                        category = "collection"
-                    else:
-                        category = "other"
-
-                    if category not in by_category:
-                        by_category[category] = []
-                    by_category[category].append(name)
+                    by_type.setdefault(type_name, []).append(name)
+                    category = ParameterDiscovery._type_category(type_name)
+                    by_category.setdefault(category, []).append(name)
 
             return {"by_type": by_type, "by_category": by_category}
         except Exception as e:
