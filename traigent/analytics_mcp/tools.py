@@ -556,6 +556,69 @@ def _signals_not_ready(response: Any | None) -> bool:
     return False
 
 
+def _error_object(response: Any | None) -> dict[str, Any] | None:
+    payload = _response_payload(response)
+    error = payload.get("error") if isinstance(payload, dict) else None
+    return error if isinstance(error, dict) else None
+
+
+def _not_found_failure(
+    response: Any | None, *, what: str, backend_url: str | None
+) -> dict[str, Any]:
+    if _signals_not_ready(response):
+        return _failure(
+            f"The backend found the run, but {what} analytics are not ready yet.",
+            code="not_ready",
+            http_status=404,
+            backend_url=backend_url,
+        )
+    return _failure(
+        f"The requested {what} was not found on the configured backend.",
+        code="not_found",
+        http_status=404,
+        backend_url=backend_url,
+    )
+
+
+def _conflict_failure(
+    response: Any | None, *, what: str, backend_url: str | None
+) -> dict[str, Any]:
+    # A stale-revision or idempotency conflict is a normal, recoverable
+    # outcome -- never a generic failure. Surface the error code (and, for
+    # stale_revision, the current revision so the caller can re-read
+    # state and retry) instead of collapsing it into backend_unavailable.
+    error = _error_object(response)
+    code = error.get("code") if error is not None else None
+    message = error.get("message") if error is not None else None
+    recognized_codes = {
+        "stale_revision",
+        "idempotency_key_reuse",
+        "turn_in_flight",
+    }
+    result = _failure(
+        message or f"The {what} request conflicts with the session's current state.",
+        code=code if code in recognized_codes else "conflict",
+        http_status=409,
+        backend_url=backend_url,
+    )
+    if error is not None and isinstance(error.get("current_revision"), int):
+        result["current_revision"] = error["current_revision"]
+    return result
+
+
+def _bad_request_failure(
+    response: Any | None, *, what: str, backend_url: str | None
+) -> dict[str, Any]:
+    error = _error_object(response)
+    message = error.get("message") if error is not None else None
+    return _failure(
+        message or f"The {what} request was rejected as invalid.",
+        code="validation_error",
+        http_status=400,
+        backend_url=backend_url,
+    )
+
+
 def _http_status_failure(
     exc: BaseException,
     *,
@@ -582,53 +645,11 @@ def _http_status_failure(
             backend_url=backend_url,
         )
     if status == 404:
-        if _signals_not_ready(response):
-            return _failure(
-                f"The backend found the run, but {what} analytics are not ready yet.",
-                code="not_ready",
-                http_status=status,
-                backend_url=backend_url,
-            )
-        return _failure(
-            f"The requested {what} was not found on the configured backend.",
-            code="not_found",
-            http_status=status,
-            backend_url=backend_url,
-        )
+        return _not_found_failure(response, what=what, backend_url=backend_url)
     if status == 409:
-        # A stale-revision or idempotency conflict is a normal, recoverable
-        # outcome -- never a generic failure. Surface the error code (and, for
-        # stale_revision, the current revision so the caller can re-read
-        # state and retry) instead of collapsing it into backend_unavailable.
-        payload = _response_payload(response)
-        error = payload.get("error") if isinstance(payload, dict) else None
-        code = error.get("code") if isinstance(error, dict) else None
-        message = error.get("message") if isinstance(error, dict) else None
-        recognized_codes = {
-            "stale_revision",
-            "idempotency_key_reuse",
-            "turn_in_flight",
-        }
-        result = _failure(
-            message
-            or f"The {what} request conflicts with the session's current state.",
-            code=code if code in recognized_codes else "conflict",
-            http_status=status,
-            backend_url=backend_url,
-        )
-        if isinstance(error, dict) and isinstance(error.get("current_revision"), int):
-            result["current_revision"] = error["current_revision"]
-        return result
+        return _conflict_failure(response, what=what, backend_url=backend_url)
     if status == 400:
-        payload = _response_payload(response)
-        error = payload.get("error") if isinstance(payload, dict) else None
-        message = error.get("message") if isinstance(error, dict) else None
-        return _failure(
-            message or f"The {what} request was rejected as invalid.",
-            code="validation_error",
-            http_status=status,
-            backend_url=backend_url,
-        )
+        return _bad_request_failure(response, what=what, backend_url=backend_url)
 
     return _failure(
         f"Could not retrieve {what} from the backend.",
