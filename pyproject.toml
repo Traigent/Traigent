@@ -275,6 +275,11 @@ cloud = [
     "boto3>=1.28.0",
 ]
 
+# Execution-snapshot store on S3 / S3-compatible storage (traigent.snapshot.backends.S3Store).
+snapshot-s3 = [
+    "boto3>=1.28.0",
+]
+
 # Recommended bundle for end users — everything needed to run optimizations
 # out of the box without dev/test/docs overhead
 recommended = [

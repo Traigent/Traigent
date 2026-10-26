@@ -5800,6 +5800,9 @@ security = [
     { name = "starlette" },
     { name = "uvicorn" },
 ]
+snapshot-s3 = [
+    { name = "boto3" },
+]
 test = [
     { name = "coverage" },
     { name = "hypothesis" },
@@ -5831,6 +5834,7 @@ requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=26.10.1" },
     { name = "boto3", marker = "extra == 'cloud'", specifier = ">=1.28.0" },
     { name = "boto3", marker = "extra == 'integrations'", specifier = ">=1.28.0" },
+    { name = "boto3", marker = "extra == 'snapshot-s3'", specifier = ">=1.28.0" },
     { name = "botocore", marker = "extra == 'integrations'", specifier = ">=1.31.0" },
     { name = "claude-code-sdk", marker = "extra == 'hybrid'", specifier = ">=0.0.14" },
     { name = "click", specifier = ">=8.0.0" },
@@ -5949,7 +5953,7 @@ requires-dist = [
     { name = "wandb", marker = "extra == 'integrations'", specifier = ">=0.15.0" },
     { name = "yarl", specifier = ">=1.24.5,<2" },
 ]
-provides-extras = ["analytics", "runtime-tvl", "bayesian", "integrations", "pydanticai", "security", "visualization", "hybrid", "mcp", "test", "tracing", "observability", "observability-openai", "observability-anthropic", "observability-langchain", "observability-bedrock", "dev", "docs", "ml", "deepeval", "cloud", "recommended", "all", "enterprise"]
+provides-extras = ["analytics", "runtime-tvl", "bayesian", "integrations", "pydanticai", "security", "visualization", "hybrid", "mcp", "test", "tracing", "observability", "observability-openai", "observability-anthropic", "observability-langchain", "observability-bedrock", "dev", "docs", "ml", "deepeval", "cloud", "snapshot-s3", "recommended", "all", "enterprise"]
 
 [[package]]
 name = "traigent-schema"
