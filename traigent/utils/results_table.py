@@ -689,30 +689,14 @@ def print_results_table(
     example_counts = [_example_success_counts(trial) for trial in trials]
     show_examples = any(count is not None for count in example_counts)
 
-    # Column widths
-    col_widths: dict[str, int] = {"#": 4}
-    for param in param_names:
-        max_len = max(
-            len(_format_config_value(getattr(t, "config", {}).get(param, "?")))
-            for t in trials
-        )
-        col_widths[param] = max(len(param), max_len) + 1
-    for metric in metric_names:
-        max_len = max(
-            len(
-                _render_metric_cell(
-                    metric, _get_metric_value(t, metric, i, metric_overrides), t
-                )
-            )
-            for i, t in enumerate(trials)
-        )
-        col_widths[metric] = max(len(metric), max_len) + 1
-    if show_examples:
-        max_len = max(
-            len(f"{count[0]}/{count[1]}") if count is not None else 1
-            for count in example_counts
-        )
-        col_widths["examples"] = max(len("examples"), max_len) + 1
+    col_widths = _compute_column_widths(
+        trials,
+        param_names,
+        metric_names,
+        metric_overrides,
+        example_counts,
+        show_examples,
+    )
 
     all_cols = (
         ["#"] + param_names + metric_names + (["examples"] if show_examples else [])
@@ -756,30 +740,18 @@ def print_results_table(
 
     # Data rows
     for i, trial in enumerate(trials):
-        config = getattr(trial, "config", {})
-        is_overall_best = i == best_trial_index and not all_failed
-
-        prefix = f"{C.GREEN}★{C.RESET}" if is_overall_best else " "
-        row_parts = [f"{prefix}{i + 1:>{col_widths['#'] - 1}}"]
-
-        for param in param_names:
-            val = _format_config_value(config.get(param, "?"))
-            row_parts.append(f"{val:^{col_widths[param]}}")
-
-        for metric in metric_names:
-            raw_metric_val = _get_metric_value(trial, metric, i, metric_overrides)
-            formatted = _render_metric_cell(metric, raw_metric_val, trial)
-            if not all_failed and i in best_per_objective.get(metric, set()):
-                cell = f"{C.GREEN}{C.BOLD}{formatted:^{col_widths[metric]}}{C.RESET}"
-            else:
-                cell = f"{formatted:^{col_widths[metric]}}"
-            row_parts.append(cell)
-
-        if show_examples:
-            counts = example_counts[i]
-            formatted_counts = f"{counts[0]}/{counts[1]}" if counts is not None else "?"
-            row_parts.append(f"{formatted_counts:^{col_widths['examples']}}")
-
+        row_parts = _build_row_parts(
+            i,
+            trial,
+            col_widths=col_widths,
+            param_names=param_names,
+            metric_names=metric_names,
+            metric_overrides=metric_overrides,
+            best_per_objective=best_per_objective,
+            is_overall_best=i == best_trial_index and not all_failed,
+            all_failed=all_failed,
+            example_counts=example_counts if show_examples else None,
+        )
         _safe_table_print(f"{V} " + f" {V} ".join(row_parts) + f" {V}")
 
     # Bottom border
@@ -787,7 +759,100 @@ def print_results_table(
         f"{BL}" + BT.join(H * (col_widths[c] + 2) for c in all_cols) + f"{BR}"
     )
 
-    # Legend (or "all failed" banner when no trial succeeded)
+    _print_table_legend(
+        trials,
+        metric_names,
+        all_failed=all_failed,
+        show_best=show_best,
+        best_trial_index=best_trial_index,
+    )
+    _print_table_notices(results)
+
+
+def _compute_column_widths(
+    trials: list[Any],
+    param_names: list[str],
+    metric_names: list[str],
+    metric_overrides: dict[str, list[float]] | None,
+    example_counts: list[tuple[int, int] | None],
+    show_examples: bool,
+) -> dict[str, int]:
+    """Column widths keyed by column name (``#``, params, metrics, ``examples``)."""
+    col_widths: dict[str, int] = {"#": 4}
+    for param in param_names:
+        max_len = max(
+            len(_format_config_value(getattr(t, "config", {}).get(param, "?")))
+            for t in trials
+        )
+        col_widths[param] = max(len(param), max_len) + 1
+    for metric in metric_names:
+        max_len = max(
+            len(
+                _render_metric_cell(
+                    metric, _get_metric_value(t, metric, i, metric_overrides), t
+                )
+            )
+            for i, t in enumerate(trials)
+        )
+        col_widths[metric] = max(len(metric), max_len) + 1
+    if show_examples:
+        max_len = max(
+            len(f"{count[0]}/{count[1]}") if count is not None else 1
+            for count in example_counts
+        )
+        col_widths["examples"] = max(len("examples"), max_len) + 1
+    return col_widths
+
+
+def _build_row_parts(
+    i: int,
+    trial: Any,
+    *,
+    col_widths: dict[str, int],
+    param_names: list[str],
+    metric_names: list[str],
+    metric_overrides: dict[str, list[float]] | None,
+    best_per_objective: dict[str, set[int]],
+    is_overall_best: bool,
+    all_failed: bool,
+    example_counts: list[tuple[int, int] | None] | None,
+) -> list[str]:
+    """Rendered cells of one data row (``example_counts`` None hides that column)."""
+    C = _Colors
+    config = getattr(trial, "config", {})
+    prefix = f"{C.GREEN}★{C.RESET}" if is_overall_best else " "
+    row_parts = [f"{prefix}{i + 1:>{col_widths['#'] - 1}}"]
+
+    for param in param_names:
+        val = _format_config_value(config.get(param, "?"))
+        row_parts.append(f"{val:^{col_widths[param]}}")
+
+    for metric in metric_names:
+        raw_metric_val = _get_metric_value(trial, metric, i, metric_overrides)
+        formatted = _render_metric_cell(metric, raw_metric_val, trial)
+        if not all_failed and i in best_per_objective.get(metric, set()):
+            cell = f"{C.GREEN}{C.BOLD}{formatted:^{col_widths[metric]}}{C.RESET}"
+        else:
+            cell = f"{formatted:^{col_widths[metric]}}"
+        row_parts.append(cell)
+
+    if example_counts is not None:
+        counts = example_counts[i]
+        formatted_counts = f"{counts[0]}/{counts[1]}" if counts is not None else "?"
+        row_parts.append(f"{formatted_counts:^{col_widths['examples']}}")
+    return row_parts
+
+
+def _print_table_legend(
+    trials: list[Any],
+    metric_names: list[str],
+    *,
+    all_failed: bool,
+    show_best: bool,
+    best_trial_index: int | None,
+) -> None:
+    """Legend (or "all failed" / "no winner" banner) under the table."""
+    C = _Colors
     if all_failed:
         _safe_table_print(
             f"{C.YELLOW}⚠ All trials failed — no examples succeeded. "
@@ -814,6 +879,10 @@ def print_results_table(
         legend.extend(f"{C.GREEN}{C.BOLD}{m}{C.RESET} = Best {m}" for m in metric_names)
         _safe_table_print(f"{C.DIM}Legend: {', '.join(legend)}{C.RESET}")
 
+
+def _print_table_notices(results: OptimizationResult) -> None:
+    """Stop-detail, mock-run and local-fallback caveats under the legend."""
+    C = _Colors
     # A run cut short by a limit says which one (issue #2518).
     stop_detail = (getattr(results, "metadata", None) or {}).get("stop_detail")
     if isinstance(stop_detail, str) and stop_detail:
