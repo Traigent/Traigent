@@ -67,3 +67,28 @@ def test_positive_branch_suppresses_context():
         _from_api(r)
     assert ei.value.__suppress_context__ is True
     assert ei.value.__cause__ is None
+
+
+class _SequencedLowerStr(str):
+    """str whose lower() returns a different value on each successive call."""
+
+    def __new__(cls, text, lowered):
+        obj = super().__new__(cls, text)
+        obj._lowered = list(lowered)
+        return obj
+
+    def lower(self):
+        return self._lowered.pop(0)
+
+
+def test_api_functions_caller_lowers_message_separately_per_check():
+    class _Err:
+        message = _SequencedLowerStr("msg", ["nothing", "invalid choice", "nothing"])
+
+    class Fake:
+        is_valid = False
+        errors = [_Err()]
+
+    with pytest.raises(ValueError) as ei:
+        _from_api(Fake())
+    assert str(ei.value) == "Must be one of"

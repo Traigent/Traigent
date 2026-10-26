@@ -1416,12 +1416,11 @@ def _raise_api_value_error(result: ValidationResult) -> None:
     if not result.errors:
         raise ValueError("Validation failed")
     msg = result.errors[0].message
-    lowered = msg.lower()
-    if "positive" in lowered:
+    if "positive" in msg.lower():
         raise ValueError("Must be positive") from None
-    if "invalid choice" in lowered:
+    if "invalid choice" in msg.lower():
         raise ValueError("Must be one of")
-    if "expected dict" in lowered:
+    if "expected dict" in msg.lower():
         raise ValueError(f"Expected dict, got {msg.split('got ')[-1]}")
     raise ValueError(msg)
 
