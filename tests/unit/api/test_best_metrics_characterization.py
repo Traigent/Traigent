@@ -27,7 +27,9 @@ def _trial(tid, metrics, config=None, ok=True):
     )
 
 
-def _result(trials, best_config=CFG, best_score=0.5, objectives=("acc",), metadata=None):
+def _result(
+    trials, best_config=CFG, best_score=0.5, objectives=("acc",), metadata=None
+):
     return OptimizationResult(
         trials=trials,
         best_config=best_config,
@@ -79,7 +81,10 @@ def test_no_objectives_no_metrics_anywhere_returns_empty():
 
 def test_no_objectives_empty_config_valid_winner_takes_first_with_metrics():
     r = _result(
-        [_trial("a", {"acc": 0.3}, OTHER)], best_config={}, best_score=0.0, objectives=()
+        [_trial("a", {"acc": 0.3}, OTHER)],
+        best_config={},
+        best_score=0.0,
+        objectives=(),
     )
     assert r.best_metrics == {"acc": 0.3}
 

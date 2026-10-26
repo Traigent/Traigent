@@ -32,7 +32,7 @@ def _split(expr: str, op: str) -> list[str]:
         ("x = 'a AND b' AND y = 2", "AND", ["x = 'a AND b'", "y = 2"]),
         ('x = "a AND b"', "AND", ['x = "a AND b"']),
         ("x = 'it(' AND y = 2", "AND", ["x = 'it('", "y = 2"]),
-        ("x = \"a'b\" AND y = 2", "AND", ["x = \"a'b\"", "y = 2"]),
+        ('x = "a\'b" AND y = 2', "AND", ['x = "a\'b"', "y = 2"]),
         ("BRAND = 1", "AND", ["BRAND = 1"]),
         ("a ANDROID b", "AND", ["a ANDROID b"]),
         ("a AND", "AND", ["a AND"]),  # trailing operator: single part -> original

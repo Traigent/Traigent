@@ -10,9 +10,7 @@ from traigent.utils.multi_objective import scalarize_objectives
 
 
 def _obj(name, orientation="maximize", weight=1.0, band=None):
-    return SimpleNamespace(
-        name=name, orientation=orientation, weight=weight, band=band
-    )
+    return SimpleNamespace(name=name, orientation=orientation, weight=weight, band=band)
 
 
 def _schema(*objs):
@@ -127,7 +125,9 @@ def test_schema_incomplete_band_raises(band):
 
 def test_schema_incomplete_band_not_checked_when_objective_absent():
     schema = _schema(_obj("lat", "band", 1.0, None), _obj("a"))
-    assert scalarize_objectives({"a": 0.7}, {}, objective_schema=schema) == pytest.approx(0.7)
+    assert scalarize_objectives(
+        {"a": 0.7}, {}, objective_schema=schema
+    ) == pytest.approx(0.7)
 
 
 def test_caller_dicts_not_mutated():

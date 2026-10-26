@@ -26,7 +26,9 @@ def _sess(trials):
 
 
 def test_trial_with_no_metadata_or_measures_is_skipped():
-    s = _sess([{"metadata": None}, {"metadata": {"measures": None}}, _t([_m("example_1")])])
+    s = _sess(
+        [{"metadata": None}, {"metadata": {"measures": None}}, _t([_m("example_1")])]
+    )
     assert wire_rows_from_session(s) == {"example_1": 1}
 
 
@@ -64,7 +66,10 @@ def test_malformed(session, text):
 
 
 def test_invalid_id_checked_before_privacy_refusal():
-    t = _t([_m("bad")], extra_meta={"_traigent_local": {"rows": "full", "privacy_mode": True}})
+    t = _t(
+        [_m("bad")],
+        extra_meta={"_traigent_local": {"rows": "full", "privacy_mode": True}},
+    )
     with pytest.raises(ValidationError, match="unrecognised"):
         wire_rows_from_session(_sess([t]))
 
@@ -77,7 +82,10 @@ def test_privacy_refusal_connected_only_and_before_subset_check():
 
 
 def test_privacy_only_when_exactly_true():
-    t = _t([_m("example_0")], extra_meta={"_traigent_local": {"rows": "full", "privacy_mode": "yes"}})
+    t = _t(
+        [_m("example_0")],
+        extra_meta={"_traigent_local": {"rows": "full", "privacy_mode": "yes"}},
+    )
     assert wire_rows_from_session(_sess([t]), "connected") == {"example_0": 0}
 
 
@@ -85,7 +93,9 @@ def test_unordered_without_assume_full_refused_and_with_accepted():
     t = _t([_m("example_2")], rows="unordered")
     with pytest.raises(ValidationError):
         wire_rows_from_session(_sess([t]))
-    assert wire_rows_from_session(_sess([t]), assume_full_dataset=True) == {"example_2": 2}
+    assert wire_rows_from_session(_sess([t]), assume_full_dataset=True) == {
+        "example_2": 2
+    }
 
 
 def test_subset_maps_and_same_row_repeat_is_ok():

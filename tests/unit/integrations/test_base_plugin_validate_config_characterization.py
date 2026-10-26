@@ -50,7 +50,7 @@ def _errors(rules, config):
     prefix = "Validation failed for demo: "
     msg = str(ei.value)
     assert msg.startswith(prefix)
-    return msg[len(prefix):].split("; ")
+    return msg[len(prefix) :].split("; ")
 
 
 def _ok(rules, config):
@@ -63,7 +63,9 @@ def test_valid_config_returns_true_and_no_rules_ok():
 
 
 def test_required_missing_from_attr_and_custom_params():
-    errs = _errors({"t": ValidationRule(required=True)}, SimpleNamespace(custom_params={}))
+    errs = _errors(
+        {"t": ValidationRule(required=True)}, SimpleNamespace(custom_params={})
+    )
     assert errs == ["Required parameter 't' is missing"]
 
 
@@ -115,7 +117,9 @@ def test_custom_validator_errors_extended_and_none_ignored():
     rules = {"t": ValidationRule(custom_validator="check_even")}
     _ok(rules, SimpleNamespace(t=2))
     assert _errors(rules, SimpleNamespace(t=3)) == ["t must be even"]
-    assert _errors({"t": ValidationRule(custom_validator="check_many")}, SimpleNamespace(t=1)) == [
+    assert _errors(
+        {"t": ValidationRule(custom_validator="check_many")}, SimpleNamespace(t=1)
+    ) == [
         "first",
         "second",
     ]
@@ -129,7 +133,9 @@ def test_missing_custom_validator_method_is_ignored():
 def test_errors_accumulate_across_params_and_checks():
     rules = {
         "a": ValidationRule(required=True),
-        "b": ValidationRule(min_value=5, allowed_values=[9], custom_validator="check_even"),
+        "b": ValidationRule(
+            min_value=5, allowed_values=[9], custom_validator="check_even"
+        ),
     }
     assert _errors(rules, SimpleNamespace(b=1)) == [
         "Required parameter 'a' is missing",

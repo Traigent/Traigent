@@ -19,7 +19,9 @@ def test_non_dict_config(cfg):
 
 def test_schema_definition_orientation_wins():
     cfg = {
-        "objective_schema": {"objectives": [{"name": "acc", "orientation": "minimize"}]},
+        "objective_schema": {
+            "objectives": [{"name": "acc", "orientation": "minimize"}]
+        },
         "objective_orientations": {"acc": "maximize"},
     }
     assert resolve(cfg, "acc") == "minimize"

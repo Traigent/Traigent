@@ -187,7 +187,9 @@ def test_generic_exception_pydantic_by_message(manager, log):
             manager.activate_overrides([f"{MOD}.Client"])
     finally:
         sys.modules.pop(MOD, None)
-    assert _warnings(log)[0].startswith(f"Pydantic compatibility issue with {MOD}.Client")
+    assert _warnings(log)[0].startswith(
+        f"Pydantic compatibility issue with {MOD}.Client"
+    )
 
 
 def test_generic_exception_unexpected(manager, log):

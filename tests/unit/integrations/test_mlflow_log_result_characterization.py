@@ -129,8 +129,12 @@ def test_metric_with_no_values_is_skipped(ml):
 def test_metadata_numeric_as_metric_else_param_string(ml):
     r = _result(metadata={"n": 3, "f": 0.5, "s": "t", "b": True, "l": [1]})
     _tracker().log_optimization_result(r)
-    metrics = [c for c in ml.log_metric.call_args_list if c.args[0].startswith("metadata_")]
-    params = [c for c in ml.log_param.call_args_list if c.args[0].startswith("metadata_")]
+    metrics = [
+        c for c in ml.log_metric.call_args_list if c.args[0].startswith("metadata_")
+    ]
+    params = [
+        c for c in ml.log_param.call_args_list if c.args[0].startswith("metadata_")
+    ]
     assert metrics == [
         call("metadata_n", 3),
         call("metadata_f", 0.5),

@@ -59,7 +59,9 @@ def test_comparability_included_only_when_dict(ev):
     assert ev._build_summary_stats(results, 1.0, {"mode": "warn"})["metadata"][
         "comparability"
     ] == {"mode": "warn"}
-    assert "comparability" not in ev._build_summary_stats(results, 1.0, ["x"])["metadata"]
+    assert (
+        "comparability" not in ev._build_summary_stats(results, 1.0, ["x"])["metadata"]
+    )
 
 
 def test_failed_example_contributes_only_success_cost_latency(ev):

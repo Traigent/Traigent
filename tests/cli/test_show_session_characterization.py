@@ -64,8 +64,20 @@ def test_json_format_full_payload():
     data = json.loads(result.output)
     assert data["best_score"] == 0.91234
     assert data["trials"] == [
-        {"trial_id": "t1", "config": {"k": 1}, "score": 0.5, "timestamp": "ts", "error": None},
-        {"trial_id": "t2", "config": {"k": 2}, "score": None, "timestamp": "ts", "error": "boom"},
+        {
+            "trial_id": "t1",
+            "config": {"k": 1},
+            "score": 0.5,
+            "timestamp": "ts",
+            "error": None,
+        },
+        {
+            "trial_id": "t2",
+            "config": {"k": 2},
+            "score": None,
+            "timestamp": "ts",
+            "error": "boom",
+        },
     ]
     assert list(data)[:3] == ["session_id", "function_name", "created_at"]
 

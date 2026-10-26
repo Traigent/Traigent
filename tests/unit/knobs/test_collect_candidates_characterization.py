@@ -27,9 +27,7 @@ def _body(arms, cardinality=None):
 
 def test_sampling_stage_returns_k_samples_keyed_by_identity():
     runner = StageRunner(run=lambda item: ["a", "b", "a"])
-    out, excl = _call(
-        _body([StageArm("s")], "k"), {"s": runner}, config={"k": 3}
-    )
+    out, excl = _call(_body([StageArm("s")], "k"), {"s": runner}, config={"k": 3})
     assert _view(out) == [("a", "a"), ("b", "b"), ("a", "a")] and excl == 0
 
 
@@ -78,7 +76,11 @@ def _res(kind, output=None, error=None):
 def test_sampling_composite_runs_k_times_excluding_no_accept(monkeypatch):
     calls = _node_runner(
         monkeypatch,
-        [_res(ResultKind.OUTPUT, 1), _res(ResultKind.NO_ACCEPT), _res(ResultKind.OUTPUT, 2)],
+        [
+            _res(ResultKind.OUTPUT, 1),
+            _res(ResultKind.NO_ACCEPT),
+            _res(ResultKind.OUTPUT, 2),
+        ],
     )
     out, excl = _call(
         _body([CompositeArm("c")], "k"), registry={"c": "NODE"}, config={"k": 3}

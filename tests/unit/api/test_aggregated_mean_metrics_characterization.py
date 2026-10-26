@@ -29,7 +29,9 @@ def _trial(tid, metrics, config=None, ok=True):
     )
 
 
-def _result(trials, summary=None, best_config=CFG, best_score=None, objectives=("acc",)):
+def _result(
+    trials, summary=None, best_config=CFG, best_score=None, objectives=("acc",)
+):
     metadata: Any = {"session_summary": summary} if summary is not None else {}
     return OptimizationResult(
         trials=trials,

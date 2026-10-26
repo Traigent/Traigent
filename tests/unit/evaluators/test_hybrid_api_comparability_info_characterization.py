@@ -82,13 +82,25 @@ SCENARIOS = {
         "warn",
     ),
     "metadata_derivation_path": (
-        [_r("a", {"accuracy": 1.0}, meta={**EV, "accuracy_derivation_path": " custom "})],
+        [
+            _r(
+                "a",
+                {"accuracy": 1.0},
+                meta={**EV, "accuracy_derivation_path": " custom "},
+            )
+        ],
         {"accuracy": 1},
         "accuracy",
         "warn",
     ),
     "metadata_path_none_falls_back": (
-        [_r("a", {"overall_accuracy": 1.0}, meta={**EV, "accuracy_derivation_path": "none"})],
+        [
+            _r(
+                "a",
+                {"overall_accuracy": 1.0},
+                meta={**EV, "accuracy_derivation_path": "none"},
+            )
+        ],
         {"overall_accuracy": 1},
         "overall_accuracy",
         "warn",
@@ -132,7 +144,9 @@ def test_matches_golden(name, monkeypatch):
     monkeypatch.setenv("TRAIGENT_COMPARABILITY_MODE", mode)
     ev = HybridAPIEvaluator(api_endpoint="http://unused.invalid")
     got = json.loads(
-        json.dumps(ev._build_comparability_info(results, counts, primary_objective=objective))
+        json.dumps(
+            ev._build_comparability_info(results, counts, primary_objective=objective)
+        )
     )
     data = json.loads(GOLDEN.read_text()) if GOLDEN.exists() else {}
     if os.environ.get("REGEN_GOLDEN") == "1":

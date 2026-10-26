@@ -13,7 +13,9 @@ from traigent.cloud.models import AgentSpecification
 def _mapper(*mappings, platform="Plat"):
     mapper = ConfigurationMapper.__new__(ConfigurationMapper)
     mapper._platform_mappings = {
-        platform.lower(): PlatformMapping(platform=platform, parameter_mappings=list(mappings))
+        platform.lower(): PlatformMapping(
+            platform=platform, parameter_mappings=list(mappings)
+        )
     }
     return mapper
 

@@ -53,7 +53,9 @@ def test_set_takes_precedence_over_values_and_range_over_set(captured):
     assert captured[-1][1]["low"] == 0
 
 
-@pytest.mark.parametrize("key,msg", [("set", "set domain"), ("values", "values domain")])
+@pytest.mark.parametrize(
+    "key,msg", [("set", "set domain"), ("values", "values domain")]
+)
 @pytest.mark.parametrize("bad", [None, "ab", (1,), {"a": 1}])
 def test_non_list_set_or_values(captured, key, msg, bad):
     with pytest.raises(ValueError, match=f"{msg} must contain a list"):
@@ -88,7 +90,11 @@ def test_range_form_with_resolution_log_and_range_type(captured):
 def test_explicit_range_kind(captured):
     _go({"domain": {"kind": "range", "range": [0.1, 1.0]}})
     assert captured[0][1] == {
-        "low": 0.1, "high": 1.0, "step": None, "log": False, "default": None,
+        "low": 0.1,
+        "high": 1.0,
+        "step": None,
+        "log": False,
+        "default": None,
     }
 
 
@@ -115,7 +121,12 @@ def test_unsupported_kind_message_names_kind(captured):
 
 def test_unit_and_agent_only_when_strings(captured):
     _go({"domain": [1], "unit": "ms", "agent": "a"})
-    assert captured[-1][1] == {"values": [1], "default": None, "unit": "ms", "agent": "a"}
+    assert captured[-1][1] == {
+        "values": [1],
+        "default": None,
+        "unit": "ms",
+        "agent": "a",
+    }
     _go({"domain": [1], "unit": 3, "agent": None})
     assert captured[-1][1] == {"values": [1], "default": None}
 

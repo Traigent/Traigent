@@ -58,8 +58,12 @@ def _result(trials, metadata=None, best_config=None, best_score=None):
 
 
 def _scenarios() -> dict[str, tuple[Any, ...]]:
-    t1 = _trial(1, {"model": "a", "t": 0.5, "flag": True}, {"accuracy": 0.5, "cost": 0.02})
-    t2 = _trial(2, {"model": "bb", "t": 1.0, "flag": False}, {"accuracy": 0.9, "cost": 0.05})
+    t1 = _trial(
+        1, {"model": "a", "t": 0.5, "flag": True}, {"accuracy": 0.5, "cost": 0.02}
+    )
+    t2 = _trial(
+        2, {"model": "bb", "t": 1.0, "flag": False}, {"accuracy": 0.9, "cost": 0.05}
+    )
     space = {"model": ["a", "bb"], "t": [0.5, 1.0], "flag": [True, False]}
     ok = _result(
         [t1, t2],
@@ -94,7 +98,9 @@ def _scenarios() -> dict[str, tuple[Any, ...]]:
         ]
     )
     mock = _result(
-        [t1, t2], metadata={"mock_llm_run": True, "stop_detail": ""}, best_config=t2.config
+        [t1, t2],
+        metadata={"mock_llm_run": True, "stop_detail": ""},
+        best_config=t2.config,
     )
     nometa = _result([t1, t2], best_config=t2.config)
     nometa.metadata = None
@@ -133,6 +139,8 @@ def test_output_matches_golden(name, capsys, monkeypatch):
     data = json.loads(GOLDEN.read_text()) if GOLDEN.exists() else {}
     if os.environ.get("REGEN_GOLDEN") == "1":
         data[name] = out
-        GOLDEN.write_text(json.dumps(data, indent=1, sort_keys=True, ensure_ascii=False))
+        GOLDEN.write_text(
+            json.dumps(data, indent=1, sort_keys=True, ensure_ascii=False)
+        )
         return
     assert out == data[name]

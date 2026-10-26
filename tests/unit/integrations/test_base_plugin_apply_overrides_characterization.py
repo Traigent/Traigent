@@ -66,7 +66,9 @@ def test_none_attrs_are_skipped():
 
 
 def test_custom_params_mapped_and_passed_through():
-    cfg = TraigentConfig(custom_params={"temperature": 0.7, "native": 5, "model_name": 1})
+    cfg = TraigentConfig(
+        custom_params={"temperature": 0.7, "native": 5, "model_name": 1}
+    )
     out = _Plugin().apply_overrides({"native": "kw"}, cfg)
     # mapped via mapping; native does not clobber existing kwarg; model_name is a
     # framework-native passthrough
@@ -107,9 +109,13 @@ def test_long_system_prompt_truncated_in_audit(caplog):
     with caplog.at_level(logging.WARNING, logger=MODULE_LOGGER):
         _Plugin().apply_overrides({}, cfg)
     msg = next(
-        r.getMessage() for r in caplog.records if "Optimizer is modifying" in r.getMessage()
+        r.getMessage()
+        for r in caplog.records
+        if "Optimizer is modifying" in r.getMessage()
     )
-    assert msg == "Optimizer is modifying system prompt param 'system': " + "x" * 120 + "…"
+    assert (
+        msg == "Optimizer is modifying system prompt param 'system': " + "x" * 120 + "…"
+    )
 
 
 def test_exactly_120_chars_not_truncated(caplog):
@@ -118,7 +124,9 @@ def test_exactly_120_chars_not_truncated(caplog):
     with caplog.at_level(logging.WARNING, logger=MODULE_LOGGER):
         _Plugin().apply_overrides({}, cfg)
     msg = next(
-        r.getMessage() for r in caplog.records if "Optimizer is modifying" in r.getMessage()
+        r.getMessage()
+        for r in caplog.records
+        if "Optimizer is modifying" in r.getMessage()
     )
     assert msg.endswith(value) and "…" not in msg
 

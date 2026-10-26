@@ -159,7 +159,10 @@ def test_direct_attribute_unknown_refused_with_warning(caplog):
         )
     assert not hasattr(spec, "_secret")
     assert spec.tone == "warm"
-    assert any("Refusing to set unknown agent specification" in r.message for r in caplog.records)
+    assert any(
+        "Refusing to set unknown agent specification" in r.message
+        for r in caplog.records
+    )
 
 
 def test_empty_mappings_and_odd_non_dict_config_get():

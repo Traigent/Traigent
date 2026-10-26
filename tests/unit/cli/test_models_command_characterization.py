@@ -92,7 +92,9 @@ def test_json_with_check(env, verdict, valid, note_is_live, code):
 def test_json_bedrock_region_and_note(env):
     state, calls, _ = env
     state["verdict"] = "live"
-    r = _invoke("--provider", "bedrock", "--region", "us-east-1", "--check", "m1", "--json")
+    r = _invoke(
+        "--provider", "bedrock", "--region", "us-east-1", "--check", "m1", "--json"
+    )
     payload = json.loads(r.output)
     assert r.exit_code == 0
     assert payload["region"] == "us-east-1"

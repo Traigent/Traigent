@@ -8,15 +8,15 @@ from traigent.tvl import spec_loader as sl
 
 
 def _view(domains):
-    return {
-        k: (v.raw_type, v.domain, v.legacy_parameter) for k, v in domains.items()
-    }
+    return {k: (v.raw_type, v.domain, v.legacy_parameter) for k, v in domains.items()}
 
 
 def test_empty_and_missing():
     assert sl._collect_assignment_domains({}) == {}
     assert sl._collect_assignment_domains({"tvars": None}) == {}
-    assert sl._collect_assignment_domains({"tvars": "x", "configuration_space": 3}) == {}
+    assert (
+        sl._collect_assignment_domains({"tvars": "x", "configuration_space": 3}) == {}
+    )
 
 
 def test_tvars_dict_form():
@@ -69,7 +69,9 @@ def test_configuration_space_overrides_tvars_and_marks_legacy():
     )
     assert set(out) == {"a"}
     assert out["a"].legacy_parameter is True
-    assert out["a"].raw_type == sl._legacy_parameter_type({"type": "float", "default": 1})
+    assert out["a"].raw_type == sl._legacy_parameter_type(
+        {"type": "float", "default": 1}
+    )
     assert out["a"].domain == {"type": "float", "default": 1}
 
 

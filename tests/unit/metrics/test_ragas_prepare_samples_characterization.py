@@ -108,9 +108,7 @@ def test_dataset_example_input_and_metadata_sources_used():
 
 def test_result_metadata_precedes_dataset_metadata():
     ex = SimpleNamespace(input_data=None, metadata={"contexts": ["ds"]})
-    out = _prep(
-        [_res(metadata={"contexts": ["res"]})], dataset_examples=[ex]
-    )
+    out = _prep([_res(metadata={"contexts": ["res"]})], dataset_examples=[ex])
     assert out[0].retrieved_contexts == ["res"]
 
 

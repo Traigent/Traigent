@@ -93,9 +93,7 @@ def test_score_missing_attribute_uses_metric():
     assert row.scores == [0.8]
 
 
-@pytest.mark.parametrize(
-    "score", ["0.5", float("nan"), float("inf"), True], ids=str
-)
+@pytest.mark.parametrize("score", ["0.5", float("nan"), float("inf"), True], ids=str)
 def test_non_numeric_score_counts_failed(score):
     row = _agg([_run(_trial(score, {}))])
     assert row.scores == [None] and row.failed_repeats == 1
@@ -115,9 +113,7 @@ def test_none_metrics_tolerated():
 
 
 def test_non_finite_and_bool_metric_values_ignored():
-    row = _agg(
-        [_run(_trial(0.3, {"a": float("nan"), "b": True, "c": 2, "d": "x"}))]
-    )
+    row = _agg([_run(_trial(0.3, {"a": float("nan"), "b": True, "c": 2, "d": "x"}))])
     assert row.metrics_mean == {"c": 2.0}
 
 

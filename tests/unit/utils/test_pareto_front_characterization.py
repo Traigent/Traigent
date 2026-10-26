@@ -33,7 +33,11 @@ def test_non_completed_and_empty_metrics_are_skipped():
 
 
 def test_single_objective_picks_max_and_keeps_ties():
-    a, b, c = _trial({"accuracy": 0.5}), _trial({"accuracy": 0.9}), _trial({"accuracy": 0.9})
+    a, b, c = (
+        _trial({"accuracy": 0.5}),
+        _trial({"accuracy": 0.9}),
+        _trial({"accuracy": 0.9}),
+    )
     front = _front([a, b, c], ["accuracy"], {"accuracy": True})
     assert [p.trial for p in front] == [b, c]
     assert front[0].objectives == {"accuracy": 0.9}
@@ -63,7 +67,9 @@ def test_none_metric_value_counts_as_missing():
 def test_cost_flag_drops_cost_objectives_so_trial_excluded():
     flagged = _trial({"accuracy": 0.99, "cost": 0.0, "cost_unmeasured": 1.0})
     ok = _trial({"accuracy": 0.5, "cost": 2.0})
-    front = _front([flagged, ok], ["accuracy", "cost"], {"accuracy": True, "cost": False})
+    front = _front(
+        [flagged, ok], ["accuracy", "cost"], {"accuracy": True, "cost": False}
+    )
     assert [p.trial for p in front] == [ok]
 
 

@@ -59,7 +59,10 @@ def test_generation_message_metadata_before_generation_itself():
 
 
 def test_generation_candidate_order_and_flattening():
-    g1 = NS(message=NS(response_metadata={}, model=""), response_metadata={"model_name": "g1"})
+    g1 = NS(
+        message=NS(response_metadata={}, model=""),
+        response_metadata={"model_name": "g1"},
+    )
     g2 = NS(response_metadata=None, model="g2")
     assert ex(NS(generations=[[g1], g2])) == "g1"
     assert ex(NS(generations=[[NS(), NS(model="")], g2])) == "g2"
