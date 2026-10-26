@@ -410,64 +410,17 @@ class FrameworkOverrideManager(BaseOverrideManager):
             _capture_openai_usage(response, call_kwargs)
             return response
 
+        def call_kwargs_for(kwargs: dict[str, Any]) -> dict[str, Any]:
+            return self._method_call_kwargs(kwargs, supported_params, effective_mapping)
+
         @functools.wraps(original_method)
         def override_method(instance, *args, **kwargs):
             # Check if we're in an optimization context
             if not getattr(override_active, "enabled", False):
                 return original_method(instance, *args, **kwargs)
 
-            # Get current Traigent configuration
-            config = get_config()
-            if not config:
-                return finish(original_method(instance, *args, **kwargs), kwargs)
-
-            # Extract configuration values
-            config_dict = {}
-            if isinstance(config, TraigentConfig):
-                config_dict = config.to_dict()
-                config_dict.update(config.custom_params)
-            elif isinstance(config, dict):
-                config_dict = config
-            else:
-                return finish(original_method(instance, *args, **kwargs), kwargs)
-
-            # Get current configuration space from context to determine what to override
-            from traigent.config.context import get_config_space
-
-            config_space = get_config_space()
-
-            # Override parameters based on supported_params and effective translation.
-            # Iterating supported_params (not parameter_mapping) ensures we inject all
-            # method-accepted generation params even when they are absent from the
-            # class-level PARAMETER_MAPPINGS (e.g. temperature for HF InferenceClient).
-            overridden_kwargs = kwargs.copy()
-            overrides_applied = []
-
-            for traigent_param in supported_params:
-                if traigent_param in config_dict:
-                    # Only override if parameter is in configuration space (being optimized)
-                    # or if no configuration space is set (not in optimization)
-                    if config_space is None or traigent_param in config_space:
-                        framework_param = effective_mapping.get(
-                            traigent_param, traigent_param
-                        )
-                        override_value = config_dict[traigent_param]
-                        original_value = overridden_kwargs.get(
-                            framework_param, "not_set"
-                        )
-                        overridden_kwargs[framework_param] = override_value
-                        overrides_applied.append(
-                            f"{framework_param}: {original_value} -> {override_value}"
-                        )
-
-            # Record what overrides were applied
-            # (logging handled separately if needed)
-
-            # Call original method with overridden parameters
-            return finish(
-                original_method(instance, *args, **overridden_kwargs),
-                overridden_kwargs,
-            )
+            call_kwargs = call_kwargs_for(kwargs)
+            return finish(original_method(instance, *args, **call_kwargs), call_kwargs)
 
         @functools.wraps(original_method)
         async def async_override_method(instance, *args, **kwargs):
@@ -475,54 +428,9 @@ class FrameworkOverrideManager(BaseOverrideManager):
             if not getattr(override_active, "enabled", False):
                 return await original_method(instance, *args, **kwargs)
 
-            # Get current Traigent configuration
-            config = get_config()
-            if not config:
-                return finish(await original_method(instance, *args, **kwargs), kwargs)
-
-            # Extract configuration values
-            config_dict = {}
-            if isinstance(config, TraigentConfig):
-                config_dict = config.to_dict()
-                config_dict.update(config.custom_params)
-            elif isinstance(config, dict):
-                config_dict = config
-            else:
-                return finish(await original_method(instance, *args, **kwargs), kwargs)
-
-            # Get current configuration space from context to determine what to override
-            from traigent.config.context import get_config_space
-
-            config_space = get_config_space()
-
-            # Override parameters based on supported_params and effective translation.
-            overridden_kwargs = kwargs.copy()
-            overrides_applied = []
-
-            for traigent_param in supported_params:
-                if traigent_param in config_dict:
-                    # Only override if parameter is in configuration space (being optimized)
-                    # or if no configuration space is set (not in optimization)
-                    if config_space is None or traigent_param in config_space:
-                        framework_param = effective_mapping.get(
-                            traigent_param, traigent_param
-                        )
-                        override_value = config_dict[traigent_param]
-                        original_value = overridden_kwargs.get(
-                            framework_param, "not_set"
-                        )
-                        overridden_kwargs[framework_param] = override_value
-                        overrides_applied.append(
-                            f"{framework_param}: {original_value} -> {override_value}"
-                        )
-
-            # Record what overrides were applied
-            # (logging handled separately if needed)
-
-            # Call original method with overridden parameters
+            call_kwargs = call_kwargs_for(kwargs)
             return finish(
-                await original_method(instance, *args, **overridden_kwargs),
-                overridden_kwargs,
+                await original_method(instance, *args, **call_kwargs), call_kwargs
             )
 
         # Return async version if original is async
@@ -530,6 +438,49 @@ class FrameworkOverrideManager(BaseOverrideManager):
             return async_override_method
         else:
             return override_method
+
+    @staticmethod
+    def _method_call_kwargs(
+        kwargs: dict[str, Any],
+        supported_params: list[str],
+        effective_mapping: dict[str, str],
+    ) -> dict[str, Any]:
+        """Return the kwargs a wrapped method should be called with.
+
+        ``kwargs`` itself is returned when there is no usable Traigent
+        configuration; otherwise a copy with the configured overrides applied.
+        """
+        config = get_config()
+        if not config:
+            return kwargs
+
+        if isinstance(config, TraigentConfig):
+            config_dict = config.to_dict()
+            config_dict.update(config.custom_params)
+        elif isinstance(config, dict):
+            config_dict = config
+        else:
+            return kwargs
+
+        # Get current configuration space from context to determine what to override
+        from traigent.config.context import get_config_space
+
+        config_space = get_config_space()
+
+        # Iterating supported_params (not parameter_mapping) ensures we inject all
+        # method-accepted generation params even when they are absent from the
+        # class-level PARAMETER_MAPPINGS (e.g. temperature for HF InferenceClient).
+        overridden_kwargs = kwargs.copy()
+        for traigent_param in supported_params:
+            if traigent_param not in config_dict:
+                continue
+            # Only override if parameter is in configuration space (being optimized)
+            # or if no configuration space is set (not in optimization)
+            if config_space is not None and traigent_param not in config_space:
+                continue
+            framework_param = effective_mapping.get(traigent_param, traigent_param)
+            overridden_kwargs[framework_param] = config_dict[traigent_param]
+        return overridden_kwargs
 
     def _apply_method_override(
         self, target_class: type, class_name: str, method_path: str
