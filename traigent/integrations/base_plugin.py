@@ -183,6 +183,64 @@ class IntegrationPlugin(ABC):
         """
         return self._parameter_mappings.copy()
 
+    @staticmethod
+    def _config_param_value(config: "TraigentConfig", param_name: str) -> Any:
+        """Read a parameter from direct attributes, then ``custom_params``."""
+        # Get value from both direct attributes and custom_params
+        value = None
+        if hasattr(config, param_name):
+            value = getattr(config, param_name)
+        if value is None and hasattr(config, "custom_params") and config.custom_params:
+            value = config.custom_params.get(param_name)
+        return value
+
+    @staticmethod
+    def _bound_error(
+        param_name: str, value: Any, bound: Any, below: bool
+    ) -> str | None:
+        """Error text when ``value`` crosses ``bound`` (or is not comparable)."""
+        if bound is None:
+            return None
+        try:
+            crossed = value < bound if below else value > bound
+        except TypeError:
+            # Cannot compare types - treat as invalid
+            return (
+                f"Parameter '{param_name}' value {value} has incompatible type "
+                "(expected numeric)"
+            )
+        if not crossed:
+            return None
+        direction = "below minimum" if below else "above maximum"
+        return f"Parameter '{param_name}' value {value} is {direction} {bound}"
+
+    def _rule_errors(
+        self, param_name: str, rule: ValidationRule, value: Any
+    ) -> list[str]:
+        """All rule violations for one present parameter value, in check order."""
+        errors: list[str] = []
+
+        # Validate min/max values (ensure comparable types)
+        for bound, below in ((rule.min_value, True), (rule.max_value, False)):
+            bound_error = self._bound_error(param_name, value, bound, below)
+            if bound_error is not None:
+                errors.append(bound_error)
+
+        # Validate allowed values
+        if rule.allowed_values is not None and value not in rule.allowed_values:
+            errors.append(
+                f"Parameter '{param_name}' value {value} not in allowed values: {rule.allowed_values}"
+            )
+
+        # Custom validation
+        if rule.custom_validator:
+            custom_method = getattr(self, rule.custom_validator, None)
+            if custom_method:
+                custom_errors = custom_method(param_name, value)
+                if custom_errors:
+                    errors.extend(custom_errors)
+        return errors
+
     def validate_config(self, config: "TraigentConfig") -> bool:
         """Validate a TraigentConfig against this plugin's rules.
 
@@ -195,19 +253,10 @@ class IntegrationPlugin(ABC):
         Raises:
             TraigentError: If validation fails with details
         """
-        errors = []
+        errors: list[str] = []
 
         for param_name, rule in self._validation_rules.items():
-            # Get value from both direct attributes and custom_params
-            value = None
-            if hasattr(config, param_name):
-                value = getattr(config, param_name)
-            if (
-                value is None
-                and hasattr(config, "custom_params")
-                and config.custom_params
-            ):
-                value = config.custom_params.get(param_name)
+            value = self._config_param_value(config, param_name)
 
             # Check required parameters
             if rule.required and value is None:
@@ -217,42 +266,7 @@ class IntegrationPlugin(ABC):
             if value is None:
                 continue
 
-            # Validate min/max values (ensure comparable types)
-            try:
-                if rule.min_value is not None and value < rule.min_value:
-                    errors.append(
-                        f"Parameter '{param_name}' value {value} is below minimum {rule.min_value}"
-                    )
-            except TypeError:
-                # Cannot compare types - treat as invalid
-                errors.append(
-                    f"Parameter '{param_name}' value {value} has incompatible type (expected numeric)"
-                )
-
-            try:
-                if rule.max_value is not None and value > rule.max_value:
-                    errors.append(
-                        f"Parameter '{param_name}' value {value} is above maximum {rule.max_value}"
-                    )
-            except TypeError:
-                # Cannot compare types - treat as invalid
-                errors.append(
-                    f"Parameter '{param_name}' value {value} has incompatible type (expected numeric)"
-                )
-
-            # Validate allowed values
-            if rule.allowed_values is not None and value not in rule.allowed_values:
-                errors.append(
-                    f"Parameter '{param_name}' value {value} not in allowed values: {rule.allowed_values}"
-                )
-
-            # Custom validation
-            if rule.custom_validator:
-                custom_method = getattr(self, rule.custom_validator, None)
-                if custom_method:
-                    custom_errors = custom_method(param_name, value)
-                    if custom_errors:
-                        errors.extend(custom_errors)
+            errors.extend(self._rule_errors(param_name, rule, value))
 
         if errors:
             raise TraigentError(
