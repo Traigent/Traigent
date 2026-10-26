@@ -3342,15 +3342,10 @@ class BaseEvaluator(ABC):
         """Handle a completed task result, storing success or error appropriately."""
         try:
             result = task.result()
-        except TrialPrunedError as e:
+        except TrialPrunedError:
             await self._cancel_pending_tasks(pending_tasks, sample_lease)
-            # Attach partial example results to the exception before re-raising
-            if detailed:
-                collected_results = self._collect_partial_results(
-                    example_results_by_index
-                )
-                if collected_results or e.example_results:
-                    e.example_results = collected_results + list(e.example_results)
+            # The outer concurrent batch owns partial-row attachment. Attaching
+            # here as well duplicates every completed row when it catches this.
             raise
         except asyncio.CancelledError:
             # S7497: CancelledError must be re-raised after cleanup

@@ -18,7 +18,7 @@ from tests.integration.test_execution_budget_multiphase import (
 )
 from traigent import get_config, with_usage
 from traigent.api.decorators import optimize
-from traigent.api.types import TrialStatus
+from traigent.api.types import ExampleResult, TrialStatus
 from traigent.cloud.session_types import SessionCreationResult
 from traigent.config.types import TraigentConfig
 from traigent.core.execution_budget import BudgetDebitExceeded, ExecutionBudget
@@ -65,11 +65,76 @@ async def test_signal_survives_evaluator_lanes(sync: bool, concurrency: int) -> 
         raise signal
 
     dataset = Dataset([EvaluationExample({"value": 1}, 1)])
+    evaluator = LocalEvaluator(metrics=["accuracy"], max_workers=concurrency)
+    assert evaluator.max_workers == concurrency
     with pytest.raises(BudgetDebitExceeded) as propagated:
-        await LocalEvaluator(metrics=["accuracy"], max_concurrent=concurrency).evaluate(
-            thread_agent if sync else async_agent, {}, dataset
-        )
+        await evaluator.evaluate(thread_agent if sync else async_agent, {}, dataset)
     assert propagated.value is signal
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(3)
+@pytest.mark.parametrize("pruning", ["budget", "ordinary"])
+async def test_concurrent_pruning_attaches_each_partial_row_once(pruning: str) -> None:
+    budget = ExecutionBudget(max_budget_debit_usd=0.1 if pruning == "budget" else 1)
+    second_started = asyncio.Event()
+    second_cancelled = asyncio.Event()
+    never = asyncio.Event()
+    calls: list[int] = []
+    raised: list[TrialPrunedError] = []
+    supplied_row = ExampleResult(
+        example_id="nested-partial",
+        input_data={"value": 99},
+        expected_output=99,
+        actual_output=99,
+        metrics={"accuracy": 1.0},
+        execution_time=0.0,
+        success=True,
+    )
+    ordinary_signal = TrialPrunedError("ordinary prune", example_results=[supplied_row])
+
+    async def agent(value: int) -> int:
+        try:
+            if value == 3 and pruning == "ordinary":
+                raise ordinary_signal
+            with budget.reserve_debit(0.05):
+                calls.append(value)
+                if value == 1:
+                    await second_started.wait()
+                elif value == 2:
+                    second_started.set()
+                    try:
+                        await never.wait()
+                    except asyncio.CancelledError:
+                        second_cancelled.set()
+                        raise
+                return value
+        except TrialPrunedError as exc:
+            raised.append(exc)
+            raise
+
+    evaluator = LocalEvaluator(metrics=["accuracy"], max_workers=2, detailed=True)
+    assert evaluator.max_workers == 2
+    dataset = Dataset([EvaluationExample({"value": i}, i) for i in (1, 2, 3)])
+    expected_error = BudgetDebitExceeded if pruning == "budget" else TrialPrunedError
+    with pytest.raises(expected_error) as propagated:
+        await asyncio.wait_for(evaluator.evaluate(agent, {}, dataset, budget=budget), 3)
+    assert propagated.value is raised[0]
+    assert calls == [1, 2]
+    assert second_cancelled.is_set()
+    rows = propagated.value.example_results
+    if pruning == "budget":
+        assert len(rows) == 1
+        assert [row.input_data for row in rows] == [{"value": 1}]
+    else:
+        assert propagated.value is ordinary_signal
+        assert len(rows) == 2
+        assert [row.input_data for row in rows] == [{"value": 1}, {"value": 99}]
+        assert rows[1] is supplied_row
+    assert rows[0].actual_output == 1
+    assert rows[0].success
+    assert budget.debit_snapshot().consumed_budget_debit_usd == pytest.approx(0.1)
+    assert budget.debit_snapshot().reserved_budget_debit_usd == 0
 
 
 @pytest.mark.asyncio
@@ -88,7 +153,7 @@ async def test_depletion_retains_partial_rows_and_completed_trials(
 
     orchestrator = _build_orchestrator(budget, max_suggestions=5, max_trials=5)
     orchestrator.evaluator = (
-        LocalEvaluator(metrics=["accuracy"], max_concurrent=1, detailed=True)
+        LocalEvaluator(metrics=["accuracy"], max_workers=1, detailed=True)
         if evaluator_type is LocalEvaluator
         else SimpleScoringEvaluator(lambda output, expected: float(output == expected))
     )
@@ -109,7 +174,7 @@ async def test_depletion_retains_partial_rows_and_completed_trials(
             return query.replace("q", "a")
 
     holdout = _build_orchestrator(budget, max_suggestions=1, max_trials=1)
-    holdout.evaluator = LocalEvaluator(metrics=["accuracy"], max_concurrent=1)
+    holdout.evaluator = LocalEvaluator(metrics=["accuracy"], max_workers=1)
     holdout_result = await holdout.optimize(func=holdout_agent, dataset=_dataset(1))
     assert len(holdout_result.trials) == 1
     assert holdout_result.trials[0].status == TrialStatus.COMPLETED
@@ -131,7 +196,7 @@ async def test_parallel_trials_settle_admitted_work_and_stop() -> None:
     orchestrator = _build_orchestrator(
         budget, max_suggestions=8, max_trials=8, parallel_trials=2
     )
-    orchestrator.evaluator = LocalEvaluator(metrics=["accuracy"], max_concurrent=1)
+    orchestrator.evaluator = LocalEvaluator(metrics=["accuracy"], max_workers=1)
     result = await orchestrator.optimize(func=agent, dataset=_dataset())
     assert result.stop_reason == "execution_budget"
     assert calls == 3
@@ -147,7 +212,7 @@ async def test_ordinary_pruning_does_not_become_budget_stop() -> None:
         raise TrialPrunedError("ordinary evaluator prune")
 
     orchestrator = _build_orchestrator(budget, max_suggestions=2, max_trials=2)
-    orchestrator.evaluator = LocalEvaluator(metrics=["accuracy"], max_concurrent=1)
+    orchestrator.evaluator = LocalEvaluator(metrics=["accuracy"], max_workers=1)
     result = await orchestrator.optimize(func=agent, dataset=_dataset())
     assert result.stop_reason != "execution_budget"
     assert len(result.trials) == 2
@@ -225,7 +290,7 @@ async def test_shared_phases_do_not_auto_charge_nominal_debits() -> None:
             calls += 1
             return query.replace("q", "a")
 
-    evaluator = LocalEvaluator(metrics=["accuracy"], max_concurrent=1)
+    evaluator = LocalEvaluator(metrics=["accuracy"], max_workers=1)
     await evaluator.evaluate(agent, {}, _dataset(1), budget=budget)
     orchestrator = _build_orchestrator(budget, max_suggestions=1, max_trials=1)
     orchestrator.evaluator = evaluator
@@ -364,7 +429,7 @@ async def test_mock_connected_outgoing_payloads_exclude_local_ledger(
         optimizer=MockSequentialOptimizer(
             {"param1": (0, 100)}, ["accuracy"], max_suggestions=2
         ),
-        evaluator=LocalEvaluator(metrics=["accuracy"], max_concurrent=1, detailed=True),
+        evaluator=LocalEvaluator(metrics=["accuracy"], max_workers=1, detailed=True),
         config=TraigentConfig(offline=False, algorithm="grid", privacy_enabled=False),
         max_trials=2,
     )
