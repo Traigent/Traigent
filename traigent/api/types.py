@@ -916,6 +916,23 @@ class EvalAudit:
         }
 
 
+def _sum_numeric_metrics(
+    trials: list[TrialResult],
+) -> tuple[dict[str, float], dict[str, int]]:
+    """Per-metric (sum, count) over numeric metrics, excluding bools and
+    ``examples_attempted``."""
+    numeric_sums: dict[str, float] = {}
+    numeric_counts: dict[str, int] = {}
+    for trial in trials:
+        for name, value in trial.metrics.items():
+            if name == "examples_attempted" or isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)):
+                numeric_sums[name] = numeric_sums.get(name, 0.0) + float(value)
+                numeric_counts[name] = numeric_counts.get(name, 0) + 1
+    return numeric_sums, numeric_counts
+
+
 # Adding a field here? Classify it in the round-trip manifest at
 # traigent/utils/optimization_result_persistence.py (RESULT_RESTORE vs
 # RESULT_RESET) — otherwise both persisted formats silently drop it on load
@@ -1312,6 +1329,19 @@ class OptimizationResult:
             summary.get("samples_per_config")
         )
 
+    def _stamped_winning_trial_ids(self) -> set[str] | None:
+        """Winner replicate ids stamped by result selection, if present."""
+        metadata = self.metadata
+        if not isinstance(metadata, dict):
+            return None
+        summary = metadata.get("session_summary")
+        if not isinstance(summary, dict):
+            return None
+        stamped = summary.get("winning_trial_ids")
+        if isinstance(stamped, list) and stamped:
+            return {str(trial_id) for trial_id in stamped}
+        return None
+
     def _aggregated_mean_metrics(self) -> dict[str, float] | None:
         """Reconstruct the winning config's MEAN metrics for aggregated runs.
 
@@ -1339,14 +1369,7 @@ class OptimizationResult:
         # config, so full-dict equality silently drops replicates whose aux
         # keys differ. Config equality remains only as a fallback for older
         # persisted results that predate the stamp.
-        winning_ids: set[str] | None = None
-        metadata = self.metadata
-        if isinstance(metadata, dict):
-            summary = metadata.get("session_summary")
-            if isinstance(summary, dict):
-                stamped = summary.get("winning_trial_ids")
-                if isinstance(stamped, list) and stamped:
-                    winning_ids = {str(trial_id) for trial_id in stamped}
+        winning_ids = self._stamped_winning_trial_ids()
         if winning_ids is not None:
             replicates = [
                 trial
@@ -1365,17 +1388,7 @@ class OptimizationResult:
             ]
         if not replicates:
             return None
-        numeric_sums: dict[str, float] = {}
-        numeric_counts: dict[str, int] = {}
-        for trial in replicates:
-            for name, value in trial.metrics.items():
-                if name == "examples_attempted":
-                    continue
-                if isinstance(value, bool):
-                    continue
-                if isinstance(value, (int, float)):
-                    numeric_sums[name] = numeric_sums.get(name, 0.0) + float(value)
-                    numeric_counts[name] = numeric_counts.get(name, 0) + 1
+        numeric_sums, numeric_counts = _sum_numeric_metrics(replicates)
         if not numeric_sums:
             return None
         mean_metrics: dict[str, float] = {
