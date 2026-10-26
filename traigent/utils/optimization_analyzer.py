@@ -617,33 +617,7 @@ class OptimizationAnalyzer:
             logger.warning(f"No runs found for experiment: {experiment_name}")
             return None
 
-        # Collect all trial data
-        all_trials = []
-        for _, run_info in exp_runs.iterrows():
-            run_id = run_info["run_id"]
-            data = self.load_run(experiment_name, run_id)
-
-            if "trials" in data:
-                for trial in data["trials"]:
-                    trial_data = {
-                        "run_id": run_id,
-                        "trial_id": trial.get("trial_id"),
-                        "status": trial.get("status"),
-                        "duration": trial.get("duration"),
-                    }
-
-                    # Add config parameters
-                    config = trial.get("config", {})
-                    for key, value in config.items():
-                        trial_data[f"config_{key}"] = value
-
-                    # Add metrics
-                    metrics = trial.get("metrics", {})
-                    for key, value in metrics.items():
-                        trial_data[f"metric_{key}"] = value
-
-                    all_trials.append(trial_data)
-
+        all_trials = self._collect_trial_rows(experiment_name, exp_runs)
         if not all_trials:
             logger.warning(f"No trial data found for experiment: {experiment_name}")
             return None
@@ -654,6 +628,18 @@ class OptimizationAnalyzer:
         timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         filename = f"{experiment_name}_{timestamp}"
 
+        output_file = self._write_export(df, format, output_dir, filename)
+        if output_file is None:
+            return None
+
+        logger.info(f"Exported {len(df)} trials to {output_file}")
+        return str(output_file)
+
+    @staticmethod
+    def _write_export(
+        df: pd.DataFrame, format: str, output_dir: Path, filename: str
+    ) -> Path | None:
+        """Write ``df`` in the requested format; ``None`` when it cannot be."""
         if format == "csv":
             output_file = output_dir / f"{filename}.csv"
             df.to_csv(output_file, index=False)
@@ -672,9 +658,37 @@ class OptimizationAnalyzer:
         else:
             logger.warning(f"Unsupported format: {format}")
             return None
+        return output_file
 
-        logger.info(f"Exported {len(df)} trials to {output_file}")
-        return str(output_file)
+    def _collect_trial_rows(
+        self, experiment_name: str, exp_runs: pd.DataFrame
+    ) -> list[dict[str, Any]]:
+        """Flatten every trial of the experiment's runs into export rows."""
+        all_trials: list[dict[str, Any]] = []
+        for _, run_info in exp_runs.iterrows():
+            run_id = run_info["run_id"]
+            data = self.load_run(experiment_name, run_id)
+
+            if "trials" not in data:
+                continue
+            for trial in data["trials"]:
+                trial_data: dict[str, Any] = {
+                    "run_id": run_id,
+                    "trial_id": trial.get("trial_id"),
+                    "status": trial.get("status"),
+                    "duration": trial.get("duration"),
+                }
+
+                # Add config parameters
+                for key, value in trial.get("config", {}).items():
+                    trial_data[f"config_{key}"] = value
+
+                # Add metrics
+                for key, value in trial.get("metrics", {}).items():
+                    trial_data[f"metric_{key}"] = value
+
+                all_trials.append(trial_data)
+        return all_trials
 
     def get_run_summary(self, experiment_name: str, run_id: str) -> str:
         """Generate a text summary of a run."""
