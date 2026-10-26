@@ -1864,50 +1864,9 @@ def _preflight_reachable(
             continue
         visited.add(node.name)
 
-        missing_stages = _missing_stage_names(node, stages)
-        if missing_stages:
-            return _error(
-                "composite-runtime: missing stage callable(s) "
-                f"{sorted(missing_stages)!r} for composite {node.name!r} "
-                "(fail-closed: a missing stage fails the item's evaluation)"
-            )
-        missing_refs = _missing_composite_refs(node, registry)
-        if missing_refs:
-            return _error(
-                "composite-runtime: missing composite ref(s) "
-                f"{sorted(missing_refs)!r} for composite {node.name!r} "
-                "(fail-closed: an unresolved nested arm fails the item's evaluation)"
-            )
-
-        body = node.body
-        if isinstance(body, LoopBody):
-            stop = body.stop
-            if stop.kind is StopKind.SIGNAL_ACCEPT and stop.signal is not None:
-                if stop.signal.signal not in signals:
-                    return _error(
-                        f"composite-runtime: signal {stop.signal.signal!r} is not "
-                        f"provided for composite {node.name!r} (fail-closed: a "
-                        "missing signal fails the item's evaluation)"
-                    )
-            elif stop.kind is StopKind.EXTERNAL_ACCEPT and stop.predicate is not None:
-                if stop.predicate not in predicates:
-                    return _error(
-                        f"composite-runtime: predicate {stop.predicate!r} is not "
-                        f"provided for composite {node.name!r} (fail-closed: a "
-                        "missing predicate fails the item's evaluation)"
-                    )
-        elif isinstance(body, CascadeBody) and body.placement is Placement.PRE:
-            # A pre-cascade (dispatch) gate's routing signal must be in the
-            # registry FAIL-CLOSED — a missing dispatch signal fails the item's
-            # evaluation BEFORE any arm runs, mirroring the signal_accept stop
-            # preflight (the IR guarantees a signal_below gate carries a signal).
-            for gate in body.gates:
-                if gate.signal is not None and gate.signal.signal not in signals:
-                    return _error(
-                        f"composite-runtime: signal {gate.signal.signal!r} is not "
-                        f"provided for composite {node.name!r} (fail-closed: a "
-                        "missing dispatch signal fails the item's evaluation)"
-                    )
+        failure = _preflight_node(node, stages, registry, signals, predicates)
+        if failure is not None:
+            return failure
 
         # Recurse into every present nested composite ref (missing refs already
         # short-circuited above, so every ref here resolves).
@@ -1915,6 +1874,71 @@ def _preflight_reachable(
             child = registry.get(arm)
             if child is not None and child.name not in visited:
                 stack.append(child)
+    return None
+
+
+def _preflight_node(
+    node: CompositeNode,
+    stages: Mapping[str, StageEntry],
+    registry: Mapping[str, CompositeNode],
+    signals: Mapping[str, Callable[..., Any]],
+    predicates: Mapping[str, Callable[..., Any]],
+) -> CompositeRunResult | None:
+    """Fail-closed obligations of ONE node: stages, refs, then body signals."""
+    missing_stages = _missing_stage_names(node, stages)
+    if missing_stages:
+        return _error(
+            "composite-runtime: missing stage callable(s) "
+            f"{sorted(missing_stages)!r} for composite {node.name!r} "
+            "(fail-closed: a missing stage fails the item's evaluation)"
+        )
+    missing_refs = _missing_composite_refs(node, registry)
+    if missing_refs:
+        return _error(
+            "composite-runtime: missing composite ref(s) "
+            f"{sorted(missing_refs)!r} for composite {node.name!r} "
+            "(fail-closed: an unresolved nested arm fails the item's evaluation)"
+        )
+
+    body = node.body
+    if isinstance(body, LoopBody):
+        return _preflight_loop_stop(node, body, signals, predicates)
+    if isinstance(body, CascadeBody) and body.placement is Placement.PRE:
+        # A pre-cascade (dispatch) gate's routing signal must be in the
+        # registry FAIL-CLOSED — a missing dispatch signal fails the item's
+        # evaluation BEFORE any arm runs, mirroring the signal_accept stop
+        # preflight (the IR guarantees a signal_below gate carries a signal).
+        for gate in body.gates:
+            if gate.signal is not None and gate.signal.signal not in signals:
+                return _error(
+                    f"composite-runtime: signal {gate.signal.signal!r} is not "
+                    f"provided for composite {node.name!r} (fail-closed: a "
+                    "missing dispatch signal fails the item's evaluation)"
+                )
+    return None
+
+
+def _preflight_loop_stop(
+    node: CompositeNode,
+    body: LoopBody,
+    signals: Mapping[str, Callable[..., Any]],
+    predicates: Mapping[str, Callable[..., Any]],
+) -> CompositeRunResult | None:
+    stop = body.stop
+    if stop.kind is StopKind.SIGNAL_ACCEPT and stop.signal is not None:
+        if stop.signal.signal not in signals:
+            return _error(
+                f"composite-runtime: signal {stop.signal.signal!r} is not "
+                f"provided for composite {node.name!r} (fail-closed: a "
+                "missing signal fails the item's evaluation)"
+            )
+    elif stop.kind is StopKind.EXTERNAL_ACCEPT and stop.predicate is not None:
+        if stop.predicate not in predicates:
+            return _error(
+                f"composite-runtime: predicate {stop.predicate!r} is not "
+                f"provided for composite {node.name!r} (fail-closed: a "
+                "missing predicate fails the item's evaluation)"
+            )
     return None
 
 
