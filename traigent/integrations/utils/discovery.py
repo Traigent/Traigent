@@ -20,6 +20,16 @@ from ...utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _first_string_attr(obj: Any, attrs: list[str]) -> str | None:
+    """Return the first attribute of ``obj`` (in order) whose value is a str."""
+    for attr in attrs:
+        if hasattr(obj, attr):
+            value = getattr(obj, attr)
+            if isinstance(value, str):
+                return value
+    return None
+
+
 class ParameterDiscovery:
     """Dynamically discover and map parameters for any framework."""
 
@@ -540,20 +550,14 @@ class ParameterDiscovery:
             # Try different version attributes
             version_attrs = ["__version__", "_version", "VERSION", "version"]
 
-            for attr in version_attrs:
-                if hasattr(cls, attr):
-                    version = getattr(cls, attr)
-                    if isinstance(version, str):
-                        return version
+            version = _first_string_attr(cls, version_attrs)
+            if version is not None:
+                return version
 
             # Try module version
             module = inspect.getmodule(cls)
             if module:
-                for attr in version_attrs:
-                    if hasattr(module, attr):
-                        version = getattr(module, attr)
-                        if isinstance(version, str):
-                            return version
+                return _first_string_attr(module, version_attrs)
 
             return None
         except Exception as e:

@@ -1411,35 +1411,39 @@ def validate_probability(value: float, name: str) -> None:
     result.raise_if_invalid()
 
 
+def _raise_api_value_error(result: ValidationResult) -> None:
+    """Raise the ValueError that API functions expect for a failed result."""
+    if not result.errors:
+        raise ValueError("Validation failed")
+    msg = result.errors[0].message
+    lowered = msg.lower()
+    if "positive" in lowered:
+        raise ValueError("Must be positive") from None
+    if "invalid choice" in lowered:
+        raise ValueError("Must be one of")
+    if "expected dict" in lowered:
+        raise ValueError(f"Expected dict, got {msg.split('got ')[-1]}")
+    raise ValueError(msg)
+
+
 def validate_or_raise(result: ValidationResult) -> None:
     """Raise exception if validation failed (common_validators compatibility)."""
-    if not result.is_valid:
-        # Check if we need ValueError for backward compatibility (API functions)
-        import inspect
+    if result.is_valid:
+        return
+    # Check if we need ValueError for backward compatibility (API functions)
+    import inspect
 
-        frame = inspect.currentframe()
-        if (
-            frame
-            and frame.f_back
-            and frame.f_back.f_code.co_filename.endswith("api/functions.py")
-        ):
-            # API functions expect ValueError for backward compatibility
-            if result.errors:
-                first_error = result.errors[0]
-                msg = first_error.message
-                if "positive" in msg.lower():
-                    raise ValueError("Must be positive") from None
-                elif "invalid choice" in msg.lower():
-                    raise ValueError("Must be one of")
-                elif "expected dict" in msg.lower():
-                    raise ValueError(f"Expected dict, got {msg.split('got ')[-1]}")
-                else:
-                    raise ValueError(msg)
-            else:
-                raise ValueError("Validation failed")
-        else:
-            # Normal case - use ValidationError
-            result.raise_if_invalid()
+    frame = inspect.currentframe()
+    if (
+        frame
+        and frame.f_back
+        and frame.f_back.f_code.co_filename.endswith("api/functions.py")
+    ):
+        # API functions expect ValueError for backward compatibility
+        _raise_api_value_error(result)
+    else:
+        # Normal case - use ValidationError
+        result.raise_if_invalid()
 
 
 # ===== High-Level Validators =====
