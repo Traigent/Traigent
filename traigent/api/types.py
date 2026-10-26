@@ -1424,18 +1424,26 @@ class OptimizationResult:
         if aggregated_metrics is not None:
             return aggregated_metrics
         if not self.objectives:
-            for trial in self.trials:
-                if (
-                    trial.metrics
-                    and trial.is_successful
-                    and self.best_config
-                    and trial.config == self.best_config
-                ):
-                    return dict(trial.metrics)
-            for trial in self.trials:
-                if trial.metrics:
-                    return dict(trial.metrics)
-            return {}
+            return self._best_metrics_without_objectives()
+        return self._best_metrics_with_objectives()
+
+    def _best_metrics_without_objectives(self) -> dict[str, float]:
+        """Winner metrics for a result that declares no objectives."""
+        for trial in self.trials:
+            if (
+                trial.metrics
+                and trial.is_successful
+                and self.best_config
+                and trial.config == self.best_config
+            ):
+                return dict(trial.metrics)
+        for trial in self.trials:
+            if trial.metrics:
+                return dict(trial.metrics)
+        return {}
+
+    def _best_metrics_with_objectives(self) -> dict[str, float]:
+        """Winner metrics for a result with objectives (config, id, then any)."""
         # F-C fix: match the trial whose config equals best_config so that
         # best_metrics is always consistent with the actual winning trial, not
         # the highest-scoring trial (which differs for minimize-primary or
@@ -1444,6 +1452,17 @@ class OptimizationResult:
             for trial in self.trials:
                 if trial.metrics and trial.config == self.best_config:
                     return dict(trial.metrics)
+        by_id = self._best_metrics_by_trial_id()
+        if by_id is not None:
+            return by_id
+        # Last resort: return any successful trial's metrics.
+        for trial in self.trials:
+            if trial.metrics and trial.is_successful:
+                return dict(trial.metrics)
+        return {}
+
+    def _best_metrics_by_trial_id(self) -> dict[str, float] | None:
+        """Metrics of the trial named by ``metadata['best_trial_id']``, if any."""
         # Fall back to best_trial_id stored in metadata (set by result_selection)
         # when no config match is found (aggregated configs, degenerate configs).
         best_trial_id = self.metadata.get("best_trial_id") if self.metadata else None
@@ -1451,11 +1470,7 @@ class OptimizationResult:
             for trial in self.trials:
                 if trial.trial_id == best_trial_id and trial.metrics:
                     return dict(trial.metrics)
-        # Last resort: return any successful trial's metrics.
-        for trial in self.trials:
-            if trial.metrics and trial.is_successful:
-                return dict(trial.metrics)
-        return {}
+        return None
 
     @staticmethod
     def _cost_flagged_for_objective(trial: TrialResult, objective: str) -> bool:
