@@ -206,34 +206,43 @@ class ParameterImportanceAnalyzer:
 
         return results
 
+    @staticmethod
+    def _encode_parameter_values(
+        trials: list[TrialResult], parameter: str
+    ) -> tuple[list[float], list[int]]:
+        """Encode a parameter's values as floats (strings by first-seen order).
+
+        Returns the encoded values and the indices of the trials they came
+        from; trials without the parameter or with other value types are
+        skipped.
+        """
+        param_values: list[float] = []
+        valid_indices: list[int] = []
+        categorical_mapping: dict[str, int] = {}
+
+        for i, trial in enumerate(trials):
+            if parameter not in trial.config:
+                continue
+            param_value = trial.config[parameter]
+
+            # bool is an int subclass, so it is encoded by the numeric branch
+            if isinstance(param_value, (int, float)):
+                encoded = float(param_value)
+            elif isinstance(param_value, str):
+                if param_value not in categorical_mapping:
+                    categorical_mapping[param_value] = len(categorical_mapping)
+                encoded = float(categorical_mapping[param_value])
+            else:
+                continue
+            param_values.append(encoded)
+            valid_indices.append(i)
+        return param_values, valid_indices
+
     def _calculate_parameter_correlation_importance(
         self, trials: list[TrialResult], parameter: str, objective_values: list[float]
     ) -> ImportanceResult | None:
         """Calculate association-based importance for a single parameter."""
-        # Extract parameter values (handle categorical by encoding)
-        param_values = []
-        valid_indices = []
-
-        # Create mapping for categorical values
-        categorical_mapping: dict[str, int] = {}
-
-        for i, trial in enumerate(trials):
-            if parameter in trial.config:
-                param_value = trial.config[parameter]
-
-                # Handle different parameter types
-                if isinstance(param_value, (int, float)):
-                    param_values.append(float(param_value))
-                    valid_indices.append(i)
-                elif isinstance(param_value, str):
-                    # Encode categorical values
-                    if param_value not in categorical_mapping:
-                        categorical_mapping[param_value] = len(categorical_mapping)
-                    param_values.append(float(categorical_mapping[param_value]))
-                    valid_indices.append(i)
-                elif isinstance(param_value, bool):
-                    param_values.append(float(param_value))
-                    valid_indices.append(i)
+        param_values, valid_indices = self._encode_parameter_values(trials, parameter)
 
         if len(param_values) < 10 or len(set(param_values)) < 2:
             return None
