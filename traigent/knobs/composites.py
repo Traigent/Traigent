@@ -738,6 +738,24 @@ def _all_arms(body: Body) -> tuple[Arm, ...]:
     return (body.body,)  # LoopBody
 
 
+def _should_descend(
+    program: CompositeProgram,
+    color: Mapping[str, int],
+    ref: str,
+    white: int,
+    gray: int,
+) -> bool:
+    """Reject a dangling or back-edge ref; True when ``ref`` is still unvisited."""
+    if ref not in program.composites:
+        raise _reject(
+            "missing_composite_ref",
+            f"composite({ref!r}) resolves to no N_X member",
+        )
+    if color[ref] == gray:
+        raise _reject("composite_cycle", f"cycle through composite({ref!r})")
+    return color[ref] == white
+
+
 def _detect_cycle(program: CompositeProgram) -> None:
     """Item 4: the ``composite(·)`` reference graph over ``N_X`` is acyclic.
 
@@ -751,18 +769,10 @@ def _detect_cycle(program: CompositeProgram) -> None:
         color[name] = GRAY
         node = program.composites[name]
         for arm in _all_arms(node.body):
-            if isinstance(arm, CompositeArm):
-                if arm.ref not in program.composites:
-                    raise _reject(
-                        "missing_composite_ref",
-                        f"composite({arm.ref!r}) resolves to no N_X member",
-                    )
-                if color[arm.ref] == GRAY:
-                    raise _reject(
-                        "composite_cycle", f"cycle through composite({arm.ref!r})"
-                    )
-                if color[arm.ref] == WHITE:
-                    visit(arm.ref)
+            if isinstance(arm, CompositeArm) and _should_descend(
+                program, color, arm.ref, WHITE, GRAY
+            ):
+                visit(arm.ref)
         color[name] = BLACK
 
     for name in program.composites:
@@ -1002,35 +1012,54 @@ def required_parents(
     certificate must depend on. TVAR-only (C6) — the cardinality term is
     intersected with ``N_T``.
     """
-    out: dict[str, frozenset[str]] = {}
     body = node.body
     if isinstance(body, CascadeBody):
+        return _cascade_required_parents(program, body)
+    if isinstance(body, EnsembleBody):
+        return _ensemble_required_parents(program, body)
+    return _loop_required_parents(program, body)  # LoopBody
+
+
+def _cascade_required_parents(
+    program: CompositeProgram, body: CascadeBody
+) -> dict[str, frozenset[str]]:
+    out: dict[str, frozenset[str]] = {}
+    prefix: frozenset[str] = frozenset()
+    for index, gate in enumerate(body.gates):
+        leaves = _leaf_tvars_program(body.arms[index], program)
         if body.placement is Placement.POST:
             # θ_i covers leafT(a_1) ∪ … ∪ leafT(a_i)
-            prefix: frozenset[str] = frozenset()
-            for index, gate in enumerate(body.gates):
-                prefix |= _leaf_tvars_program(body.arms[index], program)
-                out[gate.threshold] = out.get(gate.threshold, frozenset()) | prefix
-        else:  # PRE: θ_i covers leafT(a_i)
-            for index, gate in enumerate(body.gates):
-                out[gate.threshold] = out.get(
-                    gate.threshold, frozenset()
-                ) | _leaf_tvars_program(body.arms[index], program)
-    elif isinstance(body, EnsembleBody):
-        accept = body.aggregate.accept
-        if accept is not None:
-            leaves: frozenset[str] = frozenset()
-            for member in _all_arms(body):
-                leaves |= _leaf_tvars_program(member, program)
-            if body.cardinality is not None and body.cardinality in program.tvars:
-                leaves |= {body.cardinality}
-            out[accept.threshold] = out.get(accept.threshold, frozenset()) | leaves
-    else:  # LoopBody
-        stop = body.stop
-        if stop.kind is StopKind.SIGNAL_ACCEPT and stop.threshold is not None:
-            out[stop.threshold] = out.get(
-                stop.threshold, frozenset()
-            ) | _leaf_tvars_program(body.body, program)
+            prefix |= leaves
+            leaves = prefix
+        # else PRE: θ_i covers leafT(a_i)
+        out[gate.threshold] = out.get(gate.threshold, frozenset()) | leaves
+    return out
+
+
+def _ensemble_required_parents(
+    program: CompositeProgram, body: EnsembleBody
+) -> dict[str, frozenset[str]]:
+    out: dict[str, frozenset[str]] = {}
+    accept = body.aggregate.accept
+    if accept is not None:
+        leaves: frozenset[str] = frozenset()
+        for member in _all_arms(body):
+            leaves |= _leaf_tvars_program(member, program)
+        if body.cardinality is not None and body.cardinality in program.tvars:
+            leaves |= {body.cardinality}
+        out[accept.threshold] = out.get(accept.threshold, frozenset()) | leaves
+    return out
+
+
+def _loop_required_parents(
+    program: CompositeProgram, body: LoopBody
+) -> dict[str, frozenset[str]]:
+    out: dict[str, frozenset[str]] = {}
+    stop = body.stop
+    if stop.kind is StopKind.SIGNAL_ACCEPT and stop.threshold is not None:
+        out[stop.threshold] = out.get(
+            stop.threshold, frozenset()
+        ) | _leaf_tvars_program(body.body, program)
     return out
 
 
