@@ -159,6 +159,48 @@ class ParetoFrontCalculator:
             random.Random(random_seed) if random_seed is not None else random.Random()
         )
 
+    @staticmethod
+    def _trial_to_point(
+        trial: TrialResult, objectives: list[str]
+    ) -> ParetoPoint | None:
+        """Build a front candidate from a completed trial, or None."""
+        if not (_is_completed_status(getattr(trial, "status", None)) and trial.metrics):
+            return None
+        # Extract objective values
+        point_objectives = {}
+        cost_flagged = is_cost_unranked(trial.metrics)
+        for obj in objectives:
+            if cost_flagged and obj in _COST_OBJECTIVE_NAMES:
+                # Flagged unmeasured: a number next to the flag is a
+                # floor or a stray zero, never a ranking value (#2517).
+                continue
+            if trial.metrics.get(obj) is not None:
+                point_objectives[obj] = trial.metrics[obj]
+
+        # A trial missing any configured objective (an unmeasured cost
+        # is the common case) cannot be placed on the front: being
+        # incomparable would leave it undominated, so it would sit on
+        # the front on the strength of a measurement it does not have
+        # (Traigent#2446).
+        if not point_objectives or len(point_objectives) != len(set(objectives)):
+            return None
+        return ParetoPoint(
+            config=trial.config,
+            objectives=point_objectives,
+            trial=trial,
+        )
+
+    def _is_dominated(
+        self, index: int, points: list[ParetoPoint], objectives: list[str]
+    ) -> bool:
+        """Whether any other point dominates ``points[index]``."""
+        point = points[index]
+        return any(
+            index != j
+            and other_point.dominates(point, self.maximize, objectives=objectives)
+            for j, other_point in enumerate(points)
+        )
+
     def calculate_pareto_front(
         self, trials: list[TrialResult], objectives: list[str]
     ) -> list[ParetoPoint]:
@@ -174,31 +216,9 @@ class ParetoFrontCalculator:
         # Convert trials to Pareto points
         points = []
         for trial in trials:
-            if _is_completed_status(getattr(trial, "status", None)) and trial.metrics:
-                # Extract objective values
-                point_objectives = {}
-                cost_flagged = is_cost_unranked(trial.metrics)
-                for obj in objectives:
-                    if cost_flagged and obj in _COST_OBJECTIVE_NAMES:
-                        # Flagged unmeasured: a number next to the flag is a
-                        # floor or a stray zero, never a ranking value (#2517).
-                        continue
-                    if trial.metrics.get(obj) is not None:
-                        point_objectives[obj] = trial.metrics[obj]
-
-                # A trial missing any configured objective (an unmeasured cost
-                # is the common case) cannot be placed on the front: being
-                # incomparable would leave it undominated, so it would sit on
-                # the front on the strength of a measurement it does not have
-                # (Traigent#2446).
-                if point_objectives and len(point_objectives) == len(set(objectives)):
-                    points.append(
-                        ParetoPoint(
-                            config=trial.config,
-                            objectives=point_objectives,
-                            trial=trial,
-                        )
-                    )
+            point = self._trial_to_point(trial, objectives)
+            if point is not None:
+                points.append(point)
 
         if not points:
             return []
@@ -207,16 +227,7 @@ class ParetoFrontCalculator:
         pareto_front = []
 
         for i, point in enumerate(points):
-            is_dominated = False
-
-            for j, other_point in enumerate(points):
-                if i != j and other_point.dominates(
-                    point, self.maximize, objectives=objectives
-                ):
-                    is_dominated = True
-                    break
-
-            if not is_dominated:
+            if not self._is_dominated(i, points, objectives):
                 pareto_front.append(point)
 
         return pareto_front
