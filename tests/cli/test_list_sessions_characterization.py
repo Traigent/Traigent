@@ -130,7 +130,10 @@ def _snapshot(name):
                 storage_cls.call_args,
                 storage.list_sessions.call_args,
                 storage.get_session_summary.call_args_list,
-                [c.args == (config,) for c in collect.call_args_list],
+                [
+                    c.args == (config,) and c.kwargs == {}
+                    for c in collect.call_args_list
+                ],
             )
         ),
     }
