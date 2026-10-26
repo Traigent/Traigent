@@ -139,42 +139,10 @@ class ConfigSpace:
           ``knobs`` is synthesized as all-Tuned via the adapter, so the two
           surfaces can never drift apart.
         """
-        from traigent.knobs import Knob as _Knob
-        from traigent.knobs import knob_to_parameter_range, parameter_range_to_knob
-
         if self.knobs is not None:
-            knobs = dict(self.knobs)
-            for knob_name, knob in knobs.items():
-                if not isinstance(knob, _Knob):
-                    raise TypeError(f"knobs[{knob_name!r}] is not a Knob")
-                if knob.name != knob_name:
-                    raise ValueError(
-                        f"knob mapping key {knob_name!r} != knob.name {knob.name!r}"
-                    )
-            projected = {
-                name: knob_to_parameter_range(knob)
-                for name, knob in knobs.items()
-                if knob.is_tuned()
-            }
-            if self.tvars and dict(self.tvars) != projected:
-                raise ValueError(
-                    "tvars must be the Tuned-only projection of knobs; "
-                    "pass only knobs and let tvars be derived"
-                )
-            object.__setattr__(self, "tvars", MappingProxyType(projected))
-            object.__setattr__(self, "knobs", MappingProxyType(knobs))
+            self._adopt_knobs(dict(self.knobs))
         else:
-            object.__setattr__(self, "tvars", MappingProxyType(dict(self.tvars)))
-            object.__setattr__(
-                self,
-                "knobs",
-                MappingProxyType(
-                    {
-                        name: parameter_range_to_knob(name, parameter_range)
-                        for name, parameter_range in self.tvars.items()
-                    }
-                ),
-            )
+            self._synthesize_knobs()
         object.__setattr__(self, "constraints", tuple(self.constraints))
 
         # Ensure all tvars have unique names
@@ -188,6 +156,47 @@ class ConfigSpace:
             if hasattr(tvar, "name") and tvar.name is None:
                 # Note: We can't modify frozen dataclasses, so we just validate
                 pass
+
+    def _adopt_knobs(self, knobs: dict[str, Knob]) -> None:
+        """Validate ``knobs`` and derive ``tvars`` as their Tuned-only projection."""
+        from traigent.knobs import Knob as _Knob
+        from traigent.knobs import knob_to_parameter_range
+
+        for knob_name, knob in knobs.items():
+            if not isinstance(knob, _Knob):
+                raise TypeError(f"knobs[{knob_name!r}] is not a Knob")
+            if knob.name != knob_name:
+                raise ValueError(
+                    f"knob mapping key {knob_name!r} != knob.name {knob.name!r}"
+                )
+        projected = {
+            name: knob_to_parameter_range(knob)
+            for name, knob in knobs.items()
+            if knob.is_tuned()
+        }
+        if self.tvars and dict(self.tvars) != projected:
+            raise ValueError(
+                "tvars must be the Tuned-only projection of knobs; "
+                "pass only knobs and let tvars be derived"
+            )
+        object.__setattr__(self, "tvars", MappingProxyType(projected))
+        object.__setattr__(self, "knobs", MappingProxyType(knobs))
+
+    def _synthesize_knobs(self) -> None:
+        """Freeze ``tvars`` and derive an all-Tuned ``knobs`` surface from them."""
+        from traigent.knobs import parameter_range_to_knob
+
+        object.__setattr__(self, "tvars", MappingProxyType(dict(self.tvars)))
+        object.__setattr__(
+            self,
+            "knobs",
+            MappingProxyType(
+                {
+                    name: parameter_range_to_knob(name, parameter_range)
+                    for name, parameter_range in self.tvars.items()
+                }
+            ),
+        )
 
     def __getstate__(self) -> dict[str, Any]:
         """Return a pickle-safe representation of the config space."""
