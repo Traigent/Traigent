@@ -16,9 +16,9 @@ def test_unknown_parameter_returns_no_issues_without_constraints_lookup():
 
 
 def test_unknown_framework_uses_common_constraints():
-    assert FrameworkConstraints.validate_parameter(
-        "made-up", "temperature", -0.5
-    ) == ["Parameter 'temperature' value -0.5 is below minimum 0.0"]
+    assert FrameworkConstraints.validate_parameter("made-up", "temperature", -0.5) == [
+        "Parameter 'temperature' value -0.5 is below minimum 0.0"
+    ]
 
 
 def test_alias_uses_canonical_name_in_validation_issue():
@@ -86,7 +86,9 @@ def test_range_and_allowed_value_issues_keep_order_and_warning_follows_checks():
             side_effect=lambda message: events.append(("warning", message)),
         ),
     ):
-        issues = FrameworkConstraints.validate_parameter("custom", "mode", TracedValue())
+        issues = FrameworkConstraints.validate_parameter(
+            "custom", "mode", TracedValue()
+        )
 
     assert issues == [
         "Parameter 'mode' value sample is below minimum 1",

@@ -46,9 +46,7 @@ def test_trial_start_preserves_primary_precedence_iteration_and_output_order() -
     callback.on_trial_start(3, config)
 
     assert config.events == ["get:model", "get:approach", "items"]
-    assert observations == [
-        (4, "[4/6] Testing: cot, temperature=0.7, other=kept")
-    ]
+    assert observations == [(4, "[4/6] Testing: cot, temperature=0.7, other=kept")]
 
 
 def test_trial_start_falsey_primaries_keep_fallback_and_short_circuit_order() -> None:
