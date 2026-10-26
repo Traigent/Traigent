@@ -246,13 +246,10 @@ def _axis_label(default: str, meta: Any) -> str:
     return default
 
 
-def _render_correlations(plt: Any, payload: dict[str, Any]) -> Any:
-    """Plot a bar chart of measure correlations from a ``run_correlations`` payload.
-
-    Each bar is one ``measure_correlations`` entry's ``r`` value. Values are read
-    directly from the payload; nothing is recomputed.
-    """
-    correlations = payload.get("measure_correlations") or []
+def _collect_correlations(
+    correlations: list[Any],
+) -> tuple[list[str], list[float]]:
+    """Return (labels, r values) for entries that carry a numeric ``r``."""
     labels: list[str] = []
     values: list[float] = []
     for entry in correlations:
@@ -265,6 +262,34 @@ def _render_correlations(plt: Any, payload: dict[str, Any]) -> Any:
         y = entry.get("y")
         labels.append(f"{x}↔{y}" if x and y else str(entry.get("strength", "?")))
         values.append(r)
+    return labels, values
+
+
+def _correlations_title(payload: dict[str, Any]) -> str:
+    method = payload.get("method")
+    run_id = payload.get("run_id") or "run"
+    sample = payload.get("sample_size")
+    title = f"Measure correlations — {run_id}"
+    if method or sample is not None:
+        suffix = ", ".join(
+            part
+            for part in (
+                str(method) if method else None,
+                f"n={sample}" if sample is not None else None,
+            )
+            if part
+        )
+        title = f"{title} ({suffix})"
+    return title
+
+
+def _render_correlations(plt: Any, payload: dict[str, Any]) -> Any:
+    """Plot a bar chart of measure correlations from a ``run_correlations`` payload.
+
+    Each bar is one ``measure_correlations`` entry's ``r`` value. Values are read
+    directly from the payload; nothing is recomputed.
+    """
+    labels, values = _collect_correlations(payload.get("measure_correlations") or [])
 
     if not values:
         raise ChartRenderError(
@@ -281,21 +306,7 @@ def _render_correlations(plt: Any, payload: dict[str, Any]) -> Any:
     ax.set_ylabel("Pearson r")
     ax.set_ylim(-1.05, 1.05)
     ax.axhline(0.0, color="#333333", linewidth=0.8)
-    method = payload.get("method")
-    run_id = payload.get("run_id") or "run"
-    sample = payload.get("sample_size")
-    title = f"Measure correlations — {run_id}"
-    if method or sample is not None:
-        suffix = ", ".join(
-            part
-            for part in (
-                str(method) if method else None,
-                f"n={sample}" if sample is not None else None,
-            )
-            if part
-        )
-        title = f"{title} ({suffix})"
-    ax.set_title(title)
+    ax.set_title(_correlations_title(payload))
     ax.grid(True, axis="y", linestyle=":", alpha=0.4)
     fig.tight_layout()
     return fig
