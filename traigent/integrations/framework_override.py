@@ -693,79 +693,80 @@ class FrameworkOverrideManager(BaseOverrideManager):
             if self.is_override_registered(target):
                 continue  # Already overridden
 
-            # Try to find and override the target class
-            override_applied = False
-            failure_detail = ""
-
-            # Handle built-in mock classes
-            if target in _BUILTIN_MOCK_TARGETS:
-                # These are handled at the module level when demo is run
-                override_applied = True
-
-            # Try to import and override real framework classes
-            else:
-                try:
-                    module_path, class_name = target.rsplit(".", 1)
-                    module = __import__(module_path, fromlist=[class_name])
-                    target_class = getattr(module, class_name)
-
-                    # Store original constructor
-                    if not hasattr(target_class, "_traigent_original_init"):
-                        target_class._traigent_original_init = target_class.__init__
-
-                    # Apply constructor override
-                    override_constructor = self._create_override_constructor(
-                        target_class._traigent_original_init, target
-                    )
-                    target_class.__init__ = override_constructor
-
-                    # Apply method overrides
-                    method_mappings = self._method_mappings.get(target, {})
-                    for method_path in method_mappings.keys():
-                        self._apply_method_override(target_class, target, method_path)
-
-                    self.register_active_override(target, target_class)
-                    override_applied = True
-
-                except (ImportError, AttributeError) as e:
-                    # Handle specific compatibility errors
-                    error_msg = str(e)
-                    if (
-                        "PydanticUserError" in error_msg
-                        or "__modify_schema__" in error_msg
-                    ):
-                        logger.warning(
-                            f"Pydantic compatibility issue with {target}: {error_msg}"
-                        )
-                        logger.info(
-                            f"Consider upgrading {target.split('.')[0]} package for Pydantic v2 compatibility"
-                        )
-                    else:
-                        failure_detail = error_msg
-                    # Framework not available; reported once below
-                except Exception as e:
-                    # Catch any other errors (including PydanticUserError)
-                    error_msg = str(e)
-                    error_type = type(e).__name__
-                    if (
-                        "PydanticUserError" in error_type
-                        or "pydantic" in error_msg.lower()
-                    ):
-                        logger.warning(
-                            f"Pydantic compatibility issue with {target}: {error_type}: {error_msg}"
-                        )
-                        logger.info(
-                            f"Skipping {target} due to Pydantic v2 compatibility issues. Consider upgrading the package."
-                        )
-                    else:
-                        logger.warning(
-                            f"Unexpected error loading {target}: {error_type}: {error_msg}"
-                        )
-                    # Skip silently to avoid breaking optimization
+            override_applied, failure_detail = self._try_activate_target(target)
 
             if not override_applied:
                 detail = f": {failure_detail}" if failure_detail else ""
                 logger.warning(f"Could not override framework target: {target}{detail}")
+
+    def _try_activate_target(self, target: str) -> tuple[bool, str]:
+        """Try to override one target; return ``(applied, failure_detail)``."""
+        # Handle built-in mock classes
+        if target in _BUILTIN_MOCK_TARGETS:
+            # These are handled at the module level when demo is run
+            return True, ""
+
+        # Try to import and override real framework classes
+        try:
+            self._override_target_class(target)
+            return True, ""
+        except (ImportError, AttributeError) as e:
+            # Framework not available; reported once by the caller
+            return False, self._describe_import_failure(target, str(e))
+        except Exception as e:
+            # Catch any other errors (including PydanticUserError)
+            self._log_unexpected_activation_error(target, e)
+            # Skip silently to avoid breaking optimization
+            return False, ""
+
+    def _override_target_class(self, target: str) -> None:
+        module_path, class_name = target.rsplit(".", 1)
+        module = __import__(module_path, fromlist=[class_name])
+        target_class = getattr(module, class_name)
+
+        # Store original constructor
+        if not hasattr(target_class, "_traigent_original_init"):
+            target_class._traigent_original_init = target_class.__init__
+
+        # Apply constructor override
+        override_constructor = self._create_override_constructor(
+            target_class._traigent_original_init, target
+        )
+        target_class.__init__ = override_constructor
+
+        # Apply method overrides
+        method_mappings = self._method_mappings.get(target, {})
+        for method_path in method_mappings.keys():
+            self._apply_method_override(target_class, target, method_path)
+
+        self.register_active_override(target, target_class)
+
+    @staticmethod
+    def _describe_import_failure(target: str, error_msg: str) -> str:
+        """Log Pydantic compatibility issues; return failure detail otherwise."""
+        if "PydanticUserError" in error_msg or "__modify_schema__" in error_msg:
+            logger.warning(f"Pydantic compatibility issue with {target}: {error_msg}")
+            logger.info(
+                f"Consider upgrading {target.split('.')[0]} package for Pydantic v2 compatibility"
+            )
+            return ""
+        return error_msg
+
+    @staticmethod
+    def _log_unexpected_activation_error(target: str, error: Exception) -> None:
+        error_msg = str(error)
+        error_type = type(error).__name__
+        if "PydanticUserError" in error_type or "pydantic" in error_msg.lower():
+            logger.warning(
+                f"Pydantic compatibility issue with {target}: {error_type}: {error_msg}"
+            )
+            logger.info(
+                f"Skipping {target} due to Pydantic v2 compatibility issues. Consider upgrading the package."
+            )
+        else:
+            logger.warning(
+                f"Unexpected error loading {target}: {error_type}: {error_msg}"
+            )
 
     @property
     def applied_targets(self) -> list[str]:
