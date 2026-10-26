@@ -265,6 +265,46 @@ def _all_eligible_cost_unmeasured(trials: list, metric_names: list[str]) -> bool
     )
 
 
+def _metric_candidate_value(
+    trial: Any,
+    index: int,
+    metric_name: str,
+    metric_overrides: dict[str, list[float]] | None,
+) -> float | None:
+    """Rankable float for ``trial`` on ``metric_name``, or None if not rankable."""
+    if not _trial_is_best_candidate(trial) or _cost_flagged(trial, metric_name):
+        return None
+    return _coerce_float(_get_metric_value(trial, metric_name, index, metric_overrides))
+
+
+def _best_indices_for_metric(
+    trials: list,
+    metric_name: str,
+    is_minimize: bool,
+    metric_overrides: dict[str, list[float]] | None,
+) -> set[int]:
+    """Indices of the (tied) best candidate trials for one metric."""
+    best_set: set[int] = set()
+    best_val: float | None = None
+    for i, trial in enumerate(trials):
+        val = _metric_candidate_value(trial, i, metric_name, metric_overrides)
+        if val is None:
+            continue
+        if best_val is not None and math.isclose(
+            val,
+            best_val,
+            rel_tol=BEST_METRIC_REL_TOL,
+            abs_tol=BEST_METRIC_ABS_TOL,
+        ):
+            best_set.add(i)
+        elif best_val is None or (
+            (val < best_val) if is_minimize else (val > best_val)
+        ):
+            best_val = val
+            best_set = {i}
+    return best_set
+
+
 def _find_best_per_objective(
     trials: list,
     metric_info: list[tuple[str, str]],
@@ -276,35 +316,9 @@ def _find_best_per_objective(
         if orientation == "band":
             best_indices[metric_name] = set()
             continue
-        best_set: set[int] = set()
-        best_val: float | None = None
-        is_minimize = orientation == "minimize"
-        for i, trial in enumerate(trials):
-            if not _trial_is_best_candidate(trial):
-                continue
-            if _cost_flagged(trial, metric_name):
-                continue
-            val = _coerce_float(
-                _get_metric_value(trial, metric_name, i, metric_overrides)
-            )
-            if val is None:
-                continue
-            if best_val is None:
-                best_val = val
-                best_set = {i}
-                continue
-            if math.isclose(
-                val,
-                best_val,
-                rel_tol=BEST_METRIC_REL_TOL,
-                abs_tol=BEST_METRIC_ABS_TOL,
-            ):
-                best_set.add(i)
-                continue
-            if (val < best_val) if is_minimize else (val > best_val):
-                best_val = val
-                best_set = {i}
-        best_indices[metric_name] = best_set
+        best_indices[metric_name] = _best_indices_for_metric(
+            trials, metric_name, orientation == "minimize", metric_overrides
+        )
     return best_indices
 
 
