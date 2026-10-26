@@ -105,8 +105,8 @@ def _scenarios() -> dict[str, tuple[Any, ...]]:
     nometa = _result([t1, t2], best_config=t2.config)
     nometa.metadata = None
     return {
-        "ok_best": (ok, space, ["accuracy", "cost"], dict(mode_label=" MOCK ")),
-        "ok_no_show_best": (ok, space, ["accuracy"], dict(show_best=False)),
+        "ok_best": (ok, space, ["accuracy", "cost"], {"mode_label": " MOCK "}),
+        "ok_no_show_best": (ok, space, ["accuracy"], {"show_best": False}),
         "failed": (failed, {"model": []}, ["accuracy"], {}),
         "unmeasured_cost": (unmeasured, {"model": []}, ["accuracy", "cost"], {}),
         "no_examples_cols": (noex, {"model": []}, ["accuracy"], {}),
@@ -115,7 +115,7 @@ def _scenarios() -> dict[str, tuple[Any, ...]]:
             ok,
             space,
             ["accuracy"],
-            dict(metric_overrides={"accuracy": [0.25, 0.75]}),
+            {"metric_overrides": {"accuracy": [0.25, 0.75]}},
         ),
         "mock_notice": (mock, space, ["accuracy"], {}),
         "metadata_none": (nometa, space, ["accuracy"], {}),

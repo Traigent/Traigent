@@ -68,7 +68,7 @@ SCENARIOS = {
         ],
         ["ea", "eb"],
         ["a", "b"],
-        dict(reported=0.2),
+        {"reported": 0.2},
         None,
     ),
     "output_id_only_and_missing_output": (
@@ -76,7 +76,7 @@ SCENARIOS = {
         [{"example_id": "a", "metrics": {"accuracy": 0.3}}],
         ["ea", "eb"],
         ["a", "b"],
-        dict(reported=None),
+        {"reported": None},
         None,
     ),
     "eval_error_and_expected_behavior": (
@@ -100,7 +100,7 @@ SCENARIOS = {
         ],
         [None, "given"],
         ["a", "b"],
-        dict(reported=0.0),
+        {"reported": 0.0},
         None,
     ),
     "exec_error_only": (
@@ -108,7 +108,7 @@ SCENARIOS = {
         [],
         ["ea"],
         ["a"],
-        dict(reported=0.1),
+        {"reported": 0.1},
         None,
     ),
     "metrics_none_and_missing_eval_row": (
@@ -116,7 +116,7 @@ SCENARIOS = {
         [{"example_id": "a", "metrics": None}],
         ["ea", "eb"],
         ["a", "b"],
-        dict(reported=0.1),
+        {"reported": 0.1},
         None,
     ),
     "negative_item_cost": (
@@ -124,7 +124,7 @@ SCENARIOS = {
         [{"example_id": "a", "metrics": {"accuracy": 1.0}}],
         ["ea"],
         ["a"],
-        dict(reported=0.1),
+        {"reported": 0.1},
         None,
     ),
     "no_matching_outputs_falls_back": (
@@ -132,7 +132,7 @@ SCENARIOS = {
         [],
         ["ea"],
         ["a"],
-        dict(reported=0.1),
+        {"reported": 0.1},
         None,
     ),
     "transport_error_falls_back": (
@@ -140,7 +140,7 @@ SCENARIOS = {
         None,
         ["ea"],
         ["a"],
-        dict(reported=0.1),
+        {"reported": 0.1},
         RuntimeError("down"),
     ),
     "malformed_eval_results_fall_back": (
@@ -148,7 +148,7 @@ SCENARIOS = {
         [7],
         ["ea"],
         ["a"],
-        dict(reported=0.1),
+        {"reported": 0.1},
         None,
     ),
 }

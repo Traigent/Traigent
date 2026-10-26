@@ -49,14 +49,14 @@ def _trial(status, metrics=None, tid="t"):
 
 
 def _result(**kw):
-    base = dict(
-        best_config={},
-        best_metrics={},
-        trials=[],
-        duration=2.5,
-        status=NS(value="completed"),
-        metadata={},
-    )
+    base = {
+        "best_config": {},
+        "best_metrics": {},
+        "trials": [],
+        "duration": 2.5,
+        "status": NS(value="completed"),
+        "metadata": {},
+    }
     base.update(kw)
     return NS(**base)
 

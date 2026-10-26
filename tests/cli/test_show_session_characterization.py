@@ -21,20 +21,20 @@ def _trial(i, score, error=None):
 
 
 def _session(**over):
-    base = dict(
-        session_id="s1",
-        function_name="fn",
-        created_at="c",
-        updated_at="u",
-        status="completed",
-        total_trials=2,
-        completed_trials=2,
-        best_config={"model": "a"},
-        best_score=0.91234,
-        baseline_score=0.5,
-        optimization_config={"o": 1},
-        trials=[_trial(1, 0.5), _trial(2, None, error="boom")],
-    )
+    base = {
+        "session_id": "s1",
+        "function_name": "fn",
+        "created_at": "c",
+        "updated_at": "u",
+        "status": "completed",
+        "total_trials": 2,
+        "completed_trials": 2,
+        "best_config": {"model": "a"},
+        "best_score": 0.91234,
+        "baseline_score": 0.5,
+        "optimization_config": {"o": 1},
+        "trials": [_trial(1, 0.5), _trial(2, None, error="boom")],
+    }
     base.update(over)
     return SimpleNamespace(**base)
 
@@ -145,7 +145,7 @@ def test_summary_hint_failure_is_swallowed():
 
 @pytest.mark.parametrize(
     "kwargs",
-    [dict(local=False), dict(session=_session(status="running"))],
+    [{"local": False}, {"session": _session(status="running")}],
 )
 def test_summary_no_hint_when_not_local_or_not_completed(kwargs):
     session = kwargs.pop("session", _session())

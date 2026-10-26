@@ -46,11 +46,11 @@ class _BadIso:
 
 
 def trial(**over):
-    base = dict(
-        trial_id="t1",
-        status=TrialStatus.COMPLETED,
-        duration=1.5,
-        config={
+    base = {
+        "trial_id": "t1",
+        "status": TrialStatus.COMPLETED,
+        "duration": 1.5,
+        "config": {
             "model": "m",
             "n": 3,
             "flag": True,
@@ -58,9 +58,9 @@ def trial(**over):
             "obj": _Obj(),
             "l": [1],
         },
-        metrics={"acc": 0.5, "i": 2, "s": "text", "b": True, "n": None},
-        timestamp=datetime(2025, 1, 2, 3, 4, 5, tzinfo=UTC),
-    )
+        "metrics": {"acc": 0.5, "i": 2, "s": "text", "b": True, "n": None},
+        "timestamp": datetime(2025, 1, 2, 3, 4, 5, tzinfo=UTC),
+    }
     base.update(over)
     return SimpleNamespace(**base)
 
