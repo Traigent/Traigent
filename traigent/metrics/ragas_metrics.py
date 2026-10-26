@@ -295,27 +295,25 @@ def _extract_candidate(
     return None
 
 
+def _context_item_text(item: Any) -> str:
+    """Render one context item as text (``text``/``content`` of mappings)."""
+    if isinstance(item, str):
+        return item
+    if isinstance(item, Mapping):
+        if "text" in item and item["text"]:
+            return str(item["text"])
+        if "content" in item and item["content"]:
+            return str(item["content"])
+    return str(item)
+
+
 def _normalise_contexts(value: Any) -> list[str] | None:
     if value is None:
         return None
     if isinstance(value, str):
         return [value]
     if isinstance(value, (list, tuple)):
-        items = []
-        for item in value:
-            if item is None:
-                continue
-            if isinstance(item, str):
-                items.append(item)
-            elif isinstance(item, Mapping):
-                if "text" in item and item["text"]:
-                    items.append(str(item["text"]))
-                elif "content" in item and item["content"]:
-                    items.append(str(item["content"]))
-                else:
-                    items.append(str(item))
-            else:
-                items.append(str(item))
+        items = [_context_item_text(item) for item in value if item is not None]
         return items or None
     if isinstance(value, Mapping):
         return _normalise_contexts(list(value.values()))
