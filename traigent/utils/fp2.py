@@ -193,6 +193,88 @@ _VALUE = 1  # encode this value
 _CLOSE = 2  # leave a container: drop it from the open-path set
 
 
+_WorkItem = tuple[int, Any, int]
+
+
+def _encode_scalar(value: Any) -> str | None:
+    """Encode a scalar, or return None when ``value`` is not a scalar.
+
+    Exact types only. isinstance() would admit subclasses, and a subclass
+    decides its own __iter__/items()/__int__/__float__ -- so user code,
+    not this function, would choose the canonical bytes. That is the same
+    hole as formatting through repr(), reached through a different door.
+    The spec already calls class instances unsupported; this makes the
+    implementation agree with it.
+    """
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if type(value) is str:
+        return _encode_string(value)
+    if type(value) is int:
+        return _encode_int(value)
+    if type(value) is float:
+        return _encode_float(value)
+    return None
+
+
+def _expand_dict(value: dict[Any, Any], depth: int, out: list[str]) -> list[_WorkItem]:
+    for key in value:
+        # Exact type for KEYS as well as values. A str subclass can
+        # override encode(), and encode() produces the UTF-16 sort
+        # key -- so a subclassed key chooses the ordering of the
+        # whole object, and the result is a *verified* digest.
+        if type(key) is not str:
+            raise Fp2UnsupportedValue(
+                f"object key is not a plain string: {type(key).__name__}"
+            )
+    items = sorted(value.items(), key=lambda item: _utf16_sort_key(item[0]))
+    out.append("{")
+    pending: list[_WorkItem] = []
+    for index, (key, item) in enumerate(items):
+        if index:
+            pending.append((_EMIT, ",", 0))
+        pending.append((_EMIT, _encode_string(key) + ":", 0))
+        pending.append((_VALUE, item, depth + 1))
+    pending.append((_EMIT, "}", 0))
+    return pending
+
+
+def _expand_list(value: list[Any], depth: int, out: list[str]) -> list[_WorkItem]:
+    out.append("[")
+    pending: list[_WorkItem] = []
+    for index, item in enumerate(value):
+        if index:
+            pending.append((_EMIT, ",", 0))
+        pending.append((_VALUE, item, depth + 1))
+    pending.append((_EMIT, "]", 0))
+    return pending
+
+
+def _expand_container(
+    value: Any, depth: int, open_containers: set[int], out: list[str]
+) -> list[_WorkItem]:
+    """Open a list/dict and return its work items in emission order."""
+    if depth > MAX_DEPTH:
+        raise Fp2UnsupportedValue(
+            f"manifest nests deeper than the fp2 limit of {MAX_DEPTH}"
+        )
+    identity = id(value)
+    if identity in open_containers:
+        raise Fp2UnsupportedValue("circular reference")
+    open_containers.add(identity)
+
+    if type(value) is dict:
+        pending = _expand_dict(value, depth, out)
+    else:
+        pending = _expand_list(value, depth, out)
+    pending.append((_CLOSE, identity, 0))
+    return pending
+
+
 def _encode(root: Any) -> str:
     """Encode ``root`` with an explicit work stack rather than recursion.
 
@@ -204,7 +286,7 @@ def _encode(root: Any) -> str:
     """
     out: list[str] = []
     open_containers: set[int] = set()
-    work: list[tuple[int, Any, int]] = [(_VALUE, root, 1)]
+    work: list[_WorkItem] = [(_VALUE, root, 1)]
 
     while work:
         kind, payload, depth = work.pop()
@@ -216,74 +298,19 @@ def _encode(root: Any) -> str:
             open_containers.discard(payload)
             continue
 
-        value = payload
-        if value is None:
-            out.append("null")
-            continue
-        if value is True:
-            out.append("true")
-            continue
-        if value is False:
-            out.append("false")
-            continue
-        # Exact types only. isinstance() would admit subclasses, and a subclass
-        # decides its own __iter__/items()/__int__/__float__ -- so user code,
-        # not this function, would choose the canonical bytes. That is the same
-        # hole as formatting through repr(), reached through a different door.
-        # The spec already calls class instances unsupported; this makes the
-        # implementation agree with it.
-        if type(value) is str:
-            out.append(_encode_string(value))
-            continue
-        if type(value) is int:
-            out.append(_encode_int(value))
-            continue
-        if type(value) is float:
-            out.append(_encode_float(value))
+        scalar = _encode_scalar(payload)
+        if scalar is not None:
+            out.append(scalar)
             continue
 
-        if type(value) in (list, dict):
-            if depth > MAX_DEPTH:
-                raise Fp2UnsupportedValue(
-                    f"manifest nests deeper than the fp2 limit of {MAX_DEPTH}"
-                )
-            identity = id(value)
-            if identity in open_containers:
-                raise Fp2UnsupportedValue("circular reference")
-            open_containers.add(identity)
-
+        if type(payload) in (list, dict):
             # Children are pushed reversed so they pop in emission order.
-            pending: list[tuple[int, Any, int]] = []
-            if type(value) is dict:
-                for key in value:
-                    # Exact type for KEYS as well as values. A str subclass can
-                    # override encode(), and encode() produces the UTF-16 sort
-                    # key -- so a subclassed key chooses the ordering of the
-                    # whole object, and the result is a *verified* digest.
-                    if type(key) is not str:
-                        raise Fp2UnsupportedValue(
-                            f"object key is not a plain string: {type(key).__name__}"
-                        )
-                items = sorted(value.items(), key=lambda item: _utf16_sort_key(item[0]))
-                out.append("{")
-                for index, (key, item) in enumerate(items):
-                    if index:
-                        pending.append((_EMIT, ",", 0))
-                    pending.append((_EMIT, _encode_string(key) + ":", 0))
-                    pending.append((_VALUE, item, depth + 1))
-                pending.append((_EMIT, "}", 0))
-            else:
-                out.append("[")
-                for index, item in enumerate(value):
-                    if index:
-                        pending.append((_EMIT, ",", 0))
-                    pending.append((_VALUE, item, depth + 1))
-                pending.append((_EMIT, "]", 0))
-            pending.append((_CLOSE, identity, 0))
-            work.extend(reversed(pending))
+            work.extend(
+                reversed(_expand_container(payload, depth, open_containers, out))
+            )
             continue
 
-        raise Fp2UnsupportedValue(f"unsupported type: {type(value).__name__}")
+        raise Fp2UnsupportedValue(f"unsupported type: {type(payload).__name__}")
 
     return "".join(out)
 
