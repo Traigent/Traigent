@@ -202,15 +202,16 @@ class IntegrationPlugin(ABC):
         if bound is None:
             return None
         try:
-            crossed = value < bound if below else value > bound
+            # The truth test stays inside the handler: some comparison results
+            # (e.g. pandas.NA) raise TypeError from bool().
+            if not (value < bound if below else value > bound):
+                return None
         except TypeError:
             # Cannot compare types - treat as invalid
             return (
                 f"Parameter '{param_name}' value {value} has incompatible type "
                 "(expected numeric)"
             )
-        if not crossed:
-            return None
         direction = "below minimum" if below else "above maximum"
         return f"Parameter '{param_name}' value {value} is {direction} {bound}"
 

@@ -153,3 +153,27 @@ def test_odd_custom_params_none_and_non_mapping_attr():
     ]
     with pytest.raises(AttributeError):
         _Plugin(rules).validate_config(SimpleNamespace(custom_params=["t"]))
+
+
+class _NoTruth:
+    """Comparison result whose truth value cannot be taken (like pandas.NA)."""
+
+    def __bool__(self):
+        raise TypeError("boolean value of this result is ambiguous")
+
+
+class _AmbiguousValue:
+    def __lt__(self, other):
+        return _NoTruth()
+
+    def __gt__(self, other):
+        return _NoTruth()
+
+
+@pytest.mark.parametrize("field", ["min_value", "max_value"])
+def test_comparison_result_with_unusable_truth_value_is_type_diagnostic(field):
+    rules = {"t": ValidationRule(**{field: 5})}
+    errors = _errors(rules, SimpleNamespace(t=_AmbiguousValue()))
+    assert len(errors) == 1
+    assert errors[0].endswith("has incompatible type (expected numeric)")
+    assert errors[0].startswith("Parameter 't' value ")
