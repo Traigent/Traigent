@@ -281,6 +281,48 @@ def _config_hash(config: Any) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:12]
 
 
+def _fill_trial_cells(
+    index: int,
+    trial_id: str,
+    example_results: list[Any],
+    rows: dict[str, dict[str, Any]],
+    order: list[str],
+    merged_cells: dict[int, int],
+) -> None:
+    """Add one trial's per-example cells to ``rows`` (mutating the accumulators)."""
+    for ex in example_results:
+        example_id = _get(ex, "example_id")
+        if example_id is None:
+            continue
+        example_id = str(example_id)
+        if example_id not in rows:
+            rows[example_id] = {}
+            order.append(example_id)
+        elif trial_id in rows[example_id]:
+            merged_cells[index] = merged_cells.get(index, 0) + 1
+        rows[example_id][trial_id] = _extract_cell(ex)
+
+
+def _warn_merged_cells(merged_cells: dict[int, int]) -> None:
+    if not merged_cells:
+        return
+    # Not an error: with content identity, identical rows legitimately
+    # share one example id. But a merge must never be silent, because a
+    # buggy id scheme (e.g. one id for every example) looks the same.
+    # Content-free: column indexes (the matrix ``trials[].index``) and
+    # counts only. Never example ids, and never trial ids either: a trial
+    # id is a free-form string set by whoever built the result, so it can
+    # carry content.
+    logger.warning(
+        "outcome matrix keeps one cell per example_id per trial; merged "
+        "cells that repeated an example_id within the same trial "
+        "(by trial column index): %s",
+        ", ".join(
+            f"column {index}: {count} merged" for index, count in merged_cells.items()
+        ),
+    )
+
+
 def build_outcome_matrix(result: OptimizationResult) -> dict[str, Any]:
     """Assemble the per-example x per-trial outcome matrix from a result.
 
@@ -326,35 +368,9 @@ def build_outcome_matrix(result: OptimizationResult) -> dict[str, Any]:
         if not isinstance(example_results, list):
             continue
 
-        for ex in example_results:
-            example_id = _get(ex, "example_id")
-            if example_id is None:
-                continue
-            example_id = str(example_id)
-            if example_id not in rows:
-                rows[example_id] = {}
-                order.append(example_id)
-            elif trial_id in rows[example_id]:
-                merged_cells[index] = merged_cells.get(index, 0) + 1
-            rows[example_id][trial_id] = _extract_cell(ex)
+        _fill_trial_cells(index, trial_id, example_results, rows, order, merged_cells)
 
-    if merged_cells:
-        # Not an error: with content identity, identical rows legitimately
-        # share one example id. But a merge must never be silent, because a
-        # buggy id scheme (e.g. one id for every example) looks the same.
-        # Content-free: column indexes (the matrix ``trials[].index``) and
-        # counts only. Never example ids, and never trial ids either: a trial
-        # id is a free-form string set by whoever built the result, so it can
-        # carry content.
-        logger.warning(
-            "outcome matrix keeps one cell per example_id per trial; merged "
-            "cells that repeated an example_id within the same trial "
-            "(by trial column index): %s",
-            ", ".join(
-                f"column {index}: {count} merged"
-                for index, count in merged_cells.items()
-            ),
-        )
+    _warn_merged_cells(merged_cells)
 
     examples = [
         {"example_id": example_id, "cells": rows[example_id]} for example_id in order
