@@ -95,6 +95,30 @@ def _root_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+def _select_root_row(
+    trace_id: str, rows: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Earliest root observation (ties by id); None, with a warning, if absent."""
+    roots = _root_rows(rows)
+    if not roots:
+        logger.warning(f"Trace {trace_id} has no root observation.")
+        return None
+    root = min(
+        roots,
+        key=lambda r: (
+            r.get("startTime") is None,
+            r.get("startTime") or "",
+            str(r.get("id") or ""),
+        ),
+    )
+    if len(roots) > 1:
+        logger.warning(
+            f"Trace {trace_id} has {len(roots)} root observations; "
+            f"using the earliest ({root.get('id')})."
+        )
+    return root
+
+
 _V2_PAGE_LIMIT = 1000  # v2 max (v1 was 100)
 # Legacy v1 /api/public/observations rejects limits above 100.
 _LEGACY_PAGE_LIMIT = 100
@@ -745,24 +769,7 @@ class LangfuseClient:
         """
         if not rows:
             return None
-        roots = _root_rows(rows)
-        root: dict[str, Any] | None = None
-        if roots:
-            root = min(
-                roots,
-                key=lambda r: (
-                    r.get("startTime") is None,
-                    r.get("startTime") or "",
-                    str(r.get("id") or ""),
-                ),
-            )
-            if len(roots) > 1:
-                logger.warning(
-                    f"Trace {trace_id} has {len(roots)} root observations; "
-                    f"using the earliest ({root.get('id')})."
-                )
-        else:
-            logger.warning(f"Trace {trace_id} has no root observation.")
+        root = _select_root_row(trace_id, rows)
         trace: dict[str, Any] = {
             "id": trace_id,
             "name": (root.get("traceName") or root.get("name")) if root else None,
