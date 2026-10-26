@@ -260,6 +260,23 @@ _ACCURACY_REL_TOL = 1e-9
 _ACCURACY_ABS_TOL = 1e-12
 
 
+def _coerce_json_container(
+    actual: str, stripped: str, expected: Any
+) -> tuple[Any, bool]:
+    # A model that answers with a JSON string against a structured
+    # (dict/list) expected value otherwise scores 0.0 in every trial,
+    # across every config -- a config-independent ceiling (Traigent#1772).
+    try:
+        parsed = json.loads(stripped)
+    except (ValueError, TypeError):
+        return actual, False
+    if isinstance(expected, dict) and isinstance(parsed, dict):
+        return parsed, True
+    if isinstance(expected, (list, tuple)) and isinstance(parsed, list):
+        return parsed, True
+    return actual, False
+
+
 def _coerce_string_to_expected_type(actual: str, expected: Any) -> tuple[Any, bool]:
     """Coerce string outputs for scalar (and JSON-container) typed expected values."""
     stripped = actual.strip()
@@ -269,31 +286,14 @@ def _coerce_string_to_expected_type(actual: str, expected: Any) -> tuple[Any, bo
             return lowered == "true", True
         return actual, False
 
-    if isinstance(expected, int) and not isinstance(expected, bool):
-        try:
-            return float(stripped), True
-        except ValueError:
-            return actual, False
-
-    if isinstance(expected, float):
+    if isinstance(expected, (int, float)):
         try:
             return float(stripped), True
         except ValueError:
             return actual, False
 
     if isinstance(expected, (dict, list, tuple)):
-        # A model that answers with a JSON string against a structured
-        # (dict/list) expected value otherwise scores 0.0 in every trial,
-        # across every config -- a config-independent ceiling (Traigent#1772).
-        try:
-            parsed = json.loads(stripped)
-        except (ValueError, TypeError):
-            return actual, False
-        if isinstance(expected, dict) and isinstance(parsed, dict):
-            return parsed, True
-        if isinstance(expected, (list, tuple)) and isinstance(parsed, list):
-            return parsed, True
-        return actual, False
+        return _coerce_json_container(actual, stripped, expected)
 
     return actual, False
 
