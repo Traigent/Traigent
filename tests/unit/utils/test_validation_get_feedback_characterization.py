@@ -51,3 +51,27 @@ def test_suggestions_only_with_valid_result_gets_success_line():
     r = ValidationResult()
     r.suggestions.append("a")
     assert r.get_feedback() == "💡 Suggestions:\n  • a\n✅ Validation passed!"
+
+
+def test_error_with_suggestions_none_renders_without_suggestion_lines():
+    r = ValidationResult()
+    r.add_error("f", "bad", suggestions=None)
+    assert r.get_feedback() == "❌ Validation Errors:\n  • f: bad"
+
+
+def test_error_with_empty_suggestions_renders_without_suggestion_lines():
+    r = ValidationResult()
+    r.add_error("f", "bad", suggestions=[])
+    assert r.get_feedback() == "❌ Validation Errors:\n  • f: bad"
+
+
+def test_warning_with_suggestions_none_renders_without_suggestion_lines():
+    r = ValidationResult()
+    r.add_warning("w", "careful", suggestions=None)
+    assert r.get_feedback() == "⚠️  Warnings:\n  • w: careful"
+
+
+def test_warning_with_empty_suggestions_renders_without_suggestion_lines():
+    r = ValidationResult()
+    r.add_warning("w", "careful", suggestions=[])
+    assert r.get_feedback() == "⚠️  Warnings:\n  • w: careful"

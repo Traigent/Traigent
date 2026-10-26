@@ -110,7 +110,8 @@ class ValidationResult:
         lines: list[str] = []
         for issue in issues:
             lines.append(f"  • {issue.field}: {issue.message}")
-            lines.extend(f"    💡 {suggestion}" for suggestion in issue.suggestions)
+            if issue.suggestions:
+                lines.extend(f"    💡 {suggestion}" for suggestion in issue.suggestions)
         return lines
 
     def get_feedback(self, include_warnings: bool = True) -> str:
