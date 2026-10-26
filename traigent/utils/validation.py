@@ -105,37 +105,36 @@ class ValidationResult:
 
             raise ValidationException(full_message)
 
+    @staticmethod
+    def _format_issue_lines(issues: list[ValidationError]) -> list[str]:
+        lines: list[str] = []
+        for issue in issues:
+            lines.append(f"  • {issue.field}: {issue.message}")
+            lines.extend(f"    💡 {suggestion}" for suggestion in issue.suggestions)
+        return lines
+
     def get_feedback(self, include_warnings: bool = True) -> str:
         """Get user-friendly feedback message."""
-        lines = []
+        lines: list[str] = []
 
         # Add errors
         if self.errors:
             lines.append("❌ Validation Errors:")
-            for error in self.errors:
-                lines.append(f"  • {error.field}: {error.message}")
-                if error.suggestions:
-                    for suggestion in error.suggestions:
-                        lines.append(f"    💡 {suggestion}")
+            lines.extend(self._format_issue_lines(self.errors))
 
         # Add warnings
         if include_warnings and self.warnings:
             if lines:
                 lines.append("")
             lines.append("⚠️  Warnings:")
-            for warning in self.warnings:
-                lines.append(f"  • {warning.field}: {warning.message}")
-                if warning.suggestions:
-                    for suggestion in warning.suggestions:
-                        lines.append(f"    💡 {suggestion}")
+            lines.extend(self._format_issue_lines(self.warnings))
 
         # Add general suggestions
         if self.suggestions:
             if lines:
                 lines.append("")
             lines.append("💡 Suggestions:")
-            for suggestion in self.suggestions:
-                lines.append(f"  • {suggestion}")
+            lines.extend(f"  • {suggestion}" for suggestion in self.suggestions)
 
         # Add success message if valid
         if self.is_valid and not self.warnings:
