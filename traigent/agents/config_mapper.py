@@ -257,7 +257,7 @@ class ConfigurationMapper:
             "supported_parameters": supported_parameters,
         }
 
-    def _apply_parameter_mappings(  # noqa: C901
+    def _apply_parameter_mappings(
         self, spec: AgentSpecification, config: dict[str, Any], mapping: PlatformMapping
     ) -> AgentSpecification:
         """Apply parameter mappings to specification."""
@@ -269,43 +269,7 @@ class ConfigurationMapper:
             if source_value is None:
                 continue
 
-            # Apply transformation if specified
-            if param_mapping.transform:
-                transform_name = getattr(
-                    param_mapping.transform,
-                    "__name__",
-                    param_mapping.transform.__class__.__name__,
-                )
-                try:
-                    target_value = param_mapping.transform(source_value)
-                except ConfigurationError:
-                    raise
-                except ValueError as err:
-                    raise ConfigurationError(
-                        (
-                            f"Transform '{transform_name}' for parameter "
-                            f"'{param_mapping.source_key}' produced an invalid value: {err}"
-                        ),
-                        {
-                            "source_key": param_mapping.source_key,
-                            "target_key": param_mapping.target_key,
-                            "transform": transform_name,
-                        },
-                    ) from err
-                except Exception as e:
-                    raise ConfigurationError(
-                        (
-                            f"Transform '{transform_name}' raised an unexpected error for "
-                            f"'{param_mapping.source_key}': {e}"
-                        ),
-                        {
-                            "source_key": param_mapping.source_key,
-                            "target_key": param_mapping.target_key,
-                            "transform": transform_name,
-                        },
-                    ) from e
-            else:
-                target_value = source_value
+            target_value = self._transform_mapped_value(param_mapping, source_value)
 
             # Apply validation if specified
             if param_mapping.validation:
@@ -316,34 +280,81 @@ class ConfigurationMapper:
                         f"Validation failed for {param_mapping.target_key}: {e}"
                     ) from e
 
-            # Set the parameter in the appropriate section
-            if param_mapping.target_section == "model_parameters":
-                if spec.model_parameters is None:
-                    spec.model_parameters = {}
-                spec.model_parameters[param_mapping.target_key] = target_value
-            elif param_mapping.target_section == "custom_tools":
-                # Ensure custom_tools is a list of strings
-                if spec.custom_tools is None:
-                    spec.custom_tools = []
-                if isinstance(target_value, list):
-                    spec.custom_tools.extend([str(v) for v in target_value])
-                else:
-                    spec.custom_tools.append(str(target_value))
-            else:
-                # Direct attribute assignment is restricted to an explicit
-                # allowlist so a registered (or imported) mapping cannot
-                # clobber internal/private fields on AgentSpecification.
-                if param_mapping.target_key not in _ALLOWED_DIRECT_ATTR_KEYS:
-                    logger.warning(
-                        "Refusing to set unknown agent specification attribute %r"
-                        " (target_section=%r)",
-                        param_mapping.target_key,
-                        param_mapping.target_section,
-                    )
-                    continue
-                setattr(spec, param_mapping.target_key, target_value)
+            self._set_mapped_value(spec, param_mapping, target_value)
 
         return spec
+
+    @staticmethod
+    def _transform_mapped_value(
+        param_mapping: ParameterMapping, source_value: Any
+    ) -> Any:
+        """Apply the mapping's transform (if any), wrapping failures."""
+        if not param_mapping.transform:
+            return source_value
+        transform_name = getattr(
+            param_mapping.transform,
+            "__name__",
+            param_mapping.transform.__class__.__name__,
+        )
+        try:
+            return param_mapping.transform(source_value)
+        except ConfigurationError:
+            raise
+        except ValueError as err:
+            raise ConfigurationError(
+                (
+                    f"Transform '{transform_name}' for parameter "
+                    f"'{param_mapping.source_key}' produced an invalid value: {err}"
+                ),
+                {
+                    "source_key": param_mapping.source_key,
+                    "target_key": param_mapping.target_key,
+                    "transform": transform_name,
+                },
+            ) from err
+        except Exception as e:
+            raise ConfigurationError(
+                (
+                    f"Transform '{transform_name}' raised an unexpected error for "
+                    f"'{param_mapping.source_key}': {e}"
+                ),
+                {
+                    "source_key": param_mapping.source_key,
+                    "target_key": param_mapping.target_key,
+                    "transform": transform_name,
+                },
+            ) from e
+
+    @staticmethod
+    def _set_mapped_value(
+        spec: AgentSpecification, param_mapping: ParameterMapping, target_value: Any
+    ) -> None:
+        """Set a mapped value in the section of the specification it targets."""
+        if param_mapping.target_section == "model_parameters":
+            if spec.model_parameters is None:
+                spec.model_parameters = {}
+            spec.model_parameters[param_mapping.target_key] = target_value
+        elif param_mapping.target_section == "custom_tools":
+            # Ensure custom_tools is a list of strings
+            if spec.custom_tools is None:
+                spec.custom_tools = []
+            if isinstance(target_value, list):
+                spec.custom_tools.extend([str(v) for v in target_value])
+            else:
+                spec.custom_tools.append(str(target_value))
+        else:
+            # Direct attribute assignment is restricted to an explicit
+            # allowlist so a registered (or imported) mapping cannot
+            # clobber internal/private fields on AgentSpecification.
+            if param_mapping.target_key not in _ALLOWED_DIRECT_ATTR_KEYS:
+                logger.warning(
+                    "Refusing to set unknown agent specification attribute %r"
+                    " (target_section=%r)",
+                    param_mapping.target_key,
+                    param_mapping.target_section,
+                )
+                return
+            setattr(spec, param_mapping.target_key, target_value)
 
     @staticmethod
     def _sanitize_template_value(template_var: str, value: Any) -> str:
