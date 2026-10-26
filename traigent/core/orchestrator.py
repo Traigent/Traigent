@@ -442,6 +442,22 @@ _DEFAULT_NORMALIZATION = next(
 )
 
 
+@dataclasses.dataclass
+class _WinnerStabilityAttempt:
+    """Mutable per-rerun state shared by the winner-stability helpers."""
+
+    trial_id: str
+    permit: Permit | None = None
+    trial: TrialResult | None = None
+    dispatched: bool = False
+    accounted: bool = False
+    accounting_task: asyncio.Task[float | None] | None = None
+
+    def mark_dispatched(self) -> None:
+        """Record the lifecycle's actual evaluator-dispatch boundary."""
+        self.dispatched = True
+
+
 class OptimizationOrchestrator:
     """Orchestrates the optimization process.
 
@@ -4520,6 +4536,371 @@ class OptimizationOrchestrator:
         decision = await self._handle_vendor_pause(exc)
         return decision == "break"
 
+    def _winner_stability_reps(self) -> int:
+        """Requested stability replicates; 0 when unset, malformed or non-positive."""
+        try:
+            return int(self.config.get("winner_stability_reps", 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _winner_stability_primary_objective(
+        self, result: OptimizationResult, reps: int
+    ) -> str | None:
+        """Return the objective to measure, or ``None`` after logging a skip."""
+        # #2421: ``no_usage_captured`` is terminal. The run is about to fail
+        # closed with UnknownModelError; reruns would add spend and any usage
+        # they capture could suppress that error. Keep the partial result.
+        if self._stop_reason == "no_usage_captured" or (
+            getattr(result, "stop_reason", None) == "no_usage_captured"
+        ):
+            logger.info(
+                "winner_stability_reps=%d skipped: the run stopped with "
+                "no_usage_captured.",
+                reps,
+            )
+            return None
+        if not result.best_config:
+            logger.info(
+                "winner_stability_reps=%d requested but the run selected no "
+                "winner; skipping the stability rerun.",
+                reps,
+            )
+            return None
+        primary_objective: str | None = (
+            self.optimizer.objectives[0] if self.optimizer.objectives else None
+        )
+        if not primary_objective:
+            logger.warning(
+                "winner_stability_reps=%d requested but the run declares no "
+                "primary objective to measure; skipping the stability rerun.",
+                reps,
+            )
+            return None
+        return primary_objective
+
+    def _winner_stability_budget_denied(
+        self, index: int, reps: int, measured: int
+    ) -> bool:
+        """True (after logging) when the shared execution budget bars a rerun."""
+        budget = getattr(self, "execution_budget", None)
+        if budget is None:
+            return False
+        snapshot = budget.snapshot()
+        exhausted_dimension = snapshot.exhausted_dimension
+        if (
+            exhausted_dimension is None
+            and self.cost_enforcer is not None
+            and snapshot.remaining_cost
+            < self.cost_enforcer.get_status().estimated_cost_per_trial
+        ):
+            exhausted_dimension = "cost"
+        if exhausted_dimension is None:
+            return False
+        logger.info(
+            "Winner-stability rerun %d/%d denied by the "
+            "shared execution budget (%s); stopping with "
+            "%d measured score(s).",
+            index + 1,
+            reps,
+            exhausted_dimension,
+            measured,
+        )
+        return True
+
+    async def _winner_stability_acquire_permit(
+        self,
+        attempt: _WinnerStabilityAttempt,
+        index: int,
+        reps: int,
+        measured: int,
+    ) -> bool:
+        """Acquire the cost permit for a rerun; False (after logging) if denied."""
+        if self.cost_enforcer is None:
+            return True
+        attempt.permit = await self.cost_enforcer.acquire_permit_async()
+        if attempt.permit.is_granted:
+            return True
+        logger.info(
+            "Winner-stability rerun %d/%d denied by the "
+            "cost limit; stopping with %d measured score(s).",
+            index + 1,
+            reps,
+            measured,
+        )
+        return False
+
+    def _create_winner_stability_accounting_task(
+        self, attempt: _WinnerStabilityAttempt
+    ) -> asyncio.Task[float | None]:
+        return asyncio.create_task(
+            self._account_winner_stability_rerun_attempt(
+                rerun_trial=attempt.trial,
+                rerun_dispatched=attempt.dispatched,
+                permit=attempt.permit,
+                trial_id=attempt.trial_id,
+            )
+        )
+
+    def _ensure_winner_stability_accounting_task(
+        self, attempt: _WinnerStabilityAttempt
+    ) -> None:
+        """Create the accounting task for an attempt that has spent but not booked."""
+        if (
+            not attempt.accounted
+            and attempt.accounting_task is None
+            and (attempt.trial is not None or attempt.dispatched)
+        ):
+            attempt.accounting_task = self._create_winner_stability_accounting_task(
+                attempt
+            )
+
+    @staticmethod
+    async def _finish_winner_stability_accounting_after_cancellation(
+        task: asyncio.Task[float | None],
+    ) -> float | None:
+        """Drain only the accounting task before preserving cancellation."""
+        while True:
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError:  # NOSONAR
+                # A repeated cancellation must not strand a paid or
+                # unknown attempt after the lifecycle has dispatched it.
+                # The enclosing handler always re-raises the original
+                # cancellation after this accounting task finishes.
+                continue
+
+    async def _execute_winner_stability_rerun(
+        self,
+        attempt: _WinnerStabilityAttempt,
+        *,
+        index: int,
+        result: OptimizationResult,
+        func: Callable[..., Any],
+        dataset: Dataset,
+        session_id: str | None,
+    ) -> None:
+        """Run one rerun through the trial lifecycle and book its accounting."""
+        self._winner_stability_ledger_start = len(
+            getattr(self, "_abandoned_vendor_attempts", [])
+        )
+        attempt.trial = await self._trial_lifecycle.run_trial(
+            func=func,
+            config=copy.deepcopy(result.best_config),  # type: ignore[arg-type]
+            dataset=dataset,
+            trial_number=len(self._trials) + index + 1,
+            session_id=session_id,
+            on_evaluation_dispatch=attempt.mark_dispatched,
+        )
+        attempt.accounting_task = self._create_winner_stability_accounting_task(attempt)
+        await asyncio.shield(attempt.accounting_task)
+        attempt.accounted = True
+
+    async def _winner_stability_on_cancelled(
+        self,
+        attempt: _WinnerStabilityAttempt,
+        *,
+        index: int,
+        reps: int,
+        result: OptimizationResult,
+    ) -> None:
+        """Account a dispatched-but-unbooked rerun before cancellation propagates.
+
+        Once the lifecycle reached the evaluator-dispatch seam, account the
+        attempt; pre-dispatch cancellation only releases its reservation and
+        never invents an attempt.
+        """
+        self._ensure_winner_stability_accounting_task(attempt)
+        if attempt.accounting_task is None:
+            return
+        try:
+            trial_cost = (
+                await self._finish_winner_stability_accounting_after_cancellation(
+                    attempt.accounting_task
+                )
+            )
+            attempt.accounted = True
+            if trial_cost is not None:
+                # The outer cancellation handler constructs a
+                # fresh result, but keep this in-flight result
+                # consistent too before propagating control flow.
+                self._add_winner_stability_cost_to_result(
+                    result,
+                    self._winner_stability_accounted_cost,
+                    getattr(self, "_winner_stability_unmeasured_reruns", 0),
+                )
+        except Exception:
+            logger.warning(
+                "Failed to account the cancelled winner-stability attempt %d/%d.",
+                index + 1,
+                reps,
+                exc_info=True,
+            )
+
+    async def _winner_stability_on_failed(
+        self,
+        attempt: _WinnerStabilityAttempt,
+        *,
+        index: int,
+        reps: int,
+        measured: int,
+    ) -> None:
+        """Book a hard execution failure as an untracked attempt, then log it.
+
+        Keeps whatever was already measured, stops spending, and records the
+        attempt as an untracked lower bound rather than inventing zero cost.
+        """
+        self._ensure_winner_stability_accounting_task(attempt)
+        if attempt.accounting_task is not None:
+            try:
+                await asyncio.shield(attempt.accounting_task)
+                attempt.accounted = True
+            except Exception:
+                logger.warning(
+                    "Failed to account the untracked winner-stability attempt %d/%d.",
+                    index + 1,
+                    reps,
+                    exc_info=True,
+                )
+        logger.warning(
+            "Winner-stability rerun %d/%d failed to execute; "
+            "stopping the rerun with %d measured score(s). "
+            "Optimization results are unaffected.",
+            index + 1,
+            reps,
+            measured,
+            exc_info=True,
+        )
+
+    async def _run_winner_stability_attempt(
+        self,
+        attempt: _WinnerStabilityAttempt,
+        *,
+        index: int,
+        reps: int,
+        measured: int,
+        result: OptimizationResult,
+        func: Callable[..., Any],
+        dataset: Dataset,
+        session_id: str | None,
+    ) -> bool:
+        """Run one guarded rerun; False means stop the rerun loop."""
+        try:
+            if self._winner_stability_budget_denied(index, reps, measured):
+                return False
+            if not await self._winner_stability_acquire_permit(
+                attempt, index, reps, measured
+            ):
+                return False
+            await self._execute_winner_stability_rerun(
+                attempt,
+                index=index,
+                result=result,
+                func=func,
+                dataset=dataset,
+                session_id=session_id,
+            )
+            return True
+        except asyncio.CancelledError:
+            # Cancellation is a control-flow signal and must reach the
+            # outer optimize() handler.
+            await self._winner_stability_on_cancelled(
+                attempt, index=index, reps=reps, result=result
+            )
+            raise
+        except Exception:
+            # Hard execution failure (e.g. a vendor pause rethrown
+            # before a TrialResult exists).
+            await self._winner_stability_on_failed(
+                attempt, index=index, reps=reps, measured=measured
+            )
+            return False
+        finally:
+            # This is intentionally synchronous: cancellation can
+            # interrupt an await in this block, while release_permit
+            # mutates the reservation under the same lock immediately.
+            permit = attempt.permit
+            if permit is not None and permit.active and self.cost_enforcer is not None:
+                self.cost_enforcer.release_permit(permit)
+
+    async def _collect_winner_stability_scores(
+        self,
+        result: OptimizationResult,
+        func: Callable[..., Any],
+        dataset: Dataset,
+        session_id: str | None,
+        *,
+        primary_objective: str,
+        reps: int,
+    ) -> list[float]:
+        """Run up to ``reps`` reruns and return the finite primary-objective scores."""
+        scores: list[float] = []
+        for index in range(reps):
+            attempt = _WinnerStabilityAttempt(
+                trial_id=f"winner_stability_{self._optimization_id}_{index + 1}"
+            )
+            proceed = await self._run_winner_stability_attempt(
+                attempt,
+                index=index,
+                reps=reps,
+                measured=len(scores),
+                result=result,
+                func=func,
+                dataset=dataset,
+                session_id=session_id,
+            )
+            if not proceed:
+                break
+            rerun_trial = attempt.trial
+            if rerun_trial is None:
+                continue
+            score = (
+                coerce_finite_objective_score(rerun_trial.get_metric(primary_objective))
+                if rerun_trial.is_successful
+                else None
+            )
+            if score is None:
+                logger.warning(
+                    "Winner-stability rerun %d/%d produced no finite "
+                    "'%s' score; skipping it.",
+                    index + 1,
+                    reps,
+                    primary_objective,
+                )
+                continue
+            scores.append(float(score))
+        return scores
+
+    def _build_winner_stability_block(
+        self, result: OptimizationResult, scores: list[float]
+    ) -> dict[str, Any]:
+        """Assemble the ``winner_stability`` metadata block from measured scores."""
+        block: dict[str, Any] = {
+            "reps": len(scores),
+            "mean": statistics.fmean(scores),
+        }
+        # SAMPLE standard deviation (ddof=1), shown whenever it is
+        # computable — per the C3/C5 rulings there is NO small-replicate
+        # suppression (it is undefined for a single replicate, the only
+        # case where it is omitted); small-sample values are descriptive
+        # only, with the note logged adjacent to the measurement.
+        if len(scores) >= 2:
+            block["std"] = statistics.stdev(scores)
+            if len(scores) < 5:
+                logger.info(
+                    "winner_stability: sample SD computed from only %d "
+                    "replicate(s); descriptive only.",
+                    len(scores),
+                )
+        else:
+            logger.info(
+                "winner_stability: sample SD is undefined for a single "
+                "replicate; recording mean and the one score only."
+            )
+        block["scores"] = list(scores)
+        block["config_hash"] = self._get_config_hash(result.best_config)
+        block["evaluated_at"] = datetime.now(UTC).isoformat()
+        return block
+
     async def _maybe_run_winner_stability(
         self,
         result: OptimizationResult,
@@ -4545,239 +4926,22 @@ class OptimizationOrchestrator:
         if prefill is not None:
             # Reruns must re-measure, never replay reused example results.
             prefill.active = False
-        try:
-            reps = int(self.config.get("winner_stability_reps", 0) or 0)
-        except (TypeError, ValueError):
-            return
+        reps = self._winner_stability_reps()
         if reps <= 0:
             return
-        # #2421: ``no_usage_captured`` is terminal. The run is about to fail
-        # closed with UnknownModelError; reruns would add spend and any usage
-        # they capture could suppress that error. Keep the partial result.
-        if self._stop_reason == "no_usage_captured" or (
-            getattr(result, "stop_reason", None) == "no_usage_captured"
-        ):
-            logger.info(
-                "winner_stability_reps=%d skipped: the run stopped with "
-                "no_usage_captured.",
-                reps,
-            )
-            return
-        if not result.best_config:
-            logger.info(
-                "winner_stability_reps=%d requested but the run selected no "
-                "winner; skipping the stability rerun.",
-                reps,
-            )
-            return
-        primary_objective = (
-            self.optimizer.objectives[0] if self.optimizer.objectives else None
-        )
+        primary_objective = self._winner_stability_primary_objective(result, reps)
         if not primary_objective:
-            logger.warning(
-                "winner_stability_reps=%d requested but the run declares no "
-                "primary objective to measure; skipping the stability rerun.",
-                reps,
-            )
             return
 
         try:
-            scores: list[float] = []
-            for index in range(reps):
-                permit: Permit | None = None
-                rerun_trial: TrialResult | None = None
-                rerun_dispatched = False
-                rerun_accounted = False
-                accounting_task: asyncio.Task[float | None] | None = None
-                rerun_trial_id = f"winner_stability_{self._optimization_id}_{index + 1}"
-
-                def mark_rerun_dispatched() -> None:
-                    """Record the lifecycle's actual evaluator-dispatch boundary."""
-                    nonlocal rerun_dispatched
-                    rerun_dispatched = True
-
-                async def finish_accounting_after_cancellation(
-                    task: asyncio.Task[float | None],
-                ) -> float | None:
-                    """Drain only the accounting task before preserving cancellation."""
-                    while True:
-                        try:
-                            return await asyncio.shield(task)
-                        except asyncio.CancelledError:  # NOSONAR
-                            # A repeated cancellation must not strand a paid or
-                            # unknown attempt after the lifecycle has dispatched it.
-                            # The enclosing handler always re-raises the original
-                            # cancellation after this accounting task finishes.
-                            continue
-
-                try:
-                    if (budget := getattr(self, "execution_budget", None)) is not None:
-                        snapshot = budget.snapshot()
-                        exhausted_dimension = snapshot.exhausted_dimension
-                        if (
-                            exhausted_dimension is None
-                            and self.cost_enforcer is not None
-                            and snapshot.remaining_cost
-                            < self.cost_enforcer.get_status().estimated_cost_per_trial
-                        ):
-                            exhausted_dimension = "cost"
-                        if exhausted_dimension is not None:
-                            logger.info(
-                                "Winner-stability rerun %d/%d denied by the "
-                                "shared execution budget (%s); stopping with "
-                                "%d measured score(s).",
-                                index + 1,
-                                reps,
-                                exhausted_dimension,
-                                len(scores),
-                            )
-                            break
-                    if self.cost_enforcer is not None:
-                        permit = await self.cost_enforcer.acquire_permit_async()
-                        if not permit.is_granted:
-                            logger.info(
-                                "Winner-stability rerun %d/%d denied by the "
-                                "cost limit; stopping with %d measured score(s).",
-                                index + 1,
-                                reps,
-                                len(scores),
-                            )
-                            break
-                    self._winner_stability_ledger_start = len(
-                        getattr(self, "_abandoned_vendor_attempts", [])
-                    )
-                    rerun_trial = await self._trial_lifecycle.run_trial(
-                        func=func,
-                        config=copy.deepcopy(result.best_config),
-                        dataset=dataset,
-                        trial_number=len(self._trials) + index + 1,
-                        session_id=session_id,
-                        on_evaluation_dispatch=mark_rerun_dispatched,
-                    )
-                    accounting_task = asyncio.create_task(
-                        self._account_winner_stability_rerun_attempt(
-                            rerun_trial=rerun_trial,
-                            rerun_dispatched=rerun_dispatched,
-                            permit=permit,
-                            trial_id=rerun_trial_id,
-                        )
-                    )
-                    await asyncio.shield(accounting_task)
-                    rerun_accounted = True
-                except asyncio.CancelledError:
-                    # Cancellation is a control-flow signal and must reach the
-                    # outer optimize() handler. Once the lifecycle reached the
-                    # evaluator-dispatch seam, account the attempt before
-                    # propagating; pre-dispatch cancellation only releases its
-                    # reservation and never invents an attempt.
-                    if (
-                        not rerun_accounted
-                        and accounting_task is None
-                        and (rerun_trial is not None or rerun_dispatched)
-                    ):
-                        accounting_task = asyncio.create_task(
-                            self._account_winner_stability_rerun_attempt(
-                                rerun_trial=rerun_trial,
-                                rerun_dispatched=rerun_dispatched,
-                                permit=permit,
-                                trial_id=rerun_trial_id,
-                            )
-                        )
-                    if accounting_task is not None:
-                        try:
-                            trial_cost = await finish_accounting_after_cancellation(
-                                accounting_task
-                            )
-                            rerun_accounted = True
-                            if trial_cost is not None:
-                                # The outer cancellation handler constructs a
-                                # fresh result, but keep this in-flight result
-                                # consistent too before propagating control flow.
-                                self._add_winner_stability_cost_to_result(
-                                    result,
-                                    self._winner_stability_accounted_cost,
-                                    getattr(
-                                        self, "_winner_stability_unmeasured_reruns", 0
-                                    ),
-                                )
-                        except Exception:
-                            logger.warning(
-                                "Failed to account the cancelled winner-stability "
-                                "attempt %d/%d.",
-                                index + 1,
-                                reps,
-                                exc_info=True,
-                            )
-                    raise
-                except Exception:
-                    # Hard execution failure (e.g. a vendor pause rethrown
-                    # before a TrialResult exists): keep whatever was already
-                    # measured, stop spending, and record the attempt as an
-                    # untracked lower bound rather than inventing zero cost.
-                    if (
-                        not rerun_accounted
-                        and accounting_task is None
-                        and (rerun_trial is not None or rerun_dispatched)
-                    ):
-                        accounting_task = asyncio.create_task(
-                            self._account_winner_stability_rerun_attempt(
-                                rerun_trial=rerun_trial,
-                                rerun_dispatched=rerun_dispatched,
-                                permit=permit,
-                                trial_id=rerun_trial_id,
-                            )
-                        )
-                    if accounting_task is not None:
-                        try:
-                            await asyncio.shield(accounting_task)
-                            rerun_accounted = True
-                        except Exception:
-                            logger.warning(
-                                "Failed to account the untracked winner-stability "
-                                "attempt %d/%d.",
-                                index + 1,
-                                reps,
-                                exc_info=True,
-                            )
-                    logger.warning(
-                        "Winner-stability rerun %d/%d failed to execute; "
-                        "stopping the rerun with %d measured score(s). "
-                        "Optimization results are unaffected.",
-                        index + 1,
-                        reps,
-                        len(scores),
-                        exc_info=True,
-                    )
-                    break
-                finally:
-                    # This is intentionally synchronous: cancellation can
-                    # interrupt an await in this block, while release_permit
-                    # mutates the reservation under the same lock immediately.
-                    if (
-                        permit is not None
-                        and permit.active
-                        and self.cost_enforcer is not None
-                    ):
-                        self.cost_enforcer.release_permit(permit)
-                if rerun_trial is None:
-                    continue
-                score = (
-                    coerce_finite_objective_score(
-                        rerun_trial.get_metric(primary_objective)
-                    )
-                    if rerun_trial.is_successful
-                    else None
-                )
-                if score is None:
-                    logger.warning(
-                        "Winner-stability rerun %d/%d produced no finite "
-                        "'%s' score; skipping it.",
-                        index + 1,
-                        reps,
-                        primary_objective,
-                    )
-                    continue
-                scores.append(float(score))
+            scores = await self._collect_winner_stability_scores(
+                result,
+                func,
+                dataset,
+                session_id,
+                primary_objective=primary_objective,
+                reps=reps,
+            )
 
             self._add_winner_stability_cost_to_result(
                 result,
@@ -4800,37 +4964,14 @@ class OptimizationOrchestrator:
                     reps,
                 )
 
-            block: dict[str, Any] = {
-                "reps": len(scores),
-                "mean": statistics.fmean(scores),
-            }
-            # SAMPLE standard deviation (ddof=1), shown whenever it is
-            # computable — per the C3/C5 rulings there is NO small-replicate
-            # suppression (it is undefined for a single replicate, the only
-            # case where it is omitted); small-sample values are descriptive
-            # only, with the note logged adjacent to the measurement.
-            if len(scores) >= 2:
-                block["std"] = statistics.stdev(scores)
-                if len(scores) < 5:
-                    logger.info(
-                        "winner_stability: sample SD computed from only %d "
-                        "replicate(s); descriptive only.",
-                        len(scores),
-                    )
-            else:
-                logger.info(
-                    "winner_stability: sample SD is undefined for a single "
-                    "replicate; recording mean and the one score only."
-                )
-            block["scores"] = list(scores)
-            block["config_hash"] = self._get_config_hash(result.best_config)
-            block["evaluated_at"] = datetime.now(UTC).isoformat()
             # Measured-only wiring (C3/C5): this block must never feed
             # contrast selection or any noise floor. Its consumer is the S2
             # verdict path — absent stability evidence the affected metric
             # verdict is INDETERMINATE; a single execution may still be
             # reported descriptively.
-            result.metadata["winner_stability"] = block
+            result.metadata["winner_stability"] = self._build_winner_stability_block(
+                result, scores
+            )
         except Exception:
             logger.warning(
                 "Winner-stability rerun failed; optimization results are unaffected",
@@ -6342,6 +6483,325 @@ class OptimizationOrchestrator:
             "vendor_call_attempt_records_truncated": truncated,
         }
 
+    def _certified_selection_inputs(
+        self, strict_mode: bool
+    ) -> tuple[dict[str, Any] | None, float | None]:
+        """Return the (certified_config, certified_score) pair for strict runs."""
+        if not (
+            strict_mode
+            and self._best_trial_cached is not None
+            and self._certified_promotions > 0
+        ):
+            return None, None
+        # Only an incumbent that won at least one explicit gate
+        # promotion is a certified winner. The FIRST trial seeds the
+        # incumbent as comparison initialization, NOT as certification —
+        # a strict run with zero gate promotions returns
+        # NO_CERTIFIED_SELECTION (review finding: first-incumbent
+        # overclaim).
+        config_space_keys = set(getattr(self.optimizer, "config_space", {}).keys())
+        incumbent = self._best_trial_cached
+        certified_config = {
+            key: value
+            for key, value in (incumbent.config or {}).items()
+            if not config_space_keys or key in config_space_keys
+        }
+        primary = self.optimizer.objectives[0] if self.optimizer.objectives else None
+        certified_score = (
+            incumbent.get_metric(primary)
+            if primary and hasattr(incumbent, "get_metric")
+            else None
+        )
+        return certified_config, certified_score
+
+    def _declared_objective_orientations(self) -> dict[str, str] | None:
+        """Build objective orientation map from ObjectiveSchema when available.
+
+        (F-B fix: honour declared orientation, not name-pattern heuristics).
+        """
+        if self.objective_schema and self.objective_schema.objectives:
+            return {
+                obj.name: str(obj.orientation)
+                for obj in self.objective_schema.objectives
+            }
+        return None
+
+    @staticmethod
+    def _log_statistical_tie(selection: Any, best_config_margin: Any) -> None:
+        """Surface a statistical-tie winner once per run (issue #1866).
+
+        When the winner-vs-runner-up margin is not significant, the "adopt
+        best_config" action is being taken on noise — name both configs, the
+        objective, and the p-value so the user can prefer the cheaper/faster
+        config or add examples. Additive: best_config itself is unchanged.
+        """
+        if not (
+            isinstance(best_config_margin, dict)
+            and best_config_margin.get("verdict") == "statistical_tie"
+        ):
+            return
+        logger.warning(
+            "best_config is a STATISTICAL TIE on '%s': winner (trial %s) vs "
+            "runner-up (trial %s) delta=%.4g, p=%.4g (alpha=%s). The winner "
+            "is statistically interchangeable with the runner-up on the "
+            "primary objective; prefer the cheaper/faster config or add "
+            "examples rather than treating the margin as a decision.",
+            best_config_margin.get("primary_objective"),
+            selection.best_trial_id,
+            best_config_margin.get("runner_up_trial_id"),
+            best_config_margin.get("delta"),
+            best_config_margin.get("p_value"),
+            best_config_margin.get("alpha"),
+        )
+
+    @staticmethod
+    def _copy_session_summary(
+        session_summary: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Return a fresh mutable copy of the session summary."""
+        if session_summary is None:
+            return {}
+        return dict(session_summary)
+
+    def _fail_if_completed(
+        self, result_status: OptimizationStatus
+    ) -> OptimizationStatus:
+        """Downgrade COMPLETED to FAILED (also on self); keep other statuses."""
+        if result_status == OptimizationStatus.COMPLETED:
+            result_status = OptimizationStatus.FAILED
+            self._status = result_status
+        return result_status
+
+    def _apply_unmatched_objective(
+        self,
+        selection: Any,
+        primary_objective: str | None,
+        session_summary: dict[str, Any] | None,
+        result_status: OptimizationStatus,
+        result_warnings: list[str],
+        result_warning_codes: list[str],
+    ) -> tuple[dict[str, Any] | None, OptimizationStatus]:
+        """Record the unmatched-objective warning, summary and status downgrade."""
+        if not (
+            primary_objective
+            and selection.reason_code == NO_RANKING_ELIGIBLE_TRIALS
+            and _objective_metric_never_measured(self._trials, primary_objective)
+        ):
+            return session_summary, result_status
+        available_metric_names = _successful_trial_metric_names(self._trials)
+        warning, suggestion = _format_unmatched_objective_warning(
+            primary_objective,
+            available_metric_names,
+        )
+        result_warnings.append(warning)
+        result_warning_codes.append(_OBJECTIVE_UNMATCHED_WARNING_CODE)
+        session_summary = self._copy_session_summary(session_summary)
+        session_summary["reason"] = warning
+        session_summary["reason_code"] = selection.reason_code
+        session_summary["unmatched_objective"] = primary_objective
+        session_summary["available_metrics"] = list(available_metric_names)
+        if suggestion:
+            session_summary["did_you_mean"] = suggestion
+        return session_summary, self._fail_if_completed(result_status)
+
+    def _apply_all_trials_failed(
+        self,
+        result_status: OptimizationStatus,
+        result_warnings: list[str],
+        result_warning_codes: list[str],
+    ) -> OptimizationStatus:
+        """Downgrade a run whose executed trials all failed (issue #2477).
+
+        Mirrors the #1691 downgrade: a run that executed trials where none
+        succeeded is not COMPLETED, whatever the stop reason (budget stops
+        included; the stop_reason value itself is unchanged). Statuses already
+        set by a stop cause (e.g. CANCELLED) are kept; no exception is raised.
+        """
+        if not (
+            self._trials
+            and not any(t.is_successful for t in self._trials)
+            and any(t.status == TrialStatus.FAILED for t in self._trials)
+        ):
+            return result_status
+        failed_count = sum(1 for t in self._trials if t.status == TrialStatus.FAILED)
+        result_warnings.append(
+            f"All trials failed: {failed_count} of {len(self._trials)} trial(s) "
+            "failed and none succeeded; no best_config was selected. See "
+            "per-trial error messages."
+        )
+        result_warning_codes.append(_ALL_TRIALS_FAILED_WARNING_CODE)
+        return self._fail_if_completed(result_status)
+
+    def _apply_partial_coverage(
+        self,
+        selection: Any,
+        primary_objective: str | None,
+        result_warnings: list[str],
+        result_warning_codes: list[str],
+    ) -> None:
+        """Append the partial-metric-coverage warning when applicable."""
+        if not primary_objective:
+            return
+        partial = _partial_coverage_trials(self._trials, primary_objective)
+        if partial:
+            result_warnings.append(
+                _format_partial_coverage_warning(
+                    partial,
+                    primary_objective,
+                    selection.reason_code,
+                    selection.best_config,
+                    selection.ranking_eligible_trial_ids,
+                )
+            )
+            result_warning_codes.append(_METRIC_PARTIAL_COVERAGE_WARNING_CODE)
+
+    def _apply_custom_evaluator_failed_rows(
+        self,
+        session_summary: dict[str, Any] | None,
+        result_warnings: list[str],
+        result_warning_codes: list[str],
+    ) -> dict[str, Any] | None:
+        """Warn about trials whose custom evaluator raised on some rows."""
+        failed_row_counts = {
+            str(trial.trial_id): int(count)
+            for trial in self._trials
+            if isinstance(
+                count := (getattr(trial, "metadata", None) or {}).get(
+                    "custom_evaluator_failed_rows"
+                ),
+                int,
+            )
+            and not isinstance(count, bool)
+            and count > 0
+        }
+        if not failed_row_counts:
+            return session_summary
+        result_warnings.append(
+            f"{len(failed_row_counts)} trial(s) had rows where the "
+            "custom_evaluator raised; those rows scored 0.0 on quality "
+            "metrics. See trial metadata 'custom_evaluator_failed_rows'."
+        )
+        result_warning_codes.append(_CUSTOM_EVALUATOR_ROWS_FAILED_WARNING_CODE)
+        session_summary = self._copy_session_summary(session_summary)
+        session_summary["custom_evaluator_failed_rows_by_trial"] = failed_row_counts
+        return session_summary
+
+    def _apply_inert_constant_objectives(
+        self,
+        selection: Any,
+        session_summary: dict[str, Any] | None,
+        result_warnings: list[str],
+        result_warning_codes: list[str],
+    ) -> dict[str, Any] | None:
+        """Warn when a weighted, matched objective is uniformly constant.
+
+        Issue #1832 (sibling of #1691): the declared, weighted, matched
+        objective is constant across the ranking-eligible trials so its weight
+        is a silent no-op. Warning-only — selection math, status, and
+        cost/latency binding are untouched; real priced runs with varying
+        cost/latency never trigger this.
+        """
+        weighted_selection_schema = resolve_weighted_selection_schema(
+            self.objective_schema
+        )
+        if not (
+            weighted_selection_schema is not None
+            and selection.ranking_eligible_trial_ids
+        ):
+            return session_summary
+        eligible_ids = set(selection.ranking_eligible_trial_ids)
+        eligible_trials = [
+            trial for trial in self._trials if trial.trial_id in eligible_ids
+        ]
+        inert_objectives = _detect_inert_constant_objectives(
+            eligible_trials, weighted_selection_schema
+        )
+        if not inert_objectives:
+            return session_summary
+        all_objective_names = [obj.name for obj in weighted_selection_schema.objectives]
+        constant_value = (
+            coerce_finite_objective_score(
+                eligible_trials[0].get_metric(inert_objectives[0])
+            )
+            or 0.0
+        )
+        inert_warning = _format_inert_objective_warning(
+            inert_objectives, all_objective_names, constant_value
+        )
+        result_warnings.append(inert_warning)
+        result_warning_codes.append(_OBJECTIVE_INERT_CONSTANT_WARNING_CODE)
+        logger.warning(inert_warning)
+        session_summary = self._copy_session_summary(session_summary)
+        session_summary["inert_constant_objectives"] = list(inert_objectives)
+        return session_summary
+
+    def _run_label_func_name(self) -> str:
+        """Return the function name used to generate the run label."""
+        func_name = "run"
+        if self._function_descriptor is not None:
+            func_name = (
+                self._function_descriptor.display_name
+                or self._function_descriptor.identifier
+                or "run"
+            )
+        return func_name
+
+    def _add_provenance_metadata(
+        self, result_metadata: dict[str, Any], source: str
+    ) -> None:
+        """Record source, fallback and persistence provenance in the metadata."""
+        result_metadata["source"] = source
+        fallback_reason = (
+            getattr(self.traigent_config, "fallback_reason", None)
+            or self.backend_session_manager.fallback_reason
+        )
+        if source == SOURCE_LOCAL_FALLBACK and fallback_reason:
+            result_metadata["fallback_reason"] = fallback_reason
+            # Typed counterpart, so reporting can pick the right remedy without
+            # pattern-matching the backend-controlled reason text (#2024).
+            # Same two sources as the reason above: the run's config may be a
+            # different object from the one the session manager stamped.
+            fallback_reason_code = (
+                getattr(self.traigent_config, "fallback_reason_code", None)
+                or self.backend_session_manager.fallback_reason_code
+            )
+            if fallback_reason_code:
+                result_metadata["fallback_reason_code"] = fallback_reason_code
+        rejection_reason = (
+            self.backend_session_manager.backend_rejection_reason
+            or getattr(self.traigent_config, "persistence_rejection_reason", None)
+        )
+        if rejection_reason:
+            result_metadata["persistence_reason"] = "rejected"
+            result_metadata["persistence_rejected"] = True
+            result_metadata["persistence_rejection_reason"] = rejection_reason
+        if getattr(self.traigent_config, "persistence_status", None):
+            result_metadata["persistence_status"] = (
+                self.traigent_config.persistence_status
+            )
+
+    def _log_session_end_for_result(
+        self, optimization_result: OptimizationResult
+    ) -> None:
+        """Log optimization completion when a run logger is attached."""
+        if not self._logger:
+            return
+        weighted_results = None
+        if len(self.optimizer.objectives) > 1:
+            # Thread the declared schema (same reason as
+            # BackendSessionManager.update_weighted_scores): without it,
+            # minimize orientations fall back to name-pattern autodetect
+            # and the logged weighted results can contradict terminal
+            # best_config (#1846 follow-up).
+            weighted_results = optimization_result.calculate_weighted_scores(
+                objective_schema=self.objective_schema
+            )
+
+        self._logger_facade.log_session_end(
+            optimization_result=optimization_result,
+            weighted_results=weighted_results,
+        )
+
     def _create_optimization_result(self) -> OptimizationResult:
         """Create final optimization result.
 
@@ -6349,42 +6809,10 @@ class OptimizationOrchestrator:
             OptimizationResult with all trial data
         """
         strict_mode = self._is_strict_evidence_mode()
-        certified_config: dict[str, Any] | None = None
-        certified_score: float | None = None
-        if (
+        certified_config, certified_score = self._certified_selection_inputs(
             strict_mode
-            and self._best_trial_cached is not None
-            and self._certified_promotions > 0
-        ):
-            # Only an incumbent that won at least one explicit gate
-            # promotion is a certified winner. The FIRST trial seeds the
-            # incumbent as comparison initialization, NOT as certification —
-            # a strict run with zero gate promotions returns
-            # NO_CERTIFIED_SELECTION (review finding: first-incumbent
-            # overclaim).
-            config_space_keys = set(getattr(self.optimizer, "config_space", {}).keys())
-            incumbent = self._best_trial_cached
-            certified_config = {
-                key: value
-                for key, value in (incumbent.config or {}).items()
-                if not config_space_keys or key in config_space_keys
-            }
-            primary = (
-                self.optimizer.objectives[0] if self.optimizer.objectives else None
-            )
-            certified_score = (
-                incumbent.get_metric(primary)
-                if primary and hasattr(incumbent, "get_metric")
-                else None
-            )
-        # Build objective orientation map from ObjectiveSchema when available
-        # (F-B fix: honour declared orientation, not name-pattern heuristics).
-        _obj_orientations: dict[str, str] | None = None
-        if self.objective_schema and self.objective_schema.objectives:
-            _obj_orientations = {
-                obj.name: str(obj.orientation)
-                for obj in self.objective_schema.objectives
-            }
+        )
+        _obj_orientations = self._declared_objective_orientations()
         primary_objective = (
             self.optimizer.objectives[0] if self.optimizer.objectives else None
         )
@@ -6418,160 +6846,31 @@ class OptimizationOrchestrator:
         # R3: the finalize selection receipt is projected from THIS selection
         # (never a recomputed ranking) and bound to the result built below.
         selection_receipt = build_selection_receipt(selection)
-        # Issue #1866: surface a statistical-tie winner once per run. When the
-        # winner-vs-runner-up margin is not significant, the "adopt best_config"
-        # action is being taken on noise — name both configs, the objective, and
-        # the p-value so the user can prefer the cheaper/faster config or add
-        # examples. Additive: best_config itself is unchanged.
-        if (
-            isinstance(best_config_margin, dict)
-            and best_config_margin.get("verdict") == "statistical_tie"
-        ):
-            logger.warning(
-                "best_config is a STATISTICAL TIE on '%s': winner (trial %s) vs "
-                "runner-up (trial %s) delta=%.4g, p=%.4g (alpha=%s). The winner "
-                "is statistically interchangeable with the runner-up on the "
-                "primary objective; prefer the cheaper/faster config or add "
-                "examples rather than treating the margin as a decision.",
-                best_config_margin.get("primary_objective"),
-                selection.best_trial_id,
-                best_config_margin.get("runner_up_trial_id"),
-                best_config_margin.get("delta"),
-                best_config_margin.get("p_value"),
-                best_config_margin.get("alpha"),
-            )
+        self._log_statistical_tie(selection, best_config_margin)
         session_summary = selection.session_summary
         result_status = self._status
         result_warnings: list[str] = []
         result_warning_codes: list[str] = []
-        if (
-            primary_objective
-            and selection.reason_code == NO_RANKING_ELIGIBLE_TRIALS
-            and _objective_metric_never_measured(self._trials, primary_objective)
-        ):
-            available_metric_names = _successful_trial_metric_names(self._trials)
-            warning, suggestion = _format_unmatched_objective_warning(
-                primary_objective,
-                available_metric_names,
-            )
-            result_warnings.append(warning)
-            result_warning_codes.append(_OBJECTIVE_UNMATCHED_WARNING_CODE)
-            if session_summary is None:
-                session_summary = {}
-            else:
-                session_summary = dict(session_summary)
-            session_summary["reason"] = warning
-            session_summary["reason_code"] = selection.reason_code
-            session_summary["unmatched_objective"] = primary_objective
-            session_summary["available_metrics"] = list(available_metric_names)
-            if suggestion:
-                session_summary["did_you_mean"] = suggestion
-            if result_status == OptimizationStatus.COMPLETED:
-                result_status = OptimizationStatus.FAILED
-                self._status = result_status
-
-        # Issue #2477 (mirrors the #1691 downgrade above): a run that executed
-        # trials where none succeeded is not COMPLETED, whatever the stop reason
-        # (budget stops included; the stop_reason value itself is unchanged).
-        # Statuses already set by a stop cause (e.g. CANCELLED) are kept; no
-        # exception is raised.
-        if (
-            self._trials
-            and not any(t.is_successful for t in self._trials)
-            and any(t.status == TrialStatus.FAILED for t in self._trials)
-        ):
-            failed_count = sum(
-                1 for t in self._trials if t.status == TrialStatus.FAILED
-            )
-            result_warnings.append(
-                f"All trials failed: {failed_count} of {len(self._trials)} trial(s) "
-                "failed and none succeeded; no best_config was selected. See "
-                "per-trial error messages."
-            )
-            result_warning_codes.append(_ALL_TRIALS_FAILED_WARNING_CODE)
-            if result_status == OptimizationStatus.COMPLETED:
-                result_status = OptimizationStatus.FAILED
-                self._status = result_status
-
-        if primary_objective:
-            partial = _partial_coverage_trials(self._trials, primary_objective)
-            if partial:
-                result_warnings.append(
-                    _format_partial_coverage_warning(
-                        partial,
-                        primary_objective,
-                        selection.reason_code,
-                        selection.best_config,
-                        selection.ranking_eligible_trial_ids,
-                    )
-                )
-                result_warning_codes.append(_METRIC_PARTIAL_COVERAGE_WARNING_CODE)
-
-        failed_row_counts = {
-            str(trial.trial_id): int(count)
-            for trial in self._trials
-            if isinstance(
-                count := (getattr(trial, "metadata", None) or {}).get(
-                    "custom_evaluator_failed_rows"
-                ),
-                int,
-            )
-            and not isinstance(count, bool)
-            and count > 0
-        }
-        if failed_row_counts:
-            result_warnings.append(
-                f"{len(failed_row_counts)} trial(s) had rows where the "
-                "custom_evaluator raised; those rows scored 0.0 on quality "
-                "metrics. See trial metadata 'custom_evaluator_failed_rows'."
-            )
-            result_warning_codes.append(_CUSTOM_EVALUATOR_ROWS_FAILED_WARNING_CODE)
-            if session_summary is None:
-                session_summary = {}
-            else:
-                session_summary = dict(session_summary)
-            session_summary["custom_evaluator_failed_rows_by_trial"] = failed_row_counts
-
-        # Issue #1832 (sibling of #1691): warn when a declared, weighted,
-        # matched objective is uniformly constant across the ranking-eligible
-        # trials so its weight is a silent no-op. Warning-only — selection math,
-        # status, and cost/latency binding are untouched; real priced runs with
-        # varying cost/latency never trigger this.
-        weighted_selection_schema = resolve_weighted_selection_schema(
-            self.objective_schema
+        session_summary, result_status = self._apply_unmatched_objective(
+            selection,
+            primary_objective,
+            session_summary,
+            result_status,
+            result_warnings,
+            result_warning_codes,
         )
-        if (
-            weighted_selection_schema is not None
-            and selection.ranking_eligible_trial_ids
-        ):
-            eligible_ids = set(selection.ranking_eligible_trial_ids)
-            eligible_trials = [
-                trial for trial in self._trials if trial.trial_id in eligible_ids
-            ]
-            inert_objectives = _detect_inert_constant_objectives(
-                eligible_trials, weighted_selection_schema
-            )
-            if inert_objectives:
-                all_objective_names = [
-                    obj.name for obj in weighted_selection_schema.objectives
-                ]
-                constant_value = (
-                    coerce_finite_objective_score(
-                        eligible_trials[0].get_metric(inert_objectives[0])
-                    )
-                    or 0.0
-                )
-                inert_warning = _format_inert_objective_warning(
-                    inert_objectives, all_objective_names, constant_value
-                )
-                result_warnings.append(inert_warning)
-                result_warning_codes.append(_OBJECTIVE_INERT_CONSTANT_WARNING_CODE)
-                logger.warning(inert_warning)
-                if session_summary is None:
-                    session_summary = {}
-                else:
-                    session_summary = dict(session_summary)
-                session_summary["inert_constant_objectives"] = list(inert_objectives)
+        result_status = self._apply_all_trials_failed(
+            result_status, result_warnings, result_warning_codes
+        )
+        self._apply_partial_coverage(
+            selection, primary_objective, result_warnings, result_warning_codes
+        )
+        session_summary = self._apply_custom_evaluator_failed_rows(
+            session_summary, result_warnings, result_warning_codes
+        )
+        session_summary = self._apply_inert_constant_objectives(
+            selection, session_summary, result_warnings, result_warning_codes
+        )
 
         # Calculate duration
         duration = time.time() - self._start_time if self._start_time else 0.0
@@ -6610,13 +6909,7 @@ class OptimizationOrchestrator:
         )
 
         # Generate human-readable run label
-        func_name = "run"
-        if self._function_descriptor is not None:
-            func_name = (
-                self._function_descriptor.display_name
-                or self._function_descriptor.identifier
-                or "run"
-            )
+        func_name = self._run_label_func_name()
         now = datetime.now(UTC)
         run_label = generate_run_label(func_name, self._optimization_id, now)
 
@@ -6643,35 +6936,7 @@ class OptimizationOrchestrator:
         # stayed healthy; "local" when an intentionally-local mode ran or a
         # backend-tracking run degraded to local-only mid-flight.
         source = self.backend_session_manager.result_source(len(self._trials))
-        result_metadata["source"] = source
-        fallback_reason = (
-            getattr(self.traigent_config, "fallback_reason", None)
-            or self.backend_session_manager.fallback_reason
-        )
-        if source == SOURCE_LOCAL_FALLBACK and fallback_reason:
-            result_metadata["fallback_reason"] = fallback_reason
-            # Typed counterpart, so reporting can pick the right remedy without
-            # pattern-matching the backend-controlled reason text (#2024).
-            # Same two sources as the reason above: the run's config may be a
-            # different object from the one the session manager stamped.
-            fallback_reason_code = (
-                getattr(self.traigent_config, "fallback_reason_code", None)
-                or self.backend_session_manager.fallback_reason_code
-            )
-            if fallback_reason_code:
-                result_metadata["fallback_reason_code"] = fallback_reason_code
-        rejection_reason = (
-            self.backend_session_manager.backend_rejection_reason
-            or getattr(self.traigent_config, "persistence_rejection_reason", None)
-        )
-        if rejection_reason:
-            result_metadata["persistence_reason"] = "rejected"
-            result_metadata["persistence_rejected"] = True
-            result_metadata["persistence_rejection_reason"] = rejection_reason
-        if getattr(self.traigent_config, "persistence_status", None):
-            result_metadata["persistence_status"] = (
-                self.traigent_config.persistence_status
-            )
+        self._add_provenance_metadata(result_metadata, source)
 
         # Create optimization result
         optimization_result = OptimizationResult(
@@ -6707,22 +6972,6 @@ class OptimizationOrchestrator:
         )
         self._selection_receipt_binding = (optimization_result, selection_receipt)
 
-        # Log optimization completion
-        if self._logger:
-            weighted_results = None
-            if len(self.optimizer.objectives) > 1:
-                # Thread the declared schema (same reason as
-                # BackendSessionManager.update_weighted_scores): without it,
-                # minimize orientations fall back to name-pattern autodetect
-                # and the logged weighted results can contradict terminal
-                # best_config (#1846 follow-up).
-                weighted_results = optimization_result.calculate_weighted_scores(
-                    objective_schema=self.objective_schema
-                )
-
-            self._logger_facade.log_session_end(
-                optimization_result=optimization_result,
-                weighted_results=weighted_results,
-            )
+        self._log_session_end_for_result(optimization_result)
 
         return optimization_result

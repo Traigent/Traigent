@@ -584,6 +584,99 @@ class MultiObjectiveMetrics:
         return total_distance / len(pareto_front) if pareto_front else float("inf")
 
 
+def _declare_schema_objective(
+    obj_def: Any,
+    objectives: dict[str, float],
+    declared_values: dict[str, float],
+    weights: dict[str, float],
+    minimize_objectives: list[str],
+) -> None:
+    """Fold one schema objective into the declared values, weights and minimize list."""
+    weights[obj_def.name] = obj_def.weight
+    if obj_def.name not in objectives:
+        return
+    value = objectives[obj_def.name]
+    if obj_def.orientation == "band":
+        band = obj_def.band
+        if band is None or band.low is None or band.high is None:
+            raise ValueError(
+                f"Banded objective {obj_def.name!r} requires a complete target band"
+            )
+        if band.low <= value <= band.high:
+            declared_values[obj_def.name] = 0.0
+        else:
+            declared_values[obj_def.name] = -float(
+                min(abs(value - band.low), abs(value - band.high))
+            )
+        return
+    declared_values[obj_def.name] = value
+    if obj_def.orientation == "minimize":
+        minimize_objectives.append(obj_def.name)
+
+
+def _resolve_schema_objectives(
+    objectives: dict[str, float], objective_schema: ObjectiveSchema
+) -> tuple[dict[str, float], dict[str, float], list[str]]:
+    """Return ``(objectives, weights, minimize_objectives)`` from a schema."""
+    declared_values: dict[str, float] = {}
+    weights: dict[str, float] = {}
+    minimize_objectives: list[str] = []
+
+    for obj_def in objective_schema.objectives:
+        _declare_schema_objective(
+            obj_def, objectives, declared_values, weights, minimize_objectives
+        )
+    return declared_values, weights, minimize_objectives
+
+
+def _weighted_totals(
+    objectives: dict[str, float],
+    weights: dict[str, float],
+    minimize_objectives: list[str],
+) -> tuple[float, float]:
+    """Accumulate ``(total_score, total_weight)`` over the non-None objectives."""
+    total_score = 0.0
+    total_weight = 0.0
+
+    for obj_name, obj_value in objectives.items():
+        # Skip None values
+        if obj_value is None:
+            continue
+
+        weight = weights.get(obj_name, 1.0)
+
+        # For minimization objectives, we invert the value by using (1 - obj_value)
+        # assuming objectives are normalized between 0 and 1, or use negative weight
+        if obj_name in minimize_objectives:
+            # Use negative objective value for minimization
+            total_score += weight * (-obj_value)
+        else:
+            # Normal maximization
+            total_score += weight * obj_value
+
+        total_weight += weight
+    return total_score, total_weight
+
+
+def _equal_weight_mean(
+    objectives: dict[str, float], minimize_objectives: list[str]
+) -> float:
+    """Mean over the non-None objectives with equal weights."""
+    valid_objectives = {k: v for k, v in objectives.items() if v is not None}
+    if not valid_objectives:
+        return 0.0
+
+    # Apply minimization logic for equal weights too
+    total_value = 0.0
+    for obj_name, obj_value in valid_objectives.items():
+        if obj_name in minimize_objectives:
+            total_value += -obj_value
+        else:
+            total_value += obj_value
+
+    return total_value / len(valid_objectives)
+
+
 def scalarize_objectives(
     objectives: dict[str, float],
     weights: dict[str, float],
@@ -608,32 +701,9 @@ def scalarize_objectives(
 
     # Use ObjectiveSchema if provided (overrides other params)
     if objective_schema is not None:
-        declared_values: dict[str, float] = {}
-        weights = {}
-        minimize_objectives = []
-
-        for obj_def in objective_schema.objectives:
-            weights[obj_def.name] = obj_def.weight
-            if obj_def.name not in objectives:
-                continue
-            value = objectives[obj_def.name]
-            if obj_def.orientation == "band":
-                band = obj_def.band
-                if band is None or band.low is None or band.high is None:
-                    raise ValueError(
-                        f"Banded objective {obj_def.name!r} requires a complete target band"
-                    )
-                if band.low <= value <= band.high:
-                    declared_values[obj_def.name] = 0.0
-                else:
-                    declared_values[obj_def.name] = -float(
-                        min(abs(value - band.low), abs(value - band.high))
-                    )
-                continue
-            declared_values[obj_def.name] = value
-            if obj_def.orientation == "minimize":
-                minimize_objectives.append(obj_def.name)
-        objectives = declared_values
+        objectives, weights, minimize_objectives = _resolve_schema_objectives(
+            objectives, objective_schema
+        )
 
     # No explicit list: resolve exact SDK-owned defaults. An explicitly empty
     # list remains the deliberate all-maximize declaration.
@@ -644,43 +714,13 @@ def scalarize_objectives(
             if resolve_objective_orientation(name) == "minimize"
         ]
 
-    total_score = 0.0
-    total_weight = 0.0
-
-    for obj_name, obj_value in objectives.items():
-        # Skip None values
-        if obj_value is None:
-            continue
-
-        weight = weights.get(obj_name, 1.0)
-
-        # For minimization objectives, we invert the value by using (1 - obj_value)
-        # assuming objectives are normalized between 0 and 1, or use negative weight
-        if obj_name in minimize_objectives:
-            # Use negative objective value for minimization
-            total_score += weight * (-obj_value)
-        else:
-            # Normal maximization
-            total_score += weight * obj_value
-
-        total_weight += weight
+    total_score, total_weight = _weighted_totals(
+        objectives, weights, minimize_objectives
+    )
 
     # Handle case where total weight is zero (use equal weights)
     if total_weight == 0:
-        # Use equal weights for all non-None objectives
-        valid_objectives = {k: v for k, v in objectives.items() if v is not None}
-        if not valid_objectives:
-            return 0.0
-
-        # Apply minimization logic for equal weights too
-        total_value = 0.0
-        for obj_name, obj_value in valid_objectives.items():
-            if obj_name in minimize_objectives:
-                total_value += -obj_value
-            else:
-                total_value += obj_value
-
-        return total_value / len(valid_objectives)
+        return _equal_weight_mean(objectives, minimize_objectives)
 
     return total_score / total_weight
 
