@@ -1668,6 +1668,80 @@ class HybridAPIEvaluator(BaseEvaluator):
             return sorted(str(key) for key in keys)[0]
         return "accuracy"
 
+    @staticmethod
+    def _accumulate_example_metrics(
+        results: list[HybridExampleResult],
+    ) -> tuple[dict[str, float], dict[str, int]]:
+        """Per-metric sums and example counts over the successful examples."""
+        metric_sums: dict[str, float] = {}
+        metric_counts: dict[str, int] = {}
+
+        for result in results:
+            # A failed example is not a real measurement (issue #2192,
+            # mirroring the measured-vs-unmeasured distinction from #1964's
+            # local evaluator lane): the external agent service's
+            # ``metrics`` payload for an errored example is not a
+            # trustworthy measurement -- e.g. an output scored before a
+            # downstream validation step raised an error may still carry a
+            # quality metric, and averaging that value in would silently
+            # depress the reported mean for an example that did not really
+            # complete. Only successful examples contribute a quality
+            # metric to the per-example means.
+            if not result.success:
+                continue
+            for metric_name, value in result.metrics.items():
+                # Never let a payload key overwrite what Traigent computed.
+                if metric_name in _TRAIGENT_COMPUTED_METRIC_KEYS:
+                    continue
+                if metric_name not in metric_sums:
+                    metric_sums[metric_name] = 0.0
+                    metric_counts[metric_name] = 0
+                metric_sums[metric_name] += value
+                metric_counts[metric_name] += 1
+            HybridAPIEvaluator._count_computed_metric_coverage(result, metric_counts)
+        return metric_sums, metric_counts
+
+    @staticmethod
+    def _count_computed_metric_coverage(
+        result: HybridExampleResult, metric_counts: dict[str, int]
+    ) -> None:
+        """Count one successful example toward the Traigent-computed metrics."""
+        for metric_name in (
+            "cost",
+            "total_cost",
+            "latency",
+            "response_time_ms",
+        ):
+            if result.cost_unmeasured and metric_name in {"cost", "total_cost"}:
+                # No cost was reported for this example: it contributes
+                # no coverage to the cost metrics (#2517).
+                metric_counts.setdefault(metric_name, 0)
+                continue
+            metric_counts[metric_name] = metric_counts.get(metric_name, 0) + 1
+
+    @staticmethod
+    def _apply_cost_verdict(
+        aggregated: dict[str, float],
+        results: list[HybridExampleResult],
+        cost_unknown: bool,
+    ) -> None:
+        """Authoritative cost verdict, last: an unknown cost claims no total and
+        carries the flag; a known one never carries a stray flag."""
+        if not cost_unknown:
+            aggregated.pop(_COST_UNMEASURED_KEY, None)
+            return
+        aggregated.pop("cost", None)
+        aggregated.pop("total_cost", None)
+        aggregated[_COST_UNMEASURED_KEY] = 1.0
+        # The independently reported per-example costs are a valid floor
+        # (never a measured total): keep them so budgeted submission sends
+        # the reported spend with the flag instead of 0.0.
+        reported_floor = sum(
+            r.cost_usd for r in results if not r.cost_unmeasured and r.cost_usd > 0
+        )
+        if reported_floor > 0:
+            aggregated["cost_lower_bound"] = reported_floor
+
     def _compute_aggregated_metrics_with_comparability(
         self,
         results: list[HybridExampleResult],
@@ -1694,44 +1768,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         # aggregated can overwrite it (#2517).
         cost_unknown = self._results_cost_unknown(results)
 
-        # Aggregate per-example metrics
-        metric_sums: dict[str, float] = {}
-        metric_counts: dict[str, int] = {}
-
-        for result in results:
-            # A failed example is not a real measurement (issue #2192,
-            # mirroring the measured-vs-unmeasured distinction from #1964's
-            # local evaluator lane): the external agent service's
-            # ``metrics`` payload for an errored example is not a
-            # trustworthy measurement -- e.g. an output scored before a
-            # downstream validation step raised an error may still carry a
-            # quality metric, and averaging that value in would silently
-            # depress the reported mean for an example that did not really
-            # complete. Only successful examples contribute a quality
-            # metric to the per-example means.
-            if not result.success:
-                continue
-            for metric_name, value in result.metrics.items():
-                # Never let a payload key overwrite what Traigent computed.
-                if metric_name in _TRAIGENT_COMPUTED_METRIC_KEYS:
-                    continue
-                if metric_name not in metric_sums:
-                    metric_sums[metric_name] = 0.0
-                    metric_counts[metric_name] = 0
-                metric_sums[metric_name] += value
-                metric_counts[metric_name] += 1
-            for metric_name in (
-                "cost",
-                "total_cost",
-                "latency",
-                "response_time_ms",
-            ):
-                if result.cost_unmeasured and metric_name in {"cost", "total_cost"}:
-                    # No cost was reported for this example: it contributes
-                    # no coverage to the cost metrics (#2517).
-                    metric_counts.setdefault(metric_name, 0)
-                    continue
-                metric_counts[metric_name] = metric_counts.get(metric_name, 0) + 1
+        metric_sums, metric_counts = self._accumulate_example_metrics(results)
 
         # Compute means
         for metric_name, total in metric_sums.items():
@@ -1761,22 +1798,7 @@ class HybridAPIEvaluator(BaseEvaluator):
             primary_objective=primary_objective,
         )
 
-        # Authoritative cost verdict, last: an unknown cost claims no total and
-        # carries the flag; a known one never carries a stray flag.
-        if cost_unknown:
-            aggregated.pop("cost", None)
-            aggregated.pop("total_cost", None)
-            aggregated[_COST_UNMEASURED_KEY] = 1.0
-            # The independently reported per-example costs are a valid floor
-            # (never a measured total): keep them so budgeted submission sends
-            # the reported spend with the flag instead of 0.0.
-            reported_floor = sum(
-                r.cost_usd for r in results if not r.cost_unmeasured and r.cost_usd > 0
-            )
-            if reported_floor > 0:
-                aggregated["cost_lower_bound"] = reported_floor
-        else:
-            aggregated.pop(_COST_UNMEASURED_KEY, None)
+        self._apply_cost_verdict(aggregated, results, cost_unknown)
         return aggregated, comparability
 
     def _compute_aggregated_metrics(
