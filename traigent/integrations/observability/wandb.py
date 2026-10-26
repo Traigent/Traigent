@@ -230,6 +230,7 @@ class TraigentWandBTracker:
         # the try block so a bad caller falls into the same graceful-failure
         # path as I/O / serialisation errors instead of crashing log_trial().
         artifact_written = False
+        trial_file: str | None = None
         try:
             trial_file = f"trial_{int(trial_number)}.json"
             with open(trial_file, "w", encoding="utf-8") as f:
@@ -243,14 +244,15 @@ class TraigentWandBTracker:
                 exc_info=False,
             )
 
-        if artifact_written:
+        if artifact_written and trial_file is not None:
             try:
                 wandb.save(trial_file)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "Failed to save trial artifact to W&B: %s", exc, exc_info=False
                 )
-        Path(trial_file).unlink(missing_ok=True)
+        if trial_file is not None:
+            Path(trial_file).unlink(missing_ok=True)
 
     @staticmethod
     def _mapping_or_warn(

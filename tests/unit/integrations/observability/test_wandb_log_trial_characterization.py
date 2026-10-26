@@ -343,7 +343,7 @@ GOLDEN: dict = {
         "leftover": [],
     },
     "bad_trial_number": {
-        "outcome": "UnboundLocalError",
+        "outcome": "ok",
         "logged": "[({'trial_x/status': 'completed', 'trial_x/duration': 1.5, "
         "'trial_x/config/model': 'm', 'trial_x/config/n': 3, "
         "'trial_x/config/flag': True, 'trial_x/config/none': None, "
