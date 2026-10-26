@@ -408,6 +408,59 @@ class ParameterImportanceAnalyzer:
         )
         return sorted_results[:top_k]
 
+    def _format_method_results(self, results: dict[str, ImportanceResult]) -> list[str]:
+        if not results:
+            return ["  No significant importance detected"]
+        lines = []
+        for result in self.get_top_parameters(results, top_k=5):
+            ci_low, ci_high = result.confidence_interval
+            lines.append(
+                f"  {result.parameter_name:15s}: {result.importance_score:.3f} "
+                f"[{ci_low:.3f}, {ci_high:.3f}]"
+            )
+        return lines
+
+    @staticmethod
+    def _format_report_summary(
+        all_results: dict[str, dict[str, ImportanceResult]],
+    ) -> list[str]:
+        if not all_results:
+            return [
+                "  Insufficient data for reliable importance analysis",
+                "  Recommendation: Run more trials for better insights",
+            ]
+
+        # Find parameters that are consistently important across methods
+        param_scores = defaultdict(list)
+        for method_results in all_results.values():
+            for param, result in method_results.items():
+                param_scores[param].append(result.importance_score)
+
+        # Calculate average importance across methods
+        avg_importance = {}
+        for param, scores in param_scores.items():
+            avg_importance[param] = statistics.mean(scores)
+
+        # Sort by average importance
+        sorted_params = sorted(avg_importance.items(), key=lambda x: x[1], reverse=True)
+
+        if not sorted_params:
+            return ["  No clear parameter importance patterns detected"]
+
+        lines = ["  Top parameters to focus on:"]
+        for param, avg_score in sorted_params[:3]:
+            lines.append(f"    • {param}: avg importance = {avg_score:.3f}")
+        lines.extend(
+            [
+                "",
+                "  Consider:",
+                "    • Fine-tuning the top parameters with more granular values",
+                "    • Removing or fixing low-importance parameters",
+                "    • Using these insights for future optimization runs",
+            ]
+        )
+        return lines
+
     def generate_importance_report(
         self, optimization_result: OptimizationResult
     ) -> str:
@@ -440,7 +493,7 @@ class ParameterImportanceAnalyzer:
         if len(optimization_result.successful_trials) >= 20:
             methods.append(("Permutation-based", self.analyze_permutation_based))
 
-        all_results = {}
+        all_results: dict[str, dict[str, ImportanceResult]] = {}
 
         for method_name, method_func in methods:
             report_lines.append(f"📊 {method_name} Analysis:")
@@ -449,18 +502,7 @@ class ParameterImportanceAnalyzer:
             try:
                 results = method_func(optimization_result.trials)
                 all_results[method_name] = results
-
-                if results:
-                    top_params = self.get_top_parameters(results, top_k=5)
-                    for result in top_params:
-                        ci_low, ci_high = result.confidence_interval
-                        report_lines.append(
-                            f"  {result.parameter_name:15s}: {result.importance_score:.3f} "
-                            f"[{ci_low:.3f}, {ci_high:.3f}]"
-                        )
-                else:
-                    report_lines.append("  No significant importance detected")
-
+                report_lines.extend(self._format_method_results(results))
             except Exception as e:
                 report_lines.append(f"  Error in analysis: {e}")
 
@@ -469,46 +511,6 @@ class ParameterImportanceAnalyzer:
         # Summary and recommendations
         report_lines.append("💡 Summary & Recommendations:")
         report_lines.append("-" * 30)
-
-        if all_results:
-            # Find parameters that are consistently important across methods
-            param_scores = defaultdict(list)
-            for method_results in all_results.values():
-                for param, result in method_results.items():
-                    param_scores[param].append(result.importance_score)
-
-            # Calculate average importance across methods
-            avg_importance = {}
-            for param, scores in param_scores.items():
-                avg_importance[param] = statistics.mean(scores)
-
-            # Sort by average importance
-            sorted_params = sorted(
-                avg_importance.items(), key=lambda x: x[1], reverse=True
-            )
-
-            if sorted_params:
-                report_lines.append("  Top parameters to focus on:")
-                for param, avg_score in sorted_params[:3]:
-                    report_lines.append(
-                        f"    • {param}: avg importance = {avg_score:.3f}"
-                    )
-
-                report_lines.append("")
-                report_lines.append("  Consider:")
-                report_lines.append(
-                    "    • Fine-tuning the top parameters with more granular values"
-                )
-                report_lines.append(
-                    "    • Removing or fixing low-importance parameters"
-                )
-                report_lines.append(
-                    "    • Using these insights for future optimization runs"
-                )
-            else:
-                report_lines.append("  No clear parameter importance patterns detected")
-        else:
-            report_lines.append("  Insufficient data for reliable importance analysis")
-            report_lines.append("  Recommendation: Run more trials for better insights")
+        report_lines.extend(self._format_report_summary(all_results))
 
         return "\n".join(report_lines)
