@@ -636,13 +636,13 @@ class LocalStorageManager:
         if not (isinstance(target, list) and len(target) == 2):
             return None
         low, high = target
+        # Type-check both bounds before any finiteness check: math.isfinite
+        # raises OverflowError on an int too large for a float.
         for bound in (low, high):
-            if (
-                not isinstance(bound, (int, float))
-                or isinstance(bound, bool)
-                or not math.isfinite(bound)
-            ):
+            if not isinstance(bound, (int, float)) or isinstance(bound, bool):
                 return None
+        if not (math.isfinite(low) and math.isfinite(high)):
+            return None
         if low > high:
             return None
         return float(low), float(high)

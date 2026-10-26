@@ -75,3 +75,19 @@ def test_invalid_target_raises(target):
 def test_missing_or_malformed_raises(cfg):
     with pytest.raises(ValueError, match="complete target band"):
         resolve(cfg, "acc")
+
+
+def test_huge_int_low_with_non_numeric_high_raises_value_error_not_overflow():
+    # The non-numeric upper bound must be rejected before any finiteness
+    # check runs on the (unconvertible) huge lower bound.
+    cfg = _cfg({"name": "acc", "band": {"target": [10**400, None]}})
+    with pytest.raises(ValueError, match="complete target band"):
+        resolve(cfg, "acc")
+
+
+def test_huge_int_low_with_non_numeric_high_falls_through_to_later_definition():
+    cfg = _cfg(
+        {"name": "acc", "band": {"target": [10**400, None]}},
+        _obj("acc", (1, 2)),
+    )
+    assert resolve(cfg, "acc") == (1.0, 2.0)
