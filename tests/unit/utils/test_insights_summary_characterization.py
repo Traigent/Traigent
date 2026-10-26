@@ -139,7 +139,7 @@ def test_parameter_importance_pins_output_order_and_config_metric_read_order() -
 
     importance = _analyze_parameter_importance(trials, ["quality"])
 
-    assert list(importance) == list(set(key for config in configs for key in config))
+    assert list(importance) == list({key for config in configs for key in config})
     assert json.dumps(importance, sort_keys=True, separators=(",", ":")) == (
         '{"color":{"best_value":"blue","optimization_priority":"high",'
         '"performance_impact":0.5303300858899107,"value_distribution":'
@@ -157,7 +157,7 @@ def test_parameter_importance_pins_output_order_and_config_metric_read_order() -
     )
 
     expected_trace: list[tuple] = [("config.read", label) for label in labels]
-    parameter_order = list(set(key for config in configs for key in config))
+    parameter_order = list({key for config in configs for key in config})
     for parameter in parameter_order:
         for label, config in zip(labels, configs, strict=True):
             expected_trace.append(("config.read", label))
