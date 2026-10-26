@@ -375,6 +375,72 @@ def coercion_log_scope() -> Iterator[None]:
             )
 
 
+def _string_pair_matches(actual: str, expected: str) -> bool:
+    """Exact-match semantics for two strings, incl. numeric-string pairs."""
+    if actual.strip().lower() == expected.strip().lower():
+        return True
+    # Numeric string-string pairs (e.g. the common JSONL habit of storing
+    # numeric gold labels as strings) get zero coercion otherwise: the
+    # existing coercion only fires when the EXPECTED side is typed
+    # (Traigent#1772).
+    #
+    # But NOT when either side is zero-padded. A leading zero followed by
+    # another digit is how identifiers are written -- zip codes, order
+    # numbers, SKUs, phone extensions -- and never how a numeric label is.
+    # Without this, "007" scores as a correct answer to "7": a false
+    # positive in accuracy, which is the value the optimizer argmaxes, so
+    # it would rank a config that returns the wrong identifier first.
+    # Formatting differences that are NOT identifier-shaped still coerce:
+    # "1.0"/"1", ".5"/"0.5", "1e5"/"100000".
+    if _ZERO_PADDED_NUMERIC_RE.match(actual.strip()) or (
+        _ZERO_PADDED_NUMERIC_RE.match(expected.strip())
+    ):
+        return False
+    try:
+        actual_num = float(actual.strip())
+        expected_num = float(expected.strip())
+    except ValueError:
+        return False
+    _report_coercion("numeric", len(actual))
+    return math.isclose(
+        actual_num,
+        expected_num,
+        rel_tol=_ACCURACY_REL_TOL,
+        abs_tol=_ACCURACY_ABS_TOL,
+    )
+
+
+def _float_pair_matches(actual: Any, expected: Any) -> bool:
+    """Tolerant comparison when either side is a float (bools excluded upstream)."""
+    try:
+        return math.isclose(
+            float(actual),
+            float(expected),
+            rel_tol=_ACCURACY_REL_TOL,
+            abs_tol=_ACCURACY_ABS_TOL,
+        )
+    except (TypeError, ValueError):
+        return _typed_accuracy_equality(actual, expected)
+
+
+def _dict_values_match(actual: dict[Any, Any], expected: dict[Any, Any]) -> bool:
+    """Same keys and element-wise accuracy match on every value."""
+    if set(actual.keys()) != set(expected.keys()):
+        return False
+    return all(_accuracy_values_match(actual[key], expected[key]) for key in expected)
+
+
+def _sequence_values_match(
+    actual: list[Any] | tuple[Any, ...], expected: list[Any] | tuple[Any, ...]
+) -> bool:
+    """Same length and element-wise accuracy match."""
+    if len(actual) != len(expected):
+        return False
+    return all(
+        _accuracy_values_match(a, e) for a, e in zip(actual, expected, strict=True)
+    )
+
+
 def _accuracy_values_match(actual: Any, expected: Any) -> bool:
     """Return whether two accuracy values match under SDK exact-match semantics."""
     original_actual = actual
@@ -387,66 +453,20 @@ def _accuracy_values_match(actual: Any, expected: Any) -> bool:
     # scalar rules element-wise (list/tuple) or value-wise (dict), keyed on
     # the (possibly just-JSON-coerced) expected shape (Traigent#1772).
     if isinstance(expected, dict) and isinstance(actual, dict):
-        if set(actual.keys()) != set(expected.keys()):
-            return False
-        return all(
-            _accuracy_values_match(actual[key], expected[key]) for key in expected
-        )
+        return _dict_values_match(actual, expected)
 
     if isinstance(expected, (list, tuple)) and isinstance(actual, (list, tuple)):
-        if len(actual) != len(expected):
-            return False
-        return all(
-            _accuracy_values_match(a, e) for a, e in zip(actual, expected, strict=True)
-        )
+        return _sequence_values_match(actual, expected)
 
     if isinstance(actual, str) and isinstance(expected, str):
-        if actual.strip().lower() == expected.strip().lower():
-            return True
-        # Numeric string-string pairs (e.g. the common JSONL habit of storing
-        # numeric gold labels as strings) get zero coercion otherwise: the
-        # existing coercion only fires when the EXPECTED side is typed
-        # (Traigent#1772).
-        #
-        # But NOT when either side is zero-padded. A leading zero followed by
-        # another digit is how identifiers are written -- zip codes, order
-        # numbers, SKUs, phone extensions -- and never how a numeric label is.
-        # Without this, "007" scores as a correct answer to "7": a false
-        # positive in accuracy, which is the value the optimizer argmaxes, so
-        # it would rank a config that returns the wrong identifier first.
-        # Formatting differences that are NOT identifier-shaped still coerce:
-        # "1.0"/"1", ".5"/"0.5", "1e5"/"100000".
-        if _ZERO_PADDED_NUMERIC_RE.match(actual.strip()) or (
-            _ZERO_PADDED_NUMERIC_RE.match(expected.strip())
-        ):
-            return False
-        try:
-            actual_num = float(actual.strip())
-            expected_num = float(expected.strip())
-        except ValueError:
-            return False
-        _report_coercion("numeric", len(actual))
-        return math.isclose(
-            actual_num,
-            expected_num,
-            rel_tol=_ACCURACY_REL_TOL,
-            abs_tol=_ACCURACY_ABS_TOL,
-        )
+        return _string_pair_matches(actual, expected)
 
     if (
         (isinstance(actual, float) or isinstance(expected, float))
         and not isinstance(actual, bool)
         and not isinstance(expected, bool)
     ):
-        try:
-            return math.isclose(
-                float(actual),
-                float(expected),
-                rel_tol=_ACCURACY_REL_TOL,
-                abs_tol=_ACCURACY_ABS_TOL,
-            )
-        except (TypeError, ValueError):
-            return _typed_accuracy_equality(actual, expected)
+        return _float_pair_matches(actual, expected)
 
     return _typed_accuracy_equality(actual, expected)
 
