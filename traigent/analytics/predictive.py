@@ -1294,6 +1294,33 @@ class PredictiveAnalytics:
         self.trend_analyzer = TrendAnalyzer()
         logger.info("PredictiveAnalytics initialized")
 
+    @staticmethod
+    def _collect_metric_series(
+        historical_data: list[dict[str, Any]],
+    ) -> dict[str, list[Any]]:
+        """Group metric values by name across the historical data points."""
+        trends: dict[str, list[Any]] = {}
+        for data_point in historical_data:
+            if "metrics" not in data_point:
+                continue
+            for metric_name, value in data_point["metrics"].items():
+                trends.setdefault(metric_name, []).append(value)
+        return trends
+
+    @staticmethod
+    def _summarize_trends(trends: dict[str, list[Any]]) -> dict[str, dict[str, Any]]:
+        """Summarize direction, strength and volatility of each metric series."""
+        trend_analysis: dict[str, dict[str, Any]] = {}
+        for metric_name, values in trends.items():
+            if len(values) < 3:
+                continue
+            trend_analysis[metric_name] = {
+                "direction": "increasing" if values[-1] > values[0] else "decreasing",
+                "strength": abs(values[-1] - values[0]) / max(abs(values[0]), 0.001),
+                "volatility": statistics.stdev(values) if len(values) > 1 else 0,
+            }
+        return trend_analysis
+
     def analyze_patterns(self, historical_data: list[dict[str, Any]]) -> dict[str, Any]:
         """Analyze patterns in historical optimization data."""
         if not historical_data:
@@ -1305,27 +1332,8 @@ class PredictiveAnalytics:
                 "confidence": 0.0,
             }
 
-        # Extract trends from historical data
-        trends: dict[str, list[Any]] = {}
-        for data_point in historical_data:
-            if "metrics" in data_point:
-                for metric_name, value in data_point["metrics"].items():
-                    if metric_name not in trends:
-                        trends[metric_name] = []
-                    trends[metric_name].append(value)
-
-        # Analyze each metric trend
-        trend_analysis = {}
-        for metric_name, values in trends.items():
-            if len(values) >= 3:
-                trend_analysis[metric_name] = {
-                    "direction": (
-                        "increasing" if values[-1] > values[0] else "decreasing"
-                    ),
-                    "strength": abs(values[-1] - values[0])
-                    / max(abs(values[0]), 0.001),
-                    "volatility": statistics.stdev(values) if len(values) > 1 else 0,
-                }
+        trends = self._collect_metric_series(historical_data)
+        trend_analysis = self._summarize_trends(trends)
 
         # Determine if there are any warnings
         warnings = []
