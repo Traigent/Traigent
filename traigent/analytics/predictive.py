@@ -1160,6 +1160,25 @@ class TrendAnalyzer:
             "trends_distribution": dict(direction_counts),
         }
 
+    @staticmethod
+    def _timestamped_values(
+        data_points: Any, metric_name: str
+    ) -> list[tuple[Any, Any]]:
+        """Extract ``(timestamp, value)`` pairs from dict points, skipping others."""
+        pairs: list[tuple[Any, Any]] = []
+        for point in data_points:
+            if not isinstance(point, dict):
+                continue
+            timestamp = point.get("timestamp", datetime.now(UTC))
+            if metric_name in point:
+                value = point[metric_name]
+            elif "value" in point:
+                value = point["value"]
+            else:
+                value = 0
+            pairs.append((timestamp, value))
+        return pairs
+
     def detect_seasonality(self, data_points, metric_name: str) -> dict[str, Any]:
         """Detect seasonal patterns in data."""
         if not data_points or len(data_points) < 24:
@@ -1170,18 +1189,7 @@ class TrendAnalyzer:
                 "note": "Insufficient data for seasonality detection",
             }
 
-        # Extract values and timestamps
-        timestamped_values = []
-        for point in data_points:
-            if isinstance(point, dict):
-                timestamp = point.get("timestamp", datetime.now(UTC))
-                if metric_name in point:
-                    value = point[metric_name]
-                elif "value" in point:
-                    value = point["value"]
-                else:
-                    value = 0
-                timestamped_values.append((timestamp, value))
+        timestamped_values = self._timestamped_values(data_points, metric_name)
 
         # Sort by timestamp
         timestamped_values.sort(key=lambda x: x[0])
@@ -1189,16 +1197,14 @@ class TrendAnalyzer:
         # Simple seasonality detection - check for daily patterns
         hourly_averages: dict[int, list[float]] = {}
         for timestamp, value in timestamped_values:
-            hour = timestamp.hour
-            if hour not in hourly_averages:
-                hourly_averages[hour] = []
-            hourly_averages[hour].append(value)
+            hourly_averages.setdefault(timestamp.hour, []).append(value)
 
         # Calculate average for each hour
-        hour_means = {}
-        for hour, values in hourly_averages.items():
-            if values:
-                hour_means[hour] = statistics.mean(values)
+        hour_means = {
+            hour: statistics.mean(values)
+            for hour, values in hourly_averages.items()
+            if values
+        }
 
         if len(hour_means) < 12:  # Need at least half the hours
             return {
