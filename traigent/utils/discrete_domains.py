@@ -111,14 +111,15 @@ _FIXED_TYPES = frozenset({"fixed", "constant"})
 _INT_TYPES = frozenset({"int", "integer"})
 
 
-def _is_categorical_definition(definition: dict[str, Any], param_type: str) -> bool:
+def _is_categorical_definition(
+    definition: dict[str, Any], param_type: str, has_range: bool
+) -> bool:
     """True when a dict definition describes an explicit set of choices."""
 
-    if param_type in _CATEGORICAL_TYPES:
-        return True
-    has_range = "low" in definition and "high" in definition
     has_categorical_values = "choices" in definition or "values" in definition
-    return not param_type and not has_range and has_categorical_values
+    return param_type in _CATEGORICAL_TYPES or (
+        not param_type and not has_range and has_categorical_values
+    )
 
 
 def _categorical_choices(definition: dict[str, Any]) -> Any:
@@ -182,16 +183,19 @@ def _range_cardinality(definition: dict[str, Any], param_type: str) -> int | Non
 def _dict_cardinality(definition: dict[str, Any]) -> int | None:
     param_type = str(definition.get("type") or "").lower()
 
-    if _is_categorical_definition(definition, param_type):
+    has_range = "low" in definition and "high" in definition
+
+    if _is_categorical_definition(definition, param_type, has_range):
+        choices = _categorical_choices(definition)
         try:
-            return len(_categorical_choices(definition))
+            return len(choices)
         except TypeError:
             return None
 
     if param_type in _FIXED_TYPES:
         return 1
 
-    if "low" in definition and "high" in definition:
+    if has_range:
         return _range_cardinality(definition, param_type)
 
     return 1
@@ -249,13 +253,15 @@ def _range_values(
 def _dict_values(definition: dict[str, Any]) -> tuple[Any, ...] | None:
     param_type = str(definition.get("type") or "").lower()
 
-    if _is_categorical_definition(definition, param_type):
+    has_range = "low" in definition and "high" in definition
+
+    if _is_categorical_definition(definition, param_type, has_range):
         return tuple(_categorical_choices(definition))
 
     if param_type in _FIXED_TYPES:
         return _fixed_values(definition)
 
-    if "low" in definition and "high" in definition:
+    if has_range:
         return _range_values(definition, param_type)
 
     return (definition,)

@@ -136,3 +136,49 @@ def test_discrete_values_for_config_param(definition, expected):
         result = discrete_values_for_config_param(definition)
         assert result == expected
         assert type(result) is type(expected)
+
+
+class _TracingDict(dict):
+    """dict that records membership checks and can raise on item lookup."""
+
+    def __init__(self, *args, raise_on=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.contains_calls: list = []
+        self._raise_on = raise_on
+
+    def __contains__(self, key):
+        self.contains_calls.append(key)
+        return super().__contains__(key)
+
+    def __getitem__(self, key):
+        if key == self._raise_on:
+            raise TypeError("lookup failed")
+        return super().__getitem__(key)
+
+
+@pytest.mark.parametrize(
+    "func",
+    [discrete_cardinality_for_config_param, discrete_values_for_config_param],
+)
+def test_categorical_lookup_error_propagates(func):
+    definition = _TracingDict(
+        {"type": "categorical", "choices": [1, 2]}, raise_on="choices"
+    )
+    with pytest.raises(TypeError, match="lookup failed"):
+        func(definition)
+
+
+MEMBERSHIP_CASES = [
+    ({"type": "categorical", "choices": [1, 2]}, ["low", "choices", "choices"]),
+    ({"choices": [1, 2]}, ["low", "choices", "choices"]),
+    ({"values": [1, 2]}, ["low", "choices", "values", "choices"]),
+    ({"type": "fixed", "value": 1}, ["low", "choices", "values"]),
+    ({"type": "int", "low": 0, "high": 3}, ["low", "high", "choices", "values"]),
+]
+
+
+@pytest.mark.parametrize(("body", "expected"), MEMBERSHIP_CASES)
+def test_cardinality_membership_check_order(body, expected):
+    definition = _TracingDict(body)
+    discrete_cardinality_for_config_param(definition)
+    assert definition.contains_calls == expected
