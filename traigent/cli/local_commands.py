@@ -59,6 +59,45 @@ def local_commands() -> None:
     pass
 
 
+def _echo_sessions_json(storage: LocalStorageManager, sessions: list[Any]) -> None:
+    summaries = []
+    for session in sessions:
+        summary = storage.get_session_summary(session.session_id)
+        if summary:
+            summaries.append(summary)
+    click.echo(json.dumps(summaries, indent=2, default=str))
+
+
+def _echo_sessions_table(storage: LocalStorageManager, sessions: list[Any]) -> None:
+    if not sessions:
+        click.echo("No sessions found.")
+        return
+
+    click.echo(
+        f"{'Session ID':<30} {'Function':<20} {'Status':<12} {'Trials':<8} {'Best Score':<12} {'Created'}"
+    )
+    click.echo("-" * 100)
+
+    for session in sessions:
+        summary = storage.get_session_summary(session.session_id)
+        if not summary:
+            continue
+        created_at = str(summary.get("created_at", ""))[:10]  # Just the date
+        best_score = (
+            f"{summary['best_score']:.3f}"
+            if summary["best_score"] is not None
+            else "N/A"
+        )
+        click.echo(
+            f"{session.session_id:<30} "
+            f"{summary['function_name']:<20} "
+            f"{summary['status']:<12} "
+            f"{summary['completed_trials']:<8} "
+            f"{best_score:<12} "
+            f"{created_at}"
+        )
+
+
 @local_commands.command(name="list")
 @click.option(
     "--status",
@@ -89,42 +128,9 @@ def list_sessions(status: str | None, limit: int, output_format: str) -> None:
                 logger.debug(f"Analytics submission failed: {e}")
 
         if output_format == "json":
-            summaries = []
-            for session in sessions:
-                summary = storage.get_session_summary(session.session_id)
-                if summary:
-                    summaries.append(summary)
-            click.echo(json.dumps(summaries, indent=2, default=str))
+            _echo_sessions_json(storage, sessions)
         else:
-            # Table format
-            if not sessions:
-                click.echo("No sessions found.")
-                return
-
-            click.echo(
-                f"{'Session ID':<30} {'Function':<20} {'Status':<12} {'Trials':<8} {'Best Score':<12} {'Created'}"
-            )
-            click.echo("-" * 100)
-
-            for session in sessions:
-                summary = storage.get_session_summary(session.session_id)
-                if summary:
-                    created_at = str(summary.get("created_at", ""))[
-                        :10
-                    ]  # Just the date
-                    best_score = (
-                        f"{summary['best_score']:.3f}"
-                        if summary["best_score"] is not None
-                        else "N/A"
-                    )
-                    click.echo(
-                        f"{session.session_id:<30} "
-                        f"{summary['function_name']:<20} "
-                        f"{summary['status']:<12} "
-                        f"{summary['completed_trials']:<8} "
-                        f"{best_score:<12} "
-                        f"{created_at}"
-                    )
+            _echo_sessions_table(storage, sessions)
 
     except Exception as e:
         click.echo(f"Error listing sessions: {e}", err=True)
