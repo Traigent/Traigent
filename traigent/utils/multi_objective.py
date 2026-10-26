@@ -429,30 +429,9 @@ class ParetoFrontCalculator:
         if objectives is None:
             objectives = list(pareto_front[0].objectives.keys())
 
-        # Build the sampling box per-objective from orientation (#1945). The box
-        # spans from the *nadir* (reference / worst) to the *ideal* (best +
-        # margin) on each objective. A blind ``max + 1`` upper bound inverts the
-        # range for a minimize objective whose nadir reference is *larger* than
-        # every point (e.g. a user cost/latency reference), so ``uniform(ref,
-        # max+1)`` samples a thin sliver and ``abs()`` silently hides it.
-        lower_bounds: dict[str, float] = {}
-        upper_bounds: dict[str, float] = {}
-        for obj in objectives:
-            values = [point.objectives[obj] for point in pareto_front]
-            maximize = _should_maximize(obj, self.maximize)
-
-            if reference_point is not None and obj in reference_point:
-                nadir = reference_point[obj]
-            else:
-                nadir = (min(values) - 1) if maximize else (max(values) + 1)
-
-            ideal = (max(values) + 1) if maximize else (min(values) - 1)
-
-            # For maximize the ideal is the high end; for minimize it is the low
-            # end. Order the bounds so the draw is always over a valid range.
-            lower_bounds[obj], upper_bounds[obj] = (
-                (nadir, ideal) if maximize else (ideal, nadir)
-            )
+        lower_bounds, upper_bounds = self._hypervolume_sampling_box(
+            pareto_front, reference_point, objectives
+        )
 
         # Monte Carlo sampling
         dominated_count = 0
@@ -477,6 +456,41 @@ class ParetoFrontCalculator:
         # Approximate hypervolume
         hypervolume = (dominated_count / self.num_samples) * total_volume
         return hypervolume
+
+    def _hypervolume_sampling_box(
+        self,
+        pareto_front: list[ParetoPoint],
+        reference_point: dict[str, float] | None,
+        objectives: list[str],
+    ) -> tuple[dict[str, float], dict[str, float]]:
+        """Return per-objective (lower, upper) bounds of the sampling box.
+
+        Built per-objective from orientation (#1945). The box spans from the
+        *nadir* (reference / worst) to the *ideal* (best + margin) on each
+        objective. A blind ``max + 1`` upper bound inverts the range for a
+        minimize objective whose nadir reference is *larger* than every point
+        (e.g. a user cost/latency reference), so ``uniform(ref, max+1)``
+        samples a thin sliver and ``abs()`` silently hides it.
+        """
+        lower_bounds: dict[str, float] = {}
+        upper_bounds: dict[str, float] = {}
+        for obj in objectives:
+            values = [point.objectives[obj] for point in pareto_front]
+            maximize = _should_maximize(obj, self.maximize)
+
+            if reference_point is not None and obj in reference_point:
+                nadir = reference_point[obj]
+            else:
+                nadir = (min(values) - 1) if maximize else (max(values) + 1)
+
+            ideal = (max(values) + 1) if maximize else (min(values) - 1)
+
+            # For maximize the ideal is the high end; for minimize it is the low
+            # end. Order the bounds so the draw is always over a valid range.
+            lower_bounds[obj], upper_bounds[obj] = (
+                (nadir, ideal) if maximize else (ideal, nadir)
+            )
+        return lower_bounds, upper_bounds
 
     def _point_dominates_sample(
         self, pareto_point: ParetoPoint, sample_point: dict[str, float]
