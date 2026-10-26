@@ -823,6 +823,29 @@ class StatisticsCallback(OptimizationCallback):
         return importance
 
 
+def _format_trial_config(config: dict[str, Any]) -> str:
+    """Format the details shown when a trial starts."""
+    config_parts = []
+
+    # Prioritize showing model/approach/method first
+    primary_param = (
+        config.get("model") or config.get("approach") or config.get("method")
+    )
+    if primary_param:
+        config_parts.append(str(primary_param))
+
+    # Add other important parameters
+    for key, value in config.items():
+        if key not in ["model", "approach", "method"] and value is not None:
+            # Format the value nicely
+            if isinstance(value, float):
+                config_parts.append(f"{key}={value:.1f}")
+            else:
+                config_parts.append(f"{key}={value}")
+
+    return ", ".join(config_parts) if config_parts else "config"
+
+
 class SimpleProgressCallback(OptimizationCallback):
     """Simple progress callback for basic console output.
 
@@ -888,26 +911,7 @@ class SimpleProgressCallback(OptimizationCallback):
         self.current_trial = trial_number + 1
 
         if self.show_details:
-            # Build a descriptive string of the configuration
-            config_parts = []
-
-            # Prioritize showing model/approach/method first
-            primary_param = (
-                config.get("model") or config.get("approach") or config.get("method")
-            )
-            if primary_param:
-                config_parts.append(str(primary_param))
-
-            # Add other important parameters
-            for key, value in config.items():
-                if key not in ["model", "approach", "method"] and value is not None:
-                    # Format the value nicely
-                    if isinstance(value, float):
-                        config_parts.append(f"{key}={value:.1f}")
-                    else:
-                        config_parts.append(f"{key}={value}")
-
-            config_str = ", ".join(config_parts) if config_parts else "config"
+            config_str = _format_trial_config(config)
             self._output(
                 f"[{self.current_trial}/{self.total_trials}] Testing: {config_str}"
             )
