@@ -1907,6 +1907,25 @@ def note_key_validation(body: Any, scope: str | None = None) -> bool:
     return True
 
 
+def carry_latch(url: Any, source_headers: Any, derived_headers: Any) -> bool:
+    """Latch the scope of a credential DERIVED from an already-latched one.
+
+    ``credential_scope`` prefers ``Authorization`` over ``X-API-Key``, so a JWT the SDK
+    obtains from a latched API key would otherwise start with a clean scope. When the source
+    credential's scope is latched the derived credential's scope is latched too. A derived
+    credential of an unlatched source, or a source with no credential, changes nothing.
+    Returns True when a latch was set.
+    """
+    source = credential_scope(url, source_headers)
+    derived = credential_scope(url, derived_headers)
+    if source is None or derived is None or source == derived:
+        return False
+    if not is_latched(source):
+        return False
+    latch_on(derived)
+    return True
+
+
 # ---- per-session declared objectives (objective-aware metric rules need them) -----------
 
 _MAX_TRACKED_SESSIONS = 1024

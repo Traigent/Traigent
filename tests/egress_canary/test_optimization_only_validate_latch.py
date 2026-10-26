@@ -135,3 +135,108 @@ def test_requests_fallback_path_latches_too(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr("traigent.cloud.auth.AIOHTTP_AVAILABLE", False)
     assert _validate({"valid": True, "optimization_only": True}) is None
     assert oo.is_latched(_scope())
+
+
+# ---- a JWT derived from the validated API key inherits the latch ------------------------
+
+
+def _manager() -> Any:
+    from traigent.cloud.auth import AuthManager, UnifiedAuthConfig
+
+    return AuthManager(
+        UnifiedAuthConfig(backend_base_url=BACKEND_URL, cache_credentials=False)
+    )
+
+
+def _derive(auth: Any, jwt: str, api_key: str = FAKE_API_KEY) -> None:
+    from traigent.cloud.auth import AuthCredentials, AuthMode, AuthStatus
+
+    auth._set_credentials_and_status(
+        AuthCredentials(mode=AuthMode.JWT_TOKEN, jwt_token=jwt, api_key=api_key),
+        AuthStatus.AUTHENTICATED,
+    )
+
+
+def _jwt_scope(jwt: str) -> str:
+    scope = oo.credential_scope(BACKEND_URL, {"Authorization": f"Bearer {jwt}"})
+    assert scope is not None
+    return scope
+
+
+@pytest.mark.parametrize("both", [False, True])
+def test_derived_jwt_first_send_is_projected(both: bool) -> None:
+    from .test_optimization_only_egress import _create_session_raw, _session_posts
+
+    _validate({"valid": True, "optimization_only": True})
+    _derive(_manager(), "jwt.one.sig")
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer jwt.one.sig",
+    }
+    if both:
+        headers["X-API-Key"] = FAKE_API_KEY
+    expected = oo.project_for_phase(oo.PHASE_SESSION_CREATE_AUTO, DIRTY_TYPED_SESSION)
+    with capture_egress() as cap:
+        asyncio.run(_create_session_raw(DIRTY_TYPED_SESSION, headers=headers))
+    (post,) = _session_posts(cap)
+    assert json.loads(post.body) == expected
+    assert "Alice" not in post.body.decode()
+
+
+def test_refreshed_token_stays_latched() -> None:
+    _validate({"valid": True, "optimization_only": True})
+    auth = _manager()
+    _derive(auth, "jwt.one.sig")
+    _derive(auth, "jwt.two.sig")
+    assert oo.is_latched(_jwt_scope("jwt.one.sig"))
+    assert oo.is_latched(_jwt_scope("jwt.two.sig"))
+
+
+def test_get_auth_headers_latches_emitted_bearer() -> None:
+    from traigent.cloud.auth import AuthCredentials, AuthMode, AuthStatus
+
+    _validate({"valid": True, "optimization_only": True})
+    auth = _manager()
+    auth._set_credentials_and_status(
+        AuthCredentials(
+            mode=AuthMode.JWT_TOKEN, jwt_token="jwt.h.sig", api_key=FAKE_API_KEY
+        ),
+        AuthStatus.AUTHENTICATED,
+    )
+    oo.reset_latch()  # drop the set-time latch; the emit path must restore it
+    oo.latch_on(_scope())
+    auth._authenticated = True
+    headers = asyncio.run(auth.get_auth_headers())
+    assert "Authorization" in headers
+    assert oo.is_latched(_jwt_scope("jwt.h.sig"))
+
+
+def test_token_derived_from_unlatched_key_is_unaffected() -> None:
+    _validate({"valid": True, "optimization_only": False})
+    _derive(_manager(), "jwt.free.sig")
+    assert not oo.is_latched(_jwt_scope("jwt.free.sig"))
+    assert not oo.is_active(oo.Policy(None, _jwt_scope("jwt.free.sig")))
+
+
+def test_other_key_derived_token_is_unaffected() -> None:
+    _validate({"valid": True, "optimization_only": True})
+    _derive(_manager(), "jwt.other.sig", api_key=OTHER_KEY)
+    assert not oo.is_latched(_jwt_scope("jwt.other.sig"))
+
+
+def test_jwt_with_no_api_key_behind_it_is_left_alone() -> None:
+    from traigent.cloud.auth import AuthCredentials, AuthMode, AuthStatus
+
+    _validate({"valid": True, "optimization_only": True})
+    auth = _manager()
+    auth._set_credentials_and_status(
+        AuthCredentials(mode=AuthMode.JWT_TOKEN, jwt_token="jwt.user.sig"),
+        AuthStatus.AUTHENTICATED,
+    )
+    assert not oo.is_latched(_jwt_scope("jwt.user.sig"))
+
+
+def test_explicit_false_still_loses_for_derived_token() -> None:
+    _validate({"valid": True, "optimization_only": True})
+    _derive(_manager(), "jwt.exp.sig")
+    assert oo.is_active(oo.Policy(False, _jwt_scope("jwt.exp.sig")))

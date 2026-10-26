@@ -723,6 +723,35 @@ class AuthManager:
         """Helper for TokenManager callback to set credentials and status."""
         self._credentials = credentials
         self._auth_status = status
+        if credentials is not None and credentials.jwt_token:
+            self._carry_optimization_only_latch(
+                {"Authorization": f"Bearer {credentials.jwt_token}"}
+            )
+
+    def _carry_optimization_only_latch(self, derived_headers: dict[str, str]) -> None:
+        """Latch the scope of a JWT/Bearer derived from this manager's API key.
+
+        The single place that carries a ``/keys/validate`` optimization_only latch across
+        credential derivation (login, exchange, refresh, OAuth2): called whenever the
+        manager stores a token and whenever it emits auth headers. A JWT supplied with no
+        API key behind it is a credential from outside the SDK and is left alone. Never
+        raises.
+        """
+        try:
+            if "Authorization" not in derived_headers:
+                return
+            from traigent.config.backend_config import BackendConfig
+            from traigent.utils import optimization_only_egress as oo_egress
+
+            # Only a key carried by the same credentials record counts as the source: a
+            # bare JWT (user-supplied, or from an OAuth2 client flow) is not derived from it.
+            key = self._credentials.api_key if self._credentials else None
+            if not key:
+                return
+            base = self.config.backend_base_url or BackendConfig.get_cloud_backend_url()
+            oo_egress.carry_latch(base, {"X-API-Key": key}, derived_headers)
+        except Exception:  # noqa: BLE001 - observation must never break authentication
+            return
 
     # ------------------------------------------------------------------
     # API key state delegators (backward compatibility)
@@ -1185,6 +1214,7 @@ class AuthManager:
         else:
             headers = {}
 
+        self._carry_optimization_only_latch(headers)
         self._add_common_headers(headers, target)
         return headers
 
