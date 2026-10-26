@@ -97,7 +97,7 @@ class AzureOpenAIDiscovery(ModelDiscovery):
             params = {"api-version": "2024-02-01"}
             headers = {"api-key": api_key}
 
-            preflight_requests("GET", url, params=params)
+            preflight_requests("GET", url, external=True, params=params)
             response = httpx.get(url, params=params, headers=headers, timeout=10)
             response.raise_for_status()
 

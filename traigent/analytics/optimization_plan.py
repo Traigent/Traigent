@@ -16,6 +16,7 @@ from typing import Any, cast
 from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.config.backend_config import DEFAULT_LOCAL_URL
 from traigent.labels.transport_gate import gate_session
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -199,6 +200,13 @@ class OptimizationPlanClient:
         if offline is not None:
             body["offline"] = offline
 
+        oo_egress.assert_closed_body(
+            body,
+            "optimization_plan_request",
+            explicit=oo_egress.policy_from_headers(
+                self.backend_url, _build_auth_headers(self.api_key)
+            ),
+        )
         client = self._get_client()
         response = await client.post("/api/v1/optimization/plan", json=body)
         response.raise_for_status()

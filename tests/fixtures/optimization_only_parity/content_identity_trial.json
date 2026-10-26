@@ -1,0 +1,34 @@
+{
+  "candidate": {
+    "agent_id": "qa_agent",
+    "build_digest": "sha256:9d218e95efa390710cd921539f9d516604634b53dc8118ef29dcc81555f1996c",
+    "manifest": {
+      "agent_id": "qa_agent",
+      "applied_config_digest": "sha256:2b3ecdc83926c52c6f63a6e4e06fd4527ed021a44f567109ae017ad574a80279",
+      "asset_digests": {
+        "helper_modules": {
+          "fixture_gen.py": "sha256:231ead47159b61ea1753aa436e719b59a16d20663adfab07e5f167162c0e42d9",
+          "qa_agent_mod.py": "sha256:a7170d7ee2f703671293c3556d252f9ca2e7988eb2509b359e2d2ef936a5ee08"
+        },
+        "prompts": {},
+        "tool_definitions": {}
+      },
+      "coverage": "partial",
+      "manifest_version": 1,
+      "runtime": {
+        "language": "python",
+        "language_version": "3.13.14",
+        "sdk_version": "0.31.0.dev0"
+      },
+      "source_digest": "sha256:e6e92d640266159366713b6502d557120388439f9976576be1455feb72730f0d"
+    }
+  },
+  "evaluated": null,
+  "observed_provider_versions": [],
+  "provenance": "declared",
+  "scheme": "traigent.content_identity.v1",
+  "trial_id": "trial_0001",
+  "unavailable": {
+    "evaluated": "evaluation_results_unavailable"
+  }
+}
