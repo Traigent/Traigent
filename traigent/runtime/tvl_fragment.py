@@ -105,24 +105,9 @@ def _parse_requirement(node: Any) -> tuple[str, int, float]:
     return name, threshold, _num(req["max_rate"], f"{path}.max_rate")
 
 
-def _parse_monitor(node: Any, requirement_name: str) -> tuple[str, dict[str, Any]]:
-    path = "monitors[0]"
-    mon = _closed_keys(
-        node,
-        {
-            "name",
-            "requirement",
-            "phase",
-            "profile",
-            "applies_to",
-            "evidence",
-            "window",
-            "decision",
-            "episode",
-        },
-        {"name", "requirement", "phase", "profile", "evidence", "decision"},
-        path,
-    )
+def _check_monitor_header(
+    mon: Mapping[str, Any], requirement_name: str, path: str
+) -> str:
     name = _name(mon["name"], f"{path}.name")
     if mon["requirement"] != requirement_name:
         raise _invalid(f"{path}.requirement")
@@ -132,6 +117,10 @@ def _parse_monitor(node: Any, requirement_name: str) -> tuple[str, dict[str, Any
         raise _unsupported(f"{path}.profile")
     if mon.get("applies_to", "agent") != "agent":
         raise _unsupported(f"{path}.applies_to")
+    return name
+
+
+def _parse_monitor_environment(mon: Mapping[str, Any], path: str) -> str:
     evidence = _closed_keys(
         mon["evidence"],
         {"source", "deployment_environment", "attribution", "resolution", "sampling"},
@@ -150,6 +139,10 @@ def _parse_monitor(node: Any, requirement_name: str) -> tuple[str, dict[str, Any
     environment = evidence.get("deployment_environment", DEFAULT_ENVIRONMENT)
     if not isinstance(environment, str):
         raise _invalid(f"{path}.evidence.deployment_environment")
+    return environment
+
+
+def _parse_monitor_decision(mon: Mapping[str, Any], path: str) -> Mapping[str, Any]:
     decision = _closed_keys(
         mon["decision"],
         {
@@ -168,6 +161,30 @@ def _parse_monitor(node: Any, requirement_name: str) -> tuple[str, dict[str, Any
         raise _unsupported(f"{path}.decision.method")
     if "model" in decision and decision["model"] != "iid_bernoulli_within_window_v1":
         raise _unsupported(f"{path}.decision.model")
+    return decision
+
+
+def _parse_monitor(node: Any, requirement_name: str) -> tuple[str, dict[str, Any]]:
+    path = "monitors[0]"
+    mon = _closed_keys(
+        node,
+        {
+            "name",
+            "requirement",
+            "phase",
+            "profile",
+            "applies_to",
+            "evidence",
+            "window",
+            "decision",
+            "episode",
+        },
+        {"name", "requirement", "phase", "profile", "evidence", "decision"},
+        path,
+    )
+    name = _check_monitor_header(mon, requirement_name, path)
+    environment = _parse_monitor_environment(mon, path)
+    decision = _parse_monitor_decision(mon, path)
     window = _closed_keys(
         mon.get("window", {}),
         {"tumbling_hours", "grace_minutes"},
@@ -197,6 +214,56 @@ def _parse_monitor(node: Any, requirement_name: str) -> tuple[str, dict[str, Any
     return name, fields
 
 
+def _severity_and_approval(
+    action: Any, severity: Any, approval: Any, path: str
+) -> tuple[Any, Any]:
+    """Apply the per-action severity/approval rules of one response rule."""
+    if action == "notify":
+        if severity is None:
+            severity = "critical"  # RFC 0003 section 7.2: the default severity
+        if severity not in SEVERITIES:
+            raise _invalid(f"{path}.severity")
+        if approval is not None:
+            raise _invalid(f"{path}.approval")
+    elif action == "optimize":
+        if severity is not None:
+            raise _invalid(f"{path}.severity")
+        if approval not in (None, "human"):
+            raise RuntimeRequirementError(E_ACTION_UNSUPPORTED, f"{path}.approval")
+        approval = "human"
+    elif severity is not None or approval is not None:
+        raise _invalid(f"{path}.do")
+    return severity, approval
+
+
+def _parse_response_rule(raw: Any, index: int, monitor_name: str) -> ResponseRule:
+    path = f"responses[0].rules[{index}]"
+    rule = _closed_keys(
+        raw,
+        {"id", "trigger", "do", "severity", "approval"},
+        {"id", "trigger", "do"},
+        path,
+    )
+    rule_id = _name(rule["id"], f"{path}.id")
+    trigger = _closed_keys(
+        rule["trigger"],
+        {"monitor", "event"},
+        {"monitor", "event"},
+        f"{path}.trigger",
+    )
+    if trigger["monitor"] != monitor_name:
+        raise _invalid(f"{path}.trigger.monitor")
+    if trigger["event"] not in EVENTS:
+        raise _unsupported(f"{path}.trigger.event")
+    action = rule["do"]
+    if action not in ACTIONS:
+        raise RuntimeRequirementError(E_ACTION_UNSUPPORTED, f"{path}.do")
+    severity, approval = _severity_and_approval(
+        action, rule.get("severity"), rule.get("approval"), path
+    )
+    return ResponseRule(rule_id, trigger["event"], action, severity, approval)
+
+
 def _parse_responses(
     node: Any, monitor_name: str
 ) -> tuple[str | None, tuple[ResponseRule, ...]]:
@@ -215,49 +282,10 @@ def _parse_responses(
     raw_rules = response["rules"]
     if not isinstance(raw_rules, list):
         raise _invalid("responses[0].rules")
-    rules: list[ResponseRule] = []
-    for index, raw in enumerate(raw_rules):
-        path = f"responses[0].rules[{index}]"
-        rule = _closed_keys(
-            raw,
-            {"id", "trigger", "do", "severity", "approval"},
-            {"id", "trigger", "do"},
-            path,
-        )
-        rule_id = _name(rule["id"], f"{path}.id")
-        trigger = _closed_keys(
-            rule["trigger"],
-            {"monitor", "event"},
-            {"monitor", "event"},
-            f"{path}.trigger",
-        )
-        if trigger["monitor"] != monitor_name:
-            raise _invalid(f"{path}.trigger.monitor")
-        if trigger["event"] not in EVENTS:
-            raise _unsupported(f"{path}.trigger.event")
-        action = rule["do"]
-        if action not in ACTIONS:
-            raise RuntimeRequirementError(E_ACTION_UNSUPPORTED, f"{path}.do")
-        severity = rule.get("severity")
-        approval = rule.get("approval")
-        if action == "notify":
-            if severity is None:
-                severity = "critical"  # RFC 0003 section 7.2: the default severity
-            if severity not in SEVERITIES:
-                raise _invalid(f"{path}.severity")
-            if approval is not None:
-                raise _invalid(f"{path}.approval")
-        elif action == "optimize":
-            if severity is not None:
-                raise _invalid(f"{path}.severity")
-            if approval not in (None, "human"):
-                raise RuntimeRequirementError(E_ACTION_UNSUPPORTED, f"{path}.approval")
-            approval = "human"
-        elif severity is not None or approval is not None:
-            raise _invalid(f"{path}.do")
-        rules.append(
-            ResponseRule(rule_id, trigger["event"], action, severity, approval)
-        )
+    rules = [
+        _parse_response_rule(raw, index, monitor_name)
+        for index, raw in enumerate(raw_rules)
+    ]
     return ladder, tuple(rules)
 
 
