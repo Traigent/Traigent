@@ -90,7 +90,7 @@ See `docs/features/constraint-dsl.md` for full syntax and precedence details.
 - `Choices.prompting_strategy()`
 - `Choices.context_format()`
 - `Choices.retriever_type()`
-- `Choices.embedding_model(provider=None)`
+- `Choices.embedding_model(provider=None)` (an unknown provider raises `ValueError`; there is no silent OpenAI fallback)
 - `Choices.reranker_model()`
 
 ## Notes
