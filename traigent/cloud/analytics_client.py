@@ -2233,6 +2233,9 @@ def _derive_director_idempotency_key(*parts: str) -> str:
     return f"dk_{digest[:32]}"
 
 
+_OBSERVABILITY_ANALYSIS_INSIGHTS = "observability analysis insights"
+
+
 class BackendAnalyticsClient:
     """Async-first read client for backend optimization-results analytics.
 
@@ -2971,7 +2974,7 @@ class BackendAnalyticsClient:
         start_time, end_time = _validate_observability_time_window(start_time, end_time)
         payload = await self._get_json(
             f"{_observability_path(project_id)}/analysis/insights",
-            what="observability analysis insights",
+            what=_OBSERVABILITY_ANALYSIS_INSIGHTS,
             params={
                 "start_time": start_time,
                 "end_time": end_time,
@@ -3355,7 +3358,7 @@ def _validate_observability_analysis_insights_payload(
     *,
     for_mcp: bool = False,
 ) -> None:
-    what = "observability analysis insights"
+    what = _OBSERVABILITY_ANALYSIS_INSIGHTS
     required_payload_keys = _OBSERVABILITY_ANALYSIS_INSIGHTS_REQUIRED_KEYS - (
         frozenset({"limitations"}) if for_mcp else frozenset()
     )
@@ -3786,7 +3789,7 @@ def _project_observability_analysis_insights(
     payload: Any, *, for_mcp: bool = False
 ) -> dict[str, Any]:
     """Validate and rebuild analysis insights according to their exact nesting."""
-    source = _require_object(payload, what="observability analysis insights")
+    source = _require_object(payload, what=_OBSERVABILITY_ANALYSIS_INSIGHTS)
     _validate_observability_analysis_insights_payload(source, for_mcp=for_mcp)
     conformance = cast(dict[str, Any], source["conformance"])
     deviations = cast(list[dict[str, Any]], conformance["deviations"])

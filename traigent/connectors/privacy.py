@@ -139,12 +139,15 @@ def _pointer(path: Any) -> str:
     return "/" + "/".join(parts) if parts else "/"
 
 
+_UNKNOWN = "<unknown>"
+
+
 def _error_pointer(error: Any) -> str:
     path = tuple(error.absolute_path)
     if error.validator == "additionalProperties":
         allowed = error.schema.get("properties", {})
         if any(key not in allowed for key in error.instance):
-            path += ("<unknown>",)
+            path += (_UNKNOWN,)
     return _pointer(path)
 
 
@@ -174,7 +177,7 @@ def _normalize_json_primitive(value: Any, path: tuple[Any, ...] = ()) -> Any:
         normalized: dict[str, Any] = {}
         for key, item in value.items():
             if type(key) is not str:
-                raise SummaryValidationError(_pointer(path + ("<unknown>",))) from None
+                raise SummaryValidationError(_pointer(path + (_UNKNOWN,))) from None
             normalized[key] = _normalize_json_primitive(item, path + (key,))
         return normalized
     raise SummaryValidationError(_pointer(path)) from None
@@ -300,9 +303,7 @@ def serialize_summary(
         if node_type is dict:
             for key, value in node.items():
                 if type(key) is not str:
-                    raise SummaryValidationError(
-                        _pointer(path + ("<unknown>",))
-                    ) from None
+                    raise SummaryValidationError(_pointer(path + (_UNKNOWN,))) from None
                 check_shape(value, path + (key,))
         elif node_type is list:
             for index, value in enumerate(node):

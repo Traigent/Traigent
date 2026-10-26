@@ -16,21 +16,21 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import ExampleResult
-from traigent.utils.example_id import stamp_row_index
 from traigent.core.utils import safe_get_nested_attr
-from traigent.evaluators.metrics_tracker import RESERVED_METRIC_KEYS
 from traigent.evaluators.base import (
+    EXAMPLE_TIMEOUT_ERROR_PREFIX,
     MEASURED_ONLY_METRICS,
     BaseEvaluator,
     Dataset,
     EvaluationExample,
     EvaluationResult,
     _maybe_restore_trial_context,
-    EXAMPLE_TIMEOUT_ERROR_PREFIX,
     aggregate_measured_metric,
     failed_row_metrics,
 )
+from traigent.evaluators.metrics_tracker import RESERVED_METRIC_KEYS
 from traigent.identity.examples import result_identity_fields
+from traigent.utils.example_id import stamp_row_index
 from traigent.utils.exceptions import EvaluationError
 from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.logging import get_logger
@@ -116,6 +116,9 @@ if TYPE_CHECKING:
 _SDK_MEASURED_OBJECTIVES = (MEASURED_ONLY_METRICS | RESERVED_METRIC_KEYS) - frozenset(
     {"accuracy", "score"}
 )
+
+
+_COST_TOTAL_COST = "cost.total_cost"
 
 
 class CustomEvaluatorWrapper(BaseEvaluator):
@@ -315,7 +318,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         return bool(
             safe_get_nested_attr(metrics, "tokens.input_tokens", 0)
             or safe_get_nested_attr(metrics, "tokens.output_tokens", 0)
-            or safe_get_nested_attr(metrics, "cost.total_cost", 0.0)
+            or safe_get_nested_attr(metrics, _COST_TOTAL_COST, 0.0)
             or safe_get_nested_attr(metrics, "cost.cost_explicit", False)
         )
 
@@ -372,7 +375,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 example_result.metrics["cost_unmeasured"] = 1.0
                 # The part that WAS measured stays a floor, never a total.
                 known = safe_get_nested_attr(
-                    llm_metrics, "cost.total_cost", 0.0
+                    llm_metrics, _COST_TOTAL_COST, 0.0
                 ) + safe_get_nested_attr(llm_metrics, "cost.known_cost", 0.0)
                 if known > 0:
                     example_result.metrics["cost_lower_bound"] = known
@@ -384,7 +387,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                     llm_metrics, "cost.output_cost", 0.0
                 )
                 example_result.metrics["total_cost"] = safe_get_nested_attr(
-                    llm_metrics, "cost.total_cost", 0.0
+                    llm_metrics, _COST_TOTAL_COST, 0.0
                 )
 
             response_time_ms = safe_get_nested_attr(

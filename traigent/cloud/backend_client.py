@@ -955,6 +955,13 @@ class ExperimentGroupsNamespace:
 bridge = _bridge
 
 
+_BACKEND_CLIENT = "backend client"
+_REQUESTS_IS_UNAVAILABLE = "requests is unavailable"
+_AGENT_HEAD_FETCH = "Agent-head fetch"
+_BACKEND_BEST_CONFIG_URL_IS_INVALID = "Backend best-config URL is invalid"
+_BEST_CONFIG_PUBLISH = "Best-config publish"
+
+
 class BackendIntegratedClient:
     """Enhanced backend client with Traigent Backend integration (Refactored).
 
@@ -1039,7 +1046,7 @@ class BackendIntegratedClient:
         self._url_invalid = False
         try:
             effective_base_url = validate_cloud_base_url(
-                effective_base_url, purpose="backend client"
+                effective_base_url, purpose=_BACKEND_CLIENT
             )
             self.base_url = self._api_ops.validate_and_sanitize_url(effective_base_url)
 
@@ -1047,7 +1054,7 @@ class BackendIntegratedClient:
             if not explicit_base_origin:
                 backend_base_url = self.backend_config.backend_base_url or self.base_url
             backend_base_url = validate_cloud_base_url(
-                backend_base_url, purpose="backend client"
+                backend_base_url, purpose=_BACKEND_CLIENT
             )
             self.backend_config.backend_base_url = (
                 self._api_ops.validate_and_sanitize_url(backend_base_url)
@@ -1067,7 +1074,7 @@ class BackendIntegratedClient:
             api_origin, api_path = BackendConfig.split_api_url(api_base_candidate)
             if api_origin is None:
                 raise ValueError("backend client API base URL must include an origin")
-            api_origin = validate_cloud_base_url(api_origin, purpose="backend client")
+            api_origin = validate_cloud_base_url(api_origin, purpose=_BACKEND_CLIENT)
             # validate_cloud_base_url only saw the origin; the API path is
             # reattached below, so re-check the (decoded) path for traversal
             # here — otherwise an explicit api_base_url like ".../../admin" would
@@ -2418,7 +2425,7 @@ class BackendIntegratedClient:
         try:
             import requests
         except ImportError as exc:  # pragma: no cover - requests is required
-            raise CloudServiceError("requests is unavailable") from exc
+            raise CloudServiceError(_REQUESTS_IS_UNAVAILABLE) from exc
 
         base = self._build_best_config_url()
         if not base:
@@ -2445,12 +2452,12 @@ class BackendIntegratedClient:
                 TimeoutError,
             ) as exc:
                 raise _SyncBackendTransientError(
-                    transport_failed_message("Agent-head fetch", exc)
+                    transport_failed_message(_AGENT_HEAD_FETCH, exc)
                 ) from None
             _raise_for_transient_backend_response(response, "Agent-head fetch")
             return response
 
-        response = _run_sync_backend_request_with_retry("Agent-head fetch", _get_head)
+        response = _run_sync_backend_request_with_retry(_AGENT_HEAD_FETCH, _get_head)
         _refuse_redirect_response(response, "Agent-head fetch")
         if response.status_code >= 400:
             raise CloudServiceError(
@@ -2532,7 +2539,7 @@ class BackendIntegratedClient:
         try:
             import requests
         except ImportError as exc:  # pragma: no cover - requests is required
-            raise CloudServiceError("requests is unavailable") from exc
+            raise CloudServiceError(_REQUESTS_IS_UNAVAILABLE) from exc
 
         session = gate_session(requests.Session(), origins=[url], strict=True)
         try:
@@ -2583,7 +2590,7 @@ class BackendIntegratedClient:
             response = self._protected_request(
                 "GET",
                 url,
-                operation="Agent-head fetch",
+                operation=_AGENT_HEAD_FETCH,
                 params={"environment": environment},
                 headers=headers,
             )
@@ -2598,7 +2605,7 @@ class BackendIntegratedClient:
                 )
             return response
 
-        response = _run_sync_backend_request_with_retry("Agent-head fetch", _get_head)
+        response = _run_sync_backend_request_with_retry(_AGENT_HEAD_FETCH, _get_head)
         if response.status_code >= 400:
             raise self._head_refusal_from_response(response)
         try:
@@ -2741,7 +2748,7 @@ class BackendIntegratedClient:
         self._raise_if_backend_egress_disabled("publish best config")
         url = self._build_best_config_url()
         if not url:
-            raise CloudServiceError("Backend best-config URL is invalid")
+            raise CloudServiceError(_BACKEND_BEST_CONFIG_URL_IS_INVALID)
         headers = self._get_sync_auth_headers(target="backend")
         if if_match:
             headers["If-Match"] = if_match
@@ -2753,7 +2760,7 @@ class BackendIntegratedClient:
         response = self._protected_request(
             "POST",
             url,
-            operation="Best-config publish",
+            operation=_BEST_CONFIG_PUBLISH,
             json=payload,
             headers=headers,
         )
@@ -2825,11 +2832,11 @@ class BackendIntegratedClient:
         try:
             import requests
         except ImportError as exc:  # pragma: no cover - requests is required
-            raise CloudServiceError("requests is unavailable") from exc
+            raise CloudServiceError(_REQUESTS_IS_UNAVAILABLE) from exc
 
         url = self._build_best_config_url()
         if not url:
-            raise CloudServiceError("Backend best-config URL is invalid")
+            raise CloudServiceError(_BACKEND_BEST_CONFIG_URL_IS_INVALID)
 
         headers = self._get_sync_auth_headers(target="backend")
         if if_match:
@@ -2860,13 +2867,13 @@ class BackendIntegratedClient:
                 TimeoutError,
             ) as exc:
                 raise _SyncBackendTransientError(
-                    transport_failed_message("Best-config publish", exc)
+                    transport_failed_message(_BEST_CONFIG_PUBLISH, exc)
                 ) from None
             _raise_for_transient_backend_response(response, "Best-config publish")
             return response
 
         response = _run_sync_backend_request_with_retry(
-            "Best-config publish",
+            _BEST_CONFIG_PUBLISH,
             _post_best_config,
         )
         _refuse_redirect_response(response, "Best-config publish")
@@ -2931,11 +2938,11 @@ class BackendIntegratedClient:
         try:
             import requests
         except ImportError as exc:  # pragma: no cover - requests is required
-            raise CloudServiceError("requests is unavailable") from exc
+            raise CloudServiceError(_REQUESTS_IS_UNAVAILABLE) from exc
 
         url = self._build_best_config_url(config_id)
         if not url:
-            raise CloudServiceError("Backend best-config URL is invalid")
+            raise CloudServiceError(_BACKEND_BEST_CONFIG_URL_IS_INVALID)
 
         headers = self._get_sync_auth_headers(target="backend")
         if etag:
@@ -3039,7 +3046,7 @@ class BackendIntegratedClient:
         try:
             import requests
         except ImportError as exc:  # pragma: no cover - requests is required
-            raise CloudServiceError("requests is unavailable") from exc
+            raise CloudServiceError(_REQUESTS_IS_UNAVAILABLE) from exc
 
         url = self._build_purpose_keys_url()
         if not url:
