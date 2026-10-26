@@ -403,6 +403,36 @@ def init(output: str, force: bool) -> None:
         raise SystemExit(1) from e
 
 
+def _print_config_space(config_space: dict[str, Any]) -> None:
+    console.print("  Configuration Space:")
+    for param, values in config_space.items():
+        if isinstance(values, list):
+            console.print(f"    {param}: {values}")
+        elif isinstance(values, tuple):
+            console.print(f"    {param}: [{values[0]} - {values[1]}]")
+        else:
+            console.print(f"    {param}: {values}")
+
+
+def _print_function_config(func_info: Any) -> None:
+    console.print(f"[bold cyan]{func_info.name}[/bold cyan]")
+
+    # Objectives
+    objectives_str = ", ".join(func_info.objectives)
+    console.print(f"  Objectives: {objectives_str}")
+
+    # Dataset
+    if func_info.eval_dataset:
+        console.print(f"  Dataset: {func_info.eval_dataset}")
+
+    # Configuration space
+    config_space = func_info.decorator_config.get("configuration_space", {})
+    if config_space:
+        _print_config_space(config_space)
+
+    console.print()
+
+
 @hooks.command()
 @click.argument("module_path", type=click.Path(exists=True))
 @click.option("--function", "-f", help="Specific function to show")
@@ -431,26 +461,4 @@ def show(module_path: str, function: str | None) -> None:
     console.print(f"\n[bold blue]Agent Configurations in {module_path}[/bold blue]\n")
 
     for func_info in functions:
-        console.print(f"[bold cyan]{func_info.name}[/bold cyan]")
-
-        # Objectives
-        objectives_str = ", ".join(func_info.objectives)
-        console.print(f"  Objectives: {objectives_str}")
-
-        # Dataset
-        if func_info.eval_dataset:
-            console.print(f"  Dataset: {func_info.eval_dataset}")
-
-        # Configuration space
-        config_space = func_info.decorator_config.get("configuration_space", {})
-        if config_space:
-            console.print("  Configuration Space:")
-            for param, values in config_space.items():
-                if isinstance(values, list):
-                    console.print(f"    {param}: {values}")
-                elif isinstance(values, tuple):
-                    console.print(f"    {param}: [{values[0]} - {values[1]}]")
-                else:
-                    console.print(f"    {param}: {values}")
-
-        console.print()
+        _print_function_config(func_info)
