@@ -1,0 +1,207 @@
+{
+  "canonical_form": "tvl.canonical.canonical_json_digest: json.dumps(value, sort_keys=True, indent=2, ensure_ascii=True) + LF, sha256 hex; non-finite numbers refused",
+  "gate_document": {
+    "format": "traigent-gate-result/1",
+    "keys": [
+      "format",
+      "contract_digest",
+      "fingerprint",
+      "legacy_decision",
+      "monitors",
+      "decision"
+    ]
+  },
+  "fingerprints": [
+    {
+      "name": "simple",
+      "config": {
+        "temperature": 0.2,
+        "model": "m-small"
+      },
+      "fingerprint": "080304da2668e2304e828b1dbe5235abfbfa34aa53bbc709d08414e4ffc6d7c2"
+    },
+    {
+      "name": "key-order-a",
+      "config": {
+        "b": 1,
+        "a": 2,
+        "c": 3
+      },
+      "fingerprint": "d5042d81c608fd9dedcc8cc891bec8e939568d7271788c69c659a7af34ba002f"
+    },
+    {
+      "name": "key-order-b",
+      "config": {
+        "c": 3,
+        "a": 2,
+        "b": 1
+      },
+      "fingerprint": "d5042d81c608fd9dedcc8cc891bec8e939568d7271788c69c659a7af34ba002f"
+    },
+    {
+      "name": "floats",
+      "config": {
+        "t": 0.1,
+        "u": 1.0,
+        "v": 1e-07,
+        "w": 1e+20,
+        "x": -0.0,
+        "y": 3.141592653589793
+      },
+      "fingerprint": "34330d4918931766f6a9c396e4264360dd90238d42cb6ccd504e81be0d1846dd"
+    },
+    {
+      "name": "ints",
+      "config": {
+        "n": 0,
+        "big": 9007199254740993,
+        "neg": -42
+      },
+      "fingerprint": "91e2d9b574be1149386326ec53e5e0d94a6326167a3e19ccb340c9594ef5ce8a"
+    },
+    {
+      "name": "unicode-bmp",
+      "config": {
+        "name": "caf\u00e9",
+        "han": "\u6f22\u5b57"
+      },
+      "fingerprint": "077bd5758de238af0afdb7fbb8d780feedbd1882eeb00e45ac1799038df6af84"
+    },
+    {
+      "name": "unicode-astral",
+      "config": {
+        "emoji": "\ud83d\ude00",
+        "mix": "a\ud834\udd1eb"
+      },
+      "fingerprint": "a991fd815cc2fcfafe643cdabcb4ad54b52ca139e03f463474f770ccebd3931c"
+    },
+    {
+      "name": "nested",
+      "config": {
+        "outer": {
+          "z": [
+            1,
+            2,
+            {
+              "k": null
+            }
+          ],
+          "a": {
+            "deep": {
+              "x": true,
+              "y": false
+            }
+          }
+        }
+      },
+      "fingerprint": "cd0ef1f9084c2fbf9988a2ff81d469f5398c99134c28bb2513525ab8a56973cd"
+    },
+    {
+      "name": "list-order",
+      "config": {
+        "xs": [
+          3,
+          1,
+          2
+        ],
+        "ys": [
+          "b",
+          "a"
+        ]
+      },
+      "fingerprint": "1fde788e3a17bf667970de266f06863ccc465765b561c9e30a5e4c924193cc18"
+    },
+    {
+      "name": "empty-containers",
+      "config": {
+        "a": [],
+        "b": {},
+        "c": ""
+      },
+      "fingerprint": "c50b22b79ba7aab16d8b0facea0e291dae52744abbbc175222d3858e5a2f0f7d"
+    },
+    {
+      "name": "escapes",
+      "config": {
+        "s": "line\nbreak\t\"quote\" back\\slash \u0001"
+      },
+      "fingerprint": "602c1a21d3cc3822fde2a797c84a558c27331903c4d738d782552ae4a526269b"
+    },
+    {
+      "name": "bool-null",
+      "config": {
+        "on": true,
+        "off": false,
+        "none": null
+      },
+      "fingerprint": "992e0729da3c77ad538c3ad7c4fcbca86f35a99c08c4dcc880480f4c17a411f9"
+    }
+  ],
+  "gates": [
+    {
+      "name": "promote-met",
+      "contract_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "fingerprint": "080304da2668e2304e828b1dbe5235abfbfa34aa53bbc709d08414e4ffc6d7c2",
+      "legacy_decision": "Promote",
+      "monitors": {
+        "tA1B2C3D4E5F6G7H8": "MET"
+      },
+      "decision": "Promote",
+      "gate_result_digest": "3433f3af1dbef5cbfb56ee1ebdd03ef377160c288125aba4cec9bf676ebccf93"
+    },
+    {
+      "name": "breached",
+      "contract_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "fingerprint": "080304da2668e2304e828b1dbe5235abfbfa34aa53bbc709d08414e4ffc6d7c2",
+      "legacy_decision": "Promote",
+      "monitors": {
+        "tA1B2C3D4E5F6G7H8": "BREACHED"
+      },
+      "decision": "Reject",
+      "gate_result_digest": "70ed6e1dc0a4490f77c23f78aa5d84c9e6f97d40f7f8159f966cae566ed884c9"
+    },
+    {
+      "name": "unknown",
+      "contract_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "fingerprint": "080304da2668e2304e828b1dbe5235abfbfa34aa53bbc709d08414e4ffc6d7c2",
+      "legacy_decision": "Promote",
+      "monitors": {
+        "tA1B2C3D4E5F6G7H8": "UNKNOWN(inconclusive)"
+      },
+      "decision": "NoDecision",
+      "gate_result_digest": "fd461cc689bd04e2795592a7c1472f6cef0c64b0b641c2f4fb350197913f09a3"
+    },
+    {
+      "name": "two-monitors-order",
+      "contract_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "fingerprint": "080304da2668e2304e828b1dbe5235abfbfa34aa53bbc709d08414e4ffc6d7c2",
+      "legacy_decision": "Promote",
+      "monitors": {
+        "tZZZZZZZZZZZZZZZZ": "MET",
+        "tAAAAAAAAAAAAAAAA": "MET"
+      },
+      "decision": "Promote",
+      "gate_result_digest": "7417bc404b1219c807cd0bac6bab23c0b19c53c40f30bd1458878f24429cfb31"
+    },
+    {
+      "name": "no-monitors",
+      "contract_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "fingerprint": "080304da2668e2304e828b1dbe5235abfbfa34aa53bbc709d08414e4ffc6d7c2",
+      "legacy_decision": "NoDecision",
+      "monitors": {},
+      "decision": "NoDecision",
+      "gate_result_digest": "a06c59ad9409b77004d25c30030cf9e462df239c784b960d0eab667b0bb3b7dd"
+    },
+    {
+      "name": "legacy-reject",
+      "contract_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "fingerprint": "080304da2668e2304e828b1dbe5235abfbfa34aa53bbc709d08414e4ffc6d7c2",
+      "legacy_decision": "Reject",
+      "monitors": {
+        "tA1B2C3D4E5F6G7H8": "MET"
+      },
+      "decision": "Reject",
+      "gate_result_digest": "88ca192d5b8b7bbac54f60e50cdf0bce278d7cc2a572cdc7e0ba2f7e7b9752c6"
+    }
+  ]
+}

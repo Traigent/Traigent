@@ -1,5 +1,5 @@
 {
-  "compiler_pin": "858092ac97bf8598538bf5f0193cc3193bd88671",
+  "compiler_pin": "tvl-spec==1.4.0",
   "contract": {
     "backend_profiles": [
       {
@@ -73,7 +73,52 @@
           }
         }
       ],
-      "responses": [],
+      "responses": [
+        {
+          "name": "tresponse0001",
+          "rules": [
+            {
+              "approval": "none",
+              "do": "notify",
+              "id": "trule_alert",
+              "severity": "warning",
+              "trigger": {
+                "event": "episode_opened",
+                "monitor": "tmonitor0001"
+              }
+            },
+            {
+              "approval": "none",
+              "do": "open_next_step",
+              "id": "trule_restore",
+              "trigger": {
+                "event": "episode_opened",
+                "monitor": "tmonitor0001"
+              }
+            },
+            {
+              "approval": "human",
+              "deploy": "never",
+              "do": "optimize",
+              "id": "trule_fix",
+              "trigger": {
+                "event": "episode_opened",
+                "monitor": "tmonitor0001"
+              }
+            },
+            {
+              "approval": "none",
+              "do": "notify",
+              "id": "trule_ok",
+              "severity": "info",
+              "trigger": {
+                "event": "episode_resolved",
+                "monitor": "tmonitor0001"
+              }
+            }
+          ]
+        }
+      ],
       "tvl": {
         "module": "tmodule0001"
       }

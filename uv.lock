@@ -5941,7 +5941,7 @@ requires-dist = [
     { name = "traigent", extras = ["integrations", "analytics", "bayesian", "visualization", "hybrid", "pydanticai"], marker = "extra == 'recommended'" },
     { name = "traigent", extras = ["security"], marker = "extra == 'cloud'" },
     { name = "traigent-schema", specifier = "==7.0.0" },
-    { name = "tvl-spec", marker = "extra == 'runtime-tvl'", git = "https://github.com/Traigent/tvl?rev=858092ac97bf8598538bf5f0193cc3193bd88671" },
+    { name = "tvl-spec", marker = "extra == 'runtime-tvl'", specifier = "==1.4.0" },
     { name = "types-bleach", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.31.0" },
@@ -5977,13 +5977,17 @@ wheels = [
 
 [[package]]
 name = "tvl-spec"
-version = "1.2.0"
-source = { git = "https://github.com/Traigent/tvl?rev=858092ac97bf8598538bf5f0193cc3193bd88671#858092ac97bf8598538bf5f0193cc3193bd88671" }
+version = "1.4.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jsonschema" },
     { name = "ortools" },
     { name = "pyyaml" },
     { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/56/6d/b386462a4c4d2a19ab8e5731a66425bcc065831c1e4435da892f54a999e2/tvl_spec-1.4.0.tar.gz", hash = "sha256:b1ec85e251b51b6ac2990dce0cd32c29574365fc710d332708c38bb2853a523c", size = 362966, upload-time = "2026-10-22T16:33:06.614Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/36/a3/815fc576fbb80d6a677703fff221505e64fd689cce97a0415ba1ee057568/tvl_spec-1.4.0-py3-none-any.whl", hash = "sha256:929b0cbed32f88224a4976f7c1a1102702e8c13a91ab082d69ffa08a3f103f7d", size = 441526, upload-time = "2026-10-22T16:33:04.802Z" },
 ]
 
 [[package]]
