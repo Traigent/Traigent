@@ -63,11 +63,21 @@ class APIKeyManager:
         # Latch-on-read hook (set by AuthManager): called with the credential headers about
         # to be handed out; it latches their scope and raises on a flagged manager that cannot.
         self.read_guard: Any = None
+        self.guard_active: Any = None  # () -> bool; True when reads must be latched
+
+    def _guarding(self) -> bool:
+        return self.read_guard is not None and (
+            self.guard_active is None or bool(self.guard_active())
+        )
 
     def _guard_read(self, headers: dict[str, str]) -> None:
-        guard = self.read_guard
-        if guard is not None:
-            guard(headers)
+        if self._guarding():
+            self.read_guard(headers)
+
+    def _guard_key(self, key: str | None) -> str | None:
+        if key and self._guarding():
+            self.read_guard({"X-API-Key": key})
+        return key
 
     def set_callbacks(
         self,
@@ -94,7 +104,7 @@ class APIKeyManager:
     def api_key_token(self) -> SecureToken | None:
         """Get current API key token."""
         token = self._api_key_token
-        if token is not None and self.read_guard is not None:
+        if token is not None and self._guarding():
             value = getattr(token, "_value", None)
             if value and not token.is_expired:
                 self._guard_read({"X-API-Key": value})
@@ -124,7 +134,7 @@ class APIKeyManager:
     def api_key(self) -> APIKey | None:
         """Get the APIKey object."""
         api_key = self._api_key
-        if api_key is not None and api_key.key and self.read_guard is not None:
+        if api_key is not None and self._guarding() and api_key.key:
             self._guard_read({"X-API-Key": api_key.key})
         return api_key
 
@@ -276,7 +286,7 @@ class APIKeyManager:
 
         if self._api_key_token and not self._api_key_token.is_expired:
             try:
-                return self._api_key_token.get_value()
+                return self._guard_key(self._api_key_token.get_value())
             except TokenExpiredError:
                 pass
 
@@ -289,13 +299,13 @@ class APIKeyManager:
                 continue
             key = self._extract_valid_key(fetch_fn())
             if key:
-                return key
+                return self._guard_key(key)
 
         # Last auth result has an extra .credentials indirection
         if self._get_last_auth_result_fn:
             last_result = self._get_last_auth_result_fn()
             if last_result:
-                return self._extract_valid_key(last_result.credentials)
+                return self._guard_key(self._extract_valid_key(last_result.credentials))
 
         return None
 

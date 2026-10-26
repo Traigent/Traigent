@@ -682,6 +682,8 @@ class AuthManager:
         # Latch-on-read: every getter of a stored credential latches it first (flagged only).
         self._token_manager.read_guard = self._latch_emitted_credential
         self._api_key_manager.read_guard = self._latch_emitted_credential
+        self._token_manager.guard_active = lambda: self._server_optimization_only
+        self._api_key_manager.guard_active = lambda: self._server_optimization_only
 
         self._last_auth_result: AuthResult | None = None
 

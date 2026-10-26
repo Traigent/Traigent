@@ -76,6 +76,12 @@ class TokenManager:
         self._auth_lock: asyncio.Lock | None = None
         # Latch-on-read hook (set by AuthManager); see APIKeyManager.read_guard.
         self.read_guard: Any = None
+        self.guard_active: Any = None  # () -> bool; True when reads must be latched
+
+    def _guarding(self) -> bool:
+        return self.read_guard is not None and (
+            self.guard_active is None or bool(self.guard_active())
+        )
 
     def set_callbacks(
         self,
@@ -110,7 +116,7 @@ class TokenManager:
     def current_token(self) -> SecureToken | None:
         """Get current access token."""
         token = self._current_token
-        if token is not None and self.read_guard is not None:
+        if token is not None and self._guarding():
             value = getattr(token, "_value", None)
             if value and not token.is_expired:
                 self.read_guard({"Authorization": f"Bearer {value}"})
@@ -118,8 +124,13 @@ class TokenManager:
 
     @property
     def refresh_token_secure(self) -> SecureToken | None:
-        """Get current refresh token."""
-        return self._refresh_token_secure
+        """Get current refresh token (latched under its own scope on a flagged manager)."""
+        token = self._refresh_token_secure
+        if token is not None and self._guarding():
+            value = getattr(token, "_value", None)
+            if value and not token.is_expired:
+                self.read_guard({"Authorization": f"Bearer {value}"})
+        return token
 
     @property
     def refresh_task(self) -> asyncio.Task[None] | None:
@@ -650,7 +661,7 @@ class TokenManager:
         """
         if self._current_token and not self._current_token.is_expired:
             header = cast(dict[str, str], self._current_token.get_header())
-            if self.read_guard is not None:
+            if self._guarding():
                 self.read_guard(header)
             return header
         return {}

@@ -582,3 +582,52 @@ def test_unflagged_manager_getters_are_unchanged_when_latch_fails(
     assert auth._get_api_key_for_internal_use() == OTHER_KEY
     for getter in _getters(auth):
         getter()
+
+
+def test_every_api_key_return_path_is_guarded() -> None:
+    from traigent.cloud.auth import AuthCredentials, AuthMode, AuthResult, AuthStatus
+
+    key = OTHER_KEY
+    creds = AuthCredentials(mode=AuthMode.API_KEY, api_key=key)
+
+    def refuse(_headers: Any) -> None:
+        raise oo.OptimizationOnlyRefusal("test")
+
+    # Each case leaves exactly one source able to answer.
+    cases = ("secure_token", "credentials", "provided", "last_result")
+    for case in cases:
+        auth = _manager()
+        mgr = auth._api_key_manager
+        mgr._api_key_token = None
+        auth._credentials = None
+        auth._provided_credentials = None
+        auth._last_auth_result = None
+        if case == "secure_token":
+            mgr.set_token(key, source="explicit")
+        elif case == "credentials":
+            auth._credentials = creds
+        elif case == "provided":
+            auth._provided_credentials = creds
+        else:
+            auth._last_auth_result = AuthResult(
+                success=True, status=AuthStatus.AUTHENTICATED, credentials=creds
+            )
+        assert mgr.get_key_for_internal_use() == key, case  # unflagged: unchanged
+        mgr.read_guard = refuse
+        mgr.guard_active = lambda: True
+        with pytest.raises(oo.OptimizationOnlyRefusal):
+            mgr.get_key_for_internal_use()
+        mgr.guard_active = lambda: False  # inactive guard: unchanged
+        assert mgr.get_key_for_internal_use() == key, case
+
+
+def test_refresh_token_getter_is_guarded_on_flagged_manager(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth = _flagged_manager()
+    auth._token_manager.store_tokens(
+        {"access_token": NEW_JWT, "refresh_token": "refresh-new-0123456789"}
+    )
+    monkeypatch.setattr(oo, "latch_on", _boom)
+    with pytest.raises(oo.OptimizationOnlyRefusal):
+        _ = auth._token_manager.refresh_token_secure
