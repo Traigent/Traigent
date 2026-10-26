@@ -755,6 +755,11 @@ class AuthManager:
                 stored["X-API-Key"] = credentials.api_key
             if stored:
                 self._latch_emitted_credential(stored)
+            if credentials.refresh_token:
+                # a refresh token is a credential of its own scope
+                self._latch_emitted_credential(
+                    {"Authorization": f"Bearer {credentials.refresh_token}"}
+                )
         self._credentials = credentials
         self._auth_status = status
 

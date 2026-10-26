@@ -625,6 +625,9 @@ class TokenManager:
                 refresh_token = self._refresh_token_secure.get_value()
             except TokenExpiredError:
                 refresh_token = None
+            if refresh_token and self._guarding():
+                # handed out inside AuthCredentials: latch it like the guarded getter does
+                self.read_guard({"Authorization": f"Bearer {refresh_token}"})
 
         metadata: dict[str, Any] = {}
         credentials = self._get_credentials_fn() if self._get_credentials_fn else None

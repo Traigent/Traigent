@@ -631,3 +631,59 @@ def test_refresh_token_getter_is_guarded_on_flagged_manager(
     monkeypatch.setattr(oo, "latch_on", _boom)
     with pytest.raises(oo.OptimizationOnlyRefusal):
         _ = auth._token_manager.refresh_token_secure
+
+
+REFRESH = "refresh-new-0123456789"
+
+
+def _builder_without_refresh_in_payload(auth: Any) -> Any:
+    auth._token_manager.store_tokens(
+        {"access_token": OLD_JWT, "refresh_token": REFRESH}
+    )
+    return auth._build_credentials_from_token_data(
+        {
+            "access_token": NEW_JWT,
+            "expires_in": 3600,
+        }  # no refresh_token: read from store
+    )
+
+
+def test_builder_refuses_stored_refresh_token_it_cannot_latch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth = _flagged_manager()
+    auth._token_manager.store_tokens(
+        {"access_token": OLD_JWT, "refresh_token": REFRESH}
+    )
+    monkeypatch.setattr(oo, "latch_on", _boom)
+    with pytest.raises(oo.OptimizationOnlyRefusal):
+        auth._build_credentials_from_token_data(
+            {"access_token": NEW_JWT, "expires_in": 3600}
+        )
+
+
+def test_builder_and_setter_latch_the_refresh_token_scope() -> None:
+    from traigent.cloud.auth import AuthStatus
+
+    auth = _flagged_manager()
+    oo.reset_latch()
+    creds = _builder_without_refresh_in_payload(auth)
+    assert creds.refresh_token == REFRESH
+    assert oo.is_latched(_jwt_scope(REFRESH))
+    oo.reset_latch()
+    auth._set_credentials_and_status(creds, AuthStatus.AUTHENTICATED)
+    assert oo.is_latched(_jwt_scope(REFRESH))
+    assert oo.is_latched(_jwt_scope(NEW_JWT))
+
+
+def test_unflagged_builder_and_setter_ignore_refresh_token_latching(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from traigent.cloud.auth import AuthStatus
+
+    auth = _manager()
+    monkeypatch.setattr(oo, "latch_on", _boom)
+    creds = _builder_without_refresh_in_payload(auth)
+    assert creds.refresh_token == REFRESH
+    auth._set_credentials_and_status(creds, AuthStatus.AUTHENTICATED)
+    assert auth._credentials is creds
