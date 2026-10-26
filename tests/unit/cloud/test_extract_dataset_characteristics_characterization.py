@@ -56,10 +56,12 @@ def test_examples_without_input_data_attribute_are_skipped_in_consistency():
     assert out["input_type"] == "str"
 
 
-def test_first_example_without_input_data_with_second_having_it_is_unbound():
+def test_first_example_without_input_data_with_second_having_it_is_inconsistent():
+    # Used to raise UnboundLocalError; now reported as inconsistent structure.
     exs = [NS(expected_output=1), _ex("a")]
-    with pytest.raises(UnboundLocalError):
-        _go(NS(examples=exs))
+    out = _go(NS(examples=exs))
+    assert out["structure_consistent"] is False
+    assert "input_type" not in out
 
 
 def test_first_example_without_input_data_and_none_after_is_fine():
