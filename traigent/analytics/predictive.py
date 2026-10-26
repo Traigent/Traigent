@@ -1223,23 +1223,36 @@ class TrendAnalyzer:
             "pattern_strength": pattern_strength,
         }
 
+    @staticmethod
+    def _extract_metric_points(
+        data_points: Any, metric_name: str
+    ) -> list[tuple[dict[str, Any], Any]]:
+        """Pair each dict point with its metric (or generic ``value``) reading."""
+        values: list[tuple[dict[str, Any], Any]] = []
+        for point in data_points:
+            if not isinstance(point, dict):
+                continue
+            if metric_name in point:
+                values.append((point, point[metric_name]))
+            elif "value" in point:
+                values.append((point, point["value"]))
+        return values
+
+    @staticmethod
+    def _anomaly_severity(z_score: float) -> str | None:
+        """Map a z-score to a severity label (``None`` when not anomalous)."""
+        if z_score > 3:  # 3 sigma rule
+            return "high" if z_score > 4 else "medium"
+        if z_score > 2:  # 2 sigma rule for low severity
+            return "low"
+        return None
+
     def detect_anomalies(self, data_points, metric_name: str) -> list[dict[str, Any]]:
         """Detect anomalies in data."""
         if not data_points or len(data_points) < 3:
             return []
 
-        # Extract values
-        values = []
-        for point in data_points:
-            if isinstance(point, dict):
-                if metric_name in point:
-                    value = point[metric_name]
-                elif "value" in point:
-                    value = point["value"]
-                else:
-                    continue
-                values.append((point, value))
-
+        values = self._extract_metric_points(data_points, metric_name)
         if len(values) < 3:
             return []
 
@@ -1248,34 +1261,25 @@ class TrendAnalyzer:
         mean_val = statistics.mean(value_list)
         std_val = statistics.stdev(value_list) if len(value_list) > 1 else 0
 
-        anomalies = []
+        anomalies: list[dict[str, Any]] = []
+        if std_val <= 0:
+            return anomalies
 
         # Z-score based anomaly detection
         for point, value in values:
-            if std_val > 0:
-                z_score = abs(value - mean_val) / std_val
-
-                if z_score > 3:  # 3 sigma rule
-                    severity = "high" if z_score > 4 else "medium"
-                    anomalies.append(
-                        {
-                            "timestamp": point.get("timestamp", datetime.now(UTC)),
-                            "value": value,
-                            "z_score": z_score,
-                            "severity": severity,
-                            "type": "statistical_outlier",
-                        }
-                    )
-                elif z_score > 2:  # 2 sigma rule for low severity
-                    anomalies.append(
-                        {
-                            "timestamp": point.get("timestamp", datetime.now(UTC)),
-                            "value": value,
-                            "z_score": z_score,
-                            "severity": "low",
-                            "type": "statistical_outlier",
-                        }
-                    )
+            z_score = abs(value - mean_val) / std_val
+            severity = self._anomaly_severity(z_score)
+            if severity is None:
+                continue
+            anomalies.append(
+                {
+                    "timestamp": point.get("timestamp", datetime.now(UTC)),
+                    "value": value,
+                    "z_score": z_score,
+                    "severity": severity,
+                    "type": "statistical_outlier",
+                }
+            )
 
         return anomalies
 
