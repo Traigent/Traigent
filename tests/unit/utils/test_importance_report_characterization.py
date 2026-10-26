@@ -124,3 +124,18 @@ def test_only_top_five_listed_per_method_and_top_three_in_summary():
     assert len(listed) == 5
     focus = [ln for ln in lines if ln.startswith("    • p")]
     assert [ln.split(":")[0] for ln in focus] == ["    • p0", "    • p1", "    • p2"]
+
+
+def test_malformed_later_result_keeps_earlier_valid_line():
+    a = ParameterImportanceAnalyzer("accuracy")
+    variance = {"lr": _res("lr", 0.5), "bs": _res("bs", 0.25, (0.7,))}
+    report = _run(a, variance, {})
+    lines = report.split("\n")
+    start = lines.index("📊 Variance-based Analysis:")
+    assert lines[start : start + 5] == [
+        "📊 Variance-based Analysis:",
+        "-" * 30,
+        "  lr             : 0.500 [0.100, 0.900]",
+        "  Error in analysis: not enough values to unpack (expected 2, got 1)",
+        "",
+    ]

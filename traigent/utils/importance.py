@@ -408,17 +408,23 @@ class ParameterImportanceAnalyzer:
         )
         return sorted_results[:top_k]
 
-    def _format_method_results(self, results: dict[str, ImportanceResult]) -> list[str]:
+    def _format_method_results(
+        self, results: dict[str, ImportanceResult], lines: list[str]
+    ) -> None:
+        """Append result lines to ``lines`` one at a time.
+
+        Appending incrementally (not buffering) keeps already-formatted lines
+        in the report if a later result is malformed and raises.
+        """
         if not results:
-            return ["  No significant importance detected"]
-        lines = []
+            lines.append("  No significant importance detected")
+            return
         for result in self.get_top_parameters(results, top_k=5):
             ci_low, ci_high = result.confidence_interval
             lines.append(
                 f"  {result.parameter_name:15s}: {result.importance_score:.3f} "
                 f"[{ci_low:.3f}, {ci_high:.3f}]"
             )
-        return lines
 
     @staticmethod
     def _format_report_summary(
@@ -502,7 +508,7 @@ class ParameterImportanceAnalyzer:
             try:
                 results = method_func(optimization_result.trials)
                 all_results[method_name] = results
-                report_lines.extend(self._format_method_results(results))
+                self._format_method_results(results, report_lines)
             except Exception as e:
                 report_lines.append(f"  Error in analysis: {e}")
 
