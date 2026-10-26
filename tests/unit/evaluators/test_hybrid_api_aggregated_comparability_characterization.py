@@ -69,3 +69,19 @@ def test_matches_golden(name, monkeypatch):
         GOLDEN.write_text(json.dumps(data, indent=1, sort_keys=True))
         return
     assert got == data[name]
+
+
+def test_odd_non_numeric_metric_value_raises_type_error():
+    ev = HybridAPIEvaluator(api_endpoint="http://unused.invalid")
+    with pytest.raises(TypeError):
+        ev._compute_aggregated_metrics_with_comparability(
+            [_r({"accuracy": "high"})], 0.0
+        )
+
+
+def test_odd_failed_row_with_non_numeric_metric_is_ignored():
+    ev = HybridAPIEvaluator(api_endpoint="http://unused.invalid")
+    aggregated, _ = ev._compute_aggregated_metrics_with_comparability(
+        [_r({"accuracy": "high"}, err="x")], 0.0
+    )
+    assert aggregated["success_rate"] == 0.0
