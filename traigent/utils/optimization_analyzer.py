@@ -552,63 +552,16 @@ class OptimizationAnalyzer:
         if not trials:
             return None
 
-        # Determine objectives to plot
-        if objectives is None or len(objectives) < 2:
-            objectives_data = data.get("objectives", {})
-            if isinstance(objectives_data, dict):
-                all_objectives = objectives_data.get("objectives", [])
-            else:
-                all_objectives = (
-                    objectives_data if isinstance(objectives_data, list) else []
-                )
-
-            # Extract objective names if they're dicts
-            objective_names = []
-            for obj in all_objectives:
-                if isinstance(obj, dict):
-                    objective_names.append(obj.get("name", ""))
-                elif isinstance(obj, str):
-                    objective_names.append(obj)
-
-            if len(objective_names) >= 2:
-                objectives = objective_names[:2]
-            else:
-                logger.warning("Need at least 2 objectives for Pareto front")
-                return None
-
-        # Extract objective values
-        obj1_values = []
-        obj2_values = []
-        for trial in trials:
-            metrics = trial.get("metrics", {})
-            if objectives[0] in metrics and objectives[1] in metrics:
-                obj1_values.append(metrics[objectives[0]])
-                obj2_values.append(metrics[objectives[1]])
-
-        if not obj1_values:
-            logger.warning("No values found for the requested objectives")
+        objectives = _resolve_pareto_objectives(data, objectives)
+        if objectives is None:
             return None
 
-        # Compute Pareto front
-        points = np.array(list(zip(obj1_values, obj2_values, strict=False)))
-        pareto_points = []
+        metric_values = _get_pareto_metric_values(trials, objectives)
+        if metric_values is None:
+            return None
+        obj1_values, obj2_values = metric_values
 
-        for i, point in enumerate(points):
-            dominated = False
-            for j, other in enumerate(points):
-                if i != j:
-                    # Check if 'other' dominates 'point' (assuming maximization)
-                    if (
-                        other[0] >= point[0]
-                        and other[1] >= point[1]
-                        and (other[0] > point[0] or other[1] > point[1])
-                    ):
-                        dominated = True
-                        break
-            if not dominated:
-                pareto_points.append(point)
-
-        pareto_points = np.array(pareto_points)
+        pareto_points = _calculate_pareto_points(obj1_values, obj2_values)
 
         # Create plot
         fig, ax = plt.subplots(figsize=(10, 8))
@@ -821,3 +774,81 @@ def _append_best_configuration(summary: list[str], best_config: dict[str, Any]) 
     summary.append("\nBest Configuration:")
     for key, value in best_config.get("config", {}).items():
         summary.append(f"  {key}: {value}")
+
+
+def _extract_pareto_objective_names(all_objectives: list[Any]) -> list[str]:
+    """Extract stored objective names in their existing iteration order."""
+    objective_names = []
+    for obj in all_objectives:
+        if isinstance(obj, dict):
+            objective_names.append(obj.get("name", ""))
+        elif isinstance(obj, str):
+            objective_names.append(obj)
+    return objective_names
+
+
+def _resolve_pareto_objectives(
+    data: dict[str, Any], objectives: list[str] | None
+) -> list[str] | None:
+    """Resolve the first two stored objective names when explicit ones are absent."""
+    if objectives is None or len(objectives) < 2:
+        objectives_data = data.get("objectives", {})
+        if isinstance(objectives_data, dict):
+            all_objectives = objectives_data.get("objectives", [])
+        else:
+            all_objectives = (
+                objectives_data if isinstance(objectives_data, list) else []
+            )
+
+        objective_names = _extract_pareto_objective_names(all_objectives)
+        if len(objective_names) >= 2:
+            objectives = objective_names[:2]
+        else:
+            logger.warning("Need at least 2 objectives for Pareto front")
+            return None
+
+    return objectives
+
+
+def _get_pareto_metric_values(
+    trials: list[dict[str, Any]], objectives: list[str]
+) -> tuple[list[Any], list[Any]] | None:
+    """Gather complete objective pairs in trial order."""
+    obj1_values = []
+    obj2_values = []
+    for trial in trials:
+        metrics = trial.get("metrics", {})
+        if objectives[0] in metrics and objectives[1] in metrics:
+            obj1_values.append(metrics[objectives[0]])
+            obj2_values.append(metrics[objectives[1]])
+
+    if not obj1_values:
+        logger.warning("No values found for the requested objectives")
+        return None
+
+    return obj1_values, obj2_values
+
+
+def _calculate_pareto_points(
+    obj1_values: list[Any], obj2_values: list[Any]
+) -> np.ndarray:
+    """Return nondominated points with the original maximize-both comparison."""
+    points = np.array(list(zip(obj1_values, obj2_values, strict=False)))
+    pareto_points = []
+
+    for i, point in enumerate(points):
+        dominated = False
+        for j, other in enumerate(points):
+            if i != j:
+                # Check if 'other' dominates 'point' (assuming maximization)
+                if (
+                    other[0] >= point[0]
+                    and other[1] >= point[1]
+                    and (other[0] > point[0] or other[1] > point[1])
+                ):
+                    dominated = True
+                    break
+        if not dominated:
+            pareto_points.append(point)
+
+    return np.array(pareto_points)
