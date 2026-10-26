@@ -221,7 +221,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.fetch_agent_head_generation_sync",
         "raise",
-        "b095aa95e5da58fd",
+        "62886236eb813eea",
     ): (
         1,
         "safe_http_error_summary only",
@@ -257,7 +257,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.publish_best_config_sync",
         "raise",
-        "6e80b36f5f2a4109",  # pragma: allowlist secret
+        "128b79cee23c9049",  # pragma: allowlist secret
     ): (
         1,
         "safe_http_error_summary only",
@@ -809,7 +809,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "decode_result",
         "raise",
-        "4afff28277651612",  # pragma: allowlist secret
+        "8a64165e411768eb",  # pragma: allowlist secret
     ): (
         1,
         _DECODER,
@@ -818,7 +818,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "decode_result",
         "raise",
-        "52448019bbf40e37",  # pragma: allowlist secret
+        "f17729b2fa184b2f",  # pragma: allowlist secret
     ): (
         1,
         _DECODER,
@@ -827,7 +827,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "decode_result",
         "raise",
-        "8905b0fcf7fc8541",  # pragma: allowlist secret
+        "a1ae4c003f92b825",  # pragma: allowlist secret
     ): (
         1,
         _DECODER,
@@ -836,7 +836,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "decode_result",
         "raise",
-        "cdf1bfd8c277e80a",  # pragma: allowlist secret
+        "ff116f015709b897",  # pragma: allowlist secret
     ): (
         1,
         _DECODER,
@@ -863,7 +863,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "verify_envelope_version",
         "raise",
-        "7c6f7eedce6ff880",
+        "fd50b3b3ee6cad66",  # pragma: allowlist secret
     ): (
         1,
         _DECODER,
@@ -872,7 +872,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "verify_envelope_version",
         "raise",
-        "b2c5030f8ca7aa58",  # pragma: allowlist secret
+        "829aaf9707da7eaa",  # pragma: allowlist secret
     ): (
         1,
         _DECODER,
