@@ -137,7 +137,13 @@ def test_requests_fallback_path_latches_too(monkeypatch: pytest.MonkeyPatch) -> 
     assert oo.is_latched(_scope())
 
 
-# ---- a JWT derived from the validated API key inherits the latch ------------------------
+# ---- every credential a flagged manager emits is latched --------------------------------
+
+
+def _validate_on(auth: Any, response: dict[str, Any]) -> None:
+    with capture_egress() as cap:
+        cap.backend.validate_response = response
+        asyncio.run(auth._validate_api_key_with_backend(FAKE_API_KEY))
 
 
 def _manager() -> Any:
@@ -148,7 +154,14 @@ def _manager() -> Any:
     )
 
 
-def _derive(auth: Any, jwt: str, api_key: str = FAKE_API_KEY) -> None:
+def _flagged_manager() -> Any:
+    auth = _manager()
+    _validate_on(auth, {"valid": True, "optimization_only": True})
+    assert auth._server_optimization_only is True
+    return auth
+
+
+def _store(auth: Any, jwt: str, api_key: str | None = None) -> None:
     from traigent.cloud.auth import AuthCredentials, AuthMode, AuthStatus
 
     auth._set_credentials_and_status(
@@ -164,11 +177,10 @@ def _jwt_scope(jwt: str) -> str:
 
 
 @pytest.mark.parametrize("both", [False, True])
-def test_derived_jwt_first_send_is_projected(both: bool) -> None:
+def test_stored_jwt_first_send_is_projected(both: bool) -> None:
     from .test_optimization_only_egress import _create_session_raw, _session_posts
 
-    _validate({"valid": True, "optimization_only": True})
-    _derive(_manager(), "jwt.one.sig")
+    _store(_flagged_manager(), "jwt.one.sig", FAKE_API_KEY)
     headers = {
         "Content-Type": "application/json",
         "Authorization": "Bearer jwt.one.sig",
@@ -183,60 +195,59 @@ def test_derived_jwt_first_send_is_projected(both: bool) -> None:
     assert "Alice" not in post.body.decode()
 
 
-def test_refreshed_token_stays_latched() -> None:
-    _validate({"valid": True, "optimization_only": True})
-    auth = _manager()
-    _derive(auth, "jwt.one.sig")
-    _derive(auth, "jwt.two.sig")
+def test_refresh_response_without_api_key_stays_latched() -> None:
+    auth = _flagged_manager()
+    _store(auth, "jwt.one.sig", FAKE_API_KEY)
+    _store(auth, "jwt.two.sig", None)  # the refresh response carried no API key
     assert oo.is_latched(_jwt_scope("jwt.one.sig"))
     assert oo.is_latched(_jwt_scope("jwt.two.sig"))
 
 
-def test_get_auth_headers_latches_emitted_bearer() -> None:
-    from traigent.cloud.auth import AuthCredentials, AuthMode, AuthStatus
-
-    _validate({"valid": True, "optimization_only": True})
-    auth = _manager()
-    auth._set_credentials_and_status(
-        AuthCredentials(
-            mode=AuthMode.JWT_TOKEN, jwt_token="jwt.h.sig", api_key=FAKE_API_KEY
-        ),
-        AuthStatus.AUTHENTICATED,
-    )
-    oo.reset_latch()  # drop the set-time latch; the emit path must restore it
-    oo.latch_on(_scope())
-    auth._authenticated = True
+def test_get_auth_headers_latches_whatever_it_emits() -> None:
+    auth = _flagged_manager()
+    _store(auth, "jwt.h.sig")
+    oo.reset_latch()  # drop the store-time latch: the emit path must restore it
     headers = asyncio.run(auth.get_auth_headers())
-    assert "Authorization" in headers
+    assert headers.get("Authorization") == "Bearer jwt.h.sig"
     assert oo.is_latched(_jwt_scope("jwt.h.sig"))
 
 
-def test_token_derived_from_unlatched_key_is_unaffected() -> None:
-    _validate({"valid": True, "optimization_only": False})
-    _derive(_manager(), "jwt.free.sig")
+def test_user_jwt_on_unflagged_manager_is_not_latched() -> None:
+    auth = _manager()
+    _validate_on(auth, {"valid": True, "optimization_only": False})
+    assert auth._server_optimization_only is False
+    _store(auth, "jwt.free.sig", FAKE_API_KEY)
     assert not oo.is_latched(_jwt_scope("jwt.free.sig"))
     assert not oo.is_active(oo.Policy(None, _jwt_scope("jwt.free.sig")))
 
 
-def test_other_key_derived_token_is_unaffected() -> None:
-    _validate({"valid": True, "optimization_only": True})
-    _derive(_manager(), "jwt.other.sig", api_key=OTHER_KEY)
+def test_second_manager_with_unrelated_jwt_is_unaffected() -> None:
+    _flagged_manager()
+    other = _manager()
+    _store(other, "jwt.other.sig", OTHER_KEY)
     assert not oo.is_latched(_jwt_scope("jwt.other.sig"))
 
 
-def test_jwt_with_no_api_key_behind_it_is_left_alone() -> None:
-    from traigent.cloud.auth import AuthCredentials, AuthMode, AuthStatus
-
-    _validate({"valid": True, "optimization_only": True})
-    auth = _manager()
-    auth._set_credentials_and_status(
-        AuthCredentials(mode=AuthMode.JWT_TOKEN, jwt_token="jwt.user.sig"),
-        AuthStatus.AUTHENTICATED,
-    )
-    assert not oo.is_latched(_jwt_scope("jwt.user.sig"))
+def test_flag_is_sticky_when_a_later_validation_says_false() -> None:
+    auth = _flagged_manager()
+    _validate_on(auth, {"valid": True, "optimization_only": False})
+    assert auth._server_optimization_only is True
 
 
-def test_explicit_false_still_loses_for_derived_token() -> None:
-    _validate({"valid": True, "optimization_only": True})
-    _derive(_manager(), "jwt.exp.sig")
+def test_explicit_false_still_loses_for_emitted_token() -> None:
+    _store(_flagged_manager(), "jwt.exp.sig")
     assert oo.is_active(oo.Policy(False, _jwt_scope("jwt.exp.sig")))
+
+
+def test_unflagged_hot_path_computes_no_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[Any] = []
+    real = oo.credential_scope
+    monkeypatch.setattr(
+        oo, "credential_scope", lambda *a, **k: calls.append(a) or real(*a, **k)
+    )
+    auth = _manager()
+    _store(auth, "jwt.n.sig")
+    asyncio.run(auth.get_auth_headers())
+    assert calls == []

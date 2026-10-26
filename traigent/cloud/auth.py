@@ -96,18 +96,21 @@ def _headers_to_lower_dict(headers: Any | None) -> dict[str, str]:
     return {str(key).lower(): str(value).lower() for key, value in items()}
 
 
-def _latch_key_validation(url: str, headers: dict[str, str], data: Any) -> None:
+def _latch_key_validation(url: str, headers: dict[str, str], data: Any) -> bool:
     """Latch optimization_only for this credential when ``/keys/validate`` says so.
 
     Runs before the validation result is returned, so the first content-bearing send
-    after authentication is already judged under the mode. Never raises.
+    after authentication is already judged under the mode. Returns True when the
+    response asked for the mode. Never raises.
     """
     try:
         from traigent.utils import optimization_only_egress as oo_egress
 
-        oo_egress.note_key_validation(data, oo_egress.credential_scope(url, headers))
+        return oo_egress.note_key_validation(
+            data, oo_egress.credential_scope(url, headers)
+        )
     except Exception:  # noqa: BLE001 - observation must never break authentication
-        return
+        return False
 
 
 def _parse_validation_payload(data: Any | None, raw_body: str | None) -> dict[str, Any]:
@@ -586,6 +589,8 @@ class AuthManager:
 
         self.config = config or UnifiedAuthConfig()
         self.no_egress = bool(no_egress)
+        #: Sticky: set when /keys/validate answered optimization_only true; never cleared.
+        self._server_optimization_only = False
 
         # Authentication state
         self._credentials: AuthCredentials | None = None
@@ -724,32 +729,29 @@ class AuthManager:
         self._credentials = credentials
         self._auth_status = status
         if credentials is not None and credentials.jwt_token:
-            self._carry_optimization_only_latch(
+            self._latch_emitted_credential(
                 {"Authorization": f"Bearer {credentials.jwt_token}"}
             )
 
-    def _carry_optimization_only_latch(self, derived_headers: dict[str, str]) -> None:
-        """Latch the scope of a JWT/Bearer derived from this manager's API key.
+    def _latch_emitted_credential(self, headers: dict[str, str]) -> None:
+        """Latch the scope of the credential this manager is about to emit.
 
-        The single place that carries a ``/keys/validate`` optimization_only latch across
-        credential derivation (login, exchange, refresh, OAuth2): called whenever the
-        manager stores a token and whenever it emits auth headers. A JWT supplied with no
-        API key behind it is a credential from outside the SDK and is left alone. Never
-        raises.
+        Once ``/keys/validate`` has said ``optimization_only: true`` through this manager
+        (``_server_optimization_only``, never cleared) EVERY credential it emits belongs to
+        the client it authenticated, so each emitted credential's scope is latched: the API
+        key, a login/exchange JWT, a refreshed JWT (with or without an API key in the
+        refresh response), whatever. This is deliberately over-inclusive: a user-supplied
+        JWT on a flagged manager is restricted too. Over-restriction is fail-safe; a missed
+        scope would let content out. Unflagged managers pay one attribute check. Never raises.
         """
+        if not self._server_optimization_only:
+            return
         try:
-            if "Authorization" not in derived_headers:
-                return
             from traigent.config.backend_config import BackendConfig
             from traigent.utils import optimization_only_egress as oo_egress
 
-            # Only a key carried by the same credentials record counts as the source: a
-            # bare JWT (user-supplied, or from an OAuth2 client flow) is not derived from it.
-            key = self._credentials.api_key if self._credentials else None
-            if not key:
-                return
             base = self.config.backend_base_url or BackendConfig.get_cloud_backend_url()
-            oo_egress.carry_latch(base, {"X-API-Key": key}, derived_headers)
+            oo_egress.latch_on(oo_egress.credential_scope(base, headers))
         except Exception:  # noqa: BLE001 - observation must never break authentication
             return
 
@@ -1214,7 +1216,7 @@ class AuthManager:
         else:
             headers = {}
 
-        self._carry_optimization_only_latch(headers)
+        self._latch_emitted_credential(headers)
         self._add_common_headers(headers, target)
         return headers
 
@@ -1770,7 +1772,8 @@ class AuthManager:
                             data = await response.json(content_type=None)
                         except Exception:
                             return "backend returned non-JSON success body"
-                        _latch_key_validation(url, headers, data)
+                        if _latch_key_validation(url, headers, data):
+                            self._server_optimization_only = True
                         return self._interpret_backend_key_validation_response(
                             response.status,
                             data,
@@ -1942,7 +1945,8 @@ class AuthManager:
                 data = response.json()
             except Exception:
                 return "backend returned non-JSON success body"
-            _latch_key_validation(url, headers, data)
+            if _latch_key_validation(url, headers, data):
+                self._server_optimization_only = True
             return self._interpret_backend_key_validation_response(
                 status,
                 data,
