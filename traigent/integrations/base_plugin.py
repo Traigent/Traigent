@@ -386,6 +386,22 @@ class IntegrationPlugin(ABC):
                 truncated,
             )
 
+    def _apply_validation_overrides(self, validation: Mapping[str, Any]) -> None:
+        for param_name, rule_data in validation.items():
+            if param_name not in self._validation_rules:
+                self._validation_rules[param_name] = ValidationRule()
+
+            self._apply_attribute_overrides(
+                self._validation_rules[param_name], rule_data
+            )
+
+    @staticmethod
+    def _apply_attribute_overrides(target: Any, values: Mapping[str, Any]) -> None:
+        """Set each known attribute of ``target`` from ``values``."""
+        for key, value in values.items():
+            if hasattr(target, key):
+                setattr(target, key, value)
+
     def _load_config_overrides(self, config_path: Path) -> None:
         """Load configuration overrides from YAML or JSON file.
 
@@ -417,20 +433,11 @@ class IntegrationPlugin(ABC):
 
             # Override validation rules
             if "validation" in config_data:
-                for param_name, rule_data in config_data["validation"].items():
-                    if param_name not in self._validation_rules:
-                        self._validation_rules[param_name] = ValidationRule()
-
-                    rule = self._validation_rules[param_name]
-                    for key, value in rule_data.items():
-                        if hasattr(rule, key):
-                            setattr(rule, key, value)
+                self._apply_validation_overrides(config_data["validation"])
 
             # Override metadata if specified
             if "metadata" in config_data:
-                for key, value in config_data["metadata"].items():
-                    if hasattr(self.metadata, key):
-                        setattr(self.metadata, key, value)
+                self._apply_attribute_overrides(self.metadata, config_data["metadata"])
 
             logger.info(f"Loaded configuration overrides from {config_path}")
 
