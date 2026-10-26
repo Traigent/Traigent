@@ -192,7 +192,7 @@ class ConfigurationMapper:
         """
         return self._platform_mappings.get(platform.lower())
 
-    def validate_configuration_compatibility(  # noqa: C901
+    def validate_configuration_compatibility(
         self, agent_spec: AgentSpecification, config_space: dict[str, Any]
     ) -> dict[str, Any]:
         """Validate that configuration space is compatible with agent.
@@ -223,32 +223,25 @@ class ConfigurationMapper:
 
         # Check if config space parameters can be mapped
         for param_name in config_space.keys():
-            mapped = False
-            for param_mapping in mapping.parameter_mappings:
-                if param_mapping.source_key == param_name:
-                    mapped = True
-                    supported_parameters.append(param_name)
-
-                    # Validate parameter space definition if validation function exists
-                    if param_mapping.validation:
-                        try:
-                            # For config space validation, check if it's a list or tuple
-                            param_space = config_space[param_name]
-                            if isinstance(param_space, (list, tuple)):
-                                # Validate each possible value
-                                for value in param_space:
-                                    param_mapping.validation(value)
-                            else:
-                                # Single value validation
-                                param_mapping.validation(param_space)
-                        except (ValueError, TypeError) as e:
-                            warnings.append(f"Parameter {param_name}: {e}")
-                    break
-
-            if not mapped:
+            param_mapping = next(
+                (
+                    candidate
+                    for candidate in mapping.parameter_mappings
+                    if candidate.source_key == param_name
+                ),
+                None,
+            )
+            if param_mapping is None:
                 warnings.append(
                     f"Parameter '{param_name}' has no mapping for platform '{platform}'"
                 )
+                continue
+            supported_parameters.append(param_name)
+            warning = self._parameter_space_warning(
+                param_mapping, param_name, config_space
+            )
+            if warning is not None:
+                warnings.append(warning)
 
         return {
             "compatible": len(errors) == 0,
@@ -256,6 +249,30 @@ class ConfigurationMapper:
             "warnings": warnings,
             "supported_parameters": supported_parameters,
         }
+
+    @staticmethod
+    def _parameter_space_warning(
+        param_mapping: ParameterMapping,
+        param_name: str,
+        config_space: dict[str, Any],
+    ) -> str | None:
+        """Warning text when the mapping's validation rejects the parameter space."""
+        # Validate parameter space definition if validation function exists
+        if not param_mapping.validation:
+            return None
+        try:
+            # For config space validation, check if it's a list or tuple
+            param_space = config_space[param_name]
+            if isinstance(param_space, (list, tuple)):
+                # Validate each possible value
+                for value in param_space:
+                    param_mapping.validation(value)
+            else:
+                # Single value validation
+                param_mapping.validation(param_space)
+        except (ValueError, TypeError) as e:
+            return f"Parameter {param_name}: {e}"
+        return None
 
     def _apply_parameter_mappings(
         self, spec: AgentSpecification, config: dict[str, Any], mapping: PlatformMapping
