@@ -32,6 +32,7 @@ import ast
 import copy
 import hashlib
 import io
+import ipaddress
 import json
 import math
 import os
@@ -1669,7 +1670,7 @@ def env_setting(environ: Mapping[str, str] | None = None) -> bool | None:
 _CREDENTIAL_HEADERS = ("authorization", "x-api-key", "x-service-key")
 
 
-def _normalised_origin(url: Any) -> str:
+def normalised_origin(url: Any) -> str:
     """``scheme://host[:port]``: lowercase host, default port dropped, so equivalent
     spellings of one origin share a latch."""
     try:
@@ -1679,7 +1680,15 @@ def _normalised_origin(url: Any) -> str:
         port = parts.port
     except ValueError:
         return ""
-    if ":" in host:
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address is not None:
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+            address = address.ipv4_mapped  # ::ffff:1.2.3.4 is the IPv4 address
+        host = f"[{address}]" if address.version == 6 else str(address)
+    elif ":" in host:
         host = f"[{host}]"
     default = {"https": 443, "http": 80}.get(scheme)
     suffix = f":{port}" if port and port != default else ""
@@ -1709,7 +1718,7 @@ def credential_scope(url: Any, headers: Any = None) -> str | None:
             break
     if not material:
         return None
-    origin = _normalised_origin(url)
+    origin = normalised_origin(url)
     digest = hashlib.sha256(material.encode("utf-8")).hexdigest()
     return f"{origin}|{digest}"
 
@@ -1797,6 +1806,12 @@ def policy_from_environment(url: Any, explicit: bool | None = None) -> Policy:
     except Exception:  # noqa: BLE001 - silent-ok: no configured credential, no scope
         key = None
     return Policy(explicit, credential_scope(url, {"X-API-Key": key} if key else None))
+
+
+def latched_origins() -> set[str]:
+    """Origins of every latched credential scope (``origin|fingerprint`` keys)."""
+    with _latch_lock:
+        return {scope.split("|", 1)[0] for scope in _latched_scopes}
 
 
 def latch_on(scope: str | None) -> None:
@@ -2132,12 +2147,19 @@ def project_finalize_payload(data: Any) -> dict[str, Any]:
                 out[key] = s_closed_tree(out[key], _Ctx(), 0)
             except _Drop:
                 raise MetadataContractViolation from None
+    if out.get("request_metadata") is not None:
+        # free-form like ``metadata``: the backend empties finalize metadata, so do the same
+        if not isinstance(out["request_metadata"], dict):
+            raise MetadataContractViolation
+        out["request_metadata"] = {}
+    if out.get("include_full_history") is not None and not isinstance(
+        out["include_full_history"], bool
+    ):
+        raise MetadataContractViolation
+    if out.get("session_id") is not None:
+        out["session_id"] = _strict_id(out["session_id"], _Ctx())
     for key in list(out):
-        if key in FINALIZE_KEYS:
-            continue
-        try:
-            out[key] = _closed_passthrough(out[key])
-        except _Drop:
+        if key not in FINALIZE_KEYS:  # unknown members are dropped whatever their value
             del out[key]
     return out
 
@@ -2512,6 +2534,55 @@ def _api_tails(path: str, prefixes: Iterable[str]) -> list[str]:
     return tails
 
 
+def _reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError("duplicate JSON member")
+        out[key] = value
+    return out
+
+
+def _refuse_constant(_name: str) -> Any:
+    raise ValueError("non-finite JSON constant")
+
+
+def loads_strict(body: bytes | bytearray | str) -> Any:
+    """Parse a request body exactly as a server would see it: UTF-8, no duplicate object
+    members at any depth, no NaN/Infinity. Raises ``ValueError`` otherwise."""
+    text = bytes(body).decode("utf-8") if isinstance(body, (bytes, bytearray)) else body
+    return json.loads(
+        text, object_pairs_hook=_reject_duplicates, parse_constant=_refuse_constant
+    )
+
+
+def canonical_json_bytes(value: Any) -> bytes:
+    """The one serialisation transmitted for a validated body (what was judged is sent)."""
+    return json.dumps(value, separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+
+_TOKEN_RE = re.compile(r"^[\x21-\x7e]{1,4096}$")
+_EMAIL_RE = re.compile(r"^[^\s@]{1,128}@[^\s@]{1,255}$")
+_SCOPE_RE = re.compile(r"^[A-Za-z0-9_.:/ -]{0,256}$")
+_GRANT_TYPES = frozenset(
+    {"client_credentials", "refresh_token", "password", "authorization_code"}
+)
+
+
+def _auth_value_ok(field: str, value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    if field == "email":
+        return _EMAIL_RE.fullmatch(value) is not None
+    if field == "grant_type":
+        return value in _GRANT_TYPES
+    if field == "scope":
+        return _SCOPE_RE.fullmatch(value) is not None
+    if field == "password":
+        return 1 <= len(value) <= 1024 and value.isprintable()
+    return _TOKEN_RE.fullmatch(value) is not None
+
+
 def _auth_body_ok(path_tail: str, body: Any) -> bool:
     fields = next(
         (
@@ -2524,16 +2595,32 @@ def _auth_body_ok(path_tail: str, body: Any) -> bool:
     if fields is None or body is UNREADABLE_BODY:
         return False
     parsed = body
-    if isinstance(body, (bytes, bytearray)):
-        body = bytes(body).decode("utf-8", "replace")
-    if isinstance(body, str):
+    if isinstance(body, (bytes, bytearray, str)):
         try:
-            parsed = json.loads(body)
+            parsed = loads_strict(body)
         except ValueError:
             from urllib.parse import parse_qsl
 
-            parsed = dict(parse_qsl(body, keep_blank_values=True))
-    return isinstance(parsed, dict) and set(parsed) <= fields
+            try:
+                text = (
+                    bytes(body).decode("utf-8")
+                    if isinstance(body, (bytes, bytearray))
+                    else body
+                )
+            except UnicodeDecodeError:
+                return False
+            pairs = parse_qsl(text, keep_blank_values=True)
+            if len({k for k, _ in pairs}) != len(pairs):
+                return False  # duplicate form field
+            parsed = dict(pairs)
+    return (
+        isinstance(parsed, dict)
+        and set(parsed) <= fields
+        and all(_auth_value_ok(k, v) for k, v in parsed.items())
+    )
+
+
+_INACTIVE = object()
 
 
 def enforce_outgoing(
@@ -2544,7 +2631,34 @@ def enforce_outgoing(
     *,
     explicit: bool | Policy | None = None,
     api_prefixes: Iterable[str] = (),
-) -> None:
+) -> bytes | None:
+    """Judge one request (see :func:`_judge_outgoing`); raise to refuse.
+
+    Returns ``None`` normally. When the body arrived as bytes/str and was validated as JSON,
+    returns its CANONICAL serialisation: the caller should transmit that, so exactly what was
+    judged (duplicate members refused, one canonical encoding) is what is sent.
+    """
+    parsed = _judge_outgoing(
+        method, url, headers, body, explicit=explicit, api_prefixes=api_prefixes
+    )
+    if (
+        parsed is _INACTIVE
+        or parsed is None
+        or not isinstance(body, (bytes, bytearray, str))
+    ):
+        return None
+    return canonical_json_bytes(parsed)
+
+
+def _judge_outgoing(
+    method: str,
+    url: Any,
+    headers: Any,
+    body: Any,
+    *,
+    explicit: bool | Policy | None = None,
+    api_prefixes: Iterable[str] = (),
+) -> Any:
     """Transport backstop for one request (FINAL url/headers/body).
 
     Mode inactive for the request's credential: returns at once. Mode active: DEFAULT-DENY.
@@ -2558,7 +2672,7 @@ def enforce_outgoing(
     headers_scope = credential_scope(url, headers) if scope_required(None) else None
     base = explicit.explicit if isinstance(explicit, Policy) else explicit
     if not is_active(Policy(base, headers_scope)):
-        return
+        return _INACTIVE
     from urllib.parse import parse_qsl, unquote
 
     parts = urlsplit(str(url))
@@ -2597,17 +2711,17 @@ def enforce_outgoing(
     if route.kind == "read":
         if has_body:
             raise OptimizationOnlyRefusal("body_not_allowed")
-        return
+        return None
     if route.kind == "auth":
         if not _auth_body_ok(tail, body):
             raise OptimizationOnlyRefusal("auth_body_not_closed")
-        return
+        return None
     if body is UNREADABLE_BODY:
         raise OptimizationOnlyRefusal("body_unreadable")
     parsed = body
     if isinstance(body, (bytes, bytearray, str)):
         try:
-            parsed = json.loads(body) if body else None
+            parsed = loads_strict(body) if body else None
         except ValueError:
             raise OptimizationOnlyRefusal("body_not_json") from None
     if route.kind == "director":
@@ -2618,9 +2732,9 @@ def enforce_outgoing(
         )
         if not _director_conforms(parsed, allowed):
             raise OptimizationOnlyRefusal("director_request")
-        return
+        return parsed
     if route.phase is None:
-        return
+        return parsed
     if not isinstance(parsed, (dict, list)):
         raise OptimizationOnlyRefusal("body_missing")
     session_id = session_id_from_url(tail)
@@ -2637,11 +2751,12 @@ def enforce_outgoing(
             items = [parsed]
         if not all(_is_fixed_point(route.phase, item, session_id) for item in items):
             raise OptimizationOnlyRefusal("body_not_projected")
-        return
+        return parsed
     if not _is_fixed_point(route.phase, parsed, session_id):
         raise OptimizationOnlyRefusal("body_not_projected")
     if route.phase == PHASE_SESSION_CREATE_AUTO and _payload_embeds_examples(parsed):
         raise OptimizationOnlyRefusal("embedded_examples")
+    return parsed
 
 
 def explicit_of(client: Any) -> bool | None:

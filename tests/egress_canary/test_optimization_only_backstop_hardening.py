@@ -315,7 +315,7 @@ def test_finalize_projection_closes_both_members_and_unknown_fields() -> None:
     )
     assert out["certified_selection"] == {"ok": True}
     assert out["session_aggregation"] == {"selection": {}, "n": 1}
-    assert "extra_text" not in out and out["extra_id"] == "run_9"
+    assert "extra_text" not in out and "extra_id" not in out  # unknown members dropped
     with pytest.raises(oo.MetadataContractViolation):
         oo.project_for_phase(oo.PHASE_FINALIZE, {"certified_selection": "text"})
 

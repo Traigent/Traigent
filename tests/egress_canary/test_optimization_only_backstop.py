@@ -103,13 +103,25 @@ def test_the_scanner_resolves_aliased_imports_and_preflight_order() -> None:
         ("httpx-client", False),
         ("urllib-opener", False),
     ]
-    # a preflight AFTER the raw call (or none) does not gate it
+    # only an UNCONDITIONAL preflight statement immediately before the call, in the same
+    # block, gates it: not one after it, in a dead branch, or one that does not dominate it
     assert _scan_source(
         "import requests\n"
         "from traigent.labels.transport_gate import preflight_requests as pre\n"
         "def late():\n    requests.get('u')\n    pre('GET', 'u')\n"
         "def early():\n    pre('GET', 'u')\n    requests.get('u')\n"
-    ) == [("requests-call", False), ("requests-call", True)]
+        "def dead():\n    if False:\n        pre('GET', 'u')\n    requests.get('u')\n"
+        "def cond(flag):\n    if flag:\n        pre('GET', 'u')\n    requests.get('u')\n"
+        "def far():\n    pre('GET', 'u')\n    x = 1\n    requests.get('u')\n"
+        "def in_try():\n    try:\n        pre('GET', 'u')\n        r = requests.get('u')\n    finally:\n        pass\n"
+    ) == [
+        ("requests-call", False),
+        ("requests-call", True),
+        ("requests-call", False),
+        ("requests-call", False),
+        ("requests-call", False),
+        ("requests-call", True),
+    ]
 
 
 # ------------------------------------------- default-deny: unknown routes are refused

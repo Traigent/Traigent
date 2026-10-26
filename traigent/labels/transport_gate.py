@@ -368,6 +368,24 @@ def _configured_api_prefixes() -> frozenset[str]:
         return frozenset()
 
 
+#: Normalised origins of every NON-external gated session (the Traigent backends the SDK talks
+#: to), so an external-marked session can never be pointed back at one of them.
+_traigent_origin_registry: set[str] = set()
+
+
+def _known_traigent_origins() -> set[str]:
+    known = set(_traigent_origin_registry) | oo_egress.latched_origins()
+    for scheme, host, port in backend_origins():
+        shown = f"[{host}]" if ":" in host else host
+        known.add(oo_egress.normalised_origin(f"{scheme}://{shown}:{port}"))
+    return known
+
+
+def _refuse_external_to_traigent(url: Any) -> None:
+    if oo_egress.normalised_origin(url) in _known_traigent_origins():
+        raise oo_egress.OptimizationOnlyRefusal("external_session_to_traigent_origin")
+
+
 def enforce_optimization_only(
     method: str,
     url: Any,
@@ -376,17 +394,19 @@ def enforce_optimization_only(
     body: Any = None,
     explicit: bool | None = None,
     api_prefixes: Iterable[str] = (),
-) -> None:
+) -> bytes | None:
     """Transport backstop (default-deny while optimization_only is active).
 
     Called by every wrapper with the FINAL method, URL, headers and body, immediately before
-    bytes leave, for requests to ANY origin: sessions the SDK creates for customer or
-    third-party endpoints are marked ``external`` at creation and never reach this function,
-    and provider SDKs do not use the gate. Mode off and nothing latched: one cheap check.
+    bytes leave, for requests to ANY origin. Sessions the SDK creates for customer or
+    third-party endpoints are marked ``external`` at creation and judged only for "is this
+    actually a Traigent backend origin" (refused if so); provider SDKs do not use the gate.
+    Mode off and nothing latched: one cheap check. Returns the canonical body bytes to
+    transmit in place of the original, or ``None``.
     """
     if not oo_egress.outgoing_may_be_active(explicit):
-        return
-    oo_egress.enforce_outgoing(
+        return None
+    return oo_egress.enforce_outgoing(
         method,
         url,
         headers,
@@ -398,14 +418,16 @@ def enforce_optimization_only(
 
 def _enforce_for_session(
     session: Any, method: str, url: Any, headers_fn: Any, body_fn: Any
-) -> None:
-    """The wrapper hook: judge one request unless the session is external or inactive."""
+) -> bytes | None:
+    """The wrapper hook: judge one request. External sessions are refused if their target is
+    a known Traigent origin; otherwise skipped. Returns replacement body bytes or ``None``."""
     explicit = getattr(session, "_traigent_oo_explicit", None)
     if not oo_egress.outgoing_may_be_active(explicit):
-        return
+        return None
     if getattr(session, "_traigent_oo_external", False):
-        return
-    enforce_optimization_only(
+        _refuse_external_to_traigent(url)
+        return None
+    return enforce_optimization_only(
         method,
         url,
         headers=headers_fn(),
@@ -416,9 +438,8 @@ def _enforce_for_session(
 
 
 def _oo_redirects_refused(session: Any) -> bool:
-    return not getattr(
-        session, "_traigent_oo_external", False
-    ) and oo_egress.outgoing_may_be_active(
+    """While the mode is active NO gated session (external ones included) follows a redirect."""
+    return oo_egress.outgoing_may_be_active(
         getattr(session, "_traigent_oo_explicit", None)
     )
 
@@ -451,18 +472,24 @@ class GatedOpenerDirector(urllib.request.OpenerDirector):
 
     def open(self, fullurl: Any, data: Any = None, *args: Any, **kwargs: Any) -> Any:
         if isinstance(fullurl, urllib.request.Request):
-            enforce_optimization_only(
+            replacement = enforce_optimization_only(
                 fullurl.get_method(),
                 fullurl.full_url,
                 headers=dict(fullurl.header_items()),
                 body=_bytes_body(data if data is not None else fullurl.data),
             )
+            if replacement is not None:
+                fullurl.data = replacement
+                fullurl.add_unredirected_header("Content-length", str(len(replacement)))
+                data = None
         else:
-            enforce_optimization_only(
+            replacement = enforce_optimization_only(
                 "POST" if data is not None else "GET",
                 str(fullurl),
                 body=_bytes_body(data),
             )
+            if replacement is not None:
+                data = replacement
         return super().open(fullurl, data, *args, **kwargs)
 
 
@@ -503,13 +530,15 @@ def _build_aiohttp(base: type) -> type:
                 url = str(base_url).rstrip("/") + "/" + url.lstrip("/")
             url = _with_params(url, kwargs.get("params"))
             _check_strict(self, url)
-            _enforce_for_session(
+            replacement = _enforce_for_session(
                 self,
                 str(method),
                 url,
                 lambda: _effective_headers(self, kwargs),
                 lambda: _aiohttp_body(kwargs),
             )
+            if replacement is not None and kwargs.get("json") is None:
+                kwargs["data"] = replacement  # send exactly what was judged
             extra = _instance_origins(self)
             body: bytes | None = None
             unreadable = False
@@ -576,13 +605,16 @@ def _build_requests(base: type) -> type:
                 body = body.encode("utf-8")
             readable = body is None or isinstance(body, (bytes, bytearray))
             _check_strict(self, str(request.url))
-            _enforce_for_session(
+            replacement = _enforce_for_session(
                 self,
                 str(request.method),
                 str(request.url),
                 lambda: request.headers,
                 lambda: _bytes_body(request.body),
             )
+            if replacement is not None:
+                request.body = replacement
+                request.headers["Content-Length"] = str(len(replacement))
             inspect_outgoing(
                 str(request.method),
                 str(request.url),
@@ -604,6 +636,15 @@ def _build_requests(base: type) -> type:
 
     GatedRequestsSession.__name__ = f"Gated{base.__name__}"
     return GatedRequestsSession
+
+
+def _replace_httpx_body(request: Any, content: bytes) -> None:
+    """Swap an httpx request's body for the canonical, validated bytes."""
+    import httpx
+
+    request.stream = httpx.ByteStream(content)
+    request._content = content  # noqa: SLF001 - httpx has no public setter
+    request.headers["Content-Length"] = str(len(content))
 
 
 def _httpx_body(request: Any) -> tuple[bytes | None, bool]:
@@ -638,13 +679,15 @@ def _build_httpx_sync(base: type) -> type:
         def send(self, request: Any, **kwargs: Any) -> Any:
             body, unreadable = _httpx_body(request)
             _check_strict(self, str(request.url))
-            _enforce_for_session(
+            replacement = _enforce_for_session(
                 self,
                 str(request.method),
                 str(request.url),
                 lambda: request.headers,
                 lambda: oo_egress.UNREADABLE_BODY if unreadable else body,
             )
+            if replacement is not None:
+                _replace_httpx_body(request, replacement)
             inspect_outgoing(
                 str(request.method),
                 str(request.url),
@@ -675,13 +718,15 @@ def _build_httpx_async(base: type) -> type:
         async def send(self, request: Any, **kwargs: Any) -> Any:
             body, unreadable = _httpx_body(request)
             _check_strict(self, str(request.url))
-            _enforce_for_session(
+            replacement = _enforce_for_session(
                 self,
                 str(request.method),
                 str(request.url),
                 lambda: request.headers,
                 lambda: oo_egress.UNREADABLE_BODY if unreadable else body,
             )
+            if replacement is not None:
+                _replace_httpx_body(request, replacement)
             inspect_outgoing(
                 str(request.method),
                 str(request.url),
@@ -756,6 +801,10 @@ def gate_session(
             object.__setattr__(client, "_traigent_oo_explicit", optimization_only)
         if external:
             object.__setattr__(client, "_traigent_oo_external", True)
+        else:
+            _traigent_origin_registry.update(
+                n for u in (origins or ()) if (n := oo_egress.normalised_origin(u))
+            )
         prefixes = frozenset(
             urlsplit(str(u)).path.rstrip("/") for u in (origins or ()) if str(u)
         )
@@ -784,7 +833,10 @@ def preflight_requests(
     The body is prepared exactly as ``requests`` will prepare it (deterministic JSON
     encoding); the caller then makes its normal call.
     """
-    if not external:
+    if external:
+        if oo_egress.outgoing_may_be_active(None):
+            _refuse_external_to_traigent(_with_params(str(url), kwargs.get("params")))
+    else:
         enforce_optimization_only(
             method,
             _with_params(str(url), kwargs.get("params")),

@@ -119,6 +119,35 @@ class _Visitor(ast.NodeVisitor):
             )
         self.generic_visit(node)
 
+    def _preceded_by_preflight(self) -> bool:
+        """True iff the statement holding the raw call is immediately preceded, in the SAME
+        block, by an unconditional ``preflight_requests(...)`` expression statement (so it
+        dominates the call and cannot sit in an always-false branch)."""
+        stmts = [n for n in self._parents if isinstance(n, ast.stmt)]
+        if not stmts:
+            return False
+        current = stmts[-1]
+        parent = (
+            stmts[-2] if len(stmts) > 1 else self._parents[0] if self._parents else None
+        )
+        if parent is None:
+            return False
+        for field in ("body", "orelse", "finalbody", "handlers"):
+            block = getattr(parent, field, None)
+            if isinstance(block, list) and current in block:
+                index = block.index(current)
+                if index == 0:
+                    return False
+                previous = block[index - 1]
+                return (
+                    isinstance(previous, ast.Expr)
+                    and isinstance(previous.value, ast.Call)
+                    and self._resolve(_dotted(previous.value.func)).endswith(
+                        "preflight_requests"
+                    )
+                )
+        return False
+
     def _gated(self, node: ast.Call, kind: str) -> bool:
         parent = self._parents[-1] if self._parents else None
         if kind in ("aiohttp-session", "requests-session", "httpx-client"):
@@ -128,13 +157,7 @@ class _Visitor(ast.NodeVisitor):
                 == "gate_session"
             )
         if kind in ("requests-call", "httpx-call"):
-            fn = self._functions[-1] if self._functions else None
-            return fn is not None and any(
-                isinstance(n, ast.Call)
-                and self._resolve(_dotted(n.func)).endswith("preflight_requests")
-                and n.lineno < node.lineno  # the preflight runs BEFORE the raw call
-                for n in ast.walk(fn)
-            )
+            return self._preceded_by_preflight()
         if kind == "urllib-opener":
             return isinstance(parent, ast.Call) and self._resolve(
                 _dotted(parent.func)
