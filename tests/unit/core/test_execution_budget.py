@@ -164,6 +164,92 @@ def test_lease_context_retains_allowance_on_failure(failure: BaseException) -> N
     assert budget.debit_snapshot().reserved_budget_debit_usd == 0
 
 
+def test_lease_context_preserves_explicit_settlement() -> None:
+    budget = ExecutionBudget(max_budget_debit_usd=0.1)
+    with budget.reserve_debit(0.05) as lease:
+        lease.settle_debit(0.03)
+    assert budget.debit_snapshot().consumed_budget_debit_usd == pytest.approx(0.03)
+    assert budget.debit_snapshot().reserved_budget_debit_usd == 0
+    with pytest.raises(ValueError, match="closed"):
+        lease.settle_debit()
+
+
+def test_lease_context_preserves_explicit_nonbilling_release() -> None:
+    budget = ExecutionBudget(max_budget_debit_usd=0.1)
+    with budget.reserve_debit(0.05) as lease:
+        lease.release_debit()
+    assert budget.debit_snapshot().consumed_budget_debit_usd == 0
+    assert budget.debit_snapshot().reserved_budget_debit_usd == 0
+    with pytest.raises(ValueError, match="closed"):
+        lease.release_debit()
+
+
+@pytest.mark.parametrize("close", ["settle_debit", "release_debit"])
+def test_lease_context_does_not_mask_body_error_after_explicit_close(
+    close: str,
+) -> None:
+    budget = ExecutionBudget(max_budget_debit_usd=0.1)
+    failure = RuntimeError("original body failure")
+    with pytest.raises(RuntimeError) as propagated:
+        with budget.reserve_debit(0.05) as lease:
+            getattr(lease, close)()
+            raise failure
+    assert propagated.value is failure
+    assert budget.debit_snapshot().reserved_budget_debit_usd == 0
+    assert budget.debit_snapshot().consumed_budget_debit_usd == pytest.approx(
+        0.05 if close == "settle_debit" else 0
+    )
+
+
+@pytest.mark.parametrize("closed", [False, True])
+def test_debit_context_rejects_unfunded_entry(closed: bool) -> None:
+    budget = ExecutionBudget(max_budget_debit_usd=0.1)
+    if closed:
+        lease = budget.reserve_debit(0.05)
+        lease.release_debit()
+    else:
+        lease = BudgetDebitLease(budget, 0.05)  # never admitted by the ledger
+    with pytest.raises(ValueError):
+        with lease:
+            pytest.fail("Unfunded context body must not run")
+    assert budget.debit_snapshot().consumed_budget_debit_usd == 0
+
+
+def test_automatic_context_cleanup_rejects_forged_and_foreign_leases() -> None:
+    budget = ExecutionBudget(max_budget_debit_usd=0.1)
+    foreign = ExecutionBudget(max_budget_debit_usd=0.1).reserve_debit(0.05)
+    foreign.release_debit()
+    for invalid in (BudgetDebitLease(budget, 0.05), foreign):
+        with pytest.raises(ValueError):
+            budget._finish_debit_context(invalid)
+    assert budget.debit_snapshot().consumed_budget_debit_usd == 0
+
+
+def test_automatic_context_cleanup_races_with_explicit_settlement_once() -> None:
+    budget = ExecutionBudget(max_budget_debit_usd=1)
+    lease = budget.reserve_debit(0.05)
+    lease.__enter__()
+    start = threading.Barrier(2)
+
+    def explicit_close() -> None:
+        start.wait(timeout=5)
+        try:
+            lease.settle_debit(0.03)
+        except ValueError:
+            pass  # automatic cleanup won; direct duplicate closure still rejects
+
+    def automatic_close() -> None:
+        start.wait(timeout=5)
+        assert lease.__exit__(None, None, None) is False
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(explicit_close), pool.submit(automatic_close)]
+        for future in futures:
+            future.result(timeout=5)
+    assert budget.debit_snapshot().consumed_budget_debit_usd in (0.03, 0.05)
+    assert budget.debit_snapshot().reserved_budget_debit_usd == 0
+
+
 # ---------------------------------------------------------------------------
 # Public export
 # ---------------------------------------------------------------------------

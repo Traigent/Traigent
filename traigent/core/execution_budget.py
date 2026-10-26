@@ -115,6 +115,7 @@ class BudgetDebitLease:
 
     _budget: ExecutionBudget = field(repr=False)
     reserved_debit_usd: float
+    _closed: bool = field(default=False, init=False, repr=False)
 
     def settle_debit(self, amount: float | None = None) -> None:
         """Consume the reservation, or an explicitly supplied settlement."""
@@ -125,10 +126,11 @@ class BudgetDebitLease:
         self._budget.release_debit(self)
 
     def __enter__(self) -> BudgetDebitLease:
+        self._budget._enter_debit_context(self)
         return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> Literal[False]:
-        self.settle_debit()
+        self._budget._finish_debit_context(self)
         return False
 
 
@@ -374,6 +376,21 @@ class ExecutionBudget:
             raise ValueError("Debit lease is foreign or already closed.")
         return self._debit_leases[lease]
 
+    def _enter_debit_context(self, lease: BudgetDebitLease) -> None:
+        with self._lock:
+            self._owned_debit_locked(lease)
+
+    def _finish_debit_context(self, lease: BudgetDebitLease) -> None:
+        """Automatically settle only an open, issued lease; never close twice."""
+        with self._lock:
+            if not isinstance(lease, BudgetDebitLease) or lease._budget is not self:
+                raise ValueError("Debit lease is foreign or already closed.")
+            if lease._closed:
+                return
+            # The RLock keeps the check and settlement atomic with explicit
+            # settlement/release; it spans cleanup only, never provider work.
+            self.settle_debit(lease)
+
     def settle_debit(
         self, lease: BudgetDebitLease, amount: float | None = None
     ) -> None:
@@ -393,12 +410,14 @@ class ExecutionBudget:
                 reserved if settlement is None else settlement
             )
             del self._debit_leases[lease]
+            object.__setattr__(lease, "_closed", True)
 
     def release_debit(self, lease: BudgetDebitLease) -> None:
         """Close an unplaced or caller-proven nonbillable reservation once."""
         with self._lock:
             self._owned_debit_locked(lease)
             del self._debit_leases[lease]
+            object.__setattr__(lease, "_closed", True)
 
     def debit_snapshot(self) -> BudgetDebitSnapshot:
         """Read local allocation state without extending ``snapshot()`` or wire data."""
