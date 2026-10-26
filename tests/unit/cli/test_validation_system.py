@@ -70,7 +70,7 @@ class TestFunctionDiscovery:
     """Test function discovery engine."""
 
     @pytest.fixture
-    def temp_module(self):
+    def temp_module(self, cli_scratch_dir):
         """Create temporary module for testing within the workspace."""
         content = '''
 import traigent
@@ -106,18 +106,9 @@ def regular_function():
     return "regular"
 '''
 
-        modules_dir = Path(__file__).resolve().parent / "temp_modules"
-        modules_dir.mkdir(exist_ok=True)
-        temp_file = modules_dir / f"temp_module_{uuid4().hex}.py"
+        temp_file = cli_scratch_dir / f"temp_module_{uuid4().hex}.py"
         temp_file.write_text(content)
-
-        try:
-            yield str(temp_file)
-        finally:
-            if temp_file.exists():
-                temp_file.unlink()
-            if not any(modules_dir.iterdir()):
-                modules_dir.rmdir()
+        yield str(temp_file)
 
     def test_extract_default_params(self):
         """Test parameter extraction from function signatures."""
@@ -632,7 +623,7 @@ class TestIntegrationScenarios:
     """Test complete integration scenarios."""
 
     @pytest.mark.asyncio
-    async def test_complete_validation_workflow(self):
+    async def test_complete_validation_workflow(self, cli_scratch_dir):
         """Test complete validation workflow end-to-end."""
         # Create temporary test module
         test_content = '''
@@ -650,9 +641,7 @@ def analyze_sentiment(text: str, model: str = "default", temperature: float = 0.
     return {"accuracy": 0.8, "cost": 0.05}
 '''
 
-        modules_dir = Path(__file__).resolve().parent / "temp_modules"
-        modules_dir.mkdir(exist_ok=True)
-        temp_path = modules_dir / f"validation_workflow_{uuid4().hex}.py"
+        temp_path = cli_scratch_dir / f"validation_workflow_{uuid4().hex}.py"
         temp_path.write_text(test_content)
 
         temp_file = str(temp_path)
@@ -675,10 +664,7 @@ def analyze_sentiment(text: str, model: str = "default", temperature: float = 0.
 
         finally:
             temp_path.unlink(missing_ok=True)
-            if dataset_path.exists():
-                dataset_path.unlink()
-            if modules_dir.exists() and not any(modules_dir.iterdir()):
-                modules_dir.rmdir()
+            dataset_path.unlink(missing_ok=True)
 
 
 # Fixtures for all tests
