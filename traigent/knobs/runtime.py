@@ -1769,19 +1769,10 @@ def execute_kchain(
 
     for index, _stage in enumerate(stages):
         iterations_used = index + 1
-        try:
-            raw = runner.run(config, _restrict_state(state, state_keys))
-            result = raw if isinstance(raw, LoopBodyResult) else LoopBodyResult(raw)
-        except Exception as exc:  # noqa: BLE001 - body exception is absorbing
-            return _error(f"composite-runtime: {type(exc).__name__}: {exc}")
-        if result.result_kind is ResultKind.ERROR:
-            # F4 parity: a body ERROR result-kind is the §3.2.1 absorbing error
-            # — the SAME outcome the live loop produces. The chain must NOT
-            # treat the error cell's .output as a produced output (fail closed).
-            return _error(
-                f"composite-runtime: K-chain body of {chain.signal!r} failed: "
-                f"{result.error if isinstance(result, CompositeRunResult) else 'error'}"
-            )
+        result, failure = _kchain_body_step(chain, runner, config, state, state_keys)
+        if failure is not None:
+            return failure
+        assert result is not None
         if result.result_kind is ResultKind.NO_ACCEPT:
             # a no_accept body iteration: escalate (no accepted state to test).
             state = _restrict_state(result.state, state_keys)
@@ -1789,11 +1780,10 @@ def execute_kchain(
         last_output = result.output
         state = _restrict_state(result.state, state_keys)
         try:
-            sigma = _kchain_sigma(chain, state, signals)
-            theta = _resolve_threshold(chain.threshold, calibrated_values)
+            accepted = _kchain_accepts(chain, state, signals, calibrated_values)
         except Exception as exc:  # noqa: BLE001 - signal/threshold absorbing
             return _error(f"composite-runtime: {type(exc).__name__}: {exc}")
-        if sigma >= theta:  # ¬escalate: the signal_accept stop fired
+        if accepted:  # ¬escalate: the signal_accept stop fired
             return CompositeRunResult(
                 output=last_output,
                 result_kind=ResultKind.OUTPUT,
@@ -1804,6 +1794,42 @@ def execute_kchain(
         # complement, §3.8).
 
     return _no_accept(_loop_measures(len(stages), StopReason.EXHAUSTED))
+
+
+def _kchain_body_step(
+    chain: Any,
+    runner: LoopBodyRunner,
+    config: Mapping[str, Any],
+    state: Mapping[str, Any],
+    state_keys: tuple[str, ...],
+) -> tuple[LoopBodyResult | None, CompositeRunResult | None]:
+    """Run one chain body; returns ``(result, None)`` or ``(None, error_result)``."""
+    try:
+        raw = runner.run(config, _restrict_state(state, state_keys))
+        result = raw if isinstance(raw, LoopBodyResult) else LoopBodyResult(raw)
+    except Exception as exc:  # noqa: BLE001 - body exception is absorbing
+        return None, _error(f"composite-runtime: {type(exc).__name__}: {exc}")
+    if result.result_kind is ResultKind.ERROR:
+        # F4 parity: a body ERROR result-kind is the §3.2.1 absorbing error
+        # — the SAME outcome the live loop produces. The chain must NOT
+        # treat the error cell's .output as a produced output (fail closed).
+        return None, _error(
+            f"composite-runtime: K-chain body of {chain.signal!r} failed: "
+            f"{result.error if isinstance(result, CompositeRunResult) else 'error'}"
+        )
+    return result, None
+
+
+def _kchain_accepts(
+    chain: Any,
+    state: Mapping[str, Any],
+    signals: Mapping[str, Callable[..., Any]],
+    calibrated_values: Mapping[str, float | int],
+) -> bool:
+    """Whether ``σ(state) ≥ θ`` (signal read first, then the live threshold)."""
+    sigma = _kchain_sigma(chain, state, signals)
+    theta = _resolve_threshold(chain.threshold, calibrated_values)
+    return bool(sigma >= theta)
 
 
 def _kchain_sigma(
