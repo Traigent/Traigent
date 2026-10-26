@@ -449,32 +449,10 @@ class MetricLimitStopCondition(StopCondition):
             if not self._include_pruned and trial.status == TrialStatus.PRUNED:
                 continue
 
-            metrics = trial.metrics or {}
-            value = metrics.get(self._metric)
-
-            if value is None and self._metric == "total_cost":
-                # Compatibility with older evaluators that reported cost under
-                # different names before metric_limit required an explicit metric.
-                value = metrics.get("cost")
-                if value is None:
-                    value = (trial.metadata or {}).get("total_example_cost")
+            value = self._raw_metric_value(trial)
 
             if value is None and self._metric in _UNMEASURABLE_COST_METRICS:
-                # A trial with no captured LLM usage has an UNKNOWN cost, not a
-                # missing mandatory metric (Traigent#2441). Failing the run
-                # over it would be worse than the old $0; adding 0 would repeat
-                # it. It is left out of the running total, and the cost
-                # enforcer's unknown-cost trial limit governs such a run.
-                self._unmeasured_trials += 1
-                if self._unmeasured_trials == 1:
-                    logger.warning(
-                        "metric_limit on '%s': trial %s has no measured cost; "
-                        "unmeasured trials are left out of the running total "
-                        "(the unmeasured-cost trial limit, "
-                        "TRAIGENT_FALLBACK_TRIAL_LIMIT, bounds them instead).",
-                        self._metric,
-                        trial.trial_id,
-                    )
+                self._note_unmeasured_trial(trial)
                 continue
 
             if value is None:
@@ -482,14 +460,7 @@ class MetricLimitStopCondition(StopCondition):
                     f"Mandatory metric '{self._metric}' missing for trial {trial.trial_id}"
                 )
 
-            try:
-                numeric_value = float(value)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"Metric '{self._metric}' for trial {trial.trial_id} is not numeric: {value!r}"
-                ) from exc
-
-            self._running_total += numeric_value
+            self._running_total += self._to_numeric(trial, value)
 
             if self._running_total >= self._limit:
                 self._last_index = len(trial_seq)
@@ -497,6 +468,43 @@ class MetricLimitStopCondition(StopCondition):
 
         self._last_index = len(trial_seq)
         return self._running_total >= self._limit
+
+    def _raw_metric_value(self, trial: TrialResult) -> Any:
+        metrics = trial.metrics or {}
+        value = metrics.get(self._metric)
+
+        if value is None and self._metric == "total_cost":
+            # Compatibility with older evaluators that reported cost under
+            # different names before metric_limit required an explicit metric.
+            value = metrics.get("cost")
+            if value is None:
+                value = (trial.metadata or {}).get("total_example_cost")
+        return value
+
+    def _note_unmeasured_trial(self, trial: TrialResult) -> None:
+        # A trial with no captured LLM usage has an UNKNOWN cost, not a
+        # missing mandatory metric (Traigent#2441). Failing the run
+        # over it would be worse than the old $0; adding 0 would repeat
+        # it. It is left out of the running total, and the cost
+        # enforcer's unknown-cost trial limit governs such a run.
+        self._unmeasured_trials += 1
+        if self._unmeasured_trials == 1:
+            logger.warning(
+                "metric_limit on '%s': trial %s has no measured cost; "
+                "unmeasured trials are left out of the running total "
+                "(the unmeasured-cost trial limit, "
+                "TRAIGENT_FALLBACK_TRIAL_LIMIT, bounds them instead).",
+                self._metric,
+                trial.trial_id,
+            )
+
+    def _to_numeric(self, trial: TrialResult, value: Any) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Metric '{self._metric}' for trial {trial.trial_id} is not numeric: {value!r}"
+            ) from exc
 
 
 class MaxSamplesStopCondition(StopCondition):
@@ -556,19 +564,8 @@ class MaxSamplesStopCondition(StopCondition):
             if not self._include_pruned and trial.status == TrialStatus.PRUNED:
                 continue
 
-            attempted = extract_examples_attempted(
-                trial, default=None, check_example_results=True
-            )
+            attempted = self._new_examples_attempted(trial)
             if attempted is not None:
-                # Work reused from a prior run (resume_from, #1697/#2541) ran no
-                # new examples: only newly evaluated examples use this budget.
-                meta = getattr(trial, "metadata", None) or {}
-                if meta.get("resumed_from_prior_run"):
-                    attempted = 0
-                else:
-                    reused = meta.get("resumed_examples_reused")
-                    if isinstance(reused, int) and reused > 0:
-                        attempted = max(0, attempted - reused)
                 self._total_attempted += attempted
 
             if self._total_attempted >= self._max_samples:
@@ -577,6 +574,23 @@ class MaxSamplesStopCondition(StopCondition):
 
         self._last_index = len(trial_seq)
         return self._total_attempted >= self._max_samples
+
+    @staticmethod
+    def _new_examples_attempted(trial: TrialResult) -> int | None:
+        attempted = extract_examples_attempted(
+            trial, default=None, check_example_results=True
+        )
+        if attempted is None:
+            return None
+        # Work reused from a prior run (resume_from, #1697/#2541) ran no
+        # new examples: only newly evaluated examples use this budget.
+        meta = getattr(trial, "metadata", None) or {}
+        if meta.get("resumed_from_prior_run"):
+            return 0
+        reused = meta.get("resumed_examples_reused")
+        if isinstance(reused, int) and reused > 0:
+            return max(0, attempted - reused)
+        return attempted
 
 
 class SemanticSaturationStopCondition(StopCondition):
