@@ -20,10 +20,11 @@ from traigent.cloud.dataset_converter import (
     metadata_to_backend_tags,
     sanitize_backend_metadata,
 )
-from traigent.utils.wire_text import filter_wire_metadata
+from traigent.core.constants import DEFAULT_MODEL as _SDK_DEFAULT_MODEL
 from traigent.evaluators.base import Dataset
 from traigent.utils.hashing import generate_benchmark_hash, generate_experiment_hash
 from traigent.utils.logging import get_logger
+from traigent.utils.wire_text import filter_wire_metadata
 
 from .models import (
     AgentSpecification,
@@ -609,7 +610,7 @@ Response:"""
         model_params: dict[str, Any] = {}
         agent_defaults = dict(agent_spec.model_parameters or {}) if agent_spec else {}
 
-        DEFAULT_MODEL = "gpt-3.5"
+        DEFAULT_MODEL = _SDK_DEFAULT_MODEL
         DEFAULT_TEMPERATURE = 0.7
         DEFAULT_MAX_TOKENS = 150
         DEFAULT_TOP_P = 1.0

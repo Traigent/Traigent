@@ -1781,7 +1781,13 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
 
             # Common models to check pricing for
             model_mappings = {
-                "openai": ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo", "gpt-4-turbo"],
+                "openai": [
+                    "gpt-5.6-sol",
+                    "gpt-5.6-terra",
+                    "gpt-5.6-luna",
+                    "gpt-4o",  # valid until 2027-01-14
+                    "gpt-4o-mini",
+                ],
                 "anthropic": [
                     "claude-opus-4-8",
                     "claude-sonnet-4-6",

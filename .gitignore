@@ -489,3 +489,6 @@ MAINTENANCE.md
 /tools/
 scripts/project_review/
 docs/installation-guide-offline.md
+
+# Per-test scratch directories created by the CLI unit tests
+tests/unit/cli/temp_modules/

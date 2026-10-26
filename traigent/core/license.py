@@ -48,6 +48,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from traigent.config.backend_config import PRICING_URL
 from traigent.utils.env_config import _is_truthy_env_value
 
 logger = logging.getLogger(__name__)
@@ -123,7 +124,7 @@ class FeatureRequiresLicenseError(Exception):
         self.required_tier = required_tier
         super().__init__(
             f"'{feature}' requires a Traigent {required_tier} license. "
-            "Visit https://traigent.ai/pricing for details."
+            f"Visit {PRICING_URL} for details."
         )
 
 

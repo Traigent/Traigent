@@ -12,9 +12,7 @@ from click.testing import CliRunner
 from traigent.cli.main import cli
 
 
-def _write_temp_module(root: Path) -> Path:
-    module_dir = root / "temp_modules"
-    module_dir.mkdir(exist_ok=True)
+def _write_temp_module(module_dir: Path) -> Path:
     module_path = module_dir / f"module_{uuid4().hex}.py"
 
     module_path.write_text("""
@@ -46,9 +44,8 @@ fake_optimized_function.optimize = _optimize_stub
     return module_path
 
 
-def test_cli_passes_sample_limit_options():
-    modules_root = Path(__file__).resolve().parent
-    module_path = _write_temp_module(modules_root)
+def test_cli_passes_sample_limit_options(cli_scratch_dir: Path):
+    module_path = _write_temp_module(cli_scratch_dir)
 
     try:
         sys.modules.pop("user_module", None)
@@ -80,8 +77,4 @@ def test_cli_passes_sample_limit_options():
         assert recorded.get("samples_include_pruned") is False
     finally:
         sys.modules.pop("user_module", None)
-        if module_path.exists():
-            module_path.unlink()
-        module_dir = module_path.parent
-        if module_dir.exists() and not any(module_dir.iterdir()):
-            module_dir.rmdir()
+        module_path.unlink(missing_ok=True)

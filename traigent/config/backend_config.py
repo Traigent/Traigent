@@ -26,6 +26,12 @@ DEFAULT_CLOUD_URL = "https://portal.traigent.ai"
 #: Portal URL shown in user-facing warnings (register or login).
 SIGNUP_URL = DEFAULT_CLOUD_URL
 
+#: Single source of truth for the pricing / plans page that every plan-limit,
+#: licence-tier or quota error points to. The no-slash form is the one in the
+#: marketing site's sitemap and canonical tag; the live site redirects it to
+#: ``/pricing/`` (308), and both work.
+PRICING_URL = "https://traigent.ai/pricing"
+
 
 def get_no_credentials_hint() -> str:
     """One-liner appended to missing-credentials warnings."""

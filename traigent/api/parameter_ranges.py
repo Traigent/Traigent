@@ -632,6 +632,15 @@ class LogRange(NumericConstraintBuilderMixin, ParameterRange):
     # in_range, is_in, not_in) are provided by NumericConstraintBuilderMixin
 
 
+def _require_provider_str(provider: object) -> None:
+    """Reject a non-string provider with the same ValueError as an unknown one."""
+    if provider is not None and not isinstance(provider, str):
+        raise ValueError(
+            f"provider must be a string such as 'openai', got {provider!r} "
+            f"({type(provider).__name__})"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class Choices[T](CategoricalConstraintBuilderMixin, ParameterRange):
     """Categorical choices for optimization.
@@ -791,7 +800,13 @@ class Choices[T](CategoricalConstraintBuilderMixin, ParameterRange):
             >>> model_quality = Choices.model(provider="anthropic", tier="quality")
         """
         # Check for environment-based model list
-        env_key = f"TRAIGENT_MODELS_{(provider or 'DEFAULT').upper()}_{tier.upper()}"
+        _require_provider_str(provider)
+        if not isinstance(tier, str):
+            raise ValueError(
+                f"tier must be a string such as 'fast', got {tier!r} "
+                f"({type(tier).__name__})"
+            )
+        env_key = f"TRAIGENT_MODELS_{('DEFAULT' if provider is None else provider).upper()}_{tier.upper()}"
         env_models = os.environ.get(env_key)
         if env_models:
             models = [m.strip() for m in env_models.split(",") if m.strip()]
@@ -800,7 +815,7 @@ class Choices[T](CategoricalConstraintBuilderMixin, ParameterRange):
 
         # Provider names are case-insensitive; "google" is the canonical name
         # for the registry key "gemini" (#2650).
-        provider_key = provider.lower() if provider else None
+        provider_key = None if provider is None else provider.lower()
         if provider_key == "google":
             provider_key = "gemini"
 
@@ -823,13 +838,27 @@ class Choices[T](CategoricalConstraintBuilderMixin, ParameterRange):
             (None, "quality"): ["gpt-4o", "claude-opus-4-8"],
         }
 
+        # Never substitute an OpenAI model for an unknown provider or tier
+        # (#2650); the caller must choose explicitly. The empty string is not
+        # None: only None selects the cross-provider default set.
+        known_providers = sorted({p for p, _ in fallbacks if p})
+        known_tiers = sorted({t for _, t in fallbacks})
+        if provider_key not in {p for p, _ in fallbacks}:
+            override = (
+                f" Set {env_key!r} to provide an explicit model list."
+                if provider
+                else " Pass provider=None for the cross-provider defaults."
+            )
+            raise ValueError(
+                f"Unknown provider {provider!r}. "
+                f"Supported providers: {', '.join(known_providers)} ('google' is "
+                f"an alias for 'gemini').{override}"
+            )
         models_found = fallbacks.get((provider_key, tier))
         if not models_found:
-            # Never substitute an OpenAI model for an unknown provider or
-            # tier (#2650); the caller must choose explicitly.
             raise ValueError(
-                "No default models for the requested provider/tier. "
-                f"Set {env_key} to provide an explicit model list."
+                f"Unknown tier {tier!r}. Valid tiers: {', '.join(known_tiers)}. "
+                f"Set {env_key!r} to provide an explicit model list."
             )
 
         return Choices(models_found, name="model")
@@ -897,6 +926,11 @@ class Choices[T](CategoricalConstraintBuilderMixin, ParameterRange):
         Returns:
             Choices with embedding model names
 
+        Raises:
+            ValueError: If ``provider`` has no built-in embedding models. An
+                unknown provider never falls back to OpenAI embedding models
+                (#2650).
+
         Example:
             >>> embedding = Choices.embedding_model()
             >>> embedding_openai = Choices.embedding_model(provider="openai")
@@ -913,7 +947,16 @@ class Choices[T](CategoricalConstraintBuilderMixin, ParameterRange):
             ],
         }
 
-        models = fallbacks.get(provider, fallbacks[None])
+        _require_provider_str(provider)
+        provider_key = None if provider is None else provider.lower()
+        models = fallbacks.get(provider_key)
+        if not models:
+            known = sorted(k for k in fallbacks if k)
+            raise ValueError(
+                f"No built-in embedding models for provider {provider!r}. "
+                f"Supported providers: {', '.join(known)}. "
+                "Pass explicit model names with Choices([...], name='embedding_model')."
+            )
         return Choices(models, name="embedding_model")
 
     @classmethod
