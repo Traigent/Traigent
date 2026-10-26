@@ -643,6 +643,58 @@ def _print_model_ids(provider: str, region: str | None, model_ids: list[str]) ->
     console.print(table)
 
 
+def _models_json_payload(
+    provider: str,
+    region: str | None,
+    model_id: str | None,
+    is_valid: bool | None,
+    verdict: str | None,
+    model_ids: list[str],
+) -> dict[str, Any]:
+    note: str | None
+    if provider == "bedrock":
+        note = (
+            "Bedrock validation lists regional foundation models only; it does "
+            "not invoke a model or prove account entitlement."
+        )
+    else:
+        note = _LIVE_NOTE if verdict == "snapshot-only" else None
+    return {
+        "provider": provider,
+        "region": region if provider == "bedrock" else None,
+        "model": model_id,
+        "valid": is_valid,
+        "verdict": verdict,
+        "models": model_ids,
+        "note": note,
+    }
+
+
+def _print_model_check_result(
+    provider: str, model_id: str, is_valid: bool | None, verdict: str | None
+) -> None:
+    if verdict == "not-live":
+        console.print(
+            f"\n[red]Model preflight failed:[/red] {model_id} is not in the "
+            f"live {provider} catalog (retired or unavailable "
+            "for this key)."
+        )
+    elif is_valid:
+        label = "live" if verdict == "live" else "snapshot-only"
+        console.print(f"\n[green]Model preflight passed ({label}):[/green] {model_id}")
+        if verdict == "snapshot-only":
+            console.print(f"[yellow]{_LIVE_NOTE}[/yellow]")
+    else:
+        console.print(
+            f"\n[red]Model preflight failed:[/red] {model_id} is not in "
+            f"the known {provider} model surface."
+        )
+        console.print(
+            "[yellow]Pick a model from the table above or update your "
+            "provider/model configuration before running optimization.[/yellow]"
+        )
+
+
 @cli.command(name="models")
 @click.option(
     "--provider",
@@ -706,50 +758,14 @@ def models(
         is_valid = verdict in {"live", "snapshot-only"}
 
     if output_json:
-        note: str | None
-        if normalized_provider == "bedrock":
-            note = (
-                "Bedrock validation lists regional foundation models only; it does "
-                "not invoke a model or prove account entitlement."
-            )
-        else:
-            note = _LIVE_NOTE if verdict == "snapshot-only" else None
-        payload = {
-            "provider": normalized_provider,
-            "region": region if normalized_provider == "bedrock" else None,
-            "model": model_id,
-            "valid": is_valid,
-            "verdict": verdict,
-            "models": model_ids,
-            "note": note,
-        }
+        payload = _models_json_payload(
+            normalized_provider, region, model_id, is_valid, verdict, model_ids
+        )
         click.echo(json.dumps(payload, indent=2))
     else:
         _print_model_ids(normalized_provider, region, model_ids)
         if model_id:
-            if verdict == "not-live":
-                console.print(
-                    f"\n[red]Model preflight failed:[/red] {model_id} is not in the "
-                    f"live {normalized_provider} catalog (retired or unavailable "
-                    "for this key)."
-                )
-            elif is_valid:
-                label = "live" if verdict == "live" else "snapshot-only"
-                console.print(
-                    f"\n[green]Model preflight passed ({label}):[/green] {model_id}"
-                )
-                if verdict == "snapshot-only":
-                    console.print(f"[yellow]{_LIVE_NOTE}[/yellow]")
-            else:
-                console.print(
-                    f"\n[red]Model preflight failed:[/red] {model_id} is not in "
-                    f"the known {normalized_provider} model surface."
-                )
-                console.print(
-                    "[yellow]Pick a model from the table above or update your "
-                    "provider/model configuration before running optimization.[/yellow]"
-                )
-
+            _print_model_check_result(normalized_provider, model_id, is_valid, verdict)
         if normalized_provider == "bedrock":
             console.print(
                 "\n[dim]Note: Bedrock preflight lists regional foundation models only; "
