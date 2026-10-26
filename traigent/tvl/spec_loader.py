@@ -568,15 +568,21 @@ def _parameter_domain_issues(name: Any, definition: Any) -> list[str]:
     parameter_type = _legacy_parameter_type(definition)
     if parameter_type is None:
         return [f"Parameter '{name}' must define 'type', 'values', or 'range'"]
-    default = definition.get("default", _MISSING)
     if parameter_type in {"categorical", "discrete"}:
         return _validate_choice_membership(
-            name, definition.get("values"), default, "enum"
+            name,
+            definition.get("values"),
+            definition.get("default", _MISSING),
+            "enum",
         )
     if parameter_type in {"continuous", "float"}:
-        return _validate_range_membership(name, definition, default, "float")
+        return _validate_range_membership(
+            name, definition, definition.get("default", _MISSING), "float"
+        )
     if parameter_type in {"integer", "int"}:
-        return _validate_range_membership(name, definition, default, "int")
+        return _validate_range_membership(
+            name, definition, definition.get("default", _MISSING), "int"
+        )
     if parameter_type in {"boolean", "bool"}:
         if "default" in definition:
             return _default_type_issues(name, "bool", definition["default"])

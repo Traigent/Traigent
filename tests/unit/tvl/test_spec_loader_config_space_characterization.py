@@ -156,3 +156,44 @@ def test_validate_domains_type_precedence():
         _validate_configuration_space_domains({"a": {"type": 7, "values": [1]}}) == []
     )
     assert _validate_configuration_space_domains({}) == []
+
+
+class _NoDefaultLookup(dict):
+    """Mapping whose ``.get("default", ...)`` must never be called."""
+
+    def get(self, key, *args):
+        if key == "default":
+            raise AssertionError("default looked up via .get")
+        return super().get(key, *args)
+
+
+class _RecordingLookup(dict):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.calls: list[str] = []
+
+    def get(self, key, *args):
+        self.calls.append(key)
+        return super().get(key, *args)
+
+
+def test_validate_domains_boolean_does_not_use_get_default():
+    assert (
+        _validate_configuration_space_domains({"a": _NoDefaultLookup(type="boolean")})
+        == []
+    )
+
+
+def test_validate_domains_unsupported_type_does_not_use_get_default():
+    assert _validate_configuration_space_domains(
+        {"a": _NoDefaultLookup(type="weird")}
+    ) == ["Unsupported parameter type 'weird' for 'a'"]
+
+
+def test_validate_domains_categorical_lookup_order_values_then_default():
+    definition = _RecordingLookup(type="categorical", values=[1, 2], default=1)
+    assert _validate_configuration_space_domains({"a": definition}) == []
+    assert [c for c in definition.calls if c in {"values", "default"}] == [
+        "values",
+        "default",
+    ]
