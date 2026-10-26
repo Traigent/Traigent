@@ -33,7 +33,11 @@ from traigent.cloud.session_types import SessionCreationFailureDetail
 from traigent.cloud.token_manager import TokenManager
 from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.cloud.user_agent import get_sdk_user_agent
-from traigent.labels.transport_gate import gate_session, preflight_requests
+from traigent.labels.transport_gate import (
+    gate_session,
+    observe_requests_response,
+    preflight_requests,
+)
 from traigent.security.redaction import redact_sensitive_data
 from traigent.utils.exceptions import AuthenticationError as TraigentAuthenticationError
 
@@ -709,6 +713,26 @@ class AuthManager:
     # ------------------------------------------------------------------
     # API key state delegators (backward compatibility)
     # ------------------------------------------------------------------
+
+    def configured_credential_headers(self) -> dict[str, str]:
+        """Header carrying the configured credential, with no network call or refresh.
+
+        Used only to name the credential (for scoping a server refusal); never sent.
+        """
+        credentials = self._credentials
+        if credentials is not None and credentials.jwt_token:
+            return {"Authorization": f"Bearer {credentials.jwt_token}"}
+        token = self._api_key_token
+        # a cleared token has no value; an expired one is not the credential in use
+        if (
+            token is not None
+            and getattr(token, "_value", None)
+            and not token.is_expired
+        ):
+            return {"X-API-Key": token.get_value()}
+        if credentials is not None and credentials.api_key:
+            return {"X-API-Key": credentials.api_key}
+        return {}
 
     @property
     def _api_key_token(self) -> SecureToken | None:
@@ -1852,6 +1876,7 @@ class AuthManager:
                 timeout=15,
                 allow_redirects=False,
             )
+            observe_requests_response(response)
         except requests.Timeout:
             return "backend validation timed out"
         except requests.RequestException as exc:

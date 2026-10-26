@@ -61,6 +61,7 @@ from traigent.observability.dtos import (
     utc_now,
 )
 from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.exceptions import (
     AuthenticationError,
     ClientError,
@@ -100,6 +101,13 @@ class _ClientErrorWithRetryAfter(ClientError):
     ) -> None:
         super().__init__(message, status_code=status_code, details=details)
         self.retry_after = retry_after
+
+
+def _gate_opener(opener: Any) -> Any:
+    """Route this module's urllib opener through the optimization_only transport backstop."""
+    from traigent.labels.transport_gate import gate_opener
+
+    return gate_opener(opener)
 
 
 class _NoRedirectHandler(request.HTTPRedirectHandler):
@@ -2051,7 +2059,7 @@ class ObservabilityClient:
         self._offline_notice_logged = False
         self._missing_generation_usage_notice_logged = False
         self._credential_egress_disabled = False
-        self._http_opener = request.build_opener(_NoRedirectHandler)
+        self._http_opener = _gate_opener(request.build_opener(_NoRedirectHandler))
         self._transport = self._create_transport()
         self._disable_egress_if_credential_missing()
 
@@ -3460,6 +3468,17 @@ class ObservabilityClient:
 
         return self._post_batch_sync(traces)
 
+    def _optimization_only_policy(self) -> oo_egress.Policy:
+        """Policy inputs for this client's credential (no explicit setting of its own)."""
+        if not oo_egress.scope_required(None):
+            return oo_egress.Policy()
+        try:
+            headers = self.config.build_headers()
+            origin = self.config.backend_origin
+        except Exception:  # noqa: BLE001 - silent-ok: unattributable, env/explicit only
+            return oo_egress.Policy()
+        return oo_egress.Policy(None, oo_egress.credential_scope(origin, headers))
+
     @property
     def _has_custom_trace_sender(self) -> bool:
         return self._sender_override is not None
@@ -3473,10 +3492,15 @@ class ObservabilityClient:
         SDK never authenticates, so it keeps working in both cases.
         """
         return (
-            self.config.offline_mode or self._credential_egress_disabled
+            self.config.offline_mode
+            or self._credential_egress_disabled
+            or oo_egress.is_active(self._optimization_only_policy())
         ) and not self._has_custom_trace_sender
 
     def _post_batch_sync(self, traces: list[dict[str, Any]]) -> dict[str, Any] | None:
+        if oo_egress.is_active(self._optimization_only_policy()):
+            # optimization_only: the server refuses trace ingest; nothing is sent.
+            return None
         if self.config.offline_mode or self._credential_egress_disabled:
             self._log_offline_mode_once()
             return None
@@ -3505,6 +3529,9 @@ class ObservabilityClient:
                 return self._parse_ingest_response(body)
         except error.HTTPError as exc:
             body = self._read_http_error_body(exc)
+            oo_egress.note_response(
+                exc.code, body, self._optimization_only_policy().scope
+            )
             if exc.code in {401, 403}:
                 raise AuthenticationError(
                     f"Observability ingest rejected with status {exc.code}"
@@ -3568,6 +3595,9 @@ class ObservabilityClient:
             return cast(
                 dict[str, Any], self._request_sender_override(method, path, payload)
             )
+        oo_egress.refuse_if_active(
+            "observability_request", explicit=self._optimization_only_policy()
+        )
         if self._credential_egress_disabled:
             raise ClientError(
                 "Observability backend request skipped: no credential resolved "
@@ -3606,6 +3636,9 @@ class ObservabilityClient:
                 return parsed
         except error.HTTPError as exc:
             body = self._read_http_error_body(exc)
+            oo_egress.note_response(
+                exc.code, body, self._optimization_only_policy().scope
+            )
             if exc.code in {401, 403}:
                 raise AuthenticationError(
                     f"Observability request rejected with status {exc.code}"

@@ -331,6 +331,38 @@ def test_local_gate_hotfix_strict_freshness_still_fails_behind_develop(
     assert "❌ HEAD is behind origin/develop" in result.stdout
 
 
+def _link_system_tools(
+    dest: Path, sysdirs: tuple[str, ...] = ("/usr/bin", "/bin")
+) -> None:
+    """Symlink every system tool into ``dest`` except docker*.
+
+    ``is_symlink`` is checked too: ``exists`` follows links, so a dangling
+    link left by an earlier sysdir would look absent and collide.
+    """
+    for sysdir in sysdirs:
+        for tool in Path(sysdir).iterdir():
+            link = dest / tool.name
+            if tool.name.startswith("docker") or link.exists() or link.is_symlink():
+                continue
+            link.symlink_to(tool)
+
+
+def test_link_system_tools_tolerates_dangling_symlink_from_earlier_sysdir(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    dest = tmp_path / "dest"
+    for directory in (first, second, dest):
+        directory.mkdir()
+    for directory in (first, second):
+        (directory / "grub-ntldr-img").symlink_to(directory / "missing-target")
+
+    _link_system_tools(dest, (str(first), str(second)))
+
+    assert (dest / "grub-ntldr-img").is_symlink()
+
+
 def _run_sonar_gate(
     tmp_path: Path,
     *,
@@ -374,12 +406,7 @@ def _run_sonar_gate(
         # the stubbed sonar-scanner even on machines that have docker.
         nodocker = tmp_path / "nodocker-bin"
         nodocker.mkdir()
-        for sysdir in ("/usr/bin", "/bin"):
-            for tool in Path(sysdir).iterdir():
-                link = nodocker / tool.name
-                if tool.name.startswith("docker") or link.exists():
-                    continue
-                link.symlink_to(tool)
+        _link_system_tools(nodocker)
         env["PATH"] = f"{fake_bin}:{nodocker}"
     result = subprocess.run(
         ["bash", "scripts/local_gate.sh"],
@@ -508,12 +535,7 @@ def test_local_gate_pytest_steps_clear_git_hook_environment(tmp_path: Path) -> N
     # No docker on PATH: shadow system tools so the stub sonar-scanner is used.
     nodocker = tmp_path / "nodocker-bin"
     nodocker.mkdir()
-    for sysdir in ("/usr/bin", "/bin"):
-        for tool in Path(sysdir).iterdir():
-            link = nodocker / tool.name
-            if tool.name.startswith("docker") or link.exists():
-                continue
-            link.symlink_to(tool)
+    _link_system_tools(nodocker)
     env["PATH"] = f"{fake_bin}:{nodocker}"
     result = subprocess.run(
         ["bash", "scripts/local_gate.sh"],

@@ -50,6 +50,7 @@ from traigent.core.session_types import (
     safe_http_error_summary,
 )
 from traigent.labels.transport_gate import gate_session
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.artifact_fingerprints import (
     artifact_fingerprints_to_wire,
     fingerprint_meta_to_wire,
@@ -913,6 +914,9 @@ class ApiOperations:
         """Send the session creation request and handle responses."""
 
         self._raise_if_backend_egress_disabled("create session")
+        # optimization_only: rebuild the final body from the closed contract before any
+        # bytes leave (no-op, same object, when the mode is off).
+        declared_metrics = oo_egress.declared_from_session_payload(payload)
         content_less_ctx: tuple[Any, ...] | None = None
         if "capabilities" in payload:
             content_less_ctx = getattr(self, "_content_less_ctx", None)
@@ -923,6 +927,7 @@ class ApiOperations:
                 trust_env=True,
             ),
             origins=self._gate_origins(),
+            optimization_only=oo_egress.explicit_of(self.client),
             strict=content_less_ctx is not None,
         ) as session:
             api_base = (
@@ -931,6 +936,13 @@ class ApiOperations:
             )
             url = f"{api_base}/sessions"
             timeout = cast(Any, aiohttp).ClientTimeout(total=30)
+            # Final policy check + projection immediately before the send, with the
+            # headers already resolved (no await between this and the transport call).
+            payload = oo_egress.project_for_send(
+                oo_egress.PHASE_SESSION_CREATE_AUTO,
+                payload,
+                explicit=oo_egress.policy_of(self.client, headers, url),
+            )
 
             async with session.post(
                 url,
@@ -940,10 +952,13 @@ class ApiOperations:
             ) as response:
                 if response.status == 201:
                     if content_less_ctx is not None:
-                        return await self._parse_session_response(
+                        parsed = await self._parse_session_response(
                             response, content_less_ctx=content_less_ctx
                         )
-                    return await self._parse_session_response(response)
+                    else:
+                        parsed = await self._parse_session_response(response)
+                    self._remember_session_objectives(parsed, declared_metrics)
+                    return parsed
 
                 if content_less_ctx is not None and response.status == 404:
                     # A cached reference was refused (foreign / unknown): forget the scope.
@@ -954,6 +969,14 @@ class ApiOperations:
                 self._handle_session_error(response.status, error_msg)
 
         raise CloudServiceError("Unexpected session creation failure")
+
+    @staticmethod
+    def _remember_session_objectives(result: Any, declared: list[str]) -> None:
+        """Record the session's declared metrics for later results projection."""
+        try:
+            oo_egress.register_session_objectives(result[0], declared)
+        except (TypeError, IndexError, KeyError):  # silent-ok: nothing to record
+            return
 
     async def _parse_session_response(
         self, response: Any, content_less_ctx: Any = None
@@ -1050,8 +1073,15 @@ class ApiOperations:
                 ),
             )
 
+        # no header await here: a refresh failure must not fail a created session, and
+        # mode off must cost nothing; the scope comes from the configured credential
+        policy = oo_egress.policy_of(self.client, None, f"{api_base}/sessions")
         await send_session_labels(
-            content_less_session.label_texts(session_request), refs, api_base, _headers
+            content_less_session.label_texts(session_request),
+            refs,
+            api_base,
+            _headers,
+            policy=policy,
         )
 
     @staticmethod
@@ -1087,7 +1117,6 @@ class ApiOperations:
         if not AIOHTTP_AVAILABLE:
             logger.debug("aiohttp not available, skipping intermediate report")
             return {"prune": False, "prune_reason": None}
-
         try:
             headers = await self.client.auth_manager.augment_headers(
                 {"Content-Type": _JSON_CONTENT_TYPE}
@@ -1098,6 +1127,7 @@ class ApiOperations:
                     trust_env=True,
                 ),
                 origins=self._gate_origins(),
+                optimization_only=oo_egress.explicit_of(self.client),
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -1105,6 +1135,15 @@ class ApiOperations:
                 )
                 url = f"{api_base}/sessions/{session_id}/intermediate-report"
                 timeout = cast(Any, aiohttp).ClientTimeout(total=10)
+                try:
+                    wire_payload = oo_egress.project_for_send(
+                        oo_egress.PHASE_INTERMEDIATE_REPORT,
+                        wire_payload,
+                        explicit=oo_egress.policy_of(self.client, headers, url),
+                    )
+                except oo_egress.MetadataContractViolation:
+                    logger.debug("optimization_only: intermediate report not sent")
+                    return {"prune": False, "prune_reason": None}
                 async with session.post(
                     url,
                     json=wire_payload,
@@ -1238,6 +1277,7 @@ class ApiOperations:
                     trust_env=True,
                 ),
                 origins=self._gate_origins(),
+                optimization_only=oo_egress.explicit_of(self.client),
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -1248,6 +1288,11 @@ class ApiOperations:
                 sanitized_error_message = self.sanitize_error_message(error_message)
                 if sanitized_error_message:
                     status_data["error_message"] = sanitized_error_message
+                status_data = oo_egress.project_for_send(
+                    oo_egress.PHASE_CONFIGURATION_RUN,
+                    status_data,
+                    explicit=oo_egress.policy_of(self.client, headers, url),
+                )
 
                 async with session.put(
                     url,
@@ -1428,12 +1473,18 @@ class ApiOperations:
                     trust_env=True,
                 ),
                 origins=self._gate_origins(),
+                optimization_only=oo_egress.explicit_of(self.client),
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
                     or BackendConfig.get_backend_api_url()
                 )
                 url = f"{api_base}/configuration-runs/{config_run_id}/measures"
+                measures_data = oo_egress.project_for_send(
+                    oo_egress.PHASE_CONFIGURATION_RUN,
+                    measures_data,
+                    explicit=oo_egress.policy_of(self.client, headers, url),
+                )
 
                 async with session.put(
                     url,
@@ -1503,16 +1554,22 @@ class ApiOperations:
                     trust_env=True,
                 ),
                 origins=self._gate_origins(),
+                optimization_only=oo_egress.explicit_of(self.client),
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
                     or BackendConfig.get_backend_api_url()
                 )
                 url = f"{api_base}/experiment-runs/runs/{experiment_run_id}"
+                run_status_body = oo_egress.project_for_send(
+                    oo_egress.PHASE_CONFIGURATION_RUN,
+                    {"status": backend_status},
+                    explicit=oo_egress.policy_of(self.client, headers, url),
+                )
 
                 async with session.put(
                     url,
-                    json={"status": backend_status},
+                    json=run_status_body,
                     headers=headers,
                     timeout=cast(Any, aiohttp).ClientTimeout(total=10),
                 ) as response:

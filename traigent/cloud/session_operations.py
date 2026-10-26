@@ -42,7 +42,8 @@ from traigent.cloud.session_types import (
 from traigent.cloud.smart_pruning import normalize_smart_pruning_options
 from traigent.config.backend_config import BackendConfig
 from traigent.core.session_types import safe_http_error_summary
-from traigent.labels.transport_gate import client_origins, gate_session
+from traigent.labels.transport_gate import client_origins, gate_session, mark_explicit
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
@@ -1097,6 +1098,11 @@ class SessionOperations:
 
         logger.info("Creating hybrid execution session")
         self._raise_if_backend_egress_disabled("create hybrid session")
+        # The backend refuses POST /hybrid/sessions for an optimization_only workspace
+        # unconditionally (hybrid_routes.py require_not_optimization_only): never send it.
+        oo_egress.refuse_if_active(
+            "hybrid_session_create", explicit=oo_egress.policy_of(self.client)
+        )
 
         session = await self.client._ensure_session()
 
@@ -1636,6 +1642,7 @@ class SessionOperations:
                 ),
                 origins=client_origins(self.client),
             ) as session:
+                mark_explicit(session, oo_egress.explicit_of(self.client))
                 api_base = (
                     self.client.backend_config.api_base_url
                     or BackendConfig.get_backend_api_url()
@@ -1673,6 +1680,11 @@ class SessionOperations:
                     )
                     if sanitized_aggregation is not None:
                         finalize_body["session_aggregation"] = sanitized_aggregation
+                finalize_body = oo_egress.project_for_send(
+                    oo_egress.PHASE_FINALIZE,
+                    finalize_body,
+                    explicit=oo_egress.policy_of(self.client, headers, url),
+                )
                 async with session.post(
                     url,
                     json=finalize_body,

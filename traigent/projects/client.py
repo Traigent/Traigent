@@ -51,8 +51,15 @@ class _RefuseRedirectHandler(request.HTTPRedirectHandler):
         )
 
 
+def _gate_opener(opener: request.OpenerDirector) -> request.OpenerDirector:
+    """Route this module's urllib opener through the optimization_only transport backstop."""
+    from traigent.labels.transport_gate import gate_opener
+
+    return gate_opener(opener)
+
+
 def _build_opener(*extra_handlers: Any) -> request.OpenerDirector:
-    return request.build_opener(_RefuseRedirectHandler, *extra_handlers)
+    return _gate_opener(request.build_opener(_RefuseRedirectHandler, *extra_handlers))
 
 
 class ProjectManagementClient:

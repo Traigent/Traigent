@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-
 # Closed vocabulary of quota/limit error codes safe to render. Anything else
 # (including backend-invented strings) is shown as "unknown" so a quota
 # diagnostic can never carry backend or customer text (#2550).
@@ -35,6 +34,10 @@ CLOSED_REFUSAL_CODES = frozenset(
         "director_tokens_required",
         "director_opaque_ids_required",
         "content_identity_keys_unavailable",
+        # The workspace is limited to optimization (see
+        # traigent.utils.optimization_only_egress): a closed 403, never retried or
+        # degraded to a different request shape or a local fallback.
+        "optimization_only",
     }
 )
 

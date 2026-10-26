@@ -39,6 +39,7 @@ from traigent.core.session_types import (
     safe_http_error_summary,
 )
 from traigent.evaluators.base import Dataset
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.artifact_fingerprints import (
     artifact_fingerprints_to_wire,
     fingerprint_meta_to_wire,
@@ -764,6 +765,7 @@ class TraigentCloudClient(BaseTraigentClient):
         max_retries: int = 3,
         timeout: float = 30.0,
         no_egress: bool = False,
+        optimization_only: bool | None = None,
     ) -> None:
         """Initialize cloud client.
 
@@ -774,7 +776,12 @@ class TraigentCloudClient(BaseTraigentClient):
             max_retries: Maximum retry attempts for cloud requests
             timeout: Request timeout in seconds
             no_egress: Runtime policy flag that forbids backend transport
+            optimization_only: Opt in (True) or out (False) of optimization-only egress;
+                None defers to ``TRAIGENT_OPTIMIZATION_ONLY`` (unset = legacy behaviour).
         """
+        self.optimization_only = oo_egress.parse_flag(
+            optimization_only, source="optimization_only"
+        )
         if not AIOHTTP_AVAILABLE:
             logger.warning(
                 "aiohttp not available, cloud client will use fallback mode only"
@@ -875,6 +882,7 @@ class TraigentCloudClient(BaseTraigentClient):
                 trust_env=True,
             ),
             origins=client_origins(self),
+            optimization_only=oo_egress.explicit_of(self),
         )
         self._register_session_finalizer(self._aio_session)
         return self
@@ -929,6 +937,7 @@ class TraigentCloudClient(BaseTraigentClient):
                     trust_env=True,
                 ),
                 origins=client_origins(self),
+                optimization_only=oo_egress.explicit_of(self),
             )
             self._register_session_finalizer(self._aio_session)
             return self._aio_session
@@ -1218,6 +1227,9 @@ class TraigentCloudClient(BaseTraigentClient):
     ) -> dict[str, Any]:
         """Submit optimization request to the reserved remote service."""
         self._raise_if_backend_egress_disabled("submit optimization")
+        oo_egress.refuse_if_active(
+            "hosted_optimization", explicit=oo_egress.policy_of(self)
+        )
         await self._ensure_session()
         if self._aio_session is None:
             raise CloudServiceError(_SESSION_NOT_INITIALIZED)
@@ -1803,6 +1815,12 @@ class TraigentCloudClient(BaseTraigentClient):
                     ),
                 )
 
+            declared_metrics = oo_egress.declared_from_session_payload(request_data)
+            request_data = oo_egress.project_for_send(
+                oo_egress.PHASE_SESSION_CREATE_AUTO,
+                request_data,
+                explicit=oo_egress.policy_of(self, headers, url),
+            )
             async with self._aio_session.post(
                 url, json=request_data, headers=headers
             ) as response:
@@ -1818,8 +1836,12 @@ class TraigentCloudClient(BaseTraigentClient):
                                 issued,
                                 self.api_base_url,
                                 self._get_headers,
+                                policy=oo_egress.policy_of(self, headers, url),
                             )
                     result = self._deserialize_session_response(data)
+                    oo_egress.register_session_objectives(
+                        result.session_id, declared_metrics
+                    )
                     self._remember_session_owner(
                         result.session_id,
                         dict(request.metadata or {}),
@@ -1891,10 +1913,18 @@ class TraigentCloudClient(BaseTraigentClient):
             raise CloudServiceError(_CLIENT_SESSION_NOT_INITIALIZED)
         try:
             url = f"{self.api_base_url}/sessions/{session_id}/next-trial"
-            request_data = self._serialize_next_trial_request(request)
+            # Resolve headers FIRST: the policy check and projection must be the last
+            # step before the send, after every await that could change the policy.
+            headers = await self._get_headers()
+            request_data = oo_egress.project_for_send(
+                oo_egress.PHASE_NEXT_TRIAL,
+                self._serialize_next_trial_request(request),
+                explicit=oo_egress.policy_of(self, headers, url),
+                session_id=session_id,
+            )
 
             async with self._aio_session.post(
-                url, json=request_data, headers=await self._get_headers()
+                url, json=request_data, headers=headers
             ) as response:
                 if response.status == 200:
                     data = await response.json()
@@ -1977,9 +2007,16 @@ class TraigentCloudClient(BaseTraigentClient):
                 logger=logger,
             )
             lift_cost_floor_to_body(request_data)
+            headers = await self._get_headers()  # before the final policy check
+            request_data = oo_egress.project_for_send(
+                oo_egress.PHASE_RESULTS,
+                request_data,
+                explicit=oo_egress.policy_of(self, headers, url),
+                session_id=session_id,
+            )
 
             async with self._aio_session.post(
-                url, json=request_data, headers=await self._get_headers()
+                url, json=request_data, headers=headers
             ) as response:
                 if response.status == 403:
                     error_text = await response.text()
@@ -2025,10 +2062,15 @@ class TraigentCloudClient(BaseTraigentClient):
             raise CloudServiceError(_CLIENT_SESSION_NOT_INITIALIZED)
         try:
             url = f"{self.api_base_url}/sessions/{session_id}/finalize"
-            request_data = self._serialize_finalization_request(request)
+            headers = await self._get_headers()  # before the final policy check
+            request_data = oo_egress.project_for_send(
+                oo_egress.PHASE_FINALIZE,
+                self._serialize_finalization_request(request),
+                explicit=oo_egress.policy_of(self, headers, url),
+            )
 
             async with self._aio_session.post(
-                url, json=request_data, headers=await self._get_headers()
+                url, json=request_data, headers=headers
             ) as response:
                 if response.status == 200:
                     data = await response.json()
@@ -2351,6 +2393,9 @@ class TraigentCloudClient(BaseTraigentClient):
             CloudServiceError: If optimization start fails
         """
         self._raise_if_backend_egress_disabled("start agent optimization")
+        oo_egress.refuse_if_active(
+            "hosted_agent_optimization", explicit=oo_egress.policy_of(self)
+        )
         await self._ensure_session()
 
         # Default objectives
@@ -2434,6 +2479,9 @@ class TraigentCloudClient(BaseTraigentClient):
             CloudServiceError: If execution fails
         """
         self._raise_if_backend_egress_disabled("execute agent")
+        oo_egress.refuse_if_active(
+            "hosted_agent_execution", explicit=oo_egress.policy_of(self)
+        )
         await self._ensure_session()
 
         # Handle both calling patterns

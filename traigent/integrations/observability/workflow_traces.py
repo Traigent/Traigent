@@ -52,7 +52,11 @@ from traigent.cloud.url_security import (
     validate_cloud_base_url,
 )
 from traigent.config.backend_config import BackendConfig
-from traigent.labels.transport_gate import gate_session, preflight_requests
+from traigent.labels.transport_gate import (
+    gate_session,
+    observe_requests_response,
+    preflight_requests,
+)
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -863,8 +867,13 @@ class WorkflowTracesClient:
         Returns:
             TraceIngestionResponse with ingestion results
         """
+        from traigent.utils import optimization_only_egress as oo_egress
         from traigent.utils.env_config import is_backend_offline
 
+        if oo_egress.is_active(
+            oo_egress.policy_from_headers(self.backend_url, self._get_headers())
+        ):
+            return TraceIngestionResponse(success=False, error="optimization_only")
         if is_backend_offline():
             return TraceIngestionResponse(success=False, error="offline")
 
@@ -903,6 +912,7 @@ class WorkflowTracesClient:
                 timeout=self.timeout,
                 allow_redirects=False,
             )
+            observe_requests_response(response)
             if 300 <= response.status_code < 400:
                 return TraceIngestionResponse(
                     success=False,
@@ -944,8 +954,13 @@ class WorkflowTracesClient:
         Returns:
             TraceIngestionResponse with ingestion results
         """
+        from traigent.utils import optimization_only_egress as oo_egress
         from traigent.utils.env_config import is_backend_offline
 
+        if oo_egress.is_active(
+            oo_egress.policy_from_headers(self.backend_url, self._get_headers())
+        ):
+            return TraceIngestionResponse(success=False, error="optimization_only")
         if is_backend_offline():
             return TraceIngestionResponse(success=False, error="offline")
 
