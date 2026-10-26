@@ -864,50 +864,62 @@ class TrendAnalyzer:
         """Resolve the provided inputs into a list of values for analysis."""
 
         if isinstance(data_points_or_metric_name, str):
-            metric_name = data_points_or_metric_name
             if isinstance(metric_name_or_period, int):
                 period_days = metric_name_or_period
+            return self._resolve_named_metric_input(
+                data_points_or_metric_name, period_days
+            )
 
-            if metric_name not in self.metrics_history:
-                return {"error": f"No data available for metric: {metric_name}"}
-
-            cutoff_date = datetime.now(UTC) - timedelta(days=period_days)
-            recent_data = [
-                (timestamp, value)
-                for timestamp, value in self.metrics_history[metric_name]
-                if timestamp >= cutoff_date
-            ]
-
-            if len(recent_data) < 3:
-                return {"error": "Insufficient data for trend analysis"}
-
-            values = [value for _, value in recent_data]
-            return {
-                "values": values,
-                "metric_name": metric_name,
-                "period_days": period_days,
-            }
-
-        data_points = data_points_or_metric_name
         metric_name = metric_name_or_period if metric_name_or_period else "value"
+        return self._resolve_data_points_input(
+            data_points_or_metric_name, metric_name, period_days
+        )
 
+    def _resolve_named_metric_input(
+        self, metric_name: str, period_days: int
+    ) -> dict[str, Any]:
+        if metric_name not in self.metrics_history:
+            return {"error": f"No data available for metric: {metric_name}"}
+
+        cutoff_date = datetime.now(UTC) - timedelta(days=period_days)
+        recent_data = [
+            (timestamp, value)
+            for timestamp, value in self.metrics_history[metric_name]
+            if timestamp >= cutoff_date
+        ]
+
+        if len(recent_data) < 3:
+            return {"error": "Insufficient data for trend analysis"}
+
+        values = [value for _, value in recent_data]
+        return {
+            "values": values,
+            "metric_name": metric_name,
+            "period_days": period_days,
+        }
+
+    @staticmethod
+    def _timestamped_point(point: Any, metric_name: str) -> tuple[datetime, float]:
+        if not isinstance(point, dict):
+            return (datetime.now(UTC), float(point))
+        timestamp = point.get("timestamp", datetime.now(UTC))
+        if metric_name in point:
+            value = point[metric_name]
+        elif "value" in point:
+            value = point["value"]
+        else:
+            value = 0
+        return (timestamp, float(value))
+
+    def _resolve_data_points_input(
+        self, data_points: Any, metric_name: str, period_days: int
+    ) -> dict[str, Any]:
         if not data_points:
             return {"error": "No data points provided"}
 
-        timestamped_values: list[tuple[datetime, float]] = []
-        for point in data_points:
-            if isinstance(point, dict):
-                timestamp = point.get("timestamp", datetime.now(UTC))
-                if metric_name in point:
-                    value = point[metric_name]
-                elif "value" in point:
-                    value = point["value"]
-                else:
-                    value = 0
-                timestamped_values.append((timestamp, float(value)))
-            else:
-                timestamped_values.append((datetime.now(UTC), float(point)))
-
+        timestamped_values = [
+            self._timestamped_point(point, metric_name) for point in data_points
+        ]
         timestamped_values.sort(key=lambda item: item[0])
         values = [value for _, value in timestamped_values]
 
