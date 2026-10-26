@@ -33,7 +33,7 @@ import copy
 import json
 import os
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -386,6 +386,98 @@ def differing_components(
     return tuple(differing), False
 
 
+_FINISHED_STATUSES = (
+    TrialStatus.COMPLETED,
+    TrialStatus.FAILED,
+    TrialStatus.CANCELLED,
+    TrialStatus.PRUNED,
+)
+
+
+@dataclass
+class _Triage:
+    """Running tally of how prior trials were classified."""
+
+    unfinished: int = 0
+    other: int = 0
+    partial: int = 0
+    blocked: list[dict[str, Any]] = field(default_factory=list)
+    eligible: list[TrialResult] = field(default_factory=list)
+    pool: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
+
+
+def _pool_partial_trial(
+    triage: _Triage,
+    trial: TrialResult,
+    done: dict[str, dict[str, Any]],
+    config_keys: Sequence[str] | None,
+) -> None:
+    """Keep a partial trial's finished examples for reuse when its config reruns."""
+    triage.partial += 1
+    slot = triage.pool.setdefault(config_key(trial.config, config_keys), {})
+    # A trial flagged ``cost_unmeasured`` has an uncertain spend
+    # even where its rows look priced (an abandoned or usage-less
+    # attempt is not in any row): its reused rows must carry the
+    # flag, never present a fully measured, cost-rankable trial.
+    uncertain = is_cost_unmeasured(trial.metrics or {})
+    for example_id, row in done.items():
+        slot.setdefault(example_id, _flag_row_cost_uncertain(row) if uncertain else row)
+
+
+def _triage_trial(
+    triage: _Triage,
+    trial: TrialResult,
+    current_ids: set[str] | None,
+    config_keys: Sequence[str] | None,
+) -> None:
+    if trial.status not in _FINISHED_STATUSES:
+        # running / pending / not started / unrecognised: outcome unknown.
+        triage.unfinished += 1
+        triage.blocked.append(copy.deepcopy(trial.config))
+        return
+    rows = stored_example_rows(trial) if current_ids is not None else None
+    if rows is not None and current_ids is not None:
+        done = {
+            r["example_id"]: r
+            for r in rows
+            if _row_completed(r) and r["example_id"] in current_ids
+        }
+        if len(done) < len(current_ids):
+            # Partial: its finished examples are reused when this config
+            # runs again; the trial itself is not counted.
+            _pool_partial_trial(triage, trial, done, config_keys)
+            return
+    if (
+        rows is None
+        and current_ids is not None
+        and redacted_rows_cover(trial, current_ids) is False
+    ):
+        # Content was opted out, but ids/status show it missed examples:
+        # never reuse it wholesale; it runs again in full.
+        triage.other += 1
+        return
+    if trial.status == TrialStatus.COMPLETED and _trial_cost_ok(trial):
+        triage.eligible.append(trial)
+    else:
+        triage.other += 1
+
+
+def _reused_clone(trial: TrialResult) -> TrialResult:
+    clone = copy.deepcopy(trial)
+    clone.metadata = {
+        **(clone.metadata or {}),
+        REUSED_TRIAL_KEY: True,
+        "resumed_original_trial_id": str(trial.trial_id),
+    }
+    if not is_cost_unmeasured(clone.metrics):
+        # Normalize to the canonical key the totals aggregator reads.
+        cost = _known_cost(trial)
+        if cost is not None:
+            clone.metrics = {**clone.metrics, "total_cost": cost}
+    clone.trial_id = f"resumed-{trial.trial_id}"
+    return clone
+
+
 def plan_resume(
     prior: OptimizationResult,
     current_fingerprints: Mapping[str, Any] | None,
@@ -398,98 +490,33 @@ def plan_resume(
     prior_fps = (prior.metadata or {}).get(FINGERPRINTS_METADATA_KEY)
     mismatched, unavailable = differing_components(prior_fps, current_fingerprints)
 
-    unfinished = 0
-    other = 0
-    partial = 0
-    blocked: list[dict[str, Any]] = []
-    eligible: list[TrialResult] = []
-    pool: dict[str, dict[str, dict[str, Any]]] = {}
+    triage = _Triage()
     current_ids = set(dataset_example_ids) if dataset_example_ids else None
     for trial in prior.trials:
-        in_flight = trial.status not in (
-            TrialStatus.COMPLETED,
-            TrialStatus.FAILED,
-            TrialStatus.CANCELLED,
-            TrialStatus.PRUNED,
-        )
-        if in_flight:
-            # running / pending / not started / unrecognised: outcome unknown.
-            unfinished += 1
-            blocked.append(copy.deepcopy(trial.config))
-            continue
-        rows = stored_example_rows(trial) if current_ids is not None else None
-        if rows is not None and current_ids is not None:
-            done = {
-                r["example_id"]: r
-                for r in rows
-                if _row_completed(r) and r["example_id"] in current_ids
-            }
-            if len(done) < len(current_ids):
-                # Partial: its finished examples are reused when this config
-                # runs again; the trial itself is not counted.
-                partial += 1
-                slot = pool.setdefault(config_key(trial.config, config_keys), {})
-                # A trial flagged ``cost_unmeasured`` has an uncertain spend
-                # even where its rows look priced (an abandoned or usage-less
-                # attempt is not in any row): its reused rows must carry the
-                # flag, never present a fully measured, cost-rankable trial.
-                uncertain = is_cost_unmeasured(trial.metrics or {})
-                for example_id, row in done.items():
-                    slot.setdefault(
-                        example_id, _flag_row_cost_uncertain(row) if uncertain else row
-                    )
-                continue
-        if (
-            rows is None
-            and current_ids is not None
-            and redacted_rows_cover(trial, current_ids) is False
-        ):
-            # Content was opted out, but ids/status show it missed examples:
-            # never reuse it wholesale; it runs again in full.
-            other += 1
-            continue
-        if trial.status == TrialStatus.COMPLETED and _trial_cost_ok(trial):
-            eligible.append(trial)
-        else:
-            other += 1
+        _triage_trial(triage, trial, current_ids, config_keys)
 
     if mismatched:
         return ResumePlan(
             reusable=(),
-            not_reusable_unfinished=unfinished,
-            not_reusable_other=other,
+            not_reusable_unfinished=triage.unfinished,
+            not_reusable_other=triage.other,
             mismatched_components=mismatched,
             identity_unavailable=unavailable,
         )
 
+    eligible = triage.eligible
     dropped = 0
     if max_trials is not None and len(eligible) > max_trials:
         dropped = len(eligible) - max_trials
         eligible = eligible[:max_trials]
 
-    reused: list[TrialResult] = []
-    for trial in eligible:
-        clone = copy.deepcopy(trial)
-        clone.metadata = {
-            **(clone.metadata or {}),
-            REUSED_TRIAL_KEY: True,
-            "resumed_original_trial_id": str(trial.trial_id),
-        }
-        if not is_cost_unmeasured(clone.metrics):
-            # Normalize to the canonical key the totals aggregator reads.
-            cost = _known_cost(trial)
-            if cost is not None:
-                clone.metrics = {**clone.metrics, "total_cost": cost}
-        clone.trial_id = f"resumed-{trial.trial_id}"
-        reused.append(clone)
-
     return ResumePlan(
-        reusable=tuple(reused),
-        blocked_configs=tuple(blocked),
-        partial_trials=partial,
-        prefill=ResumePrefill(pool, config_keys) if pool else None,
-        not_reusable_unfinished=unfinished,
-        not_reusable_other=other,
+        reusable=tuple(_reused_clone(trial) for trial in eligible),
+        blocked_configs=tuple(triage.blocked),
+        partial_trials=triage.partial,
+        prefill=(ResumePrefill(triage.pool, config_keys) if triage.pool else None),
+        not_reusable_unfinished=triage.unfinished,
+        not_reusable_other=triage.other,
         dropped_over_max_trials=dropped,
     )
 
