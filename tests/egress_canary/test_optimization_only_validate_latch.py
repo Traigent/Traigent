@@ -438,10 +438,13 @@ def test_jwt_refresh_on_flagged_manager_that_cannot_latch_keeps_old_state(
 ) -> None:
     auth = _flagged_manager()
     _refresh_ready(auth, monkeypatch)
+    real_latch_on = oo.latch_on
     monkeypatch.setattr(oo, "latch_on", _boom)
     result = asyncio.run(auth._token_manager.refresh_jwt_secure(OLD_REFRESH))
     assert result.success is False
+    monkeypatch.setattr(oo, "latch_on", real_latch_on)  # reads latch; inspect old state
     _assert_old_state_only(auth)
+    monkeypatch.setattr(oo, "latch_on", _boom)
     with pytest.raises(oo.OptimizationOnlyRefusal):
         asyncio.run(auth.get_auth_headers())
 
@@ -499,3 +502,83 @@ def test_oauth_refresh_on_unflagged_manager_ignores_latch_failure(
     assert result.success is True
     assert auth._credentials.jwt_token == NEW_JWT
     assert auth._credentials.refresh_token == OLD_REFRESH
+
+
+# ---- each credential is latched on its own, and every read latches ----------------------
+
+
+def test_setter_latches_each_credential_header_separately() -> None:
+    from traigent.cloud.auth import AuthCredentials, AuthMode, AuthStatus
+
+    auth = _flagged_manager()
+    oo.reset_latch()
+    auth._set_credentials_and_status(
+        AuthCredentials(mode=AuthMode.JWT_TOKEN, jwt_token=NEW_JWT, api_key=OTHER_KEY),
+        AuthStatus.AUTHENTICATED,
+    )
+    assert oo.is_latched(_jwt_scope(NEW_JWT))
+    assert oo.is_latched(_scope(OTHER_KEY))
+
+
+def _getters(auth: Any) -> list[Any]:
+    tm = auth._token_manager
+    return [
+        tm.get_authorization_header,
+        lambda: tm.current_token,
+        auth._get_api_key_for_internal_use,
+        lambda: auth._api_key_token,
+        auth.configured_credential_headers,
+    ]
+
+
+def _stage_unlatched_login(auth: Any) -> dict[str, Any]:
+    """What password login / JWT construction does before the setter: stores into secure
+    storage (JWT) and the API-key manager."""
+    data = {
+        "access_token": NEW_JWT,
+        "refresh_token": "refresh-new-0123456789",
+        "expires_in": 3600,
+        "api_key": OTHER_KEY,
+    }
+    auth._build_credentials_from_token_data(data)  # stores the API key
+    auth._store_secure_tokens(data)  # stores the JWT
+    return data
+
+
+def test_flagged_manager_never_hands_out_a_credential_it_could_not_latch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth = _flagged_manager()
+    monkeypatch.setattr(oo, "latch_on", _boom)
+    _stage_unlatched_login(auth)
+    for getter in _getters(auth):
+        with pytest.raises(oo.OptimizationOnlyRefusal):
+            getter()
+
+
+def test_flagged_manager_reads_latch_what_they_return() -> None:
+    auth = _flagged_manager()
+    _stage_unlatched_login(auth)
+    oo.reset_latch()
+    assert auth._token_manager.get_authorization_header() == {
+        "Authorization": f"Bearer {NEW_JWT}"
+    }
+    assert oo.is_latched(_jwt_scope(NEW_JWT))
+    oo.reset_latch()
+    assert auth._get_api_key_for_internal_use() == OTHER_KEY
+    assert oo.is_latched(_scope(OTHER_KEY))
+
+
+def test_unflagged_manager_getters_are_unchanged_when_latch_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth = _manager()
+    monkeypatch.setattr(oo, "latch_on", _boom)
+    monkeypatch.setattr(oo, "credential_scope", _boom)
+    _stage_unlatched_login(auth)
+    assert auth._token_manager.get_authorization_header() == {
+        "Authorization": f"Bearer {NEW_JWT}"
+    }
+    assert auth._get_api_key_for_internal_use() == OTHER_KEY
+    for getter in _getters(auth):
+        getter()

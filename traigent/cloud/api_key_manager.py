@@ -60,6 +60,14 @@ class APIKeyManager:
         self._get_credentials_fn: Any = None
         self._get_provided_credentials_fn: Any = None
         self._get_last_auth_result_fn: Any = None
+        # Latch-on-read hook (set by AuthManager): called with the credential headers about
+        # to be handed out; it latches their scope and raises on a flagged manager that cannot.
+        self.read_guard: Any = None
+
+    def _guard_read(self, headers: dict[str, str]) -> None:
+        guard = self.read_guard
+        if guard is not None:
+            guard(headers)
 
     def set_callbacks(
         self,
@@ -85,7 +93,12 @@ class APIKeyManager:
     @property
     def api_key_token(self) -> SecureToken | None:
         """Get current API key token."""
-        return self._api_key_token
+        token = self._api_key_token
+        if token is not None and self.read_guard is not None:
+            value = getattr(token, "_value", None)
+            if value and not token.is_expired:
+                self._guard_read({"X-API-Key": value})
+        return token
 
     @property
     def api_key_preview(self) -> str | None:
@@ -110,7 +123,10 @@ class APIKeyManager:
     @property
     def api_key(self) -> APIKey | None:
         """Get the APIKey object."""
-        return self._api_key
+        api_key = self._api_key
+        if api_key is not None and api_key.key and self.read_guard is not None:
+            self._guard_read({"X-API-Key": api_key.key})
+        return api_key
 
     @staticmethod
     def mask_key(api_key: str) -> str:

@@ -679,6 +679,10 @@ class AuthManager:
             auth_lock=self._auth_lock,
         )
 
+        # Latch-on-read: every getter of a stored credential latches it first (flagged only).
+        self._token_manager.read_guard = self._latch_emitted_credential
+        self._api_key_manager.read_guard = self._latch_emitted_credential
+
         self._last_auth_result: AuthResult | None = None
 
         # Statistics
@@ -753,17 +757,19 @@ class AuthManager:
         self._auth_status = status
 
     def _latch_emitted_credential(self, headers: dict[str, str]) -> None:
-        """Latch the scope of the credential this manager is about to emit.
+        """Latch the scope of every credential this manager is about to emit or hand out.
 
         Once ``/keys/validate`` has said ``optimization_only: true`` through this manager
         (``_server_optimization_only``, never cleared) EVERY credential it emits belongs to
-        the client it authenticated, so each emitted credential's scope is latched: the API
-        key, a login/exchange JWT, a refreshed JWT (with or without an API key in the
-        refresh response), whatever. This is deliberately over-inclusive: a user-supplied
-        JWT on a flagged manager is restricted too. Over-restriction is fail-safe; a missed
-        scope would let content out. Unflagged managers pay one attribute check and never
-        raise. A flagged manager fails closed: if latching raises, the error class is logged
-        and ``OptimizationOnlyRefusal`` is raised so the credential is never emitted unlatched.
+        the client it authenticated, so each credential's scope is latched: the API key, a
+        login/exchange JWT, a refreshed JWT, whatever. Each header is latched on its own
+        (``credential_scope`` keys on a single credential, so a combined header set would
+        latch only the first). This is deliberately over-inclusive: a user-supplied JWT on a
+        flagged manager is restricted too. Unflagged managers pay one attribute check and
+        never raise. A flagged manager fails closed: if latching raises, the error class is
+        logged and ``OptimizationOnlyRefusal`` is raised so the credential is never handed
+        out unlatched. It is also the read guard of the token/API-key managers, so a
+        credential stored before the latch could be applied is latched when read.
         """
         if not self._server_optimization_only:
             return
@@ -772,7 +778,8 @@ class AuthManager:
             from traigent.utils import optimization_only_egress as oo_egress
 
             base = self.config.backend_base_url or BackendConfig.get_cloud_backend_url()
-            oo_egress.latch_on(oo_egress.credential_scope(base, headers))
+            for name, value in headers.items():
+                oo_egress.latch_on(oo_egress.credential_scope(base, {name: value}))
         except Exception as exc:  # noqa: BLE001 - fail closed on a flagged manager
             logger.error(
                 "optimization_only: could not latch an emitted credential (%s); "
@@ -791,7 +798,13 @@ class AuthManager:
         """Header carrying the configured credential, with no network call or refresh.
 
         Used only to name the credential (for scoping a server refusal); never sent.
+        On a flagged manager the credential is latched before it is returned.
         """
+        headers = self._configured_credential_headers()
+        self._latch_emitted_credential(headers)
+        return headers
+
+    def _configured_credential_headers(self) -> dict[str, str]:
         credentials = self._credentials
         if credentials is not None and credentials.jwt_token:
             return {"Authorization": f"Bearer {credentials.jwt_token}"}
@@ -898,8 +911,11 @@ class AuthManager:
         return bool(self._api_key_manager.has_key())
 
     def _get_api_key_for_internal_use(self) -> str | None:
-        """Delegate to APIKeyManager.get_key_for_internal_use."""
-        return cast(str | None, self._api_key_manager.get_key_for_internal_use())
+        """Delegate to APIKeyManager.get_key_for_internal_use (latched first if flagged)."""
+        key = cast(str | None, self._api_key_manager.get_key_for_internal_use())
+        if key:
+            self._latch_emitted_credential({"X-API-Key": key})
+        return key
 
     # Primary Authentication Interface
 

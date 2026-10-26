@@ -74,6 +74,8 @@ class TokenManager:
         self._set_credentials_fn: Any = None
         self._cache_credentials_fn: Any = None
         self._auth_lock: asyncio.Lock | None = None
+        # Latch-on-read hook (set by AuthManager); see APIKeyManager.read_guard.
+        self.read_guard: Any = None
 
     def set_callbacks(
         self,
@@ -107,7 +109,12 @@ class TokenManager:
     @property
     def current_token(self) -> SecureToken | None:
         """Get current access token."""
-        return self._current_token
+        token = self._current_token
+        if token is not None and self.read_guard is not None:
+            value = getattr(token, "_value", None)
+            if value and not token.is_expired:
+                self.read_guard({"Authorization": f"Bearer {value}"})
+        return token
 
     @property
     def refresh_token_secure(self) -> SecureToken | None:
@@ -642,5 +649,8 @@ class TokenManager:
             TokenExpiredError: If token has expired
         """
         if self._current_token and not self._current_token.is_expired:
-            return cast(dict[str, str], self._current_token.get_header())
+            header = cast(dict[str, str], self._current_token.get_header())
+            if self.read_guard is not None:
+                self.read_guard(header)
+            return header
         return {}
