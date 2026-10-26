@@ -473,50 +473,60 @@ def _validate_domain_structure(
             return _default_type_issues(name, raw_type, default)
         return [f"TVAR '{name}' missing required 'domain' field"]
 
-    issues: list[str] = []
     if isinstance(domain, (list, tuple)):
-        issues.extend(_validate_choice_membership(name, domain, default, raw_type))
-        return issues
+        return _validate_choice_membership(name, domain, default, raw_type)
 
     if isinstance(domain, dict):
-        valid_types = {"range", "choices", "registry"}
-        domain_type = domain.get("type")
-        if domain_type is not None and domain_type not in valid_types:
-            issues.append(
-                f"TVAR '{name}' has invalid domain type '{domain_type}'. "
-                f"Valid: {valid_types}"
-            )
-
-        if "range" in domain or domain_type == "range":
-            issues.extend(_validate_range_membership(name, domain, default, raw_type))
-            return issues
-        if "set" in domain:
-            issues.extend(
-                _validate_choice_membership(name, domain["set"], default, raw_type)
-            )
-            return issues
-        if "values" in domain or domain_type == "choices":
-            issues.extend(
-                _validate_choice_membership(
-                    name, domain.get("values"), default, raw_type
-                )
-            )
-            return issues
-        if "registry" in domain or domain_type == "registry":
-            return issues
-        if "components" in domain and normalized_type == "tuple":
-            return _validate_tuple_components(name, domain, default)
-
-        issues.append(
-            f"TVAR '{name}' domain must define one of range, set, values, "
-            "registry, or (tuple types) components"
+        return _validate_dict_domain(
+            name, domain, normalized_type, raw_type=raw_type, default=default
         )
-        return issues
 
     return [
         f"TVAR '{name}' domain should be dict, list, or tuple, "
         f"got {type(domain).__name__}"
     ]
+
+
+def _validate_dict_domain(
+    name: str,
+    domain: dict[str, Any],
+    normalized_type: str | None,
+    *,
+    raw_type: str | None,
+    default: Any,
+) -> list[str]:
+    issues: list[str] = []
+    valid_types = {"range", "choices", "registry"}
+    domain_type = domain.get("type")
+    if domain_type is not None and domain_type not in valid_types:
+        issues.append(
+            f"TVAR '{name}' has invalid domain type '{domain_type}'. "
+            f"Valid: {valid_types}"
+        )
+
+    if "range" in domain or domain_type == "range":
+        issues.extend(_validate_range_membership(name, domain, default, raw_type))
+        return issues
+    if "set" in domain:
+        issues.extend(
+            _validate_choice_membership(name, domain["set"], default, raw_type)
+        )
+        return issues
+    if "values" in domain or domain_type == "choices":
+        issues.extend(
+            _validate_choice_membership(name, domain.get("values"), default, raw_type)
+        )
+        return issues
+    if "registry" in domain or domain_type == "registry":
+        return issues
+    if "components" in domain and normalized_type == "tuple":
+        return _validate_tuple_components(name, domain, default)
+
+    issues.append(
+        f"TVAR '{name}' domain must define one of range, set, values, "
+        "registry, or (tuple types) components"
+    )
+    return issues
 
 
 def _legacy_parameter_type(definition: dict[str, Any]) -> str | None:
