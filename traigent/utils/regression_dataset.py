@@ -163,6 +163,34 @@ def _recorded_content(trials: Iterable[Any]) -> dict[str, set[str] | None]:
     return contents
 
 
+def _validated_requested_ids(dataset: Any, example_ids: Sequence[str]) -> list[str]:
+    if not isinstance(dataset, Dataset):
+        raise TypeError(f"dataset must be a Dataset, got {type(dataset).__name__}")
+    if isinstance(example_ids, (str, bytes)):
+        raise TypeError("example_ids must be a sequence of ids, not a single string")
+    requested = list(dict.fromkeys(example_ids))
+    if not requested:
+        raise ValueError("example_ids is empty; nothing to select")
+    for eid in requested:
+        if not isinstance(eid, str):
+            raise TypeError(f"example ids must be strings, got {eid!r}")
+    return requested
+
+
+def _rows_by_content(dataset: Dataset) -> dict[str, list[int]]:
+    rows_by_content: dict[str, list[int]] = {}
+    for index, example in enumerate(dataset.examples):
+        try:
+            content = _canonical(example.input_data, example.expected_output)
+        except TypeError as exc:
+            raise ValueError(
+                f"Dataset row {index} has no canonical JSON form ({exc}); it "
+                "cannot be compared with the run's records"
+            ) from exc
+        rows_by_content.setdefault(content, []).append(index)
+    return rows_by_content
+
+
 def select_examples_by_id(
     dataset: Dataset, example_ids: Sequence[str], run: Any
 ) -> Dataset:
@@ -184,28 +212,10 @@ def select_examples_by_id(
         UnresolvedExampleIdError: When any id is unverifiable, unresolved or
             ambiguous.
     """
-    if not isinstance(dataset, Dataset):
-        raise TypeError(f"dataset must be a Dataset, got {type(dataset).__name__}")
-    if isinstance(example_ids, (str, bytes)):
-        raise TypeError("example_ids must be a sequence of ids, not a single string")
-    requested = list(dict.fromkeys(example_ids))
-    if not requested:
-        raise ValueError("example_ids is empty; nothing to select")
-    for eid in requested:
-        if not isinstance(eid, str):
-            raise TypeError(f"example ids must be strings, got {eid!r}")
+    requested = _validated_requested_ids(dataset, example_ids)
 
     recorded = _recorded_content(list(getattr(run, "trials", None) or []))
-    rows_by_content: dict[str, list[int]] = {}
-    for index, example in enumerate(dataset.examples):
-        try:
-            content = _canonical(example.input_data, example.expected_output)
-        except TypeError as exc:
-            raise ValueError(
-                f"Dataset row {index} has no canonical JSON form ({exc}); it "
-                "cannot be compared with the run's records"
-            ) from exc
-        rows_by_content.setdefault(content, []).append(index)
+    rows_by_content = _rows_by_content(dataset)
 
     unverifiable: list[str] = []
     unresolved: list[str] = []
