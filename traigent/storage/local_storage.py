@@ -619,35 +619,44 @@ class LocalStorageManager:
         return None
 
     @staticmethod
+    def _valid_band_target(target: Any) -> tuple[float, float] | None:
+        """Return ``(low, high)`` when ``target`` is a finite, ordered pair."""
+        if not (isinstance(target, list) and len(target) == 2):
+            return None
+        low, high = target
+        for bound in (low, high):
+            if (
+                not isinstance(bound, (int, float))
+                or isinstance(bound, bool)
+                or not math.isfinite(bound)
+            ):
+                return None
+        if low > high:
+            return None
+        return float(low), float(high)
+
+    @staticmethod
     def _resolve_primary_objective_band(
         optimization_config: dict[str, Any | None] | None,
         primary_objective: str,
     ) -> tuple[float, float]:
-        if isinstance(optimization_config, dict):
-            schema = optimization_config.get("objective_schema")
-            if isinstance(schema, dict):
-                definitions = schema.get("objectives")
-                if isinstance(definitions, list):
-                    for definition in definitions:
-                        if not (
-                            isinstance(definition, dict)
-                            and definition.get("name") == primary_objective
-                        ):
-                            continue
-                        band = definition.get("band")
-                        target = band.get("target") if isinstance(band, dict) else None
-                        if isinstance(target, list) and len(target) == 2:
-                            low, high = target
-                            if (
-                                isinstance(low, (int, float))
-                                and not isinstance(low, bool)
-                                and isinstance(high, (int, float))
-                                and not isinstance(high, bool)
-                                and math.isfinite(low)
-                                and math.isfinite(high)
-                                and low <= high
-                            ):
-                                return float(low), float(high)
+        schema = (
+            optimization_config.get("objective_schema")
+            if isinstance(optimization_config, dict)
+            else None
+        )
+        definitions = schema.get("objectives") if isinstance(schema, dict) else None
+        for definition in definitions if isinstance(definitions, list) else ():
+            if not (
+                isinstance(definition, dict)
+                and definition.get("name") == primary_objective
+            ):
+                continue
+            band = definition.get("band")
+            target = band.get("target") if isinstance(band, dict) else None
+            resolved = LocalStorageManager._valid_band_target(target)
+            if resolved is not None:
+                return resolved
         # the objective name is stored caller config: not quoted
         raise ValueError("Banded objective requires a complete target band")
 
