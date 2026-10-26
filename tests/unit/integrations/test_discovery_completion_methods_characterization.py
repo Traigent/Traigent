@@ -148,13 +148,8 @@ def test_classes_and_builtins_are_not_recursed_into():
     assert ParameterDiscovery.find_completion_methods(WithNested) == []
 
 
-def test_attribute_access_error_aborts_search_of_that_object(caplog):
-    """A failing ``getattr`` on the first attribute ends that object's loop.
-
-    The per-attribute handler formats ``current_path`` before it is bound, so
-    the failure escapes to the outer handler: the object's remaining names are
-    not searched, but sibling results already gathered are kept.
-    """
+def test_attribute_access_error_skips_only_that_attribute(caplog):
+    """A failing ``getattr`` is logged with its path; siblings are still searched."""
 
     class Exploding:
         @property
@@ -173,9 +168,13 @@ def test_attribute_access_error_aborts_search_of_that_object(caplog):
     with caplog.at_level(logging.DEBUG, logger=MODULE_LOGGER):
         result = ParameterDiscovery.find_completion_methods(Holder2)
 
-    assert _names(result) == [("generate", "generate")]
+    assert _names(result) == [
+        ("create_ok", "exploding.create_ok"),
+        ("generate", "generate"),
+    ]
     assert any(
-        "Error during nested method search" in r.getMessage() for r in caplog.records
+        "Could not inspect attribute at exploding.boom: no access" in r.getMessage()
+        for r in caplog.records
     )
 
 

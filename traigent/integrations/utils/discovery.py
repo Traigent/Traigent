@@ -636,35 +636,37 @@ def _search_nested_methods(
         for name in dir(obj):
             if name.startswith("_"):
                 continue
-
+            current_path = f"{path_prefix}.{name}" if path_prefix else name
             try:
-                attr = getattr(obj, name)
-                current_path = f"{path_prefix}.{name}" if path_prefix else name
-
-                # Check if this is a completion method
-                if any(keyword in name.lower() for keyword in _COMPLETION_KEYWORDS):
-                    if _is_function_like(attr):
-                        completion_methods.append(
-                            {
-                                "name": name,
-                                "path": current_path,
-                                "parameters": {},
-                            }
-                        )
-
-                # Recursively search nested objects (but not functions/methods)
-                if _should_recurse_into(attr):
-                    _search_nested_methods(
-                        attr, completion_methods, current_path, max_depth - 1
-                    )
-
+                _inspect_member(obj, name, current_path, completion_methods, max_depth)
             except Exception as attr_err:
                 logger.debug(
                     f"Could not inspect attribute at {current_path}: {attr_err}"
                 )
-                continue
     except Exception as search_err:
         logger.debug(f"Error during nested method search: {search_err}")
+
+
+def _inspect_member(
+    obj: Any,
+    name: str,
+    current_path: str,
+    completion_methods: list[dict[str, Any]],
+    max_depth: int,
+) -> None:
+    """Record ``obj.name`` if completion-like, then search inside it."""
+    attr = getattr(obj, name)
+
+    if any(keyword in name.lower() for keyword in _COMPLETION_KEYWORDS) and (
+        _is_function_like(attr)
+    ):
+        completion_methods.append(
+            {"name": name, "path": current_path, "parameters": {}}
+        )
+
+    # Recursively search nested objects (but not functions/methods)
+    if _should_recurse_into(attr):
+        _search_nested_methods(attr, completion_methods, current_path, max_depth - 1)
 
 
 def _instance_discovery_allowed(cls: type, flags: Any) -> Any:
