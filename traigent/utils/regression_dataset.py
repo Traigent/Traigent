@@ -129,6 +129,32 @@ def _canonical(input_data: Any, expected_output: Any) -> str:
     return json.dumps(projected, sort_keys=True, ensure_ascii=False)
 
 
+def _trial_example_records(trial: Any) -> list[Any]:
+    """The trial's recorded per-example results, or ``[]`` when absent."""
+    metadata = getattr(trial, "metadata", None)
+    records = metadata.get("example_results") if isinstance(metadata, dict) else None
+    return records if isinstance(records, list) else []
+
+
+def _add_record_content(contents: dict[str, set[str] | None], record: Any) -> None:
+    """Fold one example record into ``contents`` (see ``_recorded_content``)."""
+    example_id = _field(record, "example_id")
+    if example_id is None:
+        return
+    key = str(example_id)
+    input_data = _field(record, "input_data")
+    if input_data is None:
+        contents[key] = None
+        return
+    seen = contents.setdefault(key, set())
+    if seen is None:
+        return
+    try:
+        seen.add(_canonical(input_data, _field(record, "expected_output")))
+    except TypeError:
+        contents[key] = None
+
+
 def _recorded_content(trials: Iterable[Any]) -> dict[str, set[str] | None]:
     """Map each example id to the canonical contents the run recorded for it.
 
@@ -138,28 +164,8 @@ def _recorded_content(trials: Iterable[Any]) -> dict[str, set[str] | None]:
     """
     contents: dict[str, set[str] | None] = {}
     for trial in trials:
-        metadata = getattr(trial, "metadata", None)
-        records = (
-            metadata.get("example_results") if isinstance(metadata, dict) else None
-        )
-        if not isinstance(records, list):
-            continue
-        for record in records:
-            example_id = _field(record, "example_id")
-            if example_id is None:
-                continue
-            key = str(example_id)
-            input_data = _field(record, "input_data")
-            if input_data is None:
-                contents[key] = None
-                continue
-            seen = contents.setdefault(key, set())
-            if seen is None:
-                continue
-            try:
-                seen.add(_canonical(input_data, _field(record, "expected_output")))
-            except TypeError:
-                contents[key] = None
+        for record in _trial_example_records(trial):
+            _add_record_content(contents, record)
     return contents
 
 
