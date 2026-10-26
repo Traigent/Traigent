@@ -3794,9 +3794,11 @@ class BaseEvaluator(ABC):
             original_prompt=None,
             response_text=None,
             prompt_length=len(prompt_repr),
-            response_length=len(str(result.actual_output))
-            if result.actual_output is not None
-            else 0,
+            response_length=(
+                len(str(result.actual_output))
+                if result.actual_output is not None
+                else 0
+            ),
         )
 
     def _extract_response_metrics(
