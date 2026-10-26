@@ -294,6 +294,30 @@ class ConfigComparison:
         }
 
 
+def _trial_score(trial: Any, primary_metric: str) -> float | None:
+    """The trial's numeric score, or None when it failed or is not a number."""
+    score = getattr(trial, "score", None)
+    if score is None:
+        score = (trial.metrics or {}).get(primary_metric)
+    if not _is_number(score) or not trial.is_successful:
+        return None
+    return float(cast(float, score))
+
+
+def _collect_numeric_metrics(trial: Any, metric_values: dict[str, list[float]]) -> None:
+    """Append each finite numeric metric of ``trial`` to ``metric_values``."""
+    for name, value in (trial.metrics or {}).items():
+        if _is_number(value):
+            metric_values.setdefault(name, []).append(float(value))
+
+
+def _repeat_cost(stats: Any) -> tuple[float, float, int]:
+    """Return (known cost, lower-bound floor, unmeasured flag 0/1) for one repeat."""
+    if stats.total_cost is None or stats.cost_unmeasured_trials:
+        return 0.0, float(stats.cost_lower_bound or 0.0), 1
+    return float(stats.total_cost), 0.0, 0
+
+
 def aggregate_config(
     config: dict[str, Any],
     run_results: Sequence[Any],
@@ -316,23 +340,15 @@ def aggregate_config(
             scores.append(None)
             continue
         trials.append(trial)
-        score = getattr(trial, "score", None)
+        score = _trial_score(trial, primary_metric)
         if score is None:
-            score = (trial.metrics or {}).get(primary_metric)
-        if not _is_number(score) or not trial.is_successful:
             failed += 1
-            scores.append(None)
-        else:
-            scores.append(float(cast(float, score)))
-        for name, value in (trial.metrics or {}).items():
-            if _is_number(value):
-                metric_values.setdefault(name, []).append(float(value))
-        stats = result.experiment_stats
-        if stats.total_cost is None or stats.cost_unmeasured_trials:
-            unmeasured += 1
-            floor += float(stats.cost_lower_bound or 0.0)
-        else:
-            known_cost += float(stats.total_cost)
+        scores.append(score)
+        _collect_numeric_metrics(trial, metric_values)
+        run_known, run_floor, run_unmeasured = _repeat_cost(result.experiment_stats)
+        known_cost += run_known
+        floor += run_floor
+        unmeasured += run_unmeasured
     valid = [s for s in scores if s is not None]
     cost_unknown = unmeasured > 0
     return ConfigComparison(
