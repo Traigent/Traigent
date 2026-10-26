@@ -1138,6 +1138,19 @@ class MockRemoteService(RemoteOptimizationService):
             },
         )
 
+    @staticmethod
+    def _count_recent_improvements(trial_history: list[TrialResult]) -> int:
+        """Count how many of the last few trials improved on their predecessor."""
+        recent_improvements = 0
+        for i in range(1, min(5, len(trial_history))):
+            if trial_history[-i].metrics:
+                primary_obj = next(iter(trial_history[-i].metrics))
+                current_score = trial_history[-i].metrics.get(primary_obj, 0)
+                prev_score = trial_history[-i - 1].metrics.get(primary_obj, 0)
+                if current_score > prev_score:
+                    recent_improvements += 1
+        return recent_improvements
+
     def _determine_exploration_type(
         self, trial_history: list[TrialResult], strategy: OptimizationStrategy
     ) -> str:
@@ -1149,19 +1162,9 @@ class MockRemoteService(RemoteOptimizationService):
         elif trial_count < 15:
             # Mixed exploration/exploitation based on recent performance
             if trial_history:
-                recent_improvements = 0
-                for i in range(min(5, len(trial_history))):
-                    if i > 0 and trial_history[-i].metrics:
-                        primary_obj = next(iter(trial_history[-i].metrics))
-                        current_score = trial_history[-i].metrics.get(primary_obj, 0)
-                        prev_score = trial_history[-i - 1].metrics.get(primary_obj, 0)
-                        if current_score > prev_score:
-                            recent_improvements += 1
-
-                if recent_improvements >= 2:
+                if self._count_recent_improvements(trial_history) >= 2:
                     return "exploitation"  # We're on a good track
-                else:
-                    return "exploration"  # Need to explore more
+                return "exploration"  # Need to explore more
             return "exploration"
         else:
             # Later stages: focus on verification and refinement
