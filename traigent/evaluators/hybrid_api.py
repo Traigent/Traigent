@@ -1268,32 +1268,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         execute_response: Any,  # HybridExecuteResponse
     ) -> list[HybridExampleResult]:
         """Call evaluate endpoint for quality metrics."""
-        # Build evaluations with output + target pairs
-        evaluations = []
-        for i, inp in enumerate(inputs):
-            example_id = inp["example_id"]
-            expected = self._extract_expected(batch[i])
-
-            # Find matching output
-            output_item = self._find_output_item(execute_response.outputs, example_id)
-            if output_item is None:
-                continue
-
-            evaluation: dict[str, Any] = {
-                "example_id": example_id,
-                # Legacy compatibility: some services expect input_id.
-                "input_id": example_id,
-            }
-            if "output" in output_item:
-                evaluation["output"] = output_item.get("output")
-            elif "output_id" in output_item:
-                evaluation["output_id"] = output_item.get("output_id")
-            else:
-                evaluation["output"] = None
-
-            target_key, target_value = self._extract_target_fields(expected)
-            evaluation[target_key] = target_value
-            evaluations.append(evaluation)
+        evaluations = self._build_evaluation_payloads(batch, inputs, execute_response)
 
         if not evaluations:
             return self._process_execute_only_response(
@@ -1328,97 +1303,9 @@ class HybridAPIEvaluator(BaseEvaluator):
                 getattr(eval_response, "aggregate_metrics", None),
             )
 
-            # Merge execute and evaluate results
-            results: list[HybridExampleResult] = []
-            fallback_cost = self._fallback_example_cost(execute_response, len(inputs))
-            fallback_latency = self._coerce_metric(
-                execute_response.operational_metrics.get("latency_ms", 0.0)
+            return self._merge_evaluated_results(
+                batch, inputs, execute_response, eval_response
             )
-            for i, inp in enumerate(inputs):
-                example_id = inp["example_id"]
-                expected = self._extract_expected(batch[i])
-
-                # Find output from execute
-                output_item = self._find_output_item(
-                    execute_response.outputs, example_id
-                )
-                execute_error: Any | None
-                if output_item is None:
-                    output_data = None
-                    execute_error = self._missing_output_error(example_id)
-                else:
-                    output_data = output_item.get("output")
-                    if output_data is None and "output_id" in output_item:
-                        output_data = {"output_id": output_item["output_id"]}
-                    execute_error = output_item.get("error")
-
-                # Find metrics from evaluate
-                per_example_metrics: dict[str, float] = {}
-                eval_error: str | None = None
-                eval_expected: str | None = None
-                for result in eval_response.results:
-                    result_id = result.get("example_id") or result.get("input_id")
-                    if result_id == example_id:
-                        per_example_metrics, derivation_path = (
-                            self._normalize_example_metrics_with_path(
-                                result.get("metrics", {})
-                            )
-                        )
-                        if isinstance(result.get("error"), str):
-                            eval_error = result.get("error")
-                        if result.get("expected_behavior"):
-                            eval_expected = result["expected_behavior"]
-                        break
-                else:
-                    derivation_path = "none"
-
-                # Prefer per-item operational metrics when present.
-                if output_item is None:
-                    cost, cost_unmeasured = 0.0, True
-                else:
-                    cost, cost_unmeasured = self._resolve_example_cost(
-                        output_item, fallback_cost
-                    )
-                latency = (
-                    0.0
-                    if output_item is None
-                    else self._coerce_metric(
-                        output_item.get("latency_ms"), fallback_latency
-                    )
-                )
-
-                # Log raw per-example result for observability
-                logger.info(
-                    "Hybrid example result: example_id=%s, "
-                    "output_id=%s, accuracy=%s, cost=%s, "
-                    "latency=%.0fms, error=%s",
-                    example_id,
-                    output_item.get("output_id") if output_item is not None else None,
-                    per_example_metrics.get("accuracy"),
-                    "unmeasured" if cost_unmeasured else f"{cost:.6f}",
-                    latency,
-                    eval_error or execute_error,
-                )
-
-                results.append(
-                    HybridExampleResult(
-                        example_id=example_id,
-                        actual_output=output_data,
-                        expected_output=expected or eval_expected,
-                        metrics=per_example_metrics,
-                        cost_usd=cost,
-                        cost_unmeasured=cost_unmeasured,
-                        latency_ms=latency,
-                        error=eval_error
-                        or (execute_error if isinstance(execute_error, str) else None),
-                        metadata={
-                            "evaluation_mode": "evaluated",
-                            "accuracy_derivation_path": derivation_path,
-                        },
-                    )
-                )
-
-            return results
 
         except asyncio.CancelledError:
             raise
@@ -1430,6 +1317,162 @@ class HybridAPIEvaluator(BaseEvaluator):
                 execute_response,
                 evaluation_mode="evaluate_fallback",
             )
+
+    def _build_evaluation_payloads(
+        self,
+        batch: list[Any],
+        inputs: list[dict[str, Any]],
+        execute_response: Any,
+    ) -> list[dict[str, Any]]:
+        """Build evaluate-request items (output + target pairs) for matched outputs."""
+        evaluations = []
+        for i, inp in enumerate(inputs):
+            example_id = inp["example_id"]
+            expected = self._extract_expected(batch[i])
+
+            # Find matching output
+            output_item = self._find_output_item(execute_response.outputs, example_id)
+            if output_item is None:
+                continue
+
+            evaluation: dict[str, Any] = {
+                "example_id": example_id,
+                # Legacy compatibility: some services expect input_id.
+                "input_id": example_id,
+            }
+            if "output" in output_item:
+                evaluation["output"] = output_item.get("output")
+            elif "output_id" in output_item:
+                evaluation["output_id"] = output_item.get("output_id")
+            else:
+                evaluation["output"] = None
+
+            target_key, target_value = self._extract_target_fields(expected)
+            evaluation[target_key] = target_value
+            evaluations.append(evaluation)
+        return evaluations
+
+    def _merge_evaluated_results(
+        self,
+        batch: list[Any],
+        inputs: list[dict[str, Any]],
+        execute_response: Any,
+        eval_response: Any,
+    ) -> list[HybridExampleResult]:
+        """Merge execute outputs with evaluate metrics, one result per input."""
+        results: list[HybridExampleResult] = []
+        fallback_cost = self._fallback_example_cost(execute_response, len(inputs))
+        fallback_latency = self._coerce_metric(
+            execute_response.operational_metrics.get("latency_ms", 0.0)
+        )
+        for i, inp in enumerate(inputs):
+            example_id = inp["example_id"]
+            expected = self._extract_expected(batch[i])
+
+            # Find output from execute
+            output_item = self._find_output_item(execute_response.outputs, example_id)
+            results.append(
+                self._build_evaluated_example_result(
+                    example_id,
+                    expected,
+                    output_item,
+                    eval_response,
+                    fallback_cost=fallback_cost,
+                    fallback_latency=fallback_latency,
+                )
+            )
+
+        return results
+
+    def _build_evaluated_example_result(
+        self,
+        example_id: str,
+        expected: Any,
+        output_item: dict[str, Any] | None,
+        eval_response: Any,
+        *,
+        fallback_cost: float | None,
+        fallback_latency: float,
+    ) -> HybridExampleResult:
+        """Merge one example's execute output with its evaluate row."""
+        execute_error: Any | None
+        if output_item is None:
+            output_data = None
+            execute_error = self._missing_output_error(example_id)
+        else:
+            output_data = output_item.get("output")
+            if output_data is None and "output_id" in output_item:
+                output_data = {"output_id": output_item["output_id"]}
+            execute_error = output_item.get("error")
+
+        (
+            per_example_metrics,
+            derivation_path,
+            eval_error,
+            eval_expected,
+        ) = self._lookup_evaluate_row(eval_response.results, example_id)
+
+        # Prefer per-item operational metrics when present.
+        if output_item is None:
+            cost, cost_unmeasured = 0.0, True
+        else:
+            cost, cost_unmeasured = self._resolve_example_cost(
+                output_item, fallback_cost
+            )
+        latency = (
+            0.0
+            if output_item is None
+            else self._coerce_metric(output_item.get("latency_ms"), fallback_latency)
+        )
+
+        # Log raw per-example result for observability
+        logger.info(
+            "Hybrid example result: example_id=%s, "
+            "output_id=%s, accuracy=%s, cost=%s, "
+            "latency=%.0fms, error=%s",
+            example_id,
+            output_item.get("output_id") if output_item is not None else None,
+            per_example_metrics.get("accuracy"),
+            "unmeasured" if cost_unmeasured else f"{cost:.6f}",
+            latency,
+            eval_error or execute_error,
+        )
+
+        return HybridExampleResult(
+            example_id=example_id,
+            actual_output=output_data,
+            expected_output=expected or eval_expected,
+            metrics=per_example_metrics,
+            cost_usd=cost,
+            cost_unmeasured=cost_unmeasured,
+            latency_ms=latency,
+            error=eval_error
+            or (execute_error if isinstance(execute_error, str) else None),
+            metadata={
+                "evaluation_mode": "evaluated",
+                "accuracy_derivation_path": derivation_path,
+            },
+        )
+
+    def _lookup_evaluate_row(
+        self, eval_results: list[dict[str, Any]], example_id: str
+    ) -> tuple[dict[str, float], str, str | None, str | None]:
+        """Metrics, derivation path, error and expected behaviour for one example."""
+        for result in eval_results:
+            result_id = result.get("example_id") or result.get("input_id")
+            if result_id != example_id:
+                continue
+            per_example_metrics, derivation_path = (
+                self._normalize_example_metrics_with_path(result.get("metrics", {}))
+            )
+            eval_error: str | None = None
+            eval_expected: str | None = None
+            if isinstance(result.get("error"), str):
+                eval_error = result.get("error")
+            if result.get("expected_behavior"):
+                eval_expected = result["expected_behavior"]
+            return per_example_metrics, derivation_path, eval_error, eval_expected
+        return {}, "none", None, None
 
     def _process_execute_only_response(
         self,
