@@ -669,9 +669,12 @@ def _inspect_member(
         _search_nested_methods(attr, completion_methods, current_path, max_depth - 1)
 
 
-def _instance_discovery_allowed(cls: type, flags: Any) -> Any:
-    """Resolve whether discovery may instantiate ``cls`` (explicit opt-in wins)."""
-    explicit_setting = getattr(cls, "__traigent_allow_instance_discovery__", None)
+def _instance_discovery_allowed(explicit_setting: Any, flags: Any) -> Any:
+    """Resolve whether discovery may instantiate (explicit opt-in wins).
+
+    ``explicit_setting`` is the class's ``__traigent_allow_instance_discovery__``
+    value, read once by the caller.
+    """
     allow_instance_discovery = (
         explicit_setting if explicit_setting is not None else flags.auto_discovery
     )
@@ -716,7 +719,7 @@ def _search_instance_methods(
     """Search instance-level methods when instantiation is permitted."""
     flags = get_security_flags()
     explicit_setting = getattr(cls, "__traigent_allow_instance_discovery__", None)
-    allow_instance_discovery = _instance_discovery_allowed(cls, flags)
+    allow_instance_discovery = _instance_discovery_allowed(explicit_setting, flags)
 
     if allow_instance_discovery is False:
         logger.debug(

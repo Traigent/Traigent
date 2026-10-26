@@ -239,6 +239,30 @@ def test_explicit_opt_in_instantiates_even_under_pytest(monkeypatch):
     ]
 
 
+def test_instance_discovery_attribute_is_read_exactly_once(monkeypatch):
+    """A flapping attribute (False, then True) must not flip the decision."""
+    monkeypatch.setattr(
+        discovery_module, "get_security_flags", lambda: _flags(auto_discovery=True)
+    )
+    reads: list[int] = []
+
+    class FlappingMeta(type):
+        @property
+        def __traigent_allow_instance_discovery__(cls) -> bool:
+            reads.append(1)
+            return len(reads) > 1
+
+    class Flapping(Built, metaclass=FlappingMeta):
+        pass
+
+    _reset(Flapping)
+    result = ParameterDiscovery.find_completion_methods(Flapping)
+
+    assert len(reads) == 1
+    assert Flapping.instances == 0
+    assert result == []
+
+
 def test_explicit_opt_out_skips_instantiation_and_logs(monkeypatch, real_run, caplog):
     monkeypatch.setattr(
         discovery_module, "get_security_flags", lambda: _flags(auto_discovery=True)
