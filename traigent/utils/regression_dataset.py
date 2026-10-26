@@ -197,6 +197,37 @@ def _rows_by_content(dataset: Dataset) -> dict[str, list[int]]:
     return rows_by_content
 
 
+def _classify_requested_ids(
+    requested: Sequence[str],
+    recorded: dict[str, set[str] | None],
+    rows_by_content: dict[str, list[int]],
+) -> tuple[dict[int, list[str]], list[str], list[str], list[str]]:
+    """Resolve each id to one dataset row, or file it as a failure kind.
+
+    Returns ``(ids_by_row, unverifiable, unresolved, ambiguous)``.
+    """
+    unverifiable: list[str] = []
+    unresolved: list[str] = []
+    ambiguous: list[str] = []
+    ids_by_row: dict[int, list[str]] = {}
+    for eid in requested:
+        contents = recorded.get(eid)
+        if not contents or len(contents) != 1:
+            unverifiable.append(eid)
+            continue
+        rows = rows_by_content.get(next(iter(contents)), [])
+        if not rows:
+            unresolved.append(eid)
+        elif len(rows) > 1:
+            ambiguous.append(eid)
+        else:
+            ids_by_row.setdefault(rows[0], []).append(eid)
+    for ids in ids_by_row.values():
+        if len(ids) > 1:
+            ambiguous.extend(ids)
+    return ids_by_row, unverifiable, unresolved, ambiguous
+
+
 def select_examples_by_id(
     dataset: Dataset, example_ids: Sequence[str], run: Any
 ) -> Dataset:
@@ -223,25 +254,9 @@ def select_examples_by_id(
     recorded = _recorded_content(list(getattr(run, "trials", None) or []))
     rows_by_content = _rows_by_content(dataset)
 
-    unverifiable: list[str] = []
-    unresolved: list[str] = []
-    ambiguous: list[str] = []
-    ids_by_row: dict[int, list[str]] = {}
-    for eid in requested:
-        contents = recorded.get(eid)
-        if not contents or len(contents) != 1:
-            unverifiable.append(eid)
-            continue
-        rows = rows_by_content.get(next(iter(contents)), [])
-        if not rows:
-            unresolved.append(eid)
-        elif len(rows) > 1:
-            ambiguous.append(eid)
-        else:
-            ids_by_row.setdefault(rows[0], []).append(eid)
-    for ids in ids_by_row.values():
-        if len(ids) > 1:
-            ambiguous.extend(ids)
+    ids_by_row, unverifiable, unresolved, ambiguous = _classify_requested_ids(
+        requested, recorded, rows_by_content
+    )
     if unverifiable or unresolved or ambiguous:
         raise UnresolvedExampleIdError(unresolved, ambiguous, unverifiable)
 
