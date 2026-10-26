@@ -14,6 +14,55 @@ from ..utils.multi_objective import ParetoFrontCalculator
 _NO_DATA_TO_PLOT = "No data to plot"
 
 
+def _schema_definitions(schema: Any) -> Any:
+    if hasattr(schema, "objectives"):
+        return schema.objectives
+    if isinstance(schema, dict):
+        return schema.get("objectives", [])
+    return []
+
+
+def _definition_field(obj_def: Any, field: str) -> Any:
+    """Read ``field`` from an objective definition object or dict."""
+    value = getattr(obj_def, field, None)
+    if value is None and isinstance(obj_def, dict):
+        value = obj_def.get(field)
+    return value
+
+
+def _add_schema_orientations(orientations: dict[str, bool], schema: Any) -> None:
+    """Record declared (non-band) orientations from an objective schema."""
+    if schema is None:
+        return
+    for obj_def in _schema_definitions(schema):
+        name = _definition_field(obj_def, "name")
+        orientation = _definition_field(obj_def, "orientation")
+        if not (name and orientation):
+            continue
+        if str(orientation).lower() == "band":
+            continue
+        orientations[name] = (
+            resolve_objective_orientation(name, str(orientation).lower()) == "maximize"
+        )
+
+
+def _add_metadata_orientations(
+    orientations: dict[str, bool], metadata_orientations: Any
+) -> None:
+    """Add metadata-declared orientations for names the schema did not cover."""
+    if not isinstance(metadata_orientations, dict):
+        return
+    for name, orientation in metadata_orientations.items():
+        if name in orientations:
+            continue
+        if isinstance(orientation, str):
+            orientations[name] = (
+                resolve_objective_orientation(name, orientation.lower()) == "maximize"
+            )
+        else:
+            orientations[name] = bool(orientation)
+
+
 class PlotGenerator:
     """Generates plots for optimization results using ASCII and optional matplotlib."""
 
@@ -410,41 +459,8 @@ class PlotGenerator:
         orientations: dict[str, bool] = {}
         metadata = result.metadata or {}
 
-        schema = metadata.get("objective_schema")
-        if schema is not None:
-            definitions = []
-            if hasattr(schema, "objectives"):
-                definitions = schema.objectives
-            elif isinstance(schema, dict):
-                definitions = schema.get("objectives", [])
-
-            for obj_def in definitions:
-                name = getattr(obj_def, "name", None)
-                if name is None and isinstance(obj_def, dict):
-                    name = obj_def.get("name")
-                orientation = getattr(obj_def, "orientation", None)
-                if orientation is None and isinstance(obj_def, dict):
-                    orientation = obj_def.get("orientation")
-
-                if name and orientation:
-                    if str(orientation).lower() == "band":
-                        continue
-                    orientations[name] = (
-                        resolve_objective_orientation(name, str(orientation).lower())
-                        == "maximize"
-                    )
-
-        metadata_orientations = metadata.get("objective_orientations")
-        if isinstance(metadata_orientations, dict):
-            for name, orientation in metadata_orientations.items():
-                if name not in orientations:
-                    if isinstance(orientation, str):
-                        orientations[name] = (
-                            resolve_objective_orientation(name, orientation.lower())
-                            == "maximize"
-                        )
-                    else:
-                        orientations[name] = bool(orientation)
+        _add_schema_orientations(orientations, metadata.get("objective_schema"))
+        _add_metadata_orientations(orientations, metadata.get("objective_orientations"))
 
         for name in objectives:
             if name not in orientations:
