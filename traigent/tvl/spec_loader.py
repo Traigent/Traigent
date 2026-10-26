@@ -557,55 +557,39 @@ def _validate_legacy_parameter_default(
     return []
 
 
+def _parameter_domain_issues(name: Any, definition: Any) -> list[str]:
+    if not isinstance(name, str):
+        return [
+            f"Configuration parameter name must be string, got {type(name).__name__}"
+        ]
+    if not isinstance(definition, dict):
+        return [f"Parameter '{name}' must be defined as a mapping"]
+
+    parameter_type = _legacy_parameter_type(definition)
+    if parameter_type is None:
+        return [f"Parameter '{name}' must define 'type', 'values', or 'range'"]
+    default = definition.get("default", _MISSING)
+    if parameter_type in {"categorical", "discrete"}:
+        return _validate_choice_membership(
+            name, definition.get("values"), default, "enum"
+        )
+    if parameter_type in {"continuous", "float"}:
+        return _validate_range_membership(name, definition, default, "float")
+    if parameter_type in {"integer", "int"}:
+        return _validate_range_membership(name, definition, default, "int")
+    if parameter_type in {"boolean", "bool"}:
+        if "default" in definition:
+            return _default_type_issues(name, "bool", definition["default"])
+        return []
+    return [f"Unsupported parameter type '{parameter_type}' for '{name}'"]
+
+
 def _validate_configuration_space_domains(
     config_space: dict[str, Any],
 ) -> list[str]:
     issues: list[str] = []
     for name, definition in config_space.items():
-        if not isinstance(name, str):
-            issues.append(
-                f"Configuration parameter name must be string, got {type(name).__name__}"
-            )
-            continue
-        if not isinstance(definition, dict):
-            issues.append(f"Parameter '{name}' must be defined as a mapping")
-            continue
-
-        parameter_type = _legacy_parameter_type(definition)
-        if parameter_type is None:
-            issues.append(
-                f"Parameter '{name}' must define 'type', 'values', or 'range'"
-            )
-            continue
-        if parameter_type in {"categorical", "discrete"}:
-            issues.extend(
-                _validate_choice_membership(
-                    name,
-                    definition.get("values"),
-                    definition.get("default", _MISSING),
-                    "enum",
-                )
-            )
-            continue
-        if parameter_type in {"continuous", "float"}:
-            issues.extend(
-                _validate_range_membership(
-                    name, definition, definition.get("default", _MISSING), "float"
-                )
-            )
-            continue
-        if parameter_type in {"integer", "int"}:
-            issues.extend(
-                _validate_range_membership(
-                    name, definition, definition.get("default", _MISSING), "int"
-                )
-            )
-            continue
-        if parameter_type in {"boolean", "bool"}:
-            if "default" in definition:
-                issues.extend(_default_type_issues(name, "bool", definition["default"]))
-            continue
-        issues.append(f"Unsupported parameter type '{parameter_type}' for '{name}'")
+        issues.extend(_parameter_domain_issues(name, definition))
     return issues
 
 
@@ -1313,6 +1297,20 @@ def compile_constraint_expression(
     return _evaluate
 
 
+def _declared_parameter_type(name: str, definition: dict[str, Any]) -> str:
+    """Lower-cased declared type, inferred from ``values``/``range`` when absent."""
+    parameter_type = (definition.get("type") or "").lower()
+    if parameter_type:
+        return parameter_type
+    if "values" in definition:
+        return "categorical"
+    if "range" in definition:
+        return "continuous"
+    raise TVLValidationError(
+        f"Parameter '{name}' must define 'type', 'values', or 'range'"
+    )
+
+
 def _parse_configuration_space(
     resolved: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, str]]:
@@ -1329,16 +1327,7 @@ def _parse_configuration_space(
             raise TVLValidationError("Configuration parameter names must be strings")
         if not isinstance(definition, dict):
             raise TVLValidationError(f"Parameter '{name}' must be defined as a mapping")
-        parameter_type = (definition.get("type") or "").lower()
-        if not parameter_type:
-            if "values" in definition:
-                parameter_type = "categorical"
-            elif "range" in definition:
-                parameter_type = "continuous"
-            else:
-                raise TVLValidationError(
-                    f"Parameter '{name}' must define 'type', 'values', or 'range'"
-                )
+        parameter_type = _declared_parameter_type(name, definition)
 
         units_value = definition.get("unit")
         if isinstance(units_value, str):
