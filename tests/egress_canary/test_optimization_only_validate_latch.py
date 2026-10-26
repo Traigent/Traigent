@@ -251,3 +251,60 @@ def test_unflagged_hot_path_computes_no_scope(
     _store(auth, "jwt.n.sig")
     asyncio.run(auth.get_auth_headers())
     assert calls == []
+
+
+def test_stored_credentials_are_only_assigned_through_the_latching_setter() -> None:
+    import ast
+
+    import traigent.cloud.auth as auth_module
+
+    tree = ast.parse(Path(auth_module.__file__).read_text())
+    offenders: list[int] = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.Assign):
+                continue
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Attribute)
+                    and target.attr == "_credentials"
+                    and isinstance(target.value, ast.Name)
+                    and target.value.id == "self"
+                    and fn.name != "_set_credentials_and_status"
+                    and not (
+                        isinstance(node.value, ast.Constant)
+                        and node.value.value is None
+                    )
+                ):
+                    offenders.append(node.lineno)
+    assert offenders == [], offenders
+
+
+def test_login_on_flagged_manager_is_latched_for_direct_header_senders() -> None:
+    """After a successful login, a sender that reads the stored JWT directly (no
+    get_auth_headers) is refused: observability-style."""
+    from traigent.cloud.auth import AuthCredentials, AuthMode, AuthResult, AuthStatus
+
+    auth = _flagged_manager()
+    creds = AuthCredentials(mode=AuthMode.JWT_TOKEN, jwt_token="jwt.login.sig")
+    asyncio.run(
+        auth._handle_dict_success(
+            AuthResult(success=True, status=AuthStatus.AUTHENTICATED, credentials=creds)
+        )
+    )
+    asyncio.run(
+        auth._handle_successful_auth(
+            AuthCredentials(mode=AuthMode.JWT_TOKEN, jwt_token="jwt.mode.sig"),
+            AuthResult(success=True, status=AuthStatus.AUTHENTICATED),
+        )
+    )
+    for token in ("jwt.login.sig", "jwt.mode.sig"):
+        headers = {"Authorization": f"Bearer {token}"}
+        assert oo.is_latched(_jwt_scope(token))
+        with pytest.raises(oo.OptimizationOnlyRefusal):
+            oo.refuse_if_active(
+                "direct_header_send",
+                explicit=oo.policy_from_headers(BACKEND_URL, headers),
+            )

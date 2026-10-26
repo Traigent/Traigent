@@ -728,10 +728,16 @@ class AuthManager:
         """Helper for TokenManager callback to set credentials and status."""
         self._credentials = credentials
         self._auth_status = status
-        if credentials is not None and credentials.jwt_token:
-            self._latch_emitted_credential(
-                {"Authorization": f"Bearer {credentials.jwt_token}"}
-            )
+        # The ONLY place self._credentials is assigned a credential (a test enforces it), so
+        # a stored token is latched before any direct-header sender (observability) can use it.
+        if credentials is not None:
+            stored: dict[str, str] = {}
+            if credentials.jwt_token:
+                stored["Authorization"] = f"Bearer {credentials.jwt_token}"
+            if credentials.api_key:
+                stored["X-API-Key"] = credentials.api_key
+            if stored:
+                self._latch_emitted_credential(stored)
 
     def _latch_emitted_credential(self, headers: dict[str, str]) -> None:
         """Latch the scope of the credential this manager is about to emit.
@@ -1023,8 +1029,7 @@ class AuthManager:
     async def _handle_dict_success(self, result: AuthResult) -> None:
         """Apply state updates for successful dict-based authentication."""
 
-        self._credentials = result.credentials
-        self._auth_status = result.status
+        self._set_credentials_and_status(result.credentials, result.status)
         self._stats["successful_authentications"] += 1
         self._authenticated = True
 
@@ -1063,8 +1068,7 @@ class AuthManager:
     ) -> None:
         """Update state after a successful authentication attempt."""
 
-        self._credentials = credentials
-        self._auth_status = result.status
+        self._set_credentials_and_status(credentials, result.status)
         self._stats["successful_authentications"] += 1
         self._authenticated = True
 
