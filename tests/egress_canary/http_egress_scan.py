@@ -1,4 +1,9 @@
-"""AST scan of every raw HTTP egress construct in ``traigent/`` (coverage proof helper).
+"""AST scan of every raw HTTP egress construct in ``traigent/`` (a coverage AID).
+
+This scan is an aid, not the guarantee: the guarantee is the default-deny backstop inside the
+transport gate, which judges every request that goes through it. The scan exists to catch a
+new raw call that bypasses the gate entirely. It resolves aliased imports (``import aiohttp
+as aio``, ``from aiohttp import ClientSession as CS``) but cannot prove reachability.
 
 A construct is GATED when it goes through the transport gate (where the optimization_only
 backstop lives): a session/client wrapped in ``gate_session(...)``, a module-level
@@ -12,6 +17,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2] / "traigent"
 _VERBS = {"get", "post", "put", "patch", "delete", "head", "options", "request"}
@@ -37,11 +43,15 @@ def _dotted(node: ast.AST) -> str:
     return ".".join(reversed(parts))
 
 
-def _kind(call: ast.Call) -> str | None:
-    name = _dotted(call.func)
+def _kind(call: ast.Call, resolve: Any = lambda n: n) -> str | None:
+    name = resolve(_dotted(call.func))
+    # normalise ``from x import y`` forms to their dotted module spelling
+    name = name.replace("aiohttp.client.ClientSession", "aiohttp.ClientSession")
     last = name.rsplit(".", 1)[-1]
     head = name.split(".", 1)[0]
-    if last == "ClientSession" and ("aiohttp" in name or name == "ClientSession"):
+    if last == "ClientSession" and (
+        "aiohttp" in name or "aiohttp" in ast.unparse(call.func)
+    ):
         return "aiohttp-session"
     if name == "requests.Session":
         return "requests-session"
@@ -62,9 +72,24 @@ def _kind(call: ast.Call) -> str | None:
     return None
 
 
+def _aliases(tree: ast.AST) -> dict[str, str]:
+    """Local name -> fully dotted original, for ``import x as y`` and ``from x import y as z``."""
+    out: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if a.asname:
+                    out[a.asname] = a.name
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            for a in node.names:
+                out[a.asname or a.name] = f"{node.module}.{a.name}"
+    return out
+
+
 class _Visitor(ast.NodeVisitor):
-    def __init__(self, rel: str) -> None:
+    def __init__(self, rel: str, aliases: dict[str, str] | None = None) -> None:
         self.rel = rel
+        self.aliases = aliases or {}
         self.found: list[Construct] = []
         self._parents: list[ast.AST] = []
         self._functions: list[ast.AST] = []
@@ -79,8 +104,15 @@ class _Visitor(ast.NodeVisitor):
             self._functions.pop()
         self._parents.pop()
 
+    def _resolve(self, name: str) -> str:
+        head, _, rest = name.partition(".")
+        target = self.aliases.get(head)
+        if target is None:
+            return name
+        return target + ("." + rest if rest else "")
+
     def visit_Call(self, node: ast.Call) -> None:
-        kind = _kind(node)
+        kind = _kind(node, self._resolve)
         if kind is not None:
             self.found.append(
                 Construct(self.rel, node.lineno, kind, self._gated(node, kind))
@@ -92,19 +124,21 @@ class _Visitor(ast.NodeVisitor):
         if kind in ("aiohttp-session", "requests-session", "httpx-client"):
             return (
                 isinstance(parent, ast.Call)
-                and _dotted(parent.func).rsplit(".", 1)[-1] == "gate_session"
+                and self._resolve(_dotted(parent.func)).rsplit(".", 1)[-1]
+                == "gate_session"
             )
         if kind in ("requests-call", "httpx-call"):
             fn = self._functions[-1] if self._functions else None
             return fn is not None and any(
                 isinstance(n, ast.Call)
-                and _dotted(n.func).endswith("preflight_requests")
+                and self._resolve(_dotted(n.func)).endswith("preflight_requests")
+                and n.lineno < node.lineno  # the preflight runs BEFORE the raw call
                 for n in ast.walk(fn)
             )
         if kind == "urllib-opener":
-            return isinstance(parent, ast.Call) and _dotted(parent.func).rsplit(".", 1)[
-                -1
-            ] in ("gate_opener", "_gate_opener")
+            return isinstance(parent, ast.Call) and self._resolve(
+                _dotted(parent.func)
+            ).rsplit(".", 1)[-1] in ("gate_opener", "_gate_opener")
         return False
 
 
@@ -114,7 +148,8 @@ def scan() -> list[Construct]:
         rel = str(path.relative_to(ROOT))
         if rel == "labels/transport_gate.py":
             continue
-        visitor = _Visitor(rel)
-        visitor.visit(ast.parse(path.read_text(encoding="utf-8")))
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        visitor = _Visitor(rel, _aliases(tree))
+        visitor.visit(tree)
         found.extend(visitor.found)
     return found

@@ -130,6 +130,7 @@ class HTTPTransport:
                         http2=use_http2,
                     ),
                     origins=[self.base_url],
+                    external=True,  # the customer's own evaluator service
                 )
                 self._closed = False
 

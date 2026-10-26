@@ -46,10 +46,6 @@ def _latch_key() -> str:
 
 #: Raw HTTP constructs that deliberately do NOT pass through the transport gate.
 BYPASS_REGISTER: dict[tuple[str, str], str] = {
-    ("cloud/production_mcp_client.py", "aiohttp-session"): (
-        "false positive: ``ClientSession`` here is the MCP protocol session over an MCP "
-        "transport, not an aiohttp HTTP session"
-    ),
     ("utils/diagnostics.py", "socket"): (
         "TCP reachability probe for the diagnose command: connects and sends no bytes"
     ),
@@ -70,25 +66,50 @@ def test_every_http_egress_construct_is_gated_or_a_documented_bypass() -> None:
     assert stale == [], f"stale bypass register entries: {stale}"
 
 
-def test_the_scanner_flags_a_new_raw_call(tmp_path: Path) -> None:
+def _scan_source(source: str) -> list[tuple[str, bool]]:
     import ast
 
-    from .http_egress_scan import _Visitor
+    from .http_egress_scan import _aliases, _Visitor
 
-    visitor = _Visitor("new_module.py")
-    visitor.visit(
-        ast.parse(
-            "import requests, httpx\n"
-            "def f():\n    requests.post('https://x', json={})\n"
-            "def g():\n    return httpx.Client()\n"
-            "def h(gate_session):\n    return gate_session(httpx.Client())\n"
-        )
-    )
-    assert [(c.kind, c.gated) for c in visitor.found] == [
-        ("requests-call", False),
+    tree = ast.parse(source)
+    visitor = _Visitor("new_module.py", _aliases(tree))
+    visitor.visit(tree)
+    return [(c.kind, c.gated) for c in visitor.found]
+
+
+def test_the_scanner_flags_a_new_raw_call() -> None:
+    assert _scan_source(
+        "import requests, httpx\n"
+        "def f():\n    requests.post('https://x', json={})\n"
+        "def g():\n    return httpx.Client()\n"
+        "def h(gate_session):\n    return gate_session(httpx.Client())\n"
+    ) == [("requests-call", False), ("httpx-client", False), ("httpx-client", True)]
+
+
+def test_the_scanner_resolves_aliased_imports_and_preflight_order() -> None:
+    """The scan is an aid (the default-deny backstop is the guarantee) but it follows aliases."""
+    assert _scan_source(
+        "import aiohttp as aio\n"
+        "from aiohttp import ClientSession as CS\n"
+        "from httpx import AsyncClient as AC\n"
+        "import urllib.request as ur\n"
+        "def a():\n    return aio.ClientSession()\n"
+        "def b():\n    return CS()\n"
+        "def c():\n    return AC()\n"
+        "def d():\n    return ur.build_opener()\n"
+    ) == [
+        ("aiohttp-session", False),
+        ("aiohttp-session", False),
         ("httpx-client", False),
-        ("httpx-client", True),
+        ("urllib-opener", False),
     ]
+    # a preflight AFTER the raw call (or none) does not gate it
+    assert _scan_source(
+        "import requests\n"
+        "from traigent.labels.transport_gate import preflight_requests as pre\n"
+        "def late():\n    requests.get('u')\n    pre('GET', 'u')\n"
+        "def early():\n    pre('GET', 'u')\n    requests.get('u')\n"
+    ) == [("requests-call", False), ("requests-call", True)]
 
 
 # ------------------------------------------- default-deny: unknown routes are refused

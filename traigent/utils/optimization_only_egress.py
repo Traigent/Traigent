@@ -1669,6 +1669,23 @@ def env_setting(environ: Mapping[str, str] | None = None) -> bool | None:
 _CREDENTIAL_HEADERS = ("authorization", "x-api-key", "x-service-key")
 
 
+def _normalised_origin(url: Any) -> str:
+    """``scheme://host[:port]``: lowercase host, default port dropped, so equivalent
+    spellings of one origin share a latch."""
+    try:
+        parts = urlsplit(str(url))
+        scheme = parts.scheme.lower()
+        host = (parts.hostname or "").lower().rstrip(".")
+        port = parts.port
+    except ValueError:
+        return ""
+    if ":" in host:
+        host = f"[{host}]"
+    default = {"https": 443, "http": 80}.get(scheme)
+    suffix = f":{port}" if port and port != default else ""
+    return f"{scheme}://{host}{suffix}"
+
+
 def credential_scope(url: Any, headers: Any = None) -> str | None:
     """Opaque key for "this backend origin + this credential", or None without a credential.
 
@@ -1692,8 +1709,7 @@ def credential_scope(url: Any, headers: Any = None) -> str | None:
             break
     if not material:
         return None
-    parts = urlsplit(str(url))
-    origin = f"{parts.scheme.lower()}://{parts.netloc.lower()}"
+    origin = _normalised_origin(url)
     digest = hashlib.sha256(material.encode("utf-8")).hexdigest()
     return f"{origin}|{digest}"
 
@@ -2102,14 +2118,43 @@ def project_next_trial_payload(
     return out
 
 
-def project_closed_scalars(payload: Any) -> dict[str, Any]:
+def project_finalize_payload(data: Any) -> dict[str, Any]:
+    """Finalize body: the backend's projection (``project_session_finalize``) plus an SDK-side
+    closure the backend does not apply: ``certified_selection`` and ``session_aggregation``
+    keep only identifier/digest/number leaves (the backend leaves them unprojected), and
+    any other top-level member is kept only if it is a closed scalar."""
+    out = project_session_finalize(data)
+    for key in ("certified_selection", "session_aggregation"):
+        if out.get(key) is not None:
+            if not isinstance(out[key], dict):
+                raise MetadataContractViolation
+            try:
+                out[key] = s_closed_tree(out[key], _Ctx(), 0)
+            except _Drop:
+                raise MetadataContractViolation from None
+    for key in list(out):
+        if key in FINALIZE_KEYS:
+            continue
+        try:
+            out[key] = _closed_passthrough(out[key])
+        except _Drop:
+            del out[key]
+    return out
+
+
+def project_closed_scalars(
+    payload: Any, allowed_keys: Iterable[str] | None = None
+) -> dict[str, Any]:
     """A flat body of ids, numbers and booleans (intermediate report). Any other value, or an
     unknown shape, is refused rather than sent."""
     if not isinstance(payload, dict):
         raise MetadataContractViolation
+    allowed = None if allowed_keys is None else frozenset(allowed_keys)
     out: dict[str, Any] = {}
     for key, value in payload.items():
         if not isinstance(key, str) or ID_RE.fullmatch(key) is None:
+            raise MetadataContractViolation
+        if allowed is not None and key not in allowed:
             raise MetadataContractViolation
         try:
             out[key] = _closed_passthrough(value)
@@ -2311,13 +2356,52 @@ def project_best_config_payload(payload: Any) -> dict[str, Any]:
 # ---- transport backstop: default-deny route allowlist --------------------------------------
 # The per-site guards above produce good bodies, but a site can forget a guard or resolve a
 # credential late. The transport gate therefore calls :func:`enforce_outgoing` with the FINAL
-# method, URL, headers and body of every request to the Traigent backend. When the mode is
-# active only the optimization-loop routes below may pass, and a body-carrying route passes
-# only if its body is already a fixed point of its phase projector.
+# method, URL, headers and body of EVERY request that passes through it, whatever its origin
+# (sessions the SDK creates for customer or third-party endpoints are marked external at
+# creation and skipped; provider SDKs never use the gate). When the mode is active only the
+# routes below may pass, a body-carrying route passes only if its body is already a fixed
+# point of its phase projector (or matches an explicit field list), and no redirect is ever
+# followed.
 
-_API_PREFIX = r"^(?:/api/v\d+(?:beta\d*)?)?"
+_DEFAULT_API_PREFIX = re.compile(r"^/api/v\d+(?:beta\d*)?(?=/|$)")
 #: Marker for a body the gate cannot read (multipart, stream): never allowed on a body route.
 UNREADABLE_BODY = object()
+_BAD_PATH_ESCAPES = re.compile(r"%(?:2f|5c|2e)", re.IGNORECASE)
+
+#: ``intermediate-report`` fields (mirrors ``traigent.cloud.smart_pruning``; a test pins them).
+INTERMEDIATE_REPORT_KEYS = frozenset(
+    {
+        "session_id",
+        "trial_id",
+        "running_score",
+        "examples_attempted",
+        "objective_name",
+        "partial_cost_usd",
+    }
+)
+#: Credential fields only, per auth route (no free text may ride on an auth route).
+AUTH_FIELDS: dict[str, frozenset[str]] = {
+    "keys/validate": frozenset({"api_key"}),
+    "auth/login": frozenset({"email", "password"}),
+    "auth/refresh": frozenset({"refresh_token"}),
+    "oauth/token": frozenset(
+        {"grant_type", "client_id", "client_secret", "scope", "refresh_token"}
+    ),
+}
+#: Finalize members the SDK sends (everything else is dropped or closed, never passed on).
+FINALIZE_KEYS = frozenset(
+    {
+        "reason",
+        "experiment_run_id",
+        "include_full_history",
+        "final_metrics",
+        "metadata",
+        "certified_selection",
+        "session_aggregation",
+        "session_id",
+        "request_metadata",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -2331,8 +2415,23 @@ class Route:
 def _route(
     method: str, tail: str, phase: str | None = None, kind: str = "projected"
 ) -> Route:
-    return Route(method, re.compile(_API_PREFIX + tail + r"/?$"), phase, kind)
+    return Route(method, re.compile("^" + tail + r"/?$"), phase, kind)
 
+
+#: Bodyless, schema-defined reads (identifier-only path parameters and query values).
+READ_PREFIXES = (
+    "analytics",
+    "projects",
+    "prompts",
+    "evaluators",
+    "experiments",
+    "experiment-runs",
+    "configuration-runs",
+    "sessions",
+    "best-configs",
+    "benchmarks",
+    "agents",
+)
 
 ALLOWED_ROUTES: tuple[Route, ...] = (
     _route("POST", r"/sessions", PHASE_SESSION_CREATE_AUTO),
@@ -2341,32 +2440,26 @@ ALLOWED_ROUTES: tuple[Route, ...] = (
     _route("POST", r"/sessions/[^/]+/finalize", PHASE_FINALIZE),
     _route("POST", r"/sessions/[^/]+/intermediate-report", PHASE_INTERMEDIATE_REPORT),
     _route("DELETE", r"/sessions/[^/]+", None, "read"),
-    _route("GET", r"/sessions(?:/[^/]+(?:/[^/]+)?)?", None, "read"),
     _route(
         "PUT",
         r"/configuration-runs/[^/]+/(?:status|measures|summary-stats)",
         PHASE_CONFIGURATION_RUN,
     ),
     _route("PUT", r"/experiment-runs/runs/[^/]+", PHASE_CONFIGURATION_RUN),
-    _route(
-        "GET",
-        r"/(?:experiment-runs|configuration-runs|experiments)(?:/.*)?",
-        None,
-        "read",
-    ),
     _route("POST", r"/experiments/[^/]+/runs", PHASE_PARENT_RUN),
     _route("POST", r"/best-configs", PHASE_BEST_CONFIG),
-    _route("GET", r"/best-configs(?:/.*)?", None, "read"),
     _route("POST", r"/director/sessions", None, "director"),
     _route("POST", r"/director/sessions/[^/]+/turn", None, "director"),
-    _route("GET", r"/director/sessions/[^/]+/state", None, "read"),
     _route("POST", r"/hybrid/optimizer/[^/]+", PHASE_OPTIMIZER_METRICS),
     _route("POST", r"/hybrid/optimizer/[^/]+/batch", PHASE_OPTIMIZER_METRICS),
-    _route("GET", r"/hybrid/optimizer/[^/]+/(?:next|status)", None, "read"),
     # credentials only, no customer content
     _route("POST", r"/keys/validate", None, "auth"),
     _route("POST", r"/auth/(?:login|refresh)", None, "auth"),
     _route("POST", r"/oauth/token", None, "auth"),
+    *(
+        _route("GET", "/" + prefix + r"(?:/[^/]+)*", None, "read")
+        for prefix in READ_PREFIXES
+    ),
 )
 
 
@@ -2405,6 +2498,44 @@ def _is_fixed_point(phase: str, body: Any, session_id: str | None) -> bool:
     return _canonical(projected) == _canonical(body)
 
 
+def _api_tails(path: str, prefixes: Iterable[str]) -> list[str]:
+    """Candidate route parts of ``path``: after each configured API base the client holds
+    (``/proxy/api/v1`` style), after the default ``/api/vN``, and the path itself."""
+    tails: list[str] = []
+    for prefix in sorted({p.rstrip("/") for p in prefixes if p}, key=len, reverse=True):
+        if path == prefix or path.startswith(prefix + "/"):
+            tails.append(path[len(prefix) :] or "/")
+    match = _DEFAULT_API_PREFIX.match(path)
+    if match:
+        tails.append(path[match.end() :] or "/")
+    tails.append(path)
+    return tails
+
+
+def _auth_body_ok(path_tail: str, body: Any) -> bool:
+    fields = next(
+        (
+            f
+            for route, f in AUTH_FIELDS.items()
+            if path_tail.rstrip("/").endswith("/" + route)
+        ),
+        None,
+    )
+    if fields is None or body is UNREADABLE_BODY:
+        return False
+    parsed = body
+    if isinstance(body, (bytes, bytearray)):
+        body = bytes(body).decode("utf-8", "replace")
+    if isinstance(body, str):
+        try:
+            parsed = json.loads(body)
+        except ValueError:
+            from urllib.parse import parse_qsl
+
+            parsed = dict(parse_qsl(body, keep_blank_values=True))
+    return isinstance(parsed, dict) and set(parsed) <= fields
+
+
 def enforce_outgoing(
     method: str,
     url: Any,
@@ -2412,39 +2543,64 @@ def enforce_outgoing(
     body: Any,
     *,
     explicit: bool | Policy | None = None,
+    api_prefixes: Iterable[str] = (),
 ) -> None:
-    """Transport backstop for one request to the Traigent backend (FINAL url/headers/body).
+    """Transport backstop for one request (FINAL url/headers/body).
 
     Mode inactive for the request's credential: returns at once. Mode active: DEFAULT-DENY.
-    Only :data:`ALLOWED_ROUTES` pass; a body route passes only if its JSON body is a fixed
-    point of its phase projector (Director bodies must pass
-    :func:`assert_director_request`); query values must be identifier-shaped. Anything else
-    raises :class:`OptimizationOnlyRefusal` before a byte is sent.
+    The path must be free of dot segments and percent-encoded separators, every segment must
+    be identifier-shaped once decoded, and the route (after the client's API base) must be in
+    :data:`ALLOWED_ROUTES`. A body route passes only if its JSON body is a fixed point of its
+    phase projector (Director bodies must match their allowlist, auth bodies carry credential
+    fields only); query values must be identifier-shaped. Anything else raises
+    :class:`OptimizationOnlyRefusal` before a byte is sent.
     """
     headers_scope = credential_scope(url, headers) if scope_required(None) else None
     base = explicit.explicit if isinstance(explicit, Policy) else explicit
     if not is_active(Policy(base, headers_scope)):
         return
+    from urllib.parse import parse_qsl, unquote
+
     parts = urlsplit(str(url))
-    path = parts.path
+    raw_path = parts.path
+    if (
+        "\\" in raw_path
+        or _BAD_PATH_ESCAPES.search(raw_path)
+        or "//" in raw_path.rstrip("/")
+        or any(seg in (".", "..") for seg in raw_path.split("/"))
+    ):
+        raise OptimizationOnlyRefusal("path_not_normalised")
     verb = str(method).upper()
-    route = next(
-        (r for r in ALLOWED_ROUTES if r.method == verb and r.pattern.match(path)), None
-    )
+    tail = ""
+    route = None
+    for candidate in _api_tails(raw_path, api_prefixes):
+        route = next(
+            (
+                r
+                for r in ALLOWED_ROUTES
+                if r.method == verb and r.pattern.match(candidate)
+            ),
+            None,
+        )
+        if route is not None:
+            tail = candidate
+            break
     if route is None:
         raise OptimizationOnlyRefusal("route_not_allowed")
-    if parts.query:
-        from urllib.parse import parse_qsl
-
-        for key, value in parse_qsl(parts.query, keep_blank_values=True):
-            if ID_RE.fullmatch(key) is None or (
-                value and ID_RE.fullmatch(value) is None
-            ):
-                raise OptimizationOnlyRefusal("query_not_closed")
+    for segment in tail.split("/"):
+        if segment and ID_RE.fullmatch(unquote(segment)) is None:
+            raise OptimizationOnlyRefusal("path_parameter_not_closed")
+    for key, value in parse_qsl(parts.query, keep_blank_values=True):
+        if ID_RE.fullmatch(key) is None or (value and ID_RE.fullmatch(value) is None):
+            raise OptimizationOnlyRefusal("query_not_closed")
     has_body = body is not None and body != b"" and body != ""
-    if route.kind in ("read", "auth") and route.phase is None:
-        if route.kind == "read" and has_body:
+    if route.kind == "read":
+        if has_body:
             raise OptimizationOnlyRefusal("body_not_allowed")
+        return
+    if route.kind == "auth":
+        if not _auth_body_ok(tail, body):
+            raise OptimizationOnlyRefusal("auth_body_not_closed")
         return
     if body is UNREADABLE_BODY:
         raise OptimizationOnlyRefusal("body_unreadable")
@@ -2455,29 +2611,30 @@ def enforce_outgoing(
         except ValueError:
             raise OptimizationOnlyRefusal("body_not_json") from None
     if route.kind == "director":
-        if not _director_conforms(
-            parsed,
+        allowed = (
             DIRECTOR_CREATE_ALLOWLIST
-            if path.rstrip("/").endswith("/director/sessions")
-            else DIRECTOR_TURN_ALLOWLIST,
-        ):
+            if tail.rstrip("/").endswith("/director/sessions")
+            else DIRECTOR_TURN_ALLOWLIST
+        )
+        if not _director_conforms(parsed, allowed):
             raise OptimizationOnlyRefusal("director_request")
         return
     if route.phase is None:
         return
-    if parsed is None or not isinstance(parsed, (dict, list)):
+    if not isinstance(parsed, (dict, list)):
         raise OptimizationOnlyRefusal("body_missing")
-    session_id = session_id_from_url(path)
+    session_id = session_id_from_url(tail)
     if route.phase == PHASE_OPTIMIZER_METRICS:
-        items = (
-            parsed.get("submissions")
-            if isinstance(parsed, dict) and "submissions" in parsed
-            else [parsed]
-        )
-        if not isinstance(items, list):
-            raise OptimizationOnlyRefusal("body_not_projected")
-        segs = path.rstrip("/").split("/")
+        segs = tail.rstrip("/").split("/")
         session_id = segs[-2] if segs[-1] == "batch" else segs[-1]
+        if isinstance(parsed, dict) and "submissions" in parsed:
+            if set(parsed) != {"submissions"} or not isinstance(
+                parsed["submissions"], list
+            ):
+                raise OptimizationOnlyRefusal("body_not_projected")
+            items = parsed["submissions"]
+        else:
+            items = [parsed]
         if not all(_is_fixed_point(route.phase, item, session_id) for item in items):
             raise OptimizationOnlyRefusal("body_not_projected")
         return
@@ -2525,12 +2682,14 @@ _PROJECTORS: dict[str, Callable[[Any, tuple[str, ...]], Any]] = {
     PHASE_SUMMARY_SUBMISSION: lambda p, d: project_results_payload(p, d),
     PHASE_OPTIMIZER_METRICS: lambda p, d: project_results_payload(p, d),
     PHASE_NEXT_TRIAL: lambda p, d: project_next_trial_payload(p, d),
-    PHASE_FINALIZE: lambda p, d: project_session_finalize(p),
+    PHASE_FINALIZE: lambda p, d: project_finalize_payload(p),
     PHASE_CONFIGURATION_RUN: lambda p, d: project_configuration_run(p, d),
     PHASE_PARENT_RUN: lambda p, d: project_parent_run_create(p),
     PHASE_CONSTRAINTS: lambda p, d: project_constraints(p, d),
     PHASE_TVAR_OBSERVATION: lambda p, d: project_tvar_observation(p, d),
-    PHASE_INTERMEDIATE_REPORT: lambda p, d: project_closed_scalars(p),
+    PHASE_INTERMEDIATE_REPORT: lambda p, d: project_closed_scalars(
+        p, INTERMEDIATE_REPORT_KEYS
+    ),
     PHASE_BEST_CONFIG: lambda p, d: project_best_config_payload(p),
 }
 PHASES = frozenset(_PROJECTORS) | {PHASE_SESSION_CREATE_AUTO}

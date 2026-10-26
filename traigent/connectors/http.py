@@ -239,7 +239,8 @@ class HttpKernel:
                         cookies=CookieJar(policy=_RejectCookies()),
                         follow_redirects=False,
                         transport=transport,
-                    )
+                    ),
+                    external=True,  # the customer's own data endpoint
                 ) as client:
                     try:
                         return await self._request_async(

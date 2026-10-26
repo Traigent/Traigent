@@ -317,10 +317,28 @@ def _policy_names(fn: ast.AST) -> set[str]:
     return names
 
 
+_MODULE = "optimization_only_egress"
+
+
 class _GuardVisitor(ast.NodeVisitor):
-    def __init__(self) -> None:
+    """Lexical aid (the default-deny transport backstop is the guarantee)."""
+
+    def __init__(self, tree: ast.AST) -> None:
         self.missing: list[int] = []
         self._names: list[set[str]] = [set()]
+        self.module_aliases: set[str] = {"oo_egress"}
+        self.function_aliases: dict[str, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    if a.name.endswith(_MODULE):
+                        self.module_aliases.add(a.asname or a.name.split(".")[-1])
+            elif isinstance(node, ast.ImportFrom):
+                for a in node.names:
+                    if a.name == _MODULE:
+                        self.module_aliases.add(a.asname or a.name)
+                    elif (node.module or "").endswith(_MODULE) and a.name in GUARDS:
+                        self.function_aliases[a.asname or a.name] = a.name
 
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         names = set(self._names[-1])
@@ -335,18 +353,28 @@ class _GuardVisitor(ast.NodeVisitor):
     visit_AsyncFunctionDef = _visit_function  # noqa: N815
 
     def visit_Assign(self, node: ast.Assign) -> None:
+        targets = {t.id for t in node.targets if isinstance(t, ast.Name)}
         if _is_policy_expr(node.value, self._names[-1]):
-            self._names[-1].update(
-                t.id for t in node.targets if isinstance(t, ast.Name)
-            )
+            self._names[-1].update(targets)
+        else:  # re-assigned to None (or anything else): no longer a policy
+            self._names[-1].difference_update(targets)
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
         func = node.func
         name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        if isinstance(func, ast.Name):
+            name = self.function_aliases.get(name, name)
         is_guard = name in GUARDS and (
-            not isinstance(func, ast.Attribute)
-            or (isinstance(func.value, ast.Name) and func.value.id == "oo_egress")
+            (
+                isinstance(func, ast.Name)
+                and func.id in {*self.function_aliases, *GUARDS}
+            )
+            or (
+                isinstance(func, ast.Attribute)
+                and isinstance(func.value, ast.Name)
+                and func.value.id in self.module_aliases
+            )
         )
         if is_guard:
             names = self._names[-1]
@@ -368,8 +396,9 @@ def _guard_calls_without_scope(source: str) -> list[int]:
     from one (or a parameter annotated ``Policy``), or a non-None ``scope=``. Aliased imports
     of the module are not followed. This is a lexical aid; the default-deny transport
     backstop is what actually guarantees coverage."""
-    visitor = _GuardVisitor()
-    visitor.visit(ast.parse(source))
+    tree = ast.parse(source)
+    visitor = _GuardVisitor(tree)
+    visitor.visit(tree)
     return sorted(set(visitor.missing))
 
 
@@ -384,7 +413,7 @@ def test_no_guard_call_in_the_sdk_omits_the_credential_scope() -> None:
         if path.name == "optimization_only_egress.py":
             continue
         text = path.read_text(encoding="utf-8")
-        if "oo_egress" not in text:
+        if _MODULE not in text and "oo_egress" not in text:
             continue
         lines = _guard_calls_without_scope(text)
         if lines:
@@ -408,6 +437,19 @@ def test_the_scope_checker_catches_an_unscoped_guard() -> None:
         )
         == []
     )
+    # aliased imports are followed
+    alias_src = "from traigent.utils import optimization_only_egress as oe\noe.refuse_if_active('x')"
+    assert _guard_calls_without_scope(alias_src) == [2]
+    assert _guard_calls_without_scope(
+        "from traigent.utils.optimization_only_egress import refuse_if_active as r\nr('x')"
+    ) == [2]
+    # a policy variable re-assigned to None is unscoped again
+    assert _guard_calls_without_scope(
+        "def f(self):\n"
+        "    p = oo_egress.policy_of(self)\n"
+        "    p = None\n"
+        "    oo_egress.refuse_if_active('x', explicit=p)"
+    ) == [4]
     assert (
         _guard_calls_without_scope(
             "def f(self):\n    p = oo_egress.policy_of(self)\n    oo_egress.refuse_if_active('x', explicit=p)"

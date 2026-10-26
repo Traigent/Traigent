@@ -301,16 +301,21 @@ def _refuses_redirects(client: Any, url: str) -> bool:
     credential-bearing private backend cannot be redirected to an address the
     validator never checked.
     """
-    if _is_strict(client):
+    if _is_strict(client) or _oo_redirects_refused(client):
         return True
+    if current_mode() == "off":
+        return False
     from traigent.cloud.url_security import private_backend_opt_in_covers
 
     return private_backend_opt_in_covers(url)
 
 
-def _refuse_redirect() -> TransportGateRefusal:
+def _refuse_redirect(client: Any = None) -> Exception:
     """A strict session never follows a redirect: it would carry the body and credentials
-    to an origin the gate has not inspected."""
+    to an origin the gate has not inspected. While optimization_only is active no redirect is
+    followed either, and a 3xx is a local refusal."""
+    if client is not None and _oo_redirects_refused(client):
+        return oo_egress.OptimizationOnlyRefusal("redirect_refused")
     return TransportGateRefusal("redirect_refused", {"violation": 1})
 
 
@@ -351,6 +356,18 @@ def observe_requests_response(response: Any) -> None:
     _latch_sync(response, "status_code", "content")
 
 
+def _configured_api_prefixes() -> frozenset[str]:
+    """Path part of the configured backend API base (``/proxy/api/v1`` style bases)."""
+    try:
+        from traigent.config.backend_config import BackendConfig
+
+        return frozenset(
+            {urlsplit(BackendConfig.get_backend_api_url()).path.rstrip("/")}
+        )
+    except Exception:  # noqa: BLE001 - silent-ok: default prefix handling still applies
+        return frozenset()
+
+
 def enforce_optimization_only(
     method: str,
     url: Any,
@@ -358,22 +375,52 @@ def enforce_optimization_only(
     headers: Any = None,
     body: Any = None,
     explicit: bool | None = None,
-    extra_origins: frozenset[tuple[str, str, int]] = frozenset(),
+    api_prefixes: Iterable[str] = (),
 ) -> None:
     """Transport backstop (default-deny while optimization_only is active).
 
     Called by every wrapper with the FINAL method, URL, headers and body, immediately before
-    bytes leave. Mode off and nothing latched: returns after one cheap check. Only requests
-    to the Traigent backend origin are judged; the customer's own model calls are untouched.
+    bytes leave, for requests to ANY origin: sessions the SDK creates for customer or
+    third-party endpoints are marked ``external`` at creation and never reach this function,
+    and provider SDKs do not use the gate. Mode off and nothing latched: one cheap check.
     """
     if not oo_egress.outgoing_may_be_active(explicit):
         return
-    origin = _origin(str(url))
-    if origin is None or (
-        origin not in extra_origins and origin not in backend_origins()
-    ):
+    oo_egress.enforce_outgoing(
+        method,
+        url,
+        headers,
+        body,
+        explicit=explicit,
+        api_prefixes={*api_prefixes, *_configured_api_prefixes()},
+    )
+
+
+def _enforce_for_session(
+    session: Any, method: str, url: Any, headers_fn: Any, body_fn: Any
+) -> None:
+    """The wrapper hook: judge one request unless the session is external or inactive."""
+    explicit = getattr(session, "_traigent_oo_explicit", None)
+    if not oo_egress.outgoing_may_be_active(explicit):
         return
-    oo_egress.enforce_outgoing(method, url, headers, body, explicit=explicit)
+    if getattr(session, "_traigent_oo_external", False):
+        return
+    enforce_optimization_only(
+        method,
+        url,
+        headers=headers_fn(),
+        body=body_fn(),
+        explicit=explicit,
+        api_prefixes=getattr(session, "_traigent_oo_prefixes", ()),
+    )
+
+
+def _oo_redirects_refused(session: Any) -> bool:
+    return not getattr(
+        session, "_traigent_oo_external", False
+    ) and oo_egress.outgoing_may_be_active(
+        getattr(session, "_traigent_oo_explicit", None)
+    )
 
 
 def _aiohttp_body(kwargs: dict[str, Any]) -> Any:
@@ -386,6 +433,8 @@ def _aiohttp_body(kwargs: dict[str, Any]) -> Any:
         return bytes(data)
     if isinstance(data, str):
         return data
+    if isinstance(data, dict):
+        return dict(data)  # form fields (auth/oauth routes judge the field names)
     return oo_egress.UNREADABLE_BODY
 
 
@@ -454,16 +503,13 @@ def _build_aiohttp(base: type) -> type:
                 url = str(base_url).rstrip("/") + "/" + url.lstrip("/")
             url = _with_params(url, kwargs.get("params"))
             _check_strict(self, url)
-            explicit = getattr(self, "_traigent_oo_explicit", None)
-            if oo_egress.outgoing_may_be_active(explicit):
-                enforce_optimization_only(
-                    str(method),
-                    url,
-                    headers=_effective_headers(self, kwargs),
-                    body=_aiohttp_body(kwargs),
-                    explicit=explicit,
-                    extra_origins=_instance_origins(self),
-                )
+            _enforce_for_session(
+                self,
+                str(method),
+                url,
+                lambda: _effective_headers(self, kwargs),
+                lambda: _aiohttp_body(kwargs),
+            )
             extra = _instance_origins(self)
             body: bytes | None = None
             unreadable = False
@@ -512,7 +558,7 @@ def _build_aiohttp(base: type) -> type:
             response = await super()._request(method, str_or_url, **kwargs)
             if _is_redirect_status(response.status):
                 response.release()
-                raise _refuse_redirect()
+                raise _refuse_redirect(self)
             await _latch_aiohttp(response, url, _effective_headers(self, kwargs))
             return response
 
@@ -530,13 +576,12 @@ def _build_requests(base: type) -> type:
                 body = body.encode("utf-8")
             readable = body is None or isinstance(body, (bytes, bytearray))
             _check_strict(self, str(request.url))
-            enforce_optimization_only(
+            _enforce_for_session(
+                self,
                 str(request.method),
                 str(request.url),
-                headers=request.headers,
-                body=_bytes_body(request.body),
-                explicit=getattr(self, "_traigent_oo_explicit", None),
-                extra_origins=_instance_origins(self),
+                lambda: request.headers,
+                lambda: _bytes_body(request.body),
             )
             inspect_outgoing(
                 str(request.method),
@@ -553,7 +598,7 @@ def _build_requests(base: type) -> type:
             response = super().send(request, **kwargs)
             if _is_redirect_status(response.status_code):
                 response.close()
-                raise _refuse_redirect()
+                raise _refuse_redirect(self)
             _latch_sync(response, "status_code", "content")
             return response
 
@@ -593,13 +638,12 @@ def _build_httpx_sync(base: type) -> type:
         def send(self, request: Any, **kwargs: Any) -> Any:
             body, unreadable = _httpx_body(request)
             _check_strict(self, str(request.url))
-            enforce_optimization_only(
+            _enforce_for_session(
+                self,
                 str(request.method),
-                request.url,
-                headers=request.headers,
-                body=oo_egress.UNREADABLE_BODY if unreadable else body,
-                explicit=getattr(self, "_traigent_oo_explicit", None),
-                extra_origins=_instance_origins(self),
+                str(request.url),
+                lambda: request.headers,
+                lambda: oo_egress.UNREADABLE_BODY if unreadable else body,
             )
             inspect_outgoing(
                 str(request.method),
@@ -616,7 +660,7 @@ def _build_httpx_sync(base: type) -> type:
             response = super().send(request, **kwargs)
             if _is_redirect_status(response.status_code):
                 response.close()
-                raise _refuse_redirect()
+                raise _refuse_redirect(self)
             _latch_httpx_sync(response)
             return response
 
@@ -631,13 +675,12 @@ def _build_httpx_async(base: type) -> type:
         async def send(self, request: Any, **kwargs: Any) -> Any:
             body, unreadable = _httpx_body(request)
             _check_strict(self, str(request.url))
-            enforce_optimization_only(
+            _enforce_for_session(
+                self,
                 str(request.method),
-                request.url,
-                headers=request.headers,
-                body=oo_egress.UNREADABLE_BODY if unreadable else body,
-                explicit=getattr(self, "_traigent_oo_explicit", None),
-                extra_origins=_instance_origins(self),
+                str(request.url),
+                lambda: request.headers,
+                lambda: oo_egress.UNREADABLE_BODY if unreadable else body,
             )
             inspect_outgoing(
                 str(request.method),
@@ -654,7 +697,7 @@ def _build_httpx_async(base: type) -> type:
             response = await super().send(request, **kwargs)
             if _is_redirect_status(response.status_code):
                 await response.aclose()
-                raise _refuse_redirect()
+                raise _refuse_redirect(self)
             await _latch_httpx_async(response)
             return response
 
@@ -678,6 +721,7 @@ def gate_session(
     origins: Iterable[str] | None = None,
     strict: bool = False,
     optimization_only: bool | None = None,
+    external: bool = False,
 ) -> Any:
     """Gate ONE SDK-created client instance in place and return it.
 
@@ -689,10 +733,6 @@ def gate_session(
     per-client API base is gated like the default one. ``strict`` makes the instance fail
     closed on any other origin (content-less sessions).
     """
-    if current_mode() == "off" and not oo_egress.outgoing_may_be_active(
-        optimization_only
-    ):
-        return client
     if not getattr(type(client), "_traigent_gated", False):
         if _is_instance(client, "aiohttp", "ClientSession"):
             object.__setattr__(
@@ -714,6 +754,17 @@ def gate_session(
             object.__setattr__(client, "_traigent_gate_strict", True)
         if optimization_only is not None:
             object.__setattr__(client, "_traigent_oo_explicit", optimization_only)
+        if external:
+            object.__setattr__(client, "_traigent_oo_external", True)
+        prefixes = frozenset(
+            urlsplit(str(u)).path.rstrip("/") for u in (origins or ()) if str(u)
+        )
+        if prefixes:
+            object.__setattr__(
+                client,
+                "_traigent_oo_prefixes",
+                getattr(client, "_traigent_oo_prefixes", frozenset()) | prefixes,
+            )
     return client
 
 
@@ -725,22 +776,25 @@ def mark_explicit(session: Any, explicit: bool | None) -> Any:
     return session
 
 
-def preflight_requests(method: str, url: str, **kwargs: Any) -> None:
+def preflight_requests(
+    method: str, url: str, *, external: bool = False, **kwargs: Any
+) -> None:
     """Inspect a module-level ``requests.<method>(url, ...)`` call before it is made.
 
     The body is prepared exactly as ``requests`` will prepare it (deterministic JSON
     encoding); the caller then makes its normal call.
     """
-    enforce_optimization_only(
-        method,
-        _with_params(str(url), kwargs.get("params")),
-        headers=kwargs.get("headers"),
-        body=(
-            kwargs["json"]
-            if kwargs.get("json") is not None
-            else _aiohttp_body({"data": kwargs.get("data")})
-        ),
-    )
+    if not external:
+        enforce_optimization_only(
+            method,
+            _with_params(str(url), kwargs.get("params")),
+            headers=kwargs.get("headers"),
+            body=(
+                kwargs["json"]
+                if kwargs.get("json") is not None
+                else _aiohttp_body({"data": kwargs.get("data")})
+            ),
+        )
     if current_mode() == "off":
         return
     try:
