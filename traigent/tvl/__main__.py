@@ -144,6 +144,30 @@ def find_tvl_files(directory: Path, recursive: bool = True) -> list[Path]:
     return sorted(files)
 
 
+def _collect_files_to_validate(
+    args: argparse.Namespace,
+) -> tuple[list[Path], list[str]]:
+    """Expand the CLI paths into the files to validate and the searched roots."""
+    files_to_validate: list[Path] = []
+
+    if not args.files:
+        # Search current directory
+        files_to_validate = find_tvl_files(Path.cwd(), recursive=args.recursive)
+        return files_to_validate, [str(Path.cwd())]
+
+    for file_path in args.files:
+        if file_path.is_dir():
+            files_to_validate.extend(
+                find_tvl_files(file_path, recursive=args.recursive)
+            )
+        else:
+            # A missing path is kept so validate_tvl_files() reports it
+            # and counts it as a failure: a CI gate must not pass when
+            # the input it was pointed at does not exist (#2414).
+            files_to_validate.append(file_path)
+    return files_to_validate, [str(p) for p in args.files]
+
+
 def main() -> int:
     """Main entry point for TVL validation CLI.
 
@@ -197,25 +221,7 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    # Collect files to validate
-    files_to_validate: list[Path] = []
-
-    if args.files:
-        for file_path in args.files:
-            if file_path.is_dir():
-                files_to_validate.extend(
-                    find_tvl_files(file_path, recursive=args.recursive)
-                )
-            else:
-                # A missing path is kept so validate_tvl_files() reports it
-                # and counts it as a failure: a CI gate must not pass when
-                # the input it was pointed at does not exist (#2414).
-                files_to_validate.append(file_path)
-        searched = [str(p) for p in args.files]
-    else:
-        # Search current directory
-        files_to_validate = find_tvl_files(Path.cwd(), recursive=args.recursive)
-        searched = [str(Path.cwd())]
+    files_to_validate, searched = _collect_files_to_validate(args)
 
     if not files_to_validate:
         if args.allow_empty:
