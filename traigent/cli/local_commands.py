@@ -7,6 +7,7 @@ import os
 import sys
 from datetime import UTC
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -130,6 +131,110 @@ def list_sessions(status: str | None, limit: int, output_format: str) -> None:
         sys.exit(1)
 
 
+def _echo_session_json(session: Any) -> None:
+    session_data = {
+        "session_id": session.session_id,
+        "function_name": session.function_name,
+        "created_at": session.created_at,
+        "updated_at": session.updated_at,
+        "status": session.status,
+        "total_trials": session.total_trials,
+        "completed_trials": session.completed_trials,
+        "best_config": session.best_config,
+        "best_score": session.best_score,
+        "baseline_score": session.baseline_score,
+        "optimization_config": session.optimization_config,
+        "trials": [
+            {
+                "trial_id": trial.trial_id,
+                "config": trial.config,
+                "score": trial.score,
+                "timestamp": trial.timestamp,
+                "error": trial.error,
+            }
+            for trial in (session.trials or [])
+        ],
+    }
+    click.echo(json.dumps(session_data, indent=2, default=str))
+
+
+def _echo_best_score_lines(session: Any, summary: dict[str, Any] | None) -> None:
+    if session.best_score is not None:
+        click.echo(f"Best Score: {session.best_score:.4f}")
+        improvement = (summary or {}).get("improvement")
+        if improvement:
+            click.echo(f"Improvement: {improvement * 100:.1f}%")
+
+
+def _echo_session_detailed(
+    session: Any, storage: LocalStorageManager, session_id: str
+) -> None:
+    summary = storage.get_session_summary(session_id)
+    click.echo(f"\n📊 Session Details: {session_id}")
+    click.echo("=" * 60)
+    click.echo(f"Function: {session.function_name}")
+    click.echo(f"Status: {session.status}")
+    click.echo(f"Created: {session.created_at}")
+    click.echo(f"Updated: {session.updated_at}")
+    # A single count, not "completed/total": since #2032 total_trials
+    # *is* the recorded count, so both halves are len(trials) and the
+    # ratio could only ever render "n/n" — a run that stopped after 3
+    # of a declared 10 printed "3/3", which reads as a completed budget
+    # and hides the early stop. "3/0" was obviously broken and ignored;
+    # "3/3" is plausible and would be believed. The summary view at
+    # :211 already prints the bare count.
+    #
+    # The second reason this comment used to give — that
+    # metadata["max_trials"] is fabricated upstream, so a real budget of
+    # 10 is indistinguishable from no budget — no longer holds: #2049
+    # stopped `backend_session_manager` substituting 10, so the key is
+    # now present only when the caller actually set a budget. An honest
+    # denominator IS therefore available for sessions that have one.
+    # Restoring a ratio is still a display decision (it would have to
+    # read the metadata rather than total_trials, and say something
+    # sensible for the no-budget case), so it is deliberately NOT done
+    # here — only the stale justification is corrected.
+    click.echo(f"Trials: {session.completed_trials}")
+
+    _echo_best_score_lines(session, summary)
+
+    if session.best_config:
+        click.echo("\n🎯 Best Configuration:")
+        for key, value in session.best_config.items():
+            click.echo(f"  {key}: {value}")
+
+    if session.trials:
+        click.echo("\n📈 Trial History:")
+        for trial in session.trials[-5:]:  # Show last 5 trials
+            status_icon = "✅" if trial.error is None else "❌"
+            score_str = f"{trial.score:.4f}" if trial.score is not None else "N/A"
+            click.echo(f"  {status_icon} Trial {trial.trial_id}: {score_str}")
+
+
+def _echo_session_summary(
+    session: Any, storage: LocalStorageManager, session_id: str, config: Any
+) -> None:
+    summary = storage.get_session_summary(session_id)
+    click.echo(f"\n📊 {session.function_name} Optimization")
+    click.echo(f"Status: {session.status} | Trials: {session.completed_trials}")
+
+    _echo_best_score_lines(session, summary)
+
+    if session.best_config:
+        click.echo(f"Best Config: {session.best_config}")
+
+    # Show context-specific upgrade hints for completed local sessions.
+    if config.is_local_mode() and session.status == "completed":
+        try:
+            show_upgrade_hint(
+                "cli_usage",
+                trial_count=session.completed_trials,
+                best_score=session.best_score,
+            )
+        except Exception as e:
+            logger.debug(f"Failed to show upgrade hint: {e}")
+
+
 @local_commands.command(name="show")
 @click.argument("session_id")
 @click.option(
@@ -151,105 +256,11 @@ def show_session(session_id: str, output_format: str) -> None:
             sys.exit(1)
 
         if output_format == "json":
-            session_data = {
-                "session_id": session.session_id,
-                "function_name": session.function_name,
-                "created_at": session.created_at,
-                "updated_at": session.updated_at,
-                "status": session.status,
-                "total_trials": session.total_trials,
-                "completed_trials": session.completed_trials,
-                "best_config": session.best_config,
-                "best_score": session.best_score,
-                "baseline_score": session.baseline_score,
-                "optimization_config": session.optimization_config,
-                "trials": [
-                    {
-                        "trial_id": trial.trial_id,
-                        "config": trial.config,
-                        "score": trial.score,
-                        "timestamp": trial.timestamp,
-                        "error": trial.error,
-                    }
-                    for trial in (session.trials or [])
-                ],
-            }
-            click.echo(json.dumps(session_data, indent=2, default=str))
-
+            _echo_session_json(session)
         elif output_format == "detailed":
-            summary = storage.get_session_summary(session_id)
-            click.echo(f"\n📊 Session Details: {session_id}")
-            click.echo("=" * 60)
-            click.echo(f"Function: {session.function_name}")
-            click.echo(f"Status: {session.status}")
-            click.echo(f"Created: {session.created_at}")
-            click.echo(f"Updated: {session.updated_at}")
-            # A single count, not "completed/total": since #2032 total_trials
-            # *is* the recorded count, so both halves are len(trials) and the
-            # ratio could only ever render "n/n" — a run that stopped after 3
-            # of a declared 10 printed "3/3", which reads as a completed budget
-            # and hides the early stop. "3/0" was obviously broken and ignored;
-            # "3/3" is plausible and would be believed. The summary view at
-            # :211 already prints the bare count.
-            #
-            # The second reason this comment used to give — that
-            # metadata["max_trials"] is fabricated upstream, so a real budget of
-            # 10 is indistinguishable from no budget — no longer holds: #2049
-            # stopped `backend_session_manager` substituting 10, so the key is
-            # now present only when the caller actually set a budget. An honest
-            # denominator IS therefore available for sessions that have one.
-            # Restoring a ratio is still a display decision (it would have to
-            # read the metadata rather than total_trials, and say something
-            # sensible for the no-budget case), so it is deliberately NOT done
-            # here — only the stale justification is corrected.
-            click.echo(f"Trials: {session.completed_trials}")
-
-            if session.best_score is not None:
-                click.echo(f"Best Score: {session.best_score:.4f}")
-                improvement = (summary or {}).get("improvement")
-                if improvement:
-                    click.echo(f"Improvement: {improvement * 100:.1f}%")
-
-            if session.best_config:
-                click.echo("\n🎯 Best Configuration:")
-                for key, value in session.best_config.items():
-                    click.echo(f"  {key}: {value}")
-
-            if session.trials and output_format == "detailed":
-                click.echo("\n📈 Trial History:")
-                for trial in session.trials[-5:]:  # Show last 5 trials
-                    status_icon = "✅" if trial.error is None else "❌"
-                    score_str = (
-                        f"{trial.score:.4f}" if trial.score is not None else "N/A"
-                    )
-                    click.echo(f"  {status_icon} Trial {trial.trial_id}: {score_str}")
-
+            _echo_session_detailed(session, storage, session_id)
         else:
-            # Summary format
-            summary = storage.get_session_summary(session_id)
-            click.echo(f"\n📊 {session.function_name} Optimization")
-            click.echo(f"Status: {session.status} | Trials: {session.completed_trials}")
-
-            if session.best_score is not None:
-                click.echo(f"Best Score: {session.best_score:.4f}")
-                improvement = (summary or {}).get("improvement")
-                if improvement:
-                    click.echo(f"Improvement: {improvement * 100:.1f}%")
-
-            if session.best_config:
-                click.echo(f"Best Config: {session.best_config}")
-
-            # Show context-specific upgrade hints for completed local sessions.
-            if config.is_local_mode() and session.status == "completed":
-                try:
-                    show_upgrade_hint(
-                        "cli_usage",
-                        trial_count=session.completed_trials,
-                        best_score=session.best_score,
-                    )
-                except Exception as e:
-                    logger.debug(f"Failed to show upgrade hint: {e}")
-
+            _echo_session_summary(session, storage, session_id, config)
     except Exception as e:
         click.echo(f"Error showing session: {e}", err=True)
         sys.exit(1)
