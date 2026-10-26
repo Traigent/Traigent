@@ -33,7 +33,7 @@ PYPROJECT_PATH = _REPO_ROOT / "pyproject.toml"
 # package -> (extra or None for core, vulnerable, first fixed, next major, advisory)
 FLOORS: dict[str, tuple[str | None, str, str, str, str]] = {
     "yarl": (None, "1.24.2", "1.24.5", "2.0.0", "AIKIDO-2026-181733"),
-    "filelock": (None, "4.0.8", "4.0.9", "5.0.0", "AIKIDO-2026-444439"),
+    "filelock": (None, "4.2.0", "4.2.1", "5.0.0", "CVE-2026-112940/112913/112907"),
     "h2": ("hybrid", "4.3.0", "4.4.1", "5.0.0", "GHSA-6hr6-w5qg-qmwg"),
 }
 
