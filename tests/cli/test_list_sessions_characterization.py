@@ -130,7 +130,7 @@ def _snapshot(name):
                 storage_cls.call_args,
                 storage.list_sessions.call_args,
                 storage.get_session_summary.call_args_list,
-                collect.call_args_list,
+                [c.args == (config,) for c in collect.call_args_list],
             )
         ),
     }
@@ -229,9 +229,7 @@ GOLDEN: dict = {
         "0        0.500        2025-01-02\n"
         "s1                             fn1                  completed    "
         "1        0.500        2025-01-02\n",
-        "calls": "(call('/store'), call(status=None), [call('s0'), call('s1')], "
-        "[call(<MagicMock name='TraigentConfig.from_environment()' "
-        "id='131850392008560'>)])",
+        "calls": "(call('/store'), call(status=None), [call('s0'), call('s1')], [True])",
     },
     "analytics_on_json": {
         "exit": 0,
@@ -245,9 +243,7 @@ GOLDEN: dict = {
         '    "session_id": "s0"\n'
         "  }\n"
         "]\n",
-        "calls": "(call('/store'), call(status=None), [call('s0')], "
-        "[call(<MagicMock name='TraigentConfig.from_environment()' "
-        "id='131850392002848'>)])",
+        "calls": "(call('/store'), call(status=None), [call('s0')], [True])",
     },
     "analytics_on_no_sessions": {
         "exit": 0,
@@ -261,8 +257,7 @@ GOLDEN: dict = {
         "----------------------------------------------------------------------------------------------------\n"
         "s0                             fn0                  completed    "
         "0        0.500        2025-01-02\n",
-        "calls": "(call('/store'), call(status=None), [call('s0')], [call(<MagicMock "
-        "name='TraigentConfig.from_environment()' id='131850392008560'>)])",
+        "calls": "(call('/store'), call(status=None), [call('s0')], [True])",
     },
     "storage_error": {
         "exit": 1,
