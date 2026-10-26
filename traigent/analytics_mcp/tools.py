@@ -1417,81 +1417,90 @@ async def observability_get_related_changes_tool(
     )
 
 
-def _change_brief_guidance(
-    evidence: dict[str, Any],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Build bounded, deterministic guidance from already-projected facts."""
-    hypotheses: list[dict[str, Any]] = []
-    recommendations: list[dict[str, Any]] = []
+def _evidence_count(value: object) -> int:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+    ):
+        return 0
+    return max(0, int(value))
 
-    def evidence_count(value: object) -> int:
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(value)
-        ):
-            return 0
-        return max(0, int(value))
 
-    analysis = evidence.get("trace_analysis")
-    if not isinstance(analysis, dict):
-        analysis = {}
-
+def _guidance_analysis_completeness(
+    analysis: dict[str, Any],
+    hypotheses: list[dict[str, Any]],
+    recommendations: list[dict[str, Any]],
+) -> None:
     analysis_status = analysis.get("analysis_status")
-    if analysis_status != "completed":
+    if analysis_status == "completed":
+        return
+    hypotheses.append(
+        {
+            "category": "analysis_completeness",
+            "assessment": "unverified",
+            "statement": "Trace derivation is incomplete; structural conclusions may be missing.",
+            "evidence": {
+                "analysis_status": analysis_status,
+                "failure_code": analysis.get("failure_code"),
+            },
+        }
+    )
+    recommendations.append(
+        {
+            "action": "restore_trace_derivation",
+            "rationale": "Complete structural evidence is required before attributing a failure.",
+            "verification": "Re-run this brief after analysis_status becomes completed.",
+        }
+    )
+
+
+def _guidance_tool_reliability(
+    analysis: dict[str, Any],
+    hypotheses: list[dict[str, Any]],
+    recommendations: list[dict[str, Any]],
+) -> None:
+    tool_summaries = analysis.get("tool_summaries")
+    if not isinstance(tool_summaries, list):
+        return
+    for summary in tool_summaries[:20]:
+        if not isinstance(summary, dict):
+            continue
+        failures = _evidence_count(summary.get("failure_count"))
+        retries = _evidence_count(summary.get("retry_count"))
+        fallbacks = _evidence_count(summary.get("fallback_count"))
+        if failures + retries + fallbacks == 0:
+            continue
+        tool_id = summary.get("normalized_tool_id")
         hypotheses.append(
             {
-                "category": "analysis_completeness",
+                "category": "tool_execution_reliability",
                 "assessment": "unverified",
-                "statement": "Trace derivation is incomplete; structural conclusions may be missing.",
+                "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
                 "evidence": {
-                    "analysis_status": analysis_status,
-                    "failure_code": analysis.get("failure_code"),
+                    "normalized_tool_id": tool_id,
+                    "attempt_count": _evidence_count(summary.get("attempt_count")),
+                    "failure_count": failures,
+                    "retry_count": retries,
+                    "fallback_count": fallbacks,
                 },
             }
         )
         recommendations.append(
             {
-                "action": "restore_trace_derivation",
-                "rationale": "Complete structural evidence is required before attributing a failure.",
-                "verification": "Re-run this brief after analysis_status becomes completed.",
+                "action": "test_tool_contract_change",
+                "target_id": tool_id,
+                "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+                "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change.",
             }
         )
 
-    tool_summaries = analysis.get("tool_summaries")
-    if isinstance(tool_summaries, list):
-        for summary in tool_summaries[:20]:
-            if not isinstance(summary, dict):
-                continue
-            failures = evidence_count(summary.get("failure_count"))
-            retries = evidence_count(summary.get("retry_count"))
-            fallbacks = evidence_count(summary.get("fallback_count"))
-            if failures + retries + fallbacks == 0:
-                continue
-            tool_id = summary.get("normalized_tool_id")
-            hypotheses.append(
-                {
-                    "category": "tool_execution_reliability",
-                    "assessment": "unverified",
-                    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
-                    "evidence": {
-                        "normalized_tool_id": tool_id,
-                        "attempt_count": evidence_count(summary.get("attempt_count")),
-                        "failure_count": failures,
-                        "retry_count": retries,
-                        "fallback_count": fallbacks,
-                    },
-                }
-            )
-            recommendations.append(
-                {
-                    "action": "test_tool_contract_change",
-                    "target_id": tool_id,
-                    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
-                    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change.",
-                }
-            )
 
+def _guidance_loops_and_issues(
+    analysis: dict[str, Any],
+    hypotheses: list[dict[str, Any]],
+    recommendations: list[dict[str, Any]],
+) -> None:
     repeat_groups = analysis.get("repeat_groups")
     if isinstance(repeat_groups, list) and repeat_groups:
         hypotheses.append(
@@ -1527,83 +1536,107 @@ def _change_brief_guidance(
             }
         )
 
+
+def _guidance_change_attribution(
+    evidence: dict[str, Any], hypotheses: list[dict[str, Any]]
+) -> None:
     lineage = evidence.get("related_changes")
     links = lineage.get("links") if isinstance(lineage, dict) else None
-    if isinstance(links, list) and links:
+    if not (isinstance(links, list) and links):
+        return
+    hypotheses.append(
+        {
+            "category": "change_attribution",
+            "assessment": "unverified",
+            "statement": "Linked releases, prompts, configurations, or toolsets are candidate variables, not established causes.",
+            "evidence": {
+                "candidate_changes": [
+                    {
+                        key: link.get(key)
+                        for key in (
+                            "resource_type",
+                            "resource_id",
+                            "resource_version",
+                        )
+                    }
+                    for link in links[:20]
+                    if isinstance(link, dict)
+                ]
+            },
+        }
+    )
+
+
+def _aggregate_recommendation_entry(
+    recommendation: object,
+) -> dict[str, Any] | None:
+    """Wire entry for a recognised aggregate recommendation, else None."""
+    if not isinstance(recommendation, dict):
+        return None
+    category = recommendation.get("category")
+    if not isinstance(category, str):
+        return None
+    rationale = _AGGREGATE_RECOMMENDATION_RATIONALES.get(category)
+    if rationale is None:
+        return None
+    return {
+        "action": "evaluate_aggregate_recommendation",
+        "target_id": recommendation.get("id"),
+        "category": category,
+        "priority": recommendation.get("priority"),
+        "confidence": recommendation.get("confidence"),
+        "subject": recommendation.get("subject"),
+        "rationale": rationale,
+        "evidence": recommendation.get("evidence"),
+        "verification": recommendation.get("measurement"),
+        "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change.",
+    }
+
+
+def _guidance_aggregate_insights(
+    evidence: dict[str, Any],
+    hypotheses: list[dict[str, Any]],
+    recommendations: list[dict[str, Any]],
+) -> None:
+    aggregate_insights = evidence.get("analysis_insights")
+    if not isinstance(aggregate_insights, dict):
+        return
+    conformance = aggregate_insights.get("conformance")
+    if isinstance(conformance, dict) and _evidence_count(
+        conformance.get("alternate_trace_count")
+    ):
         hypotheses.append(
             {
-                "category": "change_attribution",
-                "assessment": "unverified",
-                "statement": "Linked releases, prompts, configurations, or toolsets are candidate variables, not established causes.",
+                "category": "structural_conformance",
+                "assessment": "descriptive_non_causal",
+                "statement": "Alternate structures differ from the dominant observed variant; the baseline is descriptive, not an intended-workflow assertion.",
                 "evidence": {
-                    "candidate_changes": [
-                        {
-                            key: link.get(key)
-                            for key in (
-                                "resource_type",
-                                "resource_id",
-                                "resource_version",
-                            )
-                        }
-                        for link in links[:20]
-                        if isinstance(link, dict)
-                    ]
+                    key: conformance.get(key)
+                    for key in (
+                        "baseline_type",
+                        "baseline_variant_id",
+                        "sampled_trace_count",
+                        "conformance_rate",
+                        "alternate_trace_count",
+                        "alternate_rate",
+                        "alternate_variant_count",
+                        "sample_truncated",
+                    )
                 },
             }
         )
+    aggregate_recommendations = aggregate_insights.get("recommendations")
+    if not isinstance(aggregate_recommendations, list):
+        return
+    for recommendation in aggregate_recommendations[:20]:
+        entry = _aggregate_recommendation_entry(recommendation)
+        if entry is not None:
+            recommendations.append(entry)
 
-    aggregate_insights = evidence.get("analysis_insights")
-    if isinstance(aggregate_insights, dict):
-        conformance = aggregate_insights.get("conformance")
-        if isinstance(conformance, dict) and evidence_count(
-            conformance.get("alternate_trace_count")
-        ):
-            hypotheses.append(
-                {
-                    "category": "structural_conformance",
-                    "assessment": "descriptive_non_causal",
-                    "statement": "Alternate structures differ from the dominant observed variant; the baseline is descriptive, not an intended-workflow assertion.",
-                    "evidence": {
-                        key: conformance.get(key)
-                        for key in (
-                            "baseline_type",
-                            "baseline_variant_id",
-                            "sampled_trace_count",
-                            "conformance_rate",
-                            "alternate_trace_count",
-                            "alternate_rate",
-                            "alternate_variant_count",
-                            "sample_truncated",
-                        )
-                    },
-                }
-            )
-        aggregate_recommendations = aggregate_insights.get("recommendations")
-        if isinstance(aggregate_recommendations, list):
-            for recommendation in aggregate_recommendations[:20]:
-                if not isinstance(recommendation, dict):
-                    continue
-                category = recommendation.get("category")
-                if not isinstance(category, str):
-                    continue
-                rationale = _AGGREGATE_RECOMMENDATION_RATIONALES.get(category)
-                if rationale is None:
-                    continue
-                recommendations.append(
-                    {
-                        "action": "evaluate_aggregate_recommendation",
-                        "target_id": recommendation.get("id"),
-                        "category": category,
-                        "priority": recommendation.get("priority"),
-                        "confidence": recommendation.get("confidence"),
-                        "subject": recommendation.get("subject"),
-                        "rationale": rationale,
-                        "evidence": recommendation.get("evidence"),
-                        "verification": recommendation.get("measurement"),
-                        "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change.",
-                    }
-                )
 
+def _guidance_cohort_and_instrumentation(
+    evidence: dict[str, Any], recommendations: list[dict[str, Any]]
+) -> None:
     cohort = evidence.get("cohort_comparison")
     if isinstance(cohort, dict):
         recommendations.append(
@@ -1624,6 +1657,26 @@ def _change_brief_guidance(
                 "verification": "Emit typed observations with terminal status and stable tool_name, then rebuild the brief.",
             }
         )
+
+
+def _change_brief_guidance(
+    evidence: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Build bounded, deterministic guidance from already-projected facts."""
+    hypotheses: list[dict[str, Any]] = []
+    recommendations: list[dict[str, Any]] = []
+
+    analysis = evidence.get("trace_analysis")
+    if not isinstance(analysis, dict):
+        analysis = {}
+
+    _guidance_analysis_completeness(analysis, hypotheses, recommendations)
+    _guidance_tool_reliability(analysis, hypotheses, recommendations)
+    _guidance_loops_and_issues(analysis, hypotheses, recommendations)
+    _guidance_change_attribution(evidence, hypotheses)
+    _guidance_aggregate_insights(evidence, hypotheses, recommendations)
+    _guidance_cohort_and_instrumentation(evidence, recommendations)
+
     if not hypotheses:
         hypotheses.append(
             {
