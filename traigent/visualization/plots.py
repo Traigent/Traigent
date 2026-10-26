@@ -111,33 +111,9 @@ class PlotGenerator:
         maximize = orientations[objective]
         objective_label = self._format_objective_label(objective, maximize)
 
-        # Extract trial data
-        trial_numbers = []
-        scores = []
-        best_scores = []
-
-        current_best: float | None = None
-
-        for i, trial in enumerate(result.trials):
-            if trial.status == "completed" and trial.metrics:
-                score_value = trial.metrics.get(objective)
-                if score_value is None:
-                    continue
-                try:
-                    score = float(score_value)
-                except (TypeError, ValueError):
-                    continue
-                trial_numbers.append(i + 1)
-                scores.append(score)
-
-                if current_best is None:
-                    current_best = score
-                elif maximize:
-                    current_best = max(current_best, score)
-                else:
-                    current_best = min(current_best, score)
-
-                best_scores.append(current_best)
+        trial_numbers, scores, best_scores = self._extract_progress_series(
+            result, objective, maximize
+        )
 
         if not scores:
             return f"No completed trials with objective '{objective}'"
@@ -157,6 +133,40 @@ class PlotGenerator:
                 best_scores,
                 objective_label,
             )
+
+    @staticmethod
+    def _extract_progress_series(
+        result: OptimizationResult, objective: str, maximize: bool
+    ) -> tuple[list[int], list[float], list[float]]:
+        """Collect trial numbers, scores and running-best scores for ``objective``."""
+        trial_numbers: list[int] = []
+        scores: list[float] = []
+        best_scores: list[float] = []
+        current_best: float | None = None
+
+        for i, trial in enumerate(result.trials):
+            if trial.status != "completed" or not trial.metrics:
+                continue
+            score_value = trial.metrics.get(objective)
+            if score_value is None:
+                continue
+            try:
+                score = float(score_value)
+            except (TypeError, ValueError):
+                continue
+            trial_numbers.append(i + 1)
+            scores.append(score)
+
+            if current_best is None:
+                current_best = score
+            elif maximize:
+                current_best = max(current_best, score)
+            else:
+                current_best = min(current_best, score)
+
+            best_scores.append(current_best)
+
+        return trial_numbers, scores, best_scores
 
     def _plot_progress_matplotlib(
         self,
