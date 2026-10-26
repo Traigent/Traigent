@@ -489,23 +489,7 @@ class OptimizationAnalyzer:
         if not trials:
             return None
 
-        # Determine objective to plot
-        if objective is None:
-            objectives_data = data.get("objectives", {})
-            if isinstance(objectives_data, dict):
-                objectives_list = objectives_data.get("objectives", [])
-            else:
-                objectives_list = (
-                    objectives_data if isinstance(objectives_data, list) else []
-                )
-
-            # Extract objective name if it's a dict
-            if objectives_list and isinstance(objectives_list[0], dict):
-                objective = objectives_list[0].get("name", "score")
-            elif objectives_list and isinstance(objectives_list[0], str):
-                objective = objectives_list[0]
-            else:
-                objective = "score"
+        objective = _select_convergence_objective(data, objective)
 
         # Extract metric values
         values = []
@@ -781,29 +765,59 @@ class OptimizationAnalyzer:
 
         # Best configuration
         if "best_config" in data:
-            config = data["best_config"]
-            summary.append("\nBest Configuration:")
-            for key, value in config.get("config", {}).items():
-                summary.append(f"  {key}: {value}")
+            _append_best_configuration(summary, data["best_config"])
 
         # Weighted results
         if "weighted_results" in data:
-            weighted = data["weighted_results"]
-            summary.append("\nWeighted Scoring Results:")
-            summary.append(
-                f"  Best Weighted Score: {weighted.get('best_weighted_score', 0):.4f}"
-            )
-
-            if "best_weighted_config" in weighted:
-                summary.append("  Best Weighted Config:")
-                for key, value in weighted["best_weighted_config"].items():
-                    summary.append(f"    {key}: {value}")
-
-            if "objective_weights" in weighted:
-                summary.append("  Objective Weights:")
-                for obj, weight in weighted["objective_weights"].items():
-                    summary.append(f"    {obj}: {weight}")
+            _append_weighted_results(summary, data["weighted_results"])
 
         summary.append(f"{'=' * 60}")
 
         return "\n".join(summary)
+
+
+def _select_convergence_objective(data: dict[str, Any], objective: str | None) -> str:
+    """Return the same default objective selected by the convergence display."""
+    if objective is None:
+        objectives_data = data.get("objectives", {})
+        if isinstance(objectives_data, dict):
+            objectives_list = objectives_data.get("objectives", [])
+        else:
+            objectives_list = (
+                objectives_data if isinstance(objectives_data, list) else []
+            )
+
+        # Extract objective name if it's a dict
+        if objectives_list and isinstance(objectives_list[0], dict):
+            objective = objectives_list[0].get("name", "score")
+        elif objectives_list and isinstance(objectives_list[0], str):
+            objective = objectives_list[0]
+        else:
+            objective = "score"
+
+    return objective
+
+
+def _append_weighted_results(summary: list[str], weighted: dict[str, Any]) -> None:
+    """Append weighted result lines in display order to the existing summary."""
+    summary.append("\nWeighted Scoring Results:")
+    summary.append(
+        f"  Best Weighted Score: {weighted.get('best_weighted_score', 0):.4f}"
+    )
+
+    if "best_weighted_config" in weighted:
+        summary.append("  Best Weighted Config:")
+        for key, value in weighted["best_weighted_config"].items():
+            summary.append(f"    {key}: {value}")
+
+    if "objective_weights" in weighted:
+        summary.append("  Objective Weights:")
+        for obj, weight in weighted["objective_weights"].items():
+            summary.append(f"    {obj}: {weight}")
+
+
+def _append_best_configuration(summary: list[str], best_config: dict[str, Any]) -> None:
+    """Append best configuration lines to the existing summary in iteration order."""
+    summary.append("\nBest Configuration:")
+    for key, value in best_config.get("config", {}).items():
+        summary.append(f"  {key}: {value}")
