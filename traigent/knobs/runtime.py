@@ -1588,6 +1588,13 @@ def _execute_loop(
                 error=None,
             )
 
+    return _unaccepted_loop_result(stop, last_kind, last_output, iterations_used)
+
+
+def _unaccepted_loop_result(
+    stop: Any, last_kind: ResultKind, last_output: Any, iterations_used: int
+) -> CompositeRunResult:
+    """The result of a loop that ran out of iterations without an accepting stop."""
     # max_iters reached without acceptance, OR an exhausted loop whose final
     # body result is no_accept -> the loop yields no_accept (§3.2.1).
     measures = _loop_measures(iterations_used, StopReason.EXHAUSTED)
