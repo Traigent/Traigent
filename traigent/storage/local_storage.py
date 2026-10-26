@@ -1308,9 +1308,10 @@ class LocalStorageManager:
     def _dedup_base_keys(
         cls, config: dict[str, Any], keys: list[str] | None
     ) -> set[str] | None:
+        user_config_keys = cls._user_config_keys(config)
         if not keys:
             return None
-        return cls._user_config_keys(keys) | cls._user_config_keys(config)
+        return cls._user_config_keys(keys) | user_config_keys
 
     @staticmethod
     def _session_dataset_name(session: Any) -> Any:
@@ -1337,9 +1338,9 @@ class LocalStorageManager:
                 compare_keys = None
             else:
                 compare_keys = sorted(base_keys | self._user_config_keys(trial.config))
-            if self.compute_config_hash(
-                trial.config, compare_keys
-            ) == self.compute_config_hash(config, compare_keys):
+            target_hash = self.compute_config_hash(config, compare_keys)
+            trial_hash = self.compute_config_hash(trial.config, compare_keys)
+            if trial_hash == target_hash:
                 return True
         return False
 

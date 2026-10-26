@@ -179,3 +179,27 @@ def test_non_string_and_unhashable_entries_in_keys_are_ignored(storage):
     assert storage.is_config_seen(
         "fn", "ds", {"model": "a"}, keys=["model", ["unhashable"], None]
     )
+
+
+def test_none_config_without_sessions_raises_type_error_even_without_keys(storage):
+    """The config's user keys are read before any session is consulted."""
+    with pytest.raises(TypeError):
+        storage.is_config_seen("fn", "ds", None)  # type: ignore[arg-type]
+
+
+def test_target_config_is_hashed_before_trial_config(storage, monkeypatch):
+    _session(
+        storage,
+        metadata={"evaluation_set": "ds"},
+        trials=[({"x": 2}, {"score": 0.1})],
+    )
+    seen: list[dict] = []
+    real = storage.compute_config_hash
+
+    def recording(cfg, keys=None):
+        seen.append(dict(cfg))
+        return real(cfg, keys)
+
+    monkeypatch.setattr(storage, "compute_config_hash", recording)
+    assert not storage.is_config_seen("fn", "ds", {"x": 1})
+    assert seen == [{"x": 1}, {"x": 2}]
