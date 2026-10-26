@@ -386,7 +386,7 @@ def test_default_traigent_cloud_origin_stays_known_when_another_backend_is_confi
 
     monkeypatch.setenv(oo.ENV_VAR, "1")
     monkeypatch.setenv("TRAIGENT_BACKEND_URL", BACKEND_URL)
-    assert "https://portal.traigent.ai" in _known_traigent_origins()
+    assert {"https://portal.traigent.ai"} <= set(_known_traigent_origins())
     request = HybridExecuteRequest(
         tunable_id="t",
         config={"m": "a"},

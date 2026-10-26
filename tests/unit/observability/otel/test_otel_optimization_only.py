@@ -10,8 +10,13 @@ from traigent.utils import optimization_only_egress as oo
 pytestmark = pytest.mark.backend_online
 
 
+#: Hermetic credential: never rely on the ambient ``TRAIGENT_API_KEY``.
+FAKE_API_KEY = "uk_" + "o" * 43  # pragma: allowlist secret
+
+
 @pytest.fixture(autouse=True)
 def _mode(monkeypatch):
+    monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
     monkeypatch.delenv(oo.ENV_VAR, raising=False)
     oo.reset_latch()
     yield
@@ -21,7 +26,10 @@ def _mode(monkeypatch):
 
 def _init(collector):
     return otel.init(
-        endpoint=collector.base_url, schedule_delay_s=0.05, exit_flush=False
+        endpoint=collector.base_url,
+        api_key=FAKE_API_KEY,
+        schedule_delay_s=0.05,
+        exit_flush=False,
     )
 
 

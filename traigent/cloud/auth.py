@@ -723,11 +723,13 @@ class AuthManager:
         if credentials is not None and credentials.jwt_token:
             return {"Authorization": f"Bearer {credentials.jwt_token}"}
         token = self._api_key_token
-        if token is not None:
-            try:
-                return {"X-API-Key": token.get_value()}
-            except Exception:  # noqa: BLE001 - silent-ok: expired/cleared token
-                pass
+        # a cleared token has no value; an expired one is not the credential in use
+        if (
+            token is not None
+            and getattr(token, "_value", None)
+            and not token.is_expired
+        ):
+            return {"X-API-Key": token.get_value()}
         if credentials is not None and credentials.api_key:
             return {"X-API-Key": credentials.api_key}
         return {}
