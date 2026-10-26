@@ -9,6 +9,7 @@ for agent configuration validation.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import click
 from rich.console import Console
@@ -163,6 +164,74 @@ def status(path: str | None) -> None:
     console.print(table)
 
 
+def _load_config_or_exit(loader: Any, config: str | None, verbose: bool) -> Any:
+    """Load the hooks configuration, exiting with status 1 on failure."""
+    try:
+        hooks_config = loader(config)
+        if verbose:
+            console.print(
+                f"[dim]Configuration loaded from: {config or 'auto-detected'}[/dim]\n"
+            )
+    except Exception as e:
+        console.print(f"[red]Error loading configuration: {e}[/red]")
+        raise SystemExit(1) from e
+    return hooks_config
+
+
+def _echo_validation_result(result: Any, verbose: bool) -> tuple[bool, bool]:
+    """Print one function's result; return ``(is_valid, has_warnings)``."""
+    # Function header
+    is_valid = result.is_valid
+    if is_valid:
+        console.print(f"[green]✓[/green] [bold]{result.function_name}[/bold]")
+    else:
+        console.print(f"[red]✗[/red] [bold]{result.function_name}[/bold]")
+
+    # Models
+    if result.models_found:
+        models_str = ", ".join(result.models_found)
+        console.print(f"  Models: {models_str}")
+
+    # Cost estimate
+    if result.estimated_cost_per_query is not None:
+        console.print(f"  Est. cost: ${result.estimated_cost_per_query:.4f}/query")
+
+    # Issues
+    for issue in result.issues:
+        if issue.severity == "error":
+            console.print(f"  [red]ERROR[/red]: {issue.message}")
+        else:
+            console.print(f"  [yellow]WARNING[/yellow]: {issue.message}")
+
+        if verbose and issue.suggestion:
+            console.print(f"    [dim]Suggestion: {issue.suggestion}[/dim]")
+
+    # Warnings
+    has_warnings = bool(result.warnings)
+    for warning in result.warnings:
+        console.print(f"  [yellow]WARNING[/yellow]: {warning.message}")
+
+    console.print()
+    return is_valid, has_warnings
+
+
+def _handle_empty_scan(
+    exit_code: bool, target_explicit: bool, allow_empty: bool
+) -> None:
+    console.print("[yellow]No @traigent.optimize decorated functions found[/yellow]")
+    if exit_code and target_explicit and not allow_empty:
+        raise SystemExit(1)
+
+
+def _finish_validation(has_failures: bool, exit_code: bool) -> None:
+    if not has_failures:
+        console.print("\n[green]All validations passed![/green]")
+        return
+    console.print("\n[red]Validation failed![/red]")
+    if exit_code:
+        raise SystemExit(1)
+
+
 @hooks.command()
 @click.argument("target", default=".", type=click.Path(exists=True))
 @click.option(
@@ -214,16 +283,7 @@ def validate(
     console.print("\n[bold blue]Traigent Agent Validation[/bold blue]")
     console.print(f"Target: {target_path}\n")
 
-    # Load configuration
-    try:
-        hooks_config = load_hooks_config(config)
-        if verbose:
-            console.print(
-                f"[dim]Configuration loaded from: {config or 'auto-detected'}[/dim]\n"
-            )
-    except Exception as e:
-        console.print(f"[red]Error loading configuration: {e}[/red]")
-        raise SystemExit(1) from e
+    hooks_config = _load_config_or_exit(load_hooks_config, config, verbose)
 
     # Check if validation is enabled
     if not hooks_config.enabled:
@@ -240,11 +300,7 @@ def validate(
 
     # No functions found
     if not results:
-        console.print(
-            "[yellow]No @traigent.optimize decorated functions found[/yellow]"
-        )
-        if exit_code and target_explicit and not allow_empty:
-            raise SystemExit(1)
+        _handle_empty_scan(exit_code, target_explicit, allow_empty)
         return
 
     # Display results
@@ -254,39 +310,11 @@ def validate(
     has_warnings = False
 
     for result in results:
-        # Function header
-        if result.is_valid:
-            console.print(f"[green]✓[/green] [bold]{result.function_name}[/bold]")
-        else:
-            console.print(f"[red]✗[/red] [bold]{result.function_name}[/bold]")
+        is_valid, result_has_warnings = _echo_validation_result(result, verbose)
+        if not is_valid:
             has_failures = True
-
-        # Models
-        if result.models_found:
-            models_str = ", ".join(result.models_found)
-            console.print(f"  Models: {models_str}")
-
-        # Cost estimate
-        if result.estimated_cost_per_query is not None:
-            console.print(f"  Est. cost: ${result.estimated_cost_per_query:.4f}/query")
-
-        # Issues
-        for issue in result.issues:
-            if issue.severity == "error":
-                console.print(f"  [red]ERROR[/red]: {issue.message}")
-            else:
-                console.print(f"  [yellow]WARNING[/yellow]: {issue.message}")
-
-            if verbose and issue.suggestion:
-                console.print(f"    [dim]Suggestion: {issue.suggestion}[/dim]")
-
-        # Warnings
-        if result.warnings:
+        if result_has_warnings:
             has_warnings = True
-        for warning in result.warnings:
-            console.print(f"  [yellow]WARNING[/yellow]: {warning.message}")
-
-        console.print()
 
     # Summary
     passed = sum(1 for r in results if r.is_valid)
@@ -300,12 +328,7 @@ def validate(
         has_failures = True
         console.print("\n[red]Warnings present and fail_on_warning is enabled.[/red]")
 
-    if has_failures:
-        console.print("\n[red]Validation failed![/red]")
-        if exit_code:
-            raise SystemExit(1)
-    else:
-        console.print("\n[green]All validations passed![/green]")
+    _finish_validation(has_failures, exit_code)
 
 
 @hooks.command()
