@@ -168,3 +168,14 @@ def test_internal_errors_are_swallowed_logged_and_return_false(
     messages = [r.getMessage() for r in caplog.records]
     assert "Error during config deduplication check (RuntimeError)" in messages
     assert not any("secret detail" in m for m in messages)
+
+
+def test_non_string_and_unhashable_entries_in_keys_are_ignored(storage):
+    _session(
+        storage,
+        metadata={"evaluation_set": "ds"},
+        trials=[({"model": "a"}, {"score": 0.2})],
+    )
+    assert storage.is_config_seen(
+        "fn", "ds", {"model": "a"}, keys=["model", ["unhashable"], None]
+    )

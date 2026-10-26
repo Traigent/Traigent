@@ -9,7 +9,7 @@ import json
 import math
 import os
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from dataclasses import fields as dataclass_fields
@@ -1268,15 +1268,7 @@ class LocalStorageManager:
         Returns:
             True if configuration has been seen and successfully evaluated before
         """
-        user_config_keys = {
-            key for key in config if isinstance(key, str) and not key.startswith("_")
-        }
-        base_keys = (
-            {key for key in keys if isinstance(key, str) and not key.startswith("_")}
-            | user_config_keys
-            if keys
-            else None
-        )
+        base_keys = self._dedup_base_keys(config, keys)
 
         try:
             # List all sessions for this function
@@ -1291,44 +1283,11 @@ class LocalStorageManager:
                 if not session:
                     continue
 
-                # Check dataset match (prefer evaluation_set metadata)
-                session_dataset = (
-                    session.metadata.get("evaluation_set") if session.metadata else None
-                )
-                if not session_dataset:
-                    session_dataset = (
-                        session.metadata.get("dataset_name")
-                        if session.metadata
-                        else None
-                    )
-
-                if session_dataset != dataset_name:
+                if self._session_dataset_name(session) != dataset_name:
                     continue
 
-                # Check trials for matching config
-                if session.trials:
-                    for trial in session.trials:
-                        # Check if trial was successful (no error)
-                        if trial.error is None:
-                            # Compare the complete user-facing identity on both
-                            # sides. Unioning realized user keys preserves spec
-                            # awareness when a config space later expands or
-                            # narrows, while ignoring runtime-only metadata.
-                            if base_keys is None:
-                                compare_keys = None
-                            else:
-                                trial_user_keys = {
-                                    key
-                                    for key in trial.config
-                                    if isinstance(key, str) and not key.startswith("_")
-                                }
-                                compare_keys = sorted(base_keys | trial_user_keys)
-                            target_hash = self.compute_config_hash(config, compare_keys)
-                            trial_hash = self.compute_config_hash(
-                                trial.config, compare_keys
-                            )
-                            if trial_hash == target_hash:
-                                return True
+                if self._session_has_matching_trial(session, config, base_keys):
+                    return True
 
         except Exception as e:
             logger.warning(
@@ -1336,6 +1295,52 @@ class LocalStorageManager:
             )
             # Best effort - don't fail optimization due to dedup errors
 
+        return False
+
+    @staticmethod
+    def _user_config_keys(names: Iterable[Any]) -> set[str]:
+        """Names that are user choices (string, not underscore-namespaced)."""
+        return {
+            key for key in names if isinstance(key, str) and not key.startswith("_")
+        }
+
+    @classmethod
+    def _dedup_base_keys(
+        cls, config: dict[str, Any], keys: list[str] | None
+    ) -> set[str] | None:
+        if not keys:
+            return None
+        return cls._user_config_keys(keys) | cls._user_config_keys(config)
+
+    @staticmethod
+    def _session_dataset_name(session: Any) -> Any:
+        """Dataset a session ran on (prefer evaluation_set metadata)."""
+        metadata = session.metadata
+        session_dataset = metadata.get("evaluation_set") if metadata else None
+        if not session_dataset:
+            session_dataset = metadata.get("dataset_name") if metadata else None
+        return session_dataset
+
+    def _session_has_matching_trial(
+        self, session: Any, config: dict[str, Any], base_keys: set[str] | None
+    ) -> bool:
+        """True when a successful trial of ``session`` has the same user config."""
+        for trial in session.trials or ():
+            # Check if trial was successful (no error)
+            if trial.error is not None:
+                continue
+            # Compare the complete user-facing identity on both
+            # sides. Unioning realized user keys preserves spec
+            # awareness when a config space later expands or
+            # narrows, while ignoring runtime-only metadata.
+            if base_keys is None:
+                compare_keys = None
+            else:
+                compare_keys = sorted(base_keys | self._user_config_keys(trial.config))
+            if self.compute_config_hash(
+                trial.config, compare_keys
+            ) == self.compute_config_hash(config, compare_keys):
+                return True
         return False
 
     def find_cached_result_across_sessions(
