@@ -101,16 +101,28 @@ def _latch_key_validation(url: str, headers: dict[str, str], data: Any) -> bool:
 
     Runs before the validation result is returned, so the first content-bearing send
     after authentication is already judged under the mode. Returns True when the
-    response asked for the mode. Never raises.
+    response asked for the mode. Never raises, and fails closed: if latching itself
+    fails, the error class is logged and a flagged response still returns True, so the
+    caller restricts this auth manager rather than letting content out.
     """
+    flagged = (
+        isinstance(data, dict)
+        and data.get("valid") is True
+        and data.get("optimization_only") is True
+    )
     try:
         from traigent.utils import optimization_only_egress as oo_egress
 
         return oo_egress.note_key_validation(
             data, oo_egress.credential_scope(url, headers)
         )
-    except Exception:  # noqa: BLE001 - observation must never break authentication
-        return False
+    except Exception as exc:  # noqa: BLE001 - authentication must not break; fail closed
+        logger.error(
+            "optimization_only: key-validation latch failed (%s); "
+            "restricting this auth manager",
+            type(exc).__name__,
+        )
+        return flagged
 
 
 def _parse_validation_payload(data: Any | None, raw_body: str | None) -> dict[str, Any]:
@@ -726,10 +738,9 @@ class AuthManager:
         self, credentials: AuthCredentials | None, status: AuthStatus
     ) -> None:
         """Helper for TokenManager callback to set credentials and status."""
-        self._credentials = credentials
-        self._auth_status = status
         # The ONLY place self._credentials is assigned a credential (a test enforces it), so
         # a stored token is latched before any direct-header sender (observability) can use it.
+        # Latch first: if a flagged manager cannot latch, it raises and stores nothing.
         if credentials is not None:
             stored: dict[str, str] = {}
             if credentials.jwt_token:
@@ -738,6 +749,8 @@ class AuthManager:
                 stored["X-API-Key"] = credentials.api_key
             if stored:
                 self._latch_emitted_credential(stored)
+        self._credentials = credentials
+        self._auth_status = status
 
     def _latch_emitted_credential(self, headers: dict[str, str]) -> None:
         """Latch the scope of the credential this manager is about to emit.
@@ -748,7 +761,9 @@ class AuthManager:
         key, a login/exchange JWT, a refreshed JWT (with or without an API key in the
         refresh response), whatever. This is deliberately over-inclusive: a user-supplied
         JWT on a flagged manager is restricted too. Over-restriction is fail-safe; a missed
-        scope would let content out. Unflagged managers pay one attribute check. Never raises.
+        scope would let content out. Unflagged managers pay one attribute check and never
+        raise. A flagged manager fails closed: if latching raises, the error class is logged
+        and ``OptimizationOnlyRefusal`` is raised so the credential is never emitted unlatched.
         """
         if not self._server_optimization_only:
             return
@@ -758,8 +773,15 @@ class AuthManager:
 
             base = self.config.backend_base_url or BackendConfig.get_cloud_backend_url()
             oo_egress.latch_on(oo_egress.credential_scope(base, headers))
-        except Exception:  # noqa: BLE001 - observation must never break authentication
-            return
+        except Exception as exc:  # noqa: BLE001 - fail closed on a flagged manager
+            logger.error(
+                "optimization_only: could not latch an emitted credential (%s); "
+                "refusing to emit it",
+                type(exc).__name__,
+            )
+            from traigent.utils.optimization_only_egress import OptimizationOnlyRefusal
+
+            raise OptimizationOnlyRefusal("credential_latch") from None
 
     # ------------------------------------------------------------------
     # API key state delegators (backward compatibility)

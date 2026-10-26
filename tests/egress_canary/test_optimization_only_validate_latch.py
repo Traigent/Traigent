@@ -308,3 +308,71 @@ def test_login_on_flagged_manager_is_latched_for_direct_header_senders() -> None
                 "direct_header_send",
                 explicit=oo.policy_from_headers(BACKEND_URL, headers),
             )
+
+
+# ---- latching that itself raises fails closed and loud ----------------------------------
+
+
+def _boom(*_a: Any, **_k: Any) -> Any:
+    raise RuntimeError("scope boom " + FAKE_API_KEY)
+
+
+def test_validate_latch_failure_on_flagged_response_still_restricts_manager(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(oo, "credential_scope", _boom)
+    auth = _manager()
+    with caplog.at_level("ERROR", logger="traigent.cloud.auth"):
+        _validate_on(auth, {"valid": True, "optimization_only": True})
+    assert auth._server_optimization_only is True
+    text = caplog.text
+    assert "RuntimeError" in text
+    assert FAKE_API_KEY not in text
+    assert "scope boom" not in text
+
+
+def test_validate_latch_failure_on_unflagged_response_is_harmless(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from traigent.cloud.auth import _latch_key_validation
+
+    monkeypatch.setattr(oo, "credential_scope", _boom)
+    auth = _manager()
+    _validate_on(auth, {"valid": True, "optimization_only": False})
+    assert auth._server_optimization_only is False
+    assert _latch_key_validation(BACKEND_URL, {}, {"valid": True}) is False
+    assert _latch_key_validation(BACKEND_URL, {}, "not a dict") is False
+
+
+def test_flagged_manager_refuses_to_emit_credential_when_latch_raises(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from traigent.cloud.auth import AuthCredentials, AuthMode, AuthStatus
+
+    auth = _flagged_manager()
+    _store(auth, "jwt.pre.sig")  # stored, so no network
+    monkeypatch.setattr(oo, "latch_on", _boom)
+    creds = AuthCredentials(mode=AuthMode.JWT_TOKEN, jwt_token="jwt.fail.sig")
+    with caplog.at_level("ERROR", logger="traigent.cloud.auth"):
+        with pytest.raises(oo.OptimizationOnlyRefusal) as info:
+            auth._set_credentials_and_status(creds, AuthStatus.AUTHENTICATED)
+        with pytest.raises(oo.OptimizationOnlyRefusal):
+            asyncio.run(auth.get_auth_headers())
+    assert auth._credentials is not creds
+    assert "jwt.fail.sig" not in str(info.value)
+    assert "RuntimeError" in caplog.text
+    assert "jwt.fail.sig" not in caplog.text
+    assert FAKE_API_KEY not in caplog.text
+
+
+def test_unflagged_manager_ignores_latch_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from traigent.cloud.auth import AuthCredentials, AuthMode, AuthStatus
+
+    auth = _manager()
+    monkeypatch.setattr(oo, "latch_on", _boom)
+    monkeypatch.setattr(oo, "credential_scope", _boom)
+    creds = AuthCredentials(mode=AuthMode.JWT_TOKEN, jwt_token="jwt.ok.sig")
+    auth._set_credentials_and_status(creds, AuthStatus.AUTHENTICATED)
+    assert auth._credentials is creds
