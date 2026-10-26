@@ -2107,6 +2107,22 @@ def _quote_segment(value: str, *, field: str) -> str:
     return quote(text, safe="")
 
 
+def _exact_agent_id_segment(agent_id: str) -> str:
+    """URL-encode an agent id as one path segment, byte-for-byte as given.
+
+    The backend compares ids verbatim, so nothing is stripped; an id that URL normalisation
+    would change or drop (surrounding whitespace, ``.``, ``..``) is rejected without echo.
+    """
+    if (
+        not isinstance(agent_id, str)
+        or not agent_id
+        or agent_id != agent_id.strip()
+        or agent_id in {".", ".."}
+    ):
+        raise ValueError("agent_id is not a valid agent identifier.")
+    return quote(agent_id, safe="")
+
+
 def _json_object_query_value(
     value: Mapping[str, object] | str | None, *, field: str
 ) -> str | None:
@@ -2154,6 +2170,74 @@ DIRECTOR_VALIDITY_CHECKS: tuple[str, ...] = (
 DIRECTOR_VALIDITY_STATUSES: tuple[str, ...] = ("passed", "failed", "missing")
 DIRECTOR_CONFIDENCE_LABELS: tuple[str, ...] = ("low", "medium", "high", "unknown")
 _DIRECTOR_VALIDITY_CHECKS_MAX_ITEMS = 20
+
+# --- Agent decision (host-prompt) channel ---------------------------------------------------
+# Closed vocabularies pinned to the TraigentSchema ``agent_decision`` contract. Nothing here is
+# free text: ids, enums, digests and server-issued versions only.
+AGENT_DECISION_KINDS: tuple[str, ...] = ("PREPARE_BASELINE_EVALUATION",)
+AGENT_DECISION_ANSWERS: tuple[str, ...] = ("YES", "NOT_NOW")
+AGENT_DECISION_OPTIONS_VERSIONS: tuple[str, ...] = ("1",)
+AGENT_DECISION_POLICY_VERSIONS: tuple[str, ...] = ("1",)
+AGENT_DECISION_ERROR_REASONS: tuple[str, ...] = (
+    "DECISION_NOT_FOUND",
+    "DECISION_EXPIRED",
+    "DECISION_SUPERSEDED",
+    "DECISION_ALREADY_ANSWERED",
+    "STALE_BASIS",
+    "VERSION_MISMATCH",
+    "NOT_ELIGIBLE",
+    "REPLAY_MISMATCH",
+    "INVALID_REQUEST",
+    "POLICY_UNAVAILABLE",
+    "UNAUTHENTICATED",
+    "FORBIDDEN",
+    "RATE_LIMITED",
+    "AGENT_NOT_FOUND",
+)
+_AGENT_DECISION_STATUSES = frozenset({"OPEN", "ANSWERED", "EXPIRED", "SUPERSEDED"})
+_AGENT_DECISION_EXECUTION_STATUSES = frozenset(
+    {"NOT_APPLICABLE", "AWAITING_PREFLIGHT", "STARTED", "COMPLETED", "FAILED"}
+)
+_AGENT_DECISION_NEXT_ACTIONS = frozenset({"ASK_BUILDER", "RUN_PREFLIGHT", "NONE"})
+_AGENT_DECISION_KEYS = frozenset(
+    {
+        "decision_id",
+        "kind",
+        "prompt",
+        "options_version",
+        "policy_version",
+        "basis_digest",
+        "status",
+        "answer",
+        "answered_at",
+        "answered_via",
+        "answered_principal_type",
+        "human_responder",
+        "execution_status",
+        "execution_ref",
+        "next_action",
+        "issued_at",
+        "expires_at",
+    }
+)
+AGENT_DECISION_ID_RE = re.compile(r"^dr_[0-9a-f]{32}$")
+AGENT_DECISION_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+AGENT_DECISION_NONCE_RE = re.compile(r"^rn_[0-9a-f]{32}$")
+AGENT_DECISION_EXECUTION_REF_RE = re.compile(r"^xr_[0-9a-f]{32}$")
+AGENT_DECISION_TIMESTAMP_RE = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?Z$"
+)
+_AGENT_DECISION_ANSWERED_VIA = frozenset({"AGENT_HOST_PROMPT"})
+_AGENT_DECISION_PRINCIPAL_TYPES = frozenset({"API_KEY", "USER_SESSION"})
+_AGENT_DECISION_HUMAN_RESPONDERS = frozenset({"UNKNOWN"})
+# Fixed, backend-authored prompt for PREPARE_BASELINE_EVALUATION at options_version 1.
+_AGENT_DECISION_PROMPT: dict[str, Any] = {
+    "question": "Prepare the baseline evaluation for this agent now?",
+    "options": [
+        {"code": "YES", "label": "Yes, prepare it"},
+        {"code": "NOT_NOW", "label": "Not now"},
+    ],
+}
 
 # Required keys of the session-create response.
 _DIRECTOR_SESSION_REQUIRED_KEYS = frozenset(
@@ -3345,6 +3429,223 @@ class BackendAnalyticsClient:
         )
         _require_keys(payload, _DIRECTOR_STATE_REQUIRED_KEYS, what="director state")
         return payload
+
+    # === Agent decision (host-prompt) channel ===
+
+    @staticmethod
+    def _agent_decision_headers(project_id: str | None) -> dict[str, str] | None:
+        if project_id is None:
+            return None
+        return BackendAnalyticsClient._project_headers(project_id)
+
+    async def agent_decision_ensure(
+        self,
+        agent_id: str,
+        *,
+        kind: str = "PREPARE_BASELINE_EVALUATION",
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Ask the backend for the OPEN decision on an agent (or ``{"decision": None}``).
+
+        Endpoint: ``POST /api/v1beta/agent-decisions/{agent_id}/ensure``. The body is the
+        closed ``{"kind": ...}`` object; tenant and project come from the authenticated
+        principal (``project_id``, when given, only selects the project via the usual header).
+        """
+        if kind not in AGENT_DECISION_KINDS:
+            raise ValueError("kind must be a supported agent decision kind.")
+        aid = _exact_agent_id_segment(agent_id)
+        payload = await self._post_json(
+            f"/api/v1beta/agent-decisions/{aid}/ensure",
+            what="agent decision",
+            envelope=False,
+            json_body={"kind": kind},
+            headers=self._agent_decision_headers(project_id),
+        )
+        return _validated_agent_decision_response(payload, endpoint="ensure")
+
+    async def agent_decision_latest(
+        self, agent_id: str, *, project_id: str | None = None
+    ) -> dict[str, Any]:
+        """Read the latest decision on an agent in any status (read-only).
+
+        Endpoint: ``GET /api/v1beta/agent-decisions/{agent_id}/latest``.
+        """
+        aid = _exact_agent_id_segment(agent_id)
+        payload = await self._get_json(
+            f"/api/v1beta/agent-decisions/{aid}/latest",
+            what="agent decision",
+            envelope=False,
+            headers=self._agent_decision_headers(project_id),
+        )
+        return _validated_agent_decision_response(payload, endpoint="latest")
+
+    async def agent_decision_answer(
+        self,
+        decision_id: str,
+        *,
+        answer: str,
+        options_version: str,
+        policy_version: str,
+        basis_digest: str,
+        retry_nonce: str,
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Record the human's closed answer.
+
+        Endpoint: ``POST /api/v1beta/agent-decisions/{decision_id}/answer``. Idempotency is
+        carried by ``retry_nonce`` in the body (fresh per attempt, reused only to retry that
+        attempt); the contract has no ``Idempotency-Key`` header.
+        """
+        if not isinstance(decision_id, str) or not AGENT_DECISION_ID_RE.fullmatch(
+            decision_id
+        ):
+            raise ValueError("decision_id is not a valid decision id.")
+        if answer not in AGENT_DECISION_ANSWERS:
+            raise ValueError("answer must be one of the offered options.")
+        if options_version not in AGENT_DECISION_OPTIONS_VERSIONS:
+            raise ValueError("options_version is not supported.")
+        if policy_version not in AGENT_DECISION_POLICY_VERSIONS:
+            raise ValueError("policy_version is not supported.")
+        if not isinstance(basis_digest, str) or not AGENT_DECISION_DIGEST_RE.fullmatch(
+            basis_digest
+        ):
+            raise ValueError("basis_digest is not a valid digest.")
+        if not isinstance(retry_nonce, str) or not AGENT_DECISION_NONCE_RE.fullmatch(
+            retry_nonce
+        ):
+            raise ValueError("retry_nonce is not a valid retry nonce.")
+        payload = await self._post_json(
+            f"/api/v1beta/agent-decisions/{decision_id}/answer",
+            what="agent decision",
+            envelope=False,
+            json_body={
+                "answer": answer,
+                "options_version": options_version,
+                "policy_version": policy_version,
+                "basis_digest": basis_digest,
+                "retry_nonce": retry_nonce,
+            },
+            headers=self._agent_decision_headers(project_id),
+        )
+        return _validated_agent_decision_response(payload, endpoint="answer")
+
+
+def _valid_agent_decision_timestamp(value: Any, *, nullable: bool) -> bool:
+    if value is None:
+        return nullable
+    if not (
+        isinstance(value, str)
+        and len(value) <= 27
+        and AGENT_DECISION_TIMESTAMP_RE.fullmatch(value) is not None
+    ):
+        return False
+    try:  # the shape is right; the date and time must also exist (always UTC, "Z")
+        datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError:
+        return False
+    return True
+
+
+def _agent_decision_lifecycle_ok(decision: dict[str, Any]) -> bool:
+    """Lifecycle invariants of the contract's decision object (status/answer coupling)."""
+    status = decision["status"]
+    answer = decision["answer"]
+    answer_fields = (
+        decision["answer"],
+        decision["answered_at"],
+        decision["answered_via"],
+        decision["answered_principal_type"],
+        decision["human_responder"],
+    )
+    if status != "ANSWERED":
+        return (
+            all(value is None for value in answer_fields)
+            and decision["execution_status"] == "NOT_APPLICABLE"
+            and decision["execution_ref"] is None
+            and decision["next_action"]
+            == ("ASK_BUILDER" if status == "OPEN" else "NONE")
+        )
+    if any(value is None for value in answer_fields):
+        return False
+    if decision["answered_via"] == "AGENT_HOST_PROMPT" and (
+        decision["human_responder"] != "UNKNOWN"
+    ):
+        return False
+    if answer == "NOT_NOW":
+        return (
+            decision["execution_ref"] is None
+            and decision["execution_status"] == "NOT_APPLICABLE"
+            and decision["next_action"] == "NONE"
+        )
+    execution_status = decision["execution_status"]
+    return (
+        isinstance(decision["execution_ref"], str)
+        and execution_status != "NOT_APPLICABLE"
+        and decision["next_action"]
+        == ("RUN_PREFLIGHT" if execution_status == "AWAITING_PREFLIGHT" else "NONE")
+    )
+
+
+def _validated_agent_decision_response(
+    payload: dict[str, Any], *, endpoint: str = "latest"
+) -> dict[str, Any]:
+    """Check an agent-decision response against the whole endpoint contract.
+
+    ``endpoint`` is ``"ensure"`` (the decision is null or OPEN), ``"answer"`` (the decision
+    is always present and ANSWERED) or ``"latest"`` (any status, or null). Nothing is
+    rewritten. Any body outside the contract raises :class:`AnalyticsClientError` with a
+    fixed message (the offending value is never echoed).
+    """
+    if not isinstance(payload, dict) or set(payload) != {"decision"}:
+        raise AnalyticsClientError("Malformed agent decision response.")
+    decision = payload["decision"]
+    if decision is None:
+        if endpoint == "answer":
+            raise AnalyticsClientError("Malformed agent decision response.")
+        return payload
+    if not isinstance(decision, dict) or set(decision) != _AGENT_DECISION_KEYS:
+        raise AnalyticsClientError("Malformed agent decision response.")
+    try:
+        ok = (
+            isinstance(decision["decision_id"], str)
+            and AGENT_DECISION_ID_RE.fullmatch(decision["decision_id"]) is not None
+            and decision["kind"] in AGENT_DECISION_KINDS
+            and decision["status"] in _AGENT_DECISION_STATUSES
+            and decision["answer"] in (*AGENT_DECISION_ANSWERS, None)
+            and decision["answered_via"] in (*_AGENT_DECISION_ANSWERED_VIA, None)
+            and decision["answered_principal_type"]
+            in (*_AGENT_DECISION_PRINCIPAL_TYPES, None)
+            and decision["human_responder"] in (*_AGENT_DECISION_HUMAN_RESPONDERS, None)
+            and decision["execution_status"] in _AGENT_DECISION_EXECUTION_STATUSES
+            and decision["next_action"] in _AGENT_DECISION_NEXT_ACTIONS
+            and decision["options_version"] in AGENT_DECISION_OPTIONS_VERSIONS
+            and decision["policy_version"] in AGENT_DECISION_POLICY_VERSIONS
+            and isinstance(decision["basis_digest"], str)
+            and AGENT_DECISION_DIGEST_RE.fullmatch(decision["basis_digest"]) is not None
+            and decision["prompt"] == _AGENT_DECISION_PROMPT
+            and (
+                decision["execution_ref"] is None
+                or (
+                    isinstance(decision["execution_ref"], str)
+                    and AGENT_DECISION_EXECUTION_REF_RE.fullmatch(
+                        decision["execution_ref"]
+                    )
+                    is not None
+                )
+            )
+            and _valid_agent_decision_timestamp(decision["answered_at"], nullable=True)
+            and _valid_agent_decision_timestamp(decision["issued_at"], nullable=False)
+            and _valid_agent_decision_timestamp(decision["expires_at"], nullable=False)
+            and _agent_decision_lifecycle_ok(decision)
+            and (endpoint != "ensure" or decision["status"] == "OPEN")
+            and (endpoint != "answer" or decision["status"] == "ANSWERED")
+        )
+    except TypeError:  # unhashable value in a set-membership check
+        ok = False
+
+    if not ok:
+        raise AnalyticsClientError("Malformed agent decision response.")
+    return payload
 
 
 def _require_non_empty(value: str, *, field: str) -> str:

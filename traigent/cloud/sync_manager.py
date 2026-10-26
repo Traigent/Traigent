@@ -78,7 +78,9 @@ def build_experiment_url(
     """Build the portal URL for an experiment.
 
     Single source of truth for experiment URL construction —
-    used by both SyncManager and the orchestrator.
+    used by both SyncManager and the orchestrator. ``projectId`` is the query parameter the
+    portal reads to open the link in the right workspace; ``project_id`` is kept for
+    existing consumers.
     """
     url = (
         f"{base_url.rstrip('/')}/experiments/view/{quote(str(experiment_id), safe='')}"
@@ -88,6 +90,7 @@ def build_experiment_url(
         for key, value in (
             ("run_id", run_id),
             ("project_id", project_id),
+            ("projectId", project_id),
             ("tenant_id", tenant_id),
         )
         if value is not None and (normalized := str(value).strip())
@@ -95,6 +98,21 @@ def build_experiment_url(
     if not query_params:
         return url
     return f"{url}?{urlencode(query_params, quote_via=quote)}"
+
+
+def build_agent_url(
+    base_url: str, agent_id: str, *, project_id: str | None = None
+) -> str:
+    """Build the portal URL for an agent page.
+
+    The portal opens the link in the right workspace only when it carries ``projectId``;
+    without a project id the bare agent URL is returned.
+    """
+    url = f"{base_url.rstrip('/')}/agents/view/{quote(str(agent_id), safe='')}"
+    normalized = str(project_id).strip() if project_id is not None else ""
+    if not normalized:
+        return url
+    return f"{url}?{urlencode({'projectId': normalized}, quote_via=quote)}"
 
 
 def sanitize_backend_name(value: str, fallback: str = "Local Dataset") -> str:
