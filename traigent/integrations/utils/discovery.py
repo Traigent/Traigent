@@ -298,119 +298,15 @@ class ParameterDiscovery:
         Returns:
             List of method information dictionaries
         """
-        completion_methods = []
-        completion_keywords = ["create", "complete", "generate", "chat", "completion"]
-
-        def _search_nested_methods(obj, path_prefix="", max_depth=3) -> None:
-            """Recursively search for completion methods in nested objects."""
-            if max_depth <= 0:
-                return
-
-            try:
-                for name in dir(obj):
-                    if name.startswith("_"):
-                        continue
-
-                    try:
-                        attr = getattr(obj, name)
-                        current_path = f"{path_prefix}.{name}" if path_prefix else name
-
-                        # Check if this is a completion method
-                        if any(
-                            keyword in name.lower() for keyword in completion_keywords
-                        ):
-                            if inspect.ismethod(attr) or inspect.isfunction(attr):
-                                completion_methods.append(
-                                    {
-                                        "name": name,
-                                        "path": current_path,
-                                        "parameters": {},
-                                    }
-                                )
-
-                        # Recursively search nested objects (but not functions/methods)
-                        if not (
-                            inspect.ismethod(attr)
-                            or inspect.isfunction(attr)
-                            or inspect.isbuiltin(attr)
-                            or inspect.isclass(attr)
-                        ):
-                            _search_nested_methods(attr, current_path, max_depth - 1)
-
-                    except Exception as attr_err:
-                        logger.debug(
-                            f"Could not inspect attribute at {current_path}: {attr_err}"
-                        )
-                        continue
-            except Exception as search_err:
-                logger.debug(f"Error during nested method search: {search_err}")
+        completion_methods: list[dict[str, Any]] = []
 
         try:
             # Search class methods first
-            _search_nested_methods(cls)
+            _search_nested_methods(cls, completion_methods)
 
             # Also try to search instance methods by creating a dummy instance
             if inspect.isclass(cls):
-                flags = get_security_flags()
-                explicit_setting = getattr(
-                    cls, "__traigent_allow_instance_discovery__", None
-                )
-                allow_instance_discovery = (
-                    explicit_setting
-                    if explicit_setting is not None
-                    else flags.auto_discovery
-                )
-
-                if explicit_setting is None and os.getenv("PYTEST_CURRENT_TEST"):
-                    allow_instance_discovery = False
-
-                if allow_instance_discovery is False:
-                    logger.debug(
-                        "Skipping instantiation of %s during discovery (explicit opt-out)",
-                        cls,
-                    )
-                elif allow_instance_discovery:
-                    if (
-                        flags.emit_security_telemetry
-                        and explicit_setting is None
-                        and not flags.auto_discovery
-                    ):
-                        logger.info(
-                            "Auto discovery instantiating %s under profile %s",
-                            cls.__name__,
-                            flags.profile.value,
-                        )
-                    try:
-                        # Try to create instance with minimal parameters
-                        init_params = ParameterDiscovery.discover_init_parameters(cls)
-                        if init_params:
-                            # Try to create instance with dummy values for required parameters
-                            dummy_args: dict[str, Any] = {}
-                            for param_name, param in init_params.items():
-                                if param.default == inspect.Parameter.empty:
-                                    # Required parameter - provide dummy value based on type
-                                    param_type = (
-                                        ParameterDiscovery.infer_parameter_type(param)
-                                    )
-                                    if param_type is str:
-                                        dummy_args[param_name] = "dummy"
-                                    elif param_type is int:
-                                        dummy_args[param_name] = 0
-                                    elif param_type is float:
-                                        dummy_args[param_name] = 0.0
-                                    elif param_type is bool:
-                                        dummy_args[param_name] = False
-                                    else:
-                                        dummy_args[param_name] = None
-                            instance = cls(**dummy_args)
-                        else:
-                            instance = cls()
-
-                        _search_nested_methods(instance)
-                    except Exception as instance_err:
-                        logger.debug(
-                            f"Could not create instance for discovery: {instance_err}"
-                        )
+                _search_instance_methods(cls, completion_methods)
 
         except Exception as e:
             logger.debug(f"Could not find completion methods for {cls}: {e}")
@@ -710,3 +606,137 @@ class ParameterDiscovery:
                 adapted.pop(param, None)
 
         return adapted
+
+
+_COMPLETION_KEYWORDS = ("create", "complete", "generate", "chat", "completion")
+
+
+def _is_function_like(attr: Any) -> bool:
+    return inspect.ismethod(attr) or inspect.isfunction(attr)
+
+
+def _should_recurse_into(attr: Any) -> bool:
+    """Nested objects are searched; functions, builtins and classes are not."""
+    return not (
+        _is_function_like(attr) or inspect.isbuiltin(attr) or inspect.isclass(attr)
+    )
+
+
+def _search_nested_methods(
+    obj: Any,
+    completion_methods: list[dict[str, Any]],
+    path_prefix: str = "",
+    max_depth: int = 3,
+) -> None:
+    """Recursively search for completion methods in nested objects."""
+    if max_depth <= 0:
+        return
+
+    try:
+        for name in dir(obj):
+            if name.startswith("_"):
+                continue
+
+            try:
+                attr = getattr(obj, name)
+                current_path = f"{path_prefix}.{name}" if path_prefix else name
+
+                # Check if this is a completion method
+                if any(keyword in name.lower() for keyword in _COMPLETION_KEYWORDS):
+                    if _is_function_like(attr):
+                        completion_methods.append(
+                            {
+                                "name": name,
+                                "path": current_path,
+                                "parameters": {},
+                            }
+                        )
+
+                # Recursively search nested objects (but not functions/methods)
+                if _should_recurse_into(attr):
+                    _search_nested_methods(
+                        attr, completion_methods, current_path, max_depth - 1
+                    )
+
+            except Exception as attr_err:
+                logger.debug(
+                    f"Could not inspect attribute at {current_path}: {attr_err}"
+                )
+                continue
+    except Exception as search_err:
+        logger.debug(f"Error during nested method search: {search_err}")
+
+
+def _instance_discovery_allowed(cls: type, flags: Any) -> Any:
+    """Resolve whether discovery may instantiate ``cls`` (explicit opt-in wins)."""
+    explicit_setting = getattr(cls, "__traigent_allow_instance_discovery__", None)
+    allow_instance_discovery = (
+        explicit_setting if explicit_setting is not None else flags.auto_discovery
+    )
+
+    if explicit_setting is None and os.getenv("PYTEST_CURRENT_TEST"):
+        allow_instance_discovery = False
+
+    return allow_instance_discovery
+
+
+def _dummy_value_for(param: inspect.Parameter) -> Any:
+    """Placeholder for a required constructor parameter, chosen by its type."""
+    param_type = ParameterDiscovery.infer_parameter_type(param)
+    if param_type is str:
+        return "dummy"
+    if param_type is int:
+        return 0
+    if param_type is float:
+        return 0.0
+    if param_type is bool:
+        return False
+    return None
+
+
+def _build_discovery_instance(cls: type) -> Any:
+    """Create an instance with minimal (dummy) constructor arguments."""
+    init_params = ParameterDiscovery.discover_init_parameters(cls)
+    if not init_params:
+        return cls()
+
+    dummy_args: dict[str, Any] = {
+        param_name: _dummy_value_for(param)
+        for param_name, param in init_params.items()
+        if param.default == inspect.Parameter.empty
+    }
+    return cls(**dummy_args)
+
+
+def _search_instance_methods(
+    cls: type, completion_methods: list[dict[str, Any]]
+) -> None:
+    """Search instance-level methods when instantiation is permitted."""
+    flags = get_security_flags()
+    explicit_setting = getattr(cls, "__traigent_allow_instance_discovery__", None)
+    allow_instance_discovery = _instance_discovery_allowed(cls, flags)
+
+    if allow_instance_discovery is False:
+        logger.debug(
+            "Skipping instantiation of %s during discovery (explicit opt-out)",
+            cls,
+        )
+        return
+    if not allow_instance_discovery:
+        return
+
+    if (
+        flags.emit_security_telemetry
+        and explicit_setting is None
+        and not flags.auto_discovery
+    ):
+        logger.info(
+            "Auto discovery instantiating %s under profile %s",
+            cls.__name__,
+            flags.profile.value,
+        )
+    try:
+        instance = _build_discovery_instance(cls)
+        _search_nested_methods(instance, completion_methods)
+    except Exception as instance_err:
+        logger.debug(f"Could not create instance for discovery: {instance_err}")
