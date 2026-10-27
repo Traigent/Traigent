@@ -529,7 +529,9 @@ class TestFinalWarningReceivesRealPartialCounts:
             {"example_id": "e", "success": True, "metrics": priced},
         ]
 
-    def _final_message(self, attempted: int | None, *, waived: bool = True) -> str:
+    def _final_message(
+        self, attempted: int | None, *, waived: bool = True, trial: object = None
+    ) -> str:
         import asyncio
         from types import SimpleNamespace
 
@@ -550,7 +552,8 @@ class TestFinalWarningReceivesRealPartialCounts:
             _examples_of=lambda t: 5,
         )
         permit = enforcer.acquire_permit()
-        trial = self._trial(self._rows(), attempted)
+        if trial is None:
+            trial = self._trial(self._rows(), attempted)
         asyncio.run(
             OptimizationOrchestrator._account_trial_spend(orch, trial, permit=permit)
         )
@@ -564,12 +567,54 @@ class TestFinalWarningReceivesRealPartialCounts:
 
     def test_partial_counts_reach_final_warning(self) -> None:
         message = self._final_message(attempted=5)
-        assert "usage was missing on 2 of 5 examples" in message
+        assert "cost could not be measured on 2 of 5 examples" in message
         assert "traigent.with_usage(value, total_cost=0)" in message
-        assert "no LLM usage was captured" not in message
+        assert "usage was captured" not in message
 
     def test_unreadable_counts_give_neutral_final_warning(self) -> None:
         message = self._final_message(attempted=None)
         assert "could not be measured" in message
-        assert "no LLM usage was captured" not in message
-        assert "usage was missing on" not in message
+        assert "usage was captured" not in message
+        assert "cost could not be measured on" not in message
+
+    def test_real_evaluator_trial_reaches_final_warning_with_real_counts(self) -> None:
+        """Drive LocalEvaluator and the real result factory (no hand-built
+        metadata): 2 no-model-call rows record a measured $0, 3 rows have no
+        measurable cost, and the final warning reports exactly that."""
+        import asyncio
+
+        from traigent.core.trial_result_factory import build_success_result
+        from traigent.evaluators.base import Dataset, EvaluationExample
+        from traigent.evaluators.local import LocalEvaluator
+
+        dataset = Dataset(
+            [EvaluationExample({"q": str(i)}, f"x{i}") for i in range(5)],
+            name="coverage",
+            description="five rows",
+        )
+
+        def func(input_data: dict) -> object:
+            q = int(input_data["q"])
+            if q in (0, 2):  # what traigent.with_usage(value, total_cost=0) returns
+                return {"text": f"x{q}", "__traigent_meta__": {"total_cost": 0.0}}
+            return f"x{q}"
+
+        evaluator = LocalEvaluator(
+            metrics=["accuracy", "cost"], detailed=True, execution_mode="local"
+        )
+        eval_result = asyncio.run(evaluator.evaluate(func, {}, dataset))
+        trial = build_success_result(
+            trial_id="real",
+            evaluation_config={},
+            eval_result=eval_result,
+            duration=1.0,
+            examples_attempted=5,
+            total_cost=None,
+            optuna_trial_id=None,
+        )
+        assert trial.metrics.get("cost_unmeasured") == 1.0
+
+        message = self._final_message(attempted=5, trial=trial)
+        assert "cost could not be measured on 3 of 5 examples" in message
+        assert "traigent.with_usage(value, total_cost=0)" in message
+        assert "usage was captured" not in message

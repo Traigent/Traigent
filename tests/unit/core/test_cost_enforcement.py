@@ -2144,47 +2144,48 @@ def test_partial_and_total_usage_coverage_messages() -> None:
     partial_stop = unmeasured_cost_stop_message(
         3, 10, 5.0, 3, 0.0, missing_examples=4, attempted_examples=12
     )
-    assert "usage was missing on 4 of 12 examples" in partial_stop
+    assert "cost could not be measured on 4 of 12 examples" in partial_stop
     assert hint in partial_stop
-    assert "no LLM usage was captured" not in partial_stop
+    assert "usage was captured" not in partial_stop
 
     total_stop = unmeasured_cost_stop_message(
         3, 10, 5.0, 3, 0.0, missing_examples=12, attempted_examples=12
     )
-    assert "no LLM usage was captured" in total_stop
-    assert "usage was missing on" not in total_stop
+    assert "cost could not be measured on any of those examples" in total_stop
+    assert "cost could not be measured on 12 of 12" not in total_stop
+    assert hint in total_stop
 
     unknown_stop = unmeasured_cost_stop_message(3, 10, 5.0, 3, 0.0)
     assert "Cost could not be measured" in unknown_stop
-    assert "no LLM usage was captured" not in unknown_stop
-    assert "usage was missing on" not in unknown_stop
+    assert "usage was captured" not in unknown_stop
+    assert "cost could not be measured on" not in unknown_stop  # neutral
 
     reached_stop = unmeasured_cost_stop_message(
         3, 10, 1.0, 2, 1.5, missing_examples=1, attempted_examples=6
     )
     assert "cost limit ($1.00) was reached" in reached_stop
-    assert "usage was missing on 1 of 6 examples" in reached_stop
+    assert "cost could not be measured on 1 of 6 examples" in reached_stop
 
     partial_ran = unmeasured_cost_ran_message(
         3, 3, missing_examples=4, attempted_examples=12
     )
-    assert "usage was missing on 4 of 12 examples" in partial_ran
+    assert "cost could not be measured on 4 of 12 examples" in partial_ran
     assert hint in partial_ran
-    assert "no LLM usage was captured" not in partial_ran
+    assert "usage was captured" not in partial_ran
 
     total_ran = unmeasured_cost_ran_message(
         3, 3, missing_examples=12, attempted_examples=12
     )
-    assert "no LLM usage was captured" in total_ran
+    assert "cost could not be measured on any of those examples" in total_ran
 
     unknown_ran = unmeasured_cost_ran_message(3, 3)
     assert "could not be measured" in unknown_ran
-    assert "no LLM usage was captured" not in unknown_ran
+    assert "usage was captured" not in unknown_ran
 
     reached_ran = unmeasured_cost_ran_message(
         3, 3, known_spend=2.0, cost_limit=1.0, missing_examples=2, attempted_examples=6
     )
-    assert "usage was missing on 2 of 6 examples" in reached_ran
+    assert "cost could not be measured on 2 of 6 examples" in reached_ran
 
 
 def test_enforcer_status_carries_complete_counts_or_none() -> None:
@@ -2267,3 +2268,44 @@ def test_example_coverage_counts_attempts_not_the_truncated_id_list() -> None:
     assert unmeasured_example_coverage(rows, 10) is None
     assert unmeasured_example_coverage(rows, None) is None
     assert unmeasured_example_coverage(None, 9) is None
+
+
+def test_coverage_classifies_cost_not_usage_capture() -> None:
+    """A measured $0 no-call row is measured; a row with tokens but no price is
+    unmeasured. The messages built from these counts talk about cost only."""
+    from traigent.core.cost_enforcement import (
+        unmeasured_cost_ran_message,
+        unmeasured_cost_stop_message,
+    )
+    from traigent.utils.trial_costs import unmeasured_example_coverage
+
+    no_call = {"example_id": "n", "success": True, "metrics": {"total_cost": 0.0}}
+    unpriced = {
+        "example_id": "u",
+        "success": True,
+        "metrics": {"input_tokens": 12, "output_tokens": 4},
+    }
+    assert unmeasured_example_coverage([no_call, no_call], 2) == (0, 2)
+    assert unmeasured_example_coverage([no_call, unpriced], 2) == (1, 2)
+    assert unmeasured_example_coverage([unpriced, unpriced], 2) == (2, 2)
+
+    partial = unmeasured_cost_stop_message(
+        2, 10, 5.0, 2, 0.0, missing_examples=1, attempted_examples=2
+    )
+    assert "cost could not be measured on 1 of 2 examples" in partial
+    assert "traigent.with_usage(value, total_cost=0)" in partial
+
+    every = unmeasured_cost_ran_message(
+        1, 1, missing_examples=2, attempted_examples=2
+    )
+    assert "cost could not be measured on any of those examples" in every
+
+    for message in (
+        partial,
+        every,
+        unmeasured_cost_stop_message(2, 10, 5.0, 2, 0.0),
+        unmeasured_cost_ran_message(1, 1),
+    ):
+        assert "usage was captured" not in message
+        assert "usage was missing" not in message
+        assert "usage captured" not in message

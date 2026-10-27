@@ -357,7 +357,7 @@ class CostStatus:
     cost_confidence: float = field(default=0.5)
     #: Trials whose cost could not be measured (Traigent#2441).
     unmeasured_trial_count: int = field(default=0)
-    #: Example attempts, across the unmeasured trials, whose usage was missing,
+    #: Example attempts, across the unmeasured trials, whose cost could not be measured,
     #: and the total example attempts in those trials. Both are ``None`` unless
     #: every unmeasured trial supplied complete counts: a count is never guessed.
     unmeasured_missing_examples: int | None = field(default=None)
@@ -409,7 +409,7 @@ def unmeasured_cost_stop_message(
 
     ``missing_examples`` / ``attempted_examples`` are the complete example
     attempt counts across the unmeasured trials. When absent the message only
-    says the cost could not be measured; it never claims how much usage was
+    says the cost could not be measured; it never claims whether usage was
     captured.
 
     When ``known_spend`` (a minimum: it excludes unmeasured cost) has reached
@@ -427,11 +427,13 @@ def unmeasured_cost_stop_message(
     if coverage is None:
         usage_note = ""
     elif coverage[0] == coverage[1]:
-        usage_note = "; no LLM usage was captured on any of those examples"
+        usage_note = (
+            "; cost could not be measured on any of those examples. " + _WITH_USAGE_HINT
+        )
     else:
         usage_note = (
-            f"; usage was missing on {coverage[0]} of {coverage[1]} examples "
-            "in those trials and captured on the rest. " + _WITH_USAGE_HINT
+            f"; cost could not be measured on {coverage[0]} of {coverage[1]} "
+            "examples in those trials. " + _WITH_USAGE_HINT
         )
     if measured == 0:
         counts = f"none of the {trial_count} trials' cost could be measured"
@@ -491,17 +493,21 @@ def unmeasured_cost_ran_message(
     """Warn that an explicitly sized run ran unmeasured-cost trials (#2441).
 
     Without complete example counts the message says only that the cost could
-    not be measured; it never claims how much usage was captured.
+    not be measured; it never claims whether usage was captured.
     """
     coverage = _valid_coverage(missing_examples, attempted_examples)
     if coverage is None:
         usage_note = ""
     elif coverage[0] == coverage[1]:
-        usage_note = " (no LLM usage was captured on any of those examples)"
+        usage_note = (
+            " (cost could not be measured on any of those examples. "
+            + _WITH_USAGE_HINT
+            + ")"
+        )
     else:
         usage_note = (
-            f" (usage was missing on {coverage[0]} of {coverage[1]} examples in "
-            "those trials and captured on the rest. " + _WITH_USAGE_HINT + ")"
+            f" (cost could not be measured on {coverage[0]} of {coverage[1]} "
+            "examples in those trials. " + _WITH_USAGE_HINT + ")"
         )
     if _spend_reached_limit(known_spend, cost_limit):
         return (
@@ -1155,10 +1161,10 @@ Options:
             cost_unmeasured: True when ``cost`` is only the known spend floor of
                 a trial whose cost was partly unmeasured. The floor is charged,
                 the trial is counted as unmeasured, and strict mode raises.
-            unmeasured_examples: Up to a few example ids whose usage was
+            unmeasured_examples: Up to a few example ids whose cost could not be
                 missing, named in the strict error / warning (ids only).
             missing_usage_examples: Complete count of example attempts in this
-                trial whose usage was missing, or None when not known.
+                trial whose cost could not be measured, or None when not known.
             attempted_examples: Complete count of example attempts in this
                 trial, or None when not known. Both counts are needed for the
                 end-of-run message to distinguish partial from missing usage.
@@ -1395,10 +1401,10 @@ Options:
             cost_unmeasured: True when ``cost`` is only the known spend floor of
                 a trial whose cost was partly unmeasured. The floor is charged,
                 the trial is counted as unmeasured, and strict mode raises.
-            unmeasured_examples: Up to a few example ids whose usage was
+            unmeasured_examples: Up to a few example ids whose cost could not be
                 missing, named in the strict error / warning (ids only).
             missing_usage_examples: Complete count of example attempts in this
-                trial whose usage was missing, or None when not known.
+                trial whose cost could not be measured, or None when not known.
             attempted_examples: Complete count of example attempts in this
                 trial, or None when not known. Both counts are needed for the
                 end-of-run message to distinguish partial from missing usage.
@@ -1561,7 +1567,7 @@ Options:
         examples_text = ""
         if unmeasured_examples:
             examples_text = (
-                " Examples whose usage was missing: "
+                " Examples whose cost could not be measured: "
                 + ", ".join(str(e) for e in list(unmeasured_examples)[:5])
                 + "."
             )
