@@ -1007,7 +1007,7 @@ class CostTracker:
 
         # Add to session costs with bounds
         if cost_item.session_id:
-            self._add_session_cost_item(cost_item, cost_item.session_id)
+            self._add_session_cost_item(cost_item)
 
         # Add to pending sync
         if self.config.enable_server_sync:
@@ -1022,38 +1022,42 @@ class CostTracker:
         if self.config.enable_real_time_alerts:
             self._check_cost_alerts()
 
-    def _add_session_cost_item(self, cost_item: CostItem, session_id: str) -> None:
-        """Group ``cost_item`` under its session, enforcing the session bounds."""
-        if session_id not in self._session_costs:
+    def _add_session_cost_item(self, cost_item: CostItem) -> None:
+        """Group ``cost_item`` under its session, enforcing the session bounds.
+
+        ``cost_item.session_id`` is deliberately re-read at each use.
+        """
+        if cost_item.session_id not in self._session_costs:
             self._evict_oldest_session_if_full()
-            self._session_costs[session_id] = []
+            self._session_costs[cost_item.session_id] = []  # type: ignore[index]
 
         # Enforce per-session items limit
-        session_items = self._session_costs[session_id]
+        session_items = self._session_costs[cost_item.session_id]  # type: ignore[index]
         if len(session_items) >= self._max_items_per_session:
             # Remove oldest items from this session
             items_to_remove = max(1, self._max_items_per_session // 10)
-            self._session_costs[session_id] = session_items[items_to_remove:]
+            self._session_costs[cost_item.session_id] = session_items[  # type: ignore[index]
+                items_to_remove:
+            ]
 
-        self._session_costs[session_id].append(cost_item)
+        self._session_costs[cost_item.session_id].append(cost_item)  # type: ignore[index]
 
     def _evict_oldest_session_if_full(self) -> None:
         # Enforce max sessions limit
-        if len(self._session_costs) < self._max_sessions:
-            return
-        # Remove oldest session (based on oldest cost item)
-        oldest_session = min(
-            self._session_costs.keys(),
-            key=lambda s: (
-                self._session_costs[s][0].timestamp
-                if self._session_costs[s]
-                else float("inf")
-            ),
-        )
-        del self._session_costs[oldest_session]
-        logger.debug(
-            f"Removed oldest session {oldest_session} to stay within session limit"
-        )
+        if len(self._session_costs) >= self._max_sessions:
+            # Remove oldest session (based on oldest cost item)
+            oldest_session = min(
+                self._session_costs.keys(),
+                key=lambda s: (
+                    self._session_costs[s][0].timestamp
+                    if self._session_costs[s]
+                    else float("inf")
+                ),
+            )
+            del self._session_costs[oldest_session]
+            logger.debug(
+                f"Removed oldest session {oldest_session} to stay within session limit"
+            )
 
     # Reporting Methods
 
