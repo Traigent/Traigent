@@ -95,6 +95,38 @@ class TestCheckOrder:
         assert str(exc.value) == "batch_size must be greater than 0"
 
 
+class _Probe:
+    """Numeric stand-in recording which comparisons are evaluated, in order."""
+
+    def __init__(self, le_zero: bool, gt_max: bool) -> None:
+        self.log: list[str] = []
+        self._le, self._gt = le_zero, gt_max
+
+    def __le__(self, other):
+        self.log.append("le")
+        return self._le
+
+    def __gt__(self, other):
+        self.log.append("gt")
+        return self._gt
+
+
+class TestComparisonOrder:
+    def test_lower_bound_compared_first_and_short_circuits(self):
+        probe = _Probe(le_zero=True, gt_max=True)
+        with pytest.raises(ValueError) as exc:
+            _make(batch_size=probe)
+        assert str(exc.value) == "batch_size must be greater than 0"
+        assert probe.log == ["le"]
+
+    def test_upper_bound_compared_second(self):
+        probe = _Probe(le_zero=False, gt_max=True)
+        with pytest.raises(ValueError) as exc:
+            _make(batch_size=probe)
+        assert str(exc.value) == "batch_size must be less than or equal to 10000"
+        assert probe.log == ["le", "gt"]
+
+
 class TestPerTraceTimeout:
     def test_zero_accepted(self):
         assert _make(per_trace_timeout=0).per_trace_timeout == 0
