@@ -1225,6 +1225,18 @@ class MetricsTracker:
             return next(iter(sources))
         return COST_SOURCE_MIXED
 
+    @staticmethod
+    def _builtin_accuracy_value(metric: ExampleMetrics, raw_accuracy: Any) -> float:
+        """Accuracy of one eligible, measured row under built-in exact match."""
+        if metric.success:
+            # Existing tracker-only callers may not have emitted a
+            # per-example exact-match value. Preserve their established
+            # success fallback while making it identical in both formats.
+            return float(raw_accuracy) if raw_accuracy is not None else 1.0
+        # Built-in exact match: an error is an attempted miss, never
+        # numerator credit from a retained matching output.
+        return 0.0
+
     def _accuracy_values_for_formatters(
         self, *, user_supplied_accuracy: bool
     ) -> list[float]:
@@ -1255,15 +1267,7 @@ class MetricsTracker:
                 # Unmeasured, not a miss and not a hit (#2495).
                 continue
 
-            if metric.success:
-                # Existing tracker-only callers may not have emitted a
-                # per-example exact-match value. Preserve their established
-                # success fallback while making it identical in both formats.
-                values.append(float(raw_accuracy) if raw_accuracy is not None else 1.0)
-            else:
-                # Built-in exact match: an error is an attempted miss, never
-                # numerator credit from a retained matching output.
-                values.append(0.0)
+            values.append(self._builtin_accuracy_value(metric, raw_accuracy))
 
         return values
 
