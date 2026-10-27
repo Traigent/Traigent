@@ -363,6 +363,29 @@ def delete_session(session_id: str, force: bool) -> None:
         sys.exit(1)
 
 
+def _echo_sessions_older_than(storage: LocalStorageManager, days: int) -> None:
+    """Print the sessions a cleanup of ``days`` days would delete."""
+    from datetime import datetime, timedelta
+
+    cutoff_date = datetime.now(UTC) - timedelta(days=days)
+
+    old_sessions = []
+    for session in storage.list_sessions():
+        session_date = datetime.fromisoformat(session.created_at)
+        # Normalize to timezone-aware for safe comparison
+        if session_date.tzinfo is None:
+            session_date = session_date.replace(tzinfo=UTC)
+        if session_date < cutoff_date:
+            old_sessions.append(session)
+
+    if old_sessions:
+        click.echo(f"Would delete {len(old_sessions)} sessions older than {days} days:")
+        for session in old_sessions:
+            click.echo(f"  - {session.session_id} ({session.function_name})")
+    else:
+        click.echo(f"No sessions older than {days} days found.")
+
+
 @local_commands.command(name="cleanup")
 @click.option("--days", default=30, help="Delete sessions older than N days")
 @click.option(
@@ -375,28 +398,7 @@ def cleanup_sessions(days: int, dry_run: bool) -> None:
         storage = LocalStorageManager(config.get_local_storage_path())
 
         if dry_run:
-            # Show what would be deleted
-            from datetime import datetime, timedelta
-
-            cutoff_date = datetime.now(UTC) - timedelta(days=days)
-
-            old_sessions = []
-            for session in storage.list_sessions():
-                session_date = datetime.fromisoformat(session.created_at)
-                # Normalize to timezone-aware for safe comparison
-                if session_date.tzinfo is None:
-                    session_date = session_date.replace(tzinfo=UTC)
-                if session_date < cutoff_date:
-                    old_sessions.append(session)
-
-            if old_sessions:
-                click.echo(
-                    f"Would delete {len(old_sessions)} sessions older than {days} days:"
-                )
-                for session in old_sessions:
-                    click.echo(f"  - {session.session_id} ({session.function_name})")
-            else:
-                click.echo(f"No sessions older than {days} days found.")
+            _echo_sessions_older_than(storage, days)
         else:
             deleted_count = storage.cleanup_old_sessions(days)
             click.echo(f"✅ Cleaned up {deleted_count} sessions older than {days} days")
