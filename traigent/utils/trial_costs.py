@@ -22,6 +22,7 @@ __all__ = [
     "row_has_measured_cost",
     "row_reports_zero_provider_attempts",
     "trial_cost_unknown",
+    "unmeasured_example_coverage",
     "unmeasured_example_ids",
 ]
 
@@ -180,6 +181,26 @@ def trial_cost_unknown(
     return measured == 0 and zero_attempts == 0
 
 
+def _row_fields(row: Any) -> tuple[Any, Any, bool]:
+    """Return ``(metrics, example_id, success)`` for a dict or object row."""
+    if isinstance(row, Mapping):
+        return row.get("metrics"), row.get("example_id"), bool(row.get("success", True))
+    return (
+        getattr(row, "metrics", None),
+        getattr(row, "example_id", None),
+        bool(getattr(row, "success", True)),
+    )
+
+
+def _row_usage_missing(metrics: Mapping[str, Any], ok: bool) -> bool:
+    """The per-row rule shared by the id list and the coverage counts."""
+    flagged = is_cost_unmeasured(metrics)
+    no_cost = not row_has_measured_cost(metrics) and not (
+        not ok and row_reports_zero_provider_attempts(metrics)
+    )
+    return flagged or no_cost
+
+
 def unmeasured_example_ids(example_results: Any, limit: int = 5) -> list[str]:
     """Ids (or ``#index``) of the examples whose usage was not captured.
 
@@ -195,27 +216,45 @@ def unmeasured_example_ids(example_results: Any, limit: int = 5) -> list[str]:
         return []
     found: list[str] = []
     for index, row in enumerate(example_results):
-        if isinstance(row, Mapping):
-            metrics, example_id, ok = (
-                row.get("metrics"),
-                row.get("example_id"),
-                row.get("success", True),
-            )
-        else:
-            metrics = getattr(row, "metrics", None)
-            example_id = getattr(row, "example_id", None)
-            ok = getattr(row, "success", True)
+        metrics, example_id, ok = _row_fields(row)
         if not isinstance(metrics, Mapping):
             continue
-        flagged = is_cost_unmeasured(metrics)
-        no_cost = not row_has_measured_cost(metrics) and not (
-            not bool(ok) and row_reports_zero_provider_attempts(metrics)
-        )
-        if flagged or no_cost:
+        if _row_usage_missing(metrics, ok):
             found.append(str(example_id) if example_id else f"#{index}")
             if len(found) >= limit:
                 break
     return found
+
+
+def unmeasured_example_coverage(
+    example_results: Any, attempted: Any
+) -> tuple[int, int] | None:
+    """Complete ``(missing, attempted)`` example counts for one trial, or None.
+
+    Counts example *attempts* (not distinct ids) with the same per-row rule as
+    :func:`unmeasured_example_ids`, over every row, never a truncated id list.
+    ``attempted`` is the trial's own attempted-example count; the counts are
+    returned only when the readable rows account for exactly that many
+    attempts. Otherwise (rows absent, redacted, partial, or unreadable) the
+    coverage is unknown and ``None`` is returned: a count is never guessed.
+    """
+    if (
+        isinstance(attempted, bool)
+        or not isinstance(attempted, int)
+        or attempted <= 0
+        or not isinstance(example_results, Sequence)
+        or isinstance(example_results, (str, bytes, bytearray))
+        or len(example_results) != attempted
+    ):
+        return None
+    missing = 0
+    for row in example_results:
+        metrics, _example_id, ok = _row_fields(row)
+        if not isinstance(metrics, Mapping):
+            return None
+        if _row_usage_missing(metrics, ok):
+            missing += 1
+    return missing, attempted
 
 
 def extract_trial_cost_metric(*sources: Any) -> float | None:

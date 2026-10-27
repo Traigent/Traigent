@@ -2128,3 +2128,142 @@ def test_cost_limit_stop_after_trials_keeps_generic_detail_2671():
     )
     detail = OptimizationOrchestrator._describe_stop(orch)
     assert detail == "Stopped at 1 trials: the cost limit was reached."
+
+
+def test_partial_and_total_usage_coverage_messages() -> None:
+    """Stop and ran messages tell missing usage on some examples apart from
+    missing usage on all of them, and never claim a capture state they cannot
+    know."""
+    from traigent.core.cost_enforcement import (
+        unmeasured_cost_ran_message,
+        unmeasured_cost_stop_message,
+    )
+
+    hint = "traigent.with_usage(value, total_cost=0)"
+
+    partial_stop = unmeasured_cost_stop_message(
+        3, 10, 5.0, 3, 0.0, missing_examples=4, attempted_examples=12
+    )
+    assert "usage was missing on 4 of 12 examples" in partial_stop
+    assert hint in partial_stop
+    assert "no LLM usage was captured" not in partial_stop
+
+    total_stop = unmeasured_cost_stop_message(
+        3, 10, 5.0, 3, 0.0, missing_examples=12, attempted_examples=12
+    )
+    assert "no LLM usage was captured" in total_stop
+    assert "usage was missing on" not in total_stop
+
+    unknown_stop = unmeasured_cost_stop_message(3, 10, 5.0, 3, 0.0)
+    assert "Cost could not be measured" in unknown_stop
+    assert "no LLM usage was captured" not in unknown_stop
+    assert "usage was missing on" not in unknown_stop
+
+    reached_stop = unmeasured_cost_stop_message(
+        3, 10, 1.0, 2, 1.5, missing_examples=1, attempted_examples=6
+    )
+    assert "cost limit ($1.00) was reached" in reached_stop
+    assert "usage was missing on 1 of 6 examples" in reached_stop
+
+    partial_ran = unmeasured_cost_ran_message(
+        3, 3, missing_examples=4, attempted_examples=12
+    )
+    assert "usage was missing on 4 of 12 examples" in partial_ran
+    assert hint in partial_ran
+    assert "no LLM usage was captured" not in partial_ran
+
+    total_ran = unmeasured_cost_ran_message(
+        3, 3, missing_examples=12, attempted_examples=12
+    )
+    assert "no LLM usage was captured" in total_ran
+
+    unknown_ran = unmeasured_cost_ran_message(3, 3)
+    assert "could not be measured" in unknown_ran
+    assert "no LLM usage was captured" not in unknown_ran
+
+    reached_ran = unmeasured_cost_ran_message(
+        3, 3, known_spend=2.0, cost_limit=1.0, missing_examples=2, attempted_examples=6
+    )
+    assert "usage was missing on 2 of 6 examples" in reached_ran
+
+
+def test_enforcer_status_carries_complete_counts_or_none() -> None:
+    from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig
+
+    enforcer = CostEnforcer(
+        CostEnforcerConfig(
+            limit=5.0, estimated_cost_per_trial=0.1, limit_explicit=False
+        )
+    )
+    first = enforcer.acquire_permit()
+    enforcer.track_cost(
+        0.2,
+        permit=first,
+        cost_unmeasured=True,
+        missing_usage_examples=2,
+        attempted_examples=5,
+    )
+    second = enforcer.acquire_permit()
+    enforcer.track_cost(
+        0.1,
+        permit=second,
+        cost_unmeasured=True,
+        missing_usage_examples=1,
+        attempted_examples=5,
+    )
+    status = enforcer.get_status()
+    assert (
+        status.unmeasured_missing_examples,
+        status.unmeasured_attempted_examples,
+    ) == (
+        3,
+        10,
+    )
+    assert status.accumulated_cost_usd == pytest.approx(0.3)
+
+    third = enforcer.acquire_permit()
+    enforcer.track_cost(None, permit=third)  # counts unknown for this trial
+    status = enforcer.get_status()
+    assert status.unmeasured_missing_examples is None
+    assert status.unmeasured_attempted_examples is None
+    assert status.unmeasured_trial_count == 3
+
+    enforcer.reset()
+    assert enforcer.get_status().unmeasured_attempted_examples == 0
+
+
+def test_enforcer_async_path_threads_counts() -> None:
+    from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig
+
+    async def run() -> None:
+        enforcer = CostEnforcer(CostEnforcerConfig(limit=5.0, limit_explicit=False))
+        permit = await enforcer.acquire_permit_async()
+        await enforcer.track_cost_async(
+            0.0,
+            permit=permit,
+            cost_unmeasured=True,
+            missing_usage_examples=1,
+            attempted_examples=4,
+        )
+        status = enforcer.get_status()
+        assert status.unmeasured_missing_examples == 1
+        assert status.unmeasured_attempted_examples == 4
+
+    asyncio.run(run())
+
+
+def test_example_coverage_counts_attempts_not_the_truncated_id_list() -> None:
+    from traigent.utils.trial_costs import (
+        unmeasured_example_coverage,
+        unmeasured_example_ids,
+    )
+
+    rows = [{"example_id": "dup", "success": True, "metrics": {}} for _ in range(8)]
+    rows.append({"example_id": "ok", "success": True, "metrics": {"total_cost": 0.0}})
+
+    assert len(unmeasured_example_ids(rows)) == 5  # id list is capped
+    assert unmeasured_example_coverage(rows, 9) == (8, 9)  # counts are not
+    # Attempts must be fully accounted for, otherwise coverage is unknown.
+    assert unmeasured_example_coverage(rows, 10) is None
+    assert unmeasured_example_coverage(rows, None) is None
+    assert unmeasured_example_coverage(None, 9) is None

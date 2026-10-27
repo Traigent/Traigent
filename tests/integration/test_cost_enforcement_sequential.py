@@ -493,3 +493,83 @@ class TestMockModeIntegration:
             assert abs(enforcer._accumulated_cost - 0.05) < FLOAT_TOLERANCE
         finally:
             os.environ["TRAIGENT_MOCK_LLM"] = "false"
+
+
+class TestFinalWarningReceivesRealPartialCounts:
+    """The end-of-run warning is built from the trial's real example rows."""
+
+    @staticmethod
+    def _trial(rows: list[dict], attempted: int | None):
+        from datetime import UTC, datetime
+
+        from traigent.api.types import TrialResult, TrialStatus
+
+        metadata: dict = {"example_results": rows}
+        if attempted is not None:
+            metadata["examples_attempted"] = attempted
+        return TrialResult(
+            trial_id="t1",
+            config={},
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime.now(UTC),
+            metrics={"cost_unmeasured": 1.0, "cost_lower_bound": 0.02},
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def _rows() -> list[dict]:
+        priced = {"total_cost": 0.01}
+        no_model_call = {"total_cost": 0.0}  # with_usage(value, total_cost=0)
+        return [
+            {"example_id": "a", "success": True, "metrics": priced},
+            {"example_id": "b", "success": True, "metrics": {}},
+            {"example_id": "c", "success": True, "metrics": no_model_call},
+            {"example_id": "d", "success": True, "metrics": {}},
+            {"example_id": "e", "success": True, "metrics": priced},
+        ]
+
+    def _final_message(self, attempted: int | None, *, waived: bool = True) -> str:
+        import asyncio
+        from types import SimpleNamespace
+
+        from traigent.core.optimized_function import OptimizedFunction
+        from traigent.core.orchestrator import OptimizationOrchestrator
+
+        enforcer = CostEnforcer(
+            CostEnforcerConfig(
+                limit=5.0, estimated_cost_per_trial=0.1, limit_explicit=False
+            )
+        )
+        if waived:
+            enforcer.waive_unknown_cost_trial_cap()
+        orch = SimpleNamespace(
+            cost_enforcer=enforcer,
+            execution_budget=None,
+            _extract_trial_cost=lambda t: 0.02,
+            _examples_of=lambda t: 5,
+        )
+        permit = enforcer.acquire_permit()
+        trial = self._trial(self._rows(), attempted)
+        asyncio.run(
+            OptimizationOrchestrator._account_trial_spend(orch, trial, permit=permit)
+        )
+        result = SimpleNamespace(warnings=[], warning_codes=[], stop_reason=None)
+        OptimizedFunction._attach_unmeasured_cost_stop_warning(
+            SimpleNamespace(), result, orch
+        )
+        assert result.warning_codes == ["COST_UNMEASURED_TRIALS_RAN"]
+        (message,) = result.warnings
+        return message
+
+    def test_partial_counts_reach_final_warning(self) -> None:
+        message = self._final_message(attempted=5)
+        assert "usage was missing on 2 of 5 examples" in message
+        assert "traigent.with_usage(value, total_cost=0)" in message
+        assert "no LLM usage was captured" not in message
+
+    def test_unreadable_counts_give_neutral_final_warning(self) -> None:
+        message = self._final_message(attempted=None)
+        assert "could not be measured" in message
+        assert "no LLM usage was captured" not in message
+        assert "usage was missing on" not in message

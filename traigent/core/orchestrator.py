@@ -163,6 +163,7 @@ from traigent.utils.trial_costs import (
     COST_FLOOR_WIRE_KEY,
     is_cost_unmeasured,
     known_spend_lower_bound,
+    unmeasured_example_coverage,
     unmeasured_example_ids,
 )
 
@@ -2374,6 +2375,17 @@ class OptimizationOrchestrator:
             if flagged
             else []
         )
+        # Complete example-attempt counts for the end-of-run message, from the
+        # trial's own rows and attempted count (never the truncated id list).
+        coverage = (
+            unmeasured_example_coverage(
+                (trial_result.metadata or {}).get("example_results"),
+                (trial_result.metadata or {}).get("examples_attempted"),
+            )
+            if flagged
+            else None
+        )
+        missing_count, attempted_count = coverage if coverage else (None, None)
 
         # The shared budget is debited even when strict mode rejects the trial:
         # the known floor was spent, so the ledger must show it (a flagged
@@ -2390,6 +2402,8 @@ class OptimizationOrchestrator:
                             trial_id=trial_result.trial_id,
                             cost_unmeasured=flagged,
                             unmeasured_examples=missing_examples,
+                            missing_usage_examples=missing_count,
+                            attempted_examples=attempted_count,
                         )
                 else:
                     await self.cost_enforcer.track_cost_async(
@@ -2399,6 +2413,8 @@ class OptimizationOrchestrator:
                         trial_id=trial_result.trial_id,
                         cost_unmeasured=flagged,
                         unmeasured_examples=missing_examples,
+                        missing_usage_examples=missing_count,
+                        attempted_examples=attempted_count,
                     )
         finally:
             if (budget := getattr(self, "execution_budget", None)) is not None:

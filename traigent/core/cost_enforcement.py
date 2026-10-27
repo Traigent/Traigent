@@ -357,6 +357,11 @@ class CostStatus:
     cost_confidence: float = field(default=0.5)
     #: Trials whose cost could not be measured (Traigent#2441).
     unmeasured_trial_count: int = field(default=0)
+    #: Example attempts, across the unmeasured trials, whose usage was missing,
+    #: and the total example attempts in those trials. Both are ``None`` unless
+    #: every unmeasured trial supplied complete counts: a count is never guessed.
+    unmeasured_missing_examples: int | None = field(default=None)
+    unmeasured_attempted_examples: int | None = field(default=None)
 
 
 #: Result warning code for a run stopped by the unknown-cost trial fallback.
@@ -372,14 +377,40 @@ def _spend_reached_limit(known_spend: object, cost_limit: object) -> bool:
     )
 
 
+def _valid_coverage(missing: object, attempted: object) -> tuple[int, int] | None:
+    """``(missing, attempted)`` when both are complete, consistent counts."""
+    if (
+        isinstance(missing, int)
+        and isinstance(attempted, int)
+        and not isinstance(missing, bool)
+        and not isinstance(attempted, bool)
+        and 0 < missing <= attempted
+    ):
+        return missing, attempted
+    return None
+
+
+_WITH_USAGE_HINT = (
+    "If those examples make no model call, return "
+    "traigent.with_usage(value, total_cost=0) from them to record a measured $0"
+)
+
+
 def unmeasured_cost_stop_message(
     trial_count: int,
     fallback_trial_limit: int,
     cost_limit: float,
     unmeasured_trials: int | None = None,
     known_spend: float | None = None,
+    missing_examples: int | None = None,
+    attempted_examples: int | None = None,
 ) -> str:
     """Explain the default unknown-cost safety stop and how to continue (#2441).
+
+    ``missing_examples`` / ``attempted_examples`` are the complete example
+    attempt counts across the unmeasured trials. When absent the message only
+    says the cost could not be measured; it never claims how much usage was
+    captured.
 
     When ``known_spend`` (a minimum: it excludes unmeasured cost) has reached
     ``cost_limit``, the message says the limit itself stopped the run.
@@ -392,6 +423,16 @@ def unmeasured_cost_stop_message(
     """
     unmeasured = trial_count if unmeasured_trials is None else unmeasured_trials
     measured = max(trial_count - unmeasured, 0)
+    coverage = _valid_coverage(missing_examples, attempted_examples)
+    if coverage is None:
+        usage_note = ""
+    elif coverage[0] == coverage[1]:
+        usage_note = "; no LLM usage was captured on any of those examples"
+    else:
+        usage_note = (
+            f"; usage was missing on {coverage[0]} of {coverage[1]} examples "
+            "in those trials and captured on the rest. " + _WITH_USAGE_HINT
+        )
     if measured == 0:
         counts = f"none of the {trial_count} trials' cost could be measured"
         capture = "call the model through a captured client"
@@ -409,11 +450,11 @@ def unmeasured_cost_stop_message(
         return (
             f"The cost limit (${cost_limit:.2f}) was reached: known spend is at "
             f"least ${known_spend:.2f} (a minimum; some cost could not be "
-            f"measured: {counts}). To get cost measured instead, "
+            f"measured: {counts}{usage_note}). To get cost measured instead, "
             f"{capture} (see docs/user-guide/cost_capture.md)."
         )
     return (
-        f"Cost could not be measured ({counts}; no LLM usage was captured), "
+        f"Cost could not be measured ({counts}{usage_note}), "
         f"so the run stopped at the default safety limit of "
         f"{fallback_trial_limit} trials: the cost limit (${cost_limit:.2f}) "
         "cannot bound spend it cannot see. Set max_trials explicitly on "
@@ -444,19 +485,35 @@ def unmeasured_cost_ran_message(
     *,
     known_spend: float | None = None,
     cost_limit: float | None = None,
+    missing_examples: int | None = None,
+    attempted_examples: int | None = None,
 ) -> str:
-    """Warn that an explicitly sized run ran unmeasured-cost trials (#2441)."""
+    """Warn that an explicitly sized run ran unmeasured-cost trials (#2441).
+
+    Without complete example counts the message says only that the cost could
+    not be measured; it never claims how much usage was captured.
+    """
+    coverage = _valid_coverage(missing_examples, attempted_examples)
+    if coverage is None:
+        usage_note = ""
+    elif coverage[0] == coverage[1]:
+        usage_note = " (no LLM usage was captured on any of those examples)"
+    else:
+        usage_note = (
+            f" (usage was missing on {coverage[0]} of {coverage[1]} examples in "
+            "those trials and captured on the rest. " + _WITH_USAGE_HINT + ")"
+        )
     if _spend_reached_limit(known_spend, cost_limit):
         return (
             f"{unmeasured_trials} of {trial_count} trials ran with a cost that "
-            "could not be measured. The cost limit "
+            f"could not be measured{usage_note}. The cost limit "
             f"(${cost_limit:.2f}) was reached: known spend is at least "
             f"${known_spend:.2f} (a minimum; unmeasured cost is not included). "
             "See docs/user-guide/cost_capture.md to get cost measured."
         )
     return (
         f"{unmeasured_trials} of {trial_count} trials ran with a cost that could "
-        "not be measured (no LLM usage was captured), so the cost limit did not "
+        f"not be measured{usage_note}, so the cost limit did not "
         "bound their spend. The default safety limit on unmeasured trials did "
         "not apply because max_trials or max_total_examples was set "
         "explicitly. See docs/user-guide/cost_capture.md to get cost measured."
@@ -522,6 +579,11 @@ class CostEnforcer:
         self._lock = RLock()
         self._unknown_cost_mode: bool = False
         self._unmeasured_trial_count: int = 0
+        # Example-attempt coverage across unmeasured trials; the totals are
+        # valid only while every unmeasured trial supplied complete counts.
+        self._unmeasured_missing_examples: int = 0
+        self._unmeasured_attempted_examples: int = 0
+        self._unmeasured_coverage_complete: bool = True
         # Set when the user sized the run explicitly (max_trials or
         # max_total_examples): that is consent to run that many trials even
         # when their cost cannot be measured, so the default unknown-cost
@@ -831,6 +893,7 @@ class CostEnforcer:
                         self.config.limit,
                         self._unmeasured_trial_count,
                         self._accumulated_cost,
+                        *self._coverage_counts_locked(),
                     )
                 )
             estimated = self._accumulated_cost + self._reserved_cost
@@ -1071,6 +1134,8 @@ Options:
         trial_id: str | None = None,
         cost_unmeasured: bool = False,
         unmeasured_examples: Sequence[str] | None = None,
+        missing_usage_examples: int | None = None,
+        attempted_examples: int | None = None,
     ) -> None:
         """Track actual cost after each trial (thread-safe).
 
@@ -1092,6 +1157,11 @@ Options:
                 the trial is counted as unmeasured, and strict mode raises.
             unmeasured_examples: Up to a few example ids whose usage was
                 missing, named in the strict error / warning (ids only).
+            missing_usage_examples: Complete count of example attempts in this
+                trial whose usage was missing, or None when not known.
+            attempted_examples: Complete count of example attempts in this
+                trial, or None when not known. Both counts are needed for the
+                end-of-run message to distinguish partial from missing usage.
 
         Raises:
             CostTrackingRequiredError: If cost is None and
@@ -1119,6 +1189,8 @@ Options:
                 trial_id=trial_id,
                 cost_unmeasured=cost_unmeasured,
                 unmeasured_examples=unmeasured_examples,
+                missing_usage_examples=missing_usage_examples,
+                attempted_examples=attempted_examples,
                 require_cost_tracking=require_cost_tracking,
                 caller="track_cost",
                 include_limit_in_warning=True,
@@ -1302,6 +1374,8 @@ Options:
         trial_id: str | None = None,
         cost_unmeasured: bool = False,
         unmeasured_examples: Sequence[str] | None = None,
+        missing_usage_examples: int | None = None,
+        attempted_examples: int | None = None,
     ) -> None:
         """Async version of track_cost.
 
@@ -1323,6 +1397,11 @@ Options:
                 the trial is counted as unmeasured, and strict mode raises.
             unmeasured_examples: Up to a few example ids whose usage was
                 missing, named in the strict error / warning (ids only).
+            missing_usage_examples: Complete count of example attempts in this
+                trial whose usage was missing, or None when not known.
+            attempted_examples: Complete count of example attempts in this
+                trial, or None when not known. Both counts are needed for the
+                end-of-run message to distinguish partial from missing usage.
 
         Raises:
             CostTrackingRequiredError: If cost is None and
@@ -1352,6 +1431,8 @@ Options:
                 trial_id=trial_id,
                 cost_unmeasured=cost_unmeasured,
                 unmeasured_examples=unmeasured_examples,
+                missing_usage_examples=missing_usage_examples,
+                attempted_examples=attempted_examples,
                 require_cost_tracking=require_cost_tracking,
                 caller="track_cost_async",
                 include_limit_in_warning=False,
@@ -1533,6 +1614,27 @@ Options:
 
         self._maybe_warn_cold_start_estimate()
 
+    def _note_unmeasured_coverage_locked(
+        self, missing: int | None, attempted: int | None
+    ) -> None:
+        """Fold one unmeasured trial's example counts into the run totals."""
+        coverage = _valid_coverage(missing, attempted)
+        if coverage is None:
+            # One unmeasured trial without complete counts makes the run-level
+            # coverage unknown: the message turns neutral, never guesses.
+            self._unmeasured_coverage_complete = False
+            return
+        self._unmeasured_missing_examples += coverage[0]
+        self._unmeasured_attempted_examples += coverage[1]
+
+    def _coverage_counts_locked(self) -> tuple[int | None, int | None]:
+        if not self._unmeasured_coverage_complete:
+            return None, None
+        return (
+            self._unmeasured_missing_examples,
+            self._unmeasured_attempted_examples,
+        )
+
     def _record_known_cost_locked(
         self,
         cost: float,
@@ -1567,6 +1669,8 @@ Options:
         trial_id: str | None,
         cost_unmeasured: bool = False,
         unmeasured_examples: Sequence[str] | None = None,
+        missing_usage_examples: int | None = None,
+        attempted_examples: int | None = None,
         require_cost_tracking: bool,
         caller: str,
         include_limit_in_warning: bool,
@@ -1605,6 +1709,9 @@ Options:
                 self._accumulated_cost += cost
                 self._check_thresholds()
             self._unmeasured_trial_count += 1
+            self._note_unmeasured_coverage_locked(
+                missing_usage_examples, attempted_examples
+            )
             self._handle_unknown_cost_locked(
                 trial_desc,
                 require_cost_tracking=require_cost_tracking,
@@ -1671,6 +1778,8 @@ Options:
                 ),
                 cost_confidence=self.get_cost_confidence(),
                 unmeasured_trial_count=self._unmeasured_trial_count,
+                unmeasured_missing_examples=self._coverage_counts_locked()[0],
+                unmeasured_attempted_examples=self._coverage_counts_locked()[1],
             )
 
     def reset(self) -> None:
@@ -1683,6 +1792,9 @@ Options:
             self._trial_count = 0
             self._unknown_cost_mode = False
             self._unmeasured_trial_count = 0
+            self._unmeasured_missing_examples = 0
+            self._unmeasured_attempted_examples = 0
+            self._unmeasured_coverage_complete = True
             self._warning_emitted = False
             self._in_flight_count = 0
             self._reserved_cost = 0.0

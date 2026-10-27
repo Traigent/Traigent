@@ -3955,6 +3955,8 @@ class OptimizedFunction[**P, R]:
                 status.unmeasured_trial_count,
                 known_spend=status.accumulated_cost_usd,
                 cost_limit=status.limit_usd,
+                missing_examples=status.unmeasured_missing_examples,
+                attempted_examples=status.unmeasured_attempted_examples,
             )
         elif (
             getattr(result, "stop_reason", None) == "cost_limit"
@@ -3967,6 +3969,8 @@ class OptimizedFunction[**P, R]:
                 status.limit_usd,
                 status.unmeasured_trial_count,
                 status.accumulated_cost_usd,
+                status.unmeasured_missing_examples,
+                status.unmeasured_attempted_examples,
             )
         else:
             return

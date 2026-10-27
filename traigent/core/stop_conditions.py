@@ -1093,6 +1093,8 @@ class CostLimitStopCondition(StopCondition):
                     status.limit_usd,
                     status.unmeasured_trial_count,
                     status.accumulated_cost_usd,
+                    status.unmeasured_missing_examples,
+                    status.unmeasured_attempted_examples,
                 )
             )
         return (
