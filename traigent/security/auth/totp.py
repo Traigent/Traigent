@@ -83,30 +83,15 @@ class TOTPAuthProvider:
                 logger.warning("Invalid TOTP secret format")
                 return False
 
-            if user_id in self._used_codes:
-                if code in self._used_codes[user_id]:
-                    logger.warning(f"TOTP code replay attempt for user {user_id}")
-                    return False
-
-                if (
-                    user_id in self._code_expiry
-                    and datetime.now(UTC) > self._code_expiry[user_id]
-                ):
-                    self._used_codes[user_id].clear()
+            if self._is_replay_and_prune(user_id, code):
+                logger.warning(f"TOTP code replay attempt for user {user_id}")
+                return False
 
             totp = pyotp.TOTP(secret)
             is_valid = totp.verify(code, valid_window=min(window, 2))
 
             if is_valid:
-                if user_id not in self._used_codes:
-                    self._used_codes[user_id] = set()
-                self._used_codes[user_id].add(code)
-                self._code_expiry[user_id] = datetime.now(UTC) + timedelta(seconds=90)
-
-                if len(self._used_codes[user_id]) > 10:
-                    self._used_codes[user_id] = set(
-                        list(self._used_codes[user_id])[-5:]
-                    )
+                self._record_used_code(user_id, code)
 
                 logger.info(f"TOTP verification successful for user {user_id}")
             else:
@@ -117,6 +102,32 @@ class TOTPAuthProvider:
         except Exception as e:
             logger.error(f"TOTP verification error: {e}")
             return False
+
+    def _is_replay_and_prune(self, user_id: str, code: str) -> bool:
+        """Return True when ``code`` was already used by ``user_id``.
+
+        Expired history is cleared only when the code is not a replay.
+        """
+        if user_id not in self._used_codes:
+            return False
+        if code in self._used_codes[user_id]:
+            return True
+        if (
+            user_id in self._code_expiry
+            and datetime.now(UTC) > self._code_expiry[user_id]
+        ):
+            self._used_codes[user_id].clear()
+        return False
+
+    def _record_used_code(self, user_id: str, code: str) -> None:
+        """Remember an accepted code and bound the per-user history."""
+        if user_id not in self._used_codes:
+            self._used_codes[user_id] = set()
+        self._used_codes[user_id].add(code)
+        self._code_expiry[user_id] = datetime.now(UTC) + timedelta(seconds=90)
+
+        if len(self._used_codes[user_id]) > 10:
+            self._used_codes[user_id] = set(list(self._used_codes[user_id])[-5:])
 
     def generate_backup_codes(self, count: int = 10, code_length: int = 8) -> list[str]:
         """Generate backup codes for account recovery."""
