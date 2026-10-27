@@ -373,3 +373,85 @@ def test_comprehensive_cost_just_above_tolerance_logs_override(
         "info",
         "🔍 LOCAL EVALUATOR: Overriding cost metric: 0.0 -> 2e-09",
     )
+
+
+# Independent literals: 1e-9 is the tolerance itself, 1.0000000000000002e-9 the
+# next representable float above it.
+_AT_TOLERANCE = 1e-9
+_ABOVE_TOLERANCE = 1.0000000000000002e-9
+
+
+def test_aggregated_cost_exactly_at_tolerance_counts_as_zero(
+    recorder: _Recorder,
+) -> None:
+    _merge(["cost"], {"cost": _AT_TOLERANCE}, {"cost": 1.0}, False)
+    assert recorder.records[-1] == (
+        "info",
+        "🔍 LOCAL EVALUATOR: Overriding cost metric: 1e-09 -> 1.0",
+    )
+
+
+def test_aggregated_cost_just_above_tolerance_is_not_zero(
+    recorder: _Recorder,
+) -> None:
+    _merge(["cost"], {"cost": _ABOVE_TOLERANCE}, {"cost": 1.0}, False)
+    assert [lvl for lvl, _ in recorder.records] == ["debug", "debug"]
+
+
+def test_comprehensive_cost_exactly_at_tolerance_counts_as_zero(
+    recorder: _Recorder,
+) -> None:
+    _merge(["cost"], {"cost": 0.0}, {"cost": _AT_TOLERANCE}, False)
+    assert [lvl for lvl, _ in recorder.records] == ["debug", "debug"]
+
+
+def test_comprehensive_cost_just_above_tolerance_by_one_ulp_logs_override(
+    recorder: _Recorder,
+) -> None:
+    _merge(["cost"], {"cost": 0.0}, {"cost": _ABOVE_TOLERANCE}, False)
+    assert [lvl for lvl, _ in recorder.records] == ["debug", "debug", "info"]
+
+
+class _OnceTruth:
+    """Truth value that may be converted to bool only once."""
+
+    def __init__(self, value: bool) -> None:
+        self._value = value
+        self._used = False
+
+    def __bool__(self) -> bool:
+        if self._used:
+            raise RuntimeError("truth tested twice")
+        self._used = True
+        return self._value
+
+
+class _OnceEqKey(str):
+    """str whose == returns a fresh single-use truth object."""
+
+    __slots__ = ()
+
+    def __hash__(self) -> int:
+        return str.__hash__(self)
+
+    def __eq__(self, other: object) -> Any:
+        return _OnceTruth(str.__eq__(self, other) is True)
+
+    def __ne__(self, other: object) -> Any:
+        return _OnceTruth(str.__eq__(self, other) is not True)
+
+
+def test_non_score_key_truth_is_tested_once_per_operand() -> None:
+    agg: dict[str, Any] = {}
+    key = _OnceEqKey("f1")
+    _merge(["x"], agg, {key: 1.0}, True)
+    assert agg == {"f1": 1.0}
+
+
+def test_preserve_flag_truth_is_tested_once_when_keeping_accuracy() -> None:
+    agg: dict[str, Any] = {"accuracy": 0.5}
+    preserve: Any = _OnceTruth(True)
+    _evaluator(["x"])._merge_comprehensive_metrics(
+        agg, {"accuracy": 0.9}, preserve_authoritative_accuracy=preserve
+    )
+    assert agg == {"accuracy": 0.5}

@@ -2924,12 +2924,14 @@ class LocalEvaluator(BaseEvaluator):
         preserve_authoritative_accuracy: bool,
     ) -> bool:
         """True when ``score`` is absent but a built-in accuracy is authoritative."""
-        return bool(
+        if (
             key == "score"
             and preserve_authoritative_accuracy
             and "accuracy" in aggregated_metrics
             and key not in aggregated_metrics
-        )
+        ):
+            return True
+        return False
 
     @staticmethod
     def _keeps_authoritative_value(
@@ -2938,14 +2940,16 @@ class LocalEvaluator(BaseEvaluator):
         preserve_authoritative_accuracy: bool,
     ) -> bool:
         """True when an existing accuracy/score aggregate must not be replaced."""
-        return bool(
+        if (
             key in {"accuracy", "score"}
             and key in aggregated_metrics
             and (
                 preserve_authoritative_accuracy
                 or aggregated_metrics[key] not in (None, 0.0)
             )
-        )
+        ):
+            return True
+        return False
 
     def _merge_comprehensive_metrics(
         self,
