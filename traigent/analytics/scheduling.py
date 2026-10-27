@@ -84,6 +84,100 @@ class SchedulingPolicy:
     max_job_duration: timedelta = timedelta(hours=24)
 
 
+def _apply_schedule_defaults(
+    constraints: dict[str, Any] | None,
+    optimization_window: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Fill in the default constraints and 7-day optimization window."""
+    # Default constraints
+    if constraints is None:
+        constraints = {
+            "max_concurrent": 2,
+            "business_hours_only": False,
+            "maintenance_windows": [],
+        }
+
+    # Default optimization window (7 days)
+    if optimization_window is None:
+        optimization_window = {"start": time.time(), "duration_days": 7}
+
+    return constraints, optimization_window
+
+
+def _total_schedule_duration(
+    scheduled_tasks: list[dict[str, Any]], optimization_window: dict[str, Any]
+) -> Any:
+    """Return the span from the window start to the latest scheduled end."""
+    # Calculate total duration
+    if scheduled_tasks:
+        total_duration = (
+            max(t["end_time"] for t in scheduled_tasks) - optimization_window["start"]
+        )
+    else:
+        total_duration = 0
+    return total_duration
+
+
+def _pack_sorted_tasks(
+    sorted_tasks: list[dict[str, Any]],
+    constraints: dict[str, Any],
+    optimization_window: dict[str, Any],
+    current_time: Any,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], Any]:
+    """Pack sorted tasks under the concurrency limit and total the duration."""
+    scheduled_tasks: list[dict[str, Any]] = []
+    conflicts = []
+
+    # Schedule tasks
+    running_tasks: list[dict[str, Any]] = []
+    for task in sorted_tasks:
+        task_duration = task.get("estimated_duration", 60)  # minutes
+        task_priority = task.get("priority", 1)
+
+        # Check concurrent task limit
+        # Remove completed tasks
+        running_tasks = [t for t in running_tasks if t["end_time"] > current_time]
+
+        if len(running_tasks) >= constraints["max_concurrent"]:
+            # Find earliest completion time
+            earliest_end = min(t["end_time"] for t in running_tasks)
+            current_time = earliest_end
+            running_tasks = [t for t in running_tasks if t["end_time"] > current_time]
+
+        # Schedule the task
+        start_time = current_time
+        end_time = start_time + (task_duration * 60)  # Convert to seconds
+
+        scheduled_task = {
+            "task_id": task.get("id", f"task_{len(scheduled_tasks)}"),
+            "name": task.get("name", "Unnamed task"),
+            "start_time": start_time,
+            "end_time": end_time,
+            "duration_minutes": task_duration,
+            "priority": task_priority,
+            "status": "scheduled",
+        }
+
+        scheduled_tasks.append(scheduled_task)
+        running_tasks.append(scheduled_task)
+
+        # Check if we're within the optimization window
+        if end_time > optimization_window["start"] + (
+            optimization_window["duration_days"] * 24 * 3600
+        ):
+            conflicts.append(
+                {
+                    "task_id": scheduled_task["task_id"],
+                    "reason": "exceeds_optimization_window",
+                    "details": "Task extends beyond the optimization window",
+                }
+            )
+
+    total_duration = _total_schedule_duration(scheduled_tasks, optimization_window)
+
+    return scheduled_tasks, conflicts, total_duration
+
+
 class SmartScheduler:
     """Intelligent job scheduler with cost optimization.
 
@@ -495,22 +589,12 @@ class SmartScheduler:
         if not tasks:
             return {"schedule": [], "total_duration": 0, "conflicts": []}
 
-        # Default constraints
-        if constraints is None:
-            constraints = {
-                "max_concurrent": 2,
-                "business_hours_only": False,
-                "maintenance_windows": [],
-            }
-
-        # Default optimization window (7 days)
-        if optimization_window is None:
-            optimization_window = {"start": time.time(), "duration_days": 7}
+        constraints, optimization_window = _apply_schedule_defaults(
+            constraints, optimization_window
+        )
 
         # Simple scheduling algorithm
-        scheduled_tasks: list[dict[str, Any]] = []
         current_time = optimization_window["start"]
-        conflicts = []
 
         # Sort tasks by priority and estimated duration
         sorted_tasks = sorted(
@@ -518,61 +602,9 @@ class SmartScheduler:
             key=lambda t: (-t.get("priority", 1), t.get("estimated_duration", 60)),
         )
 
-        # Schedule tasks
-        running_tasks: list[dict[str, Any]] = []
-        for task in sorted_tasks:
-            task_duration = task.get("estimated_duration", 60)  # minutes
-            task_priority = task.get("priority", 1)
-
-            # Check concurrent task limit
-            # Remove completed tasks
-            running_tasks = [t for t in running_tasks if t["end_time"] > current_time]
-
-            if len(running_tasks) >= constraints["max_concurrent"]:
-                # Find earliest completion time
-                earliest_end = min(t["end_time"] for t in running_tasks)
-                current_time = earliest_end
-                running_tasks = [
-                    t for t in running_tasks if t["end_time"] > current_time
-                ]
-
-            # Schedule the task
-            start_time = current_time
-            end_time = start_time + (task_duration * 60)  # Convert to seconds
-
-            scheduled_task = {
-                "task_id": task.get("id", f"task_{len(scheduled_tasks)}"),
-                "name": task.get("name", "Unnamed task"),
-                "start_time": start_time,
-                "end_time": end_time,
-                "duration_minutes": task_duration,
-                "priority": task_priority,
-                "status": "scheduled",
-            }
-
-            scheduled_tasks.append(scheduled_task)
-            running_tasks.append(scheduled_task)
-
-            # Check if we're within the optimization window
-            if end_time > optimization_window["start"] + (
-                optimization_window["duration_days"] * 24 * 3600
-            ):
-                conflicts.append(
-                    {
-                        "task_id": scheduled_task["task_id"],
-                        "reason": "exceeds_optimization_window",
-                        "details": "Task extends beyond the optimization window",
-                    }
-                )
-
-        # Calculate total duration
-        if scheduled_tasks:
-            total_duration = (
-                max(t["end_time"] for t in scheduled_tasks)
-                - optimization_window["start"]
-            )
-        else:
-            total_duration = 0
+        scheduled_tasks, conflicts, total_duration = _pack_sorted_tasks(
+            sorted_tasks, constraints, optimization_window, current_time
+        )
 
         # Calculate additional fields for API compatibility
         if scheduled_tasks:
