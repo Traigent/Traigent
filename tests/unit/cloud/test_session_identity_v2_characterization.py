@@ -40,7 +40,8 @@ class _Request:
 
 
 def _wire(**attrs: Any) -> dict[str, Any]:
-    return models.session_identity_v2_to_wire(_Request([], **attrs))
+    result: dict[str, Any] = models.session_identity_v2_to_wire(_Request([], **attrs))
+    return result
 
 
 def _versions(**overrides: dict[str, Any]) -> dict[str, Any]:
