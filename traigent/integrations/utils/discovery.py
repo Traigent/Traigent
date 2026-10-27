@@ -340,8 +340,8 @@ class ParameterDiscovery:
                     continue
 
                 try:
-                    attr = getattr(obj, name)
                     current_path = f"{path_prefix}.{name}" if path_prefix else name
+                    attr = getattr(obj, name)
 
                     if _is_completion_method(name, attr):
                         found.append(

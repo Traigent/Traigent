@@ -330,6 +330,9 @@ def _safe_scalar(value: Any) -> Any:
     return None
 
 
+_REDACTED = "[REDACTED]"
+
+
 def _safe_allowlisted_observation_snapshot(
     descriptor: _ObservationFallbackDescriptor,
 ) -> dict[str, Any]:
@@ -384,7 +387,7 @@ def _safe_allowlisted_observation_snapshot(
     """
     safe: dict[str, Any] = {
         "id": descriptor.id,
-        "name": "[REDACTED]",
+        "name": _REDACTED,
         "status": descriptor.status,
     }
     if descriptor.type:
@@ -396,7 +399,7 @@ def _safe_allowlisted_observation_snapshot(
     if descriptor.had_prior_output_data:
         safe["output_data"] = redacted_content_marker()
     if descriptor.had_prior_error_message:
-        safe["metadata"] = {"error_message": "[REDACTED]"}
+        safe["metadata"] = {"error_message": _REDACTED}
     return safe
 
 
@@ -463,7 +466,7 @@ def _safe_allowlisted_snapshot(
     safe_id = _safe_scalar(payload.get("id"))
     safe: dict[str, Any] = {
         "id": safe_id if isinstance(safe_id, str) and safe_id else _new_trace_id(),
-        "name": "[REDACTED]",
+        "name": _REDACTED,
         "metadata": {},
     }
     # #2588: keep an explicitly supplied status; never fabricate one for a
@@ -472,7 +475,7 @@ def _safe_allowlisted_snapshot(
     if isinstance(safe_status, str) and safe_status:
         safe["status"] = safe_status
     if payload.get("user_id") is not None:
-        safe["user_id"] = "[REDACTED]"
+        safe["user_id"] = _REDACTED
     for field_name in _SAFE_SNAPSHOT_ID_FIELDS:
         value = _safe_scalar(payload.get(field_name))
         if isinstance(value, str) and value:
@@ -519,7 +522,7 @@ def _safe_allowlisted_snapshot_or_static_fallback(
     # failure says nothing about whether the traced operation failed.
     return {
         "id": _new_trace_id(),
-        "name": "[REDACTED]",
+        "name": _REDACTED,
         "metadata": {},
     }
 
@@ -2419,7 +2422,7 @@ class ObservabilityClient:
                     and gated_error_message is None
                     and state.had_prior_content(observation_id, "error_message")
                 ):
-                    metadata["error_message"] = "[REDACTED]"
+                    metadata["error_message"] = _REDACTED
                 observation = ObservationDTO(
                     id=observation_id,
                     type=effective_type,
@@ -2467,7 +2470,7 @@ class ObservabilityClient:
                         or state.had_prior_content(observation_id, "error_message")
                     )
                 ):
-                    merged_metadata["error_message"] = "[REDACTED]"
+                    merged_metadata["error_message"] = _REDACTED
                 observation = ObservationDTO(
                     id=observation_id,
                     type=effective_type,
@@ -3158,7 +3161,7 @@ class ObservabilityClient:
                     "Comment secret scrubbing failed; sending the redaction "
                     "placeholder rather than the unscrubbed comment.",
                 )
-                gated_content = "[REDACTED]"
+                gated_content = _REDACTED
         payload = self._request_json(
             "POST",
             f"/traces/{trace_id}/comments",

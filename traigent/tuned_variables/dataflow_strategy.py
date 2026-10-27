@@ -512,32 +512,36 @@ class _SinkFinder(ast.NodeVisitor):
                 continue
 
             # Found: receiver = KnownClass(kwargs...)
-            # Extract constructor kwargs as sink arguments.
-            ctor_call = defn.value_node
-            line = getattr(ctor_call, "lineno", 0)
-            for kw in ctor_call.keywords:
-                names = _names_in_expr(kw.value)
-                for name in names:
-                    self.sink_args.append(
-                        _SinkArgument(
-                            var_name=name,
-                            param_name=kw.arg,
-                            sink_method=f"{cls_name}.__init__",
-                            sink_category=sink.category,
-                            line=line,
-                        )
+            self._add_constructor_args(defn.value_node, cls_name, sink)
+
+    def _add_constructor_args(
+        self, ctor_call: ast.Call, cls_name: str | None, sink: SinkPattern
+    ) -> None:
+        """Extract constructor kwargs as sink arguments."""
+        line = getattr(ctor_call, "lineno", 0)
+        sink_method = f"{cls_name}.__init__"
+        for kw in ctor_call.keywords:
+            for name in _names_in_expr(kw.value):
+                self.sink_args.append(
+                    _SinkArgument(
+                        var_name=name,
+                        param_name=kw.arg,
+                        sink_method=sink_method,
+                        sink_category=sink.category,
+                        line=line,
                     )
-                # Literal constructor kwarg
-                if isinstance(kw.value, ast.Constant) and kw.arg:
-                    self.sink_args.append(
-                        _SinkArgument(
-                            var_name=f"__literal__{kw.arg}",
-                            param_name=kw.arg,
-                            sink_method=f"{cls_name}.__init__",
-                            sink_category=sink.category,
-                            line=line,
-                        )
+                )
+            # Literal constructor kwarg
+            if isinstance(kw.value, ast.Constant) and kw.arg:
+                self.sink_args.append(
+                    _SinkArgument(
+                        var_name=f"__literal__{kw.arg}",
+                        param_name=kw.arg,
+                        sink_method=sink_method,
+                        sink_category=sink.category,
+                        line=line,
                     )
+                )
 
 
 # ---------------------------------------------------------------------------

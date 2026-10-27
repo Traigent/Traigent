@@ -36,6 +36,23 @@ _MAX_LENGTH: dict[str, int] = {
 }
 
 
+def _validate_filter_value(key: str, value: Any) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError(f"target_filters.{key} must be a list of strings")
+    if not 1 <= len(value) <= _MAX_ITEMS:
+        raise ValueError(f"target_filters.{key} must contain 1 to {_MAX_ITEMS} items")
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError(f"target_filters.{key} items must be strings")
+        if not 1 <= len(item) <= _MAX_LENGTH[key]:
+            raise ValueError(
+                f"target_filters.{key} items must be 1 to {_MAX_LENGTH[key]} characters"
+            )
+    if len(set(value)) != len(value):
+        raise ValueError(f"target_filters.{key} items must be unique")
+    return list(value)
+
+
 def validate_target_filters(target_filters: Mapping[str, Any] | None) -> dict[str, Any]:
     """Validate against the closed schema and return a wire-format copy.
 
@@ -52,21 +69,5 @@ def validate_target_filters(target_filters: Mapping[str, Any] | None) -> dict[st
             raise ValueError(
                 f"target_filters contains an unsupported key; allowed keys: {allowed}"
             )
-        if not isinstance(value, list):
-            raise ValueError(f"target_filters.{key} must be a list of strings")
-        if not 1 <= len(value) <= _MAX_ITEMS:
-            raise ValueError(
-                f"target_filters.{key} must contain 1 to {_MAX_ITEMS} items"
-            )
-        for item in value:
-            if not isinstance(item, str):
-                raise ValueError(f"target_filters.{key} items must be strings")
-            if not 1 <= len(item) <= _MAX_LENGTH[key]:
-                raise ValueError(
-                    f"target_filters.{key} items must be 1 to "
-                    f"{_MAX_LENGTH[key]} characters"
-                )
-        if len(set(value)) != len(value):
-            raise ValueError(f"target_filters.{key} items must be unique")
-        result[key] = list(value)
+        result[key] = _validate_filter_value(key, value)
     return result

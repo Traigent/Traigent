@@ -33,6 +33,38 @@ def _coalesce_not_none(candidate: dict[str, Any], *keys: str) -> Any:
     return None
 
 
+def _parameters_from_model_parameters(
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Project the first ``modelParameters`` entry onto normalized parameter keys."""
+    if not payload.get("modelParameters"):
+        return None
+    model_parameters = payload.get("modelParameters") or []
+    if not (isinstance(model_parameters, list) and model_parameters):
+        return None
+    candidate = model_parameters[0]
+    if not isinstance(candidate, dict):
+        return None
+    return {
+        "temperature": _coalesce_not_none(candidate, "temperature"),
+        "max_tokens": _coalesce_not_none(candidate, "max_tokens", "maxTokens"),
+        "top_p": _coalesce_not_none(candidate, "top_p", "topP"),
+        "top_k": _coalesce_not_none(candidate, "top_k", "topK"),
+        "frequency_penalty": _coalesce_not_none(
+            candidate, "frequency_penalty", "frequencyPenalty"
+        ),
+        "presence_penalty": _coalesce_not_none(
+            candidate, "presence_penalty", "presencePenalty"
+        ),
+        "repetition_penalty": _coalesce_not_none(
+            candidate, "repetition_penalty", "repetitionPenalty"
+        ),
+        "stop_sequences": _coalesce_not_none(
+            candidate, "stop_sequences", "stopSequences"
+        ),
+    }
+
+
 def _require_target_type(payload: dict[str, Any]) -> EvaluationTargetType:
     raw = payload.get("target_type")
     if raw is None or raw == "":
@@ -125,31 +157,8 @@ class JudgeConfigDTO:
             return None
 
         parameters = payload.get("parameters")
-        if parameters is None and payload.get("modelParameters"):
-            model_parameters = payload.get("modelParameters") or []
-            if isinstance(model_parameters, list) and model_parameters:
-                candidate = model_parameters[0]
-                if isinstance(candidate, dict):
-                    parameters = {
-                        "temperature": _coalesce_not_none(candidate, "temperature"),
-                        "max_tokens": _coalesce_not_none(
-                            candidate, "max_tokens", "maxTokens"
-                        ),
-                        "top_p": _coalesce_not_none(candidate, "top_p", "topP"),
-                        "top_k": _coalesce_not_none(candidate, "top_k", "topK"),
-                        "frequency_penalty": _coalesce_not_none(
-                            candidate, "frequency_penalty", "frequencyPenalty"
-                        ),
-                        "presence_penalty": _coalesce_not_none(
-                            candidate, "presence_penalty", "presencePenalty"
-                        ),
-                        "repetition_penalty": _coalesce_not_none(
-                            candidate, "repetition_penalty", "repetitionPenalty"
-                        ),
-                        "stop_sequences": _coalesce_not_none(
-                            candidate, "stop_sequences", "stopSequences"
-                        ),
-                    }
+        if parameters is None:
+            parameters = _parameters_from_model_parameters(payload)
 
         return cls(
             instructions=str(payload.get("instructions", "")),

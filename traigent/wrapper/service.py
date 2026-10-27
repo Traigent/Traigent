@@ -496,43 +496,7 @@ class TraigentService:
             raise ValueError("evaluation kwarg default must be a scalar value")
 
         domain = dict(definition.domain or {})
-        allowed_domain_keys = {"values", "range", "resolution"}
-        unknown_domain_keys = set(domain) - allowed_domain_keys
-        if unknown_domain_keys:
-            raise ValueError(
-                f"evaluation kwarg domain contains unsupported keys: {sorted(unknown_domain_keys)}"
-            )
-
-        if "values" in domain:
-            values = domain["values"]
-            if not isinstance(values, list) or not values:
-                raise ValueError(
-                    "evaluation kwarg domain.values must be a non-empty list"
-                )
-            if not all(self._is_scalar_value(item) for item in values):
-                raise ValueError(
-                    "evaluation kwarg domain.values entries must all be scalar values"
-                )
-        if "range" in domain:
-            range_spec = domain["range"]
-            if (
-                not isinstance(range_spec, list)
-                or len(range_spec) != 2
-                or not all(
-                    isinstance(item, (int, float)) and not isinstance(item, bool)
-                    for item in range_spec
-                )
-            ):
-                raise ValueError(
-                    "evaluation kwarg domain.range must be a two-item numeric list"
-                )
-        if "resolution" in domain and not (
-            isinstance(domain["resolution"], (int, float))
-            and not isinstance(domain["resolution"], bool)
-        ):
-            raise ValueError("evaluation kwarg domain.resolution must be numeric")
-        if definition.type == "enum" and "values" not in domain:
-            raise ValueError("enum evaluation kwargs must declare domain.values")
+        self._validate_evaluation_kwarg_domain(definition.type, domain)
 
         if definition.default is not None:
             self._validate_evaluation_kwarg_value(definition, definition.default)
@@ -544,6 +508,49 @@ class TraigentService:
             domain=domain or None,
             default=definition.default,
         )
+
+    def _validate_evaluation_kwarg_domain(
+        self, kwarg_type: str, domain: dict[str, Any]
+    ) -> None:
+        """Validate the declared domain of one evaluation kwarg definition."""
+        allowed_domain_keys = {"values", "range", "resolution"}
+        unknown_domain_keys = set(domain) - allowed_domain_keys
+        if unknown_domain_keys:
+            raise ValueError(
+                f"evaluation kwarg domain contains unsupported keys: {sorted(unknown_domain_keys)}"
+            )
+
+        if "values" in domain:
+            self._validate_evaluation_kwarg_domain_values(domain["values"])
+        if "range" in domain:
+            self._validate_evaluation_kwarg_domain_range(domain["range"])
+        if "resolution" in domain and not self._is_plain_number(domain["resolution"]):
+            raise ValueError("evaluation kwarg domain.resolution must be numeric")
+        if kwarg_type == "enum" and "values" not in domain:
+            raise ValueError("enum evaluation kwargs must declare domain.values")
+
+    @staticmethod
+    def _is_plain_number(value: Any) -> bool:
+        """Return whether a value is an int or float but not a bool."""
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+    def _validate_evaluation_kwarg_domain_values(self, values: Any) -> None:
+        if not isinstance(values, list) or not values:
+            raise ValueError("evaluation kwarg domain.values must be a non-empty list")
+        if not all(self._is_scalar_value(item) for item in values):
+            raise ValueError(
+                "evaluation kwarg domain.values entries must all be scalar values"
+            )
+
+    def _validate_evaluation_kwarg_domain_range(self, range_spec: Any) -> None:
+        if (
+            not isinstance(range_spec, list)
+            or len(range_spec) != 2
+            or not all(self._is_plain_number(item) for item in range_spec)
+        ):
+            raise ValueError(
+                "evaluation kwarg domain.range must be a two-item numeric list"
+            )
 
     def _resolve_declared_evaluation_kwargs(
         self,

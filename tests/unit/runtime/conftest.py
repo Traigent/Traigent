@@ -255,3 +255,72 @@ def backend_parse_import(body: dict[str, Any]) -> str:
     lines = [ln for ln in done.stdout.splitlines() if ln.strip()]
     assert lines, done.stderr[-500:]
     return lines[-1]
+
+
+# --- hosted reactive routes (TRAIG-101 P1 slice 2) ----------------------------------------
+
+#: A string that must never appear in any request body (a prompt/output stand-in).
+CANARY = "CANARY-prompt-Alice_has_diabetes"
+
+
+class Reactive:
+    """A strict fake backend, a client over it, a token map and a fix requirement."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        from traigent.runtime import manifest
+        from traigent.runtime.hosted import ReactiveClient, TokenMap
+        from traigent.runtime.model import RuntimeRequirement, build_rules
+
+        from .reactive_fake import StrictBackend, make_ref
+
+        self.state = tmp_path / "state"
+        self.agent_ref = make_ref("agent", 1)
+        self.requirement = RuntimeRequirement(
+            name="answer_latency",
+            latency_threshold_ms=2000,
+            environment="production",
+            max_violation_rate=0.05,
+            on_breach="fix",
+            max_fix_cost_usd=5.0,
+            agent_id=AGENT,
+            rules=build_rules("fix"),
+        )
+        manifest.ensure_tokens(
+            self.state,
+            [
+                ("response", self.requirement.ladder_name),
+                ("rule", "fix"),
+                ("monitor", self.requirement.monitor_name),
+                ("environment", "production"),
+            ],
+        )
+        self.tokens = TokenMap(self.state)
+        self.backend = StrictBackend(self.agent_ref)
+        self.clock = self.backend.clock
+        self.client = ReactiveClient(
+            self.agent_ref, self.tokens, transport=self.backend.transport
+        )
+        self.response = self.tokens.hosted("response", self.requirement.ladder_name)
+        self.rule = self.tokens.hosted("rule", "fix")
+        self.scope = self.tokens.hosted("scope", "episode-1", mint=True)
+
+    def attempt(self, effect: str = "optimize", rule: str | None = None) -> str:
+        return self.backend.add_attempt(
+            effect=effect,
+            response=self.response,
+            rule=rule or self.rule,
+            scope=self.scope,
+        )
+
+    def approved_optimize(self, **grant: Any) -> str:
+        ref = self.attempt()
+        self.backend.grant(ref, **grant)
+        return ref
+
+
+@pytest.fixture
+def reactive(tmp_path: Path) -> Iterator[Reactive]:
+    env = Reactive(tmp_path)
+    yield env
+    # The strict fake never lets a contract violation pass silently.
+    assert env.backend.violations == []

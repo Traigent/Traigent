@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -18,12 +19,12 @@ from typing import Any
 from traigent.runtime import manifest
 from traigent.runtime.client import RuntimeClient
 from traigent.runtime.model import (
-    _canonical_number,
     E_EXISTS,
     PROFILE_FIELDS,
     Receipt,
     RuntimeRequirement,
     RuntimeRequirementError,
+    _canonical_number,
     digest_of,
     normalise_environment,
 )
@@ -78,7 +79,33 @@ def profile_diff(
     return diff
 
 
+_REACTIVE_REF = re.compile(r"policyrevisionref_[0-9a-f]{32}")
+_DIGEST = re.compile(r"[0-9a-f]{64}")
+
+
 def _receipt(item: dict[str, Any], created: bool | None) -> Receipt:
+    if item.get("receipt_kind") == "reactive_import":
+        # Zero-native contract (201 new / 200 replay): no production requirement exists.
+        ref, digest = item.get("policy_revision_ref"), item.get("contract_digest")
+        if (
+            item.get("schema_version") != 1
+            or not isinstance(ref, str)
+            or not _REACTIVE_REF.fullmatch(ref)
+            or not isinstance(digest, str)
+            or not _DIGEST.fullmatch(digest)
+            or item.get("created") is not created
+        ):
+            raise RuntimeRequirementError("backend_error", "response")
+        return Receipt(
+            head_id="",
+            revision_id="",
+            revision_number=0,
+            provenance="tvl_spec",
+            status="reactive_import",
+            created=created,
+            policy_revision_ref=ref,
+            contract_digest=digest,
+        )
     try:
         return Receipt(
             head_id=str(item["head_id"]),

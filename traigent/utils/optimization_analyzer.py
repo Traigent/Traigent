@@ -489,23 +489,7 @@ class OptimizationAnalyzer:
         if not trials:
             return None
 
-        # Determine objective to plot
-        if objective is None:
-            objectives_data = data.get("objectives", {})
-            if isinstance(objectives_data, dict):
-                objectives_list = objectives_data.get("objectives", [])
-            else:
-                objectives_list = (
-                    objectives_data if isinstance(objectives_data, list) else []
-                )
-
-            # Extract objective name if it's a dict
-            if objectives_list and isinstance(objectives_list[0], dict):
-                objective = objectives_list[0].get("name", "score")
-            elif objectives_list and isinstance(objectives_list[0], str):
-                objective = objectives_list[0]
-            else:
-                objective = "score"
+        objective = _select_convergence_objective(data, objective)
 
         # Extract metric values
         values = []
@@ -568,63 +552,16 @@ class OptimizationAnalyzer:
         if not trials:
             return None
 
-        # Determine objectives to plot
-        if objectives is None or len(objectives) < 2:
-            objectives_data = data.get("objectives", {})
-            if isinstance(objectives_data, dict):
-                all_objectives = objectives_data.get("objectives", [])
-            else:
-                all_objectives = (
-                    objectives_data if isinstance(objectives_data, list) else []
-                )
-
-            # Extract objective names if they're dicts
-            objective_names = []
-            for obj in all_objectives:
-                if isinstance(obj, dict):
-                    objective_names.append(obj.get("name", ""))
-                elif isinstance(obj, str):
-                    objective_names.append(obj)
-
-            if len(objective_names) >= 2:
-                objectives = objective_names[:2]
-            else:
-                logger.warning("Need at least 2 objectives for Pareto front")
-                return None
-
-        # Extract objective values
-        obj1_values = []
-        obj2_values = []
-        for trial in trials:
-            metrics = trial.get("metrics", {})
-            if objectives[0] in metrics and objectives[1] in metrics:
-                obj1_values.append(metrics[objectives[0]])
-                obj2_values.append(metrics[objectives[1]])
-
-        if not obj1_values:
-            logger.warning("No values found for the requested objectives")
+        objectives = _resolve_pareto_objectives(data, objectives)
+        if objectives is None:
             return None
 
-        # Compute Pareto front
-        points = np.array(list(zip(obj1_values, obj2_values, strict=False)))
-        pareto_points = []
+        metric_values = _get_pareto_metric_values(trials, objectives)
+        if metric_values is None:
+            return None
+        obj1_values, obj2_values = metric_values
 
-        for i, point in enumerate(points):
-            dominated = False
-            for j, other in enumerate(points):
-                if i != j:
-                    # Check if 'other' dominates 'point' (assuming maximization)
-                    if (
-                        other[0] >= point[0]
-                        and other[1] >= point[1]
-                        and (other[0] > point[0] or other[1] > point[1])
-                    ):
-                        dominated = True
-                        break
-            if not dominated:
-                pareto_points.append(point)
-
-        pareto_points = np.array(pareto_points)
+        pareto_points = _calculate_pareto_points(obj1_values, obj2_values)
 
         # Create plot
         fig, ax = plt.subplots(figsize=(10, 8))
@@ -680,33 +617,7 @@ class OptimizationAnalyzer:
             logger.warning(f"No runs found for experiment: {experiment_name}")
             return None
 
-        # Collect all trial data
-        all_trials = []
-        for _, run_info in exp_runs.iterrows():
-            run_id = run_info["run_id"]
-            data = self.load_run(experiment_name, run_id)
-
-            if "trials" in data:
-                for trial in data["trials"]:
-                    trial_data = {
-                        "run_id": run_id,
-                        "trial_id": trial.get("trial_id"),
-                        "status": trial.get("status"),
-                        "duration": trial.get("duration"),
-                    }
-
-                    # Add config parameters
-                    config = trial.get("config", {})
-                    for key, value in config.items():
-                        trial_data[f"config_{key}"] = value
-
-                    # Add metrics
-                    metrics = trial.get("metrics", {})
-                    for key, value in metrics.items():
-                        trial_data[f"metric_{key}"] = value
-
-                    all_trials.append(trial_data)
-
+        all_trials = self._collect_trial_rows(experiment_name, exp_runs)
         if not all_trials:
             logger.warning(f"No trial data found for experiment: {experiment_name}")
             return None
@@ -717,6 +628,18 @@ class OptimizationAnalyzer:
         timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         filename = f"{experiment_name}_{timestamp}"
 
+        output_file = self._write_export(df, format, output_dir, filename)
+        if output_file is None:
+            return None
+
+        logger.info(f"Exported {len(df)} trials to {output_file}")
+        return str(output_file)
+
+    @staticmethod
+    def _write_export(
+        df: pd.DataFrame, format: str, output_dir: Path, filename: str
+    ) -> Path | None:
+        """Write ``df`` in the requested format; ``None`` when it cannot be."""
         if format == "csv":
             output_file = output_dir / f"{filename}.csv"
             df.to_csv(output_file, index=False)
@@ -735,9 +658,37 @@ class OptimizationAnalyzer:
         else:
             logger.warning(f"Unsupported format: {format}")
             return None
+        return output_file
 
-        logger.info(f"Exported {len(df)} trials to {output_file}")
-        return str(output_file)
+    def _collect_trial_rows(
+        self, experiment_name: str, exp_runs: pd.DataFrame
+    ) -> list[dict[str, Any]]:
+        """Flatten every trial of the experiment's runs into export rows."""
+        all_trials: list[dict[str, Any]] = []
+        for _, run_info in exp_runs.iterrows():
+            run_id = run_info["run_id"]
+            data = self.load_run(experiment_name, run_id)
+
+            if "trials" not in data:
+                continue
+            for trial in data["trials"]:
+                trial_data: dict[str, Any] = {
+                    "run_id": run_id,
+                    "trial_id": trial.get("trial_id"),
+                    "status": trial.get("status"),
+                    "duration": trial.get("duration"),
+                }
+
+                # Add config parameters
+                for key, value in trial.get("config", {}).items():
+                    trial_data[f"config_{key}"] = value
+
+                # Add metrics
+                for key, value in trial.get("metrics", {}).items():
+                    trial_data[f"metric_{key}"] = value
+
+                all_trials.append(trial_data)
+        return all_trials
 
     def get_run_summary(self, experiment_name: str, run_id: str) -> str:
         """Generate a text summary of a run."""
@@ -781,29 +732,137 @@ class OptimizationAnalyzer:
 
         # Best configuration
         if "best_config" in data:
-            config = data["best_config"]
-            summary.append("\nBest Configuration:")
-            for key, value in config.get("config", {}).items():
-                summary.append(f"  {key}: {value}")
+            _append_best_configuration(summary, data["best_config"])
 
         # Weighted results
         if "weighted_results" in data:
-            weighted = data["weighted_results"]
-            summary.append("\nWeighted Scoring Results:")
-            summary.append(
-                f"  Best Weighted Score: {weighted.get('best_weighted_score', 0):.4f}"
-            )
-
-            if "best_weighted_config" in weighted:
-                summary.append("  Best Weighted Config:")
-                for key, value in weighted["best_weighted_config"].items():
-                    summary.append(f"    {key}: {value}")
-
-            if "objective_weights" in weighted:
-                summary.append("  Objective Weights:")
-                for obj, weight in weighted["objective_weights"].items():
-                    summary.append(f"    {obj}: {weight}")
+            _append_weighted_results(summary, data["weighted_results"])
 
         summary.append(f"{'=' * 60}")
 
         return "\n".join(summary)
+
+
+def _select_convergence_objective(data: dict[str, Any], objective: str | None) -> str:
+    """Return the same default objective selected by the convergence display."""
+    if objective is None:
+        objectives_data = data.get("objectives", {})
+        if isinstance(objectives_data, dict):
+            objectives_list = objectives_data.get("objectives", [])
+        else:
+            objectives_list = (
+                objectives_data if isinstance(objectives_data, list) else []
+            )
+
+        # Extract objective name if it's a dict
+        if objectives_list and isinstance(objectives_list[0], dict):
+            objective = objectives_list[0].get("name", "score")
+        elif objectives_list and isinstance(objectives_list[0], str):
+            objective = objectives_list[0]
+        else:
+            objective = "score"
+
+    return objective
+
+
+def _append_weighted_results(summary: list[str], weighted: dict[str, Any]) -> None:
+    """Append weighted result lines in display order to the existing summary."""
+    summary.append("\nWeighted Scoring Results:")
+    summary.append(
+        f"  Best Weighted Score: {weighted.get('best_weighted_score', 0):.4f}"
+    )
+
+    if "best_weighted_config" in weighted:
+        summary.append("  Best Weighted Config:")
+        for key, value in weighted["best_weighted_config"].items():
+            summary.append(f"    {key}: {value}")
+
+    if "objective_weights" in weighted:
+        summary.append("  Objective Weights:")
+        for obj, weight in weighted["objective_weights"].items():
+            summary.append(f"    {obj}: {weight}")
+
+
+def _append_best_configuration(summary: list[str], best_config: dict[str, Any]) -> None:
+    """Append best configuration lines to the existing summary in iteration order."""
+    summary.append("\nBest Configuration:")
+    for key, value in best_config.get("config", {}).items():
+        summary.append(f"  {key}: {value}")
+
+
+def _extract_pareto_objective_names(all_objectives: list[Any]) -> list[str]:
+    """Extract stored objective names in their existing iteration order."""
+    objective_names = []
+    for obj in all_objectives:
+        if isinstance(obj, dict):
+            objective_names.append(obj.get("name", ""))
+        elif isinstance(obj, str):
+            objective_names.append(obj)
+    return objective_names
+
+
+def _resolve_pareto_objectives(
+    data: dict[str, Any], objectives: list[str] | None
+) -> list[str] | None:
+    """Resolve the first two stored objective names when explicit ones are absent."""
+    if objectives is None or len(objectives) < 2:
+        objectives_data = data.get("objectives", {})
+        if isinstance(objectives_data, dict):
+            all_objectives = objectives_data.get("objectives", [])
+        else:
+            all_objectives = (
+                objectives_data if isinstance(objectives_data, list) else []
+            )
+
+        objective_names = _extract_pareto_objective_names(all_objectives)
+        if len(objective_names) >= 2:
+            objectives = objective_names[:2]
+        else:
+            logger.warning("Need at least 2 objectives for Pareto front")
+            return None
+
+    return objectives
+
+
+def _get_pareto_metric_values(
+    trials: list[dict[str, Any]], objectives: list[str]
+) -> tuple[list[Any], list[Any]] | None:
+    """Gather complete objective pairs in trial order."""
+    obj1_values = []
+    obj2_values = []
+    for trial in trials:
+        metrics = trial.get("metrics", {})
+        if objectives[0] in metrics and objectives[1] in metrics:
+            obj1_values.append(metrics[objectives[0]])
+            obj2_values.append(metrics[objectives[1]])
+
+    if not obj1_values:
+        logger.warning("No values found for the requested objectives")
+        return None
+
+    return obj1_values, obj2_values
+
+
+def _calculate_pareto_points(
+    obj1_values: list[Any], obj2_values: list[Any]
+) -> np.ndarray:
+    """Return nondominated points with the original maximize-both comparison."""
+    points = np.array(list(zip(obj1_values, obj2_values, strict=False)))
+    pareto_points = []
+
+    for i, point in enumerate(points):
+        dominated = False
+        for j, other in enumerate(points):
+            if i != j:
+                # Check if 'other' dominates 'point' (assuming maximization)
+                if (
+                    other[0] >= point[0]
+                    and other[1] >= point[1]
+                    and (other[0] > point[0] or other[1] > point[1])
+                ):
+                    dominated = True
+                    break
+        if not dominated:
+            pareto_points.append(point)
+
+    return np.array(pareto_points)

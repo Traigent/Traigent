@@ -744,15 +744,11 @@ class HistoricalAnalyticsEngine:
             ),
         }
 
-    def get_insights(self, function_name: str | None = None) -> dict[str, Any]:
-        """Get optimization insights and patterns."""
-
-        records = self.history.get_records(function_name=function_name)
-
-        if not records:
-            return {"message": "No optimization history available"}
-
-        # Algorithm performance analysis
+    @staticmethod
+    def _summarize_algorithm_performance(
+        records: list[OptimizationRecord],
+    ) -> dict[str, dict[str, Any]]:
+        """Summarize completed runs per algorithm."""
         algorithm_stats = defaultdict(list)
         for record in records:
             if record.status == OptimizationStatus.COMPLETED:
@@ -774,23 +770,34 @@ class HistoricalAnalyticsEngine:
                     / len([r for r in records if r.algorithm == algorithm]),
                     "total_runs": len(stats),
                 }
+        return algorithm_performance
 
-        # Trend analysis
+    @staticmethod
+    def _recent_trend(records: list[OptimizationRecord]) -> str:
+        """Classify the score trend over the most recent records."""
         recent_records = sorted(records, key=lambda r: r.timestamp)[-10:]
-        if len(recent_records) >= 2:
-            recent_scores = [
-                r.best_score
-                for r in recent_records
-                if r.status == OptimizationStatus.COMPLETED
-            ]
-            if len(recent_scores) >= 2:
-                trend = (
-                    "improving" if recent_scores[-1] > recent_scores[0] else "declining"
-                )
-            else:
-                trend = "insufficient_data"
-        else:
-            trend = "insufficient_data"
+        if len(recent_records) < 2:
+            return "insufficient_data"
+
+        recent_scores = [
+            r.best_score
+            for r in recent_records
+            if r.status == OptimizationStatus.COMPLETED
+        ]
+        if len(recent_scores) < 2:
+            return "insufficient_data"
+        return "improving" if recent_scores[-1] > recent_scores[0] else "declining"
+
+    def get_insights(self, function_name: str | None = None) -> dict[str, Any]:
+        """Get optimization insights and patterns."""
+
+        records = self.history.get_records(function_name=function_name)
+
+        if not records:
+            return {"message": "No optimization history available"}
+
+        algorithm_performance = self._summarize_algorithm_performance(records)
+        trend = self._recent_trend(records)
 
         return {
             "total_optimizations": len(records),

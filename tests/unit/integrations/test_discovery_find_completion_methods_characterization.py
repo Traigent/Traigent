@@ -173,7 +173,7 @@ def test_dir_failure_is_logged_and_returns_empty(mock_logger):
     )
 
 
-def test_attribute_error_after_first_attr_logs_previous_path_and_continues(
+def test_attribute_error_after_first_attr_logs_failing_path_and_continues(
     mock_logger,
 ):
     class Flaky:
@@ -192,11 +192,11 @@ def test_attribute_error_after_first_attr_logs_previous_path_and_continues(
         _entry("zzz_create", "zzz_create"),
     ]
     mock_logger.debug.assert_called_once_with(
-        "Could not inspect attribute at alpha_create: boom"
+        "Could not inspect attribute at bad: boom"
     )
 
 
-def test_attribute_error_on_first_attr_aborts_the_scan(mock_logger):
+def test_attribute_error_on_first_attr_logs_failing_path_and_continues(mock_logger):
     class Flaky:
         @property
         def bad(self):
@@ -205,11 +205,10 @@ def test_attribute_error_on_first_attr_aborts_the_scan(mock_logger):
         def create_after(self):
             pass
 
-    assert find(Flaky()) == []
-    assert mock_logger.debug.call_count == 1
-    message = mock_logger.debug.call_args.args[0]
-    assert message.startswith("Error during nested method search: ")
-    assert "current_path" in message
+    assert find(Flaky()) == [_entry("create_after", "create_after")]
+    mock_logger.debug.assert_called_once_with(
+        "Could not inspect attribute at bad: boom"
+    )
 
 
 def test_recursion_failure_in_nested_object_is_isolated(mock_logger):

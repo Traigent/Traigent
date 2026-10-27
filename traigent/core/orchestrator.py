@@ -569,6 +569,9 @@ class OptimizationOrchestrator:
         self._smart_pruning: dict[str, Any] | None = kwargs.pop("smart_pruning", None)
         self._config_metrics_history: dict[str, dict[str, list[float]]] = {}
         self._incumbent_config_hash: str | None = None
+        # config hash -> the closed promotion decision last made for that candidate
+        # (additive record; nothing here changes which config wins).
+        self._promotion_decisions: dict[str, str] = {}
 
         # Multi-agent configuration
         self._agent_configuration = self._init_agent_configuration(kwargs)
@@ -1757,6 +1760,11 @@ class OptimizationOrchestrator:
         )
         return self._simple_is_better(candidate_trial)
 
+    def _record_promotion(self, config_hash: str, decision: str) -> None:
+        """Record the closed promotion decision for a candidate (additive; never raises)."""
+        decisions = self.__dict__.setdefault("_promotion_decisions", {})
+        decisions[config_hash] = decision
+
     def _evaluate_promotion(
         self,
         candidate_hash: str,
@@ -1772,6 +1780,10 @@ class OptimizationOrchestrator:
         """
         # If no promotion gate or no incumbent, use simple logic
         if self._promotion_gate is None:
+            self._record_promotion(
+                candidate_hash,
+                "withheld_no_gate" if self._is_strict_evidence_mode() else "no_gate",
+            )
             if self._is_strict_evidence_mode():
                 # RFC 0001 §3.6: a declared-governed CVAR demands
                 # certificate-backed promotion evidence; with no promotion
@@ -1784,6 +1796,7 @@ class OptimizationOrchestrator:
                 )
             return self._simple_is_better(candidate_trial)
         if self._incumbent_config_hash is None:
+            self._record_promotion(candidate_hash, "no_incumbent")
             return True
 
         # Get metrics for both configs
@@ -1797,6 +1810,7 @@ class OptimizationOrchestrator:
         if not has_data or not self._has_sufficient_samples(
             candidate_metrics, incumbent_metrics
         ):
+            self._record_promotion(candidate_hash, "insufficient_samples")
             if self._is_strict_evidence_mode():
                 return self._withhold_promotion(
                     "insufficient samples for statistical comparison"
@@ -1806,13 +1820,19 @@ class OptimizationOrchestrator:
         # Use PromotionGate for statistical evaluation
         inc_metrics_seq = cast(dict[str, Sequence[float]], incumbent_metrics)
         cand_metrics_seq = cast(dict[str, Sequence[float]], candidate_metrics)
+        decision: Any = None
         try:
             decision = self._promotion_gate.evaluate(
                 incumbent_metrics=inc_metrics_seq,
                 candidate_metrics=cand_metrics_seq,
             )
+            self._record_promotion(candidate_hash, str(decision.decision))
             return self._handle_promotion_decision(decision, candidate_trial)
         except Exception as e:
+            if (
+                decision is None
+            ):  # the gate itself failed (not the handling of its answer)
+                self._record_promotion(candidate_hash, "gate_error")
             if self._is_strict_evidence_mode():
                 # Gate exception fails CLOSED in strict modes (Rule 1: a
                 # failing policy surface denies; it never silently degrades
@@ -1977,6 +1997,8 @@ class OptimizationOrchestrator:
 
         # First trial becomes incumbent
         if self._best_trial_cached is None:
+            # Recorded explicitly: there was no incumbent to compare against.
+            self._record_promotion(config_hash, "no_incumbent")
             self._best_trial_cached = trial_result
             self._incumbent_config_hash = config_hash
             return
@@ -6966,6 +6988,7 @@ class OptimizationOrchestrator:
             # Thread the terminal selector's exact eligible set through so
             # post-hoc range normalization shares its basis (issue #1704).
             ranking_eligible_trial_ids=selection.ranking_eligible_trial_ids,
+            promotion_decisions=dict(getattr(self, "_promotion_decisions", {})),
         )
         OptimizationOrchestrator._apply_abandoned_attempts_cost(
             self, optimization_result

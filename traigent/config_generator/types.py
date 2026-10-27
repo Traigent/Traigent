@@ -264,44 +264,57 @@ class AutoConfigResult:
         if self.structural_constraints:
             raise ValueError(_structural_constraint_error(self.structural_constraints))
 
-        lines: list[str] = []
-        lines.append("@traigent.optimize(")
-
-        # configuration_space
+        lines: list[str] = ["@traigent.optimize("]
         if self.tvars:
-            lines.append("    configuration_space={")
-            for tvar in self.tvars:
-                lines.append(f"        {tvar.name!r}: {tvar.to_range_code()},")
-            lines.append("    },")
-
-        # objectives
+            lines.extend(_configuration_space_lines(self.tvars))
         if self.objectives:
-            lines.append("    objectives=ObjectiveSchema.from_objectives([")
-            for objective in self.objectives:
-                lines.append(
-                    "        ObjectiveDefinition("
-                    f"name={objective.name!r}, orientation={objective.orientation!r}, "
-                    f"weight={objective.weight!r}),"
-                )
-            lines.append("    ]),")
-
-        # safety_constraints
+            lines.extend(_objective_lines(self.objectives))
         if self.safety_constraints:
-            lines.append("    safety_constraints=[")
-            for sc in self.safety_constraints:
-                metric_expr = _metric_expression(sc.metric_name)
-                method = "above" if sc.operator == ">=" else "below"
-                lines.append(f"        {metric_expr}.{method}({sc.threshold}),")
-            lines.append("    ],")
-
-        # recommendations as comments
+            lines.extend(_safety_constraint_lines(self.safety_constraints))
         if self.recommendations:
-            lines.append("    # Recommended additional TVars:")
-            for rec in self.recommendations:
-                lines.append(f"    #   {rec.name!r}: {rec.to_range_code()},")
+            lines.extend(_recommendation_comment_lines(self.recommendations))
 
         lines.append(")")
         return "\n".join(lines)
+
+
+def _configuration_space_lines(tvars: tuple[TVarSpec, ...]) -> list[str]:
+    lines = ["    configuration_space={"]
+    for tvar in tvars:
+        lines.append(f"        {tvar.name!r}: {tvar.to_range_code()},")
+    lines.append("    },")
+    return lines
+
+
+def _objective_lines(objectives: tuple[ObjectiveSpec, ...]) -> list[str]:
+    lines = ["    objectives=ObjectiveSchema.from_objectives(["]
+    for objective in objectives:
+        lines.append(
+            "        ObjectiveDefinition("
+            f"name={objective.name!r}, orientation={objective.orientation!r}, "
+            f"weight={objective.weight!r}),"
+        )
+    lines.append("    ]),")
+    return lines
+
+
+def _safety_constraint_lines(constraints: tuple[SafetySpec, ...]) -> list[str]:
+    lines = ["    safety_constraints=["]
+    for sc in constraints:
+        metric_expr = _metric_expression(sc.metric_name)
+        method = "above" if sc.operator == ">=" else "below"
+        lines.append(f"        {metric_expr}.{method}({sc.threshold}),")
+    lines.append("    ],")
+    return lines
+
+
+def _recommendation_comment_lines(
+    recommendations: tuple[TVarRecommendation, ...],
+) -> list[str]:
+    lines = ["    # Recommended additional TVars:"]
+    for rec in recommendations:
+        lines.append(f"    #   {rec.name!r}: {rec.to_range_code()},")
+    return lines
 
 
 def _structural_constraint_error(

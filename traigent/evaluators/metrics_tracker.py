@@ -1390,22 +1390,7 @@ class MetricsTracker:
             user_supplied_accuracy=user_supplied_accuracy
         )
 
-        metrics_data: dict[str, list[int | float]] = {
-            "accuracy": accuracy_values,
-            "input_tokens": [m.tokens.input_tokens for m in measured_metrics],
-            "output_tokens": [m.tokens.output_tokens for m in measured_metrics],
-            "total_tokens": [m.tokens.total_tokens for m in measured_metrics],
-            "response_time_ms": [m.response.response_time_ms for m in measured_metrics],
-            "input_cost": [
-                m.cost.input_cost for m in measured_metrics if m.cost_measured
-            ],
-            "output_cost": [
-                m.cost.output_cost for m in measured_metrics if m.cost_measured
-            ],
-            "total_cost": [
-                m.cost.total_cost for m in measured_metrics if m.cost_measured
-            ],
-        }
+        metrics_data = self._built_in_metric_values(accuracy_values, measured_metrics)
         # These built-in keys must always appear in the output (with a
         # zero-count describe structure if nothing was measured) even when
         # every tracked example is `measured=False` -- callers rely on their
@@ -1424,33 +1409,7 @@ class MetricsTracker:
             metrics_data["tokens_per_second"] = tps_values
 
         # Add any other custom metrics that appear in all examples
-        if self.example_metrics:
-            # Find common custom metrics across all examples
-            all_custom_keys: set[str] = set()
-            custom_rows = self._custom_metric_rows()
-            user_evaluation_cost = not self.sdk_evaluation_cost_only
-            for row in custom_rows:
-                all_custom_keys.update(row.keys())
-
-            # Add custom metrics that we haven't already handled
-            for key in all_custom_keys:
-                if (
-                    key not in metrics_data and key != "accuracy"
-                ):  # Skip accuracy as we've already handled it
-                    custom_values = []
-                    for row in custom_rows:
-                        if key in row:
-                            custom_values.append(row[key])
-                        elif key == "evaluation_cost" and user_evaluation_cost:
-                            # An excluded SDK entry is not a user measurement
-                            # of zero. Use the same samples as the scalar mean.
-                            continue
-                        else:
-                            custom_values.append(
-                                0.0
-                            )  # Default value if metric not present
-                    if custom_values:
-                        metrics_data[key] = custom_values
+        self._add_custom_summary_values(metrics_data)
 
         # Generate pandas.describe()-compatible statistics for each metric.
         # Built-in keys (`always_emit_keys`) are always emitted, even with an
@@ -1476,13 +1435,88 @@ class MetricsTracker:
             },
         }
 
-        # Completeness of the cost aggregates above. ``total_cost`` etc. are
-        # describe() over the examples that HAD a cost measurement; an example
-        # with none contributes nothing, so a zero-count (or partial) describe
-        # is not a $0 trial. Say so with the same flag/floor vocabulary the
-        # per-trial formatter uses, so the submission path can send the flag
-        # (and the reported lower bound) instead of the placeholder zero means
-        # (#2517).
+        self._apply_summary_cost_completeness(
+            summary_metrics, all_metrics, measured_metrics
+        )
+
+        return summary_stats
+
+    @staticmethod
+    def _built_in_metric_values(
+        accuracy_values: list[float], measured_metrics: list[ExampleMetrics]
+    ) -> dict[str, list[int | float]]:
+        return {
+            "accuracy": accuracy_values,
+            "input_tokens": [m.tokens.input_tokens for m in measured_metrics],
+            "output_tokens": [m.tokens.output_tokens for m in measured_metrics],
+            "total_tokens": [m.tokens.total_tokens for m in measured_metrics],
+            "response_time_ms": [m.response.response_time_ms for m in measured_metrics],
+            "input_cost": [
+                m.cost.input_cost for m in measured_metrics if m.cost_measured
+            ],
+            "output_cost": [
+                m.cost.output_cost for m in measured_metrics if m.cost_measured
+            ],
+            "total_cost": [
+                m.cost.total_cost for m in measured_metrics if m.cost_measured
+            ],
+        }
+
+    def _add_custom_summary_values(
+        self, metrics_data: dict[str, list[int | float]]
+    ) -> None:
+        """Add per-row values for custom metrics not already in ``metrics_data``."""
+        if not self.example_metrics:
+            return
+        # Find common custom metrics across all examples
+        all_custom_keys: set[str] = set()
+        custom_rows = self._custom_metric_rows()
+        user_evaluation_cost = not self.sdk_evaluation_cost_only
+        for row in custom_rows:
+            all_custom_keys.update(row.keys())
+
+        # Add custom metrics that we haven't already handled
+        for key in all_custom_keys:
+            # Skip accuracy as we've already handled it
+            if key in metrics_data or key == "accuracy":
+                continue
+            custom_values = self._custom_values_for_key(
+                key, custom_rows, user_evaluation_cost
+            )
+            if custom_values:
+                metrics_data[key] = custom_values
+
+    @staticmethod
+    def _custom_values_for_key(
+        key: str, custom_rows: list[dict[str, Any]], user_evaluation_cost: bool
+    ) -> list[Any]:
+        custom_values: list[Any] = []
+        for row in custom_rows:
+            if key in row:
+                custom_values.append(row[key])
+            elif key == "evaluation_cost" and user_evaluation_cost:
+                # An excluded SDK entry is not a user measurement
+                # of zero. Use the same samples as the scalar mean.
+                continue
+            else:
+                custom_values.append(0.0)  # Default value if metric not present
+        return custom_values
+
+    def _apply_summary_cost_completeness(
+        self,
+        summary_metrics: dict[str, Any],
+        all_metrics: list[ExampleMetrics],
+        measured_metrics: list[ExampleMetrics],
+    ) -> None:
+        """Flag incomplete cost aggregates inside ``summary_metrics`` (#2517).
+
+        ``total_cost`` etc. are describe() over the examples that HAD a cost
+        measurement; an example with none contributes nothing, so a zero-count
+        (or partial) describe is not a $0 trial. Say so with the same
+        flag/floor vocabulary the per-trial formatter uses, so the submission
+        path can send the flag (and the reported lower bound) instead of the
+        placeholder zero means.
+        """
         cost_measured_metrics = [m for m in measured_metrics if m.cost_measured]
         if not cost_measured_metrics:
             # No cost sample at all: describe([]) would post zero means for a
@@ -1490,28 +1524,27 @@ class MetricsTracker:
             for cost_key in _COST_DESCRIBE_KEYS:
                 if cost_key in summary_metrics:
                     summary_metrics[cost_key] = None
-        if (
+        if not (
             any(m.cost.unmeasured or m.cost.unpriced for m in all_metrics)
             or not cost_measured_metrics
             or self.unattributed_spend
         ):
-            # Scalars inside ``metrics``: the summary_stats schema allows a
-            # number next to the describe() dicts, but no extra top-level keys.
-            summary_metrics["cost_unmeasured"] = 1.0
-            lower_bound = (
-                sum(float(m.cost.total_cost) for m in cost_measured_metrics)
-                + sum(float(m.cost.known_cost) for m in all_metrics)
-                + self.unattributed_known_cost
-                + sum(
-                    float(m.cost.total_cost)
-                    for m in measured_metrics
-                    if m.cost.unpriced and not m.cost.unmeasured
-                )
+            return
+        # Scalars inside ``metrics``: the summary_stats schema allows a
+        # number next to the describe() dicts, but no extra top-level keys.
+        summary_metrics["cost_unmeasured"] = 1.0
+        lower_bound = (
+            sum(float(m.cost.total_cost) for m in cost_measured_metrics)
+            + sum(float(m.cost.known_cost) for m in all_metrics)
+            + self.unattributed_known_cost
+            + sum(
+                float(m.cost.total_cost)
+                for m in measured_metrics
+                if m.cost.unpriced and not m.cost.unmeasured
             )
-            if lower_bound > 0:
-                summary_metrics["cost_lower_bound"] = lower_bound
-
-        return summary_stats
+        )
+        if lower_bound > 0:
+            summary_metrics["cost_lower_bound"] = lower_bound
 
     def _empty_summary_stats(self) -> dict[str, Any]:
         """Return empty summary stats structure."""

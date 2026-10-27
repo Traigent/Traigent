@@ -112,6 +112,23 @@ class RuntimeClient:
         self, method: str, suffix: str, body: dict[str, Any] | None = None
     ) -> tuple[int, Any]:
         """Return ``(status, parsed JSON or None)``; transport failures are closed errors."""
+        status, parsed, _headers = self.send(method, self._url(suffix), body)
+        return status, parsed
+
+    def send(
+        self,
+        method: str,
+        url: str,
+        body: dict[str, Any] | None = None,
+        *,
+        params: dict[str, Any] | None = None,
+    ) -> tuple[int, Any, dict[str, str]]:
+        """One request to an absolute ``url``: ``(status, parsed JSON or None, headers)``.
+
+        Shared by the project-scoped routes above and the reactive routes
+        (``traigent.runtime.hosted``), so egress, credentials and redirect refusal
+        are decided in one place.
+        """
         from traigent.cloud.client import cloud_backend_egress_disabled
 
         if cloud_backend_egress_disabled():
@@ -136,7 +153,6 @@ class RuntimeClient:
             preflight_requests,
         )
 
-        url = self._url(suffix)
         headers = {
             "X-API-Key": self._api_key,
             "Accept": "application/json",
@@ -145,6 +161,8 @@ class RuntimeClient:
         kwargs: dict[str, Any] = {}
         if body is not None:
             kwargs["json"] = body
+        if params:
+            kwargs["params"] = params
         try:
             preflight_requests(method, url, **kwargs)
             response = requests.request(
@@ -164,7 +182,17 @@ class RuntimeClient:
             parsed = response.json()
         except ValueError:
             parsed = None
-        return response.status_code, parsed
+        kept = {
+            k.lower(): str(v)
+            for k, v in response.headers.items()
+            if k.lower() == "retry-after"
+        }
+        return response.status_code, parsed, kept
+
+    @property
+    def origin(self) -> str:
+        """The backend origin (no path), for routes outside the project prefix."""
+        return self._origin
 
     def _expect(self, status: int, body: Any, ok: tuple[int, ...]) -> Any:
         if status in ok:

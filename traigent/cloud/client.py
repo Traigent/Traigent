@@ -747,6 +747,48 @@ def _get_retry_delay(response: Any) -> float:
     return 0.0
 
 
+def _resolve_fallback_function(
+    function_name: str, local_function: Callable[..., Any] | None
+) -> Callable[..., Any]:
+    """Resolve the callable used by the local fallback optimization."""
+    if callable(local_function):
+        return local_function
+
+    module_name, separator, attr_path = function_name.rpartition(".")
+    if not separator:
+        raise CloudServiceError(
+            "Local fallback requires local_function when function_name "
+            "is not an importable dotted path"
+        )
+
+    try:
+        resolved: Any = import_module(module_name)
+        for attr in attr_path.split("."):
+            resolved = getattr(resolved, attr)
+    except (ImportError, AttributeError) as exc:
+        raise CloudServiceError(
+            f"Unable to resolve local fallback function '{function_name}'"
+        ) from exc
+
+    if not callable(resolved):
+        raise CloudServiceError(
+            f"Resolved fallback target '{function_name}' is not callable"
+        )
+
+    return cast(Callable[..., Any], resolved)
+
+
+def _best_metrics_from_score(objective: str, best_score_raw: Any) -> dict[str, float]:
+    """Build single-objective metrics from a raw best score, {} if unusable."""
+    metrics: dict[str, float] = {}
+    if best_score_raw is not None:
+        try:
+            metrics = {objective: float(best_score_raw)}
+        except (TypeError, ValueError):
+            metrics = {}
+    return metrics
+
+
 class TraigentCloudClient(BaseTraigentClient):
     """Client for backend integration APIs and reserved cloud APIs.
 
@@ -1326,36 +1368,9 @@ class TraigentCloudClient(BaseTraigentClient):
                     continue
             return metrics
 
-        def _resolve_local_function() -> Callable[..., Any]:
-            if callable(local_function):
-                return local_function
-
-            module_name, separator, attr_path = function_name.rpartition(".")
-            if not separator:
-                raise CloudServiceError(
-                    "Local fallback requires local_function when function_name "
-                    "is not an importable dotted path"
-                )
-
-            try:
-                resolved: Any = import_module(module_name)
-                for attr in attr_path.split("."):
-                    resolved = getattr(resolved, attr)
-            except (ImportError, AttributeError) as exc:
-                raise CloudServiceError(
-                    f"Unable to resolve local fallback function '{function_name}'"
-                ) from exc
-
-            if not callable(resolved):
-                raise CloudServiceError(
-                    f"Resolved fallback target '{function_name}' is not callable"
-                )
-
-            return cast(Callable[..., Any], resolved)
-
         # Use random optimizer for fallback (faster than grid).
         fallback_max_trials = max(1, min(max_trials, 20))
-        fallback_function = _resolve_local_function()
+        fallback_function = _resolve_fallback_function(function_name, local_function)
         optimizer = get_optimizer(
             "random",
             configuration_space,
@@ -1380,14 +1395,9 @@ class TraigentCloudClient(BaseTraigentClient):
         best_config = _as_dict(getattr(optimization_result, "best_config", {}))
         best_metrics = _as_metrics(getattr(optimization_result, "best_metrics", {}))
         if not best_metrics and objectives:
-            best_score_raw = getattr(optimization_result, "best_score", None)
-            if best_score_raw is None:
-                best_metrics = {}
-            else:
-                try:
-                    best_metrics = {objectives[0]: float(best_score_raw)}
-                except (TypeError, ValueError):
-                    best_metrics = {}
+            best_metrics = _best_metrics_from_score(
+                objectives[0], getattr(optimization_result, "best_score", None)
+            )
         trials = optimization_result.trials
         trials_count = len(trials)
 
