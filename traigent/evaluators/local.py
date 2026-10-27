@@ -2889,19 +2889,12 @@ class LocalEvaluator(BaseEvaluator):
             return correct / total, total
         return None, total
 
-    def _merge_comprehensive_metrics(
+    def _log_cost_override(
         self,
         aggregated_metrics: dict[str, float],
         comprehensive_metrics: dict[str, Any],
-        *,
-        preserve_authoritative_accuracy: bool,
     ) -> None:
-        """Merge comprehensive metrics into aggregated metrics.
-
-        Args:
-            aggregated_metrics: Target metrics dict (modified in place)
-            comprehensive_metrics: Source comprehensive metrics
-        """
+        """Log when a zero aggregated cost is overridden by the comprehensive one."""
         logger.debug(
             f"LOCAL EVALUATOR DEBUG: comprehensive_metrics['cost'] = "
             f"{comprehensive_metrics.get('cost', 'MISSING')}"
@@ -2924,14 +2917,56 @@ class LocalEvaluator(BaseEvaluator):
                     f"{aggregated_cost} -> {comprehensive_cost}"
                 )
 
+    @staticmethod
+    def _is_score_alias_of_accuracy(
+        key: str,
+        aggregated_metrics: dict[str, float],
+        preserve_authoritative_accuracy: bool,
+    ) -> bool:
+        """True when ``score`` is absent but a built-in accuracy is authoritative."""
+        return bool(
+            key == "score"
+            and preserve_authoritative_accuracy
+            and "accuracy" in aggregated_metrics
+            and key not in aggregated_metrics
+        )
+
+    @staticmethod
+    def _keeps_authoritative_value(
+        key: str,
+        aggregated_metrics: dict[str, float],
+        preserve_authoritative_accuracy: bool,
+    ) -> bool:
+        """True when an existing accuracy/score aggregate must not be replaced."""
+        return bool(
+            key in {"accuracy", "score"}
+            and key in aggregated_metrics
+            and (
+                preserve_authoritative_accuracy
+                or aggregated_metrics[key] not in (None, 0.0)
+            )
+        )
+
+    def _merge_comprehensive_metrics(
+        self,
+        aggregated_metrics: dict[str, float],
+        comprehensive_metrics: dict[str, Any],
+        *,
+        preserve_authoritative_accuracy: bool,
+    ) -> None:
+        """Merge comprehensive metrics into aggregated metrics.
+
+        Args:
+            aggregated_metrics: Target metrics dict (modified in place)
+            comprehensive_metrics: Source comprehensive metrics
+        """
+        self._log_cost_override(aggregated_metrics, comprehensive_metrics)
+
         for key, value in comprehensive_metrics.items():
             if value is None:
                 continue
-            if (
-                key == "score"
-                and preserve_authoritative_accuracy
-                and "accuracy" in aggregated_metrics
-                and key not in aggregated_metrics
+            if self._is_score_alias_of_accuracy(
+                key, aggregated_metrics, preserve_authoritative_accuracy
             ):
                 # A built-in accuracy can be a real 0.0 while its sibling
                 # score key is absent (for example every expected output is
@@ -2940,13 +2975,8 @@ class LocalEvaluator(BaseEvaluator):
                 # unrelated fallback score.
                 aggregated_metrics[key] = aggregated_metrics["accuracy"]
                 continue
-            if (
-                key in {"accuracy", "score"}
-                and key in aggregated_metrics
-                and (
-                    preserve_authoritative_accuracy
-                    or aggregated_metrics[key] not in (None, 0.0)
-                )
+            if self._keeps_authoritative_value(
+                key, aggregated_metrics, preserve_authoritative_accuracy
             ):
                 # ``compute_metrics`` / ``_compute_accuracy_aggregated`` is
                 # authoritative for these objectives. In particular, 0.0 is
