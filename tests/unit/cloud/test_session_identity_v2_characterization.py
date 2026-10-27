@@ -16,7 +16,7 @@ HEX = "0123456789abcdef"
 DIGEST_A = "a" * 64
 DIGEST_B = HEX * 4
 CODE_DIGEST = "sha256:" + "c" * 64
-UNKNOWN_VERSION = {"schema": "fp1", "digest": None, "state": "unknown"}
+UNKNOWN_VERSION: dict[str, Any] = {"schema": "fp1", "digest": None, "state": "unknown"}
 
 
 class _Request:
@@ -43,7 +43,7 @@ def _wire(**attrs: Any) -> dict[str, Any]:
     return models.session_identity_v2_to_wire(_Request([], **attrs))
 
 
-def _versions(**overrides: dict[str, str | None]) -> dict[str, Any]:
+def _versions(**overrides: dict[str, Any]) -> dict[str, Any]:
     base = {
         "agent": UNKNOWN_VERSION,
         "dataset": UNKNOWN_VERSION,
@@ -54,7 +54,7 @@ def _versions(**overrides: dict[str, str | None]) -> dict[str, Any]:
     return base
 
 
-def _verified(digest: str) -> dict[str, str]:
+def _verified(digest: str) -> dict[str, Any]:
     return {"schema": "fp1", "digest": f"sha256:{digest}", "state": "verified"}
 
 
@@ -577,7 +577,7 @@ def test_digest_regex_is_the_shared_pattern(monkeypatch: pytest.MonkeyPatch) -> 
     class Pattern:
         def fullmatch(self, value: Any) -> bool:
             seen.append(value)
-            return value == "accepted"
+            return isinstance(value, str) and value == "accepted"
 
     monkeypatch.setattr(models, "EVALUATOR_CODE_DIGEST_RE", Pattern())
     result = _wire(evaluator_code_digest="accepted")
