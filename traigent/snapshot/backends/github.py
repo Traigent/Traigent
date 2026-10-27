@@ -15,6 +15,7 @@ from urllib.parse import quote, urljoin, urlsplit
 import requests
 from urllib3.util import parse_url
 
+from traigent.labels.transport_gate import gate_session
 from traigent.snapshot.errors import SnapshotErrorCode, SnapshotStoreError
 from traigent.snapshot.store import CreateResult, require_secure_endpoint, validate_key
 
@@ -135,7 +136,13 @@ class GitHubStore:
         self._api_url = api_url.rstrip("/")
         self._origin = (parts.scheme, parts.hostname, parts.port)
         self._allow_public = bool(allow_public)
-        self._session = session if session is not None else requests.Session()
+        # SDK-created sessions are gated as the customer's own endpoint; a caller-supplied
+        # session is left untouched.
+        self._session: Any = (
+            session
+            if session is not None
+            else gate_session(requests.Session(), external=True)
+        )
         self._sleep = sleep
         self._clock = clock
         self._ready = False
@@ -226,7 +233,7 @@ class GitHubStore:
             json=kwargs.get("json"),
         )
         try:
-            prepared = self._session.prepare_request(request)
+            prepared: requests.PreparedRequest = self._session.prepare_request(request)
         except (requests.RequestException, ValueError):
             raise _error(SnapshotErrorCode.UNSAFE_DESTINATION) from None
         if not self._is_safe_url(prepared.url):
