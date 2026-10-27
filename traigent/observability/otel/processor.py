@@ -165,12 +165,8 @@ class TraigentSpanProcessor(SpanProcessor):
         if self._shutdown:
             return
         started_offline = self._offline_overflow
-        ctx0 = span.context
-        if ctx0 is not None:
-            key = (ctx0.trace_id, ctx0.span_id)
-            if key in self._started_offline:
-                self._started_offline.discard(key)
-                started_offline = True
+        if self._forget_offline_start(span.context):
+            started_offline = True
         # _offline_overflow is never auto-cleared: an empty tracked set does
         # not prove the untracked offline spans have ended.
         if (
@@ -187,25 +183,37 @@ class TraigentSpanProcessor(SpanProcessor):
         if ctx is None or not ctx.trace_flags.sampled:
             self._bump("sampled_out")
             return
-        dropped = False
+        if self._enqueue(span):
+            self._notify_drop("queue_full", 1)
+
+    def _forget_offline_start(self, ctx: Any) -> bool:
+        """True when the span was tracked as started offline (and forget it)."""
+        if ctx is None:
+            return False
+        key = (ctx.trace_id, ctx.span_id)
+        if key not in self._started_offline:
+            return False
+        self._started_offline.discard(key)
+        return True
+
+    def _enqueue(self, span: ReadableSpan) -> bool:
+        """Queue ``span`` under the lock; True when the queue was full."""
         with self._cond:
             if len(self._queue) >= self._max_queue:
                 self._stats["dropped_queue_full"] += 1
-                dropped = True
-            else:
-                if not self._queue:
-                    self._first_queued_at = self._clock()
-                self._queue.append(span)
-                self._queued_bytes += _estimate_bytes(span)
-                self._stats["queued"] += 1
-                self._ensure_worker_locked()
-                if (
-                    len(self._queue) >= self._max_batch
-                    or self._queued_bytes >= self._max_bytes
-                ):
-                    self._cond.notify_all()
-        if dropped:
-            self._notify_drop("queue_full", 1)
+                return True
+            if not self._queue:
+                self._first_queued_at = self._clock()
+            self._queue.append(span)
+            self._queued_bytes += _estimate_bytes(span)
+            self._stats["queued"] += 1
+            self._ensure_worker_locked()
+            if (
+                len(self._queue) >= self._max_batch
+                or self._queued_bytes >= self._max_bytes
+            ):
+                self._cond.notify_all()
+            return False
 
     def shutdown(self) -> None:
         if self._shutdown:
