@@ -123,6 +123,22 @@ def _example_input_expected(example: Any) -> tuple[Any, Any]:
     )
 
 
+def example_input_and_expected(example: Any) -> tuple[Any, Any]:
+    """Public view of the ``(input, expected)`` pair the dataset fp1 hashes."""
+    return _example_input_expected(example)
+
+
+def materialized_examples(dataset_or_examples: Any) -> list[Any] | None:
+    """The realized example list, or ``None`` when the input is not materialized.
+
+    Never iterates a single-use iterable: the same guard as
+    :func:`is_dataset_materialized`.
+    """
+    if not is_dataset_materialized(dataset_or_examples):
+        return None
+    return _extract_examples(dataset_or_examples)
+
+
 def _compute_dataset_fingerprint_and_count(
     dataset_or_examples: Any,
 ) -> tuple[str | None, int]:

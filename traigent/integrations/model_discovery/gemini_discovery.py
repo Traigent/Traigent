@@ -1,6 +1,7 @@
 """Google Gemini model discovery implementation.
 
-Uses the google-generativeai SDK's list_models() API for dynamic discovery.
+Uses the google-genai SDK's ``Client.models.list()`` API for dynamic discovery.
+(google-generativeai is deprecated upstream and not installed on Python 3.14.)
 """
 
 # Traceability: CONC-Layer-Integration FUNC-INTEGRATIONS REQ-INT-008
@@ -30,7 +31,7 @@ class GeminiDiscovery(ModelDiscovery):
         return self._fingerprint(api_key) if api_key else None
 
     def _fetch_models_from_sdk(self) -> list[str]:
-        """Fetch models from Google Generative AI SDK.
+        """Fetch models from the google-genai SDK.
 
         Returns:
             List of model names available via the API.
@@ -47,15 +48,15 @@ class GeminiDiscovery(ModelDiscovery):
             return []
 
         try:
-            import google.generativeai as genai
+            from google import genai
 
-            genai.configure(api_key=api_key)
-            models = genai.list_models()
+            client = genai.Client(api_key=api_key)
+            models = client.models.list()
 
             # Filter to generative models (exclude embedding models)
             model_names = []
             for model in models:
-                name = model.name
+                name = model.name or ""
                 # Models come as "models/gemini-1.5-pro" format
                 # Also accept short names like "gemini-1.5-pro"
                 if "gemini" in name.lower():
@@ -72,7 +73,7 @@ class GeminiDiscovery(ModelDiscovery):
             return model_names
 
         except ImportError:
-            logger.debug("google-generativeai SDK not installed")
+            logger.debug("google-genai SDK not installed")
             raise
         except Exception as e:
             logger.debug(f"Gemini SDK model list failed: {e}")

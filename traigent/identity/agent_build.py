@@ -48,6 +48,7 @@ import re
 import subprocess  # nosec B404 - fixed argv, no shell, see _git
 import sys
 import textwrap
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -66,6 +67,12 @@ logger = get_logger(__name__)
 
 __all__ = [
     "AgentBuildBase",
+    "AgentSourceSurvey",
+    "GitOutputTooLarge",
+    "agent_bound_state",
+    "git_output",
+    "git_output_bounded",
+    "survey_agent_sources",
     "afp2_source_digest",
     "candidate_agent_version",
     "collect_agent_build_base",
@@ -332,12 +339,17 @@ def afp2_source_digest(func: Callable[..., Any]) -> str | None:
 # --------------------------------------------------------------------------
 
 
-def _git(cwd: Path, *args: str) -> str | None:
+def _git(cwd: Path, *args: str, binary: bool = False) -> Any:
+    """Run one fixed-argv git command; ``None`` on any failure.
+
+    Text (``str``) by default; ``binary=True`` returns the raw ``bytes`` (used
+    for patches, which need not be valid text).
+    """
     try:
         completed = subprocess.run(  # nosec B603 B607 - fixed argv, no shell
             ["git", "-C", str(cwd), *args],
             capture_output=True,
-            text=True,
+            text=not binary,
             timeout=_GIT_TIMEOUT_SECONDS,
             check=False,
         )
@@ -346,6 +358,60 @@ def _git(cwd: Path, *args: str) -> str | None:
     if completed.returncode != 0:
         return None
     return completed.stdout
+
+
+def git_output(cwd: Path, *args: str, binary: bool = False) -> Any:
+    """Public wrapper over the module's single fixed-argv git runner."""
+    return _git(cwd, *args, binary=binary)
+
+
+class GitOutputTooLarge(Exception):
+    """A git command produced more than the allowed number of output bytes."""
+
+
+def git_output_bounded(cwd: Path, *args: str, max_bytes: int) -> bytes | None:
+    """Raw git stdout, read as a stream and never past ``max_bytes``.
+
+    Raises :class:`GitOutputTooLarge` as soon as more than ``max_bytes`` have
+    been read: git is killed there, so memory stays bounded by the cap even
+    when the output is enormous. ``None`` on any other failure.
+    """
+    try:
+        process = subprocess.Popen(
+            ["git", "-C", str(cwd), *args],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    timer = threading.Timer(_GIT_TIMEOUT_SECONDS, process.kill)
+    timer.start()
+    chunks: list[bytes] = []
+    total = 0
+    overflow = False
+    try:
+        stream = process.stdout
+        while stream is not None:
+            chunk = stream.read(65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                overflow = True
+                break
+            chunks.append(chunk)
+    finally:
+        timer.cancel()
+        if overflow or process.poll() is None:
+            process.kill()
+        if process.stdout is not None:
+            process.stdout.close()
+        process.wait()
+    if overflow:
+        raise GitOutputTooLarge
+    if process.returncode != 0:
+        return None
+    return b"".join(chunks)
 
 
 def _git_state(start: Path) -> tuple[Path, str, set[str]] | None:
@@ -397,12 +463,9 @@ def _is_excluded(path: Path) -> bool:
         return False
 
 
-def _enumerate_helper_modules(
-    project_root: Path,
-) -> tuple[dict[str, str], set[str], list[str]]:
-    """``(name -> digest, enumerated relative paths, gaps)`` for project modules."""
+def _loaded_project_files(project_root: Path) -> dict[str, Path]:
+    """``project-relative name -> path`` of every loaded project ``.py`` module."""
     files: dict[str, Path] = {}
-    gaps: list[str] = []
     for module in list(sys.modules.values()):
         filename = getattr(module, "__file__", None)
         if not isinstance(filename, str) or not filename.endswith(".py"):
@@ -415,6 +478,15 @@ def _enumerate_helper_modules(
         if _is_excluded(path):
             continue
         files[relative.as_posix()] = path
+    return files
+
+
+def _enumerate_helper_modules(
+    project_root: Path,
+) -> tuple[dict[str, str], set[str], list[str]]:
+    """``(name -> digest, enumerated relative paths, gaps)`` for project modules."""
+    files = _loaded_project_files(project_root)
+    gaps: list[str] = []
     digests: dict[str, str] = {}
     for name in sorted(files):
         if len(digests) >= _MAX_ASSETS_PER_CATEGORY:
@@ -620,6 +692,68 @@ def collect_agent_build_base(
         dependency_lock_digest=dependency_lock,
         gaps=tuple(sorted(set(gaps))),
     )
+
+
+@dataclass(frozen=True)
+class AgentSourceSurvey:
+    """Where an agent's source lives, for raw capture (no digests, no content).
+
+    ``helper_files`` maps a project-relative name to the file the SDK's own
+    enumeration found (loaded project ``.py`` modules, same rules as the build
+    manifest). ``gaps`` are content-free reasons the survey may be incomplete.
+    """
+
+    entry_file: Path | None
+    project_root: Path | None
+    commit: str | None
+    dirty: bool
+    dirty_paths: frozenset[str]
+    helper_files: Mapping[str, Path]
+    gaps: tuple[str, ...]
+
+
+def survey_agent_sources(func: Callable[..., Any]) -> AgentSourceSurvey:
+    """Enumerate the agent's project files the way the build manifest does."""
+    gaps: list[str] = []
+    target = _innermost(func.func if isinstance(func, functools.partial) else func)
+    try:
+        source_file = inspect.getsourcefile(getattr(target, "__func__", target))
+    except TypeError:
+        source_file = None
+    code_revision, dirty_paths, project_root = _code_revision_of(source_file, gaps)
+    helper_files: dict[str, Path] = {}
+    if project_root is not None:
+        for name, path in sorted(_loaded_project_files(project_root).items()):
+            if len(helper_files) >= _MAX_ASSETS_PER_CATEGORY:
+                gaps.append("helper_modules_over_limit")
+                break
+            if not _ASSET_NAME_RE.fullmatch(name):
+                gaps.append("helper_module_name_not_representable")
+                continue
+            helper_files[name] = path
+        covered = set(helper_files)
+        if dirty_paths - covered:
+            gaps.append("dirty_files_outside_manifest")
+    return AgentSourceSurvey(
+        entry_file=Path(source_file).resolve() if source_file else None,
+        project_root=project_root,
+        commit=code_revision["commit"] if code_revision else None,
+        dirty=bool(code_revision and code_revision["dirty"]),
+        dirty_paths=frozenset(dirty_paths),
+        helper_files=helper_files,
+        gaps=tuple(sorted(set(gaps))),
+    )
+
+
+def agent_bound_state(func: Callable[..., Any]) -> dict[str, Any] | None:
+    """The agent's bound state (partial args, closure cells, instance attributes).
+
+    ``None`` when bound state exists but cannot be observed (same rule as the
+    ``afp2`` source digest).
+    """
+    partial = func if isinstance(func, functools.partial) else None
+    target = _innermost(partial.func if partial is not None else func)
+    return _bound_state(partial, target)
 
 
 def candidate_agent_version(
