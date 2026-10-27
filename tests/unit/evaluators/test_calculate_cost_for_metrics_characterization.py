@@ -580,6 +580,34 @@ def test_zero_cost_diagnostic_error_is_handled_like_a_pricing_error(
     assert "log_exception" not in _names(harness.trace)
 
 
+def test_zero_cost_diagnostic_error_that_clears_is_logged_and_swallowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = _Harness(monkeypatch)
+    metrics = _Metrics(harness.trace, total=0.0, input_tokens=4, output_tokens=2)
+    reads: list[str] = []
+
+    def flaky(self: _Tokens) -> int:
+        reads.append("read")
+        self._trace.append(("input_tokens",))
+        if len(reads) == 1:
+            raise RuntimeError("transient")
+        return 4
+
+    monkeypatch.setattr(_Tokens, "input_tokens", property(flaky))
+    harness.run(metrics, model_name="m1")
+    assert reads == ["read", "read"]
+    logged = [e for e in harness.trace if e[0] == "log_exception"]
+    assert len(logged) == 1
+    assert logged[0][1:3] == (
+        "Cost calculation failed for model %s: %s (tokens: in=%d, out=%d)",
+        "m1",
+    )
+    assert isinstance(logged[0][3], RuntimeError) and str(logged[0][3]) == "transient"
+    assert logged[0][4:] == (4, 2)
+    assert "log_warning" not in _names(harness.trace)
+
+
 # ------------------------------------------------------------- failure handling
 
 

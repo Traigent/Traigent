@@ -89,7 +89,7 @@ def _send(
     payload: dict[str, Any],
     bundle: Any,
     *,
-    link: bool,
+    link: Any,
 ) -> dict[str, Any]:
     result: dict[str, Any] = plr._send(client, ROW_ID, payload, bundle, link=link)
     return result
@@ -497,3 +497,30 @@ def test_linkage_get_error_propagates_after_the_record_read() -> None:
         _send(client, {}, _Bundle(trace), link=True)
     assert ("body_get", "data") in trace
     assert not any(event[0] == "set_result" for event in trace)
+
+
+def test_link_truth_is_evaluated_exactly_once_per_use() -> None:
+    trace: list[Any] = []
+    answers = iter([False, True, False, False])
+
+    class Link:
+        def __bool__(self) -> bool:
+            value = next(answers)
+            trace.append(("link_bool", value))
+            return value
+
+    client = _Client(
+        trace, [ProcessRecordRequestError(409, "DUPLICATE_ISSUANCE")], [_ok(trace)]
+    )
+    result = _send(client, {"refs": 1}, None, link=Link())
+    assert result == {"record": RECORD, "commitment_linkage": None}
+    assert trace == [
+        ("link_bool", False),
+        ("finalize", ROW_ID, {"refs": 1}),
+        ("link_bool", True),
+        ("get", ROW_ID),
+        ("body_get", "data"),
+        ("body_get", "commitment_linkage"),
+        ("link_bool", False),
+        ("link_bool", False),
+    ]

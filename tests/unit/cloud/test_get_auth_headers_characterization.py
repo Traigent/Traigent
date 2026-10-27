@@ -741,3 +741,31 @@ async def test_credentials_mode_accessor_error_propagates_before_builders(
     assert ("mode_read",) in trace
     assert trace.count(("mode_read",)) == 1
     assert not any(e[0] in ("api_key_headers", "latch", "common") for e in trace)
+
+
+@pytest.mark.asyncio
+async def test_credentials_truth_is_read_once_after_successful_authentication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trace: list[Any] = []
+    manager = _manager(trace)
+    answers = iter([True, False])
+
+    class Credentials(AuthCredentials):
+        def __bool__(self) -> bool:
+            value = next(answers)
+            trace.append(("creds_bool", value))
+            return value
+
+    ok = AuthResult(success=True, status=AuthStatus.AUTHENTICATED)
+    _install(
+        monkeypatch,
+        manager,
+        trace,
+        auth_state=False,
+        auth_result=ok,
+        credentials_after_auth=Credentials(mode=AuthMode.API_KEY),
+    )
+    headers = await manager.get_auth_headers()
+    assert headers == {"k": "api", "common": "both"}
+    assert [e for e in trace if e[0] == "creds_bool"] == [("creds_bool", True)]

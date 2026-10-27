@@ -622,3 +622,25 @@ def test_real_warning_check_logs_a_refused_warm_start(
     _attach(manager, result, summary=summary)
     assert len(records) == 1
     assert records[0][1:] == ("exp-0", "mismatch", None)
+
+
+@pytest.mark.parametrize("kind", ["falsy", "raising"])
+def test_client_truthiness_is_never_evaluated(kind: str) -> None:
+    trace: list[Any] = []
+
+    class Client(_Client):
+        def __bool__(self) -> bool:
+            trace.append(("client_bool",))
+            if kind == "raising":
+                raise RuntimeError("client truth failed")
+            return False
+
+    mapping = _Mapping(trace, "exp-1", "run-1")
+    result = _Result({})
+    _attach(_manager(trace, client=Client(trace, mapping)), result)
+    assert result.metadata == {
+        "local_session_id": "s-1",
+        "experiment_id": "exp-1",
+        "experiment_run_id": "run-1",
+    }
+    assert ("client_bool",) not in trace
