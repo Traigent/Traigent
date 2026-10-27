@@ -380,3 +380,51 @@ def test_conflict_raises_before_any_result_field_is_read() -> None:
     with pytest.raises(ValueError):
         dto.to_dict()
     assert _Traced.events == ["dataset_id", "benchmark_id", "evaluation_set_id"]
+
+
+class _RaisingOn(_Traced):
+    fail_on: str = ""
+    error: Exception = RuntimeError("probe")
+
+    def __getattribute__(self, name: str) -> Any:
+        if name == _RaisingOn.fail_on:
+            _Traced.events.append(name)
+            raise _RaisingOn.error
+        return super().__getattribute__(name)
+
+
+_OPTIONAL_ORDER = [
+    "status",
+    "configuration_runs_count",
+    "total_examples",
+    "optimization_runs_count",
+    "experiment_run",
+]
+
+
+@pytest.mark.parametrize("error", [RuntimeError("probe"), AttributeError("probe")])
+@pytest.mark.parametrize("field_name", _OPTIONAL_ORDER)
+def test_optional_field_accessor_error_propagates_and_later_fields_unread(
+    field_name: str, error: Exception
+) -> None:
+    _RaisingOn.fail_on = field_name
+    _RaisingOn.error = error
+    _Traced.events = []
+    dto = _RaisingOn(
+        id="e1",
+        name="n",
+        description="d",
+        created_at="c",
+        updated_at="u",
+        status="s",
+        configuration_runs_count=1,
+        total_examples=2,
+        optimization_runs_count=3,
+        experiment_run={},
+    )
+    with pytest.raises(type(error), match="probe"):
+        dto.to_dict()
+    tail = _Traced.events[_Traced.events.index("model_parameters_id") + 1 :]
+    index = _OPTIONAL_ORDER.index(field_name)
+    earlier = [n for name in _OPTIONAL_ORDER[:index] for n in (name, name)]
+    assert tail == [*earlier, field_name]
