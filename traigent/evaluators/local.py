@@ -2407,7 +2407,13 @@ class LocalEvaluator(BaseEvaluator):
             # Built-in exact match is declared: a failed eligible attempt is a
             # miss in the tracker summary, as in the aggregate.
             example_metric.accuracy_builtin = True
-            accuracy_value = self._calculate_example_accuracy(output, expected_output)
+            # Only a row with gold has a built-in value (a blank expected
+            # output is no gold).
+            accuracy_value = (
+                self._calculate_example_accuracy(output, expected_output)
+                if example_metric.accuracy_eligible
+                else None
+            )
             if (
                 accuracy_value is None
                 and example_metric.accuracy_eligible

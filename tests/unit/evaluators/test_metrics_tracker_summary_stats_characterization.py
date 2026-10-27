@@ -49,6 +49,11 @@ def ex(
         custom_metrics=dict(custom or {}),
         sdk_evaluation_cost=sdk_eval,
     )
+    # Accuracy is only ever a row's own value (never derived from success), so
+    # the fixture supplies the 1/0 each row used to be credited with.
+    m.custom_metrics.setdefault(
+        "accuracy", acc if acc is not None else (1.0 if success else 0.0)
+    )
     return m
 
 

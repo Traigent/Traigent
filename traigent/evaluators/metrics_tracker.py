@@ -1240,12 +1240,20 @@ class MetricsTracker:
            resumed row carries its stored numeric accuracy, or no value;
         3. otherwise no value (unmeasured; never derived from success).
 
-        ``user_supplied_accuracy`` is accepted for call-site compatibility and
-        no longer changes the population.
+        ``user_supplied_accuracy`` marks a run whose ``accuracy`` objective is a
+        metric function: its author owns the error semantics, so a row without
+        a value (the metric function failing closed aside) is a ``0.0`` unless
+        it is explicitly unmeasured (a resumed row with no stored accuracy).
+        The trial accuracy is derived from the non-custom population above.
         """
-        del user_supplied_accuracy
         values: list[float] = []
         for metric in self.example_metrics:
+            if user_supplied_accuracy:
+                raw = metric.custom_metrics.get("accuracy")
+                if raw is None and metric.accuracy_unavailable:
+                    continue
+                values.append(float(raw) if raw is not None else 0.0)
+                continue
             if (
                 metric.accuracy_builtin
                 and metric.accuracy_eligible
