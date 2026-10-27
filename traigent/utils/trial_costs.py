@@ -180,6 +180,26 @@ def trial_cost_unknown(
     return measured == 0 and zero_attempts == 0
 
 
+def _example_row_fields(row: Any) -> tuple[Any, Any, Any]:
+    """Read ``(metrics, example_id, success)`` from a mapping or object row."""
+    if isinstance(row, Mapping):
+        return row.get("metrics"), row.get("example_id"), row.get("success", True)
+    return (
+        getattr(row, "metrics", None),
+        getattr(row, "example_id", None),
+        getattr(row, "success", True),
+    )
+
+
+def _example_cost_unmeasured(metrics: Mapping[str, Any], ok: Any) -> bool:
+    """Per-row rule shared with :func:`trial_cost_unknown`."""
+    flagged = is_cost_unmeasured(metrics)
+    no_cost = not row_has_measured_cost(metrics) and not (
+        not bool(ok) and row_reports_zero_provider_attempts(metrics)
+    )
+    return flagged or no_cost
+
+
 def unmeasured_example_ids(example_results: Any, limit: int = 5) -> list[str]:
     """Ids (or ``#index``) of the examples whose usage was not captured.
 
@@ -195,23 +215,10 @@ def unmeasured_example_ids(example_results: Any, limit: int = 5) -> list[str]:
         return []
     found: list[str] = []
     for index, row in enumerate(example_results):
-        if isinstance(row, Mapping):
-            metrics, example_id, ok = (
-                row.get("metrics"),
-                row.get("example_id"),
-                row.get("success", True),
-            )
-        else:
-            metrics = getattr(row, "metrics", None)
-            example_id = getattr(row, "example_id", None)
-            ok = getattr(row, "success", True)
+        metrics, example_id, ok = _example_row_fields(row)
         if not isinstance(metrics, Mapping):
             continue
-        flagged = is_cost_unmeasured(metrics)
-        no_cost = not row_has_measured_cost(metrics) and not (
-            not bool(ok) and row_reports_zero_provider_attempts(metrics)
-        )
-        if flagged or no_cost:
+        if _example_cost_unmeasured(metrics, ok):
             found.append(str(example_id) if example_id else f"#{index}")
             if len(found) >= limit:
                 break

@@ -605,28 +605,36 @@ class SecureJWTValidator:
 
     def _perform_security_checks(self, payload: dict[str, Any]) -> None:
         """Perform additional security checks on token payload."""
-        # Check for suspicious claims
+        self._warn_on_suspicious_claims(payload)
+
+        # Validate scope if present
+        if "scope" in payload:
+            self._enforce_allowed_scopes(payload)
+
+    @staticmethod
+    def _warn_on_suspicious_claims(payload: dict[str, Any]) -> None:
+        """Log a warning for each privileged-looking claim set to True."""
         suspicious_claims = ["admin", "root", "superuser", "bypass"]
         for claim in suspicious_claims:
             if claim in payload and payload[claim] is True:
                 logger.warning(f"Suspicious claim detected: {claim}")
 
-        # Validate scope if present
-        if "scope" in payload:
-            allowed_scopes_str = os.getenv("TRAIGENT_ALLOWED_SCOPES", "").strip()
-            # Filter out empty strings to handle unset/empty env var
-            allowed_scopes = [
-                s.strip() for s in allowed_scopes_str.split(",") if s.strip()
-            ]
-            if allowed_scopes:
-                token_scopes = (
-                    payload["scope"].split()
-                    if isinstance(payload["scope"], str)
-                    else payload["scope"]
-                )
-                for scope in token_scopes:
-                    if scope not in allowed_scopes:
-                        raise JWTSecurityError(f"Invalid scope: {scope}") from None
+    @staticmethod
+    def _enforce_allowed_scopes(payload: dict[str, Any]) -> None:
+        """Deny any token scope outside the configured allowlist."""
+        allowed_scopes_str = os.getenv("TRAIGENT_ALLOWED_SCOPES", "").strip()
+        # Filter out empty strings to handle unset/empty env var
+        allowed_scopes = [s.strip() for s in allowed_scopes_str.split(",") if s.strip()]
+        if not allowed_scopes:
+            return
+        token_scopes = (
+            payload["scope"].split()
+            if isinstance(payload["scope"], str)
+            else payload["scope"]
+        )
+        for scope in token_scopes:
+            if scope not in allowed_scopes:
+                raise JWTSecurityError(f"Invalid scope: {scope}") from None
 
     def constant_time_validate(self, token: str, expected_result: bool = True) -> bool:
         """Validate token with constant time to prevent timing attacks."""
