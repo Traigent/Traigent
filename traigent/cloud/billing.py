@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.logging import get_logger
@@ -1029,18 +1029,18 @@ class CostTracker:
         """
         if cost_item.session_id not in self._session_costs:
             self._evict_oldest_session_if_full()
-            self._session_costs[cost_item.session_id] = []  # type: ignore[index]
+            self._session_costs[cast(str, cost_item.session_id)] = []
 
         # Enforce per-session items limit
-        session_items = self._session_costs[cost_item.session_id]  # type: ignore[index]
+        session_items = self._session_costs[cast(str, cost_item.session_id)]
         if len(session_items) >= self._max_items_per_session:
             # Remove oldest items from this session
             items_to_remove = max(1, self._max_items_per_session // 10)
-            self._session_costs[cost_item.session_id] = session_items[  # type: ignore[index]
+            self._session_costs[cast(str, cost_item.session_id)] = session_items[
                 items_to_remove:
             ]
 
-        self._session_costs[cost_item.session_id].append(cost_item)  # type: ignore[index]
+        self._session_costs[cast(str, cost_item.session_id)].append(cost_item)
 
     def _evict_oldest_session_if_full(self) -> None:
         # Enforce max sessions limit
