@@ -260,11 +260,12 @@ def test_event_trace_for_measured_rows_has_no_env_read(
         return real_measured(value)
 
     monkeypatch.setattr(base, "_measured_value", spy)
-    monkeypatch.setattr(
-        base,
-        "aggregate_measured_metric",
-        lambda m, rows: trace.append(("agg", m)) or 1.0,
-    )
+
+    def agg(metric: str, rows: Any) -> float:
+        trace.append(("agg", metric))
+        return 1.0
+
+    monkeypatch.setattr(base, "aggregate_measured_metric", agg)
     rows = [
         _Row("r0", trace, {}),
         _Row("r1", trace, {"cost": None}),
@@ -404,3 +405,17 @@ def test_measured_aggregation_error_propagates(
     monkeypatch.setattr(base, "aggregate_measured_metric", boom)
     with pytest.raises(RuntimeError, match="aggregation failed"):
         _evaluator(["cost"])._aggregate_custom_metrics([{"cost": 1.0}])
+
+
+def test_percentile_is_resolved_on_the_instance() -> None:
+    class Overridden(SimpleScoringEvaluator):
+        @staticmethod
+        def _compute_percentile(values: list[float], percentile: float) -> float:
+            return 99.0
+
+    evaluator = Overridden(
+        scoring_function=lambda output, expected: 1.0, metrics=["latency_p95"]
+    )
+    assert evaluator._aggregate_custom_metrics([{"latency_p95": 1.0}]) == {
+        "latency_p95": 99.0
+    }
