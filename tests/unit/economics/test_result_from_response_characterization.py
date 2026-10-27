@@ -506,3 +506,12 @@ def test_rejection_errors_propagate_from_the_parser(trace: Trace) -> None:
         "event at that index"
     )
     assert trace[-1][0] == "rejections"
+
+
+def test_echo_comparison_uses_raw_values_not_their_string_form(trace: Trace) -> None:
+    assert _err(_body(batch_id=5), expected_batch_id="5") == (
+        "ingest response batch_id does not echo the request"
+    )
+    assert _err(_body(idempotency_key=5), expected_idempotency_key="5") == (
+        "ingest response idempotency_key does not echo the request"
+    )
