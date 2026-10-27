@@ -363,3 +363,13 @@ def test_raising_comprehensive_get_propagates_before_merge() -> None:
     with pytest.raises(RuntimeError, match="get"):
         _merge(["cost"], agg, _Comp(a=1), False)
     assert agg == {}
+
+
+def test_comprehensive_cost_just_above_tolerance_logs_override(
+    recorder: _Recorder,
+) -> None:
+    _merge(["cost"], {"cost": 0.0}, {"cost": 2e-9}, False)
+    assert recorder.records[-1] == (
+        "info",
+        "🔍 LOCAL EVALUATOR: Overriding cost metric: 0.0 -> 2e-09",
+    )
