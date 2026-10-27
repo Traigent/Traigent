@@ -67,7 +67,8 @@ class FakeGitHubSession:
                 "params": kwargs.get("params") or parse_qs(parts.query),
                 "json": kwargs.get("json"),
                 "timeout": kwargs.get("timeout"),
-                "allow_redirects": kwargs.get("allow_redirects"),
+                # A transport adapter never follows redirects; the store sends none.
+                "allow_redirects": kwargs.get("allow_redirects", False),
             }
         )
         for source in (self.queue.pop(0) if self.queue else None, self.always):
@@ -82,6 +83,10 @@ class FakeGitHubSession:
     def prepare_request(self, request: requests.Request) -> requests.PreparedRequest:
         """Real Requests preparation, as the store must use it."""
         return requests.Session().prepare_request(request)
+
+    def get_adapter(self, url: str) -> FakeGitHubSession:
+        """The transport seam the store sends through: this fake, as its own adapter."""
+        return self
 
     def merge_environment_settings(self, *_args: Any) -> dict[str, Any]:
         return {"proxies": {}, "stream": True, "verify": True, "cert": None}

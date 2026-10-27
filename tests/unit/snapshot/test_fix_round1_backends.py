@@ -467,3 +467,29 @@ def test_fix_r2_p2_ipv6_origin_still_refuses_userinfo_and_backslash(
         SnapshotErrorCode.UNSAFE_DESTINATION
     )
     assert "evil.example" not in {parse_url(r.url or "").host for r in adapter.seen}
+
+
+# ------------------- FIX R3 P3: only redirect parsing may classify as UNSAFE
+
+
+def test_fix_r3_p3_response_hook_value_error_is_not_an_unsafe_destination() -> None:
+    adapter = IPv6Adapter()
+    session = requests.Session()
+    session.mount("https://", adapter)
+    session.hooks["response"].append(lambda response, **_kwargs: int("bad telemetry"))
+    store, _ = store_over(session)
+    assert store.read("blobs/x") is None  # the 404 is an honest absence
+    assert {parse_url(r.url or "").host for r in adapter.seen} == {API_HOST}
+
+
+def test_fix_r3_p3_unparseable_location_is_refused_and_never_requested() -> None:
+    adapter = IPv6Adapter(redirect_to="https://[bad/x")
+    session = requests.Session()
+    session.mount("https://", adapter)
+    store, _ = store_over(session)
+    assert code_of(lambda: store.read("blobs/x")) is (
+        SnapshotErrorCode.UNSAFE_DESTINATION
+    )
+    contents = [r.url for r in adapter.seen if "/contents/" in (r.url or "")]
+    assert len(contents) == 1  # the original request was sent; the target was not
+    assert all("bad" not in (url or "") for url in contents)

@@ -239,34 +239,37 @@ class GitHubStore:
         """One request, following same-origin redirects only."""
         for _ in range(_MAX_REDIRECTS + 1):
             prepared = self._prepare(method, url, accept, kwargs)
+            # Send through the transport adapter directly: Session.send would also
+            # run response hooks and parse Location for us, and an unrelated
+            # ValueError from either is not a destination problem.
             try:
                 settings = self._session.merge_environment_settings(
                     prepared.url, {}, True, None, None
                 )
-                response = self._session.send(
-                    prepared,
-                    timeout=_TIMEOUT_SECONDS,
-                    allow_redirects=False,
-                    **settings,
+                # _prepare has already refused any URL that is not a string.
+                response = self._session.get_adapter(prepared.url or "").send(
+                    prepared, timeout=_TIMEOUT_SECONDS, **settings
                 )
-            except requests.RequestException:
+            except (requests.RequestException, ValueError):
                 raise _error(SnapshotErrorCode.BACKEND_UNAVAILABLE) from None
-            except ValueError:
-                # Requests parses a redirect Location even when not following it;
-                # a Location it cannot parse is refused, never sent.
-                raise _error(SnapshotErrorCode.UNSAFE_DESTINATION) from None
             if response.status_code not in _REDIRECT_STATUS:
                 return response, self._body(response)
             location = response.headers.get("Location")
             response.close()
             if not isinstance(location, str) or not location:
                 raise _error(SnapshotErrorCode.BACKEND_UNAVAILABLE) from None
-            target = urljoin(url, location)
-            if (
-                "\\" in location
-                or "@" in urlsplit(target).netloc
-                or not self._same_origin(target)
-            ):
+            try:
+                target = urljoin(url, location)
+                refused = (
+                    "\\" in location
+                    or "@" in urlsplit(target).netloc
+                    or not self._same_origin(target)
+                )
+            except ValueError:
+                # A Location this store cannot parse is refused here, where it is
+                # parsed; the original request was sent, the target is never requested.
+                refused = True
+            if refused:
                 raise _error(SnapshotErrorCode.UNSAFE_DESTINATION) from None
             url = target
         raise _error(SnapshotErrorCode.BACKEND_UNAVAILABLE) from None
