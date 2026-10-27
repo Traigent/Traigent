@@ -87,7 +87,7 @@ class TestFormatDenials:
         assert verify_calls == [("123456", 1)]
         assert provider._used_codes["u"] == {"123456"}
 
-    def test_fullwidth_replay_of_used_code_denied(self, provider, log, verify_calls):
+    def test_equivalent_code_forms_share_validation_state(self, provider, log, verify_calls):
         assert provider.verify_totp_code("123456", SECRET, "u") is True
         log.calls.clear()
         assert provider.verify_totp_code("１２３４５６", SECRET, "u") is False
@@ -95,7 +95,7 @@ class TestFormatDenials:
         assert provider.verify_totp_code("123456", SECRET, "u") is False
         assert len(verify_calls) == 1
 
-    def test_fullwidth_first_use_then_ascii_replay_denied(
+    def test_equivalent_code_forms_share_state_regardless_of_first_form(
         self, provider, log, verify_calls
     ):
         assert provider.verify_totp_code("１２３４５６", SECRET, "u") is True
