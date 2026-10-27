@@ -34,6 +34,9 @@ logger = get_logger(__name__)
 # thousand-line message; the summary error still states the true totals.
 MAX_REPORTED_DATASET_ROW_ERRORS = 20
 
+# Shared message for relative dataset paths with no base directory.
+_DATASET_BASE_REQUIRED_MSG = "Dataset base directory is required for a relative path"
+
 
 @dataclass
 class ValidationError:
@@ -957,7 +960,7 @@ def _resolve_dataset_path(
         if dataset_base is None:
             result.add_error(
                 "dataset",
-                "Dataset base directory is required for a relative path",
+                _DATASET_BASE_REQUIRED_MSG,
                 error_code="SECURITY_ERROR",
             )
             return None
@@ -996,7 +999,7 @@ def _validate_dataset_file(
         if dataset_base is None:
             result.add_error(
                 "dataset",
-                "Dataset base directory is required for a relative path",
+                _DATASET_BASE_REQUIRED_MSG,
                 error_code="SECURITY_ERROR",
             )
             return None
