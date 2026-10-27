@@ -400,6 +400,14 @@ def _read_default_execution_context() -> dict[str, str | None]:
     return context
 
 
+def _require_positive_up_to(name: str, value: float, maximum: float) -> None:
+    """Reject ``value`` unless it is greater than 0 and at most ``maximum``."""
+    if value <= 0:
+        raise ValueError(f"{name} must be greater than 0")
+    if value > maximum:
+        raise ValueError(f"{name} must be less than or equal to {maximum}")
+
+
 @dataclass
 class ObservabilityConfig:
     """Configuration for SDK-side observability delivery.
@@ -488,42 +496,20 @@ class ObservabilityConfig:
             self.project_id.strip() or None if self.project_id is not None else None
         )
         self.api_path = scope_api_path(self.api_path, self.project_id)
-        if self.batch_size <= 0:
-            raise ValueError("batch_size must be greater than 0")
-        if self.batch_size > MAX_BATCH_SIZE:
-            raise ValueError(
-                f"batch_size must be less than or equal to {MAX_BATCH_SIZE}"
-            )
-        if self.max_buffer_age <= 0:
-            raise ValueError("max_buffer_age must be greater than 0")
-        if self.max_buffer_age > MAX_BUFFER_AGE_SECONDS:
-            raise ValueError(
-                f"max_buffer_age must be less than or equal to {MAX_BUFFER_AGE_SECONDS}"
-            )
-        if self.max_queue_size <= 0:
-            raise ValueError("max_queue_size must be greater than 0")
-        if self.max_queue_size > MAX_QUEUE_SIZE:
-            raise ValueError(
-                f"max_queue_size must be less than or equal to {MAX_QUEUE_SIZE}"
-            )
-        if self.max_batch_bytes <= 0:
-            raise ValueError("max_batch_bytes must be greater than 0")
-        if self.max_batch_bytes > MAX_BATCH_BYTES:
-            raise ValueError(
-                f"max_batch_bytes must be less than or equal to {MAX_BATCH_BYTES}"
-            )
-        if self.flush_timeout <= 0:
-            raise ValueError("flush_timeout must be greater than 0")
-        if self.flush_timeout > MAX_TIMEOUT_SECONDS:
-            raise ValueError(
-                f"flush_timeout must be less than or equal to {MAX_TIMEOUT_SECONDS}"
-            )
-        if self.request_timeout <= 0:
-            raise ValueError("request_timeout must be greater than 0")
-        if self.request_timeout > MAX_TIMEOUT_SECONDS:
-            raise ValueError(
-                f"request_timeout must be less than or equal to {MAX_TIMEOUT_SECONDS}"
-            )
+        _require_positive_up_to("batch_size", self.batch_size, MAX_BATCH_SIZE)
+        _require_positive_up_to(
+            "max_buffer_age", self.max_buffer_age, MAX_BUFFER_AGE_SECONDS
+        )
+        _require_positive_up_to("max_queue_size", self.max_queue_size, MAX_QUEUE_SIZE)
+        _require_positive_up_to(
+            "max_batch_bytes", self.max_batch_bytes, MAX_BATCH_BYTES
+        )
+        _require_positive_up_to(
+            "flush_timeout", self.flush_timeout, MAX_TIMEOUT_SECONDS
+        )
+        _require_positive_up_to(
+            "request_timeout", self.request_timeout, MAX_TIMEOUT_SECONDS
+        )
         if self.per_trace_timeout < 0:
             raise ValueError("per_trace_timeout must be greater than or equal to 0")
         constructor_content_mode = (
