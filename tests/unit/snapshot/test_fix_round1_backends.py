@@ -152,6 +152,26 @@ def test_bc1_f1_valid_same_host_redirect_is_sent_exactly_as_validated() -> None:
     assert last.headers["Authorization"] == f"Bearer {TOKEN}"
 
 
+class DifferentialSession(requests.Session):
+    """Preparation that lands on another host: a stand-in for a parser differential."""
+
+    def prepare_request(self, request: requests.Request) -> requests.PreparedRequest:
+        prepared = super().prepare_request(request)
+        prepared.url = (prepared.url or "").replace(API_HOST, "evil.example", 1)
+        return prepared
+
+
+def test_bc1_f1_the_prepared_url_is_what_gets_validated_and_nothing_is_sent() -> None:
+    adapter = RecordingAdapter("https://api.github.com/unused")
+    session = DifferentialSession()
+    session.mount("https://", adapter)
+    store, _ = store_over(session)
+    assert code_of(lambda: store.read("blobs/x")) is (
+        SnapshotErrorCode.UNSAFE_DESTINATION
+    )
+    assert adapter.seen == []
+
+
 # ------------------------------------------- BC2 finding 2: secondary limits
 
 SECONDARY = (
