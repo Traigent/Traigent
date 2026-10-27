@@ -16,9 +16,13 @@ _BACKEND = "s3"
 _BUCKET_RE = re.compile(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
 _MAX_PUT_BYTES = 5 * 1024**3  # single PutObject limit
 _AWS_SUFFIXES = (".amazonaws.com", ".amazonaws.com.cn")
+# Existing object (create_if_absent): read it and compare. 409 is a transient
+# conflict, but the answer is still "look at what is there".
 _PRECONDITION_CODES = frozenset(
     {"PreconditionFailed", "412", "ConditionalRequestConflict", "409"}
 )
+# Capability probe: only a failed precondition proves IfNoneMatch is enforced.
+_PROBE_PROOF_CODES = frozenset({"PreconditionFailed", "412"})
 _NOT_FOUND_CODES = frozenset({"NoSuchKey", "404", "NotFound"})
 _AUTH_CODES = frozenset(
     {
@@ -102,19 +106,25 @@ class S3Store:
     @staticmethod
     def _make_client(session: Any) -> Any:
         if session is not None:
-            return session.client("s3")
+            try:
+                return session.client("s3")
+            except Exception as error:
+                raise _translate(error) from None
         try:
             import boto3
         except ImportError:
             raise ImportError(_IMPORT_HINT) from None
-        return boto3.client("s3")
+        try:
+            return boto3.client("s3")
+        except Exception as error:
+            raise _translate(error) from None
 
     def _check_endpoint(self, allow_insecure_local: bool) -> None:
         meta = getattr(self._client, "meta", None)
         endpoint = getattr(meta, "endpoint_url", None)
         if not isinstance(endpoint, str) or not endpoint:
-            self._custom_endpoint = True  # unknown: treat as custom, probe it
-            return
+            # Unknown destination: refuse rather than guess it is HTTPS.
+            raise _error(SnapshotErrorCode.UNSAFE_DESTINATION) from None
         require_secure_endpoint(
             endpoint, allow_insecure_local=allow_insecure_local, backend=_BACKEND
         )
@@ -152,7 +162,7 @@ class S3Store:
         try:
             self._put(key, b"probe")
         except Exception as error:
-            if _error_code(error) not in _PRECONDITION_CODES:
+            if _error_code(error) not in _PROBE_PROOF_CODES:
                 raise _translate(error) from None
             self._probed = True
             self._best_effort_delete(key)

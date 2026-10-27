@@ -30,6 +30,7 @@ from traigent.identity.agent_build import (
 )
 from traigent.snapshot.manifest import (
     FORMAT,
+    MANDATORY_PARTS,
     ExecutionSnapshot,
     PartMediaType,
     UnavailableReason,
@@ -108,7 +109,7 @@ def serialize_example(example: Any) -> dict[str, Any]:
         metadata = getattr(example, "metadata", None)
     if identifier is not None:
         row["id"] = identifier
-    if metadata:
+    if metadata is not None:  # present means kept, even {} / False / 0
         row["metadata"] = metadata
     return row
 
@@ -464,15 +465,7 @@ def build_execution_snapshot(
     )
     evaluator_fp1, code_identity = _capture_evaluator(parts, evaluator)
 
-    fixed = [
-        DATASET_PATH,
-        CONFIG_PATH,
-        CONFIG_SPACE_PATH,
-        CALLABLE_PATH,
-        BOUND_STATE_PATH,
-        GIT_PATH,
-        *(_asset_path(kind) for kind in _DECLARED_KINDS),
-    ]
+    fixed = list(MANDATORY_PARTS)
     evaluator_paths = sorted(
         path
         for path in (*parts.present, *parts.unavailable)

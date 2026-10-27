@@ -10,6 +10,7 @@ captured", not "this is what ran".
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -24,6 +25,7 @@ __all__ = [
     "FORMAT",
     "ExecutionSnapshot",
     "LoadedSnapshot",
+    "MANDATORY_PARTS",
     "PartMediaType",
     "UnavailableReason",
     "canonical_manifest_bytes",
@@ -39,6 +41,32 @@ _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 _PART_PATH_RE = re.compile(r"[A-Za-z0-9_.:+=@-]+(/[A-Za-z0-9_.:+=@-]+)*")
 _MAX_PART_PATH = 512
 _MAX_PARTS = 4096
+_CREATED_AT_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
+
+# Slots every ``tes1`` manifest declares (present or unavailable). The evaluator
+# group is the other mandatory piece: at least one ``evaluator/...`` part.
+MANDATORY_PARTS: tuple[str, ...] = (
+    "dataset/examples.jsonl",
+    "config/config.json",
+    "config/config_space.json",
+    "agent/callable.py",
+    "agent/bound_state.json",
+    "agent/git.json",
+    "agent/assets/prompts.json",
+    "agent/assets/tool_definitions.json",
+)
+_EVALUATOR_PREFIX = "evaluator/"
+_FINGERPRINT_KEYS = (
+    "dataset_fp1",
+    "config_space_fp1",
+    "agent_fp1",
+    "evaluator_fp1",
+    "agent_build_digest",
+    "agent_build_coverage",
+    "agent_build_unavailable",
+)
+_CODE_IDENTITY_KEYS = ("origin", "digest", "algorithm")
+_COVERAGE_VALUES = frozenset({"complete", "partial"})
 
 
 class UnavailableReason(StrEnum):
@@ -148,13 +176,51 @@ def parse_manifest(manifest_bytes: bytes) -> dict[str, Any]:
     return parsed
 
 
+def _is_str_or_none(value: object) -> bool:
+    return value is None or isinstance(value, str)
+
+
+def _validate_metadata(manifest: Mapping[str, Any]) -> None:
+    """Fields every ``tes1`` manifest carries besides its parts."""
+    if not isinstance(manifest.get("sdk_version"), str) or not manifest["sdk_version"]:
+        raise ValueError("bad sdk_version")
+    created = manifest.get("created_at")
+    if not isinstance(created, str) or _CREATED_AT_RE.fullmatch(created) is None:
+        raise ValueError("bad created_at")
+    if manifest.get("binding") != {"kind": "unbound"}:
+        raise ValueError("bad binding")
+    fingerprints = manifest.get("fingerprints")
+    if not isinstance(fingerprints, dict):
+        raise ValueError("bad fingerprints")
+    if any(
+        key not in fingerprints or not _is_str_or_none(fingerprints[key])
+        for key in _FINGERPRINT_KEYS
+    ):
+        raise ValueError("bad fingerprints")
+    identity = fingerprints.get("evaluator_code_identity")
+    if not isinstance(identity, dict) or any(
+        key not in identity or not _is_str_or_none(identity[key])
+        for key in _CODE_IDENTITY_KEYS
+    ):
+        raise ValueError("bad evaluator_code_identity")
+    coverage = manifest.get("snapshot_coverage")
+    if (
+        not isinstance(coverage, dict)
+        or coverage.get("agent") not in _COVERAGE_VALUES
+        or not isinstance(coverage.get("agent_gaps"), list)
+        or not all(isinstance(gap, str) for gap in coverage["agent_gaps"])
+    ):
+        raise ValueError("bad snapshot_coverage")
+
+
 def _validate_structure(manifest: Mapping[str, Any]) -> None:
     parts = manifest["parts"]
     required = manifest["required_parts"]
     if not isinstance(parts, dict) or not isinstance(required, list):
         raise ValueError("bad shape")
-    if len(parts) > _MAX_PARTS or not isinstance(manifest["binding"], dict):
+    if len(parts) > _MAX_PARTS:
         raise ValueError("bad shape")
+    _validate_metadata(manifest)
     for path, entry in parts.items():
         validate_part_path(path)
         if not isinstance(entry, dict):
@@ -172,9 +238,19 @@ def _validate_structure(manifest: Mapping[str, Any]) -> None:
             or not isinstance(entry.get("media_type"), str)
         ):
             raise ValueError("bad part")
+    if any(not isinstance(path, str) for path in required) or len(set(required)) != len(
+        required
+    ):
+        raise ValueError("bad required_parts")
     for path in required:
         if path not in parts:
             raise ValueError("required part not declared")
+    # Independent of what the manifest says it requires: these slots are always
+    # declared, so a manifest that omits any of them is not a ``tes1`` snapshot.
+    if any(path not in required for path in MANDATORY_PARTS):
+        raise ValueError("mandatory part missing")
+    if not any(path.startswith(_EVALUATOR_PREFIX) for path in required):
+        raise ValueError("evaluator group missing")
 
 
 class ExecutionSnapshot:
@@ -182,7 +258,9 @@ class ExecutionSnapshot:
 
     The constructor copies ``parts`` into a private dict and exposes a
     read-only view over that copy only, so mutating the caller's dict after
-    construction changes nothing. ``repr`` shows digests, never content.
+    construction changes nothing. The parsed manifest is likewise private:
+    every accessor hands out a deep copy, so no caller can change what is
+    displayed or published. ``repr`` shows digests, never content.
     """
 
     __slots__ = ("_manifest", "_manifest_bytes", "_parts")
@@ -207,8 +285,8 @@ class ExecutionSnapshot:
 
     @property
     def manifest(self) -> Mapping[str, Any]:
-        """A read-only view of the parsed manifest."""
-        return MappingProxyType(self._manifest)
+        """A deep copy of the parsed manifest (changing it changes nothing)."""
+        return copy.deepcopy(self._manifest)
 
     def unavailable(self) -> tuple[tuple[str, str], ...]:
         """``(path, reason)`` for every part the manifest declares unavailable."""
@@ -219,9 +297,10 @@ class ExecutionSnapshot:
         )
 
     def present_parts(self) -> Iterator[tuple[str, dict[str, Any]]]:
+        """``(path, entry copy)`` for each present part, in path order."""
         for path, entry in sorted(self._manifest["parts"].items()):
             if entry.get("status") != "unavailable":
-                yield path, entry
+                yield path, dict(entry)
 
     def __repr__(self) -> str:
         digests = ",".join(

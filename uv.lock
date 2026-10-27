@@ -5948,7 +5948,7 @@ requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=26.10.1" },
     { name = "boto3", marker = "extra == 'cloud'", specifier = ">=1.28.0" },
     { name = "boto3", marker = "extra == 'integrations'", specifier = ">=1.28.0" },
-    { name = "boto3", marker = "extra == 'snapshot-s3'", specifier = ">=1.28.0" },
+    { name = "boto3", marker = "extra == 'snapshot-s3'", specifier = ">=1.35.2" },
     { name = "botocore", marker = "extra == 'integrations'", specifier = ">=1.31.0" },
     { name = "claude-code-sdk", marker = "extra == 'hybrid'", specifier = ">=0.0.14" },
     { name = "click", specifier = ">=8.0.0" },

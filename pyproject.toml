@@ -277,7 +277,7 @@ cloud = [
 
 # Execution-snapshot store on S3 / S3-compatible storage (traigent.snapshot.backends.S3Store).
 snapshot-s3 = [
-    "boto3>=1.28.0",
+    "boto3>=1.35.2",  # first release whose PutObject model accepts IfNoneMatch (botocore 1.35.2)
 ]
 
 # Execution-snapshot store on Google Cloud Storage (traigent.snapshot.backends.GCSStore).
