@@ -317,32 +317,46 @@ class ContentPolicy:
         dropped = 0
         for event in events or ():
             if mode == "record":
-                attrs, d = self._attrs(event.attributes, mode)
-                name = (
-                    _record_text(event.name, C.MAX_RECORD_NAME_LEN)
-                    if isinstance(event.name, str) and event.name
-                    else "event"
-                )
-                out.append(Event(name, attrs, event.timestamp))
+                recorded, d = self._record_event(event, mode)
+                out.append(recorded)
                 dropped += d
                 continue
             allowed = C.ALLOWED_EVENTS.get(event.name)
             if allowed is None:
                 dropped += 1
                 continue
-            attrs = {}
-            for key in allowed:
-                raw = (event.attributes or {}).get(key)
-                if (
-                    isinstance(raw, str)
-                    and raw
-                    and len(raw) <= 128
-                    and not _has_control(raw)
-                    and not looks_sensitive(raw)
-                ):
-                    attrs[key] = raw
-            out.append(Event(event.name, attrs, event.timestamp))
+            out.append(
+                Event(
+                    event.name, self._safe_event_attrs(event, allowed), event.timestamp
+                )
+            )
         return tuple(out), dropped
+
+    def _record_event(self, event: Event, mode: str) -> tuple[Event, int]:
+        """Record-mode event: scrubbed name and attributes, plus dropped count."""
+        attrs, d = self._attrs(event.attributes, mode)
+        name = (
+            _record_text(event.name, C.MAX_RECORD_NAME_LEN)
+            if isinstance(event.name, str) and event.name
+            else "event"
+        )
+        return Event(name, attrs, event.timestamp), d
+
+    @staticmethod
+    def _safe_event_attrs(event: Event, allowed: Collection[str]) -> dict[str, Any]:
+        """Keep only allowlisted, short, control-free, non-credential strings."""
+        attrs: dict[str, Any] = {}
+        for key in allowed:
+            raw = (event.attributes or {}).get(key)
+            if (
+                isinstance(raw, str)
+                and raw
+                and len(raw) <= 128
+                and not _has_control(raw)
+                and not looks_sensitive(raw)
+            ):
+                attrs[key] = raw
+        return attrs
 
     def _links(self, links: Sequence[Link], mode: str) -> tuple[tuple[Link, ...], int]:
         out: list[Link] = []
