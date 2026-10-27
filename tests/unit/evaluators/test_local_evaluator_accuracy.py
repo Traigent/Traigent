@@ -762,3 +762,76 @@ async def test_non_objective_accuracy_function_returning_none_is_unmeasured(
         lambda d: {"a": "label-a", "b": "label-b"}[d["q"]], {}, _two_label_dataset()
     )
     _assert_all_accuracy_views_agree(result, payloads, 0.8)
+
+
+def _scalar_accuracy(value):
+    return lambda output, expected, **_: value
+
+
+def _mapping_accuracy(value):
+    return lambda output, expected, **_: {"accuracy": value}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["scalar", "mapping"])
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), None], ids=str)
+async def test_objective_accuracy_invalid_return_fails_closed_like_none(
+    shape: str, bad: float | None
+) -> None:
+    """An invalid (None or non-finite) accuracy from the declared objective
+    raises exactly as the existing objective ``None`` return does; it is never
+    replaced by the row's exact-match value."""
+    from traigent.utils.exceptions import EvaluationError
+
+    make = _scalar_accuracy if shape == "scalar" else _mapping_accuracy
+    name = "accuracy" if shape == "scalar" else "quality"
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"],
+        metric_functions={name: make(bad)},
+        detailed=True,
+        execution_mode="local",
+    )
+    with pytest.raises(EvaluationError) as exc_info:
+        await evaluator.evaluate(
+            lambda d: {"a": "label-a", "b": "label-b"}[d["q"]],
+            {},
+            _two_label_dataset(),
+        )
+    assert exc_info.value.details["metric_name"] == "accuracy"
+    assert exc_info.value.details["is_objective"] is True
+    assert exc_info.value.details["failure_mode"] == (
+        "returned_none" if bad is None else "non_finite_return"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["scalar", "mapping"])
+@pytest.mark.parametrize("detailed", [False, True], ids=["summary", "detailed"])
+async def test_non_objective_accuracy_inf_leaves_the_row_unmeasured(
+    shape: str, detailed: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-finite accuracy on a matching row owns that row: it is unmeasured
+    (never 1.0) and the reason is recorded in ``metric_errors``."""
+    payloads = _spy_format_for_backend(monkeypatch)
+    inf = float("inf")
+    pick = (lambda v: v) if shape == "scalar" else (lambda v: {"accuracy": v})
+    name = "accuracy" if shape == "scalar" else "quality"
+    evaluator = LocalEvaluator(
+        metrics=["pass_rate"],
+        metric_functions={
+            "pass_rate": lambda output, expected, **_: 1.0,
+            name: lambda output, expected, **_: pick(
+                0.8 if output == "label-a" else inf
+            ),
+        },
+        detailed=detailed,
+        execution_mode="local",
+    )
+    result = await evaluator.evaluate(
+        lambda d: {"a": "label-a", "b": "label-b"}[d["q"]], {}, _two_label_dataset()
+    )
+    _assert_all_accuracy_views_agree(result, payloads, 0.8)
+    assert any(
+        e["metric_name"] == "accuracy" and e["failure_mode"] == "non_finite_return"
+        for e in (result.metric_errors or [])
+    )

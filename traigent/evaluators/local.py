@@ -1004,6 +1004,8 @@ class LocalEvaluator(BaseEvaluator):
         example_id: str,
         example_index: int,
         config: dict[str, Any],
+        *,
+        failure_mode: str = "returned_none",
     ) -> EvaluationError:
         """Build the fail-closed error for an objective metric returning None.
 
@@ -1016,8 +1018,9 @@ class LocalEvaluator(BaseEvaluator):
         legacy ``0.0``/skip behaviour.
         """
         return EvaluationError(
-            f"Objective metric '{metric_name}' returned None for example "
-            f"{example_id}. Refusing to substitute a fabricated 0.0 score for "
+            f"Objective metric '{metric_name}' returned "
+            f"{'None' if failure_mode == 'returned_none' else 'a non-finite value'}"
+            f" for example {example_id}. Refusing to substitute a fabricated 0.0 score for "
             "an optimization objective.",
             config=config,
             details={
@@ -1028,9 +1031,49 @@ class LocalEvaluator(BaseEvaluator):
                 # Mirror the exception-path record shape (error_type) so
                 # downstream consumers parse both failure modes uniformly.
                 "error_type": "NoneReturn",
-                "failure_mode": "returned_none",
+                "failure_mode": failure_mode,
             },
         )
+
+    def _invalidate_supplied_accuracy(
+        self,
+        example_metric: Any,
+        metric_name: str,
+        example_id: str,
+        example_index: int,
+        config: dict[str, Any],
+        metric_errors: list[dict[str, Any]] | None,
+        failure_mode: str,
+    ) -> None:
+        """A supplied accuracy that is None or non-finite owns the row.
+
+        An objective fails closed exactly as an objective ``None`` return does.
+        Otherwise the reason is recorded like ``returned_none`` and the row's
+        built-in exact-match value is cleared, so the row is unmeasured rather
+        than silently scored by exact match.
+        """
+        if metric_name in self.metrics:
+            raise self._objective_returned_none_error(
+                metric_name,
+                example_id,
+                example_index,
+                config,
+                failure_mode=failure_mode,
+            )
+        if metric_errors is not None:
+            metric_errors.append(
+                {
+                    "metric_name": metric_name,
+                    "example_id": example_id,
+                    "example_index": example_index,
+                    "error_type": "NoneReturn",
+                    "failure_mode": failure_mode,
+                    "is_objective": False,
+                }
+            )
+        example_metric.custom_metrics.pop("accuracy", None)
+        example_metric.accuracy_builtin = False
+        example_metric.accuracy_supplied = False
 
     def _handle_metric_function_exception(
         self,
@@ -1210,6 +1253,17 @@ class LocalEvaluator(BaseEvaluator):
                             example_index,
                             metric_errors=metric_errors,
                         )
+                        if result_value is None and str(result_name) == "accuracy":
+                            self._invalidate_supplied_accuracy(
+                                example_metric,
+                                "accuracy",
+                                example_id,
+                                example_index,
+                                config,
+                                metric_errors,
+                                "returned_none",
+                            )
+                            continue
                         if result_value is None:
                             if str(result_name) in self.metrics:
                                 raise self._objective_returned_none_error(
@@ -1232,6 +1286,15 @@ class LocalEvaluator(BaseEvaluator):
                             continue
                         key = str(result_name)
                         if key == "accuracy" and not math.isfinite(float(result_value)):
+                            self._invalidate_supplied_accuracy(
+                                example_metric,
+                                key,
+                                example_id,
+                                example_index,
+                                config,
+                                metric_errors,
+                                "non_finite_return",
+                            )
                             continue
                         example_metric.custom_metrics[key] = float(result_value)
                         if key == "accuracy":
@@ -1249,6 +1312,17 @@ class LocalEvaluator(BaseEvaluator):
                         if inspect.iscoroutine(pending_value):
                             pending_value.close()
                     raise
+                continue
+            if value is None and metric_name == "accuracy":
+                self._invalidate_supplied_accuracy(
+                    example_metric,
+                    metric_name,
+                    example_id,
+                    example_index,
+                    config,
+                    metric_errors,
+                    "returned_none",
+                )
                 continue
             if value is None:
                 if metric_name in self.metrics:
@@ -1277,6 +1351,15 @@ class LocalEvaluator(BaseEvaluator):
             else:
                 numeric = float(value)
                 if metric_name == "accuracy" and not math.isfinite(numeric):
+                    self._invalidate_supplied_accuracy(
+                        example_metric,
+                        metric_name,
+                        example_id,
+                        example_index,
+                        config,
+                        metric_errors,
+                        "non_finite_return",
+                    )
                     continue
                 example_metric.custom_metrics[metric_name] = numeric
             if metric_name == "accuracy":
