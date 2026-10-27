@@ -74,6 +74,29 @@ class OIDCAuthProvider:
         self._revoked_tokens: set[str] = set()
         self._token_cache: dict[str, dict[str, Any]] = {}
 
+    @staticmethod
+    def _numeric_exp(exp: Any) -> float | None:
+        """Return ``exp`` when it is a real number, else None (unknown)."""
+        if isinstance(exp, bool) or not isinstance(exp, (int, float)):
+            return None
+        return float(exp)
+
+    @classmethod
+    def _cache_lifetime_seconds(cls, exp: Any) -> float:
+        """Cache for at most 300 s and never past the token's own expiry."""
+        numeric = cls._numeric_exp(exp)
+        if numeric is None:
+            return 300.0
+        return min(300.0, max(numeric - time.time(), 0.0))
+
+    @classmethod
+    def _cache_entry_usable(cls, cached: dict[str, Any]) -> bool:
+        """A cached entry is usable until its lifetime or the token expires."""
+        if datetime.now(UTC) >= cached["expires_at"]:
+            return False
+        numeric = cls._numeric_exp(cached.get("exp"))
+        return numeric is None or time.time() < numeric
+
     def authenticate_oidc(self, id_token: str) -> User | None:
         """Authenticate user via OIDC ID token."""
         try:
@@ -86,10 +109,10 @@ class OIDCAuthProvider:
 
             if token_hash in self._token_cache:
                 cached = self._token_cache[token_hash]
-                if datetime.now(UTC) < cached["expires_at"]:
-                    claims = cached["claims"]
-                else:
+                if not self._cache_entry_usable(cached):
                     del self._token_cache[token_hash]
+                    raise RuntimeError("cached token entry expired")
+                claims = cached["claims"]
             else:
                 claims = jwt.decode(
                     id_token,
@@ -111,9 +134,12 @@ class OIDCAuthProvider:
                     logger.warning("Token too old")
                     return None
 
+                exp = claims.get("exp")
+                lifetime = self._cache_lifetime_seconds(exp)
                 self._token_cache[token_hash] = {
                     "claims": claims,
-                    "expires_at": datetime.now(UTC) + timedelta(seconds=300),
+                    "exp": exp,
+                    "expires_at": datetime.now(UTC) + timedelta(seconds=lifetime),
                 }
 
                 if len(self._token_cache) > 1000:
