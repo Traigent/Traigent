@@ -119,3 +119,20 @@ class TestCacheHonoursTokenExpiry:
         clock.now = NOW + 200
         decode.return_value = _claims(NOW + 1000)
         assert provider.authenticate_oidc("other.token.value") is not None
+
+
+class TestCacheUsesIntegerExpiryCutoff:
+    def test_cached_hit_rejected_at_integer_cutoff(self, provider, clock, decode):
+        decode.return_value = _claims(NOW + 10.5)
+        assert provider.authenticate_oidc(TOKEN) is not None
+        clock.now = NOW + 10.25
+        with pytest.raises(AuthenticationError):
+            provider.authenticate_oidc(TOKEN)
+        assert decode.call_count == 1
+
+    def test_cached_hit_accepted_before_integer_cutoff(self, provider, clock, decode):
+        decode.return_value = _claims(NOW + 10.5)
+        assert provider.authenticate_oidc(TOKEN) is not None
+        clock.now = NOW + 9.9
+        assert provider.authenticate_oidc(TOKEN) is not None
+        assert decode.call_count == 1
