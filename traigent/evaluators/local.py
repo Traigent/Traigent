@@ -618,6 +618,8 @@ class LocalEvaluator(BaseEvaluator):
         # evaluator instance is shared across a run's trials, so a flag here
         # emits the notice once per run rather than once per example/trial.
         self._dual_scorer_notice_logged = False
+        # One-shot guard for the skipped built-in accuracy notice.
+        self._builtin_accuracy_skipped_logged = False
         # One-shot guard for the high-empty-output-rate run warning (issue
         # #1851). Same rationale as the dual-scorer flag: the evaluator instance
         # is shared across the run's trials, so this emits ONE warning per run
@@ -2383,13 +2385,22 @@ class LocalEvaluator(BaseEvaluator):
         )
         # Compare the output as-is: the comparator unwraps a real response
         # wrapper itself and leaves a structured answer intact (#2523).
-        accuracy_value = self._calculate_example_accuracy(output, expected_output)
-        if accuracy_value is not None:
-            example_metric.custom_metrics.setdefault("accuracy", accuracy_value)
-        elif example_metric.accuracy_eligible:
-            # Gold exists but nothing could be compared: unmeasured, never the
-            # tracker's success-implies-1.0 fallback (#2495).
+        if "accuracy" not in self.metrics:
+            # Exact-match accuracy is not a configured metric, so it is not
+            # computed or uploaded (it would read as a fake 0.0 whenever the
+            # function output is not meant to equal the expected value). The
+            # row is unmeasured for built-in accuracy; an accuracy the user
+            # supplies explicitly still counts.
             example_metric.accuracy_unavailable = True
+            self._log_builtin_accuracy_skipped_once()
+        else:
+            accuracy_value = self._calculate_example_accuracy(output, expected_output)
+            if accuracy_value is not None:
+                example_metric.custom_metrics.setdefault("accuracy", accuracy_value)
+            elif example_metric.accuracy_eligible:
+                # Gold exists but nothing could be compared: unmeasured, never
+                # the tracker's success-implies-1.0 fallback (#2495).
+                example_metric.accuracy_unavailable = True
 
         # Merge per-example user metrics into custom_metrics, never overriding
         # an evaluator-computed key (e.g. accuracy stays the computed value).
@@ -2744,6 +2755,17 @@ class LocalEvaluator(BaseEvaluator):
             example_metric.cost.known_cost += example_metric.cost.total_cost
             example_metric.cost.unmeasured = True
         LocalEvaluator._withdraw_numeric_cost(example_metric, example_result)
+
+    def _log_builtin_accuracy_skipped_once(self) -> None:
+        """Emit one informational notice per evaluator when accuracy is skipped."""
+        if self._builtin_accuracy_skipped_logged:
+            return
+        self._builtin_accuracy_skipped_logged = True
+        logger.info(
+            "Built-in exact-match accuracy is not computed or uploaded because "
+            "'accuracy' is not one of the configured metrics. Add 'accuracy' "
+            "to the objectives to measure it."
+        )
 
     def _log_dual_scorer_notice_once(self) -> None:
         """Emit a single run-level notice when both scorers appear (issue #1845).

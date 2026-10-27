@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 
 import traigent
@@ -293,3 +295,75 @@ async def test_optimize_three_argument_metric_function_receives_metrics_payload(
     assert total_tokens == pytest.approx(2.0)
     assert result.best_score == pytest.approx(0.6)
     assert result.trials[0].metrics["accuracy"] == pytest.approx(0.6)
+
+
+def _label_dataset() -> Dataset:
+    return Dataset(
+        [
+            EvaluationExample({"q": "a"}, "label-a"),
+            EvaluationExample({"q": "b"}, "label-b"),
+        ],
+        name="labels",
+        description="rows carry a gold label the function never echoes",
+    )
+
+
+@pytest.mark.asyncio
+async def test_nonobjective_accuracy_not_computed_or_uploaded(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Exact-match accuracy is computed and uploaded only when it is a
+    configured metric; otherwise it must not be manufactured as 0.0."""
+    evaluator = LocalEvaluator(
+        metrics=["pass_rate"],
+        metric_functions={"pass_rate": lambda output, expected, **_: 1.0},
+        detailed=True,
+        execution_mode="local",
+    )
+
+    def func(input_data):
+        return "encoded-metrics-string"
+
+    caplog.set_level(logging.INFO, logger="traigent")
+    first = await evaluator.evaluate(func, {}, _label_dataset())
+    await evaluator.evaluate(func, {}, _label_dataset())
+
+    assert first.metrics is not None
+    assert first.metrics.get("accuracy") is None
+    assert first.metrics.get("score") is None
+    assert first.metrics["pass_rate"] == pytest.approx(1.0)
+    for example in first.example_results:
+        assert "accuracy" not in (example.metrics or {})
+    stats = (first.summary_stats or {}).get("metrics", {})
+    assert stats.get("accuracy", {}).get("count", 0) == 0
+    notices = [
+        r for r in caplog.records if "Built-in exact-match accuracy" in r.getMessage()
+    ]
+    assert len(notices) == 1
+
+
+@pytest.mark.asyncio
+async def test_declared_accuracy_still_computed_and_zero_is_kept() -> None:
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"], detailed=True, execution_mode="local"
+    )
+    result = await evaluator.evaluate(
+        lambda input_data: "never-matches", {}, _label_dataset()
+    )
+    assert result.metrics["accuracy"] == 0.0
+    assert result.summary_stats["metrics"]["accuracy"]["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_supplied_accuracy_survives_when_not_a_configured_metric() -> None:
+    evaluator = LocalEvaluator(
+        metrics=["pass_rate"],
+        metric_functions={
+            "pass_rate": lambda output, expected, **_: 1.0,
+            "accuracy": lambda output, expected, **_: 0.5,
+        },
+        detailed=True,
+        execution_mode="local",
+    )
+    result = await evaluator.evaluate(lambda input_data: "x", {}, _label_dataset())
+    assert result.metrics["accuracy"] == pytest.approx(0.5)

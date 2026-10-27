@@ -1400,3 +1400,67 @@ class TestPlaceholderResponseCostDoesNotShadowRealCharge:
             f"a negative cost reached the backend payload: {payload['cost']!r}"
         )
         assert payload["cost"] == pytest.approx(self._table_estimate())
+
+
+# Accuracy nobody measured is None in both formatters, never 0.0 or 1.0.
+def _tracker(*rows: ExampleMetrics) -> MetricsTracker:
+    tracker = MetricsTracker()
+    for row in rows:
+        tracker.add_example_metrics(row)
+    return tracker
+
+
+def test_unmeasured_accuracy_is_null_by_default(monkeypatch):
+    monkeypatch.delenv("TRAIGENT_STRICT_METRICS_NULLS", raising=False)
+
+    # Empty tracker.
+    empty = MetricsTracker()
+    assert empty.format_for_backend()["accuracy"] is None
+
+    # No gold: rows ineligible for the built-in comparison.
+    no_gold = _tracker(
+        ExampleMetrics(success=True, accuracy_eligible=False),
+        ExampleMetrics(success=True, accuracy_eligible=False),
+    )
+    assert no_gold.format_for_backend()["accuracy"] is None
+    assert no_gold.format_for_backend()["score"] is None
+    stats = no_gold.format_as_summary_stats()["metrics"]["accuracy"]
+    assert stats["count"] == 0
+
+    # Built-in comparison skipped by the evaluator: success must not
+    # become accuracy 1.0.
+    skipped = _tracker(
+        ExampleMetrics(success=True, accuracy_unavailable=True),
+        ExampleMetrics(success=True, accuracy_unavailable=True),
+    )
+    assert skipped.format_for_backend()["accuracy"] is None
+    assert skipped.format_as_summary_stats()["metrics"]["accuracy"]["count"] == 0
+
+    # Measured zero is preserved.
+    zero = _tracker(
+        ExampleMetrics(success=True, custom_metrics={"accuracy": 0.0}),
+        ExampleMetrics(success=True, custom_metrics={"accuracy": 0.0}),
+    )
+    assert zero.format_for_backend()["accuracy"] == 0.0
+    assert zero.format_as_summary_stats()["metrics"]["accuracy"]["count"] == 2
+
+    # Declared exact match: an errored row is an attempted miss.
+    declared = _tracker(
+        ExampleMetrics(success=True, custom_metrics={"accuracy": 1.0}),
+        ExampleMetrics(success=False, custom_metrics={"accuracy": 1.0}),
+    )
+    assert declared.format_for_backend()["accuracy"] == pytest.approx(0.5)
+
+    # Custom accuracy metric function keeps its own values.
+    custom = _tracker(
+        ExampleMetrics(success=True, custom_metrics={"accuracy": 0.25}),
+        ExampleMetrics(success=True, custom_metrics={"accuracy": 0.75}),
+    )
+    assert custom.format_for_backend(user_supplied_accuracy=True)[
+        "accuracy"
+    ] == pytest.approx(0.5)
+
+
+def test_strict_nulls_still_none(monkeypatch):
+    monkeypatch.setenv("TRAIGENT_STRICT_METRICS_NULLS", "true")
+    assert MetricsTracker().format_for_backend()["accuracy"] is None

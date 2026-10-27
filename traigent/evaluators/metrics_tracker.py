@@ -989,6 +989,9 @@ class MetricsTracker:
 
         # Calculate accuracy from the shared formatter helper so this backend
         # payload and privacy summary_stats use the same denominator.
+        # Unmeasured accuracy (no rows, no gold, built-in comparison skipped)
+        # is None: never a success-derived 1.0 and never a default 0.0. A
+        # measured zero stays 0.0.
         accuracy_value: float | None = None
         if self.example_metrics:
             accuracy_scores = self._accuracy_values_for_formatters(
@@ -996,16 +999,6 @@ class MetricsTracker:
             )
             if accuracy_scores:
                 accuracy_value = sum(accuracy_scores) / len(accuracy_scores)
-        else:
-            # Fallback to success rate if no example metrics
-            accuracy_value = safe_get(aggregated, "success_rate")
-
-        accuracy_unmeasured = any(
-            m.accuracy_unavailable and m.custom_metrics.get("accuracy") is None
-            for m in self.example_metrics
-        )
-        if accuracy_value is None and not strict_nulls and not accuracy_unmeasured:
-            accuracy_value = 0.0
 
         duration_value = safe_get(aggregated, "duration")
 
@@ -1256,9 +1249,11 @@ class MetricsTracker:
                 continue
 
             if metric.success:
-                # Existing tracker-only callers may not have emitted a
-                # per-example exact-match value. Preserve their established
-                # success fallback while making it identical in both formats.
+                # Only tracker-only callers reach this with no per-example
+                # value and no provenance flag (``LocalEvaluator`` marks every
+                # row it leaves unmeasured via ``accuracy_unavailable`` or
+                # ``accuracy_eligible``). Preserve their established success
+                # fallback, identically in both formatters.
                 values.append(float(raw_accuracy) if raw_accuracy is not None else 1.0)
             else:
                 # Built-in exact match: an error is an attempted miss, never
@@ -1328,8 +1323,9 @@ class MetricsTracker:
         missing_default = None if strict_nulls else 0.0
 
         return {
-            "score": missing_default,
-            "accuracy": missing_default,
+            # Accuracy was never measured on this path: always unmeasured.
+            "score": None,
+            "accuracy": None,
             "duration": missing_default,
             "input_tokens": missing_default,
             "output_tokens": missing_default,
