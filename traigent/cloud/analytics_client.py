@@ -3541,7 +3541,7 @@ def _valid_agent_decision_timestamp(value: Any, *, nullable: bool) -> bool:
         return False
     try:  # the shape is right; the date and time must also exist (always UTC, "Z")
         datetime.fromisoformat(value[:-1] + "+00:00")
-    except ValueError:
+    except ValueError:  # silent-ok: unparseable timestamp fails contract validation; caller returns a fixed error
         return False
     return True
 
