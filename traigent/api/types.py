@@ -1177,6 +1177,16 @@ class OptimizationResult:
     # all-successful-trials range, unchanged.
     ranking_eligible_trial_ids: list[str] | None = None
 
+    # The closed promotion decision made for each candidate config (key: config
+    # hash, ``traigent.utils.hashing.generate_config_hash``): ``promote``,
+    # ``reject``, ``no_decision`` (the statistical gate), or why there was no gate
+    # answer: ``no_incumbent`` (the first candidate: nothing to compare against,
+    # recorded explicitly), ``insufficient_samples``, ``no_gate``,
+    # ``withheld_no_gate`` (strict evidence mode), ``gate_error``. Additive record of
+    # what the optimizer already decided; it never changes which config wins. Live
+    # state of this run: not restored from persisted artifacts.
+    promotion_decisions: dict[str, str] = field(default_factory=dict, repr=False)
+
     _experiment_stats: ExperimentStats | None = field(
         default=None, init=False, repr=False
     )

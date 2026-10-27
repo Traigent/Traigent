@@ -106,32 +106,40 @@ def stepped_float_cardinality(low: float, high: float, step: float) -> int:
     return count
 
 
-_CATEGORICAL_TYPES = frozenset({"categorical", "choice"})
-_FIXED_TYPES = frozenset({"fixed", "constant"})
-_INT_TYPES = frozenset({"int", "integer"})
+_CATEGORICAL_TYPES = {"categorical", "choice"}
+_FIXED_TYPES = {"fixed", "constant"}
+_INT_TYPES = {"int", "integer"}
 
 
-def _is_categorical_definition(
-    definition: dict[str, Any], param_type: str, has_range: bool
-) -> bool:
-    """True when a dict definition describes an explicit set of choices."""
+def _dict_param_shape(definition: dict[Any, Any]) -> tuple[str, bool, bool]:
+    """Return ``(param_type, has_range, has_categorical_values)`` for a dict."""
 
+    param_type = str(definition.get("type") or "").lower()
+    has_range = "low" in definition and "high" in definition
     has_categorical_values = "choices" in definition or "values" in definition
+    return param_type, has_range, has_categorical_values
+
+
+def _is_categorical_shape(
+    param_type: str, has_range: bool, has_categorical_values: bool
+) -> bool:
     return param_type in _CATEGORICAL_TYPES or (
         not param_type and not has_range and has_categorical_values
     )
 
 
-def _categorical_choices(definition: dict[str, Any]) -> Any:
-    if "choices" in definition:
-        return definition["choices"]
-    return definition.get("values", ())
+def _categorical_choices(definition: dict[Any, Any]) -> Any:
+    return (
+        definition["choices"]
+        if "choices" in definition
+        else definition.get("values", ())
+    )
 
 
-def _int_range_bounds(
-    definition: dict[str, Any], low: Any, high: Any
+def _int_range_args(
+    definition: dict[Any, Any], low: Any, high: Any
 ) -> tuple[int, int, int] | None:
-    """Coerce an integer range to ``(low, high, step)``; None when not numeric."""
+    """Coerce an integer range, or None when a bound or the step is invalid."""
 
     step = definition.get("step", 1)
     if step is None:
@@ -142,10 +150,10 @@ def _int_range_bounds(
         return None
 
 
-def _float_range_bounds(
-    definition: dict[str, Any], low: Any, high: Any
+def _float_range_args(
+    definition: dict[Any, Any], low: Any, high: Any
 ) -> tuple[float, float, float] | None:
-    """Coerce a float range to ``(low, high, step)``; None when open or non-numeric."""
+    """Coerce a float range, or None when the step is missing or invalid."""
 
     step = definition.get("step")
     if step is None:
@@ -156,36 +164,68 @@ def _float_range_bounds(
         return None
 
 
-def _range_cardinality(definition: dict[str, Any], param_type: str) -> int | None:
+def _range_cardinality(definition: dict[Any, Any], param_type: str) -> int | None:
     low = definition.get("low")
     high = definition.get("high")
     if low is None or high is None:
         return None
 
     if param_type in _INT_TYPES:
-        int_bounds = _int_range_bounds(definition, low, high)
-        if int_bounds is None:
+        int_args = _int_range_args(definition, low, high)
+        if int_args is None:
             return None
-        low_i, high_i, step_i = int_bounds
+        low_i, high_i, step_i = int_args
         if step_i <= 0 or low_i > high_i:
             return None
         return stepped_int_cardinality(low_i, high_i, step_i)
 
-    float_bounds = _float_range_bounds(definition, low, high)
-    if float_bounds is None:
+    float_args = _float_range_args(definition, low, high)
+    if float_args is None:
         return None
-    low_f, high_f, step_f = float_bounds
+    low_f, high_f, step_f = float_args
     if step_f <= 0 or low_f > high_f:
         return None
     return stepped_float_cardinality(low_f, high_f, step_f)
 
 
-def _dict_cardinality(definition: dict[str, Any]) -> int | None:
-    param_type = str(definition.get("type") or "").lower()
+def _range_values(
+    definition: dict[Any, Any], param_type: str
+) -> tuple[Any, ...] | None:
+    low = definition.get("low")
+    high = definition.get("high")
+    if low is None or high is None:
+        return None
 
-    has_range = "low" in definition and "high" in definition
+    if param_type in _INT_TYPES:
+        int_args = _int_range_args(definition, low, high)
+        if int_args is None:
+            return None
+        low_i, high_i, step_i = int_args
+        if step_i <= 0 or low_i > high_i:
+            return ()
+        return stepped_int_values(low_i, high_i, step_i)
 
-    if _is_categorical_definition(definition, param_type, has_range):
+    float_args = _float_range_args(definition, low, high)
+    if float_args is None:
+        return None
+    low_f, high_f, step_f = float_args
+    if step_f <= 0 or low_f > high_f:
+        return ()
+    return stepped_float_values(low_f, high_f, step_f)
+
+
+def _fixed_values(definition: dict[Any, Any]) -> tuple[Any, ...]:
+    if "value" in definition:
+        return (definition["value"],)
+    if "default" in definition:
+        return (definition["default"],)
+    return (definition,)
+
+
+def _dict_cardinality(definition: dict[Any, Any]) -> int | None:
+    param_type, has_range, has_categorical_values = _dict_param_shape(definition)
+
+    if _is_categorical_shape(param_type, has_range, has_categorical_values):
         choices = _categorical_choices(definition)
         try:
             return len(choices)
@@ -201,6 +241,22 @@ def _dict_cardinality(definition: dict[str, Any]) -> int | None:
     return 1
 
 
+def _dict_values(definition: dict[Any, Any]) -> tuple[Any, ...] | None:
+    param_type, has_range, has_categorical_values = _dict_param_shape(definition)
+
+    if _is_categorical_shape(param_type, has_range, has_categorical_values):
+        choices = _categorical_choices(definition)
+        return tuple(choices)
+
+    if param_type in _FIXED_TYPES:
+        return _fixed_values(definition)
+
+    if has_range:
+        return _range_values(definition, param_type)
+
+    return (definition,)
+
+
 def discrete_cardinality_for_config_param(definition: Any) -> int | None:
     """Return finite cardinality for a config-space parameter, or None if continuous."""
 
@@ -214,57 +270,6 @@ def discrete_cardinality_for_config_param(definition: Any) -> int | None:
         return _dict_cardinality(definition)
 
     return 1
-
-
-def _fixed_values(definition: dict[str, Any]) -> tuple[Any, ...]:
-    if "value" in definition:
-        return (definition["value"],)
-    if "default" in definition:
-        return (definition["default"],)
-    return (definition,)
-
-
-def _range_values(
-    definition: dict[str, Any], param_type: str
-) -> tuple[Any, ...] | None:
-    low = definition.get("low")
-    high = definition.get("high")
-    if low is None or high is None:
-        return None
-
-    if param_type in _INT_TYPES:
-        int_bounds = _int_range_bounds(definition, low, high)
-        if int_bounds is None:
-            return None
-        low_i, high_i, step_i = int_bounds
-        if step_i <= 0 or low_i > high_i:
-            return ()
-        return stepped_int_values(low_i, high_i, step_i)
-
-    float_bounds = _float_range_bounds(definition, low, high)
-    if float_bounds is None:
-        return None
-    low_f, high_f, step_f = float_bounds
-    if step_f <= 0 or low_f > high_f:
-        return ()
-    return stepped_float_values(low_f, high_f, step_f)
-
-
-def _dict_values(definition: dict[str, Any]) -> tuple[Any, ...] | None:
-    param_type = str(definition.get("type") or "").lower()
-
-    has_range = "low" in definition and "high" in definition
-
-    if _is_categorical_definition(definition, param_type, has_range):
-        return tuple(_categorical_choices(definition))
-
-    if param_type in _FIXED_TYPES:
-        return _fixed_values(definition)
-
-    if has_range:
-        return _range_values(definition, param_type)
-
-    return (definition,)
 
 
 def discrete_values_for_config_param(definition: Any) -> tuple[Any, ...] | None:

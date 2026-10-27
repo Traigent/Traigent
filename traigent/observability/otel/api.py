@@ -35,16 +35,15 @@ from traigent.observability.config import (
     validate_content_mode_override,
 )
 from traigent.observability.otel import contract as C
-from traigent.observability.otel.policy import ContentPolicy
 from traigent.observability.otel.exporter import TraigentOTLPExporter
 from traigent.observability.otel.instrument import install
 from traigent.observability.otel.lineage import (
     _CallerAttributes,
     activate,
-    merged_attributes,
-    set_current,
 )
 from traigent.observability.otel.lineage import attributes as attributes  # re-export
+from traigent.observability.otel.lineage import merged_attributes, set_current
+from traigent.observability.otel.policy import ContentPolicy
 from traigent.observability.otel.processor import FlushOutcome, TraigentSpanProcessor
 from traigent.observability.otel.sampling import (
     parent_based_ratio_sampler,
@@ -52,6 +51,7 @@ from traigent.observability.otel.sampling import (
 )
 from traigent.observability.otel.transport import Transport, UrllibTransport
 from traigent.security.redaction import redact_sensitive_data
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_backend_offline, is_truthy
 from traigent.utils.logging import get_logger
 
@@ -222,8 +222,18 @@ def init(
         # Validate eagerly so a bad allowlist fails even in offline mode.
         ContentPolicy(mode, allowed_span_names)
         rate = _resolve_rate(sample_rate)
-        offline = is_backend_offline() or is_truthy(
-            os.getenv("TRAIGENT_DISABLE_TELEMETRY")
+        # optimization_only workspaces refuse trace ingest: never build an exporter.
+        offline = (
+            is_backend_offline()
+            or is_truthy(os.getenv("TRAIGENT_DISABLE_TELEMETRY"))
+            or oo_egress.is_active(
+                oo_egress.policy_from_headers(
+                    endpoint or BackendConfig.get_backend_url(),
+                    {"X-API-Key": api_key}
+                    if api_key
+                    else {"X-API-Key": BackendConfig.get_api_key()},
+                )
+            )
         )
         if tracer_provider is not None and not hasattr(
             tracer_provider, "add_span_processor"
@@ -284,6 +294,11 @@ def init(
                 exit_flush_timeout_s=exit_flush_timeout_s,
                 on_drop=on_drop,
             )
+            # bind the exporter and processor to this credential so a closed
+            # ``403 optimization_only`` seen for it (by any SDK client) stops them
+            oo_scope = oo_egress.credential_scope(url, headers)
+            exporter.oo_scope = oo_scope
+            processor.oo_scope = oo_scope
             provider.add_span_processor(processor)
         if set_global:
             trace.set_tracer_provider(provider)

@@ -7,10 +7,15 @@ fresh, locally recorded human approval bound to the full-policy digest, rule,
 breach, occurrence, attempt, cost ceiling and an expiry, and by a second round of
 checks immediately before the run.  Any failed check holds: nothing runs.
 
-One controller per agent: occurrences are reserved in a LOCAL ledger, so two
-controllers (separate state directories) answering the same agent are not
-deduplicated until the backend reserves occurrences.  Each start still needs
-its own human approval.  Occurrence numbers start at 0 (TVL RFC 0003, 7.4).
+Two paths.  With ``agent_ref`` the HOSTED path runs (``respond_hosted``, TRAIG-101):
+a person grants the attempt in the portal, then this controller reserves it, has the
+Backend accept the START, and only then runs ``.optimize()``; it heartbeats the
+reservation while the run is in flight, reports the result with the reservation
+generation, and never asks for a second start.  The local ledger is only a lease
+cache there.  Without ``agent_ref`` the legacy local path below runs: occurrences are
+reserved in a LOCAL ledger, so two controllers (separate state directories) answering
+the same agent are not deduplicated.  Each start still needs its own human approval.
+Occurrence numbers start at 0 (TVL RFC 0003, 7.4).
 """
 
 from __future__ import annotations
@@ -18,17 +23,27 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import datetime, timedelta
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from traigent.runtime import manifest
 from traigent.runtime.apply import matching_heads
 from traigent.runtime.client import RuntimeClient
+from traigent.runtime.hosted import (
+    NS_RESPONSE,
+    NS_RULE,
+    ReactiveClient,
+    ReactiveError,
+    ReservationHandle,
+    TokenMap,
+)
+from traigent.runtime.lease_cache import LeaseCache
 from traigent.runtime.model import (
     E_APPROVAL_EXPIRED,
     E_APPROVAL_REQUIRED,
+    E_COMPILER,
     E_FIX_CEILING,
     E_HOLD,
     E_NOT_APPLIED,
@@ -70,6 +85,16 @@ class RespondResult:
     occurrence: int
     run_id: str | None
     cost_ceiling_usd: float
+    #: Hosted path only: the attempt that ran and the generation that reported it.
+    attempt_ref: str | None = None
+    reservation_generation: int | None = None
+    #: Hosted path only: the Backend recorded the result (else it must be reported later).
+    result_recorded: bool = False
+    #: Hosted path only: the closed candidate facts that were reported (no content).
+    candidates: tuple[dict[str, Any], ...] = ()
+    #: Hosted path only: fingerprint -> candidate configuration, for a deploy.  Customer
+    #: content kept in memory on the customer side; never sent with these facts.
+    configs: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
 def _optimize_rule(requirement: RuntimeRequirement) -> str:
@@ -179,19 +204,37 @@ async def respond(
     *,
     project_id: str,
     agent_id: str,
-    confirm: Callable[[dict[str, Any]], bool],
-    interactive: bool,
+    confirm: Callable[[dict[str, Any]], bool] | None = None,
+    interactive: bool = False,
     max_fix_cost_usd: float | None = None,
     client: RuntimeClient | None = None,
     state_dir: Path | None = None,
     clock: Callable[[], datetime] = manifest.utcnow,
     occurrence_lease: timedelta = manifest.OCCURRENCE_LEASE,
+    agent_ref: str | None = None,
+    attempt_ref: str | None = None,
+    reactive: ReactiveClient | None = None,
 ) -> RespondResult:
     """Ask a person, re-check, record the occurrence, then ``await fn.optimize(...)``.
 
-    One controller per agent: cross-controller deduplication is not enforced
-    until the backend reserves occurrences (see the module docstring).
+    With ``agent_ref`` the hosted path runs instead (:func:`respond_hosted`): the
+    approval is the human grant recorded by the Backend, not a local prompt.
+    Otherwise one controller per agent: cross-controller deduplication is not
+    enforced (see the module docstring).
     """
+    if agent_ref is not None or reactive is not None:
+        return await respond_hosted(
+            fn,
+            requirement,
+            agent_ref=agent_ref or (reactive.agent_ref if reactive else ""),
+            attempt_ref=attempt_ref,
+            client=reactive,
+            max_fix_cost_usd=max_fix_cost_usd,
+            state_dir=state_dir,
+            clock=clock,
+        )
+    if confirm is None:
+        raise RuntimeRequirementError(E_APPROVAL_REQUIRED)
     errors = [i for i in requirement.validate() if i.severity == "error"]
     if errors:
         raise RuntimeRequirementError(errors[0].code, errors[0].path)
@@ -410,3 +453,356 @@ async def _drain(*tasks: asyncio.Future[Any] | None) -> None:
         if not task.done():
             task.cancel()
     await asyncio.gather(*live, return_exceptions=True)
+
+
+# --- hosted path (TRAIG-101): reserve -> start -> run -> report -> heartbeat ---------------
+
+E_NO_APPROVED_ATTEMPT = "no_approved_attempt"
+E_ATTEMPT_MISMATCH = "attempt_mismatch"
+E_AMBIGUOUS_ATTEMPT = "ambiguous_attempt"
+#: Longest wait between lease renewals while the optimize run is in flight.
+HEARTBEAT_INTERVAL = timedelta(seconds=60)
+#: Server and local clocks may differ; the local lease deadline is the server's minus this.
+CLOCK_SKEW_MARGIN = timedelta(seconds=5)
+#: Transport-ambiguity retries (same idempotency key, so a retry is a replay, never a new act).
+RETRY_BOUND = 3
+RETRY_DELAY_S = 1.0
+_ATTEMPT_PAGES = 5
+
+
+def _parse_ts(text: str) -> datetime:
+    value = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value
+
+
+def _retryable(exc: ReactiveError) -> bool:
+    return bool(exc.ambiguous or exc.code == "rate_limited")
+
+
+async def _bounded(
+    call: Callable[[str], Any],
+    *,
+    sleep: Callable[[float], Any],
+    delay: float,
+) -> Any:
+    """Call with ONE idempotency key, retrying only ambiguity/rate limits (a replay)."""
+    from traigent.runtime.hosted import new_key
+
+    key = new_key()
+    for attempt in range(RETRY_BOUND):
+        try:
+            return call(key)
+        except ReactiveError as exc:
+            if not _retryable(exc) or attempt == RETRY_BOUND - 1:
+                raise
+            await sleep(float(exc.retry_after) if exc.retry_after else delay)
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+class _HostedLease:
+    """The reservation is the lease; this renews it and says whether it is still ours."""
+
+    def __init__(
+        self,
+        client: ReactiveClient,
+        reservation: ReservationHandle,
+        *,
+        clock: Callable[[], datetime],
+        skew: timedelta,
+        lease_expires_at: str,
+    ) -> None:
+        self.client, self.reservation, self.clock, self.skew = (
+            client,
+            reservation,
+            clock,
+            skew,
+        )
+        #: The last instant the Backend verifiably vouched for (its stamp minus skew):
+        #: the post-start lease from the start receipt, never the pre-start reservation expiry.
+        self.verified_until = _parse_ts(lease_expires_at) - skew
+        self.lost = False
+
+    def beat(self) -> bool:
+        """One renewal; ``False`` once the lease is gone.
+
+        A refusal is a loss.  An ambiguous failure (or a 429) is tolerated only until
+        the last deadline the Backend vouched for.
+        """
+        try:
+            doc = self.client.heartbeat(self.reservation)
+        except ReactiveError as exc:
+            if _retryable(exc):
+                self.lost = not self.clock() < self.verified_until
+            else:
+                self.lost = True
+            return not self.lost
+        self.verified_until = _parse_ts(doc["lease_expires_at"]) - self.skew
+        return True
+
+
+async def _heartbeat_loop(lease: _HostedLease, interval: float) -> None:
+    """Renew every ``interval``; RETURNS (ending the task) once the lease is lost."""
+    while True:
+        await asyncio.sleep(interval)
+        if not await asyncio.to_thread(lease.beat):
+            return
+
+
+def _select_attempt(
+    client: ReactiveClient,
+    tokens: TokenMap,
+    requirement: RuntimeRequirement,
+    rule_id: str,
+    attempt_ref: str | None,
+) -> dict[str, Any]:
+    """The approved optimize attempt of this requirement's rule (never guessed)."""
+    response = tokens.hosted(NS_RESPONSE, requirement.ladder_name)
+    rule = tokens.hosted(NS_RULE, rule_id)
+
+    def mine(item: dict[str, Any]) -> bool:
+        return bool(
+            item["response"] == response
+            and item["rule"] == rule
+            and item["effect"] == "optimize"
+        )
+
+    if attempt_ref is not None:
+        item = client.get_attempt(attempt_ref)
+        if not mine(item):
+            raise RuntimeRequirementError(E_ATTEMPT_MISMATCH)
+        found = [item]
+    else:
+        found = []
+        after: int | None = None
+        for _ in range(_ATTEMPT_PAGES):
+            page = client.list_attempts(limit=100, after=after)
+            found.extend(
+                i for i in page["items"] if mine(i) and i["state"] == "approved"
+            )
+            after = page["next_after"]
+            if after is None:
+                break
+        if len(found) > 1:
+            raise RuntimeRequirementError(E_AMBIGUOUS_ATTEMPT)
+    if not found or found[0]["state"] != "approved" or not found[0].get("grant_ref"):
+        raise RuntimeRequirementError(E_NO_APPROVED_ATTEMPT)
+    chosen: dict[str, Any] = found[0]
+    return chosen
+
+
+def _ceilings(
+    grant: dict[str, Any], requirement: RuntimeRequirement, override: float | None
+) -> tuple[float, int]:
+    """Cost (USD) and trial ceilings: the grant's, tightened (never loosened) locally."""
+    ceiling = grant.get("ceiling")
+    if not isinstance(ceiling, dict):
+        raise RuntimeRequirementError(E_FIX_CEILING, "grant")
+    usd = ceiling["max_cost_micro_usd"] / 1_000_000
+    for local in (override, requirement.max_fix_cost_usd):
+        if local is not None and positive_finite(local):
+            usd = min(usd, float(local))
+    if not positive_finite(usd):
+        raise RuntimeRequirementError(E_FIX_CEILING, "grant")
+    return usd, int(ceiling["max_trials"])
+
+
+def _completion(result: Any) -> str:
+    return (
+        "cost_limit"
+        if getattr(result, "stop_reason", None) == "cost_limit"
+        else "normal"
+    )
+
+
+def _candidates(
+    result: Any,
+    extract: Callable[[Any, dict[str, Any]], Any] | None,
+    grant: dict[str, Any],
+    *,
+    requirement: RuntimeRequirement,
+    tokens: TokenMap,
+) -> tuple[list[Any], dict[str, Any]]:
+    """Closed candidate facts and the configurations behind them (customer side only).
+
+    From ``extract`` when given.  Otherwise, a result that carries the optimizer's
+    ``promotion_decisions`` (an ``OptimizationResult``) is turned into promotion
+    evidence by :func:`evidence_from_result`.  Anything else reports no candidate
+    (``optimize_no_candidate``), never a guessed ``Promote``.
+    """
+    configs: dict[str, Any] = {}
+    if extract is not None:
+        raw = extract(result, grant)
+        configs = dict(getattr(extract, "configs", {}) or {})
+    elif hasattr(result, "promotion_decisions"):
+        from traigent.runtime.promotion_evidence import (
+            candidate_extractor,
+            evidence_from_result,
+        )
+
+        try:
+            reporter = candidate_extractor(
+                requirement,
+                tokens,
+                lambda res: evidence_from_result(requirement, res),
+            )
+            raw = reporter(result, grant)
+            configs = dict(reporter.configs)
+        except RuntimeRequirementError as exc:
+            if exc.code != E_COMPILER:
+                raise
+            raw = ()  # no TVL evaluator: nothing can be established, nothing promotes
+    else:
+        raw = getattr(result, "reactive_candidates", ())
+    return (list(raw) if isinstance(raw, (list, tuple)) else []), configs
+
+
+async def respond_hosted(
+    fn: Any,
+    requirement: RuntimeRequirement,
+    *,
+    agent_ref: str,
+    attempt_ref: str | None = None,
+    client: ReactiveClient | None = None,
+    max_fix_cost_usd: float | None = None,
+    state_dir: Path | None = None,
+    clock: Callable[[], datetime] = manifest.utcnow,
+    heartbeat_interval: timedelta = HEARTBEAT_INTERVAL,
+    skew: timedelta = CLOCK_SKEW_MARGIN,
+    retry_delay: float = RETRY_DELAY_S,
+    sleep: Callable[[float], Any] = asyncio.sleep,
+    candidates: Callable[[Any, dict[str, Any]], Any] | None = None,
+) -> RespondResult:
+    """Run the existing ``.optimize()`` for an attempt a person granted in the portal.
+
+    Order: find the approved attempt -> read its grant -> reserve -> START (the Backend
+    accepts before anything runs) -> ``fn.optimize`` while a heartbeat renews the
+    reservation -> report the result with the reservation generation.  A second start
+    is never requested: a start that cannot be confirmed holds, and the Backend lapses
+    the attempt for a person to cancel.  A lost lease cancels the run.  Nothing here
+    sends a prompt, an output or any text: only closed facts.
+    """
+    errors = [i for i in requirement.validate() if i.severity == "error"]
+    if errors:
+        raise RuntimeRequirementError(errors[0].code, errors[0].path)
+    rule_id = _optimize_rule(requirement)
+    if not callable(getattr(fn, "optimize", None)):
+        raise RuntimeRequirementError("function_not_optimizable")
+    state = state_dir or manifest.default_state_dir()
+    api = client or ReactiveClient(agent_ref, TokenMap(state))
+    # The token map is read first: unavailable means nothing is asked or reserved.
+    attempt = _select_attempt(api, api.tokens, requirement, rule_id, attempt_ref)
+    grant = api.get_grant(attempt["grant_ref"])
+    if (
+        grant["state"] != "granted"
+        or grant["effect"] != "optimize"
+        or grant["attempt_ref"] != attempt["attempt_ref"]
+    ):
+        raise RuntimeRequirementError(E_APPROVAL_REQUIRED, "grant")
+    if "expires_at" in grant and _parse_ts(grant["expires_at"]) <= clock():
+        raise RuntimeRequirementError(E_APPROVAL_EXPIRED)
+    usd, trials = _ceilings(grant, requirement, max_fix_cost_usd)
+
+    cache = LeaseCache(
+        state, agent_ref, attempt["attempt_ref"], "optimize", clock=clock
+    )
+    cache.refuse_if_seen()
+    reservation = await _bounded(
+        lambda key: api.reserve(attempt["attempt_ref"], attempt["grant_ref"], key=key),
+        sleep=sleep,
+        delay=retry_delay,
+    )
+    cache.begin()
+    try:
+        started = await _bounded(
+            lambda key: api.start(reservation, key=key), sleep=sleep, delay=retry_delay
+        )
+    except ReactiveError as exc:
+        if _retryable(exc):
+            # The start may have been accepted: keep the cache entry, never ask again.
+            raise RuntimeRequirementError(E_HOLD, "start_unconfirmed") from None
+        cache.release()
+        raise
+    cache.started()
+
+    lease = _HostedLease(
+        api,
+        reservation,
+        clock=clock,
+        skew=skew,
+        lease_expires_at=started["lease_expires_at"],
+    )
+    if not clock() < lease.verified_until:
+        # The vouched deadline has already passed: no work under a lease we cannot rely on.
+        cache.update(lease_lost=True)
+        raise RuntimeRequirementError(E_HOLD, "lease")
+    beat = asyncio.create_task(
+        _heartbeat_loop(lease, heartbeat_interval.total_seconds())
+    )
+    run: asyncio.Future[Any] | None = None
+    try:
+        try:
+            run = asyncio.ensure_future(fn.optimize(cost_limit=usd, max_trials=trials))
+            await asyncio.wait({run, beat}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            lost = lease.lost or not (run is not None and run.done())
+            await _drain(beat, run)
+        if lost:
+            cache.update(lease_lost=True)
+            raise _LeaseLost
+        result = run.result() if run is not None else None
+    except _LeaseLost:
+        raise RuntimeRequirementError(E_HOLD, "lease") from None
+    except BaseException as exc:  # noqa: BLE001 - user code; its text is never surfaced
+        _report_best_effort(
+            api, reservation, "error" if isinstance(exc, Exception) else "cancelled"
+        )
+        cache.update(finished=True, failed=True)
+        if isinstance(exc, Exception):
+            raise RuntimeRequirementError(E_OPTIMIZE_FAILED) from None
+        raise
+
+    # Once: retries re-send the same facts.
+    reported, configs = _candidates(
+        result, candidates, grant, requirement=requirement, tokens=api.tokens
+    )
+    try:
+        receipt = await _bounded(
+            lambda key: api.report_finished(
+                reservation,
+                completion=_completion(result),
+                candidates=reported,
+                key=key,
+            ),
+            sleep=sleep,
+            delay=retry_delay,
+        )
+    except ReactiveError as exc:
+        cache.update(finished=True, unreported=True)
+        if _retryable(exc):
+            raise RuntimeRequirementError(E_HOLD, "result_unreported") from None
+        raise
+    cache.update(finished=True)
+    return RespondResult(
+        str(attempt["scope"]),
+        rule_id,
+        int(attempt["occurrence"]),
+        _run_id(result),
+        usd,
+        attempt_ref=attempt["attempt_ref"],
+        reservation_generation=reservation.generation,
+        result_recorded=bool(receipt["recorded"]),
+        candidates=tuple(reported),
+        configs=configs,
+    )
+
+
+def _report_best_effort(
+    api: ReactiveClient, reservation: ReservationHandle, completion: str
+) -> None:
+    """Tell the Backend the run ended without a result; a failure here changes nothing."""
+    try:
+        api.report_finished(reservation, completion=completion, candidates=())
+    except (ReactiveError, RuntimeRequirementError):
+        LOGGER.warning("unreported_failure")

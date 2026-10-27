@@ -289,12 +289,6 @@ class IntegrationManager:
             logger.exception(f"Local integration failed: {e}")
             return IntegrationResult(success=False, error_message=str(e))
 
-    async def _start_edge_analytics_integration(
-        self, optimization_request: OptimizationRequest, integration_id: str
-    ) -> IntegrationResult:
-        """Deprecated alias for :meth:`_start_local_integration`."""
-        return self._start_local_integration(optimization_request, integration_id)
-
     async def _start_privacy_integration(
         self, optimization_request: OptimizationRequest, integration_id: str
     ) -> IntegrationResult:

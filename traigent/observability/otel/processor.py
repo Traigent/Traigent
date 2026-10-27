@@ -36,6 +36,7 @@ from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor
 
 from traigent.observability.otel.exporter import ExportOutcome, TraigentOTLPExporter
 from traigent.observability.otel.lineage import stamp_span
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_backend_offline
 from traigent.utils.logging import get_logger
 
@@ -172,7 +173,11 @@ class TraigentSpanProcessor(SpanProcessor):
                 started_offline = True
         # _offline_overflow is never auto-cleared: an empty tracked set does
         # not prove the untracked offline spans have ended.
-        if started_offline or is_backend_offline():
+        if (
+            started_offline
+            or is_backend_offline()
+            or oo_egress.is_active(scope=getattr(self, "oo_scope", None))
+        ):
             # Offline (offline=True run or the offline env vars) is checked at
             # record time, not only at init: a pipeline initialised online must
             # not queue spans recorded while offline. Dropped, never queued.

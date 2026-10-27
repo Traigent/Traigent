@@ -95,30 +95,6 @@ def _root_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def _select_root_row(
-    trace_id: str, rows: list[dict[str, Any]]
-) -> dict[str, Any] | None:
-    """Earliest root observation (ties by id); None, with a warning, if absent."""
-    roots = _root_rows(rows)
-    if not roots:
-        logger.warning(f"Trace {trace_id} has no root observation.")
-        return None
-    root = min(
-        roots,
-        key=lambda r: (
-            r.get("startTime") is None,
-            r.get("startTime") or "",
-            str(r.get("id") or ""),
-        ),
-    )
-    if len(roots) > 1:
-        logger.warning(
-            f"Trace {trace_id} has {len(roots)} root observations; "
-            f"using the earliest ({root.get('id')})."
-        )
-    return root
-
-
 _V2_PAGE_LIMIT = 1000  # v2 max (v1 was 100)
 # Legacy v1 /api/public/observations rejects limits above 100.
 _LEGACY_PAGE_LIMIT = 100
@@ -529,7 +505,9 @@ class LangfuseClient:
     ) -> dict[str, Any] | None:
         """Legacy v1 ``GET /api/public/traces/{id}`` (Langfuse v3 self-hosted only)."""
         try:
-            preflight_requests("GET", f"{self.host}/api/public/traces/{trace_id}")
+            preflight_requests(
+                "GET", f"{self.host}/api/public/traces/{trace_id}", external=True
+            )
             response = requests.get(
                 f"{self.host}/api/public/traces/{trace_id}",
                 headers=self._get_auth_header(),
@@ -659,6 +637,7 @@ class LangfuseClient:
                 preflight_requests(
                     "GET",
                     f"{self.host}{_V2_OBSERVATIONS_PATH}",
+                    external=True,
                     params=self._v2_params(trace_id, cursor, window, include_io),
                 )
                 response = requests.get(
@@ -705,7 +684,9 @@ class LangfuseClient:
         window = self._v2_window()
         invalid = 0
         cursor: str | None = None
-        async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
+        async with gate_session(
+            aiohttp.ClientSession(trust_env=True), external=True
+        ) as session:
             for page_no in range(max_pages):
                 try:
                     async with session.get(
@@ -769,7 +750,24 @@ class LangfuseClient:
         """
         if not rows:
             return None
-        root = _select_root_row(trace_id, rows)
+        roots = _root_rows(rows)
+        root: dict[str, Any] | None = None
+        if roots:
+            root = min(
+                roots,
+                key=lambda r: (
+                    r.get("startTime") is None,
+                    r.get("startTime") or "",
+                    str(r.get("id") or ""),
+                ),
+            )
+            if len(roots) > 1:
+                logger.warning(
+                    f"Trace {trace_id} has {len(roots)} root observations; "
+                    f"using the earliest ({root.get('id')})."
+                )
+        else:
+            logger.warning(f"Trace {trace_id} has no root observation.")
         trace: dict[str, Any] = {
             "id": trace_id,
             "name": (root.get("traceName") or root.get("name")) if root else None,
@@ -869,6 +867,7 @@ class LangfuseClient:
                 preflight_requests(
                     "GET",
                     f"{self.host}/api/public/observations",
+                    external=True,
                     params={
                         "traceId": trace_id,
                         "limit": str(_LEGACY_PAGE_LIMIT),
@@ -989,7 +988,9 @@ class LangfuseClient:
     ) -> dict[str, Any] | None:
         """Legacy v1 trace endpoint (Langfuse v3 self-hosted only)."""
         try:
-            async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
+            async with gate_session(
+                aiohttp.ClientSession(trust_env=True), external=True
+            ) as session:
                 async with session.get(
                     f"{self.host}/api/public/traces/{trace_id}",
                     headers=self._get_auth_header(),
@@ -1061,7 +1062,9 @@ class LangfuseClient:
         self._observations_partial_by_trace[trace_id] = False
 
         try:
-            async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
+            async with gate_session(
+                aiohttp.ClientSession(trust_env=True), external=True
+            ) as session:
                 while page <= max_pages:
                     async with session.get(
                         f"{self.host}/api/public/observations",

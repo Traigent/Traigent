@@ -1,0 +1,143 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Traigent TVL Reactive Import Route",
+    "version": "1.0.0",
+    "description": "Import of a compiled TVL runtime contract; this contract models only the zero-native ReactiveImportReceipt response (TRAIG-101). The legacy native response and the request body are outside this contract. Portal catalog outside the optimization lint roots; the receipt schema stays closed and content-class checked."
+  },
+  "paths": {
+    "/api/v1/projects/{project_id}/production-requirements/tvl-import": {
+      "post": {
+        "summary": "Import a compiled TVL runtime contract",
+        "description": "Existing create-only import route (Backend: POST /production-requirements/tvl-import). This contract models only the reactive receipt response; the legacy native response and the import request body are outside this contract (no schema for them exists in this repo). A zero-native contract creates no production requirement and returns ReactiveImportReceipt: 201 first import, new digest with the same semantics, or policy edit; 200 exact replay; 409 genuine native conflict or environment rebinding. P-human only. Tenant and project come from the authenticated request context only. Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 reference_not_found. Every error body is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal except 429.",
+        "operationId": "importTvlReactiveContract",
+        "x-asserted-against-backend": false,
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "description": "Project id of the portal request; authorized against the authenticated tenant.",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Exact replay of an existing import (receipt.created false). ReactiveImportReceipt.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_import_schema.json#/definitions/ReactiveImportReceipt"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "New import (receipt.created true). ReactiveImportReceipt.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_import_schema.json#/definitions/ReactiveImportReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthenticated. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden, fact_source_not_permitted. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "reference_not_found. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "requirement_exists, import_conflict, environment_rebinding. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait; the only rate-limit detail on the wire.",
+                "schema": {
+                  "x-content-class": "number",
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 86400
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "service_unavailable. Closed envelope; nothing is echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../optimization/tvl_reactive_common_schema.json#/definitions/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

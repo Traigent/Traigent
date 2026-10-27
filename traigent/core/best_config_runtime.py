@@ -135,6 +135,8 @@ class BestConfigSourceMode(StrEnum):
     CLOUD = "cloud"
     REPO_THEN_CLOUD = "repo_then_cloud"
     CLOUD_THEN_REPO = "cloud_then_repo"
+    #: The exact version the agent head pins (TRAIG-101 plan 8.5); fail closed.
+    AGENT_HEAD = "agent_head"
 
 
 class BestConfigSource(StrEnum):
@@ -148,6 +150,7 @@ class BestConfigSource(StrEnum):
     REPO = "repo"
     CLOUD_CACHE = "cloud_cache"
     CLOUD_FETCH = "cloud_fetch"
+    AGENT_HEAD = "agent_head"
     DEV_LOG = "dev_log"
 
 
@@ -480,7 +483,7 @@ def source_order_for_mode(
     if normalized is None:
         raise diag.refusal(
             "Unknown best_config_source. "
-            "Use one of: off, repo, cloud, repo_then_cloud, cloud_then_repo.",
+            "Use one of: off, repo, cloud, repo_then_cloud, cloud_then_repo, agent_head.",
             category=diag.Category.SOURCE_MODE,
             best_config_source_type=type(mode).__name__,
         ) from None
@@ -491,6 +494,8 @@ def source_order_for_mode(
         return (BestConfigSource.REPO,)
     if normalized is BestConfigSourceMode.CLOUD:
         return (BestConfigSource.CLOUD_CACHE, BestConfigSource.CLOUD_FETCH)
+    if normalized is BestConfigSourceMode.AGENT_HEAD:
+        return (BestConfigSource.AGENT_HEAD,)
     if normalized is BestConfigSourceMode.REPO_THEN_CLOUD:
         return (
             BestConfigSource.REPO,
@@ -555,9 +560,6 @@ def load_best_config_spec(
         return None
 
 
-_BEST_CONFIG_SPEC_MUST_BE_A_JSON_OBJECT = "Best config spec must be a JSON object"
-
-
 @diag.boundary(
     diag.Category.RESULT_INVALID,
     "Best config spec could not be validated",
@@ -580,7 +582,7 @@ def snapshot_from_spec(
     """
 
     if not isinstance(spec, dict):
-        raise diag._safe_error(_BEST_CONFIG_SPEC_MUST_BE_A_JSON_OBJECT)
+        raise diag._safe_error("Best config spec must be a JSON object")
 
     unknown_top_level = set(spec) - _SPEC_ALLOWED_KEYS
     if unknown_top_level:
@@ -764,7 +766,7 @@ def _v1_hash_payload(spec: dict[str, Any], environment: str | None) -> dict[str,
     _check_spec_hash_depth(spec)
     normalized = _normalize_json_value(copy.deepcopy(spec))
     if not isinstance(normalized, dict):
-        raise diag._safe_error(_BEST_CONFIG_SPEC_MUST_BE_A_JSON_OBJECT)
+        raise diag._safe_error("Best config spec must be a JSON object")
     config_id = spec.get("config_id")
     if not isinstance(config_id, str):
         raise diag._safe_error("Best config config_id must be a string")
@@ -818,12 +820,6 @@ def _pre_alignment_spec_hash(spec: dict[str, Any]) -> str:
     return sha256_digest(canonical_json(payload))
 
 
-_MANIFEST_JSON = "manifest.json"
-_BEST_CONFIG_MANIFEST_REQUIRES_A_CONFIGS_ = (
-    "Best config manifest requires a configs object"
-)
-
-
 @diag.boundary(
     diag.Category.FILESYSTEM_FAILED,
     "Best config manifest could not be read",
@@ -831,7 +827,7 @@ _BEST_CONFIG_MANIFEST_REQUIRES_A_CONFIGS_ = (
 def load_manifest(directory: str | Path) -> dict[str, Any] | None:
     """Load a best-config manifest from a directory."""
 
-    manifest_path = Path(directory) / _MANIFEST_JSON
+    manifest_path = Path(directory) / "manifest.json"
     with diag.fs_guard("Best config manifest could not be read"):
         if not manifest_path.exists():
             return None
@@ -846,7 +842,7 @@ def load_manifest(directory: str | Path) -> dict[str, Any] | None:
         )
     configs = manifest.get("configs")
     if not isinstance(configs, dict):
-        raise diag._safe_error(_BEST_CONFIG_MANIFEST_REQUIRES_A_CONFIGS_)
+        raise diag._safe_error("Best config manifest requires a configs object")
     return manifest
 
 
@@ -890,7 +886,7 @@ def write_repo_best_config(
     spec_path = output_dir / f"{safe_config_id}.json"
     _write_json_atomic(spec_path, spec)
 
-    manifest_path = output_dir / _MANIFEST_JSON
+    manifest_path = output_dir / "manifest.json"
     with diag.fs_guard("Best config manifest could not be inspected"):
         manifest_present = manifest_path.exists()
     loaded_manifest = load_manifest(output_dir) if manifest_present else None
@@ -900,7 +896,7 @@ def write_repo_best_config(
     }
     configs = manifest["configs"]
     if not isinstance(configs, dict):
-        raise diag._safe_error(_BEST_CONFIG_MANIFEST_REQUIRES_A_CONFIGS_)
+        raise diag._safe_error("Best config manifest requires a configs object")
     configs[safe_config_id] = {
         "path": spec_path.name,
         "spec_hash": spec_hash,
@@ -935,13 +931,13 @@ def write_cloud_cache_best_config(
 
     normalized_spec = _normalize_json_value(copy.deepcopy(spec))
     if not isinstance(normalized_spec, dict):
-        raise diag._safe_error(_BEST_CONFIG_SPEC_MUST_BE_A_JSON_OBJECT)
+        raise diag._safe_error("Best config spec must be a JSON object")
     config_hash = sha256_digest(canonical_json(normalized_spec["config"]))
     spec_hash = compute_spec_hash(normalized_spec)
     spec_path = output_dir / f"{safe_config_id}.json"
     _write_json_atomic(spec_path, normalized_spec)
 
-    manifest_path = output_dir / _MANIFEST_JSON
+    manifest_path = output_dir / "manifest.json"
     with diag.fs_guard("Best config manifest could not be inspected"):
         manifest_present = manifest_path.exists()
     loaded_manifest = load_manifest(output_dir) if manifest_present else None
@@ -951,7 +947,7 @@ def write_cloud_cache_best_config(
     }
     configs = manifest["configs"]
     if not isinstance(configs, dict):
-        raise diag._safe_error(_BEST_CONFIG_MANIFEST_REQUIRES_A_CONFIGS_)
+        raise diag._safe_error("Best config manifest requires a configs object")
 
     entry: dict[str, Any] = {
         "path": spec_path.name,
@@ -992,7 +988,7 @@ def resolve_repo_best_config(
         return None
     safe_config_id = _validate_config_id(config_id)
     directory = Path(repo_root or Path.cwd()) / ".traigent" / "best-configs"
-    manifest_path = directory / _MANIFEST_JSON
+    manifest_path = directory / "manifest.json"
 
     try:
         # Inside the guarded boundary: ``exists()`` raises ``OSError`` (text names the
@@ -1149,7 +1145,7 @@ def _resolve_entry_path(directory: Path, path: Any) -> Path:
 
 
 def _load_cache_entry(directory: Path, config_id: str) -> dict[str, Any] | None:
-    manifest_path = directory / _MANIFEST_JSON
+    manifest_path = directory / "manifest.json"
     if manifest_path.exists():
         manifest = load_manifest(directory) or {}
         entry = manifest.get("configs", {}).get(config_id)

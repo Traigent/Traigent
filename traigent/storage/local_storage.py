@@ -9,7 +9,7 @@ import json
 import math
 import os
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from dataclasses import fields as dataclass_fields
@@ -587,22 +587,6 @@ class LocalStorageManager:
 
         return "score"
 
-    @staticmethod
-    def _find_objective_definition(
-        schema: Any, primary_objective: str
-    ) -> dict[str, Any] | None:
-        """First schema objective definition named ``primary_objective``."""
-        definitions = schema.get("objectives") if isinstance(schema, dict) else None
-        if not isinstance(definitions, list):
-            return None
-        for definition in definitions:
-            if (
-                isinstance(definition, dict)
-                and definition.get("name") == primary_objective
-            ):
-                return definition
-        return None
-
     def _resolve_primary_objective_orientation(
         self,
         optimization_config: dict[str, Any | None] | None,
@@ -611,12 +595,16 @@ class LocalStorageManager:
         if not isinstance(optimization_config, dict):
             return "maximize" if primary_objective == "score" else None
         schema = optimization_config.get("objective_schema")
-        definition = LocalStorageManager._find_objective_definition(
-            schema, primary_objective
-        )
-        if definition is not None:
-            orientation = definition.get("orientation")
-            return str(orientation) if orientation is not None else None
+        if isinstance(schema, dict):
+            definitions = schema.get("objectives")
+            if isinstance(definitions, list):
+                for definition in definitions:
+                    if (
+                        isinstance(definition, dict)
+                        and definition.get("name") == primary_objective
+                    ):
+                        orientation = definition.get("orientation")
+                        return str(orientation) if orientation is not None else None
         orientations = optimization_config.get("objective_orientations")
         if isinstance(orientations, dict) and primary_objective in orientations:
             return str(orientations[primary_objective])
@@ -631,44 +619,35 @@ class LocalStorageManager:
         return None
 
     @staticmethod
-    def _valid_band_target(target: Any) -> tuple[float, float] | None:
-        """Return ``(low, high)`` when ``target`` is a finite, ordered pair."""
-        if not (isinstance(target, list) and len(target) == 2):
-            return None
-        low, high = target
-        # Type-check both bounds before any finiteness check: math.isfinite
-        # raises OverflowError on an int too large for a float.
-        for bound in (low, high):
-            if not isinstance(bound, (int, float)) or isinstance(bound, bool):
-                return None
-        if not (math.isfinite(low) and math.isfinite(high)):
-            return None
-        if low > high:
-            return None
-        return float(low), float(high)
-
-    @staticmethod
     def _resolve_primary_objective_band(
         optimization_config: dict[str, Any | None] | None,
         primary_objective: str,
     ) -> tuple[float, float]:
-        schema = (
-            optimization_config.get("objective_schema")
-            if isinstance(optimization_config, dict)
-            else None
-        )
-        definitions = schema.get("objectives") if isinstance(schema, dict) else None
-        for definition in definitions if isinstance(definitions, list) else ():
-            if not (
-                isinstance(definition, dict)
-                and definition.get("name") == primary_objective
-            ):
-                continue
-            band = definition.get("band")
-            target = band.get("target") if isinstance(band, dict) else None
-            resolved = LocalStorageManager._valid_band_target(target)
-            if resolved is not None:
-                return resolved
+        if isinstance(optimization_config, dict):
+            schema = optimization_config.get("objective_schema")
+            if isinstance(schema, dict):
+                definitions = schema.get("objectives")
+                if isinstance(definitions, list):
+                    for definition in definitions:
+                        if not (
+                            isinstance(definition, dict)
+                            and definition.get("name") == primary_objective
+                        ):
+                            continue
+                        band = definition.get("band")
+                        target = band.get("target") if isinstance(band, dict) else None
+                        if isinstance(target, list) and len(target) == 2:
+                            low, high = target
+                            if (
+                                isinstance(low, (int, float))
+                                and not isinstance(low, bool)
+                                and isinstance(high, (int, float))
+                                and not isinstance(high, bool)
+                                and math.isfinite(low)
+                                and math.isfinite(high)
+                                and low <= high
+                            ):
+                                return float(low), float(high)
         # the objective name is stored caller config: not quoted
         raise ValueError("Banded objective requires a complete target band")
 
@@ -1289,7 +1268,8 @@ class LocalStorageManager:
         Returns:
             True if configuration has been seen and successfully evaluated before
         """
-        base_keys = self._dedup_base_keys(config, keys)
+        user_config_keys = self._user_config_key_set(config)
+        base_keys = self._user_config_key_set(keys) | user_config_keys if keys else None
 
         try:
             # List all sessions for this function
@@ -1319,51 +1299,56 @@ class LocalStorageManager:
         return False
 
     @staticmethod
-    def _user_config_keys(names: Iterable[Any]) -> set[str]:
-        """Names that are user choices (string, not underscore-namespaced)."""
-        return {
-            key for key in names if isinstance(key, str) and not key.startswith("_")
-        }
-
-    @classmethod
-    def _dedup_base_keys(
-        cls, config: dict[str, Any], keys: list[str] | None
-    ) -> set[str] | None:
-        user_config_keys = cls._user_config_keys(config)
-        if not keys:
-            return None
-        return cls._user_config_keys(keys) | user_config_keys
+    def _user_config_key_set(keys: Any) -> set[str]:
+        """User-facing keys: strings without the runtime-metadata underscore."""
+        return {key for key in keys if isinstance(key, str) and not key.startswith("_")}
 
     @staticmethod
     def _session_dataset_name(session: Any) -> Any:
         """Dataset a session ran on (prefer evaluation_set metadata)."""
-        metadata = session.metadata
-        session_dataset = metadata.get("evaluation_set") if metadata else None
+        session_dataset = (
+            session.metadata.get("evaluation_set") if session.metadata else None
+        )
         if not session_dataset:
-            session_dataset = metadata.get("dataset_name") if metadata else None
+            session_dataset = (
+                session.metadata.get("dataset_name") if session.metadata else None
+            )
         return session_dataset
 
     def _session_has_matching_trial(
-        self, session: Any, config: dict[str, Any], base_keys: set[str] | None
+        self,
+        session: Any,
+        config: dict[str, Any],
+        base_keys: set[str] | None,
     ) -> bool:
-        """True when a successful trial of ``session`` has the same user config."""
-        for trial in session.trials or ():
-            # Check if trial was successful (no error)
-            if trial.error is not None:
-                continue
-            # Compare the complete user-facing identity on both
-            # sides. Unioning realized user keys preserves spec
-            # awareness when a config space later expands or
-            # narrows, while ignoring runtime-only metadata.
-            if base_keys is None:
-                compare_keys = None
-            else:
-                compare_keys = sorted(base_keys | self._user_config_keys(trial.config))
-            target_hash = self.compute_config_hash(config, compare_keys)
-            trial_hash = self.compute_config_hash(trial.config, compare_keys)
-            if trial_hash == target_hash:
-                return True
+        """True when a successful trial of ``session`` has the same config identity."""
+        if session.trials:
+            for trial in session.trials:
+                # Check if trial was successful (no error)
+                if trial.error is None and self._trial_config_matches(
+                    trial, config, base_keys
+                ):
+                    return True
         return False
+
+    def _trial_config_matches(
+        self,
+        trial: Any,
+        config: dict[str, Any],
+        base_keys: set[str] | None,
+    ) -> bool:
+        # Compare the complete user-facing identity on both
+        # sides. Unioning realized user keys preserves spec
+        # awareness when a config space later expands or
+        # narrows, while ignoring runtime-only metadata.
+        if base_keys is None:
+            compare_keys = None
+        else:
+            trial_user_keys = self._user_config_key_set(trial.config)
+            compare_keys = sorted(base_keys | trial_user_keys)
+        target_hash = self.compute_config_hash(config, compare_keys)
+        trial_hash = self.compute_config_hash(trial.config, compare_keys)
+        return trial_hash == target_hash
 
     def find_cached_result_across_sessions(
         self,

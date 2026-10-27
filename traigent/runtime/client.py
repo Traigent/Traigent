@@ -20,6 +20,7 @@ from traigent.runtime.model import (
     E_NO_CREDENTIALS,
     RuntimeRequirementError,
 )
+from traigent.utils import optimization_only_egress as oo_egress
 
 API_PREFIX = "/api/v1beta/projects"
 _TIMEOUT = (5.0, 30.0)
@@ -111,18 +112,47 @@ class RuntimeClient:
         self, method: str, suffix: str, body: dict[str, Any] | None = None
     ) -> tuple[int, Any]:
         """Return ``(status, parsed JSON or None)``; transport failures are closed errors."""
+        status, parsed, _headers = self.send(method, self._url(suffix), body)
+        return status, parsed
+
+    def send(
+        self,
+        method: str,
+        url: str,
+        body: dict[str, Any] | None = None,
+        *,
+        params: dict[str, Any] | None = None,
+    ) -> tuple[int, Any, dict[str, str]]:
+        """One request to an absolute ``url``: ``(status, parsed JSON or None, headers)``.
+
+        Shared by the project-scoped routes above and the reactive routes
+        (``traigent.runtime.hosted``), so egress, credentials and redirect refusal
+        are decided in one place.
+        """
         from traigent.cloud.client import cloud_backend_egress_disabled
 
         if cloud_backend_egress_disabled():
             raise RuntimeRequirementError(E_EGRESS)
         if not self._api_key:
             raise RuntimeRequirementError(E_NO_CREDENTIALS)
+        try:
+            oo_egress.assert_closed_body(
+                body,
+                "production_requirements_request",
+                explicit=oo_egress.policy_from_headers(
+                    self._origin, {"X-API-Key": self._api_key}
+                ),
+            )
+        except oo_egress.OptimizationOnlyRefusal:
+            raise RuntimeRequirementError(E_EGRESS) from None
         import requests
 
         from traigent.cloud.user_agent import get_sdk_user_agent
-        from traigent.labels.transport_gate import preflight_requests
+        from traigent.labels.transport_gate import (
+            observe_requests_response,
+            preflight_requests,
+        )
 
-        url = self._url(suffix)
         headers = {
             "X-API-Key": self._api_key,
             "Accept": "application/json",
@@ -131,6 +161,8 @@ class RuntimeClient:
         kwargs: dict[str, Any] = {}
         if body is not None:
             kwargs["json"] = body
+        if params:
+            kwargs["params"] = params
         try:
             preflight_requests(method, url, **kwargs)
             response = requests.request(
@@ -141,6 +173,7 @@ class RuntimeClient:
                 allow_redirects=False,
                 **kwargs,
             )
+            observe_requests_response(response)
         except RuntimeRequirementError:
             raise
         except Exception:  # noqa: BLE001 - never surface transport text
@@ -149,7 +182,17 @@ class RuntimeClient:
             parsed = response.json()
         except ValueError:
             parsed = None
-        return response.status_code, parsed
+        kept = {
+            k.lower(): str(v)
+            for k, v in response.headers.items()
+            if k.lower() == "retry-after"
+        }
+        return response.status_code, parsed, kept
+
+    @property
+    def origin(self) -> str:
+        """The backend origin (no path), for routes outside the project prefix."""
+        return self._origin
 
     def _expect(self, status: int, body: Any, ok: tuple[int, ...]) -> Any:
         if status in ok:

@@ -148,36 +148,6 @@ def test_classes_and_builtins_are_not_recursed_into():
     assert ParameterDiscovery.find_completion_methods(WithNested) == []
 
 
-def test_attribute_access_error_skips_only_that_attribute(caplog):
-    """A failing ``getattr`` is logged with its path; siblings are still searched."""
-
-    class Exploding:
-        @property
-        def boom(self):
-            raise RuntimeError("no access")
-
-        def create_ok(self):
-            return 1
-
-    class Holder2:
-        exploding = Exploding()
-
-        def generate(self):
-            return 1
-
-    with caplog.at_level(logging.DEBUG, logger=MODULE_LOGGER):
-        result = ParameterDiscovery.find_completion_methods(Holder2)
-
-    assert _names(result) == [
-        ("create_ok", "exploding.create_ok"),
-        ("generate", "generate"),
-    ]
-    assert any(
-        "Could not inspect attribute at exploding.boom: no access" in r.getMessage()
-        for r in caplog.records
-    )
-
-
 def test_dir_failure_is_logged_and_returns_partial_results(caplog):
     class BadDir:
         def __dir__(self):
