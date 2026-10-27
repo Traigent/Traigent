@@ -69,6 +69,21 @@ def _measured_number(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def _leave_metric_unknown(aggregated: dict[str, Any], metric: str) -> None:
+    """Record ``metric`` as unknown: None under strict nulls, else left out."""
+    if _strict_metrics_nulls():
+        aggregated[metric] = None
+    else:
+        aggregated.pop(metric, None)
+
+
+def _any_row_measured(all_metrics: list[dict[str, Any]], metric: str) -> bool:
+    """True when some row reports a finite numeric ``metric``."""
+    return any(
+        row and _measured_number(row.get(metric)) is not None for row in all_metrics
+    )
+
+
 # Substrings that mark a config key as secret-bearing. Comparison is
 # case-insensitive against the full key, so e.g. "api_key", "API-KEY",
 # "openai_secret", or "x-auth-token" all match.
@@ -535,24 +550,16 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         trial_unmeasured = _truthy_flag(aggregated.get("cost_unmeasured"))
         for metric in MEASURED_ONLY_METRICS & set(self.metrics):
             if trial_unmeasured:
-                if _strict_metrics_nulls():
-                    aggregated[metric] = None
-                else:
-                    aggregated.pop(metric, None)
+                _leave_metric_unknown(aggregated, metric)
                 continue
-            if any(
-                row and _measured_number(row.get(metric)) is not None
-                for row in all_metrics
-            ):
+            if _any_row_measured(all_metrics, metric):
                 continue
             source = "total_cost" if metric == "cost" else metric
             captured = _measured_number(aggregated.get(source))
             if captured is not None:
                 aggregated[metric] = captured
-            elif _strict_metrics_nulls():
-                aggregated[metric] = None
             else:
-                aggregated.pop(metric, None)
+                _leave_metric_unknown(aggregated, metric)
 
     def _aggregate_llm_metrics(
         self, all_metrics: list[dict[str, Any]], example_results: list[ExampleResult]
