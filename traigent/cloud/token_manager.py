@@ -9,15 +9,16 @@ Extracted from AuthManager to follow Single Responsibility Principle.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from traigent.labels.transport_gate import gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.core.constants import MAX_RETRIES
+from traigent.labels.transport_gate import gate_session
 
 if TYPE_CHECKING:
     from traigent.cloud.auth import (
@@ -73,6 +74,14 @@ class TokenManager:
         self._set_credentials_fn: Any = None
         self._cache_credentials_fn: Any = None
         self._auth_lock: asyncio.Lock | None = None
+        # Latch-on-read hook (set by AuthManager); see APIKeyManager.read_guard.
+        self.read_guard: Any = None
+        self.guard_active: Any = None  # () -> bool; True when reads must be latched
+
+    def _guarding(self) -> bool:
+        return self.read_guard is not None and (
+            self.guard_active is None or bool(self.guard_active())
+        )
 
     def set_callbacks(
         self,
@@ -106,12 +115,22 @@ class TokenManager:
     @property
     def current_token(self) -> SecureToken | None:
         """Get current access token."""
-        return self._current_token
+        token = self._current_token
+        if token is not None and self._guarding():
+            value = getattr(token, "_value", None)
+            if value and not token.is_expired:
+                self.read_guard({"Authorization": f"Bearer {value}"})
+        return token
 
     @property
     def refresh_token_secure(self) -> SecureToken | None:
-        """Get current refresh token."""
-        return self._refresh_token_secure
+        """Get current refresh token (latched under its own scope on a flagged manager)."""
+        token = self._refresh_token_secure
+        if token is not None and self._guarding():
+            value = getattr(token, "_value", None)
+            if value and not token.is_expired:
+                self.read_guard({"Authorization": f"Bearer {value}"})
+        return token
 
     @property
     def refresh_task(self) -> asyncio.Task[None] | None:
@@ -404,11 +423,13 @@ class TokenManager:
                     error_message="Token refresh returned no data",
                 )
 
-            self.store_tokens(token_data)
+            # Latch BEFORE committing: the callback refuses (raises) on a flagged manager
+            # that cannot latch, and then neither credentials nor the secure store change.
             updated_credentials = self.build_credentials_from_token_data(token_data)
 
             if self._set_credentials_fn:
                 self._set_credentials_fn(updated_credentials, AuthStatus.AUTHENTICATED)
+            self.store_tokens(token_data)
 
             if self.config.auto_refresh and updated_credentials.refresh_token:
                 self.schedule_refresh(updated_credentials)
@@ -459,10 +480,17 @@ class TokenManager:
     ) -> AuthResult:
         from traigent.cloud.auth import AuthResult, AuthStatus
 
-        credentials.jwt_token = token_data["access_token"]
-        if "refresh_token" in token_data:
-            credentials.refresh_token = token_data["refresh_token"]
-        credentials.expires_at = time.time() + token_data.get("expires_in", 3600)
+        # Build a fresh candidate: ``credentials`` aliases the manager's stored object, which
+        # must stay untouched unless the latch-aware setter accepts the new token.
+        candidate = dataclasses.replace(
+            credentials,
+            scopes=list(credentials.scopes),
+            metadata=dict(credentials.metadata),
+            jwt_token=token_data["access_token"],
+            refresh_token=token_data.get("refresh_token", credentials.refresh_token),
+            expires_at=time.time() + token_data.get("expires_in", 3600),
+        )
+        credentials = candidate
 
         if self._set_credentials_fn:
             self._set_credentials_fn(credentials, AuthStatus.AUTHENTICATED)
@@ -597,6 +625,9 @@ class TokenManager:
                 refresh_token = self._refresh_token_secure.get_value()
             except TokenExpiredError:
                 refresh_token = None
+            if refresh_token and self._guarding():
+                # handed out inside AuthCredentials: latch it like the guarded getter does
+                self.read_guard({"Authorization": f"Bearer {refresh_token}"})
 
         metadata: dict[str, Any] = {}
         credentials = self._get_credentials_fn() if self._get_credentials_fn else None
@@ -632,5 +663,8 @@ class TokenManager:
             TokenExpiredError: If token has expired
         """
         if self._current_token and not self._current_token.is_expired:
-            return cast(dict[str, str], self._current_token.get_header())
+            header = cast(dict[str, str], self._current_token.get_header())
+            if self._guarding():
+                self.read_guard(header)
+            return header
         return {}

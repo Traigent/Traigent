@@ -283,6 +283,8 @@ class FakeBackend:
         self.fault_log: list[Fault] = []
         #: A Backend that predates content_less_v1 advertises nothing.
         self.advertise_content_less = True
+        #: Body answered to POST /keys/validate (tests set optimization_only here).
+        self.validate_response: dict[str, Any] = {"valid": True}
         #: Opaque references issued to content-less creates (stable per fake backend).
         self.issued_refs = {
             "agent_ref": "agentref_" + "a1" * 16,
@@ -384,7 +386,7 @@ class FakeBackend:
         )
         with self._lock:
             if p.endswith("/keys/validate"):
-                return 200, {"valid": True}
+                return 200, dict(self.validate_response)
             if method == "POST" and p.endswith("/hybrid/sessions"):
                 return 201, {
                     "session_id": "hybrid-canary",
