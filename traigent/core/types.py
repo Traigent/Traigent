@@ -236,27 +236,15 @@ class ConfigurationSpace:
 
         # Check constraints if any
         if self.constraints:
-            return self._constraints_hold(self.constraints, config)
-
-        return True
-
-    @staticmethod
-    def _constraints_hold(
-        constraints: list[Callable[..., bool]], config: dict[str, Any]
-    ) -> bool:
-        """Return True when every constraint accepts ``config``.
-
-        A constraint that raises is treated as rejecting the configuration.
-        """
-        for constraint in constraints:
-            try:
-                if not constraint(config):
+            for constraint in self.constraints:
+                try:
+                    if not constraint(config):
+                        return False
+                except Exception as e:
+                    logger.debug(
+                        f"Constraint check raised exception (treating as invalid): {e}"
+                    )
                     return False
-            except Exception as e:
-                logger.debug(
-                    f"Constraint check raised exception (treating as invalid): {e}"
-                )
-                return False
 
         return True
 
