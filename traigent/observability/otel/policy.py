@@ -213,34 +213,41 @@ class ContentPolicy:
         out: dict[str, Any] = {}
         dropped = 0
         for key, value in (attrs or {}).items():
-            if not isinstance(key, str):
+            if not self._admit_attr(out, key, value, mode):
                 dropped += 1
-                continue
-            spec = C.ATTRIBUTE_ALLOWLIST.get(key)
-            if spec is not None:
-                coerced = coerce_clean(value, spec)
-                if coerced is None:
-                    dropped += 1
-                else:
-                    out[key] = coerced
-                continue
-            is_content = key in C.CONTENT_ATTRIBUTE_KEYS or (
-                key.startswith(C.CONTENT_METADATA_PREFIX) and C.is_safe_key(key)
-            )
-            if mode == "redacted" and is_content:
-                out[key] = C.REDACTED_PLACEHOLDER
-                continue
-            if (
-                mode == "record"
-                and C.is_safe_key(key)
-                and not is_credential_key_name(key)
-            ):
-                recorded = _record_value(value)
-                if recorded is not None:
-                    out[key] = recorded
-                    continue
-            dropped += 1
         return out, dropped
+
+    @staticmethod
+    def _admit_attr(out: dict[str, Any], key: Any, value: Any, mode: str) -> bool:
+        """Copy one attribute into ``out`` when policy allows; True when kept."""
+        if not isinstance(key, str):
+            return False
+        spec = C.ATTRIBUTE_ALLOWLIST.get(key)
+        if spec is not None:
+            coerced = coerce_clean(value, spec)
+            if coerced is None:
+                return False
+            out[key] = coerced
+            return True
+        is_content = key in C.CONTENT_ATTRIBUTE_KEYS or (
+            key.startswith(C.CONTENT_METADATA_PREFIX) and C.is_safe_key(key)
+        )
+        if mode == "redacted" and is_content:
+            out[key] = C.REDACTED_PLACEHOLDER
+            return True
+        if mode == "record" and C.is_safe_key(key):
+            return ContentPolicy._admit_recorded_attr(out, key, value)
+        return False
+
+    @staticmethod
+    def _admit_recorded_attr(out: dict[str, Any], key: str, value: Any) -> bool:
+        if is_credential_key_name(key):
+            return False
+        recorded = _record_value(value)
+        if recorded is None:
+            return False
+        out[key] = recorded
+        return True
 
     # -- resource / scope -----------------------------------------------
     def _resource(self, resource: Resource | None) -> Resource:

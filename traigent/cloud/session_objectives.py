@@ -25,6 +25,26 @@ _DIRECTION_OBJECTIVES = frozenset({"maximize", "minimize"})
 _LEGACY_KEY_ALIASES = {"name": "metric", "orientation": "direction"}
 
 
+def _band_target(band: dict[str, Any]) -> Any | None:
+    """The band's bounds, or ``None`` when no usable bounds can be derived.
+
+    An explicit ``target`` is returned as given; otherwise bounds come from
+    ``{low, high}``, falling back to ``{center, tol}`` only when both of
+    ``low`` and ``high`` are absent.
+    """
+    target = band.get("target")
+    if target is not None:
+        return target
+    low, high = band.get("low"), band.get("high")
+    if low is None and high is None:
+        center, tol = band.get("center"), band.get("tol")
+        if center is not None and tol is not None:
+            low, high = center - tol, center + tol
+    if low is None or high is None:
+        return None
+    return [low, high]
+
+
 def _canonical_band(
     band: Any, test: Any = None, alpha: Any = None
 ) -> dict[str, Any] | None:
@@ -39,16 +59,9 @@ def _canonical_band(
     if not isinstance(band, dict):
         return None
 
-    target = band.get("target")
+    target = _band_target(band)
     if target is None:
-        low, high = band.get("low"), band.get("high")
-        if low is None and high is None:
-            center, tol = band.get("center"), band.get("tol")
-            if center is not None and tol is not None:
-                low, high = center - tol, center + tol
-        if low is None or high is None:
-            return None
-        target = [low, high]
+        return None
 
     canonical: dict[str, Any] = {"target": list(target)}
     # test/alpha may arrive beside the band or nested inside it; nested wins only
