@@ -2295,9 +2295,7 @@ def test_coverage_classifies_cost_not_usage_capture() -> None:
     assert "cost could not be measured on 1 of 2 examples" in partial
     assert "traigent.with_usage(value, total_cost=0)" in partial
 
-    every = unmeasured_cost_ran_message(
-        1, 1, missing_examples=2, attempted_examples=2
-    )
+    every = unmeasured_cost_ran_message(1, 1, missing_examples=2, attempted_examples=2)
     assert "cost could not be measured on any of those examples" in every
 
     for message in (
