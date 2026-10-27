@@ -280,14 +280,21 @@ class ContentPolicy:
     ) -> str:
         if mode == "record" and isinstance(raw, str) and raw:
             return _record_text(raw, C.MAX_RECORD_NAME_LEN)
-        if isinstance(raw, str):
-            # No scope is exempt: ``observe(name)`` shares the SDK's own scope
-            # but its name is user-supplied, so it is not a content-free channel.
-            if self.allowed_span_names is not None:
-                if raw in self.allowed_span_names:
-                    return raw
-            elif C.is_safe_token(raw):
-                return raw
+        if isinstance(raw, str) and self._is_permitted_literal_name(raw):
+            return raw
+        return self._derive_name(attrs)
+
+    def _is_permitted_literal_name(self, raw: str) -> bool:
+        """Whether a user-supplied name may leave as-is (allowlist, else token)."""
+        # No scope is exempt: ``observe(name)`` shares the SDK's own scope
+        # but its name is user-supplied, so it is not a content-free channel.
+        if self.allowed_span_names is not None:
+            return raw in self.allowed_span_names
+        return C.is_safe_token(raw)
+
+    @staticmethod
+    def _derive_name(attrs: Mapping[str, Any]) -> str:
+        """Content-free fallback name built from allowlisted attributes."""
         op = attrs.get("gen_ai.operation.name")
         model = attrs.get("gen_ai.request.model")
         if isinstance(op, str):
