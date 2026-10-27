@@ -84,6 +84,71 @@ def _any_row_measured(all_metrics: list[dict[str, Any]], metric: str) -> bool:
     )
 
 
+def _record_llm_cost(example_result: ExampleResult, llm_metrics: Any) -> None:
+    """Record the captured cost of one example, or flag it as unmeasured."""
+    if safe_get_nested_attr(llm_metrics, "cost.unmeasured", False):
+        # Unknown cost: leave the cost keys out, flag it (#2517).
+        example_result.metrics["cost_unmeasured"] = 1.0
+        # The part that WAS measured stays a floor, never a total.
+        known = safe_get_nested_attr(
+            llm_metrics, _COST_TOTAL_COST, 0.0
+        ) + safe_get_nested_attr(llm_metrics, "cost.known_cost", 0.0)
+        if known > 0:
+            example_result.metrics["cost_lower_bound"] = known
+    else:
+        example_result.metrics["input_cost"] = safe_get_nested_attr(
+            llm_metrics, "cost.input_cost", 0.0
+        )
+        example_result.metrics["output_cost"] = safe_get_nested_attr(
+            llm_metrics, "cost.output_cost", 0.0
+        )
+        example_result.metrics["total_cost"] = safe_get_nested_attr(
+            llm_metrics, _COST_TOTAL_COST, 0.0
+        )
+
+
+def _record_llm_usage(example_result: ExampleResult, llm_metrics: Any) -> None:
+    """Record captured tokens, cost and model latency on an example result."""
+    if example_result.metrics is None:
+        example_result.metrics = {}
+
+    # Add token and cost metrics
+    example_result.metrics["input_tokens"] = safe_get_nested_attr(
+        llm_metrics, "tokens.input_tokens", 0
+    )
+    example_result.metrics["output_tokens"] = safe_get_nested_attr(
+        llm_metrics, "tokens.output_tokens", 0
+    )
+    example_result.metrics["total_tokens"] = safe_get_nested_attr(
+        llm_metrics, "tokens.total_tokens", 0
+    )
+    _record_llm_cost(example_result, llm_metrics)
+
+    response_time_ms = safe_get_nested_attr(llm_metrics, "response.response_time_ms", 0)
+    if response_time_ms > 0:
+        response_time_ms = float(response_time_ms)
+        example_result.metrics["response_time_ms"] = response_time_ms
+        example_result.metadata["response_time_ms"] = response_time_ms
+        # Compatibility: remove in <next-minor> once consumers have
+        # migrated to canonical response_time_ms.
+        model_response_time = response_time_ms / 1000.0
+        example_result.metrics["model_response_time"] = model_response_time
+        example_result.metadata["model_response_time"] = model_response_time
+
+
+def _record_function_duration(
+    example_result: ExampleResult, per_example_duration: float
+) -> None:
+    """Record the measured function duration in canonical and legacy keys."""
+    execution_time_ms = float(per_example_duration) * 1000.0
+    example_result.metrics["execution_time_ms"] = execution_time_ms
+    example_result.metadata["execution_time_ms"] = execution_time_ms
+    # Compatibility: remove in <next-minor> once consumers have
+    # migrated to canonical execution_time_ms.
+    example_result.metrics["function_duration"] = per_example_duration
+    example_result.metadata["function_duration"] = per_example_duration
+
+
 # Substrings that mark a config key as secret-bearing. Comparison is
 # case-insensitive against the full key, so e.g. "api_key", "API-KEY",
 # "openai_secret", or "x-auth-token" all match.
@@ -372,61 +437,11 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             example_result.metadata["llm_usage_measured"] = bool(llm_metrics)
 
         if llm_metrics:
-            if example_result.metrics is None:
-                example_result.metrics = {}
-
-            # Add token and cost metrics
-            example_result.metrics["input_tokens"] = safe_get_nested_attr(
-                llm_metrics, "tokens.input_tokens", 0
-            )
-            example_result.metrics["output_tokens"] = safe_get_nested_attr(
-                llm_metrics, "tokens.output_tokens", 0
-            )
-            example_result.metrics["total_tokens"] = safe_get_nested_attr(
-                llm_metrics, "tokens.total_tokens", 0
-            )
-            if safe_get_nested_attr(llm_metrics, "cost.unmeasured", False):
-                # Unknown cost: leave the cost keys out, flag it (#2517).
-                example_result.metrics["cost_unmeasured"] = 1.0
-                # The part that WAS measured stays a floor, never a total.
-                known = safe_get_nested_attr(
-                    llm_metrics, _COST_TOTAL_COST, 0.0
-                ) + safe_get_nested_attr(llm_metrics, "cost.known_cost", 0.0)
-                if known > 0:
-                    example_result.metrics["cost_lower_bound"] = known
-            else:
-                example_result.metrics["input_cost"] = safe_get_nested_attr(
-                    llm_metrics, "cost.input_cost", 0.0
-                )
-                example_result.metrics["output_cost"] = safe_get_nested_attr(
-                    llm_metrics, "cost.output_cost", 0.0
-                )
-                example_result.metrics["total_cost"] = safe_get_nested_attr(
-                    llm_metrics, _COST_TOTAL_COST, 0.0
-                )
-
-            response_time_ms = safe_get_nested_attr(
-                llm_metrics, "response.response_time_ms", 0
-            )
-            if response_time_ms > 0:
-                response_time_ms = float(response_time_ms)
-                example_result.metrics["response_time_ms"] = response_time_ms
-                example_result.metadata["response_time_ms"] = response_time_ms
-                # Compatibility: remove in <next-minor> once consumers have
-                # migrated to canonical response_time_ms.
-                model_response_time = response_time_ms / 1000.0
-                example_result.metrics["model_response_time"] = model_response_time
-                example_result.metadata["model_response_time"] = model_response_time
+            _record_llm_usage(example_result, llm_metrics)
 
         # Track total function duration
         if per_example_duration is not None:
-            execution_time_ms = float(per_example_duration) * 1000.0
-            example_result.metrics["execution_time_ms"] = execution_time_ms
-            example_result.metadata["execution_time_ms"] = execution_time_ms
-            # Compatibility: remove in <next-minor> once consumers have
-            # migrated to canonical execution_time_ms.
-            example_result.metrics["function_duration"] = per_example_duration
-            example_result.metadata["function_duration"] = per_example_duration
+            _record_function_duration(example_result, per_example_duration)
 
         # Set execution time if not already set
         current_execution_time = getattr(example_result, "execution_time", 0.0)
