@@ -110,6 +110,10 @@ class TestMetricsTracker:
                 ),
                 success=True if i != 2 else False,  # One failure
                 error="Test error" if i == 2 else None,
+                # Explicit measurement provenance: built-in exact match was
+                # applied; the failed attempt is a miss, the rest are hits.
+                accuracy_builtin=True,
+                custom_metrics={} if i == 2 else {"accuracy": 1.0},
             )
             tracker.add_example_metrics(example)
 
@@ -1446,8 +1450,12 @@ def test_unmeasured_accuracy_is_null_by_default(monkeypatch):
 
     # Declared exact match: an errored row is an attempted miss.
     declared = _tracker(
-        ExampleMetrics(success=True, custom_metrics={"accuracy": 1.0}),
-        ExampleMetrics(success=False, custom_metrics={"accuracy": 1.0}),
+        ExampleMetrics(
+            success=True, accuracy_builtin=True, custom_metrics={"accuracy": 1.0}
+        ),
+        ExampleMetrics(
+            success=False, accuracy_builtin=True, custom_metrics={"accuracy": 1.0}
+        ),
     )
     assert declared.format_for_backend()["accuracy"] == pytest.approx(0.5)
 
@@ -1464,3 +1472,48 @@ def test_unmeasured_accuracy_is_null_by_default(monkeypatch):
 def test_strict_nulls_still_none(monkeypatch):
     monkeypatch.setenv("TRAIGENT_STRICT_METRICS_NULLS", "true")
     assert MetricsTracker().format_for_backend()["accuracy"] is None
+
+
+def _both(tracker: MetricsTracker, **kwargs):
+    backend = tracker.format_for_backend(**kwargs)
+    stats = tracker.format_as_summary_stats(**kwargs)["metrics"]["accuracy"]
+    return backend["accuracy"], stats
+
+
+def test_supplied_accuracy_survives_without_gold_in_both_formatters(monkeypatch):
+    """A returned-mapping accuracy on a row with no expected output is kept."""
+    monkeypatch.delenv("TRAIGENT_STRICT_METRICS_NULLS", raising=False)
+    tracker = _tracker(
+        ExampleMetrics(
+            success=True, accuracy_eligible=False, custom_metrics={"accuracy": 0.25}
+        ),
+        ExampleMetrics(
+            success=True, accuracy_eligible=False, custom_metrics={"accuracy": 0.75}
+        ),
+    )
+    value, stats = _both(tracker)
+    assert value == pytest.approx(0.5)
+    assert stats["count"] == 2
+    assert stats["mean"] == pytest.approx(0.5)
+
+
+def test_failed_eligible_builtin_attempt_without_output_is_a_miss(monkeypatch):
+    """Declared built-in accuracy: a failed attempt with no value counts as 0."""
+    monkeypatch.delenv("TRAIGENT_STRICT_METRICS_NULLS", raising=False)
+    tracker = _tracker(
+        ExampleMetrics(
+            success=True, accuracy_builtin=True, custom_metrics={"accuracy": 1.0}
+        ),
+        ExampleMetrics(success=False, accuracy_builtin=True),
+    )
+    value, stats = _both(tracker)
+    assert value == pytest.approx(0.5)
+    assert stats["count"] == 2
+
+
+def test_failed_row_without_provenance_is_unmeasured(monkeypatch):
+    monkeypatch.delenv("TRAIGENT_STRICT_METRICS_NULLS", raising=False)
+    tracker = _tracker(ExampleMetrics(success=False))
+    value, stats = _both(tracker)
+    assert value is None
+    assert stats["count"] == 0

@@ -2259,6 +2259,14 @@ class LocalEvaluator(BaseEvaluator):
         )
         metric.accuracy_eligible = not _is_empty_expected_output(expected)
         metric.custom_metrics.update(stored)
+        # Accuracy provenance comes only from the stored row: a stored
+        # measurement is reused as-is; a successful row with gold but no stored
+        # accuracy stays unmeasured (no builtin provenance, so never 1.0).
+        stored_accuracy = stored.get("accuracy")
+        if isinstance(stored_accuracy, bool) or not (
+            isinstance(stored_accuracy, (int, float)) and math.isfinite(stored_accuracy)
+        ):
+            metric.custom_metrics.pop("accuracy", None)
         if progress_callback:
             progress_callback(
                 index,
@@ -2389,17 +2397,20 @@ class LocalEvaluator(BaseEvaluator):
             # Exact-match accuracy is not a configured metric, so it is not
             # computed or uploaded (it would read as a fake 0.0 whenever the
             # function output is not meant to equal the expected value). The
-            # row is unmeasured for built-in accuracy; an accuracy the user
-            # supplies explicitly still counts.
-            example_metric.accuracy_unavailable = True
+            # row carries no built-in provenance, so it is unmeasured; an
+            # accuracy the user supplies explicitly still counts.
             self._log_builtin_accuracy_skipped_once()
         else:
+            # Built-in exact match is declared: a failed eligible attempt is a
+            # miss in the tracker summary, as in the aggregate.
+            example_metric.accuracy_builtin = True
             accuracy_value = self._calculate_example_accuracy(output, expected_output)
             if accuracy_value is not None:
                 example_metric.custom_metrics.setdefault("accuracy", accuracy_value)
-            elif example_metric.accuracy_eligible:
-                # Gold exists but nothing could be compared: unmeasured, never
-                # the tracker's success-implies-1.0 fallback (#2495).
+            elif example_metric.accuracy_eligible and example_metric.success:
+                # Gold exists but nothing could be compared: unmeasured (#2495).
+                # A failed attempt is not unmeasured: the tracker counts it as
+                # a miss, like the aggregate.
                 example_metric.accuracy_unavailable = True
 
         # Merge per-example user metrics into custom_metrics, never overriding

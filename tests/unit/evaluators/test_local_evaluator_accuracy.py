@@ -367,3 +367,112 @@ async def test_supplied_accuracy_survives_when_not_a_configured_metric() -> None
     )
     result = await evaluator.evaluate(lambda input_data: "x", {}, _label_dataset())
     assert result.metrics["accuracy"] == pytest.approx(0.5)
+
+
+@pytest.mark.asyncio
+async def test_failed_attempt_without_output_is_a_miss_in_aggregate_and_tracker() -> (
+    None
+):
+    """Declared built-in accuracy: an evaluator failure with no output counts
+    as 0 in the aggregate and in both tracker formats."""
+
+    def func(input_data):
+        if input_data["q"] == "b":
+            raise RuntimeError("boom")
+        return "label-a"
+
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"], detailed=True, execution_mode="local"
+    )
+    result = await evaluator.evaluate(func, {}, _label_dataset())
+
+    assert result.metrics["accuracy"] == pytest.approx(0.5)
+    stats = result.summary_stats["metrics"]["accuracy"]
+    assert stats["count"] == 2
+    assert stats["mean"] == pytest.approx(0.5)
+
+
+def _three_label_dataset() -> Dataset:
+    return Dataset(
+        [
+            EvaluationExample({"q": "a"}, "label-a"),
+            EvaluationExample({"q": "b"}, "label-b"),
+            EvaluationExample({"q": "c"}, "label-c"),
+        ],
+        name="labels3",
+        description="three gold labels",
+    )
+
+
+def _resume_prefill_for_first_row(stored_metrics: dict):
+    from traigent.core.resume import ResumePrefill, config_key
+
+    dataset = _three_label_dataset()
+    row = {
+        "input_data": dataset.examples[0].input_data,
+        "expected_output": dataset.examples[0].expected_output,
+        "actual_output": "label-a",
+        "metrics": stored_metrics,
+        "execution_time": 0.01,
+    }
+    return ResumePrefill({config_key({}): {"example_0": row}})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("configured", [True, False])
+async def test_resumed_row_with_gold_but_no_stored_accuracy_is_unmeasured(
+    configured: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A resumed successful row with gold and no stored accuracy is never 1.0:
+    it stays out of the accuracy denominator in the backend payload and the
+    summary stats, whether or not accuracy is a configured metric."""
+    from traigent.evaluators.base import bind_resume_prefill, reset_resume_prefill
+
+    def func(input_data):
+        return {"b": "label-b", "c": "wrong"}[input_data["q"]]
+
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"] if configured else ["pass_rate"],
+        metric_functions=(
+            None if configured else {"pass_rate": lambda output, expected, **_: 1.0}
+        ),
+        detailed=True,
+        execution_mode="local",
+    )
+    from traigent.evaluators.metrics_tracker import MetricsTracker
+
+    payloads: list[dict] = []
+    original = MetricsTracker.format_for_backend
+
+    def spy(self, *args, **kwargs):
+        payload = original(self, *args, **kwargs)
+        payloads.append(payload)
+        return payload
+
+    monkeypatch.setattr(MetricsTracker, "format_for_backend", spy)
+    token = bind_resume_prefill(
+        _resume_prefill_for_first_row({"total_cost": 0.0, "input_tokens": 1})
+    )
+    try:
+        result = await evaluator.evaluate(func, {}, _three_label_dataset())
+    finally:
+        reset_resume_prefill(token)
+
+    resumed = [
+        r
+        for r in result.example_results
+        if (r.metadata or {}).get("resumed_example_from_prior_run")
+    ]
+    assert len(resumed) == 1  # the partially resumed evaluation really resumed
+    stats = result.summary_stats["metrics"].get("accuracy", {})
+    (payload,) = payloads  # the tracker's submission payload
+    if configured:
+        # Two executed rows (one hit, one miss); the resumed row is excluded
+        # from the tracker's accuracy, never counted as a derived 1.0.
+        assert payload["accuracy"] == pytest.approx(0.5)
+        assert stats["count"] == 2
+        assert stats["mean"] == pytest.approx(0.5)
+    else:
+        assert payload["accuracy"] is None
+        assert result.metrics.get("accuracy") is None
+        assert stats.get("count", 0) == 0

@@ -601,14 +601,19 @@ class ExampleMetrics:
     # A false value means the built-in exact-match accuracy is not meaningful
     # for this row (for example, the expected output is blank), so formatter
     # aggregations must not put it in the built-in accuracy denominator. It
-    # defaults to true for tracker callers that do not have dataset context;
-    # that preserves their established success/error fallback semantics.
+    # defaults to true for tracker callers that do not have dataset context.
     accuracy_eligible: bool = True
     # ``LocalEvaluator`` sets this when the row had a gold value but built-in
     # accuracy could not be computed (e.g. no output to compare). The row is
     # then UNMEASURED for accuracy: it is left out of the accuracy denominator
-    # and never gets the tracker-only "success means 1.0" fallback (#2495).
+    # and never gets a success-derived 1.0 (#2495).
     accuracy_unavailable: bool = False
+    # Explicit measurement provenance: ``LocalEvaluator`` sets this when the
+    # built-in exact-match accuracy was declared and applied to this row's
+    # attempt. Only such a row can count as a miss when the attempt failed.
+    # A row with neither an accuracy value nor this provenance is UNMEASURED:
+    # success alone never implies a hit.
+    accuracy_builtin: bool = False
     # True (the default) when ``tokens``/``cost``/``response`` were actually
     # extracted or estimated from a real provider response. False marks an
     # example whose zeros are the ABSENCE of a measurement, not a measured
@@ -1241,24 +1246,24 @@ class MetricsTracker:
                 values.append(float(raw_accuracy) if raw_accuracy is not None else 0.0)
                 continue
 
-            if not metric.accuracy_eligible:
-                continue
-
-            if raw_accuracy is None and metric.accuracy_unavailable:
-                # Unmeasured, not a miss and not a hit (#2495).
-                continue
-
-            if metric.success:
-                # Only tracker-only callers reach this with no per-example
-                # value and no provenance flag (``LocalEvaluator`` marks every
-                # row it leaves unmeasured via ``accuracy_unavailable`` or
-                # ``accuracy_eligible``). Preserve their established success
-                # fallback, identically in both formatters.
-                values.append(float(raw_accuracy) if raw_accuracy is not None else 1.0)
-            else:
-                # Built-in exact match: an error is an attempted miss, never
-                # numerator credit from a retained matching output.
+            if (
+                metric.accuracy_builtin
+                and metric.accuracy_eligible
+                and not metric.success
+            ):
+                # Declared built-in exact match: a failed eligible attempt is a
+                # miss even when it retained a matching output or produced no
+                # output at all, matching the evaluator's aggregate.
                 values.append(0.0)
+                continue
+
+            if raw_accuracy is not None:
+                # A supplied or computed value is preserved independently of
+                # gold/eligibility (a returned metrics mapping can carry
+                # accuracy for a row with no expected output).
+                values.append(float(raw_accuracy))
+            # Otherwise the row has neither a value nor measurement provenance:
+            # unmeasured, neither a hit nor a miss (#2495).
 
         return values
 
