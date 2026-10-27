@@ -13,6 +13,8 @@ import os
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
+from traigent.utils.exceptions import ConfigurationError
+
 logger = logging.getLogger(__name__)
 
 #: Single source of truth for the default local backend URL.
@@ -27,8 +29,51 @@ DEFAULT_CLOUD_URL = "https://portal.traigent.ai"
 SIGNUP_URL = DEFAULT_CLOUD_URL
 
 
+#: Environment variable that enables strict-endpoint (self-hosted) mode.
+REQUIRE_EXPLICIT_ENDPOINT_ENV = "TRAIGENT_REQUIRE_EXPLICIT_ENDPOINT"
+#: Environment variable selecting a deployment profile (``self_hosted``).
+DEPLOYMENT_PROFILE_ENV = "TRAIGENT_DEPLOYMENT_PROFILE"
+
+_TRUTHY = frozenset({"1", "true", "yes"})
+
+
+class EndpointNotConfiguredError(ConfigurationError):
+    """Raised in strict-endpoint mode when no backend endpoint is configured.
+
+    Strict-endpoint (self-hosted) mode never falls back to the vendor-cloud
+    default URL; the endpoint must be set explicitly.
+    """
+
+
+def is_strict_endpoint_mode() -> bool:
+    """Return True when the SDK must not fall back to any vendor-cloud URL.
+
+    Enabled by ``TRAIGENT_REQUIRE_EXPLICIT_ENDPOINT`` (``1``/``true``/``yes``)
+    or ``TRAIGENT_DEPLOYMENT_PROFILE=self_hosted``. Default mode is unchanged.
+    """
+    if os.environ.get(REQUIRE_EXPLICIT_ENDPOINT_ENV, "").strip().lower() in _TRUTHY:
+        return True
+    profile = os.environ.get(DEPLOYMENT_PROFILE_ENV, "").strip().lower()
+    return profile.replace("-", "_") == "self_hosted"
+
+
+def _endpoint_required_error() -> EndpointNotConfiguredError:
+    return EndpointNotConfiguredError(
+        "No Traigent backend endpoint is configured and strict-endpoint "
+        "(self-hosted) mode forbids the vendor-cloud default. Set "
+        "TRAIGENT_BACKEND_URL (or TRAIGENT_API_URL) to your backend."
+    )
+
+
+def get_signup_url() -> str | None:
+    """Return the vendor signup URL, or None in strict-endpoint mode."""
+    return None if is_strict_endpoint_mode() else SIGNUP_URL
+
+
 def get_no_credentials_hint() -> str:
     """One-liner appended to missing-credentials warnings."""
+    if is_strict_endpoint_mode():
+        return "Run 'traigent auth login' against your configured backend."
     return f"Get started at {SIGNUP_URL} or run 'traigent auth login'."
 
 
@@ -188,6 +233,9 @@ class BackendConfig:
         if configured_origin:
             return configured_origin
 
+        if is_strict_endpoint_mode():
+            raise _endpoint_required_error()
+
         # Default to cloud for end-users; SDK devs should set
         # TRAIGENT_BACKEND_URL=http://localhost:5000 explicitly.
         logger.debug("Using default cloud URL: %s", cls.DEFAULT_PROD_URL)
@@ -200,6 +248,9 @@ class BackendConfig:
         configured_origin = cls._get_configured_backend_origin()
         if configured_origin:
             return configured_origin
+
+        if is_strict_endpoint_mode():
+            raise _endpoint_required_error()
 
         logger.debug("Using default cloud URL: %s", cls.DEFAULT_PROD_URL)
         return cls.DEFAULT_PROD_URL
@@ -277,7 +328,16 @@ class BackendConfig:
                 cls._derive_web_origin_from_api_origin(configured_origin)
                 or configured_origin
             )
+        if is_strict_endpoint_mode():
+            raise _endpoint_required_error()
         return cls.DEFAULT_PROD_URL
+
+    @classmethod
+    def get_default_cloud_url_or_raise(cls) -> str:
+        """Return the vendor-cloud default URL; raise in strict-endpoint mode."""
+        if is_strict_endpoint_mode():
+            raise _endpoint_required_error()
+        return DEFAULT_CLOUD_URL
 
     @classmethod
     def get_backend_api_url(cls) -> str:

@@ -23,7 +23,7 @@ from urllib.parse import urlparse
 
 from traigent.cloud.client import raise_if_cloud_egress_disabled
 from traigent.cloud.url_security import validate_always_blocked_cloud_url
-from traigent.config.backend_config import DEFAULT_CLOUD_URL
+from traigent.config.backend_config import BackendConfig
 from traigent.labels.transport_gate import gate_session
 from traigent.utils import optimization_only_egress as oo_egress
 
@@ -166,10 +166,32 @@ class DatasetConverter:
                 credentials, query parameters, or fragments.
             no_egress: Runtime policy flag that forbids backend transport.
         """
-        resolved_backend_url = backend_base_url or DEFAULT_CLOUD_URL
-        self.backend_base_url = self._validate_backend_base_url(resolved_backend_url)
+        # Strict-endpoint (self-hosted) mode has no vendor default: the module
+        # level ``converter`` is built at import time, so resolution is lazy
+        # and raises EndpointNotConfiguredError only when the URL is first used.
+        self._explicit_backend_base_url = (
+            self._validate_backend_base_url(backend_base_url)
+            if backend_base_url
+            else None
+        )
+        self._resolved_backend_base_url: str | None = None
         self.no_egress = bool(no_egress)
         self._session: aiohttp.ClientSession | None = None
+
+    @property
+    def backend_base_url(self) -> str:
+        """Backend base URL; vendor default only outside strict-endpoint mode."""
+        if self._explicit_backend_base_url:
+            return self._explicit_backend_base_url
+        if self._resolved_backend_base_url is None:
+            self._resolved_backend_base_url = self._validate_backend_base_url(
+                BackendConfig.get_default_cloud_url_or_raise()
+            )
+        return self._resolved_backend_base_url
+
+    @backend_base_url.setter
+    def backend_base_url(self, value: str) -> None:
+        self._explicit_backend_base_url = self._validate_backend_base_url(value)
 
     async def __aenter__(self):
         """Async context manager entry."""

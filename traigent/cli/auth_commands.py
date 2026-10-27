@@ -47,7 +47,11 @@ from traigent.cloud.auth import (
 )
 from traigent.cloud.credential_manager import CredentialManager
 from traigent.cloud.url_security import validate_cloud_base_url
-from traigent.config.backend_config import SIGNUP_URL, BackendConfig
+from traigent.config.backend_config import (
+    SIGNUP_URL,
+    BackendConfig,
+    get_signup_url,
+)
 from traigent.config.project import PROJECT_ENV_VAR, read_optional_project_env
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
 from traigent.security.credentials import (
@@ -1437,7 +1441,8 @@ class TraigentAuthCLI:
             self._record_password_login_failure()
             console.print(f"\n[red]❌ Authentication failed: {e}[/red]")
             console.print("\nPlease check your credentials and try again.")
-            console.print(f"If you don't have an account, visit: {SIGNUP_URL}\n")
+            if get_signup_url():
+                console.print(f"If you don't have an account, visit: {SIGNUP_URL}\n")
             return False
         except TimeoutError as e:
             self._record_password_login_failure()
