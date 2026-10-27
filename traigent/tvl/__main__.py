@@ -27,6 +27,72 @@ logger = get_logger(__name__)
 _TVL_SUFFIXES = (".tvl.yml", ".tvl.yaml")
 
 
+def _loads_cleanly(file_path: Path) -> bool:
+    """Run the full loader; report and return False on any load failure."""
+    try:
+        load_tvl_spec(spec_path=str(file_path))
+    except TVLValidationError as e:
+        print(f"FAILED: {file_path}", file=sys.stderr)
+        print(f"  - {e}", file=sys.stderr)
+        return False
+    except Exception as e:
+        print(f"FAILED: {file_path}", file=sys.stderr)
+        print(f"  - Load error: {e}", file=sys.stderr)
+        return False
+    return True
+
+
+def _validate_one_tvl_file(file_path: Path, *, strict: bool, verbose: bool) -> bool:
+    """Validate a single TVL file, reporting to stderr/stdout; True when it passes."""
+    # Resolve to absolute path for consistent handling
+    resolved_path = file_path.resolve()
+
+    if not resolved_path.exists():
+        print(f"ERROR: File not found: {file_path}", file=sys.stderr)
+        return False
+
+    try:
+        # First validate schema (early validation)
+        import yaml
+
+        # nosec - CLI tool intentionally reads user-specified files for
+        # TVL validation; resolved_path is the user-provided argument.
+        with open(resolved_path, encoding="utf-8") as f:
+            raw_data = yaml.safe_load(f)
+
+        if raw_data is None:
+            print(f"ERROR: Empty TVL spec: {file_path}", file=sys.stderr)
+            return False
+
+        # Schema errors fail in every mode: load_tvl_spec rejects the same
+        # messages, so a spec the SDK cannot load must not pass the gate
+        # (#2678). --strict additionally fails on warning-severity issues.
+        issues = validate_tvl_schema(raw_data, include_warnings=strict)
+
+        if issues:
+            print(f"FAILED: {file_path}", file=sys.stderr)
+            for issue in issues:
+                print(f"  - {issue}", file=sys.stderr)
+            return False
+
+        # Try full loading to catch deeper issues
+        if not _loads_cleanly(file_path):
+            return False
+
+        if verbose:
+            print(f"OK: {file_path}")
+        return True
+
+    except yaml.YAMLError as e:
+        print(f"FAILED: {file_path}", file=sys.stderr)
+        print(f"  - Invalid YAML: {e}", file=sys.stderr)
+        return False
+    except Exception as e:
+        print(f"FAILED: {file_path}", file=sys.stderr)
+        print(f"  - Unexpected error: {e}", file=sys.stderr)
+        return False
+
+
 def validate_tvl_files(
     files: list[Path],
     *,
@@ -48,65 +114,9 @@ def validate_tvl_files(
     failed = 0
 
     for file_path in files:
-        # Resolve to absolute path for consistent handling
-        resolved_path = file_path.resolve()
-
-        if not resolved_path.exists():
-            print(f"ERROR: File not found: {file_path}", file=sys.stderr)
-            failed += 1
-            continue
-
-        try:
-            # First validate schema (early validation)
-            import yaml
-
-            # nosec - CLI tool intentionally reads user-specified files for
-            # TVL validation; resolved_path is the user-provided argument.
-            with open(resolved_path, encoding="utf-8") as f:
-                raw_data = yaml.safe_load(f)
-
-            if raw_data is None:
-                print(f"ERROR: Empty TVL spec: {file_path}", file=sys.stderr)
-                failed += 1
-                continue
-
-            # Schema errors fail in every mode: load_tvl_spec rejects the same
-            # messages, so a spec the SDK cannot load must not pass the gate
-            # (#2678). --strict additionally fails on warning-severity issues.
-            issues = validate_tvl_schema(raw_data, include_warnings=strict)
-
-            if issues:
-                print(f"FAILED: {file_path}", file=sys.stderr)
-                for issue in issues:
-                    print(f"  - {issue}", file=sys.stderr)
-                failed += 1
-                continue
-
-            # Try full loading to catch deeper issues
-            try:
-                load_tvl_spec(spec_path=str(file_path))
-            except TVLValidationError as e:
-                print(f"FAILED: {file_path}", file=sys.stderr)
-                print(f"  - {e}", file=sys.stderr)
-                failed += 1
-                continue
-            except Exception as e:
-                print(f"FAILED: {file_path}", file=sys.stderr)
-                print(f"  - Load error: {e}", file=sys.stderr)
-                failed += 1
-                continue
-
+        if _validate_one_tvl_file(file_path, strict=strict, verbose=verbose):
             passed += 1
-            if verbose:
-                print(f"OK: {file_path}")
-
-        except yaml.YAMLError as e:
-            print(f"FAILED: {file_path}", file=sys.stderr)
-            print(f"  - Invalid YAML: {e}", file=sys.stderr)
-            failed += 1
-        except Exception as e:
-            print(f"FAILED: {file_path}", file=sys.stderr)
-            print(f"  - Unexpected error: {e}", file=sys.stderr)
+        else:
             failed += 1
 
     return passed, failed
@@ -132,6 +142,30 @@ def find_tvl_files(directory: Path, recursive: bool = True) -> list[Path]:
             files.extend(directory.glob(pattern))
 
     return sorted(files)
+
+
+def _collect_files_to_validate(
+    args: argparse.Namespace,
+) -> tuple[list[Path], list[str]]:
+    """Expand the CLI paths into the files to validate and the searched roots."""
+    files_to_validate: list[Path] = []
+
+    if not args.files:
+        # Search current directory
+        files_to_validate = find_tvl_files(Path.cwd(), recursive=args.recursive)
+        return files_to_validate, [str(Path.cwd())]
+
+    for file_path in args.files:
+        if file_path.is_dir():
+            files_to_validate.extend(
+                find_tvl_files(file_path, recursive=args.recursive)
+            )
+        else:
+            # A missing path is kept so validate_tvl_files() reports it
+            # and counts it as a failure: a CI gate must not pass when
+            # the input it was pointed at does not exist (#2414).
+            files_to_validate.append(file_path)
+    return files_to_validate, [str(p) for p in args.files]
 
 
 def main() -> int:
@@ -187,25 +221,7 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    # Collect files to validate
-    files_to_validate: list[Path] = []
-
-    if args.files:
-        for file_path in args.files:
-            if file_path.is_dir():
-                files_to_validate.extend(
-                    find_tvl_files(file_path, recursive=args.recursive)
-                )
-            else:
-                # A missing path is kept so validate_tvl_files() reports it
-                # and counts it as a failure: a CI gate must not pass when
-                # the input it was pointed at does not exist (#2414).
-                files_to_validate.append(file_path)
-        searched = [str(p) for p in args.files]
-    else:
-        # Search current directory
-        files_to_validate = find_tvl_files(Path.cwd(), recursive=args.recursive)
-        searched = [str(Path.cwd())]
+    files_to_validate, searched = _collect_files_to_validate(args)
 
     if not files_to_validate:
         if args.allow_empty:

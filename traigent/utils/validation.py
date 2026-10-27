@@ -34,6 +34,9 @@ logger = get_logger(__name__)
 # thousand-line message; the summary error still states the true totals.
 MAX_REPORTED_DATASET_ROW_ERRORS = 20
 
+# Shared message for relative dataset paths with no base directory.
+_DATASET_BASE_REQUIRED_MSG = "Dataset base directory is required for a relative path"
+
 
 @dataclass
 class ValidationError:
@@ -105,37 +108,37 @@ class ValidationResult:
 
             raise ValidationException(full_message)
 
+    @staticmethod
+    def _format_issue_lines(issues: list[ValidationError]) -> list[str]:
+        lines: list[str] = []
+        for issue in issues:
+            lines.append(f"  • {issue.field}: {issue.message}")
+            if issue.suggestions:
+                lines.extend(f"    💡 {suggestion}" for suggestion in issue.suggestions)
+        return lines
+
     def get_feedback(self, include_warnings: bool = True) -> str:
         """Get user-friendly feedback message."""
-        lines = []
+        lines: list[str] = []
 
         # Add errors
         if self.errors:
             lines.append("❌ Validation Errors:")
-            for error in self.errors:
-                lines.append(f"  • {error.field}: {error.message}")
-                if error.suggestions:
-                    for suggestion in error.suggestions:
-                        lines.append(f"    💡 {suggestion}")
+            lines.extend(self._format_issue_lines(self.errors))
 
         # Add warnings
         if include_warnings and self.warnings:
             if lines:
                 lines.append("")
             lines.append("⚠️  Warnings:")
-            for warning in self.warnings:
-                lines.append(f"  • {warning.field}: {warning.message}")
-                if warning.suggestions:
-                    for suggestion in warning.suggestions:
-                        lines.append(f"    💡 {suggestion}")
+            lines.extend(self._format_issue_lines(self.warnings))
 
         # Add general suggestions
         if self.suggestions:
             if lines:
                 lines.append("")
             lines.append("💡 Suggestions:")
-            for suggestion in self.suggestions:
-                lines.append(f"  • {suggestion}")
+            lines.extend(f"  • {suggestion}" for suggestion in self.suggestions)
 
         # Add success message if valid
         if self.is_valid and not self.warnings:
@@ -957,7 +960,7 @@ def _resolve_dataset_path(
         if dataset_base is None:
             result.add_error(
                 "dataset",
-                "Dataset base directory is required for a relative path",
+                _DATASET_BASE_REQUIRED_MSG,
                 error_code="SECURITY_ERROR",
             )
             return None
@@ -996,7 +999,7 @@ def _validate_dataset_file(
         if dataset_base is None:
             result.add_error(
                 "dataset",
-                "Dataset base directory is required for a relative path",
+                _DATASET_BASE_REQUIRED_MSG,
                 error_code="SECURITY_ERROR",
             )
             return None
@@ -1349,6 +1352,32 @@ def _numeric_bounds_domain(
             )
 
 
+def _validate_default_dict_domain(
+    param_name: str,
+    value: Any,
+    param_values: dict[str, Any],
+) -> None:
+    """Check a default against a dict-style domain (choices or numeric bounds)."""
+    param_type = Validators._infer_param_type(param_values)
+    if param_type in {"categorical", "choice"}:
+        choices = param_values.get("choices") or param_values.get("values")
+        if isinstance(choices, (list, tuple)):
+            _validate_default_choice(param_name, value, choices)
+        return
+
+    if param_type in Validators._NUMERIC_TYPES:
+        low = param_values.get("low", param_values.get("min"))
+        high = param_values.get("high", param_values.get("max"))
+        _numeric_bounds_domain(
+            param_name,
+            value,
+            low,
+            high,
+            integer=param_type in {"int", "integer"},
+            step=None if param_values.get("log") else param_values.get("step"),
+        )
+
+
 def _validate_default_config_value(
     param_name: str,
     value: Any,
@@ -1368,24 +1397,7 @@ def _validate_default_config_value(
         return
 
     if isinstance(param_values, dict):
-        param_type = Validators._infer_param_type(param_values)
-        if param_type in {"categorical", "choice"}:
-            choices = param_values.get("choices") or param_values.get("values")
-            if isinstance(choices, (list, tuple)):
-                _validate_default_choice(param_name, value, choices)
-            return
-
-        if param_type in Validators._NUMERIC_TYPES:
-            low = param_values.get("low", param_values.get("min"))
-            high = param_values.get("high", param_values.get("max"))
-            _numeric_bounds_domain(
-                param_name,
-                value,
-                low,
-                high,
-                integer=param_type in {"int", "integer"},
-                step=None if param_values.get("log") else param_values.get("step"),
-            )
+        _validate_default_dict_domain(param_name, value, param_values)
 
 
 def _validate_default_config_against_config_space(
@@ -1435,35 +1447,38 @@ def validate_probability(value: float, name: str) -> None:
     result.raise_if_invalid()
 
 
+def _raise_api_value_error(result: ValidationResult) -> None:
+    """Raise the ValueError that API functions expect for a failed result."""
+    if not result.errors:
+        raise ValueError("Validation failed")
+    msg = result.errors[0].message
+    if "positive" in msg.lower():
+        raise ValueError("Must be positive") from None
+    if "invalid choice" in msg.lower():
+        raise ValueError("Must be one of")
+    if "expected dict" in msg.lower():
+        raise ValueError(f"Expected dict, got {msg.split('got ')[-1]}")
+    raise ValueError(msg)
+
+
 def validate_or_raise(result: ValidationResult) -> None:
     """Raise exception if validation failed (common_validators compatibility)."""
-    if not result.is_valid:
-        # Check if we need ValueError for backward compatibility (API functions)
-        import inspect
+    if result.is_valid:
+        return
+    # Check if we need ValueError for backward compatibility (API functions)
+    import inspect
 
-        frame = inspect.currentframe()
-        if (
-            frame
-            and frame.f_back
-            and frame.f_back.f_code.co_filename.endswith("api/functions.py")
-        ):
-            # API functions expect ValueError for backward compatibility
-            if result.errors:
-                first_error = result.errors[0]
-                msg = first_error.message
-                if "positive" in msg.lower():
-                    raise ValueError("Must be positive") from None
-                elif "invalid choice" in msg.lower():
-                    raise ValueError("Must be one of")
-                elif "expected dict" in msg.lower():
-                    raise ValueError(f"Expected dict, got {msg.split('got ')[-1]}")
-                else:
-                    raise ValueError(msg)
-            else:
-                raise ValueError("Validation failed")
-        else:
-            # Normal case - use ValidationError
-            result.raise_if_invalid()
+    frame = inspect.currentframe()
+    if (
+        frame
+        and frame.f_back
+        and frame.f_back.f_code.co_filename.endswith("api/functions.py")
+    ):
+        # API functions expect ValueError for backward compatibility
+        _raise_api_value_error(result)
+    else:
+        # Normal case - use ValidationError
+        result.raise_if_invalid()
 
 
 # ===== High-Level Validators =====

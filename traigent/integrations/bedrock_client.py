@@ -76,6 +76,43 @@ def _extract_text_from_messages_response(body: Mapping[str, Any]) -> str:
     return "".join(pieces).strip()
 
 
+def _ai21_request_messages(
+    messages: list[Mapping[str, Any]] | str | Iterable[str],
+) -> list[dict[str, str]]:
+    """Build AI21 Jamba request messages (plain-text content) from caller input."""
+    if isinstance(messages, str):
+        return [{"role": "user", "content": messages}]
+    request_messages: list[dict[str, str]] = []
+    for item in _coerce_user_messages(messages):
+        role = str(item.get("role", "user"))
+        content = item.get("content", "")
+        if isinstance(content, list):
+            text = "\n".join(
+                str(block.get("text", ""))
+                for block in content
+                if isinstance(block, Mapping)
+            )
+        else:
+            text = str(content)
+        request_messages.append({"role": role, "content": text})
+    return request_messages
+
+
+def _ai21_text_and_usage(data: Any) -> tuple[str, Any]:
+    """Extract the reply text and usage block from an AI21 Jamba response."""
+    if not isinstance(data, Mapping):
+        return str(data), None
+    text = ""
+    choices = data.get("choices") or []
+    if choices:
+        message = choices[0].get("message") if isinstance(choices[0], Mapping) else {}
+        if isinstance(message, Mapping):
+            text = str(message.get("content", "")).strip()
+    if not text:
+        text = str(data.get("outputText", "")).strip()
+    return text, data.get("usage") or data.get("tokenUsage")
+
+
 @dataclass
 class BedrockChatResponse:
     text: str
@@ -250,23 +287,7 @@ class BedrockChatClient:
     ) -> BedrockChatResponse:
         """Invoke an AI21 Jamba family model via Bedrock."""
 
-        if isinstance(messages, str):
-            request_messages = [{"role": "user", "content": messages}]
-        else:
-            coalesced = _coerce_user_messages(messages)
-            request_messages = []
-            for item in coalesced:
-                role = str(item.get("role", "user"))
-                content = item.get("content", "")
-                if isinstance(content, list):
-                    text = "\n".join(
-                        str(block.get("text", ""))
-                        for block in content
-                        if isinstance(block, Mapping)
-                    )
-                else:
-                    text = str(content)
-                request_messages.append({"role": role, "content": text})
+        request_messages = _ai21_request_messages(messages)
 
         client = self._ensure_client()
         payload = {
@@ -285,21 +306,7 @@ class BedrockChatClient:
         else:
             data = json.loads(raw_body)
 
-        text = ""
-        if isinstance(data, Mapping):
-            choices = data.get("choices") or []
-            if choices:
-                message = (
-                    choices[0].get("message") if isinstance(choices[0], Mapping) else {}
-                )
-                if isinstance(message, Mapping):
-                    text = str(message.get("content", "")).strip()
-            if not text:
-                text = str(data.get("outputText", "")).strip()
-            usage = data.get("usage") or data.get("tokenUsage")
-        else:
-            text = str(data)
-            usage = None
+        text, usage = _ai21_text_and_usage(data)
         return BedrockChatResponse(text=text, raw=data, usage=usage, model=model_id)
 
     def invoke_stream(

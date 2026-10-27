@@ -49,6 +49,10 @@ TRIALS_JSON_FILE = "trials.json.gz"
 TRIALS_PKL_FILE = "trials.pkl.gz"
 TRIALS_SUMMARY_FILE = "trials_summary.json"
 
+_TRAIGENT_API_TYPES = "traigent.api.types"
+_TRAIGENT_CORE_TYPES = "traigent.core.types"
+_TRAIGENT_OPTIMIZERS_RESULTS = "traigent.optimizers.results"
+
 _SAFE_PICKLE_GLOBALS = frozenset(
     {
         ("_codecs", "encode"),
@@ -61,24 +65,24 @@ _SAFE_PICKLE_GLOBALS = frozenset(
         ("datetime", "datetime"),
         ("datetime", "timedelta"),
         ("datetime", "timezone"),
-        ("traigent.api.types", "OptimizationStatus"),
-        ("traigent.api.types", "Trial"),
-        ("traigent.api.types", "TrialError"),
-        ("traigent.api.types", "TrialResult"),
-        ("traigent.api.types", "TrialStatus"),
-        ("traigent.core.types", "OptimizationStatus"),
-        ("traigent.core.types", "Trial"),
-        ("traigent.core.types", "TrialResult"),
-        ("traigent.core.types", "TrialStatus"),
-        ("traigent.optimizers.results", "OptimizationResult"),
-        ("traigent.optimizers.results", "Trial"),
+        (_TRAIGENT_API_TYPES, "OptimizationStatus"),
+        (_TRAIGENT_API_TYPES, "Trial"),
+        (_TRAIGENT_API_TYPES, "TrialError"),
+        (_TRAIGENT_API_TYPES, "TrialResult"),
+        (_TRAIGENT_API_TYPES, "TrialStatus"),
+        (_TRAIGENT_CORE_TYPES, "OptimizationStatus"),
+        (_TRAIGENT_CORE_TYPES, "Trial"),
+        (_TRAIGENT_CORE_TYPES, "TrialResult"),
+        (_TRAIGENT_CORE_TYPES, "TrialStatus"),
+        (_TRAIGENT_OPTIMIZERS_RESULTS, "OptimizationResult"),
+        (_TRAIGENT_OPTIMIZERS_RESULTS, "Trial"),
         # The renamed batch types. The old names above stay so existing
         # artifacts keep loading; without the new ones a freshly pickled
         # BatchTrial/BatchResult would be rejected by RestrictedUnpickler --
         # the aliases would protect old data while new data of the same type
         # became unrestorable.
-        ("traigent.optimizers.results", "BatchResult"),
-        ("traigent.optimizers.results", "BatchTrial"),
+        (_TRAIGENT_OPTIMIZERS_RESULTS, "BatchResult"),
+        (_TRAIGENT_OPTIMIZERS_RESULTS, "BatchTrial"),
     }
 )
 

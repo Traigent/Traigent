@@ -864,50 +864,62 @@ class TrendAnalyzer:
         """Resolve the provided inputs into a list of values for analysis."""
 
         if isinstance(data_points_or_metric_name, str):
-            metric_name = data_points_or_metric_name
             if isinstance(metric_name_or_period, int):
                 period_days = metric_name_or_period
+            return self._resolve_named_metric_input(
+                data_points_or_metric_name, period_days
+            )
 
-            if metric_name not in self.metrics_history:
-                return {"error": f"No data available for metric: {metric_name}"}
-
-            cutoff_date = datetime.now(UTC) - timedelta(days=period_days)
-            recent_data = [
-                (timestamp, value)
-                for timestamp, value in self.metrics_history[metric_name]
-                if timestamp >= cutoff_date
-            ]
-
-            if len(recent_data) < 3:
-                return {"error": "Insufficient data for trend analysis"}
-
-            values = [value for _, value in recent_data]
-            return {
-                "values": values,
-                "metric_name": metric_name,
-                "period_days": period_days,
-            }
-
-        data_points = data_points_or_metric_name
         metric_name = metric_name_or_period if metric_name_or_period else "value"
+        return self._resolve_data_points_input(
+            data_points_or_metric_name, metric_name, period_days
+        )
 
+    def _resolve_named_metric_input(
+        self, metric_name: str, period_days: int
+    ) -> dict[str, Any]:
+        if metric_name not in self.metrics_history:
+            return {"error": f"No data available for metric: {metric_name}"}
+
+        cutoff_date = datetime.now(UTC) - timedelta(days=period_days)
+        recent_data = [
+            (timestamp, value)
+            for timestamp, value in self.metrics_history[metric_name]
+            if timestamp >= cutoff_date
+        ]
+
+        if len(recent_data) < 3:
+            return {"error": "Insufficient data for trend analysis"}
+
+        values = [value for _, value in recent_data]
+        return {
+            "values": values,
+            "metric_name": metric_name,
+            "period_days": period_days,
+        }
+
+    @staticmethod
+    def _timestamped_point(point: Any, metric_name: str) -> tuple[datetime, float]:
+        if not isinstance(point, dict):
+            return (datetime.now(UTC), float(point))
+        timestamp = point.get("timestamp", datetime.now(UTC))
+        if metric_name in point:
+            value = point[metric_name]
+        elif "value" in point:
+            value = point["value"]
+        else:
+            value = 0
+        return (timestamp, float(value))
+
+    def _resolve_data_points_input(
+        self, data_points: Any, metric_name: str, period_days: int
+    ) -> dict[str, Any]:
         if not data_points:
             return {"error": "No data points provided"}
 
-        timestamped_values: list[tuple[datetime, float]] = []
-        for point in data_points:
-            if isinstance(point, dict):
-                timestamp = point.get("timestamp", datetime.now(UTC))
-                if metric_name in point:
-                    value = point[metric_name]
-                elif "value" in point:
-                    value = point["value"]
-                else:
-                    value = 0
-                timestamped_values.append((timestamp, float(value)))
-            else:
-                timestamped_values.append((datetime.now(UTC), float(point)))
-
+        timestamped_values = [
+            self._timestamped_point(point, metric_name) for point in data_points
+        ]
         timestamped_values.sort(key=lambda item: item[0])
         values = [value for _, value in timestamped_values]
 
@@ -1160,6 +1172,25 @@ class TrendAnalyzer:
             "trends_distribution": dict(direction_counts),
         }
 
+    @staticmethod
+    def _timestamped_values(
+        data_points: Any, metric_name: str
+    ) -> list[tuple[Any, Any]]:
+        """Extract ``(timestamp, value)`` pairs from dict points, skipping others."""
+        pairs: list[tuple[Any, Any]] = []
+        for point in data_points:
+            if not isinstance(point, dict):
+                continue
+            timestamp = point.get("timestamp", datetime.now(UTC))
+            if metric_name in point:
+                value = point[metric_name]
+            elif "value" in point:
+                value = point["value"]
+            else:
+                value = 0
+            pairs.append((timestamp, value))
+        return pairs
+
     def detect_seasonality(self, data_points, metric_name: str) -> dict[str, Any]:
         """Detect seasonal patterns in data."""
         if not data_points or len(data_points) < 24:
@@ -1170,18 +1201,7 @@ class TrendAnalyzer:
                 "note": "Insufficient data for seasonality detection",
             }
 
-        # Extract values and timestamps
-        timestamped_values = []
-        for point in data_points:
-            if isinstance(point, dict):
-                timestamp = point.get("timestamp", datetime.now(UTC))
-                if metric_name in point:
-                    value = point[metric_name]
-                elif "value" in point:
-                    value = point["value"]
-                else:
-                    value = 0
-                timestamped_values.append((timestamp, value))
+        timestamped_values = self._timestamped_values(data_points, metric_name)
 
         # Sort by timestamp
         timestamped_values.sort(key=lambda x: x[0])
@@ -1189,16 +1209,14 @@ class TrendAnalyzer:
         # Simple seasonality detection - check for daily patterns
         hourly_averages: dict[int, list[float]] = {}
         for timestamp, value in timestamped_values:
-            hour = timestamp.hour
-            if hour not in hourly_averages:
-                hourly_averages[hour] = []
-            hourly_averages[hour].append(value)
+            hourly_averages.setdefault(timestamp.hour, []).append(value)
 
         # Calculate average for each hour
-        hour_means = {}
-        for hour, values in hourly_averages.items():
-            if values:
-                hour_means[hour] = statistics.mean(values)
+        hour_means = {
+            hour: statistics.mean(values)
+            for hour, values in hourly_averages.items()
+            if values
+        }
 
         if len(hour_means) < 12:  # Need at least half the hours
             return {
@@ -1223,23 +1241,36 @@ class TrendAnalyzer:
             "pattern_strength": pattern_strength,
         }
 
+    @staticmethod
+    def _extract_metric_points(
+        data_points: Any, metric_name: str
+    ) -> list[tuple[dict[str, Any], Any]]:
+        """Pair each dict point with its metric (or generic ``value``) reading."""
+        values: list[tuple[dict[str, Any], Any]] = []
+        for point in data_points:
+            if not isinstance(point, dict):
+                continue
+            if metric_name in point:
+                values.append((point, point[metric_name]))
+            elif "value" in point:
+                values.append((point, point["value"]))
+        return values
+
+    @staticmethod
+    def _anomaly_severity(z_score: float) -> str | None:
+        """Map a z-score to a severity label (``None`` when not anomalous)."""
+        if z_score > 3:  # 3 sigma rule
+            return "high" if z_score > 4 else "medium"
+        if z_score > 2:  # 2 sigma rule for low severity
+            return "low"
+        return None
+
     def detect_anomalies(self, data_points, metric_name: str) -> list[dict[str, Any]]:
         """Detect anomalies in data."""
         if not data_points or len(data_points) < 3:
             return []
 
-        # Extract values
-        values = []
-        for point in data_points:
-            if isinstance(point, dict):
-                if metric_name in point:
-                    value = point[metric_name]
-                elif "value" in point:
-                    value = point["value"]
-                else:
-                    continue
-                values.append((point, value))
-
+        values = self._extract_metric_points(data_points, metric_name)
         if len(values) < 3:
             return []
 
@@ -1248,34 +1279,25 @@ class TrendAnalyzer:
         mean_val = statistics.mean(value_list)
         std_val = statistics.stdev(value_list) if len(value_list) > 1 else 0
 
-        anomalies = []
+        anomalies: list[dict[str, Any]] = []
+        if std_val <= 0:
+            return anomalies
 
         # Z-score based anomaly detection
         for point, value in values:
-            if std_val > 0:
-                z_score = abs(value - mean_val) / std_val
-
-                if z_score > 3:  # 3 sigma rule
-                    severity = "high" if z_score > 4 else "medium"
-                    anomalies.append(
-                        {
-                            "timestamp": point.get("timestamp", datetime.now(UTC)),
-                            "value": value,
-                            "z_score": z_score,
-                            "severity": severity,
-                            "type": "statistical_outlier",
-                        }
-                    )
-                elif z_score > 2:  # 2 sigma rule for low severity
-                    anomalies.append(
-                        {
-                            "timestamp": point.get("timestamp", datetime.now(UTC)),
-                            "value": value,
-                            "z_score": z_score,
-                            "severity": "low",
-                            "type": "statistical_outlier",
-                        }
-                    )
+            z_score = abs(value - mean_val) / std_val
+            severity = self._anomaly_severity(z_score)
+            if severity is None:
+                continue
+            anomalies.append(
+                {
+                    "timestamp": point.get("timestamp", datetime.now(UTC)),
+                    "value": value,
+                    "z_score": z_score,
+                    "severity": severity,
+                    "type": "statistical_outlier",
+                }
+            )
 
         return anomalies
 
@@ -1290,6 +1312,33 @@ class PredictiveAnalytics:
         self.trend_analyzer = TrendAnalyzer()
         logger.info("PredictiveAnalytics initialized")
 
+    @staticmethod
+    def _collect_metric_series(
+        historical_data: list[dict[str, Any]],
+    ) -> dict[str, list[Any]]:
+        """Group metric values by name across the historical data points."""
+        trends: dict[str, list[Any]] = {}
+        for data_point in historical_data:
+            if "metrics" not in data_point:
+                continue
+            for metric_name, value in data_point["metrics"].items():
+                trends.setdefault(metric_name, []).append(value)
+        return trends
+
+    @staticmethod
+    def _summarize_trends(trends: dict[str, list[Any]]) -> dict[str, dict[str, Any]]:
+        """Summarize direction, strength and volatility of each metric series."""
+        trend_analysis: dict[str, dict[str, Any]] = {}
+        for metric_name, values in trends.items():
+            if len(values) < 3:
+                continue
+            trend_analysis[metric_name] = {
+                "direction": "increasing" if values[-1] > values[0] else "decreasing",
+                "strength": abs(values[-1] - values[0]) / max(abs(values[0]), 0.001),
+                "volatility": statistics.stdev(values) if len(values) > 1 else 0,
+            }
+        return trend_analysis
+
     def analyze_patterns(self, historical_data: list[dict[str, Any]]) -> dict[str, Any]:
         """Analyze patterns in historical optimization data."""
         if not historical_data:
@@ -1301,27 +1350,8 @@ class PredictiveAnalytics:
                 "confidence": 0.0,
             }
 
-        # Extract trends from historical data
-        trends: dict[str, list[Any]] = {}
-        for data_point in historical_data:
-            if "metrics" in data_point:
-                for metric_name, value in data_point["metrics"].items():
-                    if metric_name not in trends:
-                        trends[metric_name] = []
-                    trends[metric_name].append(value)
-
-        # Analyze each metric trend
-        trend_analysis = {}
-        for metric_name, values in trends.items():
-            if len(values) >= 3:
-                trend_analysis[metric_name] = {
-                    "direction": (
-                        "increasing" if values[-1] > values[0] else "decreasing"
-                    ),
-                    "strength": abs(values[-1] - values[0])
-                    / max(abs(values[0]), 0.001),
-                    "volatility": statistics.stdev(values) if len(values) > 1 else 0,
-                }
+        trends = self._collect_metric_series(historical_data)
+        trend_analysis = self._summarize_trends(trends)
 
         # Determine if there are any warnings
         warnings = []

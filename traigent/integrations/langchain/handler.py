@@ -221,32 +221,36 @@ def _extract_response_token_usage(response: Any) -> tuple[int, int, int]:
     return 0, 0, 0
 
 
+def _nonempty_str(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _model_from_mapping(mapping: Any) -> str | None:
+    """Model name from a ``model_name``/``model`` mapping, if it is one."""
+    if not isinstance(mapping, dict):
+        return None
+    return _nonempty_str(mapping.get("model_name") or mapping.get("model"))
+
+
 def _extract_response_model(response: Any) -> str | None:
-    llm_output = getattr(response, "llm_output", None)
-    if isinstance(llm_output, dict):
-        model = llm_output.get("model_name") or llm_output.get("model")
-        if isinstance(model, str) and model:
-            return model
+    model = _model_from_mapping(getattr(response, "llm_output", None))
+    if model:
+        return model
 
-    response_metadata = getattr(response, "response_metadata", None)
-    if isinstance(response_metadata, dict):
-        model = response_metadata.get("model_name") or response_metadata.get("model")
-        if isinstance(model, str) and model:
-            return model
+    model = _model_from_mapping(getattr(response, "response_metadata", None))
+    if model:
+        return model
 
-    model = getattr(response, "model", None)
-    if isinstance(model, str) and model:
+    model = _nonempty_str(getattr(response, "model", None))
+    if model:
         return model
 
     for generation in _iter_generation_payloads(response):
         for candidate in (getattr(generation, "message", None), generation):
-            metadata = getattr(candidate, "response_metadata", None)
-            if isinstance(metadata, dict):
-                model = metadata.get("model_name") or metadata.get("model")
-                if isinstance(model, str) and model:
-                    return model
-            model = getattr(candidate, "model", None)
-            if isinstance(model, str) and model:
+            model = _model_from_mapping(
+                getattr(candidate, "response_metadata", None)
+            ) or _nonempty_str(getattr(candidate, "model", None))
+            if model:
                 return model
 
     return None

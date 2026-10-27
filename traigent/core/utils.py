@@ -481,41 +481,17 @@ def debug_print_object(obj: Any, max_depth: int = 2, current_depth: int = 0) -> 
         return f"{indent}None"
 
     if isinstance(obj, dict):
-        if not obj:
-            return f"{indent}{{}}"
-        result = f"{indent}{{\n"
-        for key, value in obj.items():
-            result += f"{indent}  {key}: {debug_print_object(value, max_depth, current_depth + 1)}\n"
-        result += f"{indent}}}"
-        return result
+        return _debug_print_dict(obj, indent, max_depth, current_depth)
 
     if isinstance(obj, (list, tuple)):
-        if not obj:
-            return f"{indent}[]"
-        result = f"{indent}[\n"
-        for item in obj[:5]:  # Limit to first 5 items
-            result += (
-                f"{indent}  {debug_print_object(item, max_depth, current_depth + 1)}\n"
-            )
-        if len(obj) > 5:
-            result += f"{indent}  ... ({len(obj) - 5} more items)\n"
-        result += f"{indent}]"
-        return result
+        return _debug_print_sequence(obj, indent, max_depth, current_depth)
 
     # For other objects, try to get a reasonable representation
     try:
         if hasattr(obj, "__dict__"):
             attrs = vars(obj)
             if attrs:
-                result = f"{indent}{type(obj).__name__}(\n"
-                for key, value in list(attrs.items())[
-                    :3
-                ]:  # Limit to first 3 attributes
-                    result += f"{indent}  {key}: {debug_print_object(value, max_depth, current_depth + 1)}\n"
-                if len(attrs) > 3:
-                    result += f"{indent}  ... ({len(attrs) - 3} more attributes)\n"
-                result += f"{indent})"
-                return result
+                return _debug_print_attrs(obj, attrs, indent, max_depth, current_depth)
     except Exception as e:
         # If we fail to introspect the object, log it and fall through to string representation
         logger.debug(
@@ -524,6 +500,46 @@ def debug_print_object(obj: Any, max_depth: int = 2, current_depth: int = 0) -> 
 
     # Fallback to string representation
     return f"{indent}{str(obj)}"
+
+
+def _debug_print_dict(
+    obj: dict[Any, Any], indent: str, max_depth: int, current_depth: int
+) -> str:
+    if not obj:
+        return f"{indent}{{}}"
+    result = f"{indent}{{\n"
+    for key, value in obj.items():
+        result += f"{indent}  {key}: {debug_print_object(value, max_depth, current_depth + 1)}\n"
+    result += f"{indent}}}"
+    return result
+
+
+def _debug_print_sequence(
+    obj: list[Any] | tuple[Any, ...], indent: str, max_depth: int, current_depth: int
+) -> str:
+    if not obj:
+        return f"{indent}[]"
+    result = f"{indent}[\n"
+    for item in obj[:5]:  # Limit to first 5 items
+        result += (
+            f"{indent}  {debug_print_object(item, max_depth, current_depth + 1)}\n"
+        )
+    if len(obj) > 5:
+        result += f"{indent}  ... ({len(obj) - 5} more items)\n"
+    result += f"{indent}]"
+    return result
+
+
+def _debug_print_attrs(
+    obj: Any, attrs: dict[str, Any], indent: str, max_depth: int, current_depth: int
+) -> str:
+    result = f"{indent}{type(obj).__name__}(\n"
+    for key, value in list(attrs.items())[:3]:  # Limit to first 3 attributes
+        result += f"{indent}  {key}: {debug_print_object(value, max_depth, current_depth + 1)}\n"
+    if len(attrs) > 3:
+        result += f"{indent}  ... ({len(attrs) - 3} more attributes)\n"
+    result += f"{indent})"
+    return result
 
 
 # =============================================================================

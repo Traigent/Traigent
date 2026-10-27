@@ -391,6 +391,56 @@ def pre_trial_validate_config(
     return True
 
 
+_EXAMPLE_COST_KEYS = ("total_cost", "cost", "example_cost")
+
+
+def _example_cost_value(example: Any) -> Any:
+    """First non-None cost reported in an example's metrics, else None."""
+    metrics = getattr(example, "metrics", {}) or {}
+    for key in _EXAMPLE_COST_KEYS:
+        if metrics.get(key) is not None:
+            return metrics[key]
+    return None
+
+
+def _total_cost_from_examples(
+    example_results: Any, trial_id: str, current_total: float | None
+) -> float | None:
+    """Sum per-example costs, or keep/clear ``current_total`` per the cost rules."""
+    total_cost_examples = 0.0
+    has_cost_samples = False
+    example_rows = []
+    example_ok = []
+    for example in example_results:
+        row_metrics = getattr(example, "metrics", None) or {}
+        if getattr(example, "cost_unmeasured", None) is True:
+            # A row object that disowns its own cost (HybridExampleResult)
+            # is unmeasured whatever its metrics dict happens to carry.
+            row_metrics = {**row_metrics, "cost_unmeasured": 1.0}
+        example_rows.append(row_metrics)
+        example_ok.append(bool(getattr(example, "success", True)))
+        cost_value = _example_cost_value(example)
+        if cost_value is None:
+            continue
+        try:
+            total_cost_examples += float(cost_value)
+            has_cost_samples = True
+        except (TypeError, ValueError):
+            logger.debug(
+                "Unable to parse example cost %s for trial %s",
+                cost_value,
+                trial_id,
+            )
+
+    # A successful row without a measured cost makes the sum a floor, not
+    # the trial's cost (shared classifier, #2517).
+    if not has_cost_samples:
+        return current_total
+    if trial_cost_unknown(example_rows, example_ok):
+        return None
+    return total_cost_examples
+
+
 def extract_cost_from_results(
     eval_result: Any,
     progress_state: dict[str, Any] | None,
@@ -421,41 +471,9 @@ def extract_cost_from_results(
         if examples_attempted is None:
             examples_attempted = len(eval_result.example_results)
 
-        total_cost_examples = 0.0
-        has_cost_samples = False
-        example_rows = []
-        example_ok = []
-        for example in eval_result.example_results:
-            row_metrics = getattr(example, "metrics", None) or {}
-            if getattr(example, "cost_unmeasured", None) is True:
-                # A row object that disowns its own cost (HybridExampleResult)
-                # is unmeasured whatever its metrics dict happens to carry.
-                row_metrics = {**row_metrics, "cost_unmeasured": 1.0}
-            example_rows.append(row_metrics)
-            example_ok.append(bool(getattr(example, "success", True)))
-            metrics = getattr(example, "metrics", {}) or {}
-            cost_value = None
-            for key in ("total_cost", "cost", "example_cost"):
-                if metrics.get(key) is not None:
-                    cost_value = metrics[key]
-                    break
-            if cost_value is not None:
-                try:
-                    total_cost_examples += float(cost_value)
-                    has_cost_samples = True
-                except (TypeError, ValueError):
-                    logger.debug(
-                        "Unable to parse example cost %s for trial %s",
-                        cost_value,
-                        trial_id,
-                    )
-
-        # A successful row without a measured cost makes the sum a floor, not
-        # the trial's cost (shared classifier, #2517).
-        if has_cost_samples and not trial_cost_unknown(example_rows, example_ok):
-            total_cost = total_cost_examples
-        elif has_cost_samples:
-            total_cost = None
+        total_cost = _total_cost_from_examples(
+            eval_result.example_results, trial_id, total_cost
+        )
 
     # Fallback to aggregated metrics
     if total_cost is None and hasattr(eval_result, "aggregated_metrics"):

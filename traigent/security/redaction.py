@@ -62,6 +62,9 @@ _EMBEDDED_CREDENTIAL_PATTERNS = (
 )
 
 
+_REDACTED_API_KEY = "[REDACTED:api_key]"
+
+
 def redact_embedded_credentials(value: str) -> str:
     """Mask credential shapes glued to identifiers (``sess_AKIA...``).
 
@@ -69,7 +72,7 @@ def redact_embedded_credentials(value: str) -> str:
     credential preceded by ``_``. Credential shapes only; no PII heuristics.
     """
     for pattern in _EMBEDDED_CREDENTIAL_PATTERNS:
-        value = pattern.sub("[REDACTED:api_key]", value)
+        value = pattern.sub(_REDACTED_API_KEY, value)
     return value
 
 
@@ -304,11 +307,11 @@ def redact_sensitive_text(value: str | None) -> str | None:
     # patterns below, and a PEM block spans lines.
     redacted = _PEM_PRIVATE_KEY_PATTERN.sub("[REDACTED:private_key]", redacted)
     redacted = _JWT_PATTERN.sub("[REDACTED:jwt]", redacted)
-    redacted = _VENDOR_TOKEN_PATTERN.sub("[REDACTED:api_key]", redacted)
+    redacted = _VENDOR_TOKEN_PATTERN.sub(_REDACTED_API_KEY, redacted)
     redacted = _EMAIL_PATTERN.sub("[REDACTED:email]", redacted)
     redacted = _SSN_PATTERN.sub("[REDACTED:ssn]", redacted)
     redacted = _CREDIT_CARD_CANDIDATE.sub(_redact_credit_card, redacted)
-    redacted = _API_KEY_PATTERN.sub("[REDACTED:api_key]", redacted)
+    redacted = _API_KEY_PATTERN.sub(_REDACTED_API_KEY, redacted)
     redacted = _BEARER_TOKEN_PATTERN.sub("[REDACTED:bearer_token]", redacted)
     return redacted
 

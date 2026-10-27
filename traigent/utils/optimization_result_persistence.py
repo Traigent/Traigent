@@ -109,6 +109,7 @@ _UNRESTORED_DEFAULTS: dict[str, Any] = {"source": UNRESTORED_SOURCE}
 _LEGACY_CONFIG_STATE = "config_state"
 _LEGACY_PERSISTENCE = "persistence"
 _LEGACY_FORMATS = frozenset({_LEGACY_CONFIG_STATE, _LEGACY_PERSISTENCE})
+_UNNAMED_ARTIFACT_LABEL = "<unnamed>"
 
 # Fields that MUST survive a save -> load round trip. Each is durable data about
 # what the run did, not a handle into live machine-local state.
@@ -715,7 +716,7 @@ def _legacy_view(
         # absent, and those take dataclass defaults below.
         return dict(data), []
 
-    label = artifact_name or "<unnamed>"
+    label = artifact_name or _UNNAMED_ARTIFACT_LABEL
     view: dict[str, Any] = {
         key: data[key]
         for key in (

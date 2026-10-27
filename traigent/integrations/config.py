@@ -223,6 +223,31 @@ class FrameworkConstraints:
             # Return common constraints for unknown frameworks
             return cls.COMMON_CONSTRAINTS
 
+    @staticmethod
+    def _append_value_issues(
+        constraint: ParameterConstraints,
+        param_name: str,
+        param_value: Any,
+        issues: list[str],
+    ) -> None:
+        """Append range and allowed-value issues in their validation order."""
+        if constraint.min_value is not None and param_value < constraint.min_value:
+            issues.append(
+                f"Parameter '{param_name}' value {param_value} "
+                f"is below minimum {constraint.min_value}"
+            )
+
+        if constraint.max_value is not None and param_value > constraint.max_value:
+            issues.append(
+                f"Parameter '{param_name}' value {param_value} "
+                f"is above maximum {constraint.max_value}"
+            )
+
+        if constraint.allowed_values and param_value not in constraint.allowed_values:
+            issues.append(
+                f"Parameter '{param_name}' value {param_value} not in allowed values"
+            )
+
     @classmethod
     def validate_parameter(
         cls, framework: str, param_name: str, param_value: Any
@@ -259,24 +284,8 @@ class FrameworkConstraints:
             # Return early if wrong type to avoid comparison errors
             return issues
 
-        # Value range check (only if type is correct)
-        if constraint.min_value is not None and param_value < constraint.min_value:
-            issues.append(
-                f"Parameter '{param_name}' value {param_value} "
-                f"is below minimum {constraint.min_value}"
-            )
-
-        if constraint.max_value is not None and param_value > constraint.max_value:
-            issues.append(
-                f"Parameter '{param_name}' value {param_value} "
-                f"is above maximum {constraint.max_value}"
-            )
-
-        # Allowed values check
-        if constraint.allowed_values and param_value not in constraint.allowed_values:
-            issues.append(
-                f"Parameter '{param_name}' value {param_value} not in allowed values"
-            )
+        # Value range and allowed-value checks (only if type is correct)
+        cls._append_value_issues(constraint, param_name, param_value, issues)
 
         # Deprecation warning
         if constraint.deprecated:
