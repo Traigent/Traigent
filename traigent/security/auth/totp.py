@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import re
 import secrets
+import unicodedata
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
@@ -75,7 +76,12 @@ class TOTPAuthProvider:
             True if code is valid, False otherwise
         """
         try:
-            if not code or not re.match(r"^\d{6,8}$", code):
+            # Compatibility-fold the code first (e.g. fullwidth digits) so replay
+            # tracking and verification see the same value, then require ASCII
+            # digits only; surrounding whitespace is not accepted.
+            if code:
+                code = unicodedata.normalize("NFKC", code)
+            if not code or not re.fullmatch(r"[0-9]{6,8}", code):
                 logger.warning("Invalid TOTP code format")
                 return False
 
