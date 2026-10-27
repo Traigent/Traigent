@@ -590,3 +590,20 @@ def test_digest_regex_is_the_shared_pattern(monkeypatch: pytest.MonkeyPatch) -> 
     seen.clear()
     assert "evaluator_code_digest" not in _wire(evaluator_code_digest=5)
     assert seen == []
+
+
+@pytest.mark.parametrize(
+    "attrs",
+    [
+        {"evaluator_id": "ev"},
+        {"evaluator_definition_id": "def"},
+    ],
+)
+def test_digest_is_withheld_by_an_id_even_when_source_is_explicitly_unknown(
+    attrs: dict[str, Any],
+) -> None:
+    result = _wire(
+        evaluator_code_digest=CODE_DIGEST, evaluator_id_source="unknown", **attrs
+    )
+    assert "evaluator_code_digest" not in result
+    assert result["evaluator_id_source"] == "unknown"
