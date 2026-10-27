@@ -13,6 +13,7 @@ from typing import Any
 from urllib.parse import quote, urljoin, urlsplit
 
 import requests
+from urllib3.util import parse_url
 
 from traigent.snapshot.errors import SnapshotErrorCode, SnapshotStoreError
 from traigent.snapshot.store import CreateResult, require_secure_endpoint, validate_key
@@ -28,7 +29,9 @@ _MAX_PART_BYTES = 50 * 1024**2  # SDK policy cap; GitHub warns >50 MiB, rejects 
 _MAX_READ_BYTES = 100 * 1024**2
 _MAX_CONFLICT_RETRIES = 3
 _MAX_RATE_ATTEMPTS = 4
-_MAX_TOTAL_WAIT_SECONDS = 60.0
+_MAX_TOTAL_WAIT_SECONDS = 60.0  # per public operation, shared by every request in it
+_SECONDARY_LIMIT_WAIT_SECONDS = 60.0  # GitHub: wait at least a minute
+_SECONDARY_LIMIT_MARKERS = (b"secondary rate limit", b"abuse detection")
 _MAX_REDIRECTS = 3
 _REDIRECT_STATUS = frozenset({301, 302, 303, 307, 308})
 _RAW_ACCEPT = "application/vnd.github.raw+json"
@@ -52,6 +55,20 @@ def _header_float(response: Any, name: str) -> float | None:
     return number if number >= 0 else None
 
 
+class _WaitBudget:
+    """Seconds one public operation may spend sleeping, across all its requests."""
+
+    __slots__ = ("remaining",)
+
+    def __init__(self) -> None:
+        self.remaining = _MAX_TOTAL_WAIT_SECONDS
+
+    def spend(self, seconds: float) -> None:
+        if seconds > self.remaining:
+            raise _error(SnapshotErrorCode.BACKEND_UNAVAILABLE) from None
+        self.remaining -= seconds
+
+
 class GitHubStore:
     """Snapshot objects under ``github://<owner>/<repo>@<branch>/<prefix>``.
 
@@ -64,7 +81,11 @@ class GitHubStore:
 
     The token is read from ``os.environ[token_env]`` at call time and only
     ever placed in the request header; it is not stored, shown in ``repr`` or
-    carried by an error. Redirects are followed only within the API host.
+    carried by an error. Redirects are followed only within the API host:
+    every request is prepared by Requests itself and the prepared URL, the one
+    actually sent, is checked against the API origin (no userinfo, no
+    backslashes). One operation (``read`` / ``create_if_absent``) may sleep at
+    most 60 seconds in total across all of its requests.
     """
 
     max_object_bytes: int | None = _MAX_PART_BYTES
@@ -150,7 +171,31 @@ class GitHubStore:
         except ValueError:
             return False
 
-    def _wait_seconds(self, response: Any) -> float | None:
+    def _is_safe_url(self, url: object) -> bool:
+        """True only if every parser that will see ``url`` agrees on the origin.
+
+        ``urlsplit`` and urllib3 (what Requests sends with) disagree on inputs
+        such as ``https://evil\\@api.github.com``; both must name the API
+        origin, and the URL must carry no userinfo, backslash or control
+        character.
+        """
+        if not isinstance(url, str) or any(
+            char == "\\" or ord(char) <= 0x20 or ord(char) == 0x7F for char in url
+        ):
+            return False
+        try:
+            split = urlsplit(url)
+            wire = parse_url(url)
+        except ValueError:
+            return False
+        if split.username or split.password or "@" in split.netloc or wire.auth:
+            return False
+        host = (wire.host or "").lower()
+        return (split.scheme, split.hostname, split.port) == self._origin and (
+            (wire.scheme, host, wire.port) == self._origin
+        )
+
+    def _wait_seconds(self, response: Any, body: bytes) -> float | None:
         """Seconds to wait if ``response`` is a rate limit, else ``None``."""
         if response.status_code not in (403, 429):
             return None
@@ -161,24 +206,47 @@ class GitHubStore:
         reset = _header_float(response, "x-ratelimit-reset")
         if reset is not None and (remaining == "0" or response.status_code == 429):
             return max(0.0, reset - self._clock()) + 1.0
-        if response.status_code == 429:
-            return 1.0
+        lowered = body.lower()
+        if response.status_code == 429 or any(
+            marker in lowered for marker in _SECONDARY_LIMIT_MARKERS
+        ):
+            return _SECONDARY_LIMIT_WAIT_SECONDS  # headerless secondary limit
         return None
+
+    def _prepare(
+        self, method: str, url: str, accept: str, kwargs: dict[str, Any]
+    ) -> requests.PreparedRequest:
+        """Prepare with Requests and refuse any URL that is not the API origin."""
+        request = requests.Request(
+            method,
+            url,
+            headers=self._headers(accept),
+            params=kwargs.get("params"),
+            json=kwargs.get("json"),
+        )
+        try:
+            prepared = self._session.prepare_request(request)
+        except (requests.RequestException, ValueError):
+            raise _error(SnapshotErrorCode.UNSAFE_DESTINATION) from None
+        if not self._is_safe_url(prepared.url):
+            raise _error(SnapshotErrorCode.UNSAFE_DESTINATION) from None
+        return prepared
 
     def _send_once(
         self, method: str, url: str, accept: str, **kwargs: Any
     ) -> tuple[Any, bytes]:
         """One request, following same-origin redirects only."""
         for _ in range(_MAX_REDIRECTS + 1):
+            prepared = self._prepare(method, url, accept, kwargs)
             try:
-                response = self._session.request(
-                    method,
-                    url,
-                    headers=self._headers(accept),
+                settings = self._session.merge_environment_settings(
+                    prepared.url, {}, True, None, None
+                )
+                response = self._session.send(
+                    prepared,
                     timeout=_TIMEOUT_SECONDS,
                     allow_redirects=False,
-                    stream=True,
-                    **kwargs,
+                    **settings,
                 )
             except requests.RequestException:
                 raise _error(SnapshotErrorCode.BACKEND_UNAVAILABLE) from None
@@ -189,7 +257,11 @@ class GitHubStore:
             if not isinstance(location, str) or not location:
                 raise _error(SnapshotErrorCode.BACKEND_UNAVAILABLE) from None
             target = urljoin(url, location)
-            if not self._same_origin(target):
+            if (
+                "\\" in location
+                or "@" in urlsplit(target).netloc
+                or not self._same_origin(target)
+            ):
                 raise _error(SnapshotErrorCode.UNSAFE_DESTINATION) from None
             url = target
         raise _error(SnapshotErrorCode.BACKEND_UNAVAILABLE) from None
@@ -211,22 +283,24 @@ class GitHubStore:
         return b"".join(chunks)
 
     def _request(
-        self, method: str, path: str, accept: str = _JSON_ACCEPT, **kwargs: Any
+        self,
+        method: str,
+        path: str,
+        budget: _WaitBudget,
+        accept: str = _JSON_ACCEPT,
+        **kwargs: Any,
     ) -> tuple[int, bytes]:
         """Send with rate-limit backoff; return ``(status, body)`` for 2xx/404/409/422."""
         url = f"{self._api_url}{path}"
-        waited = 0.0
         for attempt in range(_MAX_RATE_ATTEMPTS):
             response, body = self._send_once(method, url, accept, **kwargs)
             status = response.status_code
-            wait = self._wait_seconds(response)
+            wait = self._wait_seconds(response, body)
             if wait is not None:
-                if attempt + 1 >= _MAX_RATE_ATTEMPTS or waited + wait > (
-                    _MAX_TOTAL_WAIT_SECONDS
-                ):
+                if attempt + 1 >= _MAX_RATE_ATTEMPTS:
                     raise _error(SnapshotErrorCode.BACKEND_UNAVAILABLE) from None
+                budget.spend(wait)
                 self._sleep(wait)
-                waited += wait
                 continue
             if status in (401, 403):
                 raise _error(SnapshotErrorCode.AUTH) from None
@@ -239,12 +313,15 @@ class GitHubStore:
 
     # ------------------------------------------------------------- preflight
 
-    def _ensure_ready(self) -> None:
+    def _branch_path(self) -> str:
+        return f"/repos/{self._repo}/branches/{quote(self._branch, safe='/')}"
+
+    def _ensure_ready(self, budget: _WaitBudget) -> None:
         """Check visibility and that the branch exists, once."""
         if self._ready:
             return
         repo_path = f"/repos/{self._repo}"
-        status, body = self._request("GET", repo_path)
+        status, body = self._request("GET", repo_path, budget)
         if status == 404:
             raise _error(SnapshotErrorCode.NOT_FOUND) from None
         if status != 200:
@@ -257,14 +334,16 @@ class GitHubStore:
             raise _error(SnapshotErrorCode.BACKEND_UNAVAILABLE) from None
         if info.get("private") is not True and not self._allow_public:
             raise _error(SnapshotErrorCode.UNSAFE_DESTINATION) from None
-        status, _ = self._request(
-            "GET", f"{repo_path}/branches/{quote(self._branch, safe='/')}"
-        )
+        self._require_branch(budget)
+        self._ready = True
+
+    def _require_branch(self, budget: _WaitBudget) -> None:
+        status, _ = self._request("GET", self._branch_path(), budget)
         if status == 404:
+            self._ready = False
             raise _error(SnapshotErrorCode.NOT_FOUND) from None
         if status != 200:
             raise _error(SnapshotErrorCode.BACKEND_UNAVAILABLE) from None
-        self._ready = True
 
     # ------------------------------------------------------------------ API
 
@@ -272,12 +351,18 @@ class GitHubStore:
         return f"/repos/{self._repo}/contents/{quote(self._path(key), safe='/')}"
 
     def read(self, key: str) -> bytes | None:
+        return self._read(key, _WaitBudget())
+
+    def _read(self, key: str, budget: _WaitBudget) -> bytes | None:
         path = self._contents_path(key)
-        self._ensure_ready()
+        self._ensure_ready(budget)
         status, body = self._request(
-            "GET", path, accept=_RAW_ACCEPT, params={"ref": self._branch}
+            "GET", path, budget, accept=_RAW_ACCEPT, params={"ref": self._branch}
         )
         if status == 404:
+            # GitHub also answers 404 for a deleted branch or lost access:
+            # only a live branch makes this "the object is absent".
+            self._require_branch(budget)
             return None
         if status != 200:
             raise _error(SnapshotErrorCode.BACKEND_UNAVAILABLE) from None
@@ -293,20 +378,23 @@ class GitHubStore:
             "content": base64.b64encode(data).decode("ascii"),
             "branch": self._branch,
         }
+        budget = _WaitBudget()
         with self._write_lock:
-            self._ensure_ready()
+            self._ensure_ready(budget)
             for attempt in range(_MAX_CONFLICT_RETRIES + 1):
-                status, _ = self._request("PUT", path, json=payload)
+                status, _ = self._request("PUT", path, budget, json=payload)
                 if status in (200, 201):
                     return CreateResult.CREATED
                 if status == 404:
                     raise _error(SnapshotErrorCode.NOT_FOUND) from None
-                existing = self.read(key)
+                existing = self._read(key, budget)
                 if existing is not None:
                     if existing == data:
                         return CreateResult.EXISTED_IDENTICAL
                     raise _error(SnapshotErrorCode.CONFLICT) from None
                 if status != 409 or attempt >= _MAX_CONFLICT_RETRIES:
                     break
-                self._sleep(float(2**attempt))  # branch advanced: back off, retry
+                pause = float(2**attempt)  # branch advanced: back off, retry
+                budget.spend(pause)
+                self._sleep(pause)
         raise _error(SnapshotErrorCode.BACKEND_UNAVAILABLE) from None

@@ -79,6 +79,30 @@ class FakeGitHubSession:
             return FakeResponse(302, headers={"Location": self.redirects[url]})
         return self._route(method, parts.path, kwargs)
 
+    def prepare_request(self, request: requests.Request) -> requests.PreparedRequest:
+        """Real Requests preparation, as the store must use it."""
+        return requests.Session().prepare_request(request)
+
+    def merge_environment_settings(self, *_args: Any) -> dict[str, Any]:
+        return {"proxies": {}, "stream": True, "verify": True, "cert": None}
+
+    def send(self, prepared: requests.PreparedRequest, **kwargs: Any) -> FakeResponse:
+        """Serve a prepared request through the same routing as ``request``."""
+        url = prepared.url or ""
+        parts = urlsplit(url)
+        params = {key: values[0] for key, values in parse_qs(parts.query).items()}
+        if set(params) == {"ref"}:
+            url = url.split("?", 1)[0]  # redirects are keyed on the bare URL
+        body = json.loads(prepared.body) if prepared.body else None
+        return self.request(
+            prepared.method or "GET",
+            url,
+            headers=dict(prepared.headers),
+            params=params,
+            json=body,
+            **kwargs,
+        )
+
     def _route(self, method: str, path: str, kwargs: dict[str, Any]) -> FakeResponse:
         prefix = f"/repos/{OWNER_REPO}"
         if not self.repo_exists or not path.startswith(prefix):

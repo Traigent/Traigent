@@ -84,7 +84,10 @@ class GCSStore:
             from google.cloud import storage
         except ImportError:
             raise ImportError(_IMPORT_HINT) from None
-        return storage.Client()
+        try:
+            return storage.Client()
+        except Exception as error:
+            raise _translate(error) from None
 
     def _check_endpoint(self, allow_insecure_local: bool) -> None:
         connection = getattr(self._client, "_connection", None)

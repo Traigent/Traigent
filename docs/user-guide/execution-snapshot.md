@@ -57,8 +57,12 @@ store = S3Store("my-bucket", "traigent/snapshots")  # uses your default AWS cred
 Remote endpoints must use HTTPS. For an S3-compatible service pass your own
 boto3 client built with `endpoint_url=...`; the store then tests, once before
 the first write, that the endpoint honours conditional writes
-(`If-None-Match: *`) and refuses it otherwise. Only endpoints that pass this
-check are supported. Plain `http://` is refused unless you pass
+(`If-None-Match: *`) and refuses it otherwise; only a `412` answer counts as
+proof (a `409` conflict is retried later, never remembered as support). Only
+endpoints that pass this check are supported. The client must expose its
+endpoint (`client.meta.endpoint_url`), or the store refuses it. The extra
+requires `boto3>=1.35.2`, the first release whose `PutObject` accepts
+`IfNoneMatch`. Plain `http://` is refused unless you pass
 `allow_insecure_local=True` **and** the host is `localhost`, `127.0.0.1` or
 `::1`.
 
@@ -120,12 +124,20 @@ Safety rules:
   anything (GitHub warns above 50 MiB and rejects above 100 MiB). Each snapshot
   is a handful of small commits, so GitHub suits small snapshots; use S3, GCS or
   Azure for large datasets.
-- **Rate limits.** `Retry-After` and `x-ratelimit-reset` are honoured; waits
-  total at most 60 seconds, after which `BACKEND_UNAVAILABLE` is raised. Every
+- **Rate limits.** `Retry-After` and `x-ratelimit-reset` are honoured. A
+  secondary rate limit without those headers (a `429`, or a `403` whose message
+  names a secondary limit) waits the documented minimum of 60 seconds. One
+  operation (`read` or `create_if_absent`, including its preflight, conflict
+  rereads and backoff) sleeps at most 60 seconds in total, after which
+  `BACKEND_UNAVAILABLE` is raised. A plain permission `403` is `AUTH`. Every
   request has a 30 second timeout.
+- **A 404 on an object is checked.** After a missing-object `404` the store
+  re-checks the branch: a deleted branch or lost repository access raises
+  `NOT_FOUND` instead of reading as "object absent".
 - **The token goes only to the API host.** Redirects are followed only within
-  the same scheme and host as `api_url`; a redirect anywhere else raises
-  `UNSAFE_DESTINATION` and the token is not sent. The token is never stored, shown
+  the same scheme and host as `api_url`; a redirect anywhere else, or one with
+  userinfo or a backslash, raises `UNSAFE_DESTINATION` and the token is not
+  sent. The URL checked is the prepared URL that is actually sent. The token is never stored, shown
   in `repr` or put in an error. For GitHub Enterprise pass
   `api_url="https://<host>/api/v3"` (HTTPS required).
 

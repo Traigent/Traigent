@@ -124,7 +124,10 @@ class AzureBlobStore:
             from azure.storage.blob import ContainerClient
         except ImportError:
             raise ImportError(_IMPORT_HINT) from None
-        client = ContainerClient(account_url, container, credential=credential)
+        try:
+            client = ContainerClient(account_url, container, credential=credential)
+        except Exception as error:
+            raise _translate(error) from None
         return cls(client, prefix, allow_insecure_local=allow_insecure_local)
 
     def __repr__(self) -> str:
