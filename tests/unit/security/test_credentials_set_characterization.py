@@ -357,6 +357,10 @@ class TestExpiry:
         past = NOW - timedelta(microseconds=1)
         env.store.set("n", GOOD, expires_at=past)
         assert env.store._credentials["n"].expires_at == past
+        decrypted = []
+        env.store._decrypt_value = lambda *args: decrypted.append(args)
+        assert env.store.get("n", check_env=False) is None
+        assert decrypted == []
         event = next(e for e in env.trace if e[0] == "event")
         assert event == (
             "event",

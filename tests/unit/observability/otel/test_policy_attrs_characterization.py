@@ -135,11 +135,23 @@ class TestRecordMode:
     def test_unsupported_value_is_dropped(self):
         assert _run({"k": {"nested": 1}, "j": None, "i": b"raw"}, "record") == ({}, 3)
 
-    def test_oversize_string_is_truncated_not_dropped(self):
-        limit = C.MAX_RECORD_ATTR_BYTES
-        out, dropped = _run({"k": "a" * (limit + 10)}, "record")
-        assert dropped == 0
-        assert out == {"k": "a" * limit}
+    def test_attribute_cap_is_65536_bytes(self):
+        assert C.MAX_RECORD_ATTR_BYTES == 65536
+
+    @pytest.mark.parametrize("length", [65534, 65535, 65536])
+    def test_string_up_to_the_cap_is_kept_whole(self, length):
+        assert _run({"k": "a" * length}, "record") == ({"k": "a" * length}, 0)
+
+    @pytest.mark.parametrize("length", [65537, 65546, 100000])
+    def test_longer_string_is_truncated_to_65536_bytes_not_dropped(self, length):
+        assert _run({"k": "a" * length}, "record") == ({"k": "a" * 65536}, 0)
+
+    def test_truncation_never_splits_a_multibyte_character(self):
+        # two bytes each: 65536 bytes hold exactly 32768 characters
+        assert _run({"k": "\u00e9" * 40000}, "record") == (
+            {"k": "\u00e9" * 32768},
+            0,
+        )
 
     def test_oversize_sequence_is_dropped(self):
         big = ["a" * 1000] * 100
