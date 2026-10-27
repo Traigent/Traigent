@@ -1372,7 +1372,7 @@ wheels = [
 
 [[package]]
 name = "google-api-core"
-version = "2.25.2"
+version = "2.33.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "google-auth" },
@@ -1381,9 +1381,9 @@ dependencies = [
     { name = "protobuf" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/09/cd/63f1557235c2440fe0577acdbc32577c5c002684c58c7f4d770a92366a24/google_api_core-2.25.2.tar.gz", hash = "sha256:1c63aa6af0d0d5e37966f157a77f9396d820fba59f9e43e9415bc3dc5baff300", size = 166266, upload-time = "2025-10-03T00:07:34.778Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/87/62/8fb1fb647d2788c950d69d6a769cd9d55c918ac1fc57be2f90b7e4029787/google_api_core-2.33.0.tar.gz", hash = "sha256:3a36bcc3e319783f4c97da41f6f45ea6ffcaa55848e341de16e09cb70243c2bb", size = 181607, upload-time = "2026-07-22T16:28:28.027Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c8/d8/894716a5423933f5c8d2d5f04b16f052a515f78e815dab0c2c6f1fd105dc/google_api_core-2.25.2-py3-none-any.whl", hash = "sha256:e9a8f62d363dc8424a8497f4c2a47d6bcda6c16514c935629c257ab5d10210e7", size = 162489, upload-time = "2025-10-03T00:07:32.924Z" },
+    { url = "https://files.pythonhosted.org/packages/89/31/5056a347bb934ea04583c8b27916ef1501729c72638629545bce26ff4223/google_api_core-2.33.0-py3-none-any.whl", hash = "sha256:a2e22a0c1d0f03eafff1858b38cf46f832d5902b0c052235bf0ab8402929fbdc", size = 176462, upload-time = "2026-07-22T16:28:22.447Z" },
 ]
 
 [package.optional-dependencies]
@@ -1454,7 +1454,7 @@ wheels = [
 
 [[package]]
 name = "google-cloud-storage"
-version = "3.4.1"
+version = "3.17.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "google-api-core" },
@@ -1464,9 +1464,9 @@ dependencies = [
     { name = "google-resumable-media" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bd/ef/7cefdca67a6c8b3af0ec38612f9e78e5a9f6179dd91352772ae1a9849246/google_cloud_storage-3.4.1.tar.gz", hash = "sha256:6f041a297e23a4b485fad8c305a7a6e6831855c208bcbe74d00332a909f82268", size = 17238203, upload-time = "2025-10-08T18:43:39.665Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1d/d8/9d6444c1bc301bd4bad36cc91306524e8aba670cbefcc0d2fc184c88fbea/google_cloud_storage-3.17.1.tar.gz", hash = "sha256:b24df37900f5e0a93518bd7d3a2a7b7b48d8a1e72add8eb57d53a38b8b2b0640", size = 17355234, upload-time = "2026-10-15T17:49:57.847Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/83/6e/b47d83d3a35231c6232566341b0355cce78fd4e6988a7343725408547b2c/google_cloud_storage-3.4.1-py3-none-any.whl", hash = "sha256:972764cc0392aa097be8f49a5354e22eb47c3f62370067fb1571ffff4a1c1189", size = 290142, upload-time = "2025-10-08T18:43:37.524Z" },
+    { url = "https://files.pythonhosted.org/packages/09/77/4376bb26f24966008a9522c61bae025d7030baabf443f20c4b795fb58308/google_cloud_storage-3.17.1-py3-none-any.whl", hash = "sha256:287c7919d7bcda710eae6f6b60c756e89140475d9a4daec01b6174e737488ca8", size = 345706, upload-time = "2026-10-15T17:49:27.497Z" },
 ]
 
 [[package]]
@@ -5644,7 +5644,7 @@ all = [
     { name = "faiss-cpu", marker = "sys_platform != 'win32'" },
     { name = "fastapi" },
     { name = "google-genai" },
-    { name = "google-generativeai" },
+    { name = "google-generativeai", marker = "python_full_version < '3.14'" },
     { name = "groq" },
     { name = "h2" },
     { name = "httpx", extra = ["http2"] },
@@ -5743,7 +5743,7 @@ enterprise = [
     { name = "faiss-cpu", marker = "sys_platform != 'win32'" },
     { name = "fastapi" },
     { name = "google-genai" },
-    { name = "google-generativeai" },
+    { name = "google-generativeai", marker = "python_full_version < '3.14'" },
     { name = "groq" },
     { name = "h2" },
     { name = "httpx", extra = ["http2"] },
@@ -5797,7 +5797,7 @@ integrations = [
     { name = "botocore" },
     { name = "faiss-cpu", marker = "sys_platform != 'win32'" },
     { name = "google-genai" },
-    { name = "google-generativeai" },
+    { name = "google-generativeai", marker = "python_full_version < '3.14'" },
     { name = "groq" },
     { name = "langchain" },
     { name = "langchain-anthropic" },
@@ -5868,7 +5868,7 @@ recommended = [
     { name = "claude-code-sdk" },
     { name = "faiss-cpu", marker = "sys_platform != 'win32'" },
     { name = "google-genai" },
-    { name = "google-generativeai" },
+    { name = "google-generativeai", marker = "python_full_version < '3.14'" },
     { name = "groq" },
     { name = "h2" },
     { name = "httpx", extra = ["http2"] },
@@ -5960,9 +5960,9 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'security'", specifier = ">=0.95.0" },
     { name = "filelock", specifier = ">=4.0.9,<5" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=5.0.0" },
-    { name = "google-cloud-storage", marker = "extra == 'snapshot-gcs'", specifier = ">=3.0.0" },
+    { name = "google-cloud-storage", marker = "extra == 'snapshot-gcs'", specifier = ">=3.10.0" },
     { name = "google-genai", marker = "extra == 'integrations'", specifier = ">=0.8.0" },
-    { name = "google-generativeai", marker = "extra == 'integrations'", specifier = ">=0.3.0" },
+    { name = "google-generativeai", marker = "python_full_version < '3.14' and extra == 'integrations'", specifier = ">=0.3.0" },
     { name = "groq", marker = "extra == 'integrations'", specifier = ">=0.9.0" },
     { name = "h2", marker = "extra == 'hybrid'", specifier = ">=4.4.1,<5" },
     { name = "httpx", extras = ["http2"], marker = "extra == 'hybrid'", specifier = ">=0.24.0" },
