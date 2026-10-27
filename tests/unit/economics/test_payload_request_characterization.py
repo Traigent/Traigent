@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any
 
 import pytest
@@ -27,10 +27,18 @@ _SRC = {"kind": "sdk", "name": "src-name", "version": "1.2.3"}
 def trace(monkeypatch: pytest.MonkeyPatch) -> Trace:
     """Record calls of every collaborator the batch builder touches."""
     events: Trace = []
-    real_roundtrip = payload_module._json_roundtrip
-    real_enforce = payload_module.enforce_characterization_egress
-    real_batch = payload_module._derive_batch_id
-    real_key = payload_module._derive_idempotency_key
+    real_roundtrip: Callable[[Mapping[str, Any], int], dict[str, Any]] = (
+        payload_module._json_roundtrip
+    )
+    real_enforce: Callable[[Mapping[str, Any]], None] = (
+        payload_module.enforce_characterization_egress
+    )
+    real_batch: Callable[[Sequence[Mapping[str, Any]]], str] = (
+        payload_module._derive_batch_id
+    )
+    real_key: Callable[[Mapping[str, Any]], str] = (
+        payload_module._derive_idempotency_key
+    )
 
     def roundtrip(event: Mapping[str, Any], index: int) -> dict[str, Any]:
         events.append(("roundtrip", index))
@@ -369,9 +377,12 @@ def test_explicit_key_skips_derivation(trace: Trace) -> None:
 def test_idempotency_key_validation_boundaries(
     trace: Trace, key: Any, ok: bool
 ) -> None:
-    kwargs: dict[str, Any] = dict(
-        batch_id="b", sent_at="s", idempotency_key=key, source={}
-    )
+    kwargs: dict[str, Any] = {
+        "batch_id": "b",
+        "sent_at": "s",
+        "idempotency_key": key,
+        "source": {},
+    }
     if ok:
         assert build_telemetry_request([_funnel(1)], **kwargs)["idempotency_key"] == key
     else:
