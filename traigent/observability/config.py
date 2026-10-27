@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -404,6 +405,8 @@ def _require_positive_up_to(name: str, value: float, maximum: float) -> None:
     """Reject ``value`` unless it is greater than 0 and at most ``maximum``."""
     if value <= 0:
         raise ValueError(f"{name} must be greater than 0")
+    if math.isnan(value):
+        raise ValueError(f"{name} must be a finite number")
     if value > maximum:
         raise ValueError(f"{name} must be less than or equal to {maximum}")
 
@@ -510,6 +513,8 @@ class ObservabilityConfig:
         _require_positive_up_to(
             "request_timeout", self.request_timeout, MAX_TIMEOUT_SECONDS
         )
+        if not math.isfinite(self.per_trace_timeout):
+            raise ValueError("per_trace_timeout must be a finite number")
         if self.per_trace_timeout < 0:
             raise ValueError("per_trace_timeout must be greater than or equal to 0")
         constructor_content_mode = (
