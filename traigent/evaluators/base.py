@@ -4964,30 +4964,47 @@ class SimpleScoringEvaluator(BaseEvaluator):
         aggregated: dict[str, Any] = {}
         for metric in self.metrics:
             if metric in MEASURED_ONLY_METRICS:
-                if not any(
-                    row and _measured_value(row.get(metric)) is not None
-                    for row in all_metrics
-                ):
-                    # Nothing measured this cost: it is unknown, never a
-                    # fabricated 0.0 (#2517). None under strict nulls.
-                    if os.environ.get("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
-                        "true",
-                        "1",
-                        "yes",
-                    ):
-                        aggregated[metric] = None
-                    continue
-                aggregated[metric] = aggregate_measured_metric(metric, all_metrics)
+                self._aggregate_measured_only_metric(metric, all_metrics, aggregated)
                 continue
-            metric_values = [m.get(metric, 0.0) for m in all_metrics if m]
-            if metric_values:
-                if "p95" in metric.lower():
-                    aggregated[metric] = self._compute_percentile(metric_values, 0.95)
-                else:
-                    aggregated[metric] = sum(metric_values) / len(metric_values)
-            else:
-                aggregated[metric] = 0.0
+            self._aggregate_plain_metric(metric, all_metrics, aggregated)
         return aggregated
+
+    @staticmethod
+    def _aggregate_measured_only_metric(
+        metric: str,
+        all_metrics: list[dict[str, Any]],
+        aggregated: dict[str, Any],
+    ) -> None:
+        """Aggregate a cost-style metric that only counts measured rows."""
+        if not any(
+            row and _measured_value(row.get(metric)) is not None for row in all_metrics
+        ):
+            # Nothing measured this cost: it is unknown, never a
+            # fabricated 0.0 (#2517). None under strict nulls.
+            if os.environ.get("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
+                "true",
+                "1",
+                "yes",
+            ):
+                aggregated[metric] = None
+            return
+        aggregated[metric] = aggregate_measured_metric(metric, all_metrics)
+
+    def _aggregate_plain_metric(
+        self,
+        metric: str,
+        all_metrics: list[dict[str, Any]],
+        aggregated: dict[str, Any],
+    ) -> None:
+        """Aggregate a score-style metric over the non-empty rows."""
+        metric_values = [m.get(metric, 0.0) for m in all_metrics if m]
+        if not metric_values:
+            aggregated[metric] = 0.0
+            return
+        if "p95" in metric.lower():
+            aggregated[metric] = self._compute_percentile(metric_values, 0.95)
+        else:
+            aggregated[metric] = sum(metric_values) / len(metric_values)
 
     def _aggregate_llm_metrics(
         self,
