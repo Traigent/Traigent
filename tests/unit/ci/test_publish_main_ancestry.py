@@ -35,7 +35,11 @@ def test_publish_job_has_upload_steps() -> None:
 
 def test_ancestry_check_is_unconditional_and_precedes_every_upload() -> None:
     steps = _steps()
-    idxs = [i for i, s in enumerate(steps) if "assert_sha_on_main.sh" in str(s.get("run", ""))]
+    idxs = [
+        i
+        for i, s in enumerate(steps)
+        if "assert_sha_on_main.sh" in str(s.get("run", ""))
+    ]
     assert len(idxs) == 1, "exactly one ancestry step expected"
     check = steps[idxs[0]]
     # No `if:` means it runs on tag push AND workflow_dispatch.
@@ -70,8 +74,10 @@ def test_actions_stay_pinned_and_permissions_not_widened() -> None:
 def _git(cwd: Path, *args: str) -> str:
     env = {
         **os.environ,
-        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@e",
-        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@e",
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@e",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@e",
     }
     return subprocess.run(
         ["git", *args], cwd=cwd, env=env, check=True, capture_output=True, text=True
