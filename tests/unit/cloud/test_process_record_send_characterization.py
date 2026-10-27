@@ -524,3 +524,28 @@ def test_link_truth_is_evaluated_exactly_once_per_use() -> None:
         ("link_bool", False),
         ("link_bool", False),
     ]
+
+
+def test_link_truth_reads_for_a_linked_send_with_a_bundle() -> None:
+    trace: list[Any] = []
+
+    class Link:
+        def __bool__(self) -> bool:
+            trace.append(("link_bool", True))
+            return True
+
+    bundle = _Bundle(trace)
+    client = _Client(trace, [_ok(trace)])
+    result = _send(client, {"refs": 1}, bundle, link=Link())
+    assert result == {"record": RECORD, "commitment_linkage": LINKAGE}
+    assert trace == [
+        ("link_bool", True),
+        ("bundle_openings",),
+        ("finalize", ROW_ID, {"refs": 1, "openings": ENCODED}),
+        ("body_get", "data"),
+        ("body_get", "commitment_linkage"),
+        ("link_bool", True),
+        ("link_bool", True),
+        ("set_result", RECORD, LINKAGE),
+        ("link_bool", True),
+    ]
