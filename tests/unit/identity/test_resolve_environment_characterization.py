@@ -391,3 +391,14 @@ def test_warnings_never_contain_the_ignored_value(log: FakeLogger) -> None:
     resolve_environment(None, {"ENVIRONMENT": "super-secret-token-value"})
     flat = repr(log.warnings)
     assert "super-secret-token-value" not in flat
+
+
+def test_falsy_non_empty_explicit_str_subclass_is_still_explicit(
+    log: FakeLogger,
+) -> None:
+    class Falsy(str):
+        def __bool__(self) -> bool:
+            return False
+
+    env = {"TRAIGENT_ENVIRONMENT": "staging"}
+    assert resolve_environment(Falsy("custom"), env) == _res("custom", "explicit", None)

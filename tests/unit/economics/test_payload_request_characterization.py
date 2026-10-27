@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import Any
+from typing import Any, overload
 
 import pytest
 
@@ -99,8 +99,8 @@ def test_full_result_with_all_explicit_arguments(trace: Trace) -> None:
         source={"name": "n"},
     )
     assert result == {
-        "contract": CONTRACT_ID,
-        "contract_version": CONTRACT_VERSION,
+        "contract": "economics_telemetry",
+        "contract_version": "1.0.0",
         "batch_id": "batch-x",
         "sent_at": "2026-05-06T07:08:09.000Z",
         "source": {"name": "n"},
@@ -123,8 +123,8 @@ def test_full_result_with_all_explicit_arguments(trace: Trace) -> None:
 def test_full_result_with_all_defaults_and_trace(trace: Trace) -> None:
     result = build_telemetry_request([_funnel(1)])
     body = {
-        "contract": CONTRACT_ID,
-        "contract_version": CONTRACT_VERSION,
+        "contract": "economics_telemetry",
+        "contract_version": "1.0.0",
         "batch_id": result["batch_id"],
         "sent_at": "2026-01-02T03:04:05.006Z",
         "source": dict(_SRC),
@@ -290,12 +290,25 @@ def test_non_serializable_event_message_and_no_chaining(trace: Trace) -> None:
 
 
 def test_event_type_is_read_from_the_copy_not_the_original(trace: Trace) -> None:
-    class Tricky(dict[str, Any]):
-        pass
+    class Hostile(dict[str, Any]):
+        @overload
+        def get(self, key: str, default: None = None, /) -> Any | None: ...
 
-    event = Tricky({"event_type": "run_economics", "characterization": {}})
+        @overload
+        def get(self, key: str, default: Any, /) -> Any: ...
+
+        def get(self, key: str, default: Any = None, /) -> Any:
+            raise RuntimeError("original event get must not be used")
+
+    event = Hostile({"event_type": "run_economics", "characterization": {}})
     with pytest.raises(EgressPolicyError):
         build_telemetry_request([event])
+    assert trace == [("roundtrip", 0), ("enforce", {})]
+
+
+def test_contract_constants_are_pinned_to_independent_literals() -> None:
+    assert CONTRACT_ID == "economics_telemetry"
+    assert CONTRACT_VERSION == "1.0.0"
 
 
 @pytest.mark.parametrize("falsy", ["", None])

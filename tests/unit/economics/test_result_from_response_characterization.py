@@ -47,8 +47,8 @@ class TracedBody(dict[str, Any]):
 
 def _body(**over: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
-        "contract": CONTRACT_ID,
-        "contract_version": CONTRACT_VERSION,
+        "contract": "economics_telemetry",
+        "contract_version": "1.0.0",
         "replayed": False,
         "batch_id": _BATCH,
         "idempotency_key": _KEY,
@@ -112,8 +112,8 @@ def test_fresh_201_result_is_exact(trace: Trace) -> None:
         replayed=False,
         batch_id=_BATCH,
         idempotency_key=_KEY,
-        contract=CONTRACT_ID,
-        contract_version=CONTRACT_VERSION,
+        contract="economics_telemetry",
+        contract_version="1.0.0",
         received_at="2026-01-02T03:04:05.006Z",
         submitted=3,
         accepted=2,
@@ -515,3 +515,8 @@ def test_echo_comparison_uses_raw_values_not_their_string_form(trace: Trace) -> 
     assert _err(_body(idempotency_key=5), expected_idempotency_key="5") == (
         "ingest response idempotency_key does not echo the request"
     )
+
+
+def test_contract_constants_are_pinned_to_independent_literals() -> None:
+    assert CONTRACT_ID == "economics_telemetry"
+    assert CONTRACT_VERSION == "1.0.0"

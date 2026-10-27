@@ -292,3 +292,13 @@ def test_observation_key_reads_model_names_then_fingerprint() -> None:
         ("r", "llm_output"),
         ("r", "system_fingerprint"),
     ]
+
+
+def test_non_empty_str_subclass_with_false_truth_is_still_a_match() -> None:
+    class Falsy(str):
+        def __bool__(self) -> bool:
+            return False
+
+    value = Falsy("served")
+    response = Probe("r", [], {"model": value, "model_name": "later"})
+    assert pv._from_response(response, _NAMES) is value
