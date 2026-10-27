@@ -146,3 +146,60 @@ class TestRecordMode:
         out = self.P._events([_ev("gen_ai.user.message", {"content": "hi"})], "record")
         assert _summary(out)[1] == 0
         assert len(out[0]) == 1
+
+
+class _SpyEvent(Event):
+    """Event whose accessors record the order in which they are read."""
+
+    def __init__(self, name, attributes, timestamp, log, fail_on=None):
+        self._n, self._a, self._t = name, attributes, timestamp
+        self._log = log
+        self._fail_on = fail_on
+
+    def _touch(self, field, value):
+        self._log.append(field)
+        if self._fail_on == field:
+            raise RuntimeError(f"boom-{field}")
+        return value
+
+    @property
+    def name(self):
+        return self._touch("name", self._n)
+
+    @property
+    def attributes(self):
+        return self._touch("attributes", self._a)
+
+    @property
+    def timestamp(self):
+        return self._touch("timestamp", self._t)
+
+
+class TestAccessOrder:
+    def test_restricted_mode_reads_name_then_attributes_then_name_then_timestamp(self):
+        log: list[str] = []
+        ev = _SpyEvent("exception", {"exception.type": "E"}, 5, log)
+        log.clear()
+        events, dropped = ContentPolicy("metadata")._events([ev], "metadata")
+        assert log == ["name", "attributes", "name", "timestamp"]
+        assert dropped == 0
+        assert events[0].attributes == {"exception.type": "E"}
+
+    def test_attributes_failure_surfaces_before_name_is_read_again(self):
+        log: list[str] = []
+        ev = _SpyEvent("exception", {"exception.type": "E"}, 5, log, "attributes")
+        log.clear()
+        try:
+            ContentPolicy("metadata")._events([ev], "metadata")
+        except RuntimeError as exc:
+            assert str(exc) == "boom-attributes"
+        else:
+            raise AssertionError("expected failure")
+        assert log == ["name", "attributes"]
+
+    def test_unknown_event_reads_only_name(self):
+        log: list[str] = []
+        ev = _SpyEvent("other", {"a": "b"}, 5, log)
+        log.clear()
+        assert ContentPolicy("metadata")._events([ev], "metadata") == ((), 1)
+        assert log == ["name"]
