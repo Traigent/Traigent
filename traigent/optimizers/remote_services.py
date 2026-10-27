@@ -231,6 +231,35 @@ class OptimizationStrategy:
             )
 
 
+def _evict_oldest_session_if_full(self: Any) -> None:
+    """Drop one cached session when the local session cache is at capacity."""
+    if len(self._active_sessions) >= self._max_active_sessions:
+        # Find and remove the oldest inactive session
+        oldest_session_id = None
+        oldest_time = float("inf")
+
+        for sid, sess in self._active_sessions.items():
+            if sess.status in [
+                OptimizationSessionStatus.COMPLETED,
+                OptimizationSessionStatus.FAILED,
+            ]:
+                if sess.created_at.timestamp() < oldest_time:
+                    oldest_time = sess.created_at.timestamp()
+                    oldest_session_id = sid
+
+        # If no inactive sessions, remove the oldest active one
+        if oldest_session_id is None:
+            oldest_session_id = min(
+                self._active_sessions.keys(),
+                key=lambda s: self._active_sessions[s].created_at.timestamp(),
+            )
+
+        del self._active_sessions[oldest_session_id]
+        logger.debug(
+            f"Removed session {oldest_session_id} to stay within active session limit"
+        )
+
+
 class RemoteOptimizationService(ABC):
     """Abstract interface for remote optimization services.
 
@@ -668,33 +697,7 @@ class RemoteOptimizationService(ABC):
                 session = await self.get_session(session_id)
 
                 # Enforce max sessions limit before adding
-                if len(self._active_sessions) >= self._max_active_sessions:
-                    # Find and remove the oldest inactive session
-                    oldest_session_id = None
-                    oldest_time = float("inf")
-
-                    for sid, sess in self._active_sessions.items():
-                        if sess.status in [
-                            OptimizationSessionStatus.COMPLETED,
-                            OptimizationSessionStatus.FAILED,
-                        ]:
-                            if sess.created_at.timestamp() < oldest_time:
-                                oldest_time = sess.created_at.timestamp()
-                                oldest_session_id = sid
-
-                    # If no inactive sessions, remove the oldest active one
-                    if oldest_session_id is None:
-                        oldest_session_id = min(
-                            self._active_sessions.keys(),
-                            key=lambda s: self._active_sessions[
-                                s
-                            ].created_at.timestamp(),
-                        )
-
-                    del self._active_sessions[oldest_session_id]
-                    logger.debug(
-                        f"Removed session {oldest_session_id} to stay within active session limit"
-                    )
+                _evict_oldest_session_if_full(self)
 
                 self._active_sessions[session_id] = session
                 return session
