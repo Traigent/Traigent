@@ -300,7 +300,7 @@ class ExecutionSnapshot:
         """``(path, entry copy)`` for each present part, in path order."""
         for path, entry in sorted(self._manifest["parts"].items()):
             if entry.get("status") != "unavailable":
-                yield path, dict(entry)
+                yield path, copy.deepcopy(entry)
 
     def __repr__(self) -> str:
         digests = ",".join(

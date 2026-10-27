@@ -390,3 +390,80 @@ def test_bc5_f5_store_recovers_after_the_branch_returns() -> None:
     session.branches.add("main")
     session.files[("main", "snaps/blobs/x")] = b"back"
     assert store.read("blobs/x") == b"back"
+
+
+# ------------------------------------ FIX R2 P2: IPv6 literals in prepared URLs
+
+
+class IPv6Adapter(BaseAdapter):
+    """Answers any host with the repo and branch, optionally redirects contents."""
+
+    def __init__(self, redirect_to: str | None = None) -> None:
+        super().__init__()
+        self.seen: list[requests.PreparedRequest] = []
+        self.redirect_to = redirect_to
+
+    def send(self, request: requests.PreparedRequest, **_kwargs: Any) -> Any:
+        self.seen.append(request)
+        path = parse_url(request.url or "").path or ""
+        status, body, headers = 404, b"", {}
+        if path == f"/repos/{OWNER_REPO}":
+            status, body = 200, json.dumps({"private": True}).encode("utf-8")
+        elif path.startswith(f"/repos/{OWNER_REPO}/branches/"):
+            status, body = 200, b"{}"
+        elif self.redirect_to is not None and "/contents/" in path:
+            status, headers = 302, {"Location": self.redirect_to}
+        response = requests.Response()
+        response.status_code = status
+        response.headers.update(headers)
+        response._content = body
+        response._content_consumed = True
+        response.raw = io.BytesIO(body)
+        response.url = request.url or ""
+        response.request = request
+        return response
+
+    def close(self) -> None:
+        return None
+
+
+@pytest.mark.parametrize(
+    ("api_url", "insecure_local", "bracketed"),
+    [
+        ("http://[::1]:8080", True, "[::1]"),
+        ("https://[2001:db8::1]", False, "[2001:db8::1]"),
+    ],
+)
+def test_fix_r2_p2_ipv6_api_origin_is_sent_not_refused(
+    api_url: str, insecure_local: bool, bracketed: str
+) -> None:
+    adapter = IPv6Adapter()
+    session = requests.Session()
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    store, _ = store_over(session, api_url=api_url, allow_insecure_local=insecure_local)
+    assert store.read("blobs/x") is None  # the 404 is an honest absence
+    assert adapter.seen, "the IPv6 origin must reach the transport"
+    assert {parse_url(r.url or "").host for r in adapter.seen} == {bracketed}
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "http://user@[::1]:8080/x",
+        "http://[::1]:8080\\@evil.example/x",
+    ],
+)
+def test_fix_r2_p2_ipv6_origin_still_refuses_userinfo_and_backslash(
+    location: str,
+) -> None:
+    adapter = IPv6Adapter(redirect_to=location)
+    session = requests.Session()
+    session.mount("http://", adapter)
+    store, _ = store_over(
+        session, api_url="http://[::1]:8080", allow_insecure_local=True
+    )
+    assert code_of(lambda: store.read("blobs/x")) is (
+        SnapshotErrorCode.UNSAFE_DESTINATION
+    )
+    assert "evil.example" not in {parse_url(r.url or "").host for r in adapter.seen}

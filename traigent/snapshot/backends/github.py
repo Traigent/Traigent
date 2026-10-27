@@ -190,7 +190,8 @@ class GitHubStore:
             return False
         if split.username or split.password or "@" in split.netloc or wire.auth:
             return False
-        host = (wire.host or "").lower()
+        # urllib3 brackets IPv6 literals ("[::1]"); urlsplit does not ("::1").
+        host = (wire.host or "").lower().removeprefix("[").removesuffix("]")
         return (split.scheme, split.hostname, split.port) == self._origin and (
             (wire.scheme, host, wire.port) == self._origin
         )
@@ -250,6 +251,10 @@ class GitHubStore:
                 )
             except requests.RequestException:
                 raise _error(SnapshotErrorCode.BACKEND_UNAVAILABLE) from None
+            except ValueError:
+                # Requests parses a redirect Location even when not following it;
+                # a Location it cannot parse is refused, never sent.
+                raise _error(SnapshotErrorCode.UNSAFE_DESTINATION) from None
             if response.status_code not in _REDIRECT_STATUS:
                 return response, self._body(response)
             location = response.headers.get("Location")

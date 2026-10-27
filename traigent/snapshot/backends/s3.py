@@ -163,6 +163,7 @@ class S3Store:
             self._put(key, b"probe")
         except Exception as error:
             if _error_code(error) not in _PROBE_PROOF_CODES:
+                self._best_effort_delete(key)  # our first PUT created this key
                 raise _translate(error) from None
             self._probed = True
             self._best_effort_delete(key)

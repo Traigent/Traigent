@@ -300,6 +300,8 @@ def test_a1_f4_conflict_409_is_not_capability_evidence(code: str) -> None:
         store.create_if_absent("blobs/x", b"1")
     assert caught.value.code is SnapshotErrorCode.BACKEND_UNAVAILABLE
     assert ("my-bucket", "p/blobs/x") not in client.objects  # nothing real written
+    # the first probe PUT created an object; it must not be left behind
+    assert not [k for _, k in client.objects if "/.probe/" in k]
     # not remembered as supported: the next call probes again from scratch
     before = len(client.put_calls)
     store.create_if_absent("blobs/x", b"1")
@@ -450,3 +452,21 @@ def test_a1_f8_falsy_metadata_lands_in_the_dataset_bytes() -> None:
     )
     line = snapshot.parts["dataset/examples.jsonl"].decode("utf-8").strip()
     assert json.loads(line)["metadata"] == {}
+
+
+def test_fix_r2_p3_nested_entry_extension_cannot_be_changed_through_view() -> None:
+    snapshot = _snapshot()
+    manifest = json.loads(snapshot.manifest_bytes)
+    path = next(
+        p
+        for p in sorted(manifest["parts"])
+        if manifest["parts"][p].get("status") != "unavailable"
+    )
+    manifest["parts"][path]["provenance"] = {"owner": "original"}
+    tampered = ExecutionSnapshot(
+        canonical_manifest_bytes(manifest), dict(snapshot.parts)
+    )
+    entries = dict(tampered.present_parts())
+    entries[path]["provenance"]["owner"] = "tampered"
+    assert tampered.manifest["parts"][path]["provenance"] == {"owner": "original"}
+    assert "tampered" not in repr(tampered)
