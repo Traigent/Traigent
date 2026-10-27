@@ -42,6 +42,19 @@ def _require_pandas() -> Any:
     return pd
 
 
+def _apply_example_count_columns(row: Any, metadata: Any) -> None:
+    """Copy the example-count entries of ``metadata`` onto a dataframe ``row``."""
+    if "successful_examples" in metadata:
+        row["successful_examples"] = metadata.get("successful_examples")
+    if "examples_attempted" in metadata:
+        row["examples_attempted"] = metadata.get("examples_attempted")
+    if "successful_examples" in metadata and "examples_attempted" in metadata:
+        row["example_success_summary"] = (
+            f"{metadata.get('successful_examples')}/"
+            f"{metadata.get('examples_attempted')} examples succeeded"
+        )
+
+
 def _name_suggests_minimize(name: str) -> bool:
     """Return the exact canonical SDK direction for a bare metric name."""
     return resolve_objective_orientation(name) == "minimize"
@@ -2445,15 +2458,7 @@ class OptimizationResult:
                 else None
             )
             metadata = trial.metadata or {}
-            if "successful_examples" in metadata:
-                row["successful_examples"] = metadata.get("successful_examples")
-            if "examples_attempted" in metadata:
-                row["examples_attempted"] = metadata.get("examples_attempted")
-            if "successful_examples" in metadata and "examples_attempted" in metadata:
-                row["example_success_summary"] = (
-                    f"{metadata.get('successful_examples')}/"
-                    f"{metadata.get('examples_attempted')} examples succeeded"
-                )
+            _apply_example_count_columns(row, metadata)
             if "total_example_cost" in metadata:
                 row["total_cost"] = metadata.get("total_example_cost")
             elif "total_cost" not in row:
