@@ -35,6 +35,7 @@ def ex(
     custom=None,
     sdk_eval=False,
     acc=None,
+    scored=True,
 ):
     cm = CostMetrics(input_cost=cost, output_cost=0.0)
     cm.unmeasured = unmeasured
@@ -50,10 +51,12 @@ def ex(
         sdk_evaluation_cost=sdk_eval,
     )
     # Accuracy is only ever a row's own value (never derived from success), so
-    # the fixture supplies the 1/0 each row used to be credited with.
-    m.custom_metrics.setdefault(
-        "accuracy", acc if acc is not None else (1.0 if success else 0.0)
-    )
+    # a scored fixture row carries the explicit 1/0 it used to be credited
+    # with. ``scored=False`` builds a row that has no accuracy value at all.
+    if scored:
+        m.custom_metrics.setdefault(
+            "accuracy", acc if acc is not None else (1.0 if success else 0.0)
+        )
     return m
 
 
@@ -117,7 +120,7 @@ SCENARIOS = {
         False,
     ),
     "user_supplied_accuracy": (
-        lambda: tracker([ex(custom={"accuracy": 0.25}), ex(success=False)]),
+        lambda: tracker([ex(custom={"accuracy": 0.25}), ex(success=False, acc=0.0)]),
         True,
     ),
     "errored_but_measured": (
@@ -142,3 +145,20 @@ SNAPSHOT = Path(__file__).parent / "fixtures" / "summary_stats_snapshots.json"
 def test_format_as_summary_stats_snapshot(name):
     expected = json.loads(SNAPSHOT.read_text(encoding="utf-8"))[name]
     assert run(name) == expected
+
+
+def test_rows_without_an_accuracy_value_are_left_out_of_every_view():
+    """A row with no accuracy value is unmeasured: not a hit, not a miss."""
+    t = tracker([ex(acc=0.5), ex(scored=False), ex(success=False, scored=False)])
+    for usa in (False, True):
+        stats = t.format_as_summary_stats(user_supplied_accuracy=usa)["metrics"][
+            "accuracy"
+        ]
+        assert stats["count"] == 1
+        assert stats["mean"] == pytest.approx(0.5)
+        assert t.format_for_backend(user_supplied_accuracy=usa)[
+            "accuracy"
+        ] == pytest.approx(0.5)
+    none_scored = tracker([ex(scored=False), ex(scored=False)])
+    assert none_scored.format_for_backend()["accuracy"] is None
+    assert none_scored.format_as_summary_stats()["metrics"]["accuracy"]["count"] == 0

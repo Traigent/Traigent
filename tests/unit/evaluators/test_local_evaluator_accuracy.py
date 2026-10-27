@@ -641,3 +641,100 @@ async def test_supplied_accuracy_with_gold_overrides_exact_match_everywhere(
         lambda d: {"a": "label-a", "b": "label-b"}[d["q"]], {}, _two_label_dataset()
     )
     _assert_all_accuracy_views_agree(result, payloads, 0.25)
+
+
+@pytest.mark.asyncio
+async def test_blank_gold_row_is_unmeasured_in_detailed_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blank expected output is not gold: in detailed mode the per-example
+    scorer must not turn it into a 0.0 that the tracker would take as supplied."""
+    payloads = _spy_format_for_backend(monkeypatch)
+    dataset = Dataset(
+        [EvaluationExample({"q": "a"}, "label-a"), EvaluationExample({"q": "b"}, "")],
+        name="blank-gold",
+        description="one blank gold",
+    )
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"], detailed=True, execution_mode="local"
+    )
+    result = await evaluator.evaluate(
+        lambda d: {"a": "label-a", "b": "anything"}[d["q"]], {}, dataset
+    )
+    _assert_all_accuracy_views_agree(result, payloads, 1.0)
+
+
+@pytest.mark.asyncio
+async def test_non_objective_accuracy_function_in_summary_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With ``accuracy`` supplied but not an objective, summary mode has no
+    detailed rows; the trial accuracy is still the per-row mean, not 0.0."""
+    payloads = _spy_format_for_backend(monkeypatch)
+    evaluator = LocalEvaluator(
+        metrics=["pass_rate"],
+        metric_functions={
+            "pass_rate": lambda output, expected, **_: 1.0,
+            "accuracy": lambda output, expected, **_: (
+                0.2 if output == "label-a" else 0.6
+            ),
+        },
+        detailed=False,
+        execution_mode="local",
+    )
+    result = await evaluator.evaluate(
+        lambda d: {"a": "label-a", "b": "label-b"}[d["q"]], {}, _two_label_dataset()
+    )
+    _assert_all_accuracy_views_agree(result, payloads, 0.4)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("detailed", [False, True], ids=["summary", "detailed"])
+async def test_supplied_accuracy_wins_on_a_failed_row(
+    detailed: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A supplied accuracy beats the built-in failed-attempt zero."""
+    payloads = _spy_format_for_backend(monkeypatch)
+
+    def func(input_data):
+        if input_data["q"] == "b":
+            raise RuntimeError("boom")
+        return "label-a"
+
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"],
+        metric_functions={"quality": lambda output, expected, **_: {"accuracy": 0.25}},
+        detailed=detailed,
+        execution_mode="local",
+    )
+    result = await evaluator.evaluate(func, {}, _two_label_dataset())
+    _assert_all_accuracy_views_agree(result, payloads, 0.25)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("detailed", [False, True], ids=["summary", "detailed"])
+async def test_custom_accuracy_objective_leaves_a_row_without_a_value_out(
+    detailed: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fresh row the custom accuracy function gave no value (and that has no
+    gold for exact match) is unmeasured, not zero-filled, in every view."""
+    payloads = _spy_format_for_backend(monkeypatch)
+    dataset = Dataset(
+        [EvaluationExample({"q": "a"}, "label-a"), EvaluationExample({"q": "b"}, "")],
+        name="custom-objective",
+        description="second row has no gold",
+    )
+
+    def accuracy(output, expected, **_):
+        return 0.8 if output == "label-a" else {"other": 1.0}
+
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"],
+        metric_functions={"accuracy": accuracy},
+        detailed=detailed,
+        execution_mode="local",
+    )
+    result = await evaluator.evaluate(
+        lambda d: {"a": "label-a", "b": "anything"}[d["q"]], {}, dataset
+    )
+    _assert_all_accuracy_views_agree(result, payloads, 0.8)

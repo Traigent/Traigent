@@ -1232,6 +1232,8 @@ class LocalEvaluator(BaseEvaluator):
                             continue
                         key = str(result_name)
                         example_metric.custom_metrics[key] = float(result_value)
+                        if key == "accuracy":
+                            example_metric.accuracy_supplied = True
                         produced_keys.append(key)
                 except BaseException:
                     # An objective sub-value that raised (or returned None,
@@ -1268,6 +1270,8 @@ class LocalEvaluator(BaseEvaluator):
                 example_metric.custom_metrics[metric_name] = 0.0
             else:
                 example_metric.custom_metrics[metric_name] = float(value)
+            if metric_name == "accuracy":
+                example_metric.accuracy_supplied = True
             produced_keys.append(metric_name)
         return produced_keys
 
@@ -2792,9 +2796,7 @@ class LocalEvaluator(BaseEvaluator):
         read it, so they share one population and one mean. The trial accuracy
         is absent when no row has a value.
         """
-        values = metrics_tracker._accuracy_values_for_formatters(
-            user_supplied_accuracy=False
-        )
+        values = metrics_tracker._accuracy_values_for_formatters()
         previous = aggregated_metrics.get("accuracy")
         if values:
             value = sum(values) / len(values)
@@ -3328,7 +3330,6 @@ class LocalEvaluator(BaseEvaluator):
         accuracy_is_custom_objective = (
             "accuracy" in self.metrics and "accuracy" in self.metric_functions
         )
-        accuracy_is_user_metric = "accuracy" in self.metric_functions
 
         if accuracy_is_custom_objective:
             accuracy_value, _ = self._compute_accuracy_aggregated(
@@ -3340,17 +3341,21 @@ class LocalEvaluator(BaseEvaluator):
                 # to the objective value).
                 aggregated_metrics["exact_match_default"] = accuracy_value
                 self._log_dual_scorer_notice_once()
-        else:
-            # One per-row contract (see MetricsTracker.
-            # _accuracy_values_for_formatters): the trial accuracy is the mean
-            # of the rows that have a value, the same population and mean the
-            # tracker formatters report.
-            self._apply_row_accuracy_to_aggregate(aggregated_metrics, metrics_tracker)
 
         # Aggregate custom metric functions using helper
         if self.metric_functions:
             custom_aggregated = self._compute_aggregated_custom_metrics(example_results)
+            # Accuracy has exactly one producer: the shared per-row helper.
+            custom_aggregated.pop("accuracy", None)
             aggregated_metrics.update(custom_aggregated)
+
+        # One per-row contract (see MetricsTracker.
+        # _accuracy_values_for_formatters): the trial accuracy is the mean of
+        # the rows that have a value, the same population and mean the tracker
+        # formatters report. Nothing writes accuracy after this point.
+        self._apply_row_accuracy_to_aggregate(aggregated_metrics, metrics_tracker)
+
+        if self.metric_functions:
             # metrics["score"] is the optimization signal. When a custom scorer
             # owns the objective, that signal is the objective value (the custom
             # scorer mean == metrics["accuracy"]), NOT the default exact-match
@@ -3396,7 +3401,6 @@ class LocalEvaluator(BaseEvaluator):
         # tracker's user-metric aggregation pass.
         comprehensive_metrics = metrics_tracker.format_for_backend(
             extra_reserved=self._evaluator_computable_metric_names(),
-            user_supplied_accuracy=accuracy_is_user_metric,
         )
         self._merge_comprehensive_metrics(
             aggregated_metrics,
@@ -3455,9 +3459,7 @@ class LocalEvaluator(BaseEvaluator):
         # Generate summary_stats (needed for insights)
         summary_stats = None
         if self.execution_mode_enum:
-            summary_stats = metrics_tracker.format_as_summary_stats(
-                user_supplied_accuracy=accuracy_is_user_metric
-            )
+            summary_stats = metrics_tracker.format_as_summary_stats()
             if isinstance(summary_stats.get("metrics"), dict):
                 enforce_unknown_cost_invariant(
                     summary_stats["metrics"],
@@ -3613,7 +3615,9 @@ class LocalEvaluator(BaseEvaluator):
         # ``random.uniform()`` plus output-string heuristics, which would
         # silently replace real evaluation results with fake scores
         # whenever the env var was set in a production environment.
-        if "accuracy" in self.metrics:
+        if "accuracy" in self.metrics and not _is_empty_expected_output(
+            expected_output
+        ):
             metrics["accuracy"] = self._compute_real_accuracy(
                 actual_output, expected_output
             )
