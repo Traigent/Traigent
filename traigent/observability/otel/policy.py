@@ -325,11 +325,8 @@ class ContentPolicy:
             if allowed is None:
                 dropped += 1
                 continue
-            out.append(
-                Event(
-                    event.name, self._safe_event_attrs(event, allowed), event.timestamp
-                )
-            )
+            attrs = self._safe_event_attrs(event, allowed)
+            out.append(Event(event.name, attrs, event.timestamp))
         return tuple(out), dropped
 
     def _record_event(self, event: Event, mode: str) -> tuple[Event, int]:
