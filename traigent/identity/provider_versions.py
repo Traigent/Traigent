@@ -44,8 +44,8 @@ def _text(value: Any) -> str | None:
     return None
 
 
-def _from_response(response: Any, names: tuple[str, ...]) -> str | None:
-    """First string field named in ``names`` on the response or its metadata."""
+def _response_sources(response: Any) -> list[Any]:
+    """The response followed by its mapping-valued metadata containers."""
     sources: list[Any] = [response]
     for attr in ("response_metadata", "llm_output"):
         extra = (
@@ -55,17 +55,26 @@ def _from_response(response: Any, names: tuple[str, ...]) -> str | None:
         )
         if isinstance(extra, Mapping):
             sources.append(extra)
-    for source in sources:
+    return sources
+
+
+def _read_field(source: Any, name: str) -> Any:
+    """Read ``name`` from a mapping or object; a raising accessor reads as None."""
+    try:
+        return (
+            source.get(name)
+            if isinstance(source, Mapping)
+            else getattr(source, name, None)
+        )
+    except Exception:  # noqa: BLE001 - a raising property is "unknown"
+        return None
+
+
+def _from_response(response: Any, names: tuple[str, ...]) -> str | None:
+    """First string field named in ``names`` on the response or its metadata."""
+    for source in _response_sources(response):
         for name in names:
-            try:
-                value = (
-                    source.get(name)
-                    if isinstance(source, Mapping)
-                    else getattr(source, name, None)
-                )
-            except Exception:  # noqa: BLE001 - a raising property is "unknown"
-                value = None
-            text = _text(value)
+            text = _text(_read_field(source, name))
             if text is not None:
                 return text
     return None
