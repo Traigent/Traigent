@@ -72,12 +72,36 @@ class TestFormatDenials:
         assert provider.verify_totp_code(code, SECRET, "u") is True
         assert verify_calls == [(code, 1)]
 
-    @pytest.mark.parametrize("code", ["١٢٣٤٥٦", "123456\n"])
-    def test_current_regex_quirks_are_accepted(self, provider, log, verify_calls, code):
-        # Existing behaviour: unicode digits and a trailing newline pass the
-        # format check and reach the verifier.
-        assert provider.verify_totp_code(code, SECRET, "u") is True
-        assert verify_calls == [(code, 1)]
+    @pytest.mark.parametrize("code", ["١٢٣٤٥٦", "123456\n", "123456 ", "\n123456"])
+    def test_non_ascii_digits_and_whitespace_denied_without_verifying(
+        self, provider, log, verify_calls, code
+    ):
+        assert provider.verify_totp_code(code, SECRET, "u") is False
+        assert log.calls == [("warning", "Invalid TOTP code format")]
+        assert verify_calls == []
+
+    def test_fullwidth_digits_normalized_for_verification(
+        self, provider, log, verify_calls
+    ):
+        assert provider.verify_totp_code("１２３４５６", SECRET, "u") is True
+        assert verify_calls == [("123456", 1)]
+        assert provider._used_codes["u"] == {"123456"}
+
+    def test_fullwidth_replay_of_used_code_denied(self, provider, log, verify_calls):
+        assert provider.verify_totp_code("123456", SECRET, "u") is True
+        log.calls.clear()
+        assert provider.verify_totp_code("１２３４５６", SECRET, "u") is False
+        assert log.calls == [("warning", "TOTP code replay attempt for user u")]
+        assert provider.verify_totp_code("123456", SECRET, "u") is False
+        assert len(verify_calls) == 1
+
+    def test_fullwidth_first_use_then_ascii_replay_denied(
+        self, provider, log, verify_calls
+    ):
+        assert provider.verify_totp_code("１２３４５６", SECRET, "u") is True
+        assert provider.verify_totp_code("123456", SECRET, "u") is False
+        assert provider.verify_totp_code("１２３４５６", SECRET, "u") is False
+        assert len(verify_calls) == 1
 
     @pytest.mark.parametrize("secret", ["", None, "abc", "JBSW1", "JBSW=A", "JBSW Y"])
     def test_bad_secret_denied_before_verify(self, provider, log, verify_calls, secret):
