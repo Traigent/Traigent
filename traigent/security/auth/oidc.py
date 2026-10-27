@@ -76,10 +76,14 @@ class OIDCAuthProvider:
 
     @staticmethod
     def _numeric_exp(exp: Any) -> float | None:
-        """Return ``exp`` when it is a real number, else None (unknown)."""
+        """Return ``exp`` as PyJWT's integer cutoff, else None (unknown).
+
+        PyJWT compares ``exp`` as an integer, so the cache floors a fractional
+        ``exp`` too; otherwise it could serve a token after PyJWT's cutoff.
+        """
         if isinstance(exp, bool) or not isinstance(exp, (int, float)):
             return None
-        return float(exp)
+        return float(int(exp))
 
     @classmethod
     def _cache_lifetime_seconds(cls, exp: Any) -> float:
