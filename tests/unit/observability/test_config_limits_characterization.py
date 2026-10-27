@@ -102,6 +102,9 @@ class _Probe:
         self.log: list[str] = []
         self._le, self._gt = le_zero, gt_max
 
+    def __float__(self) -> float:
+        return 1.0
+
     def __le__(self, other):
         self.log.append("le")
         return self._le
@@ -142,10 +145,28 @@ class TestPerTraceTimeout:
 
 class TestMalformedInputs:
     @pytest.mark.parametrize("name", [c[0] for c in CASES])
-    def test_nan_passes_both_comparisons_today(self, name):
-        # Existing behaviour: NaN is neither <= 0 nor above the limit.
-        value = getattr(_make(**{name: float("nan")}), name)
-        assert value != value
+    def test_nan_denied(self, name):
+        with pytest.raises(ValueError) as exc:
+            _make(**{name: float("nan")})
+        assert str(exc.value) == f"{name} must be a finite number"
+
+    @pytest.mark.parametrize("name,limit", [(c[0], c[1]) for c in CASES])
+    def test_positive_infinity_denied_by_upper_bound(self, name, limit):
+        with pytest.raises(ValueError) as exc:
+            _make(**{name: float("inf")})
+        assert str(exc.value) == f"{name} must be less than or equal to {limit}"
+
+    @pytest.mark.parametrize("name", [c[0] for c in CASES])
+    def test_negative_infinity_denied_by_lower_bound(self, name):
+        with pytest.raises(ValueError) as exc:
+            _make(**{name: float("-inf")})
+        assert str(exc.value) == f"{name} must be greater than 0"
+
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+    def test_per_trace_timeout_non_finite_denied(self, value):
+        with pytest.raises(ValueError) as exc:
+            _make(per_trace_timeout=value)
+        assert str(exc.value) == "per_trace_timeout must be a finite number"
 
     @pytest.mark.parametrize("name", [c[0] for c in CASES])
     def test_non_numeric_raises_type_error(self, name):
