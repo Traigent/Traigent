@@ -90,6 +90,20 @@ class _ImportedConstraintExpression(BoolExpr):
         return self.expression
 
 
+def _first_canonical_values_spec(
+    cls: type[ConfigSpace],
+    name: str,
+    domain: Mapping[str, Any],
+    entry: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """First non-``None`` canonical ``set``/``values`` spec, else ``None``."""
+    for key in ("set", "values"):
+        canonical = cls._canonical_values_spec(name, domain, entry, key, key)
+        if canonical is not None:
+            return canonical
+    return None
+
+
 @dataclass(frozen=True)
 class ConfigSpace:
     """A complete configuration space with TVARs and constraints.
@@ -357,12 +371,9 @@ class ConfigSpace:
             if "range" in domain:
                 kind = "range"
             else:
-                for key in ("set", "values"):
-                    canonical = cls._canonical_values_spec(
-                        name, domain, entry, key, key
-                    )
-                    if canonical is not None:
-                        return canonical
+                canonical = _first_canonical_values_spec(cls, name, domain, entry)
+                if canonical is not None:
+                    return canonical
         if kind == "enum":
             return {
                 "values": list(domain.get("values", [])),
