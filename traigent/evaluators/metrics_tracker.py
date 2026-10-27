@@ -1243,6 +1243,10 @@ class MetricsTracker:
                 # Objective metric-function failures fail closed before this
                 # point. A missing value is still a real attempted row, so it
                 # is a zero rather than a silently removed denominator entry.
+                if raw_accuracy is None and metric.accuracy_unavailable:
+                    # Explicitly unmeasured (e.g. a resumed row with no stored
+                    # score, never re-scored): not a miss.
+                    continue
                 values.append(float(raw_accuracy) if raw_accuracy is not None else 0.0)
                 continue
 

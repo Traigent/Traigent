@@ -418,29 +418,48 @@ def _resume_prefill_for_first_row(stored_metrics: dict):
     return ResumePrefill({config_key({}): {"example_0": row}})
 
 
+def _assert_all_accuracy_views_agree(result, payloads, expected):
+    """Trial aggregate, score alias, backend payload and summary stats agree."""
+    (payload,) = payloads
+    stats = result.summary_stats["metrics"].get("accuracy", {})
+    if expected is None:
+        assert result.metrics.get("accuracy") is None
+        assert result.metrics.get("score") is None
+        assert payload["accuracy"] is None
+        assert payload["score"] is None
+        assert stats.get("count", 0) == 0
+        return
+    assert result.metrics["accuracy"] == pytest.approx(expected)
+    assert result.metrics["score"] == pytest.approx(expected)
+    assert payload["accuracy"] == pytest.approx(expected)
+    assert stats["mean"] == pytest.approx(expected)
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("configured", [True, False])
-async def test_resumed_row_with_gold_but_no_stored_accuracy_is_unmeasured(
-    configured: bool, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("custom", [False, True], ids=["builtin", "custom"])
+@pytest.mark.parametrize("stored", [True, False], ids=["stored", "unstored"])
+async def test_partial_resume_accuracy_has_one_population(
+    stored: bool, custom: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A resumed successful row with gold and no stored accuracy is never 1.0:
-    it stays out of the accuracy denominator in the backend payload and the
-    summary stats, whether or not accuracy is a configured metric."""
+    """Reused rows are never re-scored: stored scores count, a reused row with
+    no stored score is left out (never 1.0, never 0.0), new rows count as
+    measured, and every accuracy view reports the same value."""
     from traigent.evaluators.base import bind_resume_prefill, reset_resume_prefill
+    from traigent.evaluators.metrics_tracker import MetricsTracker
 
     def func(input_data):
         return {"b": "label-b", "c": "wrong"}[input_data["q"]]
 
     evaluator = LocalEvaluator(
-        metrics=["accuracy"] if configured else ["pass_rate"],
+        metrics=["accuracy"],
         metric_functions=(
-            None if configured else {"pass_rate": lambda output, expected, **_: 1.0}
+            {"accuracy": lambda output, expected, **_: float(output == expected)}
+            if custom
+            else None
         ),
         detailed=True,
         execution_mode="local",
     )
-    from traigent.evaluators.metrics_tracker import MetricsTracker
-
     payloads: list[dict] = []
     original = MetricsTracker.format_for_backend
 
@@ -450,9 +469,10 @@ async def test_resumed_row_with_gold_but_no_stored_accuracy_is_unmeasured(
         return payload
 
     monkeypatch.setattr(MetricsTracker, "format_for_backend", spy)
-    token = bind_resume_prefill(
-        _resume_prefill_for_first_row({"total_cost": 0.0, "input_tokens": 1})
-    )
+    stored_metrics = {"total_cost": 0.0, "input_tokens": 1}
+    if stored:
+        stored_metrics["accuracy"] = 1.0
+    token = bind_resume_prefill(_resume_prefill_for_first_row(stored_metrics))
     try:
         result = await evaluator.evaluate(func, {}, _three_label_dataset())
     finally:
@@ -464,15 +484,74 @@ async def test_resumed_row_with_gold_but_no_stored_accuracy_is_unmeasured(
         if (r.metadata or {}).get("resumed_example_from_prior_run")
     ]
     assert len(resumed) == 1  # the partially resumed evaluation really resumed
-    stats = result.summary_stats["metrics"].get("accuracy", {})
-    (payload,) = payloads  # the tracker's submission payload
-    if configured:
-        # Two executed rows (one hit, one miss); the resumed row is excluded
-        # from the tracker's accuracy, never counted as a derived 1.0.
-        assert payload["accuracy"] == pytest.approx(0.5)
-        assert stats["count"] == 2
-        assert stats["mean"] == pytest.approx(0.5)
-    else:
-        assert payload["accuracy"] is None
-        assert result.metrics.get("accuracy") is None
-        assert stats.get("count", 0) == 0
+    # new rows: one hit, one miss; plus the reused row only when it has a score
+    _assert_all_accuracy_views_agree(result, payloads, 2 / 3 if stored else 0.5)
+
+
+@pytest.mark.asyncio
+async def test_resumed_row_unmeasured_when_accuracy_not_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from traigent.evaluators.base import bind_resume_prefill, reset_resume_prefill
+    from traigent.evaluators.metrics_tracker import MetricsTracker
+
+    payloads: list[dict] = []
+    original = MetricsTracker.format_for_backend
+
+    def spy(self, *args, **kwargs):
+        payload = original(self, *args, **kwargs)
+        payloads.append(payload)
+        return payload
+
+    monkeypatch.setattr(MetricsTracker, "format_for_backend", spy)
+    evaluator = LocalEvaluator(
+        metrics=["pass_rate"],
+        metric_functions={"pass_rate": lambda output, expected, **_: 1.0},
+        detailed=True,
+        execution_mode="local",
+    )
+    token = bind_resume_prefill(
+        _resume_prefill_for_first_row({"total_cost": 0.0, "input_tokens": 1})
+    )
+    try:
+        result = await evaluator.evaluate(
+            lambda d: {"b": "label-b", "c": "wrong"}[d["q"]],
+            {},
+            _three_label_dataset(),
+        )
+    finally:
+        reset_resume_prefill(token)
+    _assert_all_accuracy_views_agree(result, payloads, None)
+
+
+@pytest.mark.asyncio
+async def test_returned_mapping_accuracy_without_gold_reaches_every_view(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A metric function whose returned mapping carries ``accuracy`` is kept
+    when the dataset has no expected outputs, in every accuracy view."""
+    from traigent.evaluators.metrics_tracker import MetricsTracker
+
+    dataset = Dataset(
+        [EvaluationExample({"q": "a"}, None), EvaluationExample({"q": "b"}, None)],
+        name="nogold",
+        description="no expected outputs",
+    )
+    payloads: list[dict] = []
+    original = MetricsTracker.format_for_backend
+
+    def spy(self, *args, **kwargs):
+        payload = original(self, *args, **kwargs)
+        payloads.append(payload)
+        return payload
+
+    monkeypatch.setattr(MetricsTracker, "format_for_backend", spy)
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"],
+        metric_functions={"quality": lambda output, expected, **_: {"accuracy": 0.25}},
+        detailed=True,
+        execution_mode="local",
+    )
+    result = await evaluator.evaluate(lambda d: "x", {}, dataset)
+    assert [e.metrics["accuracy"] for e in result.example_results] == [0.25, 0.25]
+    _assert_all_accuracy_views_agree(result, payloads, 0.25)

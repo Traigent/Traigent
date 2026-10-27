@@ -2267,6 +2267,9 @@ class LocalEvaluator(BaseEvaluator):
             isinstance(stored_accuracy, (int, float)) and math.isfinite(stored_accuracy)
         ):
             metric.custom_metrics.pop("accuracy", None)
+            # Explicit provenance: this row was never scored for accuracy, so
+            # every accuracy aggregate leaves it out (it is not a miss).
+            metric.accuracy_unavailable = True
         if progress_callback:
             progress_callback(
                 index,
@@ -2766,6 +2769,50 @@ class LocalEvaluator(BaseEvaluator):
             example_metric.cost.known_cost += example_metric.cost.total_cost
             example_metric.cost.unmeasured = True
         LocalEvaluator._withdraw_numeric_cost(example_metric, example_result)
+
+    @staticmethod
+    def _align_builtin_accuracy_with_tracker(
+        aggregated_metrics: dict[str, Any],
+        metrics_tracker: Any,
+        example_results: list[Any] | None,
+    ) -> None:
+        """Derive the trial accuracy from the per-row measured population.
+
+        When rows were reused from a prior run (they are not re-scored) or carry a
+        supplied accuracy without gold, so the
+        output-based aggregate (which would compare their stored output) must
+        not decide the trial accuracy. The tracker's per-row population is the
+        single source: stored scores of reused rows, scores measured on new
+        rows, a failed eligible new attempt as 0, and no entry for a reused
+        row without a stored score. Accuracy and the score alias both follow it.
+        """
+        has_reused_rows = any(
+            r is not None
+            and (getattr(r, "metadata", None) or {}).get(
+                "resumed_example_from_prior_run"
+            )
+            for r in example_results or []
+        )
+        # A supplied accuracy on a row with no gold is outside the output-based
+        # aggregate's denominator, so that aggregate cannot report it.
+        has_supplied_without_gold = any(
+            not m.accuracy_eligible and m.custom_metrics.get("accuracy") is not None
+            for m in metrics_tracker.example_metrics
+        )
+        if not (has_reused_rows or has_supplied_without_gold):
+            return
+        values = metrics_tracker._accuracy_values_for_formatters(
+            user_supplied_accuracy=False
+        )
+        previous = aggregated_metrics.get("accuracy")
+        if values:
+            value = sum(values) / len(values)
+            aggregated_metrics["accuracy"] = value
+            aggregated_metrics["score"] = value
+            return
+        aggregated_metrics.pop("accuracy", None)
+        if aggregated_metrics.get("score") == previous:
+            aggregated_metrics.pop("score", None)
 
     def _log_builtin_accuracy_skipped_once(self) -> None:
         """Emit one informational notice per evaluator when accuracy is skipped."""
@@ -3307,6 +3354,11 @@ class LocalEvaluator(BaseEvaluator):
                     # so it is correctly both "accuracy" and "score".
                     aggregated_metrics["accuracy"] = accuracy_value
                     aggregated_metrics.setdefault("score", accuracy_value)
+
+        if "accuracy" in self.metrics and not accuracy_is_custom_objective:
+            self._align_builtin_accuracy_with_tracker(
+                aggregated_metrics, metrics_tracker, example_results
+            )
 
         # Aggregate custom metric functions using helper
         if self.metric_functions:
