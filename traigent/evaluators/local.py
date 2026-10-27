@@ -2408,13 +2408,16 @@ class LocalEvaluator(BaseEvaluator):
             # miss in the tracker summary, as in the aggregate.
             example_metric.accuracy_builtin = True
             accuracy_value = self._calculate_example_accuracy(output, expected_output)
+            if (
+                accuracy_value is None
+                and example_metric.accuracy_eligible
+                and example_metric.success
+            ):
+                # A new row with gold whose successful call produced no output
+                # is a miss, not unmeasured (one per-row contract).
+                accuracy_value = 0.0
             if accuracy_value is not None:
                 example_metric.custom_metrics.setdefault("accuracy", accuracy_value)
-            elif example_metric.accuracy_eligible and example_metric.success:
-                # Gold exists but nothing could be compared: unmeasured (#2495).
-                # A failed attempt is not unmeasured: the tracker counts it as
-                # a miss, like the aggregate.
-                example_metric.accuracy_unavailable = True
 
         # Merge per-example user metrics into custom_metrics, never overriding
         # an evaluator-computed key (e.g. accuracy stays the computed value).
@@ -2771,36 +2774,18 @@ class LocalEvaluator(BaseEvaluator):
         LocalEvaluator._withdraw_numeric_cost(example_metric, example_result)
 
     @staticmethod
-    def _align_builtin_accuracy_with_tracker(
+    def _apply_row_accuracy_to_aggregate(
         aggregated_metrics: dict[str, Any],
         metrics_tracker: Any,
-        example_results: list[Any] | None,
     ) -> None:
-        """Derive the trial accuracy from the per-row measured population.
+        """Set the trial accuracy (and score alias) from the per-row values.
 
-        When rows were reused from a prior run (they are not re-scored) or carry a
-        supplied accuracy without gold, so the
-        output-based aggregate (which would compare their stored output) must
-        not decide the trial accuracy. The tracker's per-row population is the
-        single source: stored scores of reused rows, scores measured on new
-        rows, a failed eligible new attempt as 0, and no entry for a reused
-        row without a stored score. Accuracy and the score alias both follow it.
+        The single per-row accuracy contract lives in
+        ``MetricsTracker._accuracy_values_for_formatters``; the trial
+        aggregate, ``format_for_backend`` and ``format_as_summary_stats`` all
+        read it, so they share one population and one mean. The trial accuracy
+        is absent when no row has a value.
         """
-        has_reused_rows = any(
-            r is not None
-            and (getattr(r, "metadata", None) or {}).get(
-                "resumed_example_from_prior_run"
-            )
-            for r in example_results or []
-        )
-        # A supplied accuracy on a row with no gold is outside the output-based
-        # aggregate's denominator, so that aggregate cannot report it.
-        has_supplied_without_gold = any(
-            not m.accuracy_eligible and m.custom_metrics.get("accuracy") is not None
-            for m in metrics_tracker.example_metrics
-        )
-        if not (has_reused_rows or has_supplied_without_gold):
-            return
         values = metrics_tracker._accuracy_values_for_formatters(
             user_supplied_accuracy=False
         )
@@ -2808,7 +2793,8 @@ class LocalEvaluator(BaseEvaluator):
         if values:
             value = sum(values) / len(values)
             aggregated_metrics["accuracy"] = value
-            aggregated_metrics["score"] = value
+            if aggregated_metrics.get("score") in (None, previous):
+                aggregated_metrics["score"] = value
             return
         aggregated_metrics.pop("accuracy", None)
         if aggregated_metrics.get("score") == previous:
@@ -3338,27 +3324,22 @@ class LocalEvaluator(BaseEvaluator):
         )
         accuracy_is_user_metric = "accuracy" in self.metric_functions
 
-        if "accuracy" in self.metrics:
+        if accuracy_is_custom_objective:
             accuracy_value, _ = self._compute_accuracy_aggregated(
                 outputs, dataset, errors
             )
             if accuracy_value is not None:
-                if accuracy_is_custom_objective:
-                    # Keep the default exact-match value as a labelled
-                    # diagnostic; the custom aggregate below owns "accuracy"
-                    # and "score" (set to the objective value).
-                    aggregated_metrics["exact_match_default"] = accuracy_value
-                    self._log_dual_scorer_notice_once()
-                else:
-                    # No custom scorer: the default exact-match IS the objective,
-                    # so it is correctly both "accuracy" and "score".
-                    aggregated_metrics["accuracy"] = accuracy_value
-                    aggregated_metrics.setdefault("score", accuracy_value)
-
-        if "accuracy" in self.metrics and not accuracy_is_custom_objective:
-            self._align_builtin_accuracy_with_tracker(
-                aggregated_metrics, metrics_tracker, example_results
-            )
+                # Keep the default exact-match value as a labelled diagnostic;
+                # the custom aggregate below owns "accuracy" and "score" (set
+                # to the objective value).
+                aggregated_metrics["exact_match_default"] = accuracy_value
+                self._log_dual_scorer_notice_once()
+        else:
+            # One per-row contract (see MetricsTracker.
+            # _accuracy_values_for_formatters): the trial accuracy is the mean
+            # of the rows that have a value, the same population and mean the
+            # tracker formatters report.
+            self._apply_row_accuracy_to_aggregate(aggregated_metrics, metrics_tracker)
 
         # Aggregate custom metric functions using helper
         if self.metric_functions:

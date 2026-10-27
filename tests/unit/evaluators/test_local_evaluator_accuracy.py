@@ -404,10 +404,10 @@ def _three_label_dataset() -> Dataset:
     )
 
 
-def _resume_prefill_for_first_row(stored_metrics: dict):
+def _resume_prefill_for_first_row(stored_metrics: dict, dataset: Dataset | None = None):
     from traigent.core.resume import ResumePrefill, config_key
 
-    dataset = _three_label_dataset()
+    dataset = dataset or _three_label_dataset()
     row = {
         "input_data": dataset.examples[0].input_data,
         "expected_output": dataset.examples[0].expected_output,
@@ -432,6 +432,7 @@ def _assert_all_accuracy_views_agree(result, payloads, expected):
     assert result.metrics["accuracy"] == pytest.approx(expected)
     assert result.metrics["score"] == pytest.approx(expected)
     assert payload["accuracy"] == pytest.approx(expected)
+    assert payload["score"] == pytest.approx(expected)
     assert stats["mean"] == pytest.approx(expected)
 
 
@@ -554,4 +555,89 @@ async def test_returned_mapping_accuracy_without_gold_reaches_every_view(
     )
     result = await evaluator.evaluate(lambda d: "x", {}, dataset)
     assert [e.metrics["accuracy"] for e in result.example_results] == [0.25, 0.25]
+    _assert_all_accuracy_views_agree(result, payloads, 0.25)
+
+
+def _spy_format_for_backend(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    from traigent.evaluators.metrics_tracker import MetricsTracker
+
+    payloads: list[dict] = []
+    original = MetricsTracker.format_for_backend
+
+    def spy(self, *args, **kwargs):
+        payload = original(self, *args, **kwargs)
+        payloads.append(payload)
+        return payload
+
+    monkeypatch.setattr(MetricsTracker, "format_for_backend", spy)
+    return payloads
+
+
+def _two_label_dataset() -> Dataset:
+    return Dataset(
+        [
+            EvaluationExample({"q": "a"}, "label-a"),
+            EvaluationExample({"q": "b"}, "label-b"),
+        ],
+        name="labels2",
+        description="two gold labels",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resumed", [False, True], ids=["fresh", "resumed"])
+@pytest.mark.parametrize("detailed", [False, True], ids=["summary", "detailed"])
+async def test_successful_none_output_with_gold_is_a_miss_in_every_view(
+    resumed: bool, detailed: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One correct output plus one successful ``None`` output with gold scores
+    0.5 in the trial aggregate, score alias, payload and summary stats, whether
+    or not the correct row was reused from a prior run."""
+    from traigent.evaluators.base import bind_resume_prefill, reset_resume_prefill
+
+    payloads = _spy_format_for_backend(monkeypatch)
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"], detailed=detailed, execution_mode="local"
+    )
+    dataset = _two_label_dataset()
+    token = (
+        bind_resume_prefill(
+            _resume_prefill_for_first_row(
+                {"total_cost": 0.0, "input_tokens": 1, "accuracy": 1.0}, dataset
+            )
+        )
+        if resumed
+        else None
+    )
+    try:
+        result = await evaluator.evaluate(
+            lambda d: "label-a" if d["q"] == "a" else None, {}, dataset
+        )
+    finally:
+        if token is not None:
+            reset_resume_prefill(token)
+    if resumed and detailed:
+        assert any(
+            (r.metadata or {}).get("resumed_example_from_prior_run")
+            for r in result.example_results
+        )
+    _assert_all_accuracy_views_agree(result, payloads, 0.5)
+
+
+@pytest.mark.asyncio
+async def test_supplied_accuracy_with_gold_overrides_exact_match_everywhere(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A metric function returning ``{"accuracy": 0.25}`` owns the row's
+    accuracy even when the output matches gold; every view reports 0.25."""
+    payloads = _spy_format_for_backend(monkeypatch)
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"],
+        metric_functions={"quality": lambda output, expected, **_: {"accuracy": 0.25}},
+        detailed=True,
+        execution_mode="local",
+    )
+    result = await evaluator.evaluate(
+        lambda d: {"a": "label-a", "b": "label-b"}[d["q"]], {}, _two_label_dataset()
+    )
     _assert_all_accuracy_views_agree(result, payloads, 0.25)

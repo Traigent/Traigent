@@ -1224,32 +1224,28 @@ class MetricsTracker:
         return COST_SOURCE_MIXED
 
     def _accuracy_values_for_formatters(
-        self, *, user_supplied_accuracy: bool
+        self, *, user_supplied_accuracy: bool = False
     ) -> list[float]:
-        """Return the one accuracy denominator shared by tracker formatters.
+        """Return the per-row accuracy values: the one contract for every view.
 
-        Built-in exact-match accuracy counts every eligible execution attempt;
-        an error is therefore a zero, even if a retained output happens to
-        match. A user ``metric_functions["accuracy"]`` score is a different
-        contract: its author owns its error semantics, so the tracker preserves
-        the value the metric function returned. This explicit provenance avoids
-        guessing from a score value such as ``0.0`` or ``1.0``.
+        The trial accuracy, ``format_for_backend`` and
+        ``format_as_summary_stats`` all read this list, so they share one
+        population and one mean. A row's value is, in order:
+
+        1. a supplied accuracy (a metric function, or a returned mapping that
+           sets ``accuracy``), regardless of gold; it overrides exact match;
+        2. otherwise, when built-in accuracy is configured and the row has
+           gold: a failed new attempt is ``0.0``; a successful new row carries
+           its exact-match ``1.0``/``0.0`` (``0.0`` for a missing output); a
+           resumed row carries its stored numeric accuracy, or no value;
+        3. otherwise no value (unmeasured; never derived from success).
+
+        ``user_supplied_accuracy`` is accepted for call-site compatibility and
+        no longer changes the population.
         """
+        del user_supplied_accuracy
         values: list[float] = []
         for metric in self.example_metrics:
-            raw_accuracy = metric.custom_metrics.get("accuracy")
-
-            if user_supplied_accuracy:
-                # Objective metric-function failures fail closed before this
-                # point. A missing value is still a real attempted row, so it
-                # is a zero rather than a silently removed denominator entry.
-                if raw_accuracy is None and metric.accuracy_unavailable:
-                    # Explicitly unmeasured (e.g. a resumed row with no stored
-                    # score, never re-scored): not a miss.
-                    continue
-                values.append(float(raw_accuracy) if raw_accuracy is not None else 0.0)
-                continue
-
             if (
                 metric.accuracy_builtin
                 and metric.accuracy_eligible
@@ -1257,18 +1253,13 @@ class MetricsTracker:
             ):
                 # Declared built-in exact match: a failed eligible attempt is a
                 # miss even when it retained a matching output or produced no
-                # output at all, matching the evaluator's aggregate.
+                # output at all.
                 values.append(0.0)
                 continue
-
+            raw_accuracy = metric.custom_metrics.get("accuracy")
             if raw_accuracy is not None:
-                # A supplied or computed value is preserved independently of
-                # gold/eligibility (a returned metrics mapping can carry
-                # accuracy for a row with no expected output).
                 values.append(float(raw_accuracy))
-            # Otherwise the row has neither a value nor measurement provenance:
-            # unmeasured, neither a hit nor a miss (#2495).
-
+            # Otherwise unmeasured: neither a hit nor a miss (#2495).
         return values
 
     def _aggregate_user_custom_metrics(
