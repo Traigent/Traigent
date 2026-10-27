@@ -738,3 +738,27 @@ async def test_custom_accuracy_objective_leaves_a_row_without_a_value_out(
         lambda d: {"a": "label-a", "b": "anything"}[d["q"]], {}, dataset
     )
     _assert_all_accuracy_views_agree(result, payloads, 0.8)
+
+
+@pytest.mark.asyncio
+async def test_non_objective_accuracy_function_returning_none_is_unmeasured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A scalar ``None`` from an accuracy metric function means no value for
+    that row (not a fabricated 0.0); a real value on the other row stands."""
+    payloads = _spy_format_for_backend(monkeypatch)
+    evaluator = LocalEvaluator(
+        metrics=["pass_rate"],
+        metric_functions={
+            "pass_rate": lambda output, expected, **_: 1.0,
+            "accuracy": lambda output, expected, **_: (
+                0.8 if output == "label-a" else None
+            ),
+        },
+        detailed=False,
+        execution_mode="local",
+    )
+    result = await evaluator.evaluate(
+        lambda d: {"a": "label-a", "b": "label-b"}[d["q"]], {}, _two_label_dataset()
+    )
+    _assert_all_accuracy_views_agree(result, payloads, 0.8)

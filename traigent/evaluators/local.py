@@ -1231,6 +1231,8 @@ class LocalEvaluator(BaseEvaluator):
                                 )
                             continue
                         key = str(result_name)
+                        if key == "accuracy" and not math.isfinite(float(result_value)):
+                            continue
                         example_metric.custom_metrics[key] = float(result_value)
                         if key == "accuracy":
                             example_metric.accuracy_supplied = True
@@ -1267,9 +1269,16 @@ class LocalEvaluator(BaseEvaluator):
                             "is_objective": False,
                         }
                     )
+                if metric_name == "accuracy":
+                    # No accuracy was supplied for this row: unmeasured, not a
+                    # fabricated zero. Other metrics keep their legacy 0.0.
+                    continue
                 example_metric.custom_metrics[metric_name] = 0.0
             else:
-                example_metric.custom_metrics[metric_name] = float(value)
+                numeric = float(value)
+                if metric_name == "accuracy" and not math.isfinite(numeric):
+                    continue
+                example_metric.custom_metrics[metric_name] = numeric
             if metric_name == "accuracy":
                 example_metric.accuracy_supplied = True
             produced_keys.append(metric_name)
