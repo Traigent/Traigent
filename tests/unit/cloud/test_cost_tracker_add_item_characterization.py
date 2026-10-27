@@ -323,3 +323,60 @@ class TestFailurePaths:
             tracker._add_cost_item(_item("a"))
         assert ("alerts",) not in env.trace
         assert _ids(tracker._cost_items) == ["a"]
+
+
+class _FlakySessionItem(CostItem):
+    """CostItem whose ``session_id`` accessor serves two reads, then raises."""
+
+    reads = 0
+
+    @property
+    def session_id(self):
+        type(self).reads += 1
+        if type(self).reads > 2:
+            raise RuntimeError("session_id read")
+        return "s"
+
+    @session_id.setter
+    def session_id(self, value):
+        pass
+
+
+class TestAccessorReads:
+    def test_third_session_id_read_error_propagates_before_grouping(self, env):
+        _FlakySessionItem.reads = 0
+        tracker = env.make(enable_server_sync=True)
+        item = _FlakySessionItem(
+            item_id="a",
+            category=CostCategory.COMPUTE,
+            description="d",
+            quantity=1.0,
+            unit_cost=2.0,
+            total_cost=2.0,
+        )
+        _FlakySessionItem.reads = 0
+        with pytest.raises(RuntimeError, match="session_id read"):
+            tracker._add_cost_item(item)
+        assert _FlakySessionItem.reads == 3
+        assert _ids(tracker._cost_items) == ["a"]
+        assert tracker._total_cost == 2.0
+        assert tracker._stats["total_items_tracked"] == 1
+        assert tracker._session_costs == {}
+        assert tracker._pending_sync_items == []
+
+
+class TestUnorderedSessionLimit:
+    def test_nan_session_limit_never_evicts_and_accepts_empty_storage(self, env):
+        tracker = env.make()
+        tracker._max_sessions = float("nan")
+        tracker._add_cost_item(_item("a", "s1", ts=1.0))
+        assert {k: _ids(v) for k, v in tracker._session_costs.items()} == {"s1": ["a"]}
+        assert env.trace == []
+
+    def test_nan_session_limit_with_existing_sessions_does_not_evict(self, env):
+        tracker = env.make()
+        tracker._max_sessions = float("nan")
+        tracker._add_cost_item(_item("a", "s1", ts=1.0))
+        tracker._add_cost_item(_item("b", "s2", ts=2.0))
+        assert sorted(tracker._session_costs) == ["s1", "s2"]
+        assert env.trace == []
