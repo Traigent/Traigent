@@ -297,6 +297,30 @@ class BudgetAllocator:
         return recommendations
 
 
+def _add_action_savings(
+    simulation: dict[str, Any],
+    actions: list[CostOptimizationAction],
+    simulation_days: int,
+) -> None:
+    """Add absolute daily savings of each action, scaled to the simulated span."""
+    for action in actions:
+        if hasattr(action, "estimated_savings_absolute"):
+            savings = action.estimated_savings_absolute * simulation_days
+            simulation["total_savings"] += savings
+            simulation["total_estimated_savings"] += savings
+            simulation["savings_breakdown"][action.resource_type.value] = savings
+
+
+def _add_percent_savings(simulation: dict[str, Any], actions: dict[str, Any]) -> None:
+    """Add savings given as numeric fractions of the baseline cost."""
+    for action_type, savings_percent in actions.items():
+        if isinstance(savings_percent, (int, float)):
+            savings = simulation["baseline_cost"] * savings_percent
+            simulation["total_savings"] += savings
+            simulation["total_estimated_savings"] += savings
+            simulation["savings_breakdown"][action_type] = savings
+
+
 class CostOptimizationAI:
     """AI-powered cost optimization with machine learning capabilities.
 
@@ -477,23 +501,9 @@ class CostOptimizationAI:
 
         # Handle different action types
         if isinstance(actions, list):
-            # List of CostOptimizationAction objects
-            for action in actions:
-                if hasattr(action, "estimated_savings_absolute"):
-                    savings = action.estimated_savings_absolute * simulation_days
-                    simulation["total_savings"] += savings
-                    simulation["total_estimated_savings"] += savings
-                    simulation["savings_breakdown"][action.resource_type.value] = (
-                        savings
-                    )
-        # Dictionary format
+            _add_action_savings(simulation, actions, simulation_days)
         elif isinstance(actions, dict):
-            for action_type, savings_percent in actions.items():
-                if isinstance(savings_percent, (int, float)):
-                    savings = simulation["baseline_cost"] * savings_percent
-                    simulation["total_savings"] += savings
-                    simulation["total_estimated_savings"] += savings
-                    simulation["savings_breakdown"][action_type] = savings
+            _add_percent_savings(simulation, actions)
 
         simulation["projected_cost"] = max(
             0, simulation["baseline_cost"] - simulation["total_savings"]
