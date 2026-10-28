@@ -232,10 +232,16 @@ def initialize(  # noqa: C901
     from traigent.config.backend_config import BackendConfig
 
     _configure_api_keys(api_key, BackendConfig)
-    _configure_backend_url(api_url, BackendConfig)
 
+    # Apply local configuration first: it does not need a backend endpoint.
     if config:
         _apply_config_settings(config)
+
+    _configure_backend_url(
+        api_url,
+        BackendConfig,
+        endpoint_optional=_local_only_requested(config),
+    )
 
     _apply_additional_overrides(kwargs)
     _configure_logging_settings(config)
@@ -258,8 +264,24 @@ def _configure_api_keys(api_key: str | None, backend_config: Any) -> None:
         logger.info("Traigent API key configured from environment")
 
 
-def _configure_backend_url(api_url: str | None, backend_config: Any) -> None:
-    """Resolve and store the backend API URL."""
+def _local_only_requested(config: TraigentConfig | None) -> bool:
+    """True when the caller asked for a mode that never talks to a backend."""
+    from traigent.utils.env_config import is_backend_offline
+
+    if is_backend_offline():
+        return True
+    return bool(config is not None and config.is_local_mode())
+
+
+def _configure_backend_url(
+    api_url: str | None, backend_config: Any, *, endpoint_optional: bool = False
+) -> None:
+    """Resolve and store the backend API URL.
+
+    In strict-endpoint (self-hosted) mode with no endpoint configured, a
+    local/offline initialization skips the backend URL instead of failing; any
+    other initialization still raises ``EndpointNotConfiguredError``.
+    """
 
     if api_url:
         origin, path = backend_config.split_api_url(api_url)
@@ -273,7 +295,16 @@ def _configure_backend_url(api_url: str | None, backend_config: Any) -> None:
         logger.info(f"Traigent backend API set to: {resolved_api_url}")
         return
 
-    backend_api_url = backend_config.get_backend_api_url()
+    from traigent.config.backend_config import EndpointNotConfiguredError
+
+    try:
+        backend_api_url = backend_config.get_backend_api_url()
+    except EndpointNotConfiguredError:
+        if not endpoint_optional:
+            raise
+        _GLOBAL_CONFIG.pop("traigent_api_url", None)
+        logger.info("No backend endpoint configured; running local/offline only")
+        return
     _GLOBAL_CONFIG["traigent_api_url"] = backend_api_url
     logger.info(f"Traigent backend API configured: {backend_api_url}")
 

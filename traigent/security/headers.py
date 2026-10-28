@@ -15,7 +15,10 @@ from collections.abc import Callable
 from typing import Any, cast
 from urllib.parse import urlparse
 
-from traigent.config.backend_config import BackendConfig
+from traigent.config.backend_config import (
+    BackendConfig,
+    EndpointNotConfiguredError,
+)
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -273,7 +276,11 @@ def create_fastapi_security_headers(app: Any) -> None:
 def _default_backend_origin() -> str:
     """Return the origin for the configured Traigent backend."""
 
-    backend_url = BackendConfig.get_backend_url().rstrip("/")
+    try:
+        backend_url = BackendConfig.get_backend_url().rstrip("/")
+    except EndpointNotConfiguredError:
+        # Strict-endpoint mode with no endpoint: allow no backend origin.
+        return ""
     parsed = urlparse(backend_url)
     if parsed.scheme and parsed.netloc:
         return f"{parsed.scheme}://{parsed.netloc}"

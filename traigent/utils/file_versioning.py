@@ -164,6 +164,34 @@ def write_integrity_manifest(directory: Path, filenames: list[str]) -> None:
     os.replace(tmp, directory / INTEGRITY_MANIFEST_FILE)
 
 
+def _read_integrity_listing(manifest_path: Path) -> dict[str, str]:
+    """Return the ``sha256`` listing of a manifest, or raise a value-free ``ValueError``."""
+    try:
+        with open(manifest_path, encoding="utf-8") as f:
+            payload = json.load(f)
+        listed = payload["sha256"]
+        if not isinstance(listed, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in listed.items()
+        ):
+            raise TypeError
+    except (OSError, ValueError, KeyError, TypeError):
+        raise ValueError("Integrity manifest is unreadable") from None
+    return listed
+
+
+def _verify_listed_file(directory: Path, name: str, expected: str) -> None:
+    """Check that one listed result file exists and matches its recorded digest."""
+    target = _integrity_child(directory, name)
+    if not os.path.lexists(target):
+        raise ValueError("A result file listed in the integrity manifest is missing")
+    try:
+        actual = sha256_file(directory, name)
+    except OSError:
+        raise ValueError("A result file could not be read for verification") from None
+    if actual != expected:
+        raise ValueError("Result file failed integrity verification")
+
+
 def verify_integrity_manifest(directory: Path, required: list[str]) -> bool:
     """Verify the files listed in the integrity manifest.
 
@@ -175,16 +203,7 @@ def verify_integrity_manifest(directory: Path, required: list[str]) -> bool:
     manifest_path = directory / INTEGRITY_MANIFEST_FILE
     if not manifest_path.exists():
         return False
-    try:
-        with open(manifest_path, encoding="utf-8") as f:
-            payload = json.load(f)
-        listed = payload["sha256"]
-        if not isinstance(listed, dict) or not all(
-            isinstance(k, str) and isinstance(v, str) for k, v in listed.items()
-        ):
-            raise TypeError
-    except (OSError, ValueError, KeyError, TypeError):
-        raise ValueError("Integrity manifest is unreadable") from None
+    listed = _read_integrity_listing(manifest_path)
     for name in listed:
         _integrity_child(directory, name)
     if any(name not in listed for name in required):
@@ -192,19 +211,7 @@ def verify_integrity_manifest(directory: Path, required: list[str]) -> bool:
     for name, expected in listed.items():
         if name not in required:
             continue
-        target = _integrity_child(directory, name)
-        if not os.path.lexists(target):
-            raise ValueError(
-                "A result file listed in the integrity manifest is missing"
-            )
-        try:
-            actual = sha256_file(directory, name)
-        except OSError:
-            raise ValueError(
-                "A result file could not be read for verification"
-            ) from None
-        if actual != expected:
-            raise ValueError("Result file failed integrity verification")
+        _verify_listed_file(directory, name, expected)
     return True
 
 

@@ -33,7 +33,22 @@ def _canon(value: Any) -> str:
 
 def _sdk(case: dict[str, Any]) -> Any:
     phase = case["phase"]
-    return oo.project_for_phase(phase, case["input"], declared=case["declared"])
+    data = case["input"]
+    if phase == "configuration_run":
+        # Same stricter-than-backend difference as below (``experiment_parameters`` is held to
+        # the closed check) plus the forged ``id``/``tenant_id`` the backend silently drops and the SDK
+        # refuses; both are pinned as refusals in the dedicated tests.
+        data = {
+            k: v
+            for k, v in data.items()
+            if k not in ("experiment_parameters", "id", "tenant_id")
+        }
+    if phase in ("results", "summary_submission") and "config" in data:
+        # The backend leaves a trial's ``config`` unprojected; the SDK holds it to the closed
+        # search-space check and refuses free text (covered in the envelope tests). Parity
+        # compares only the five free-form members, so judge the body without it.
+        data = {k: v for k, v in data.items() if k != "config"}
+    return oo.project_for_phase(phase, data, declared=case["declared"])
 
 
 @pytest.fixture(autouse=True)
@@ -65,6 +80,8 @@ def test_parity_with_backend_projection(name: str) -> None:
             if key in case["input"]:
                 assert _canon(got[key]) == _canon(want[key]), key
         return
+    if case["phase"] == "configuration_run":
+        want = {k: v for k, v in want.items() if k != "experiment_parameters"}
     assert _canon(got) == _canon(want)
 
 
@@ -183,13 +200,22 @@ def test_free_text_labels_and_nested_unknown_keys_are_dropped() -> None:
                 "nested": {"a": {"b": ["secret"]}},
                 "comparability": {"label": "text", "scope": "x y", "n": 3},
             },
-            "free_text_top_level": "Alice has diabetes",
-            "free_dict_top_level": {"a": "b"},
         },
     )
     blob = json.dumps(out)
-    assert "Alice" not in blob and "secret" not in blob and "free_" not in blob
+    assert "Alice" not in blob and "secret" not in blob
     assert out["metadata"]["comparability"] == {"n": 3}
+
+
+@pytest.mark.parametrize(
+    "extra", [{"free_text_top_level": "Alice has diabetes"}, {"free_dict": {"a": "b"}}]
+)
+def test_unknown_top_level_result_key_is_refused_without_echo(
+    extra: dict[str, Any],
+) -> None:
+    with pytest.raises(oo.MetadataContractViolation) as caught:
+        oo.project_for_phase(oo.PHASE_RESULTS, {"trial_id": "t1", **extra})
+    assert "Alice" not in str(caught.value) and "free_" not in str(caught.value)
 
 
 def test_error_message_collapses_to_closed_vocabulary() -> None:
@@ -827,3 +853,120 @@ def test_director_allowlist_is_enforced_at_every_depth_and_leaf(
 
 def test_director_check_is_a_noop_when_mode_off() -> None:
     oo.assert_director_request(DIRECTOR_TURN, {"report": {"notes": "free text"}})
+
+
+# ----------------------------------------------- legacy session: allowlisted metadata only
+
+_LEGACY_MARKERS = (
+    "ROW_MARKER_a1",
+    "EXAMPLE_MARKER_b2",
+    "PATH_MARKER_c3",
+    "NOTE_MARKER_d4",
+)
+
+
+def _legacy_body(**dataset: Any) -> dict[str, Any]:
+    return {
+        "problem_statement": "p",
+        "search_space": {"model": ["a", "b"]},
+        "optimization_config": {"algorithm": "grid", "max_trials": 3},
+        "dataset": dataset,
+    }
+
+
+def test_legacy_session_dataset_keeps_only_allowlisted_metadata() -> None:
+    body = _legacy_body(
+        examples=[{"input": "ROW_MARKER_a1"}],
+        rows=["EXAMPLE_MARKER_b2"],
+        path="/data/PATH_MARKER_c3.jsonl",
+        description="NOTE_MARKER_d4",
+        metadata={"size": 7, "privacy_mode": True, "notes": "NOTE_MARKER_d4"},
+    )
+    out = oo.project_legacy_session_create(body)
+    blob = json.dumps(out)
+    assert not [m for m in _LEGACY_MARKERS if m in blob], blob
+    assert set(out["dataset"]) <= {"name", "size", "metadata", "examples"}
+    assert out["dataset"]["metadata"] == {"size": 7, "privacy_mode": True}
+    # the projection of a projection is itself: the transport's "unchanged" check holds
+    assert oo.project_legacy_session_create(out) == out
+
+
+def test_legacy_session_dataset_metadata_free_text_values_are_dropped() -> None:
+    out = oo.project_legacy_session_create(
+        _legacy_body(metadata={"size": 3, "type": "NOTE_MARKER_d4", "name": "my set"})
+    )
+    blob = json.dumps(out)
+    assert "NOTE_MARKER_d4" not in blob
+    assert out["dataset"]["metadata"]["size"] == 3
+    assert "type" not in out["dataset"]["metadata"]
+
+
+def test_legacy_session_dataset_nonempty_examples_never_pass() -> None:
+    out = oo.project_legacy_session_create(_legacy_body(examples=["ROW_MARKER_a1"]))
+    assert "ROW_MARKER_a1" not in json.dumps(out)
+    assert out["dataset"].get("examples", []) == []
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("dataset", "ROW_MARKER_a1"),
+        ("dataset", ["ROW_MARKER_a1"]),
+        ("dataset", None),
+        ("optimization_config", "NOTE_MARKER_d4"),
+        ("optimization_config", ["NOTE_MARKER_d4"]),
+        ("optimization_config", None),
+    ],
+)
+def test_legacy_session_non_dict_sections_are_refused_before_transport(
+    field: str, value: Any
+) -> None:
+    body = _legacy_body()
+    body[field] = value
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_legacy_session_create(body)
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_for_phase(oo.PHASE_SESSION_CREATE_AUTO, body)
+
+
+def test_legacy_session_dataset_metadata_non_dict_is_refused() -> None:
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_legacy_session_create(_legacy_body(metadata="NOTE_MARKER_d4"))
+
+
+def test_legacy_session_create_with_allowed_fields_still_succeeds() -> None:
+    out = oo.project_legacy_session_create(
+        _legacy_body(examples=[], metadata={"size": 100}, name="my_set", size=100)
+    )
+    assert out["dataset"] == {
+        "examples": [],
+        "metadata": {"size": 100},
+        "name": "my_set",
+        "size": 100,
+    }
+    assert out["search_space"] == {"model": ["a", "b"]}
+    assert out["optimization_config"]["max_trials"] == 3
+
+
+def test_free_text_config_parity_fixtures_are_refused_by_the_sdk() -> None:
+    """The backend leaves ``config``/``experiment_parameters`` unprojected; the SDK is
+    deliberately stricter. Pin that the fixtures the parity runner strips are REFUSED."""
+    results = CASES["results_text_labels_and_unknown_nested"]
+    assert (
+        results["input"]["config"]["prompt"] == "config values are an allowed channel"
+    )
+    assert "ok" in EXPECTED["results_text_labels_and_unknown_nested"]  # backend accepts
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_for_phase(
+            results["phase"], results["input"], declared=results["declared"]
+        )
+    run = CASES["config_run_full"]
+    assert "ok" in EXPECTED["config_run_full"]  # backend accepts
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_for_phase(run["phase"], run["input"], declared=run["declared"])
+    # with only the free text removed it is still refused for the forged identity column
+    no_text = {**run["input"], "experiment_parameters": {"model": "gpt-4o"}}
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_for_phase(run["phase"], no_text, declared=run["declared"])
+    no_id = {k: v for k, v in no_text.items() if k not in ("id", "tenant_id")}
+    oo.project_for_phase(run["phase"], no_id, declared=run["declared"])

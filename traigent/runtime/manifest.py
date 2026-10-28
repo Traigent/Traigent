@@ -17,7 +17,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager, suppress
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -413,6 +413,28 @@ def failed_attempts(record: Mapping[str, Any] | None) -> int:
     return attempts if record.get("status") == STATUS_FAILED else attempts - 1
 
 
+def _refuse_running_episode_fix(
+    doc: dict[Any, Any],
+    key: str,
+    breach_id: str,
+    now: datetime | None,
+    lease: timedelta,
+) -> None:
+    for other_key, other in doc.items():
+        # Episode-wide exclusion: any rule's non-final, live record blocks.
+        if other_key == key or _breach_of_key(other_key) != breach_id:
+            continue
+        live = effective_record(
+            other if isinstance(other, dict) else None, now=now, lease=lease
+        )
+        if (
+            isinstance(live, dict)
+            and live.get("status") == STATUS_STARTED
+            and not live.get("finished")
+        ):
+            raise RuntimeRequirementError(E_EPISODE_FIX_RUNNING, "breach")
+
+
 def reserve_occurrence(
     state_dir: Path,
     agent_id: str,
@@ -454,19 +476,7 @@ def reserve_occurrence(
         if attempt is not None and failed != attempt - 1:
             raise RuntimeRequirementError(E_HOLD, "approval")
         breach_id = _breach_of_key(key)
-        for other_key, other in doc.items():
-            # Episode-wide exclusion: any rule's non-final, live record blocks.
-            if other_key == key or _breach_of_key(other_key) != breach_id:
-                continue
-            live = effective_record(
-                other if isinstance(other, dict) else None, now=now, lease=lease
-            )
-            if (
-                isinstance(live, dict)
-                and live.get("status") == STATUS_STARTED
-                and not live.get("finished")
-            ):
-                raise RuntimeRequirementError(E_EPISODE_FIX_RUNNING, "breach")
+        _refuse_running_episode_fix(doc, key, breach_id, now, lease)
         started_at = (now or utcnow()).isoformat()
         # A caller-supplied start time (low-level, no ``clock``) is honoured;
         # ``respond`` supplies none, so its lease starts at the stamp above.

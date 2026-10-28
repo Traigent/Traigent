@@ -19,10 +19,17 @@ SCRIPT = REPO_ROOT / "scripts" / "ci" / "check_release_version_identity.py"
 sys.path.insert(0, str(SCRIPT.parent))
 import check_release_version_identity as identity_check  # noqa: E402
 
+from tests._git_isolation import scrubbed_git_env  # noqa: E402
+
 
 def _git(root: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=root, check=True, capture_output=True, text=True
+        ["git", *args],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=scrubbed_git_env(),
     ).stdout
 
 
