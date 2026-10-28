@@ -101,3 +101,14 @@ def test_pin_with_wrong_ref_refused(tmp_path: Path) -> None:
     with pytest.raises(ck.ClientKeyError) as caught:
         key.pin(PROJECT_REF, wrong)
     assert caught.value.code == "KEY_REF_MISMATCH"
+
+
+def test_tampered_pin_in_key_file_is_not_trusted(tmp_path: Path) -> None:
+    key = ck.generate_client_key(tmp_path / "k.json")
+    ck.enroll_client_key(FakeG1Backend(), key, PROJECT_REF)
+    document = json.loads(key.path.read_text())
+    document["pins"][PROJECT_REF] = "ckr:" + "B" * 43
+    key.path.write_text(json.dumps(document))
+    with pytest.raises(ck.ClientKeyError) as caught:
+        ck.load_client_key(key.path).pinned_ref(PROJECT_REF)
+    assert caught.value.code == "KEY_NOT_PINNED"
