@@ -6003,6 +6003,10 @@ class OptimizationOrchestrator:
         if cost_enforcer is not None:
             cost_enforcer.waive_unknown_cost_trial_cap()
 
+    def set_snapshot_g1_required(self) -> None:
+        """Send the closed ``snapshot_g1_required`` flag at run registration."""
+        self.backend_session_manager.set_snapshot_g1_required()
+
     def add_stop_condition(self, condition: StopCondition) -> None:
         """Register an extra stop condition (e.g. the strict cost-usage guard)."""
         self._stop_condition_manager.add_condition(condition)

@@ -284,6 +284,21 @@ def session_task_type_to_wire(session_request: Any) -> dict[str, str]:
     return {"task_type": cleaned} if cleaned else {}
 
 
+def session_g1_required_to_wire(session_request: Any) -> dict[str, bool]:
+    """The closed G1 intent flag for the run-registration request.
+
+    Exactly ``{"snapshot_g1_required": True}`` when the request declares G1
+    intent, else ``{}`` (the key is absent, never ``False``). A boolean only:
+    nothing from the snapshot, the manifest or the client evidence crosses.
+    Without it the Backend issues the plain certificate at run completion and a
+    later ``certify bind`` can never upgrade it. Shared by both session-create
+    serializers so neither can drop the flag.
+    """
+    if getattr(session_request, "snapshot_g1_required", False) is True:
+        return {"snapshot_g1_required": True}
+    return {}
+
+
 DATASET_ID_MAX_LENGTH = 255
 
 # Placeholder values other SDK code paths fall back to when the caller never
@@ -722,6 +737,10 @@ class SessionCreationRequest:
     # ``sha256:<64 hex>``); see ``effective_evaluator_code_identity``. Identifies,
     # never validates. Typed/v2 shape only; content-less drops it.
     evaluator_code_digest: str | None = None
+    #: G1 intent (``ExecutionOptions.snapshot_store``, online run, readiness
+    #: available). Serialized by ``session_g1_required_to_wire`` as the closed
+    #: boolean ``snapshot_g1_required``; never anything else about the snapshot.
+    snapshot_g1_required: bool = False
 
     def __post_init__(self) -> None:
         """Handle default values and alternative parameter names."""

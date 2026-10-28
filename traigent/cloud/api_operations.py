@@ -32,6 +32,7 @@ from traigent.cloud.models import (
     TrialResultSubmission,
     session_content_identity_to_wire,
     session_dataset_identity_to_wire,
+    session_g1_required_to_wire,
     session_identity_v2_to_wire,
     session_narrative_to_wire,
     session_task_type_to_wire,
@@ -776,6 +777,7 @@ class ApiOperations:
         # direct serializer so the two session-create paths cannot drift.
         payload.update(session_narrative_to_wire(session_request))
         payload.update(session_task_type_to_wire(session_request))
+        payload.update(session_g1_required_to_wire(session_request))
         # Declared dataset identity: the backend validates dataset_id /
         # dataset_id_source ONLY on this typed path (_validate_identity_fields
         # in traigent_session_routes.py is gated `if typed`), so this is
@@ -864,6 +866,7 @@ class ApiOperations:
         wire_smart_pruning = normalize_smart_pruning_options(smart_pruning)
         if wire_smart_pruning:
             payload["smart_pruning"] = wire_smart_pruning
+        payload.update(session_g1_required_to_wire(session_request))
         self._attach_evaluator_identity(payload, session_request)
         self._attach_artifact_fingerprint_payload(payload, session_request)
         payload["metadata"] = filter_wire_metadata(payload["metadata"])

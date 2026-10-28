@@ -3637,6 +3637,7 @@ class OptimizedFunction[**P, R]:
         artifact_fingerprint_payload: dict[str, dict[str, Any]],
         requested_algorithm: str | None = None,
         execution_budget: ExecutionBudget | None = None,
+        snapshot_g1_required: bool = False,
     ) -> OptimizationOrchestrator:
         """Build the optimization orchestrator with all configuration."""
         orchestrator_kwargs = collect_orchestrator_kwargs(
@@ -3692,6 +3693,9 @@ class OptimizedFunction[**P, R]:
             smart_pruning=getattr(self, "smart_pruning", None),
             **orchestrator_kwargs,
         )
+
+        if snapshot_g1_required:
+            orchestrator.set_snapshot_g1_required()
 
         no_usage_stop = _make_no_usage_stop_condition(self.objectives)
         if no_usage_stop is not None:
@@ -4084,6 +4088,7 @@ class OptimizedFunction[**P, R]:
         requested_algorithm: str | None = None,
         execution_budget: ExecutionBudget | None = None,
         custom_evaluator: Callable[..., Any] | None = None,
+        snapshot_g1_required: bool = False,
     ) -> OptimizationResult | None:
         """Try cloud-brain execution, returning None for allowed local fallback."""
 
@@ -4201,6 +4206,7 @@ class OptimizedFunction[**P, R]:
                 artifact_fingerprint_payload=artifact_fingerprint_payload,
                 requested_algorithm=requested_algorithm,
                 execution_budget=execution_budget,
+                snapshot_g1_required=snapshot_g1_required,
             )
             orchestrator._cloud_guidance_client = cloud_client
             return await self._run_and_finalize_optimization(
@@ -4709,6 +4715,9 @@ Remediation:
                 **self._snapshot_capture_inputs(custom_evaluator),
             )
 
+        # G1 intent for run registration: online run whose readiness probe passed.
+        g1_required = snapshot_run is not None and snapshot_run.g1_required
+
         # Phase 4: Resolve parallel configuration
         effective_parallel_trials, effective_batch_size, effective_thread_workers = (
             resolve_effective_parallel_config(
@@ -4736,6 +4745,7 @@ Remediation:
             requested_algorithm=algorithm,
             execution_budget=execution_budget,
             custom_evaluator=custom_evaluator,
+            snapshot_g1_required=g1_required,
         )
         if cloud_result is not None:
             return cloud_result
@@ -4796,6 +4806,7 @@ Remediation:
             artifact_fingerprint_payload=artifact_fingerprint_payload,
             requested_algorithm=algorithm,
             execution_budget=execution_budget,
+            snapshot_g1_required=g1_required,
         )
 
         if resume_source is not None:

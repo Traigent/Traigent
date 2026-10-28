@@ -13,6 +13,7 @@ Failures raise :class:`~traigent.utils.exceptions.SnapshotBindingError`.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -32,7 +33,16 @@ from traigent.snapshot import (
 )
 from traigent.utils.exceptions import SnapshotBindingError
 
-__all__ = ["SnapshotRun", "default_transport"]
+logger = logging.getLogger(__name__)
+
+__all__ = ["BIND_GUIDANCE", "SnapshotRun", "default_transport"]
+
+#: Shown after a run that declared G1 intent. The deferral deadline is the
+#: Backend's (default 7 days from run registration).
+BIND_GUIDANCE = (
+    "G1 evidence captured locally. Run `certify bind` before the "
+    "deferral deadline (default 7 days) or the run's certificate stays plain."
+)
 
 _DATASET = "dataset/examples.jsonl"
 _CONFIG = "config/config.json"
@@ -80,6 +90,8 @@ class SnapshotRun:
         default=None, repr=False
     )
     _inputs: dict[str, Any] = field(default_factory=dict, repr=False)
+    #: True once S0 passed for an online run: run registration must declare G1.
+    g1_required: bool = field(default=False, repr=False)
 
     def capture_s0(
         self,
@@ -125,6 +137,8 @@ class SnapshotRun:
         self._s0_dataset = dataset_state
         self._s0_config_space = space_state
         self._s0_evaluators = evaluators
+        # Online and ready: declare G1 intent at run registration.
+        self.g1_required = not offline
 
     def capture_s1(self, result: Any, *, custody: Any = None) -> None:
         """Capture from the terminal ``result.best_config``; attach local-only handles."""
@@ -173,3 +187,5 @@ class SnapshotRun:
         )
         result.snapshot_ref = ref
         result.client_evidence_path = path
+        if self.g1_required:
+            logger.warning(BIND_GUIDANCE)
