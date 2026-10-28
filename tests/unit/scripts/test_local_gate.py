@@ -7,6 +7,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from tests._git_isolation import scrubbed_git_env
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 LOCAL_GATE = REPO_ROOT / "scripts" / "local_gate.sh"
 
@@ -18,6 +20,7 @@ def _run_git(repo: Path, *args: str) -> None:
         check=True,
         capture_output=True,
         text=True,
+        env=scrubbed_git_env(),
     )
 
 
