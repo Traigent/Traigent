@@ -458,6 +458,27 @@ class _WinnerStabilityAttempt:
         self.dispatched = True
 
 
+def _resolve_objective_metric(objective: Any, metrics: dict[str, Any]) -> Any:
+    """Resolve one objective's raw metric value, applying aliases and the cost fallback."""
+    metric_value = metrics.get(objective)
+    # Fallback for common objective aliases
+    if metric_value is None and objective in {"accuracy", "success_rate"}:
+        metric_value = metrics.get("accuracy") or metrics.get("success_rate")
+    # The per-config ``cost`` metric can be decoupled from the real spend
+    # (provider/meta-reported total) and arrive missing or 0.0 while
+    # ``total_cost`` is correct. A ``minimize cost`` objective pinned at 0
+    # is inert — every config looks free — so prefer ``total_cost`` when
+    # the ``cost`` metric is absent or zero (#1423). ``total_cost`` is the
+    # SDK's authoritative aggregate cost and is never wrongly zeroed.
+    if objective == "cost" and not metric_value:
+        total_cost = metrics.get("total_cost")
+        if total_cost:
+            metric_value = total_cost
+    if metric_value is None and objective in {"cost", "latency", "error"}:
+        metric_value = metrics.get(objective, 0.0)
+    return metric_value
+
+
 class OptimizationOrchestrator:
     """Orchestrates the optimization process.
 
@@ -5802,22 +5823,7 @@ class OptimizationOrchestrator:
         """Extract objective values from trial metrics."""
         values: list[float] = []
         for objective in self.optimizer.objectives:
-            metric_value = metrics.get(objective)
-            # Fallback for common objective aliases
-            if metric_value is None and objective in {"accuracy", "success_rate"}:
-                metric_value = metrics.get("accuracy") or metrics.get("success_rate")
-            # The per-config ``cost`` metric can be decoupled from the real spend
-            # (provider/meta-reported total) and arrive missing or 0.0 while
-            # ``total_cost`` is correct. A ``minimize cost`` objective pinned at 0
-            # is inert — every config looks free — so prefer ``total_cost`` when
-            # the ``cost`` metric is absent or zero (#1423). ``total_cost`` is the
-            # SDK's authoritative aggregate cost and is never wrongly zeroed.
-            if objective == "cost" and not metric_value:
-                total_cost = metrics.get("total_cost")
-                if total_cost:
-                    metric_value = total_cost
-            if metric_value is None and objective in {"cost", "latency", "error"}:
-                metric_value = metrics.get(objective, 0.0)
+            metric_value = _resolve_objective_metric(objective, metrics)
             values.append(float(metric_value if metric_value is not None else 0.0))
         return values
 
