@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import functools
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextlib import contextmanager
 from typing import Any, cast
 
@@ -20,6 +20,34 @@ from ..utils.logging import get_logger
 from .activation import ActivationState
 
 logger = get_logger(__name__)
+
+
+def _restore_constructors(stored_entries: Iterable[Any]) -> None:
+    """Write each stored original constructor back, logging per-entry failures."""
+    for stored in stored_entries:
+        try:
+            if isinstance(stored, tuple) and len(stored) == 3:
+                target_class, attr_name, original = stored
+                setattr(target_class, attr_name, original)
+        except Exception as e:
+            logger.debug(f"Could not restore {stored}: {e}")
+
+
+def _restore_methods(stored_entries: Iterable[Any]) -> None:
+    """Write each stored original method back, logging per-entry failures."""
+    for stored in stored_entries:
+        target_obj: Any | None = None
+        method_name: str | None = None
+        original = stored
+
+        if isinstance(stored, tuple) and len(stored) == 3:
+            target_obj, method_name, original = stored
+
+        if target_obj is not None and method_name:
+            try:
+                setattr(target_obj, method_name, original)
+            except Exception as e:
+                logger.debug(f"Could not restore {method_name}: {e}")
 
 
 class BaseOverrideManager:
@@ -151,28 +179,10 @@ class BaseOverrideManager:
         Thread-safe: Delegates to ActivationState with lock protection.
         """
         # Get copies and restore constructors
-        for stored in self._state.original_constructors.values():
-            try:
-                if isinstance(stored, tuple) and len(stored) == 3:
-                    target_class, attr_name, original = stored
-                    setattr(target_class, attr_name, original)
-            except Exception as e:
-                logger.debug(f"Could not restore {stored}: {e}")
+        _restore_constructors(self._state.original_constructors.values())
 
         # Get copies and restore methods
-        for stored in self._state.original_methods.values():
-            target_obj: Any | None = None
-            method_name: str | None = None
-            original = stored
-
-            if isinstance(stored, tuple) and len(stored) == 3:
-                target_obj, method_name, original = stored
-
-            if target_obj is not None and method_name:
-                try:
-                    setattr(target_obj, method_name, original)
-                except Exception as e:
-                    logger.debug(f"Could not restore {method_name}: {e}")
+        _restore_methods(self._state.original_methods.values())
 
         # Clear state through the state manager
         self._state.clear_all()
