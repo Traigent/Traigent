@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.parse import urlparse
 
 import aiohttp
 import pytest
@@ -188,9 +189,10 @@ class TestSecondaryEndpointsDisabled:
         # ... but using the vendor default must.
         with pytest.raises(EndpointNotConfiguredError):
             _ = unset.backend_base_url
-        assert DatasetConverter(
-            backend_base_url="https://tg.corp.internal"
-        ).backend_base_url.startswith("https://tg.corp.internal")
+        converted = urlparse(
+            DatasetConverter(backend_base_url="https://tg.corp.internal").backend_base_url
+        )
+        assert (converted.scheme, converted.hostname) == ("https", "tg.corp.internal")
 
     def test_csp_origin_has_no_vendor(self, strict_env: None) -> None:
         from traigent.security.headers import _default_backend_origin

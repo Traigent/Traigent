@@ -17,6 +17,7 @@ import socket
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import urlparse
 
 import pytest
 from click.testing import CliRunner
@@ -125,9 +126,8 @@ class TestInitialize:
         from traigent.api import functions
 
         traigent.initialize(api_url="http://backend.internal")
-        assert functions._GLOBAL_CONFIG["traigent_api_url"].startswith(
-            "http://backend.internal"
-        )
+        api_url = urlparse(functions._GLOBAL_CONFIG["traigent_api_url"])
+        assert (api_url.scheme, api_url.hostname) == ("http", "backend.internal")
 
 
 class TestObservabilityConfig:
@@ -194,7 +194,8 @@ class TestSyncManagerLocalFlows:
             patch("traigent.cloud.url_security._reject_unsafe_hostname"),
         ):
             manager = self._manager(tmp_path)
-            assert manager.base_url.startswith("https://backend.example.com")
+            base = urlparse(manager.base_url)
+            assert (base.scheme, base.hostname) == ("https", "backend.example.com")
             assert manager.session is not None
 
     def test_preview_cloud_cli_works(
