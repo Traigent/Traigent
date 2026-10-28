@@ -493,3 +493,172 @@ def test_task_type_free_text_string_is_dropped() -> None:
         {"configuration_space": {"a": [1]}, "task_type": SECRET}
     )
     assert "task_type" not in out
+
+
+# ------------------------------------------- the wire form, not the Python object
+
+import asyncio  # noqa: E402
+
+from traigent.labels import transport_gate as tg  # noqa: E402
+
+_SESSIONS_URL = "https://api.example.test/api/v1/sessions"
+
+
+class _LyingKey(str):
+    """Hashes and compares as ``billing_tier`` but serializes as its (secret) content."""
+
+    def __hash__(self) -> int:
+        return hash("billing_tier")
+
+    def __eq__(self, other: object) -> bool:
+        return other == "billing_tier"
+
+
+class _LyingValue(str):
+    def __hash__(self) -> int:
+        return hash("test")
+
+    def __eq__(self, other: object) -> bool:
+        return True
+
+
+class _OddDict(dict):  # type: ignore[type-arg]
+    """A dict whose ``keys``/``__iter__``/``items`` lie about what ``json`` will write."""
+
+    def keys(self) -> Any:  # type: ignore[override]
+        return ["a"]
+
+    def __iter__(self) -> Any:
+        return iter(["a"])
+
+    def items(self) -> Any:  # type: ignore[override]
+        return [("a", [1])]
+
+
+class _StrDiffers(str):
+    def __str__(self) -> str:
+        return "harmless_id"
+
+    def __hash__(self) -> int:
+        return hash("harmless_id")
+
+    def __eq__(self, other: object) -> bool:
+        return other == "harmless_id"
+
+
+class _FakeTransport:
+    _traigent_oo_explicit = True
+    _traigent_gate_origins = frozenset({("https", "api.example.test", 443)})
+    _json_serialize = staticmethod(json.dumps)
+    headers: dict[str, str] = {}
+    sent: list[bytes] = []
+
+    async def _request(self, method: str, url: str, **kwargs: Any) -> Any:
+        if "data" in kwargs:
+            data = kwargs["data"]
+            body = data if isinstance(data, bytes) else data._value
+        else:
+            body = json.dumps(kwargs["json"]).encode()
+        type(self).sent.append(bytes(body))
+        return SimpleNamespace(status=200)
+
+
+def _lying_bodies() -> list[dict[str, Any]]:
+    base: dict[str, Any] = {"configuration_space": {"a": [1]}}
+    return [
+        {**base, _LyingKey(SECRET): "standard"},
+        {**base, "environment": _LyingValue(SECRET)},
+        {**base, "budget": {_LyingKey(SECRET): 1}},
+        {**base, "metadata": _OddDict({"a": [1], "hidden": SECRET})},
+        {"configuration_space": _OddDict({"a": [1], "hidden": SECRET})},
+        {**base, "billing_tier": _StrDiffers(SECRET)},
+    ]
+
+
+@pytest.mark.parametrize("index", range(6))
+def test_projection_judges_the_serialized_form(index: int) -> None:
+    body = _lying_bodies()[index]
+    try:
+        projected = oo.project_for_send(
+            oo.PHASE_SESSION_CREATE_AUTO, body, explicit=True
+        )
+    except (oo.MetadataContractViolation, oo.OptimizationOnlyRefusal):
+        return
+    assert type(projected) is dict
+    assert SECRET not in json.dumps(projected)
+
+
+@pytest.mark.parametrize("index", range(6))
+def test_aiohttp_wrapper_never_sends_lying_bodies(index: int) -> None:
+    body = _lying_bodies()[index]
+    _FakeTransport.sent = []
+    session = tg._build_aiohttp(_FakeTransport)()
+
+    async def go() -> None:
+        projected = oo.project_for_send(
+            oo.PHASE_SESSION_CREATE_AUTO, body, explicit=True
+        )
+        await session._request("POST", _SESSIONS_URL, json=projected)
+
+    try:
+        asyncio.run(go())
+    except (oo.MetadataContractViolation, oo.OptimizationOnlyRefusal):
+        pass
+    assert all(SECRET.encode() not in sent for sent in _FakeTransport.sent)
+
+
+def test_aiohttp_wrapper_enforces_unprojected_lying_json_directly() -> None:
+    """Even a body that skipped projection is judged on the bytes the transport writes."""
+    _FakeTransport.sent = []
+    session = tg._build_aiohttp(_FakeTransport)()
+    body = {"configuration_space": {"a": [1]}, "environment": _LyingValue(SECRET)}
+    with pytest.raises(oo.OptimizationOnlyRefusal):
+        asyncio.run(session._request("POST", _SESSIONS_URL, json=body))
+    assert _FakeTransport.sent == []
+
+
+def test_aiohttp_wrapper_sends_the_checked_bytes() -> None:
+    _FakeTransport.sent = []
+    session = tg._build_aiohttp(_FakeTransport)()
+    body = oo.project_for_send(
+        oo.PHASE_SESSION_CREATE_AUTO, {"configuration_space": {"a": [1]}}, explicit=True
+    )
+    asyncio.run(session._request("POST", _SESSIONS_URL, json=body))
+    assert json.loads(_FakeTransport.sent[0]) == body
+
+
+def test_nan_in_search_space_still_refuses() -> None:
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_for_send(
+            oo.PHASE_SESSION_CREATE_AUTO,
+            {"configuration_space": {"a": [float("nan")]}},
+            explicit=True,
+        )
+
+
+def test_mode_off_returns_the_original_object() -> None:
+    body = {"configuration_space": {"a": [1]}, "environment": _LyingValue(SECRET)}
+    assert (
+        oo.project_for_send(oo.PHASE_SESSION_CREATE_AUTO, body, explicit=False) is body
+    )
+
+
+class _SubStr(str):
+    """A plain str subclass: equal and hashed like str, written like str."""
+
+
+@pytest.mark.parametrize("value", _WRONG_VALUES)
+@pytest.mark.parametrize("key", _DEDICATED_TYPED)
+def test_typed_handlers_with_str_subclass_values(key: str, value: Any) -> None:
+    def wrap(v: Any) -> Any:
+        if isinstance(v, str):
+            return _SubStr(v)
+        if isinstance(v, list):
+            return [wrap(i) for i in v]
+        if isinstance(v, dict):
+            return {_SubStr(k): wrap(i) for k, i in v.items()}
+        return v
+
+    body: dict[str, Any] = {"configuration_space": {"a": [1]}}
+    body[_SubStr(key)] = wrap(value)
+    _assert_refused_or_clean(oo.PHASE_SESSION_CREATE_AUTO, body)

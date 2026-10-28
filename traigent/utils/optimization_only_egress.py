@@ -3089,6 +3089,23 @@ _PROJECTORS: dict[str, Callable[[Any, tuple[str, ...]], Any]] = {
 PHASES = frozenset(_PROJECTORS) | {PHASE_SESSION_CREATE_AUTO}
 
 
+_SESSION_CREATE_PHASES = frozenset(
+    {PHASE_SESSION_CREATE, PHASE_SESSION_CREATE_AUTO, PHASE_SESSION_CREATE_LEGACY}
+)
+
+
+def _canonical_wire(payload: Any) -> Any:
+    """The payload as the transport will serialize it: plain ``str``/``int``/``float``/``bool``/
+    ``None``/``list``/``dict`` only. A ``str`` or ``dict`` subclass with an overridden
+    ``__eq__``/``__hash__``/``keys``/``__iter__`` is judged by what it WRITES, not by what it
+    claims to be, so a check can never pass a value that serializes to something else.
+    NaN/infinity and unserializable values refuse."""
+    try:
+        return json.loads(json.dumps(payload, allow_nan=False))
+    except (TypeError, ValueError, RecursionError):
+        raise MetadataContractViolation from None
+
+
 def project_for_phase(
     phase: str,
     payload: Any,
@@ -3099,7 +3116,13 @@ def project_for_phase(
     """Project ``payload`` for ``phase`` unconditionally. Returns a new object; the input is
     never mutated. Raises :class:`MetadataContractViolation` for a payload the server would
     refuse, and ``ValueError`` for an unknown phase (an unclassified send must not happen)."""
-    detached = copy.deepcopy(payload)
+    # Session-create bodies are judged in their wire form; other phases' projectors already
+    # rebuild every value and rely on dropping (not refusing) NaN/infinity.
+    detached = (
+        _canonical_wire(payload)
+        if phase in _SESSION_CREATE_PHASES
+        else copy.deepcopy(payload)
+    )
     if phase == PHASE_SESSION_CREATE_AUTO:
         return project_session_create_auto(detached)
     projector = _PROJECTORS.get(phase)

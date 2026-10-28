@@ -482,6 +482,9 @@ def _aiohttp_body(kwargs: dict[str, Any]) -> Any:
         return bytes(data)
     if isinstance(data, str):
         return data
+    value = getattr(data, "_value", None)
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)  # a serialized payload: judge exactly the bytes sent
     if isinstance(data, dict):
         return dict(data)  # form fields (auth/oauth routes judge the field names)
     return oo_egress.UNREADABLE_BODY
@@ -568,6 +571,23 @@ def _build_aiohttp(base: type) -> type:
                 url = str(base_url).rstrip("/") + "/" + url.lstrip("/")
             url = _with_params(url, kwargs.get("params"))
             _check_strict(self, url)
+            if (
+                kwargs.get("json") is not None
+                and kwargs.get("data") is None
+                and not getattr(self, "_traigent_oo_external", False)
+                and oo_egress.outgoing_may_be_active(
+                    getattr(self, "_traigent_oo_explicit", None)
+                )
+            ):
+                # Judge the bytes that will be sent: serialize once with the transport's own
+                # serializer, enforce on those bytes, and send those same bytes.
+                sb = getattr(self, "_json_serialize_bytes", None)
+                if sb is not None:
+                    pl = payload.JsonBytesPayload(kwargs["json"], dumps=sb)
+                else:
+                    pl = payload.JsonPayload(kwargs["json"], dumps=self._json_serialize)
+                kwargs = {k: v for k, v in kwargs.items() if k != "json"}
+                kwargs["data"] = pl
             replacement = _enforce_for_session(
                 self,
                 str(method),
@@ -865,6 +885,14 @@ def mark_explicit(session: Any, explicit: bool | None) -> Any:
     return session
 
 
+def _requests_json_bytes(value: Any) -> Any:
+    """The bytes ``requests`` will send for ``json=value``; unserializable is unreadable."""
+    try:
+        return json.dumps(value, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError, RecursionError):
+        return oo_egress.UNREADABLE_BODY
+
+
 def preflight_requests(
     method: str, url: str, *, external: bool = False, **kwargs: Any
 ) -> None:
@@ -882,7 +910,7 @@ def preflight_requests(
             _with_params(str(url), kwargs.get("params")),
             headers=kwargs.get("headers"),
             body=(
-                kwargs["json"]
+                _requests_json_bytes(kwargs["json"])
                 if kwargs.get("json") is not None
                 else _aiohttp_body({"data": kwargs.get("data")})
             ),
