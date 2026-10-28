@@ -393,6 +393,36 @@ def s_closed_tree(value: Any, _c: _Ctx, depth: int) -> Any:
     raise _Drop
 
 
+def s_search_value(value: Any, ctx: _Ctx, depth: int) -> Any:
+    """Strict closed tree for the optimizer's search space and default config.
+
+    Accepts finite numbers, booleans, ``None`` and identifier strings, recursively through
+    lists and dicts whose keys are identifiers. Unlike :func:`s_closed_tree` nothing is
+    silently dropped or truncated: any other string (free text such as a prompt), an
+    over-long container, a non-identifier key or excess depth rejects the whole value.
+    """
+    if depth > MAX_DEPTH:
+        raise _Drop
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return s_num()(value, ctx, depth)
+    if isinstance(value, str):
+        return s_id(value, ctx, depth)
+    if isinstance(value, (list, tuple)):
+        if len(value) > MAX_LIST:
+            raise _Drop
+        return [s_search_value(item, ctx, depth + 1) for item in value]
+    if isinstance(value, dict):
+        if len(value) > MAX_LIST:
+            raise _Drop
+        return {
+            s_id(key, ctx, depth): s_search_value(item, ctx, depth + 1)
+            for key, item in value.items()
+        }
+    raise _Drop
+
+
 # ---------------------------------------------------------------------------------------
 # Nested schemas matching what the Python SDK sends (design sections 2 and 3).
 # ---------------------------------------------------------------------------------------
@@ -1198,6 +1228,19 @@ def _project_code_revision(out: dict[str, Any]) -> None:
         out["code_revision"] = token("cr", revision)
 
 
+def _project_search_fields(out: dict[str, Any], keys: Iterable[str], ctx: _Ctx) -> None:
+    """Refuse free text in the search space / default config (owner ruling 2026-10-28).
+
+    Each present field must be a closed tree; ``warm_start_from`` must be an identifier.
+    Raises the closed :class:`MetadataContractViolation` without echoing key or value.
+    """
+    for key in keys:
+        if out.get(key) is None:
+            continue
+        spec = s_id if key == "warm_start_from" else s_search_value
+        out[key] = _run(spec, out[key], ctx, limit=MAX_MEASURES_BYTES)
+
+
 def _project_optional(out: dict[str, Any], key: str, spec: Spec, ctx: _Ctx) -> None:
     if key in out:
         out[key] = _optional(spec, out[key], ctx) if out[key] is not None else None
@@ -1235,6 +1278,9 @@ def project_session_create(data: dict[str, Any]) -> dict[str, Any]:
         out.pop("task_type")
     if "constraints" in out:
         out["constraints"] = _project_constraints(out["constraints"], ctx)
+    _project_search_fields(
+        out, ("configuration_space", "default_config", "warm_start_from"), ctx
+    )
     return out
 
 
@@ -1262,6 +1308,9 @@ def project_legacy_session_create(data: dict[str, Any]) -> dict[str, Any]:
         out["dataset"] = _run(_LEGACY_DATASET, out["dataset"], ctx)
     if "metadata" in out and out["metadata"] is not None:
         out["metadata"] = _run(_SESSION_METADATA, out["metadata"], ctx)
+    _project_search_fields(
+        out, ("search_space", "default_config", "warm_start_from"), ctx
+    )
     return out
 
 
