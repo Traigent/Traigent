@@ -712,6 +712,20 @@ class AgentSourceSurvey:
     gaps: tuple[str, ...]
 
 
+def _select_helper_files(loaded: dict[str, Path], gaps: list[str]) -> dict[str, Path]:
+    """Representable project files in name order, up to the per-category limit."""
+    helper_files: dict[str, Path] = {}
+    for name, path in sorted(loaded.items()):
+        if len(helper_files) >= _MAX_ASSETS_PER_CATEGORY:
+            gaps.append("helper_modules_over_limit")
+            break
+        if not _ASSET_NAME_RE.fullmatch(name):
+            gaps.append("helper_module_name_not_representable")
+            continue
+        helper_files[name] = path
+    return helper_files
+
+
 def survey_agent_sources(func: Callable[..., Any]) -> AgentSourceSurvey:
     """Enumerate the agent's project files the way the build manifest does."""
     gaps: list[str] = []
@@ -723,14 +737,7 @@ def survey_agent_sources(func: Callable[..., Any]) -> AgentSourceSurvey:
     code_revision, dirty_paths, project_root = _code_revision_of(source_file, gaps)
     helper_files: dict[str, Path] = {}
     if project_root is not None:
-        for name, path in sorted(_loaded_project_files(project_root).items()):
-            if len(helper_files) >= _MAX_ASSETS_PER_CATEGORY:
-                gaps.append("helper_modules_over_limit")
-                break
-            if not _ASSET_NAME_RE.fullmatch(name):
-                gaps.append("helper_module_name_not_representable")
-                continue
-            helper_files[name] = path
+        helper_files = _select_helper_files(_loaded_project_files(project_root), gaps)
         covered = set(helper_files)
         if dirty_paths - covered:
             gaps.append("dirty_files_outside_manifest")
