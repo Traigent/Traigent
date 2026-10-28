@@ -93,6 +93,11 @@ def _optimization_failure(exc: Exception, *, mode: str) -> dict[str, Any]:
     return _failure(message, code="optimization_failed")
 
 
+# Draft eval JSONL and manifests can hold customer examples: owner-only
+# (CodeQL py/overly-permissive-file, confidentiality).
+_PRIVATE_FILE_MODE = 0o600
+
+
 def _open_after_lstat_checks(
     path: Path, root: Path, rel_parts: tuple[str, ...], flags: int
 ) -> int:
@@ -104,7 +109,7 @@ def _open_after_lstat_checks(
             raise OSError(f"refusing to write through symlink: {current}")
     if path.is_symlink():
         raise OSError(f"refusing to write through symlink: {path}")
-    return os.open(path, flags, 0o644)
+    return os.open(path, flags, _PRIVATE_FILE_MODE)
 
 
 def _write_text_nofollow(
@@ -145,11 +150,14 @@ def _write_text_nofollow(
                 next_fd = os.open(part, dir_flags, dir_fd=fd)
                 os.close(fd)
                 fd = next_fd
-            file_fd = os.open(rel_parts[-1], flags, 0o644, dir_fd=fd)
+            file_fd = os.open(rel_parts[-1], flags, _PRIVATE_FILE_MODE, dir_fd=fd)
         finally:
             os.close(fd)
     else:
         file_fd = _open_after_lstat_checks(path, root, rel_parts, flags)
+    if hasattr(os, "fchmod"):
+        # Tighten a pre-existing file too (os.open's mode only applies on create).
+        os.fchmod(file_fd, _PRIVATE_FILE_MODE)
     with os.fdopen(file_fd, "w", encoding="utf-8") as handle:
         handle.write(text)
 

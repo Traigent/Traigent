@@ -106,7 +106,9 @@ def test_overwrite_truncates_and_exclusive_refuses_existing(
     assert target.read_text(encoding="utf-8") == "new"
 
 
-def test_file_permissions_are_0644_before_umask(
+# Owner-only (was 0o644): CodeQL py/overly-permissive-file; the files are draft
+# eval JSONL/manifests that can hold customer examples (confidentiality).
+def test_file_permissions_are_0600_before_umask(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
     root = tmp_path.resolve()
@@ -116,7 +118,7 @@ def test_file_permissions_are_0644_before_umask(
         tools._write_text_nofollow(root / "f.txt", "x", overwrite=True, root=root)
     finally:
         os.umask(previous)
-    assert stat.S_IMODE((root / "f.txt").stat().st_mode) == 0o644
+    assert stat.S_IMODE((root / "f.txt").stat().st_mode) == 0o600
 
 
 def test_default_root_is_resolved_cwd(
@@ -220,7 +222,7 @@ def test_fallback_checks_every_component_in_order_then_final_path(
     target = root / "a" / "b" / "f.txt"
     tools._write_text_nofollow(target, "x", overwrite=True, root=root)
     assert checked == [str(root / "a"), str(root / "a" / "b"), str(target)]
-    assert trace.opens == [((target, _expected_flags(True), 0o644), {})]
+    assert trace.opens == [((target, _expected_flags(True), 0o600), {})]
     assert trace.closes == []
 
 
@@ -278,7 +280,7 @@ def test_fallback_without_o_nofollow_flag(
     monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
     tools._write_text_nofollow(root / "f.txt", "x", overwrite=False, root=root)
     expected = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    assert trace.opens == [((root / "f.txt", expected, 0o644), {})]
+    assert trace.opens == [((root / "f.txt", expected, 0o600), {})]
 
 
 def test_fallback_when_only_directory_flag_is_missing_uses_lstat_branch(
@@ -289,7 +291,7 @@ def test_fallback_when_only_directory_flag_is_missing_uses_lstat_branch(
     monkeypatch.delattr(os, "O_DIRECTORY", raising=False)
     tools._write_text_nofollow(root / "f.txt", "x", overwrite=True, root=root)
     assert checked == [str(root / "f.txt")]
-    assert trace.opens == [((root / "f.txt", _expected_flags(True), 0o644), {})]
+    assert trace.opens == [((root / "f.txt", _expected_flags(True), 0o600), {})]
 
 
 def test_fallback_when_open_is_not_dir_fd_capable_uses_lstat_branch(
@@ -318,7 +320,7 @@ def test_dirfd_branch_opens_one_component_at_a_time_and_closes_each_fd(
         ((root, os.O_RDONLY | _DIRECTORY), {}),
         (("a", dir_flags), {"dir_fd": root_fd}),
         (("b", dir_flags), {"dir_fd": a_fd}),
-        (("f.txt", _expected_flags(False), 0o644), {"dir_fd": b_fd}),
+        (("f.txt", _expected_flags(False), 0o600), {"dir_fd": b_fd}),
     ]
     # each directory fd is closed when replaced; the last one in the finally block;
     # the file fd is closed by fdopen (not via os.close of this module)
@@ -394,3 +396,12 @@ def test_write_error_after_open_propagates_and_closes_descriptor(
         tools._write_text_nofollow(root / "f.txt", "x", overwrite=True, root=root)
     assert len(seen) == 1
     assert (root / "f.txt").read_text(encoding="utf-8") == ""
+
+
+def test_overwrite_tightens_existing_file_mode(tmp_path: Path) -> None:
+    root = tmp_path.resolve()
+    target = root / "f.txt"
+    target.write_text("old")
+    os.chmod(target, 0o644)
+    tools._write_text_nofollow(target, "new", overwrite=True, root=root)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
