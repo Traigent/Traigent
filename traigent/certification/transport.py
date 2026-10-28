@@ -62,6 +62,7 @@ class BackendG1Transport:
     ) -> G1Response:
         from traigent.labels.transport_gate import (
             TransportGateRefusal,
+            freeze_json_body,
             observe_requests_response,
             preflight_requests,
         )
@@ -74,7 +75,9 @@ class BackendG1Transport:
             raise G1RequestError(None, "invalid_backend_url")
         headers = self._client._get_sync_auth_headers(target="backend")
         headers["Cache-Control"] = "no-store"
-        payload = None if body is None else dict(body)
+        payload = None
+        if body is not None:
+            payload = freeze_json_body(dict(body))
         failed = False
         response: Any = None
         parsed: Any = None
