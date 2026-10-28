@@ -185,6 +185,34 @@ def normalize_environment(value: str) -> str:
     return value.strip().lower()
 
 
+def _explicit_label(explicit: str) -> str:
+    """Normalize an explicit label, refusing one over the length cap."""
+    label = normalize_environment(explicit)
+    if len(label) > ENVIRONMENT_MAX_LENGTH:
+        raise EnvironmentTooLongError(
+            f"environment must be at most {ENVIRONMENT_MAX_LENGTH} characters"
+        )
+    return label
+
+
+def _accepted_warning(
+    source: EnvironmentSource, ignored: bool
+) -> EnvironmentWarning | None:
+    """Warning attached to an accepted env-var rung (emits the legacy notice once)."""
+    warning: EnvironmentWarning | None = (
+        "invalid_env_value_ignored" if ignored else None
+    )
+    if source == "traigent_env_legacy":
+        _warn_once(
+            "legacy:TRAIGENT_ENV",
+            lambda: logger.warning(
+                "TRAIGENT_ENV is deprecated; set TRAIGENT_ENVIRONMENT instead."
+            ),
+        )
+        warning = warning or "legacy_env_var_deprecated"
+    return warning
+
+
 def resolve_environment(
     explicit: str | None = None,
     env: Mapping[str, str] | None = None,
@@ -201,11 +229,7 @@ def resolve_environment(
     """
     environ = os.environ if env is None else env
     if explicit is not None:
-        label = normalize_environment(explicit)
-        if len(label) > ENVIRONMENT_MAX_LENGTH:
-            raise EnvironmentTooLongError(
-                f"environment must be at most {ENVIRONMENT_MAX_LENGTH} characters"
-            )
+        label = _explicit_label(explicit)
         if label:
             return EnvironmentResolution(label, "explicit", None)
 
@@ -233,18 +257,7 @@ def resolve_environment(
             ignored = True
             _warn_invalid_env_value(var_name)
             continue
-        warning: EnvironmentWarning | None = (
-            "invalid_env_value_ignored" if ignored else None
-        )
-        if source == "traigent_env_legacy":
-            _warn_once(
-                "legacy:TRAIGENT_ENV",
-                lambda: logger.warning(
-                    "TRAIGENT_ENV is deprecated; set TRAIGENT_ENVIRONMENT instead."
-                ),
-            )
-            warning = warning or "legacy_env_var_deprecated"
-        return EnvironmentResolution(label, source, warning)
+        return EnvironmentResolution(label, source, _accepted_warning(source, ignored))
 
     _warn_once(
         "undeclared",

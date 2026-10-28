@@ -133,24 +133,7 @@ class TelemetryIngestResult:
         if not isinstance(body, dict):
             raise EconomicsResponseError("ingest response was not a JSON object")
 
-        if body.get("contract") != CONTRACT_ID:
-            raise EconomicsResponseError("ingest response names a different contract")
-        if body.get("contract_version") != CONTRACT_VERSION:
-            raise EconomicsResponseError(
-                "ingest response names a different contract version"
-            )
-
-        replayed = body.get("replayed")
-        if not isinstance(replayed, bool):
-            raise EconomicsResponseError(
-                "ingest response replayed flag is missing or non-boolean"
-            )
-        if replayed != _STATUS_REPLAYED[http_status]:
-            # A 200 that says replayed=false (or a 201/422 that says true) would
-            # lie about whether state was written.
-            raise EconomicsResponseError(
-                "ingest response status and replayed flag disagree"
-            )
+        replayed = _check_envelope(body, http_status)
 
         batch_id = body.get("batch_id")
         key = body.get("idempotency_key")
@@ -167,21 +150,9 @@ class TelemetryIngestResult:
         if not isinstance(received_at, str) or not received_at:
             raise EconomicsResponseError("ingest response received_at is missing")
 
-        submitted, accepted, duplicate, rejected = _parse_counts(body.get("counts"))
-        if submitted != expected_submitted:
-            raise EconomicsResponseError(
-                "ingest response submitted count does not match the batch"
-            )
-        if accepted + duplicate + rejected != submitted:
-            raise EconomicsResponseError("ingest response counts do not reconcile")
-        if http_status == 422 and not (submitted > 0 and rejected == submitted):
-            raise EconomicsResponseError("422 response is not an all-rejected batch")
-        # All-rejected is the 422 status contract, never a fresh 201. (A 200 may
-        # legitimately be all-rejected: it replays a prior 422 ingest.)
-        if http_status == 201 and submitted > 0 and rejected == submitted:
-            raise EconomicsResponseError(
-                "all-rejected batch must be reported as 422, not a fresh 201"
-            )
+        submitted, accepted, duplicate, rejected = _check_counts(
+            body.get("counts"), http_status, expected_submitted
+        )
 
         rejections = _parse_rejections(
             body.get("rejections"),
@@ -204,6 +175,51 @@ class TelemetryIngestResult:
             rejected=rejected,
             rejections=rejections,
         )
+
+
+def _check_envelope(body: dict[str, Any], http_status: int) -> bool:
+    """Check contract identity, version and the replayed flag; return the flag."""
+    if body.get("contract") != CONTRACT_ID:
+        raise EconomicsResponseError("ingest response names a different contract")
+    if body.get("contract_version") != CONTRACT_VERSION:
+        raise EconomicsResponseError(
+            "ingest response names a different contract version"
+        )
+
+    replayed = body.get("replayed")
+    if not isinstance(replayed, bool):
+        raise EconomicsResponseError(
+            "ingest response replayed flag is missing or non-boolean"
+        )
+    if replayed != _STATUS_REPLAYED[http_status]:
+        # A 200 that says replayed=false (or a 201/422 that says true) would
+        # lie about whether state was written.
+        raise EconomicsResponseError(
+            "ingest response status and replayed flag disagree"
+        )
+    return replayed
+
+
+def _check_counts(
+    counts: Any, http_status: int, expected_submitted: int
+) -> tuple[int, int, int, int]:
+    """Parse the counts and reconcile them with the request and the status."""
+    submitted, accepted, duplicate, rejected = _parse_counts(counts)
+    if submitted != expected_submitted:
+        raise EconomicsResponseError(
+            "ingest response submitted count does not match the batch"
+        )
+    if accepted + duplicate + rejected != submitted:
+        raise EconomicsResponseError("ingest response counts do not reconcile")
+    if http_status == 422 and not (submitted > 0 and rejected == submitted):
+        raise EconomicsResponseError("422 response is not an all-rejected batch")
+    # All-rejected is the 422 status contract, never a fresh 201. (A 200 may
+    # legitimately be all-rejected: it replays a prior 422 ingest.)
+    if http_status == 201 and submitted > 0 and rejected == submitted:
+        raise EconomicsResponseError(
+            "all-rejected batch must be reported as 422, not a fresh 201"
+        )
+    return submitted, accepted, duplicate, rejected
 
 
 def _parse_counts(counts: Any) -> tuple[int, int, int, int]:
