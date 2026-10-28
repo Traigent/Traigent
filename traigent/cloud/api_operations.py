@@ -1318,8 +1318,8 @@ class ApiOperations:
                         return False
 
         except EndpointNotConfiguredError:
-            logger.warning(endpoint_missing_message("config run status update"))
-            return False
+            # Strict self-hosted mode: fail closed, never degrade silently.
+            raise
         except Exception as e:
             logger.debug(f"Error updating config run status: {e}")
             return False
@@ -1512,8 +1512,8 @@ class ApiOperations:
                         return False
 
         except EndpointNotConfiguredError:
-            logger.warning(endpoint_missing_message("config run measures update"))
-            return False
+            # Strict self-hosted mode: fail closed, never degrade silently.
+            raise
         except Exception as e:
             logger.debug(f"Error updating config run measures: {e}")
             return False

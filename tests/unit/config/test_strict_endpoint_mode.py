@@ -190,7 +190,9 @@ class TestSecondaryEndpointsDisabled:
         with pytest.raises(EndpointNotConfiguredError):
             _ = unset.backend_base_url
         converted = urlparse(
-            DatasetConverter(backend_base_url="https://tg.corp.internal").backend_base_url
+            DatasetConverter(
+                backend_base_url="https://tg.corp.internal"
+            ).backend_base_url
         )
         assert (converted.scheme, converted.hostname) == ("https", "tg.corp.internal")
 
