@@ -796,11 +796,10 @@ def test_aiohttp_form_is_encoded_once_and_lying_str_is_refused() -> None:
     assert _FakeTransport.sent[-1] == b"grant_type=refresh_token"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="pre-existing on develop; follow-up: default-deny result projectors",
-)
 def test_results_projector_keeps_unknown_content_keys() -> None:
+    """A key that hashes/compares as ``config`` but WRITES secret content is judged by what it
+    writes: the result projectors are default-deny, so it is refused."""
+
     class _Key(str):
         def __hash__(self) -> int:
             return hash("config")
@@ -809,9 +808,9 @@ def test_results_projector_keeps_unknown_content_keys() -> None:
             return other == "config"
 
     body = {_Key(SECRET): 1}
-    projected = oo.project_for_send(oo.PHASE_RESULTS, body, explicit=True)
-    raw = json.dumps(projected).encode()
-    assert SECRET.encode() not in raw
+    with pytest.raises(oo.MetadataContractViolation) as caught:
+        oo.project_for_send(oo.PHASE_RESULTS, body, explicit=True)
+    assert SECRET not in str(caught.value)
 
 
 # ------------------------------------------------ fail closed when serialization fails
