@@ -13,6 +13,7 @@ from traigent_schema.certification import derive_client_key_ref
 from traigent.certification.transport import G1RequestError, G1Response
 
 PROJECT_REF = "prj_" + "ab" * 16
+SESSIONS = "/api/v1beta/certificate-build-sessions"
 
 
 class FakeG1Backend:
@@ -24,6 +25,10 @@ class FakeG1Backend:
         self.readiness = "available"
         self.fail_with: tuple[int | None, str | None] | None = None
         self.enroll_ref_override: str | None = None
+        self.fixture: dict[str, Any] | None = None
+        self.refuse_step: str | None = None
+        self.bind_root_override: str | None = None
+        self.finalized: dict[str, Any] | None = None
 
     def request(
         self, method: str, path: str, body: Mapping[str, Any] | None = None
@@ -52,4 +57,78 @@ class FakeG1Backend:
                     "created_at": "2026-10-28T00:00:00Z",
                 },
             )
+        if method == "GET" and path == f"{SESSIONS}/readiness":
+            if self.readiness == "absent":
+                raise G1RequestError(404, "not_found")
+            return G1Response(
+                200, {"readiness_version": 1, "g1_issuance": self.readiness}
+            )
+        if self.fixture is not None:
+            return self._g1_flow(method, path, body)
         raise AssertionError(f"unexpected request {method} {path}")
+
+    # Allowed body keys per step, as in the Backend routes of feature/cert-g1-be3b-issuance.
+    _BODY_KEYS = {
+        "issue": {"nonce", "ttl_seconds"},
+        "link-run": {"run_id"},
+        "bind-g1": {
+            "build_session_ref",
+            "manifest_root_digest",
+            "commitment_scheme",
+            "client_attestor_version",
+            "client_key_ref",
+            "client_signature_algorithm",
+            "declared_mode",
+            "sdk_ref",
+            "sdk_version",
+        },
+        "prepare": {"build_session_ref", "nonce"},
+        "finalize": {"build_session_ref", "nonce", "co_attestation"},
+    }
+
+    def _g1_flow(
+        self, method: str, path: str, body: Mapping[str, Any] | None
+    ) -> G1Response:
+        assert self.fixture is not None and method == "POST"
+        session = self.fixture["session"]
+        ref = session["build_session_ref"]
+        if path == SESSIONS:
+            step = "issue"
+        elif path == f"{SESSIONS}/{ref}/link-run":
+            step = "link-run"
+        elif path == f"{SESSIONS}/{ref}/abandon":
+            step = "abandon"
+        elif path in {f"{SESSIONS}/bind-g1", f"{SESSIONS}/prepare", f"{SESSIONS}/finalize"}:
+            step = path.rsplit("/", 1)[1]
+        else:
+            raise AssertionError(f"unexpected request {method} {path}")
+        if step == "abandon":
+            assert body is None
+        else:
+            assert body is not None and set(body) == self._BODY_KEYS[step], step
+        if self.refuse_step == step:
+            raise G1RequestError(400, "invalid_request")
+        if step == "issue":
+            return G1Response(201, {"build_session_ref": ref, "state": "open"})
+        if step == "link-run":
+            return G1Response(200, {"linked": True})
+        if step == "abandon":
+            return G1Response(200, {"state": "abandoned"})
+        if step == "bind-g1":
+            assert body is not None
+            return G1Response(
+                200,
+                {
+                    "binding_id": "bnd_1",
+                    "build_session_ref": ref,
+                    "session_commitment_digest": session["session_commitment_digest"],
+                    "manifest_root_digest": self.bind_root_override
+                    or body["manifest_root_digest"],
+                    "has_g1_binding": True,
+                },
+            )
+        if step == "prepare":
+            return G1Response(200, copy.deepcopy(self.fixture["prepare_response"]))
+        assert body is not None
+        self.finalized = copy.deepcopy(dict(body))
+        return G1Response(201, {"certificate_ref": "cert:" + "c" * 43})
