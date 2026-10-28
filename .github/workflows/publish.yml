@@ -91,6 +91,15 @@ jobs:
         )
         echo "package_version=$VERSION" >> "$GITHUB_OUTPUT"
 
+    # Before ANY upload: if v<version> already exists it must point at the build
+    # SHA (a manual dispatch from another main commit could otherwise upload and
+    # only fail later in the release job). Lookup errors fail closed.
+    - name: Verify existing version tag points at the build SHA
+      env:
+        GIT_SHA: ${{ github.sha }}
+        VERSION_PYPROJECT: ${{ steps.package_version.outputs.package_version }}
+      run: bash scripts/ci/assert_version_tag_matches_sha.sh "$GIT_SHA" "$VERSION_PYPROJECT"
+
     - name: Verify version consistency
       env:
         VERSION_PYPROJECT: ${{ steps.package_version.outputs.package_version }}

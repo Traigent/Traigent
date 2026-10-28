@@ -124,3 +124,60 @@ def test_script_rejects_tag_pointing_elsewhere(tmp_path: Path) -> None:
     assert _run(repo, on_main, "v1.0.0").returncode != 0
     _git(repo, "tag", "v1.0.1", on_main)
     assert _run(repo, on_main, "v1.0.1").returncode == 0
+
+
+_TAG_SCRIPT = _REPO_ROOT / "scripts" / "ci" / "assert_version_tag_matches_sha.sh"
+
+
+def test_version_tag_check_precedes_every_upload_and_is_unconditional() -> None:
+    steps = _steps()
+    idxs = [
+        i
+        for i, s in enumerate(steps)
+        if "assert_version_tag_matches_sha.sh" in str(s.get("run", ""))
+    ]
+    assert len(idxs) == 1
+    check = steps[idxs[0]]
+    assert "if" not in check
+    assert not check.get("continue-on-error")
+    assert check["env"]["GIT_SHA"] == "${{ github.sha }}"
+    assert (
+        check["env"]["VERSION_PYPROJECT"]
+        == "${{ steps.package_version.outputs.package_version }}"
+    )
+    version_step = next(
+        i for i, s in enumerate(steps) if s.get("id") == "package_version"
+    )
+    assert version_step < idxs[0]
+    assert all(idxs[0] < i for i, s in enumerate(steps) if _is_upload(s))
+
+
+def _run_tag(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", str(_TAG_SCRIPT), *args], cwd=cwd, capture_output=True, text=True
+    )
+
+
+def test_version_tag_absent_is_allowed(tmp_path: Path) -> None:
+    repo, on_main, _ = _repo(tmp_path)
+    assert _run_tag(repo, on_main, "9.9.9").returncode == 0
+
+
+def test_version_tag_pointing_elsewhere_is_rejected(tmp_path: Path) -> None:
+    repo, on_main, off_main = _repo(tmp_path)
+    _git(repo, "tag", "v1.0.0", off_main)
+    result = _run_tag(repo, on_main, "1.0.0")
+    assert result.returncode != 0
+    assert "points at" in result.stdout
+
+
+def test_version_tag_matching_sha_is_allowed(tmp_path: Path) -> None:
+    repo, on_main, _ = _repo(tmp_path)
+    _git(repo, "tag", "v1.0.0", on_main)
+    assert _run_tag(repo, on_main, "1.0.0").returncode == 0
+
+
+def test_version_tag_lookup_error_fails_closed(tmp_path: Path) -> None:
+    # Not a git repository: show-ref errors (exit 128), which must not read as "absent".
+    result = _run_tag(tmp_path, "a" * 40, "1.0.0")
+    assert result.returncode != 0
