@@ -1370,6 +1370,29 @@ def _s_budget(value: Any, ctx: _Ctx, depth: int) -> Any:
 
 _s_wire_id = s_null(s_id)
 
+
+def _s_true(value: Any, _c: _Ctx, _d: int) -> Any:
+    """The G1 intent flag: exactly boolean ``True`` (``session_g1_required_to_wire`` never
+    serializes ``False``); ``1``/``"true"``/``False`` refuse."""
+    if value is not True:
+        raise _Drop
+    return value
+
+
+#: G1 (snapshot co-sign) intent: a closed flag plus an optional integer deadline of 1-30 days,
+#: mirroring the Schema's ``snapshot_g1_deadline_days`` bounds. Nothing else about G1 crosses.
+_G1_ENVELOPE: dict[str, Spec | None] = {
+    "snapshot_g1_required": _s_true,
+    "snapshot_g1_deadline_days": s_int(1, 30),
+}
+
+
+def _enforce_g1_pairing(out: dict[str, Any]) -> None:
+    """A deadline is meaningful only with the flag (the Schema's if/then); refuse it alone."""
+    if "snapshot_g1_deadline_days" in out and "snapshot_g1_required" not in out:
+        raise MetadataContractViolation
+
+
 #: Typed ``POST /sessions`` top-level keys. Keys marked ``None`` are validated by dedicated
 #: code in :func:`project_session_create`; the rest by the spec shown. Any other key refuses.
 _TYPED_ENVELOPE: dict[str, Spec | None] = {
@@ -1416,6 +1439,7 @@ _TYPED_ENVELOPE: dict[str, Spec | None] = {
     "dataset_ref": s_id,
     "evaluation_set_ref": s_id,
     "evaluator_ref": s_id,
+    **_G1_ENVELOPE,
 }
 
 #: Legacy ``POST /sessions`` top-level keys (``None`` = dedicated handling).
@@ -1432,6 +1456,7 @@ _LEGACY_ENVELOPE: dict[str, Spec | None] = {
     "smart_pruning": _SMART_PRUNING,
     "artifact_fingerprints": _ARTIFACT_FINGERPRINTS,
     "fingerprint_meta": None,
+    **_G1_ENVELOPE,
 }
 
 
@@ -1451,6 +1476,7 @@ def _enforce_envelope(
             out[key] = spec(out[key], ctx, 0)
         except _Drop:
             raise MetadataContractViolation from None
+    _enforce_g1_pairing(out)
 
 
 def _project_optional(out: dict[str, Any], key: str, spec: Spec, ctx: _Ctx) -> None:
