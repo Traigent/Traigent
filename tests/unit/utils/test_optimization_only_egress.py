@@ -827,3 +827,96 @@ def test_director_allowlist_is_enforced_at_every_depth_and_leaf(
 
 def test_director_check_is_a_noop_when_mode_off() -> None:
     oo.assert_director_request(DIRECTOR_TURN, {"report": {"notes": "free text"}})
+
+
+# ----------------------------------------------- legacy session: allowlisted metadata only
+
+_LEGACY_MARKERS = (
+    "ROW_MARKER_a1",
+    "EXAMPLE_MARKER_b2",
+    "PATH_MARKER_c3",
+    "NOTE_MARKER_d4",
+)
+
+
+def _legacy_body(**dataset: Any) -> dict[str, Any]:
+    return {
+        "problem_statement": "p",
+        "search_space": {"model": ["a", "b"]},
+        "optimization_config": {"algorithm": "grid", "max_trials": 3},
+        "dataset": dataset,
+    }
+
+
+def test_legacy_session_dataset_keeps_only_allowlisted_metadata() -> None:
+    body = _legacy_body(
+        examples=[{"input": "ROW_MARKER_a1"}],
+        rows=["EXAMPLE_MARKER_b2"],
+        path="/data/PATH_MARKER_c3.jsonl",
+        description="NOTE_MARKER_d4",
+        metadata={"size": 7, "privacy_mode": True, "notes": "NOTE_MARKER_d4"},
+    )
+    out = oo.project_legacy_session_create(body)
+    blob = json.dumps(out)
+    assert not [m for m in _LEGACY_MARKERS if m in blob], blob
+    assert set(out["dataset"]) <= {"name", "size", "metadata", "examples"}
+    assert out["dataset"]["metadata"] == {"size": 7, "privacy_mode": True}
+    # the projection of a projection is itself: the transport's "unchanged" check holds
+    assert oo.project_legacy_session_create(out) == out
+
+
+def test_legacy_session_dataset_metadata_free_text_values_are_dropped() -> None:
+    out = oo.project_legacy_session_create(
+        _legacy_body(metadata={"size": 3, "type": "NOTE_MARKER_d4", "name": "my set"})
+    )
+    blob = json.dumps(out)
+    assert "NOTE_MARKER_d4" not in blob
+    assert out["dataset"]["metadata"]["size"] == 3
+    assert "type" not in out["dataset"]["metadata"]
+
+
+def test_legacy_session_dataset_nonempty_examples_never_pass() -> None:
+    out = oo.project_legacy_session_create(_legacy_body(examples=["ROW_MARKER_a1"]))
+    assert "ROW_MARKER_a1" not in json.dumps(out)
+    assert out["dataset"].get("examples", []) == []
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("dataset", "ROW_MARKER_a1"),
+        ("dataset", ["ROW_MARKER_a1"]),
+        ("dataset", None),
+        ("optimization_config", "NOTE_MARKER_d4"),
+        ("optimization_config", ["NOTE_MARKER_d4"]),
+        ("optimization_config", None),
+    ],
+)
+def test_legacy_session_non_dict_sections_are_refused_before_transport(
+    field: str, value: Any
+) -> None:
+    body = _legacy_body()
+    body[field] = value
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_legacy_session_create(body)
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_for_phase(oo.PHASE_SESSION_CREATE_AUTO, body)
+
+
+def test_legacy_session_dataset_metadata_non_dict_is_refused() -> None:
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_legacy_session_create(_legacy_body(metadata="NOTE_MARKER_d4"))
+
+
+def test_legacy_session_create_with_allowed_fields_still_succeeds() -> None:
+    out = oo.project_legacy_session_create(
+        _legacy_body(examples=[], metadata={"size": 100}, name="my_set", size=100)
+    )
+    assert out["dataset"] == {
+        "examples": [],
+        "metadata": {"size": 100},
+        "name": "my_set",
+        "size": 100,
+    }
+    assert out["search_space"] == {"model": ["a", "b"]}
+    assert out["optimization_config"]["max_trials"] == 3
