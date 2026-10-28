@@ -1203,12 +1203,18 @@ def _project_objectives(value: Any, ctx: _Ctx) -> Any:
     for name in declared_metric_names(value):
         if METRIC_KEY_RE.fullmatch(name) is None:
             raise MetadataContractViolation
+    if value is None:
+        return None
     if not isinstance(value, (list, dict)):
-        return value  # shape errors are the service's existing 400
+        raise MetadataContractViolation
     try:
-        return _OBJECTIVES(value, ctx, 0)
+        projected = _OBJECTIVES(value, ctx, 0)
     except _Drop:
         raise MetadataContractViolation from None
+    # An objective that the closed spec dropped as unfit (free text) refuses the request.
+    if not isinstance(projected, type(value)) or len(projected) != len(value):
+        raise MetadataContractViolation
+    return projected
 
 
 def _strict_id(value: Any, ctx: _Ctx) -> Any:
@@ -1451,11 +1457,12 @@ def project_session_create(data: dict[str, Any]) -> dict[str, Any]:
     _project_optional(out, "promotion_policy", _PROMOTION_POLICY, ctx)
     _project_optional(out, "tvl_governance", _TVL_GOVERNANCE, ctx)
     _project_optional(out, "fingerprint_meta", _FINGERPRINT_META, ctx)
-    if (
-        isinstance(out.get("task_type"), str)
-        and ID_RE.fullmatch(out["task_type"]) is None
-    ):
-        out.pop("task_type")
+    if "task_type" in out:
+        task_type = out["task_type"]
+        if not isinstance(task_type, str):
+            raise MetadataContractViolation  # a container or number is never a coarse hint
+        if ID_RE.fullmatch(task_type) is None:
+            out.pop("task_type")  # existing behaviour: a non-identifier hint is dropped
     if "constraints" in out:
         out["constraints"] = _project_constraints(out["constraints"], ctx)
     _project_search_fields(

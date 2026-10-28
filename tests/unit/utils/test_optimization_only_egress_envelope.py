@@ -407,3 +407,89 @@ def test_content_identity_named_tunable_gets_no_size_exemption(
         project({space_key: space})
     with pytest.raises(oo.MetadataContractViolation):
         project({space_key: {"renamed": chunk, "ordinary": chunk}})
+
+
+# ----------------------------------------- every dedicated-handler key, wrong-typed
+
+SECRET = "private customer prompt"  # pragma: allowlist secret
+_DEDICATED_TYPED = [
+    "function_name", "agent_key", "agent_id", "dataset_id", "evaluator_id",
+    "evaluator_definition_id", "run_title", "run_description", "objectives",
+    "metadata", "dataset_metadata", "content_identity", "code_revision",
+    "optimization_strategy", "promotion_policy", "tvl_governance",
+    "fingerprint_meta", "task_type", "constraints", "configuration_space",
+    "search_space", "default_config", "warm_start_from",
+]  # fmt: skip
+_DEDICATED_LEGACY = [
+    "problem_statement", "optimization_config", "dataset", "metadata", "search_space",
+    "default_config", "warm_start_from", "evaluator_id", "evaluator_definition_id",
+    "fingerprint_meta",
+]  # fmt: skip
+_WRONG_VALUES = [
+    pytest.param({"prompt": SECRET}, id="nested"),
+    pytest.param(SECRET, id="bare"),
+    pytest.param([SECRET], id="list"),
+    pytest.param({"a": {"prompt": [SECRET]}}, id="deep"),
+]
+
+
+def _send_and_enforce(phase: str, body: dict[str, Any]) -> str:
+    projected = oo.project_for_send(phase, body, explicit=True)
+    return json.dumps(projected, default=str)
+
+
+def _assert_refused_or_clean(phase: str, body: dict[str, Any]) -> None:
+    try:
+        projected = oo.project_for_send(phase, body, explicit=True)
+        raw = json.dumps(projected).encode()
+        oo.enforce_outgoing(
+            "POST", "https://api.example.test/api/v1/sessions", {}, raw, explicit=True
+        )
+    except (oo.MetadataContractViolation, oo.OptimizationOnlyRefusal):
+        return
+    assert SECRET not in raw.decode()
+
+
+@pytest.mark.parametrize("value", _WRONG_VALUES)
+@pytest.mark.parametrize("key", _DEDICATED_TYPED)
+def test_typed_dedicated_handlers_never_pass_nested_content(
+    key: str, value: Any
+) -> None:
+    body: dict[str, Any] = {"configuration_space": {"a": [1]}}
+    body[key] = value
+    _assert_refused_or_clean(oo.PHASE_SESSION_CREATE_AUTO, body)
+
+
+@pytest.mark.parametrize("value", _WRONG_VALUES)
+@pytest.mark.parametrize("key", _DEDICATED_LEGACY)
+def test_legacy_dedicated_handlers_never_pass_nested_content(
+    key: str, value: Any
+) -> None:
+    body: dict[str, Any] = {"problem_statement": "p", "search_space": {"a": [1]}}
+    body[key] = value
+    _assert_refused_or_clean(oo.PHASE_SESSION_CREATE_AUTO, body)
+
+
+@pytest.mark.parametrize(
+    "value", ["private customer prompt", {"prompt": SECRET}, 7, [SECRET]]
+)
+def test_objectives_wrong_shapes_are_refused(value: Any) -> None:
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_session_create(
+            {"configuration_space": {"a": [1]}, "objectives": value}
+        )
+
+
+@pytest.mark.parametrize("value", [{"prompt": SECRET}, 7, [SECRET], True])
+def test_task_type_container_or_number_is_refused(value: Any) -> None:
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_session_create(
+            {"configuration_space": {"a": [1]}, "task_type": value}
+        )
+
+
+def test_task_type_free_text_string_is_dropped() -> None:
+    out = oo.project_session_create(
+        {"configuration_space": {"a": [1]}, "task_type": SECRET}
+    )
+    assert "task_type" not in out
