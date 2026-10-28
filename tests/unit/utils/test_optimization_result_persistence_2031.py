@@ -89,8 +89,8 @@ def test_manifest_covers_every_optimization_result_field() -> None:
         "A field cannot be both restored and reset; the manifest contradicts "
         f"itself for: {sorted(RESULT_RESTORE & RESULT_RESET)}"
     )
-    assert len(declared) == 29, (
-        f"OptimizationResult now declares {len(declared)} fields, not 29. If you "
+    assert len(declared) == 31, (
+        f"OptimizationResult now declares {len(declared)} fields, not 31. If you "
         f"added one, updating this number is the LAST step, not the first: a "
         f"restorable field also needs a _SENTINELS entry, a bumped "
         f"RESULT_SCHEMA_VERSION, a FIELD_INTRODUCED_IN entry at that bumped "
@@ -116,9 +116,20 @@ def test_reset_set_is_exactly_the_three_documented_non_durable_fields() -> None:
     It is evidence for the hosted deploy path, produced by the run that is still in
     memory; a reloaded artifact has no run to deploy from, and a restored value
     would assert a gate decision for an optimizer that never ran in this process.
+
+    ``snapshot_ref`` and ``client_evidence_path`` (G1 client evidence): the
+    terminal snapshot's digest and store locator, and the local evidence file path.
+    Machine-local handles that never reach Traigent and are meaningless (and
+    sensitive) on another machine.
     """
     assert RESULT_RESET == frozenset(
-        {"sync_session_id", "_experiment_stats", "promotion_decisions"}
+        {
+            "sync_session_id",
+            "_experiment_stats",
+            "promotion_decisions",
+            "snapshot_ref",
+            "client_evidence_path",
+        }
     )
 
 

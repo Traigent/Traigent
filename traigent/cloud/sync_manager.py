@@ -82,7 +82,9 @@ def build_experiment_url(
     """Build the portal URL for an experiment.
 
     Single source of truth for experiment URL construction —
-    used by both SyncManager and the orchestrator.
+    used by both SyncManager and the orchestrator. ``projectId`` is the query parameter the
+    portal reads to open the link in the right workspace; ``project_id`` is kept for
+    existing consumers.
     """
     url = (
         f"{base_url.rstrip('/')}/experiments/view/{quote(str(experiment_id), safe='')}"
@@ -92,6 +94,7 @@ def build_experiment_url(
         for key, value in (
             ("run_id", run_id),
             ("project_id", project_id),
+            ("projectId", project_id),
             ("tenant_id", tenant_id),
         )
         if value is not None and (normalized := str(value).strip())
@@ -99,6 +102,21 @@ def build_experiment_url(
     if not query_params:
         return url
     return f"{url}?{urlencode(query_params, quote_via=quote)}"
+
+
+def build_agent_url(
+    base_url: str, agent_id: str, *, project_id: str | None = None
+) -> str:
+    """Build the portal URL for an agent page.
+
+    The portal opens the link in the right workspace only when it carries ``projectId``;
+    without a project id the bare agent URL is returned.
+    """
+    url = f"{base_url.rstrip('/')}/agents/view/{quote(str(agent_id), safe='')}"
+    normalized = str(project_id).strip() if project_id is not None else ""
+    if not normalized:
+        return url
+    return f"{url}?{urlencode({'projectId': normalized}, quote_via=quote)}"
 
 
 def sanitize_backend_name(value: str, fallback: str = "Local Dataset") -> str:
@@ -515,10 +533,17 @@ class SyncManager:
             )
         )
 
-        return {
+        converted: dict[str, Any] = {
             "session_create": session_create,
             "configuration_runs": configuration_runs,
         }
+        if not legacy_shape and session_metadata.get("snapshot_g1_pending") is True:
+            # Local G1 intent from an offline capture; resolved at registration.
+            converted["snapshot_g1_pending"] = True
+            days = session_metadata.get("snapshot_g1_deadline_days")
+            if isinstance(days, int) and not isinstance(days, bool):
+                converted["snapshot_g1_deadline_days"] = days
+        return converted
 
     @staticmethod
     def _derive_objectives(
@@ -1062,7 +1087,29 @@ class SyncManager:
             prior_state.get("cloud_experiment_run_id") if reuse else None
         )
         if not session_cloud_id:
-            create_result = self._sync_create_session(traigent_data["session_create"])
+            create_payload = traigent_data["session_create"]
+            if traigent_data.get("snapshot_g1_pending") is True:
+                # Offline G1 intent: register with the closed flag only after the
+                # readiness probe says available; otherwise refuse the sync
+                # closed. Never register plain: B1 could then make a later bind
+                # impossible.
+                if not self._g1_ready():
+                    sync_result["status"] = "error"
+                    sync_result["error_code"] = "READINESS_UNAVAILABLE"
+                    sync_result["errors"].append(
+                        "G1 certificate issuance is not available; sync refused "
+                        "(READINESS_UNAVAILABLE). Retry later."
+                    )
+                    return
+                create_payload = {**create_payload, "snapshot_g1_required": True}
+                days = traigent_data.get("snapshot_g1_deadline_days")
+                if (
+                    isinstance(days, int)
+                    and not isinstance(days, bool)
+                    and 1 <= days <= 30
+                ):
+                    create_payload["snapshot_g1_deadline_days"] = days
+            create_result = self._sync_create_session(create_payload)
             if not create_result["success"]:
                 sync_result["status"] = "error"
                 sync_result["errors"].append(
@@ -1306,6 +1353,34 @@ class SyncManager:
             "overall_status": overall_status,
         }
 
+    def _g1_ready(self) -> bool:
+        """True only when the Backend readiness probe says G1 issuance is available."""
+        from traigent.certification import snapshot_binding
+        from traigent.certification.bind import BindError, check_g1_readiness
+
+        self._raise_if_backend_egress_disabled("check G1 readiness")
+        try:
+            check_g1_readiness(
+                snapshot_binding.default_transport(
+                    self.api_key, no_egress=self.no_egress
+                )
+            )
+        except BindError as err:
+            # Closed reason only: BindError.code is a fixed token.
+            logger.error(
+                "G1 readiness probe refused (reason=%s); sync will not register G1",
+                err.code,
+            )
+            return False
+        except Exception:
+            # Never log the exception text: it may carry URLs or key material.
+            logger.error(
+                "G1 readiness probe failed (reason=READINESS_UNAVAILABLE); "
+                "sync will not register G1"
+            )
+            return False
+        return True
+
     def _sync_create_session(self, session_create: dict[str, Any]) -> dict[str, Any]:
         """Create the content-free backend_guided typed session.
 
@@ -1319,6 +1394,7 @@ class SyncManager:
         the backend did not mint one — never substituted with session_id.
         """
         self._raise_if_backend_egress_disabled("sync session create")
+        g1_registration = session_create.get("snapshot_g1_required") is True
         try:
             declared_metrics = oo_egress.declared_from_session_payload(session_create)
             session_create = oo_egress.project_for_send(
@@ -1381,6 +1457,12 @@ class SyncManager:
                         "experiment_run_id, and TRAIGENT_REQUIRE_RUN_ID is set"
                     ),
                 }
+            if experiment_run_id is None and g1_registration:
+                # G1 link-run needs the authoritative run to bind to, whatever
+                # TRAIGENT_REQUIRE_RUN_ID says: same refusal as the online guard.
+                from traigent.cloud.client import RunIdMissingError
+
+                return {"success": False, "error": str(RunIdMissingError())}
             project_id = self._optional_context_id(
                 payload.get("project_id") or metadata.get("project_id")
             )

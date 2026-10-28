@@ -202,6 +202,13 @@ class TestPrivacyCompliance:
             # because the SDK withholds it in privacy mode and content-less mode
             # (tests/unit/cloud/test_code_evaluator_payload.py).
             "evaluator_code_digest",
+            # Closed G1 intent flag and optional 1-30 day co-sign deadline. The
+            # dataclass always lists them; they are serialized only when the run
+            # set ExecutionOptions.snapshot_store (session_g1_required_to_wire),
+            # so a run without it sends nothing extra -- asserted below on the
+            # value, not just the key.
+            "snapshot_g1_required",
+            "snapshot_g1_deadline_days",
         }
 
         for req in dummy_server.received_data:
@@ -209,6 +216,7 @@ class TestPrivacyCompliance:
                 assert set(req["fields"]).issubset(allowed_fields)
                 assert req["content_identity_sent"] is False
                 assert req["evaluator_code_digest_sent"] is False
+                assert req["snapshot_g1_sent"] is False
 
     @pytest.mark.asyncio
     async def test_only_indices_in_suggestions(self, privacy_optimizer, dummy_server):

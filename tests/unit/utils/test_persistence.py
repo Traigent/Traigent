@@ -404,15 +404,25 @@ def test_save_load_resets_every_field_in_the_reset_manifest(tmp_path) -> None:
     result = _sentinel_result()
     result.sync_session_id = "20260727_005247_744918_answer_b1960eba"
     result.promotion_decisions = {"cfg-hash-1": "promote"}  # live per-run evidence
+    result.snapshot_ref = {"digest": "sha256:local"}  # machine-local G1 handle
+    result.client_evidence_path = "/local/only/evidence.json"
     assert result.experiment_stats is not None  # populate the memo cache
 
     persistence.save_result(result, "reset-fields")
     loaded = persistence.load_result("reset-fields")
 
     assert RESULT_RESET == frozenset(
-        {"sync_session_id", "_experiment_stats", "promotion_decisions"}
+        {
+            "sync_session_id",
+            "_experiment_stats",
+            "promotion_decisions",
+            "snapshot_ref",
+            "client_evidence_path",
+        }
     )
     assert loaded.sync_session_id is None
+    assert loaded.snapshot_ref is None
+    assert loaded.client_evidence_path is None
     assert loaded.promotion_decisions == {}
     assert loaded._experiment_stats is None
     # … and the cache recomputes to the same value from the restored trials.

@@ -1187,6 +1187,13 @@ class OptimizationResult:
     # state of this run: not restored from persisted artifacts.
     promotion_decisions: dict[str, str] = field(default_factory=dict, repr=False)
 
+    # Local-only G1 snapshot evidence (``ExecutionOptions.snapshot_store``): the
+    # ``SnapshotRef`` (manifest digest + store locator) of the terminal capture and
+    # the path of the local client-evidence file. Never sent to Traigent and never
+    # restored from persisted artifacts (see ``RESULT_RESET``).
+    snapshot_ref: Any = field(default=None, repr=False)
+    client_evidence_path: str | None = field(default=None, repr=False)
+
     _experiment_stats: ExperimentStats | None = field(
         default=None, init=False, repr=False
     )
