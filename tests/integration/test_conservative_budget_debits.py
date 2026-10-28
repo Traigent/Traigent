@@ -25,7 +25,7 @@ from traigent.core.execution_budget import BudgetDebitExceeded, ExecutionBudget
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators.base import Dataset, EvaluationExample, SimpleScoringEvaluator
 from traigent.evaluators.local import LocalEvaluator
-from traigent.utils.exceptions import TrialPrunedError
+from traigent.utils.exceptions import OptimizationError, TrialPrunedError
 
 
 @pytest.fixture(autouse=True)
@@ -455,3 +455,23 @@ async def test_mock_connected_outgoing_payloads_exclude_local_ledger(
     for call in client._submit_trial_result_via_session.call_args_list:
         assert call.kwargs["metrics"].get("cost") is None
         assert call.kwargs["metrics"].get("total_cost") is None
+
+
+@pytest.mark.asyncio
+async def test_foreign_budget_denial_propagates_unrecorded() -> None:
+    own = ExecutionBudget(max_budget_debit_usd=1)
+    foreign = ExecutionBudget(max_budget_debit_usd=0.01)
+    with pytest.raises(BudgetDebitExceeded) as raised:
+        foreign.reserve_debit(0.05)
+    signal = raised.value
+    assert signal.budget is foreign
+
+    async def agent(query: str, **_kwargs: Any) -> str:
+        raise signal
+
+    orchestrator = _build_orchestrator(own, max_suggestions=2, max_trials=2)
+    orchestrator.evaluator = LocalEvaluator(metrics=["accuracy"], max_workers=1)
+    with pytest.raises(OptimizationError) as propagated:
+        await orchestrator.optimize(func=agent, dataset=_dataset())
+    assert propagated.value.__cause__ is signal
+    assert not getattr(orchestrator, "_execution_debit_denied", False)
