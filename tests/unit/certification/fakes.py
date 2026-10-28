@@ -98,7 +98,11 @@ class FakeG1Backend:
             step = "link-run"
         elif path == f"{SESSIONS}/{ref}/abandon":
             step = "abandon"
-        elif path in {f"{SESSIONS}/bind-g1", f"{SESSIONS}/prepare", f"{SESSIONS}/finalize"}:
+        elif path in {
+            f"{SESSIONS}/bind-g1",
+            f"{SESSIONS}/prepare",
+            f"{SESSIONS}/finalize",
+        }:
             step = path.rsplit("/", 1)[1]
         else:
             raise AssertionError(f"unexpected request {method} {path}")

@@ -47,7 +47,9 @@ class _Client:
 
 
 class _Response:
-    def __init__(self, status: int, body: Any = None, *, bad_json: bool = False) -> None:
+    def __init__(
+        self, status: int, body: Any = None, *, bad_json: bool = False
+    ) -> None:
         self.status_code = status
         self._body = body
         self._bad_json = bad_json
@@ -99,7 +101,7 @@ def test_success_goes_through_the_transport_gate_without_redirects(
     ]
     assert len(gate["observe"]) == 1
     assert client.egress_checked and client.auth_targets == ["backend"]
-    (_, url, kwargs), = sent
+    ((_, url, kwargs),) = sent
     assert url == "https://api.example.test/api/v1beta/x"
     assert kwargs["allow_redirects"] is False
     assert kwargs["json"] == {"a": 1}
@@ -109,7 +111,12 @@ def test_success_goes_through_the_transport_gate_without_redirects(
 
 @pytest.mark.parametrize(
     "base",
-    ["ftp://api.example.test", "https://" + "user" + ":" + "word" + "@api.example.test", "not a url", ""],
+    [
+        "ftp://api.example.test",
+        "https://" + "user" + ":" + "word" + "@api.example.test",
+        "not a url",
+        "",
+    ],
 )
 def test_non_plain_http_origin_is_refused_before_any_request(
     monkeypatch: pytest.MonkeyPatch, gate: dict[str, list[Any]], base: str
@@ -126,7 +133,9 @@ def test_error_status_keeps_only_a_safe_code_token_and_drops_the_body(
 ) -> None:
     _patch_requests(
         monkeypatch,
-        _Response(400, {"error_code": "invalid_request", "message": "CANARY-BODY-TEXT"}),
+        _Response(
+            400, {"error_code": "invalid_request", "message": "CANARY-BODY-TEXT"}
+        ),
     )
     with pytest.raises(G1RequestError) as caught:
         BackendG1Transport(_Client()).request("POST", "/p", {"a": 1})
@@ -135,7 +144,8 @@ def test_error_status_keeps_only_a_safe_code_token_and_drops_the_body(
 
 
 @pytest.mark.parametrize(
-    "body", [{"error_code": "Bad Code!"}, {"error_code": 7}, {"message": "x"}, ["x"], None]
+    "body",
+    [{"error_code": "Bad Code!"}, {"error_code": 7}, {"message": "x"}, ["x"], None],
 )
 def test_unsafe_or_missing_code_becomes_none(
     monkeypatch: pytest.MonkeyPatch, gate: dict[str, list[Any]], body: Any
@@ -213,9 +223,7 @@ def _canary_snapshot() -> Any:
         dataset=[{"input": {"q": _CANARY_DATASET}, "expected": "b"}],
         config={"prompt": _CANARY_CONFIG},
         config_space={"prompt": [_CANARY_CONFIG, _CANARY_CONFIG + "-2"]},
-        evaluator=EvaluatorInputs(
-            metric_functions={"a": _canary_evaluator_function}
-        ),
+        evaluator=EvaluatorInputs(metric_functions={"a": _canary_evaluator_function}),
     )
 
 
@@ -255,7 +263,9 @@ def test_bind_of_content_bearing_evidence_never_sends_content(tmp_path: Path) ->
     snapshot = _canary_snapshot()
     ref = publish_snapshot(store, snapshot)
     # The sentinels really are in the retained snapshot, so the canary has teeth.
-    stored = b"".join(p.read_bytes() for p in (tmp_path / "store").rglob("*") if p.is_file())
+    stored = b"".join(
+        p.read_bytes() for p in (tmp_path / "store").rglob("*") if p.is_file()
+    )
     assert _CANARY_DATASET.encode() in stored and _CANARY_CONFIG.encode() in stored
     evidence = ce.build_client_evidence(
         snapshot, custody=ce.LocalFileCustody(tmp_path / "evidence")

@@ -26,7 +26,9 @@ from traigent.snapshot import (
 from traigent.snapshot.backends import LocalDirStore
 
 _FIXTURE: dict[str, Any] = json.loads(
-    (Path(__file__).parents[1] / "certification" / "data" / "g1_cosign_fixture.json").read_text()
+    (
+        Path(__file__).parents[1] / "certification" / "data" / "g1_cosign_fixture.json"
+    ).read_text()
 )
 _PROJECT_REF = _FIXTURE["pins"]["project_ref"]
 _SDK_REF = "ab" * 20
@@ -162,14 +164,17 @@ def test_bind_passes_reconstructed_evidence(
     key_path = _keygen(tmp_path)
     seen: dict[str, Any] = {}
 
-    def stub(transport: Any, evidence: Any, key: Any, pins: Any, **kwargs: Any) -> BindResult:
+    def stub(
+        transport: Any, evidence: Any, key: Any, pins: Any, **kwargs: Any
+    ) -> BindResult:
         seen.update(transport=transport, evidence=evidence, pins=pins, kwargs=kwargs)
         return BindResult("bsn:" + "a" * 43, "cert:" + "c" * 43, "n")
 
     monkeypatch.setattr(bind_module, "bind_g1", stub)
     result = CliRunner().invoke(
         certify,
-        _bind_args(evidence_setup, key_path, pins_file) + ["--declared-mode", "offline"],
+        _bind_args(evidence_setup, key_path, pins_file)
+        + ["--declared-mode", "offline"],
     )
     assert result.exit_code == 0, result.output
     assert "BOUND certificate_ref=cert:" + "c" * 43 in result.output
@@ -182,7 +187,9 @@ def test_bind_passes_reconstructed_evidence(
     assert seen["pins"].project_ref == _PROJECT_REF
 
 
-@pytest.mark.parametrize("damage", ["tamper_evidence", "missing_evidence", "missing_store"])
+@pytest.mark.parametrize(
+    "damage", ["tamper_evidence", "missing_evidence", "missing_store"]
+)
 def test_bind_reconstruction_failure_makes_no_network_call(
     tmp_path: Path,
     backend: FakeG1Backend,
@@ -198,7 +205,9 @@ def test_bind_reconstruction_failure_makes_no_network_call(
     if damage == "tamper_evidence":
         path: Path = evidence_setup["path"]
         record = json.loads(path.read_text())
-        record["documents"]["build_process_evidence"]["manifest_digest"] = "sha256:" + "0" * 64
+        record["documents"]["build_process_evidence"]["manifest_digest"] = (
+            "sha256:" + "0" * 64
+        )
         path.write_text(json.dumps(record))
         expected = "EVIDENCE_STALE_OR_CORRUPT"
     elif damage == "missing_evidence":
@@ -228,7 +237,9 @@ def test_bind_error_prints_code_and_session_ref(
         raise BindError("FINALIZE_REFUSED", "bsn:" + "b" * 43)
 
     monkeypatch.setattr(bind_module, "bind_g1", refuse)
-    result = CliRunner().invoke(certify, _bind_args(evidence_setup, key_path, pins_file))
+    result = CliRunner().invoke(
+        certify, _bind_args(evidence_setup, key_path, pins_file)
+    )
     assert result.exit_code == 1
     assert "BIND_REFUSED FINALIZE_REFUSED" in result.output
     assert "session_ref=bsn:" + "b" * 43 in result.output
@@ -242,7 +253,9 @@ def test_bind_readiness_unavailable_refuses(
 ) -> None:
     key_path = _keygen(tmp_path)
     backend.readiness = "unavailable"
-    result = CliRunner().invoke(certify, _bind_args(evidence_setup, key_path, pins_file))
+    result = CliRunner().invoke(
+        certify, _bind_args(evidence_setup, key_path, pins_file)
+    )
     assert result.exit_code == 1
     assert "BIND_REFUSED READINESS_UNAVAILABLE" in result.output
     assert [p for _, p, _ in backend.requests] == [
@@ -253,8 +266,16 @@ def test_bind_readiness_unavailable_refuses(
 def test_bind_rejects_non_digest_root(tmp_path: Path, backend: FakeG1Backend) -> None:
     result = CliRunner().invoke(
         certify,
-        ["bind", "nothex", "--key", str(tmp_path / "k"), "--run-id", "r",
-         "--store-dir", str(tmp_path / "s")],
+        [
+            "bind",
+            "nothex",
+            "--key",
+            str(tmp_path / "k"),
+            "--run-id",
+            "r",
+            "--store-dir",
+            str(tmp_path / "s"),
+        ],
     )
     assert result.exit_code == 1
     assert "BIND_REFUSED EVIDENCE_STALE_OR_CORRUPT" in result.output

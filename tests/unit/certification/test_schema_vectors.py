@@ -62,8 +62,9 @@ def test_manifest_vectors(manifest: dict[str, Any]) -> None:
             bytes.fromhex(slot["blind_hex"]), kind, slot["artifact_document"]
         )
         assert commitments[kind] == slot["slot_commitment_digest"]
-    assert ce._jcs(ce._manifest_document(commitments)).decode("utf-8") == (
-        manifest["manifest_jcs_utf8"]
+    assert (
+        ce._jcs(ce._manifest_document(commitments)).decode("utf-8")
+        == (manifest["manifest_jcs_utf8"])
     )
     assert ce.manifest_root_digest(commitments) == manifest["manifest_root_digest"]
 

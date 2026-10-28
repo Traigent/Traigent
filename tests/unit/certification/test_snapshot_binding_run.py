@@ -207,9 +207,15 @@ def test_s1_drift_raises_typed_error_with_result_on_sync_and_async(
 def test_no_eligible_winner_refuses_with_result(store: LocalDirStore) -> None:
     run = snapshot_binding.SnapshotRun(store)
     result = OptimizationResult(
-        trials=[], best_config=None, best_score=None, optimization_id="x",
-        duration=0.0, convergence_info={}, status="completed",
-        objectives=["accuracy"], algorithm="random",
+        trials=[],
+        best_config=None,
+        best_score=None,
+        optimization_id="x",
+        duration=0.0,
+        convergence_info={},
+        status="completed",
+        objectives=["accuracy"],
+        algorithm="random",
         timestamp=__import__("datetime").datetime.now(),
     )
     run._s0_dataset = ("present", "x")
@@ -253,7 +259,9 @@ def test_default_off_changes_nothing(tmp_path: Path) -> None:
             ("traigent.certification", "traigent.snapshot"))))
         """
     )
-    env = dict(os.environ, TRAIGENT_COST_APPROVED="true", TRAIGENT_RUN_COST_LIMIT="100.0")
+    env = dict(
+        os.environ, TRAIGENT_COST_APPROVED="true", TRAIGENT_RUN_COST_LIMIT="100.0"
+    )
     done = subprocess.run(  # nosec B603 - fixed argv, test-only
         [sys.executable, "-c", script],
         capture_output=True,

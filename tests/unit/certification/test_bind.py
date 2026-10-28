@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import copy
 import json
 import os
@@ -37,7 +36,9 @@ _FIXTURE: dict[str, Any] = json.loads(
 
 def _evidence() -> ClientEvidence:
     documents = _FIXTURE["evidence"]["documents"]
-    blinds = {k: bytes.fromhex(v) for k, v in _FIXTURE["evidence"]["blinds_hex"].items()}
+    blinds = {
+        k: bytes.fromhex(v) for k, v in _FIXTURE["evidence"]["blinds_hex"].items()
+    }
     commitments = {
         kind: slot_commitment_digest(blinds[kind], kind, documents[kind])
         for kind in SLOT_KINDS
@@ -45,7 +46,11 @@ def _evidence() -> ClientEvidence:
     root = manifest_root_digest(commitments)
     assert root == _FIXTURE["root"]
     return ClientEvidence(
-        documents, blinds, commitments, root, documents["build_process_evidence"]["manifest_digest"]
+        documents,
+        blinds,
+        commitments,
+        root,
+        documents["build_process_evidence"]["manifest_digest"],
     )
 
 
@@ -58,7 +63,9 @@ def _private_from_seed() -> ed25519.Ed25519PrivateKey:
 @pytest.fixture
 def key(tmp_path: Path) -> ck.ClientKey:
     key = ck.ClientKey(tmp_path / "k.json", _private_from_seed())
-    key.pin(_FIXTURE["pins"]["project_ref"], key.derive_ref(_FIXTURE["pins"]["project_ref"]))
+    key.pin(
+        _FIXTURE["pins"]["project_ref"], key.derive_ref(_FIXTURE["pins"]["project_ref"])
+    )
     return key
 
 
@@ -79,7 +86,9 @@ def backend(monkeypatch: pytest.MonkeyPatch) -> FakeG1Backend:
     return fake
 
 
-def _bind(backend: FakeG1Backend, key: ck.ClientKey, pins: pins_module.Pins) -> bind_module.BindResult:
+def _bind(
+    backend: FakeG1Backend, key: ck.ClientKey, pins: pins_module.Pins
+) -> bind_module.BindResult:
     session = _FIXTURE["session"]
     return bind_module.bind_g1(
         backend,
@@ -180,7 +189,10 @@ def test_each_refused_step_maps_to_a_closed_code(
     with pytest.raises(bind_module.BindError) as caught:
         _bind(backend, key, pins)
     assert caught.value.code == code
-    assert caught.value.__cause__ is None or isinstance(caught.value.__cause__, G1RequestError) is False
+    assert (
+        caught.value.__cause__ is None
+        or isinstance(caught.value.__cause__, G1RequestError) is False
+    )
     if step == "issue":
         assert caught.value.session_ref is None
     else:
@@ -273,7 +285,9 @@ def test_sdk_identity_requires_a_git_sha(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(
         bind_module.importlib.metadata,
         "distribution",
-        lambda name: (_ for _ in ()).throw(bind_module.importlib.metadata.PackageNotFoundError()),
+        lambda name: (_ for _ in ()).throw(
+            bind_module.importlib.metadata.PackageNotFoundError()
+        ),
     )
     with pytest.raises(bind_module.BindError) as caught:
         bind_module.resolve_sdk_identity()
@@ -291,7 +305,10 @@ def test_pins_file_modes_and_validation(tmp_path: Path) -> None:
     destination = tmp_path / "d" / "pins.json"
     pins_module.write_pins(source, destination)
     assert stat.S_IMODE(os.stat(destination).st_mode) == 0o600
-    assert pins_module.load_pins(destination).project_ref == _FIXTURE["pins"]["project_ref"]
+    assert (
+        pins_module.load_pins(destination).project_ref
+        == _FIXTURE["pins"]["project_ref"]
+    )
     os.chmod(destination, 0o644)
     with pytest.raises(pins_module.PinError) as caught:
         pins_module.load_pins(destination)
