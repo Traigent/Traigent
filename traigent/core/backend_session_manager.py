@@ -735,6 +735,12 @@ class BackendSessionManager:
     - Session aggregation and summary generation
     """
 
+    # G1 intent defaults live on the class so an instance built without
+    # ``__init__`` (partial construction, test doubles) reads "no G1 intent".
+    _snapshot_g1_required: bool = False
+    _snapshot_g1_pending: bool = False
+    _snapshot_g1_deadline_days: int | None = None
+
     def __init__(
         self,
         backend_client: BackendIntegratedClient | None,
@@ -788,6 +794,11 @@ class BackendSessionManager:
         self._session_owning_context: dict[str, dict[str, str]] = {}
         self._session_cost_budget_armed: set[str] = set()
         self._cost_budget_zero_backfill_logged = False
+        # G1 intent for this run's registration (ExecutionOptions.snapshot_store,
+        # online, readiness available). A closed boolean; see create_session.
+        self._snapshot_g1_required = False
+        self._snapshot_g1_pending = False
+        self._snapshot_g1_deadline_days: int | None = None
 
         # Tracks (session_id, trial_id) pairs that have already been registered
         # with the backend, so retries of submit_trial don't re-register and
@@ -842,6 +853,29 @@ class BackendSessionManager:
         self._remote_completed_sessions: set[str] = set()
         self._remote_early_complete_reason: str | None = None
         self._remote_early_complete_warned: bool = False
+
+    def _refuse_unregistered_g1(self) -> None:
+        """Fail closed when G1 intent was declared but no Backend run carries it.
+
+        Covers a refused registration, an unreachable Backend and an egress-off
+        run. Never fall back to a local session: a plain certificate could then
+        be issued that a later bind can never upgrade. Raised before any trial,
+        so no spend.
+        """
+        if self._snapshot_g1_required:
+            from traigent.utils.exceptions import SnapshotBindingError
+
+            raise SnapshotBindingError("READINESS_UNAVAILABLE")
+
+    def set_snapshot_g1_required(self, deadline_days: int | None = None) -> None:
+        """Declare G1 intent at run registration (a closed boolean and optional 1-30 day deadline)."""
+        self._snapshot_g1_required = True
+        self._snapshot_g1_deadline_days = deadline_days
+
+    def set_snapshot_g1_pending(self, deadline_days: int | None = None) -> None:
+        """Record G1 intent on the offline local session (synced after readiness)."""
+        self._snapshot_g1_pending = True
+        self._snapshot_g1_deadline_days = deadline_days
 
     @property
     def backend_tracking_enabled(self) -> bool:
@@ -950,7 +984,12 @@ class BackendSessionManager:
         An explicit option (True or False) always wins; ``None`` (not
         supplied) defers to ``TRAIGENT_REQUIRE_RUN_ID``, read fresh each call
         rather than cached (G1 §1, addendum F9).
+
+        A run that declared G1 intent always requires the run id, whatever the
+        option says: ``link-run`` needs the authoritative run to bind to.
         """
+        if self._snapshot_g1_required:
+            return True
         if self._require_run_id_option is not None:
             return self._require_run_id_option
         return _read_bool_env("TRAIGENT_REQUIRE_RUN_ID")
@@ -1638,6 +1677,7 @@ class BackendSessionManager:
         function_slug = function_descriptor.slug
 
         if self._egress_disabled():
+            self._refuse_unregistered_g1()
             # A no-egress/offline run never contacts the backend, so it can
             # never mint an authoritative run id. Fail closed before any
             # local session is created — never contact the network to check
@@ -1842,6 +1882,14 @@ class BackendSessionManager:
             ):
                 if not getattr(self._traigent_config, "privacy_enabled", False):
                     identity_kwargs["evaluator_code_digest"] = evaluator_code_digest
+            g1_kwargs: dict[str, Any] = (
+                {"snapshot_g1_required": True} if self._snapshot_g1_required else {}
+            )
+            if (
+                self._snapshot_g1_required
+                and self._snapshot_g1_deadline_days is not None
+            ):
+                g1_kwargs["snapshot_g1_deadline_days"] = self._snapshot_g1_deadline_days
             raw_result = self._backend_client.create_session(
                 function_name=portal_name,
                 agent_key=declared_agent_key,
@@ -1865,8 +1913,11 @@ class BackendSessionManager:
                 task_type=task_type,
                 dataset_id=dataset_id,
                 **identity_kwargs,
+                **g1_kwargs,
             )
             result = self.normalize_session_creation_result(raw_result)
+            if not result.backend_connected:
+                self._refuse_unregistered_g1()
             if self._effective_require_run_id() and not result.backend_connected:
                 # Any local-fallback create (no key, unreachable, offline,
                 # session-create failure) yields no authoritative run id.
@@ -1948,6 +1999,9 @@ class BackendSessionManager:
                     )
 
         dataset_name = getattr(dataset, "name", None) or "default_evaluation"
+
+        if self._backend_client is None:
+            self._refuse_unregistered_g1()
 
         return SessionContext(
             session_id=session_id,
@@ -2104,6 +2158,12 @@ class BackendSessionManager:
             }
             if isinstance(agent_key, str) and agent_key.strip():
                 metadata["agent_key"] = agent_key.strip()
+            if self._snapshot_g1_pending:
+                metadata["snapshot_g1_pending"] = True
+                if self._snapshot_g1_deadline_days is not None:
+                    metadata["snapshot_g1_deadline_days"] = (
+                        self._snapshot_g1_deadline_days
+                    )
             if content_less_active:
                 from traigent.cloud import content_less as content_less_session
 

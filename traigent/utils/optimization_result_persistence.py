@@ -164,6 +164,11 @@ RESULT_RESET: frozenset[str] = frozenset(
         # of THIS run (config hash -> decision). Live evidence for the hosted deploy
         # path, recomputable only by re-running; not a fact to restore.
         "promotion_decisions",
+        # Local-only G1 snapshot evidence: the terminal SnapshotRef (digest + store
+        # locator) and the local client-evidence file path. Machine-local handles
+        # that must never reach Traigent or be reloaded onto another machine.
+        "snapshot_ref",
+        "client_evidence_path",
     }
 )
 

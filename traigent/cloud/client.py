@@ -80,6 +80,7 @@ from .models import (
     TrialSuggestion,
     session_content_identity_to_wire,
     session_dataset_identity_to_wire,
+    session_g1_required_to_wire,
     session_identity_v2_to_wire,
     session_narrative_to_wire,
     session_task_type_to_wire,
@@ -2142,6 +2143,7 @@ class TraigentCloudClient(BaseTraigentClient):
         # cannot drift apart again.
         payload.update(session_narrative_to_wire(request))
         payload.update(session_task_type_to_wire(request))
+        payload.update(session_g1_required_to_wire(request))
         # Declared dataset identity rides here too, for the same reason and by the
         # same rule: history is grouped by (agent, dataset), so a serializer that
         # drops half the identity fragments the cohort exactly as dropping
