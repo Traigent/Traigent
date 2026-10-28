@@ -3402,6 +3402,8 @@ class OptimizationOrchestrator:
                 tenant_id=metadata.get("tenant_id"),
             )
         except Exception as exc:
+            # Includes EndpointNotConfiguredError (set TRAIGENT_BACKEND_URL or
+            # TRAIGENT_WEB_URL); cosmetic link only, so not a warning.
             logger.debug("Cloud URL construction failed: %s", exc)
 
     def _initialize_optimization_run(
