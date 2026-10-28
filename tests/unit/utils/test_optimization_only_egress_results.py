@@ -562,3 +562,120 @@ def test_parent_run_experiment_data_keys_never_pass_nested_content(
     key: str, value: Any
 ) -> None:
     _refused_or_clean(oo.PHASE_PARENT_RUN, {"experiment_data": {key: value}})
+
+
+# ------------------------------------------------------------ configuration-run phase
+
+_CONFIG_RUN_KEYS = sorted(oo.CONFIG_RUN_FIELDS)
+_CONFIG_RUN_URL = f"{API}/configuration-runs/c1/status"
+
+
+def _config_run_refused_or_clean(body: Any) -> None:
+    try:
+        projected = oo.project_for_send(
+            oo.PHASE_CONFIGURATION_RUN, body, explicit=True, declared=()
+        )
+        raw = json.dumps(projected).encode()
+        oo.enforce_outgoing("PUT", _CONFIG_RUN_URL, {}, raw, explicit=True)
+    except (oo.MetadataContractViolation, oo.OptimizationOnlyRefusal):
+        return
+    assert SECRET not in raw.decode()
+
+
+@pytest.mark.parametrize("value", _WRONG_VALUES)
+@pytest.mark.parametrize("key", _CONFIG_RUN_KEYS)
+def test_configuration_run_keys_never_pass_nested_content(key: str, value: Any) -> None:
+    _config_run_refused_or_clean({key: value})
+
+
+@pytest.mark.parametrize("extra", [{"free": SECRET}, {"id": "forged"}, {SECRET: 1}])
+def test_configuration_run_unknown_key_is_refused_without_echo(
+    extra: dict[str, Any],
+) -> None:
+    with pytest.raises(oo.MetadataContractViolation) as caught:
+        oo.project_for_send(
+            oo.PHASE_CONFIGURATION_RUN, {"status": "COMPLETED", **extra}, explicit=True
+        )
+    assert SECRET not in str(caught.value)
+
+
+def test_configuration_run_experiment_parameters_use_the_config_check() -> None:
+    ok = {"model": "gpt-4o", "k": 3, "p": "[REDACTED:5 chars]"}
+    out = oo.project_for_send(
+        oo.PHASE_CONFIGURATION_RUN, {"experiment_parameters": ok}, explicit=True
+    )
+    assert out["experiment_parameters"] == ok
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_for_send(
+            oo.PHASE_CONFIGURATION_RUN,
+            {"experiment_parameters": {"prompt": SECRET}},
+            explicit=True,
+        )
+
+
+def test_configuration_run_mode_off_is_untouched() -> None:
+    body = {"experiment_parameters": {"prompt": SECRET}, "x": 1}
+    assert oo.project_for_send(oo.PHASE_CONFIGURATION_RUN, body, explicit=None) is body
+
+
+@pytest.mark.asyncio
+async def test_configuration_run_producer_bodies_are_accepted() -> None:
+    from traigent.cloud.api_operations import ApiOperations
+
+    session, session_ctx = _post_mocks()
+    session.put = session.post
+    client = Mock()
+    client.optimization_only = True
+    client.backend_config.api_base_url = API
+    client.auth_manager = AsyncMock()
+    client.auth_manager.augment_headers = AsyncMock(return_value={})
+    client._map_to_backend_status = Mock(return_value="COMPLETED")
+    ops = ApiOperations(client)
+    bodies = [
+        {"status": "COMPLETED"},
+        {"status": "FAILED", "error_message": "trial_failed"},
+        {"measures": [dict(_METRICS)]},
+        {"measures": None},
+        {"summary_stats": {"metrics": {"accuracy": {"mean": 0.5}}}},
+    ]
+    for body in bodies:
+        projected = oo.project_for_send(oo.PHASE_CONFIGURATION_RUN, body, explicit=True)
+        oo.enforce_outgoing(
+            "PUT", _CONFIG_RUN_URL, {}, json.dumps(projected).encode(), explicit=True
+        )
+    assert ops is not None
+    # intermediate report and finalize producers
+    report = {
+        "session_id": SID,
+        "trial_id": "t1",
+        "running_score": 0.5,
+        "examples_attempted": 3,
+        "objective_name": "accuracy",
+        "partial_cost_usd": 0.01,
+    }
+    oo.enforce_outgoing(
+        "POST",
+        f"{API}/sessions/{SID}/intermediate-report",
+        {},
+        json.dumps(report).encode(),
+        explicit=True,
+    )
+    with pytest.raises(oo.OptimizationOnlyRefusal):
+        oo.enforce_outgoing(
+            "POST",
+            f"{API}/sessions/{SID}/intermediate-report",
+            {},
+            json.dumps({**report, "note": SECRET}).encode(),
+            explicit=True,
+        )
+    for fin in (
+        {"reason": "sdk_explicit_finalization", "experiment_run_id": "run_1"},
+        {"session_id": SID, "include_full_history": False, "metadata": {}},
+    ):
+        oo.enforce_outgoing(
+            "POST",
+            f"{API}/sessions/{SID}/finalize",
+            {},
+            json.dumps(fin).encode(),
+            explicit=True,
+        )

@@ -1723,7 +1723,7 @@ CONFIG_RUN_FIELDS = frozenset(
 def project_workflow_metadata(workflow_metadata: Any) -> Any:
     """Workflow / agent display names are free text: replaced by the (validated) ids."""
     if not isinstance(workflow_metadata, dict):
-        return workflow_metadata
+        raise MetadataContractViolation  # never a bare value in a rebuilt slot
     ctx = _Ctx()
     if workflow_metadata.get("workflow_id") is None:
         raise MetadataContractViolation
@@ -1742,7 +1742,7 @@ def project_workflow_metadata(workflow_metadata: Any) -> Any:
 
 def project_summary_stats(summary_stats: Any, declared: Iterable[str] = ()) -> Any:
     if not isinstance(summary_stats, dict):
-        return summary_stats  # the service's own shape validation answers
+        raise MetadataContractViolation  # never a bare value in a rebuilt slot
     return _run(_SUMMARY_STATS, summary_stats, _Ctx(declared))
 
 
@@ -1763,17 +1763,24 @@ def project_configuration_run(
     data: dict[str, Any], declared: Iterable[str] = ()
 ) -> dict[str, Any]:
     """Create/update body for a configuration run. Only the model's client-writable fields are
-    kept; every other key (including identity/tenant columns) is dropped."""
+    allowed; any other key (including identity/tenant columns) refuses. ``experiment_parameters``
+    (the chosen configuration) is held to the closed search-space check."""
     ctx = _Ctx(declared)
     if not isinstance(data, dict):
         raise MetadataContractViolation
     _check_contract_version(data)
     out: dict[str, Any] = {}
+    if any(key not in CONFIG_RUN_FIELDS for key in data if key != CONTRACT_VERSION_KEY):
+        raise MetadataContractViolation  # default-deny: an unknown member refuses
     for key, value in data.items():
-        if key not in CONFIG_RUN_FIELDS:
+        if key == CONTRACT_VERSION_KEY:
             continue
-        if key == "experiment_parameters" or key == "status":
-            out[key] = value
+        if key in ("experiment_parameters", "status"):
+            spec = s_config if key == "experiment_parameters" else s_id
+            try:
+                out[key] = spec(value, ctx, 0)
+            except _Drop:
+                raise MetadataContractViolation from None
         elif key == "measures":
             out[key] = project_measures(value, declared) if value is not None else None
         elif key == "summary_stats":
