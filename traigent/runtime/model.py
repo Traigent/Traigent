@@ -593,23 +593,32 @@ class RuntimeRequirement:
         return issues
 
 
+def _validate_outcome_trigger(
+    rule: ResponseRule,
+    by_id: dict[Any, ResponseRule],
+    where: str,
+    issues: list[Issue],
+) -> None:
+    target = by_id.get(rule.trigger_rule)
+    if (
+        rule.event not in OUTCOME_EVENTS
+        or target is None
+        or target.id == rule.id
+        or target.action != "optimize"
+    ):
+        issues.append(Issue(E_INVALID, f"{where}.trigger", "error"))
+    elif rule.event in DEPLOY_OUTCOME_EVENTS and target.deploy != "if_promoted":
+        issues.append(Issue(E_INVALID, f"{where}.trigger.event", "error"))
+    if rule.hours is not None:
+        issues.append(Issue(E_INVALID, f"{where}.trigger.hours", "error"))
+
+
 def _validate_trigger(
     requirement: RuntimeRequirement, rule: ResponseRule, where: str, issues: list[Issue]
 ) -> None:
     by_id = {r.id: r for r in requirement.rules}
     if rule.trigger_rule is not None:
-        target = by_id.get(rule.trigger_rule)
-        if (
-            rule.event not in OUTCOME_EVENTS
-            or target is None
-            or target.id == rule.id
-            or target.action != "optimize"
-        ):
-            issues.append(Issue(E_INVALID, f"{where}.trigger", "error"))
-        elif rule.event in DEPLOY_OUTCOME_EVENTS and target.deploy != "if_promoted":
-            issues.append(Issue(E_INVALID, f"{where}.trigger.event", "error"))
-        if rule.hours is not None:
-            issues.append(Issue(E_INVALID, f"{where}.trigger.hours", "error"))
+        _validate_outcome_trigger(rule, by_id, where, issues)
         return
     if rule.event not in EVENTS and rule.event != UNKNOWN_FOR:
         issues.append(Issue(E_INVALID, f"{where}.event", "error"))
