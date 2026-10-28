@@ -40,7 +40,7 @@ class G1Transport(Protocol):
     ) -> G1Response: ...
 
 
-_FORBIDDEN_PATH_SUBSTRINGS: Final = ("..", "//", "?", "#", "%", "\\")
+_FORBIDDEN_PATH_SUBSTRINGS: Final = ("//", "?", "#", "%", "\\")
 
 
 def _path_is_safe(path: str) -> bool:
@@ -48,6 +48,8 @@ def _path_is_safe(path: str) -> bool:
     if not isinstance(path, str) or not path.startswith("/"):
         return False
     if any(token in path for token in _FORBIDDEN_PATH_SUBSTRINGS):
+        return False
+    if any(segment in (".", "..") for segment in path[1:].split("/")):
         return False
     return all(ch.isprintable() and not ch.isspace() for ch in path)
 

@@ -372,6 +372,11 @@ def test_snapshot_capture_path_sends_nothing_but_the_readiness_probe(
         "relative/path",
         "",
         "/a/../b",
+        "/x/../y",
+        "/x/./y",
+        "/..",
+        "/.",
+        "/x/..",
         "/a//b",
         "/a?x=1",
         "/a#f",
@@ -395,3 +400,21 @@ def test_url_still_builds_catalog_paths() -> None:
         == f"https://api.example.test{bind_module.SESSIONS_PATH}/bsn:{'A' * 43}/abandon"
     )
     assert transport._url(bind_module.SESSIONS_PATH) is not None
+
+
+@pytest.mark.parametrize("run_id", ["run..1", "a.b:c"])
+def test_url_builds_run_abandon_paths_with_embedded_dots(run_id: str) -> None:
+    path = f"{bind_module.SESSIONS_PATH}/runs/{run_id}/abandon"
+    assert BackendG1Transport(_Client())._url(path) == f"https://api.example.test{path}"
+
+
+def test_abandon_run_with_embedded_dots_reaches_the_request(
+    monkeypatch: pytest.MonkeyPatch, gate: dict[str, list[Any]]
+) -> None:
+    sent = _patch_requests(monkeypatch, _Response(200, {}))
+    bind_module.abandon_run(BackendG1Transport(_Client()), "run..1")
+    ((method, url, _),) = sent
+    assert method == "POST"
+    assert url == (
+        f"https://api.example.test{bind_module.SESSIONS_PATH}/runs/run..1/abandon"
+    )
