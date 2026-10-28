@@ -1508,6 +1508,9 @@ class OptimizedFunction[**P, R]:
         else:
             self.require_run_id = bool(require_run_id_raw)
             kwargs["require_run_id"] = self.require_run_id
+        # Opt-in G1 client evidence store; ``None`` (the default) means no snapshot
+        # code is ever imported or run. Not a runtime override of the wrapped call.
+        self.snapshot_store = kwargs.pop("snapshot_store", None)
         self.optimization_history_limit = kwargs.pop("optimization_history_limit", 100)
         if (
             not isinstance(self.optimization_history_limit, int)
@@ -1558,6 +1561,7 @@ class OptimizedFunction[**P, R]:
             "example_timeout",
             "smart_pruning",
             "require_run_id",
+            "snapshot_store",
             # Multi-agent configuration
             "agents",
             "agent_prefixes",
@@ -2596,6 +2600,11 @@ class OptimizedFunction[**P, R]:
             execution_mode=self._resolve_runtime_execution_mode(algorithm).value,
         )
 
+        snapshot_run: Any = None
+        if getattr(self, "snapshot_store", None) is not None:
+            from traigent.certification.snapshot_binding import SnapshotRun
+
+            snapshot_run = SnapshotRun(self.snapshot_store)
         try:
             validate_objectives(self.objectives)
             # When cost is an objective, a model with no price must not be
@@ -2628,6 +2637,7 @@ class OptimizedFunction[**P, R]:
                         resume_from, algorithm, allow_unverified_resume
                     ),
                     call_dataset=per_call_dataset,
+                    **({} if snapshot_run is None else {"snapshot_run": snapshot_run}),
                 )
                 # Inside the run scope: a cost objective that measured no
                 # usage at all recorded $0 everywhere, which is an absent
@@ -2637,6 +2647,11 @@ class OptimizedFunction[**P, R]:
             _record_pricing_provenance(
                 result, strict_effective=strict_effective, strict_origin=strict_origin
             )
+            if snapshot_run is not None:
+                # S1 from the terminal result on every completion path (local,
+                # cloud, offline). A SnapshotBindingError carries the finished
+                # result and is an OptimizationError, so it is never re-wrapped.
+                snapshot_run.capture_s1(result)
         finally:
             if runtime_schema is not None:
                 self.objective_schema = original_schema
@@ -3540,6 +3555,31 @@ class OptimizedFunction[**P, R]:
             ),
         )
         return cast(BaseEvaluator, evaluator)
+
+    def _snapshot_capture_inputs(
+        self, custom_evaluator: Callable[..., Any] | None
+    ) -> dict[str, Any]:
+        """Agent and evaluator inputs for the opt-in snapshot capture."""
+        from traigent.snapshot import EvaluatorInputs
+
+        external: Any = None
+        if self.execution_mode == ExecutionMode.HYBRID_API.value:
+            external = {
+                "kind": "hybrid_api",
+                "endpoint": getattr(self, "hybrid_api_endpoint", None),
+            }
+        elif getattr(self, "external_service_evaluator", None) is not None:
+            external = getattr(self, "external_service_evaluator", None)
+        return {
+            "agent": self.func,
+            "evaluator": EvaluatorInputs(
+                custom_evaluator=custom_evaluator or self.custom_evaluator,
+                scoring_function=self.scoring_function,
+                metric_functions=self.metric_functions,
+                objectives=self.objectives,
+                external=external,
+            ),
+        }
 
     def _build_artifact_fingerprint_payload(
         self,
@@ -4478,6 +4518,7 @@ Remediation:
         execution_budget: ExecutionBudget | None = None,
         resume_source: OptimizationResult | None = None,
         call_dataset: Dataset | None = None,
+        snapshot_run: Any = None,
     ) -> OptimizationResult:
         """Execute optimization assuming objective schema is already resolved.
 
@@ -4657,6 +4698,16 @@ Remediation:
             configuration_space=effective_config_space,
             custom_evaluator=custom_evaluator,
         )
+
+        # S0 (opt-in ``snapshot_store``): capture and gate before any dispatch,
+        # including the cloud return below. Raises SnapshotBindingError.
+        if snapshot_run is not None:
+            snapshot_run.capture_s0(
+                dataset=dataset,
+                configuration_space=effective_config_space,
+                offline=no_egress,
+                **self._snapshot_capture_inputs(custom_evaluator),
+            )
 
         # Phase 4: Resolve parallel configuration
         effective_parallel_trials, effective_batch_size, effective_thread_workers = (

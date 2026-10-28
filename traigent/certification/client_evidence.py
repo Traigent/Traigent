@@ -238,6 +238,10 @@ class LocalFileCustody:
             directory = Path.home() / ".traigent" / "certification" / "evidence"
         self._directory = Path(directory)
 
+    def path_for(self, root_hex: str) -> str:
+        """The evidence file path for ``root_hex`` (local data; never sent anywhere)."""
+        return str(self._path(root_hex))
+
     def _path(self, root_hex: str) -> Path:
         if _DIGEST_HEX_RE.fullmatch(root_hex) is None:
             raise ClientEvidenceError("EVIDENCE_NOT_FOUND")

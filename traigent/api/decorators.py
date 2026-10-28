@@ -396,6 +396,15 @@ class ExecutionOptions(BaseModel):
             ``TRAIGENT_REQUIRE_RUN_ID`` for this run. An explicit ``True`` or
             ``False`` always overrides the environment variable, including
             explicit ``False`` against an environment set to ``true``.
+        snapshot_store: Opt-in G1 client evidence. A
+            :class:`~traigent.snapshot.SnapshotStore` in storage you own. When
+            set, the run captures the dataset, evaluator and config space into it
+            before any trial (S0, refused with
+            :class:`~traigent.utils.exceptions.SnapshotBindingError` if
+            incomplete or if the certificate service is not ready), and the
+            terminal best configuration after the run (S1). Only blinded
+            commitments are ever sent to Traigent, and only when you later bind.
+            ``None`` (default) changes nothing: no snapshot code is imported.
     """
 
     model_config = ConfigDict(
@@ -437,6 +446,7 @@ class ExecutionOptions(BaseModel):
     winner_stability_reps: int = 0
     example_timeout: float | None = None
     require_run_id: bool | None = None
+    snapshot_store: Any = None
 
     @model_validator(mode="wrap")
     @classmethod
@@ -534,6 +544,18 @@ class ExecutionOptions(BaseModel):
     @classmethod
     def _validate_algorithm(cls, v: str) -> str:
         return cast(str, validate_algorithm_name(v))
+
+    @field_validator("snapshot_store")
+    @classmethod
+    def _validate_snapshot_store(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if not all(
+            callable(getattr(v, name, None))
+            for name in ("create_if_absent", "read", "locator")
+        ):
+            raise ValueError("snapshot_store must be a SnapshotStore")
+        return v
 
     @field_validator("offline")
     @classmethod
@@ -3383,6 +3405,9 @@ def optimize(  # NOSONAR(S107)
     require_run_id_value = (
         execution_bundle.require_run_id if execution_bundle is not None else None
     )
+    snapshot_store_value = (
+        execution_bundle.snapshot_store if execution_bundle is not None else None
+    )
     smart_pruning_config = _normalize_smart_pruning_options(smart_pruning_value)
     external_service_evaluator = _resolve_external_service_evaluator(
         evaluator_value,
@@ -3615,6 +3640,11 @@ def optimize(  # NOSONAR(S107)
             winner_stability_reps=winner_stability_reps_value,
             example_timeout=example_timeout_value,
             require_run_id=require_run_id_value,
+            **(
+                {}
+                if snapshot_store_value is None
+                else {"snapshot_store": snapshot_store_value}
+            ),
             smart_pruning=smart_pruning_config,
             parallel_config=combined_parallel_config,
             custom_evaluator=custom_evaluator,
