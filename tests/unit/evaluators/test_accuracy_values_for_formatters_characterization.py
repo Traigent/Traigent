@@ -23,20 +23,33 @@ def _row(
     success: bool = True,
     eligible: bool = True,
     unavailable: bool = False,
+    builtin: bool | None = None,
+    supplied: bool | None = None,
 ) -> ExampleMetrics:
+    """Build a row; ``builtin``/``supplied`` set explicit provenance.
+
+    Left as ``None`` for both, ``_values`` applies the mode default.
+    """
     custom: dict[str, Any] = {"accuracy": raw} if has_key else {}
-    return ExampleMetrics(
+    row = ExampleMetrics(
         success=success,
         custom_metrics=custom,
         accuracy_eligible=eligible,
         accuracy_unavailable=unavailable,
     )
+    if builtin is not None or supplied is not None:
+        row.accuracy_builtin = bool(builtin)
+        row.accuracy_supplied = bool(supplied)
+        row.__dict__["_explicit_provenance"] = True
+    return row
 
 
 def _values(rows: list[Any], *, user: bool) -> list[float]:
     tracker = MetricsTracker()
     for row in rows:
-        if isinstance(row, ExampleMetrics):
+        if isinstance(row, ExampleMetrics) and not row.__dict__.get(
+            "_explicit_provenance"
+        ):
             row.accuracy_supplied = user
             row.accuracy_builtin = not user
     tracker.example_metrics = rows
@@ -74,28 +87,47 @@ def test_user_supplied_bad_value_raises() -> None:
         _values([_row([1])], user=True)
 
 
-def test_builtin_ineligible_rows_keep_a_stored_value_but_never_a_zero() -> None:
-    # Old: ineligible rows were skipped even when they carried a value.
-    # New: a stored measured value is kept (resumed rows); a row with no value
-    # stays absent, and an ineligible failure is not a miss.
+def test_builtin_excludes_ineligible_rows_even_with_values() -> None:
+    # Built-in exact match is not meaningful without gold: such a row is
+    # excluded whether or not it carries a value, and is never a miss.
     rows = [
         _row(1.0, eligible=False),
         _row(None, eligible=False, success=False),
         _row(0.5),
     ]
-    assert _values(rows, user=False) == [1.0, 0.5]
+    assert _values(rows, user=False) == [0.5]
 
 
 def test_builtin_skips_unmeasured_rows_without_value() -> None:
+    # Old: the plain successful row without a value was invented as 1.0.
+    # New: it is absent, and an unavailable built-in row is unmeasured even
+    # when its attempt failed (not a miss).
     rows = [
         _row(None, unavailable=True),
         _row(has_key=False, unavailable=True, success=False),
         _row(None),
     ]
-    # Old: the plain successful row without a value was invented as 1.0.
-    # New: it is absent; the eligible failed row is a miss (0.0) even when
-    # flagged unavailable.
-    assert _values(rows, user=False) == [0.0]
+    assert _values(rows, user=False) == []
+
+
+def test_provenance_is_explicit_per_row() -> None:
+    rows = [
+        # resumed stored measurement (no builtin provenance): included
+        _row(0.6, builtin=False, supplied=False),
+        # supplied value without gold: included
+        _row(0.8, eligible=False, builtin=False, supplied=True),
+        # ineligible built-in with a value: excluded
+        _row(1.0, eligible=False, builtin=True),
+        # unavailable failed built-in without a value: excluded
+        _row(None, unavailable=True, success=False, builtin=True),
+        # ordinary eligible failed built-in: a miss
+        _row(None, success=False, builtin=True),
+        # supplied row with no value: absent
+        _row(None, builtin=False, supplied=True),
+        # no provenance and no value: absent, success never implies a hit
+        _row(None, builtin=False, supplied=False),
+    ]
+    assert _values(rows, user=False) == [0.6, 0.8, 0.0]
 
 
 def test_builtin_unavailable_flag_ignored_when_value_present() -> None:
@@ -136,7 +168,7 @@ def test_builtin_mixed_order_is_preserved() -> None:
         _row(None),
         _row(0.6),
     ]
-    assert _values(rows, user=False) == [0.1, 0.2, 0.0, 0.6]
+    assert _values(rows, user=False) == [0.1, 0.0, 0.6]
 
 
 class _TraceRow:
@@ -198,7 +230,8 @@ def test_read_trace_user_supplied_reads_only_custom_metrics() -> None:
     ]
     # Old: the row without a value was zero-filled; new: it is absent.
     assert _values(rows, user=True) == [1.0]
-    assert events == [
+    # Reads are compared by first occurrence (the code may re-read a flag).
+    assert list(dict.fromkeys(events)) == [
         "r.custom_metrics",
         "r.supplied",
         "r.builtin",
@@ -216,32 +249,35 @@ def test_read_trace_builtin_order_eligible_unavailable_success() -> None:
         _TraceRow(events, "d", raw=1.0, eligible=False),
         _TraceRow(events, "e", raw=None, success=False),
     ]
-    assert _values(rows, user=False) == [0.5, 1.0, 0.0]
-    # The unavailable flag is no longer read: an unmeasured row is simply one
-    # with no value, and a failed eligible attempt is a miss.
-    assert events == [
+    assert _values(rows, user=False) == [0.5, 0.0]
+    # An unavailable built-in row without a value stops before eligibility
+    # and success are read; an ineligible one stops before success.
+    assert list(dict.fromkeys(events)) == [
         "a.custom_metrics",
         "a.supplied",
         "a.builtin",
+        "a.unavailable",
         "a.eligible",
         "a.success",
         "b.custom_metrics",
         "b.supplied",
         "b.builtin",
+        "b.unavailable",
         "b.eligible",
         "b.success",
         "c.custom_metrics",
         "c.supplied",
         "c.builtin",
-        "c.eligible",
-        "c.success",
+        "c.unavailable",
         "d.custom_metrics",
         "d.supplied",
         "d.builtin",
+        "d.unavailable",
         "d.eligible",
         "e.custom_metrics",
         "e.supplied",
         "e.builtin",
+        "e.unavailable",
         "e.eligible",
         "e.success",
     ]
@@ -267,6 +303,7 @@ def test_raising_eligibility_accessor_propagates() -> None:
         custom_metrics: dict[str, Any] = {}
         accuracy_supplied = False
         accuracy_builtin = True
+        accuracy_unavailable = False
 
         @property
         def accuracy_eligible(self) -> bool:

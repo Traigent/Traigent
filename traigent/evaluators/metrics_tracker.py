@@ -1249,6 +1249,14 @@ class MetricsTracker:
                 continue
             if (
                 metric.accuracy_builtin
+                and metric.accuracy_unavailable
+                and raw_accuracy is None
+            ):
+                # Declared built-in accuracy that could not be computed: the
+                # row is unmeasured, not a miss (#2495).
+                continue
+            if (
+                metric.accuracy_builtin
                 and metric.accuracy_eligible
                 and not metric.success
             ):
@@ -1256,6 +1264,9 @@ class MetricsTracker:
                 # miss even when it retained a matching output or produced no
                 # output at all.
                 values.append(0.0)
+                continue
+            if metric.accuracy_builtin and not metric.accuracy_eligible:
+                # Built-in exact match is not meaningful without gold.
                 continue
             if raw_accuracy is not None:
                 values.append(float(raw_accuracy))
