@@ -552,6 +552,22 @@ if TYPE_CHECKING:
     from traigent.core.sample_budget import SampleBudgetLease
 
 
+def _log_zero_cost_override(
+    aggregated_metrics: dict[str, float],
+    comprehensive_metrics: dict[str, Any],
+) -> None:
+    """Log when a (near) zero aggregated cost is replaced by a non-zero one."""
+    aggregated_cost = float(aggregated_metrics.get("cost", 0.0) or 0.0)
+    comprehensive_cost = float(comprehensive_metrics["cost"])
+    if math.isclose(aggregated_cost, 0.0, abs_tol=1e-9) and not math.isclose(
+        comprehensive_cost, 0.0, abs_tol=1e-9
+    ):
+        logger.info(
+            f"🔍 LOCAL EVALUATOR: Overriding cost metric: "
+            f"{aggregated_cost} -> {comprehensive_cost}"
+        )
+
+
 class LocalEvaluator(BaseEvaluator):
     """Local evaluation strategy.
 
@@ -2907,15 +2923,7 @@ class LocalEvaluator(BaseEvaluator):
                 f"{aggregated_metrics.get('cost', 'MISSING')}, "
                 f"comprehensive cost={comprehensive_metrics['cost']}"
             )
-            aggregated_cost = float(aggregated_metrics.get("cost", 0.0) or 0.0)
-            comprehensive_cost = float(comprehensive_metrics["cost"])
-            if math.isclose(aggregated_cost, 0.0, abs_tol=1e-9) and not math.isclose(
-                comprehensive_cost, 0.0, abs_tol=1e-9
-            ):
-                logger.info(
-                    f"🔍 LOCAL EVALUATOR: Overriding cost metric: "
-                    f"{aggregated_cost} -> {comprehensive_cost}"
-                )
+            _log_zero_cost_override(aggregated_metrics, comprehensive_metrics)
 
     @staticmethod
     def _is_score_alias_of_accuracy(

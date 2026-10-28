@@ -641,13 +641,8 @@ def _json_size(value: Any) -> int:
         raise MetadataContractViolation from None
 
 
-def _size_ok(value: Any, limit: int, *, identity: bool = False) -> None:
-    """Bound the projected size. A content-identity object has its own, larger cap (sized for
-    2,000 inline members) applied wherever it appears; the remainder keeps ``limit``."""
-    if identity:
-        if _json_size(value) > MAX_IDENTITY_BYTES:
-            raise MetadataContractViolation
-        return
+def _without_content_identity(value: Any) -> Any:
+    """Copy ``value`` without its content-identity members, each checked against its own cap."""
     rest = value
     if isinstance(value, dict):
         rest = dict(value)
@@ -659,7 +654,19 @@ def _size_ok(value: Any, limit: int, *, identity: bool = False) -> None:
             if "content_identity" in holder:
                 if _json_size(holder.pop("content_identity")) > MAX_IDENTITY_BYTES:
                     raise MetadataContractViolation
-    if _json_size(rest) > limit:
+    return rest
+
+
+def _size_ok(value: Any, limit: int, *, identity: bool = False) -> None:
+    """Bound the projected size. A content-identity object has its own, larger cap (sized for
+    2,000 inline members) applied wherever it appears; the remainder keeps ``limit``."""
+    if identity:
+        if _json_size(value) > MAX_IDENTITY_BYTES:
+            raise MetadataContractViolation
+        return
+    stripped = _without_content_identity(value)
+    size = _json_size(stripped)
+    if size > limit:
         raise MetadataContractViolation
 
 
