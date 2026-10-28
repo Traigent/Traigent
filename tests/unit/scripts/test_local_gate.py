@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -22,6 +21,18 @@ def _run_git(repo: Path, *args: str) -> None:
         text=True,
         env=scrubbed_git_env(),
     )
+
+
+def _git_out(repo: Path, *args: str) -> str:
+    """stdout of a git command run with the repo-redirecting environment scrubbed."""
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=scrubbed_git_env(),
+    ).stdout.strip()
 
 
 def _make_gate_repo(tmp_path: Path) -> tuple[Path, Path]:
@@ -71,7 +82,7 @@ def _make_gate_repo(tmp_path: Path) -> tuple[Path, Path]:
 def _run_gate(
     repo: Path, fake_bin: Path, log_path: Path, collection_rc: int
 ) -> subprocess.CompletedProcess[str]:
-    env = os.environ.copy()
+    env = scrubbed_git_env()
     env.update(
         {
             "PATH": f"{fake_bin}:{env['PATH']}",
@@ -203,21 +214,17 @@ def _schema_checkout(tmp_path: Path) -> tuple[Path, str, str]:
     (schema / "f").write_text("one", encoding="utf-8")
     _run_git(schema, "add", ".")
     _run_git(schema, "commit", "-qm", "one")
-    first = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=schema, capture_output=True, text=True
-    ).stdout.strip()
+    first = _git_out(schema, "rev-parse", "HEAD")
     (schema / "f").write_text("two", encoding="utf-8")
     _run_git(schema, "commit", "-qam", "two")
-    head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=schema, capture_output=True, text=True
-    ).stdout.strip()
+    head = _git_out(schema, "rev-parse", "HEAD")
     return schema, first, head
 
 
 def _run_schema_gate(
     repo: Path, schema: Path, extra_env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
-    env = os.environ.copy()
+    env = scrubbed_git_env()
     env.update(extra_env or {})
     env.update(
         {
@@ -293,27 +300,11 @@ def test_local_gate_fails_closed_without_a_readable_pin(tmp_path: Path) -> None:
 
 def _advance_remote(repo: Path, remote_branch: str) -> None:
     """Move refs/remotes/origin/<branch> one commit ahead of HEAD."""
-    tree = subprocess.run(
-        ["git", "rev-parse", "HEAD^{tree}"],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    head = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    new = subprocess.run(
-        ["git", "commit-tree", tree, "-p", head, "-m", f"advance {remote_branch}"],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
+    tree = _git_out(repo, "rev-parse", "HEAD^{tree}")
+    head = _git_out(repo, "rev-parse", "HEAD")
+    new = _git_out(
+        repo, "commit-tree", tree, "-p", head, "-m", f"advance {remote_branch}"
+    )
     _run_git(repo, "update-ref", f"refs/remotes/origin/{remote_branch}", new)
 
 
@@ -417,7 +408,7 @@ def _run_sonar_gate(
             continue
         (fake_bin / name).write_text(stub, encoding="utf-8")
         (fake_bin / name).chmod(0o755)
-    env = os.environ.copy()
+    env = scrubbed_git_env()
     env.update(
         {
             "PATH": f"{fake_bin}:{env['PATH']}",
@@ -546,7 +537,7 @@ def test_local_gate_pytest_steps_clear_git_hook_environment(tmp_path: Path) -> N
     stub = "#!/usr/bin/env bash\nexit 0\n"
     (fake_bin / "sonar-scanner").write_text(stub, encoding="utf-8")
     (fake_bin / "sonar-scanner").chmod(0o755)
-    env = os.environ.copy()
+    env = scrubbed_git_env()
     env.update(hook_env)
     env.update(
         {
@@ -613,7 +604,7 @@ def test_local_gate_main_bound_coverage_fails_closed_without_timeout_plugin(
         stub_tool = fake_bin / tool
         stub_tool.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
         stub_tool.chmod(0o755)
-    env = os.environ.copy()
+    env = scrubbed_git_env()
     env.update(
         {
             "PATH": f"{fake_bin}:{env['PATH']}",

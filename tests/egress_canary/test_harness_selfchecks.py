@@ -485,6 +485,8 @@ def test_anchor_absent_vs_present_vs_corrupt(tmp_path: Path) -> None:
     absent = _repo_with_ref(tmp_path / "absent", {"other.txt": "x"})
     assert pins.load_anchor(absent) is None  # cleanly absent: first introduction
 
+    from tests._git_isolation import scrubbed_git_env
+
     # Corrupt the tree object: ls-tree must fail closed, not report "absent".
     tree = subprocess.run(  # noqa: S603
         ["git", "-C", str(present), "rev-parse", "origin/develop^{tree}"],  # noqa: S607
@@ -492,6 +494,7 @@ def test_anchor_absent_vs_present_vs_corrupt(tmp_path: Path) -> None:
         text=True,
         check=True,
         timeout=30,
+        env=scrubbed_git_env(),
     ).stdout.strip()
     obj = present / ".git" / "objects" / tree[:2] / tree[2:]
     obj.chmod(0o644)

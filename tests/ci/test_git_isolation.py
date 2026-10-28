@@ -56,3 +56,35 @@ def test_helper_ignores_an_inherited_git_dir(
     assert decoy_config.read_text() == before
     assert "ci@example.test" not in before
     assert (repo / ".git" / "config").read_text().count("ci@example.test") == 1
+
+
+def test_helper_ignores_git_config_redirection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    decoy = tmp_path / "decoy.config"
+    decoy.write_text("[core]\n\tbare = false\n")
+    before = decoy.read_text()
+    monkeypatch.setenv("GIT_CONFIG", str(decoy))
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(decoy))
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "user.email")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "injected@example.test")
+    monkeypatch.setenv("GIT_CONFIG_PARAMETERS", "'user.name=injected'")
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    helper = required_gate_tests.TestMergeQueueTopologyReplay._git
+    helper(repo, "init", "-q")
+    helper(repo, "config", "user.email", "ci@example.test")
+    assert decoy.read_text() == before
+    assert helper(repo, "config", "--get", "user.email") == "ci@example.test"
+
+
+def test_scrubbed_env_drops_indexed_config_variables() -> None:
+    base = {
+        "GIT_CONFIG_KEY_3": "a",
+        "GIT_CONFIG_VALUE_3": "b",
+        "GIT_CONFIG": "f",
+        "K": "1",
+    }
+    assert scrubbed_git_env(base) == {"K": "1"}

@@ -70,12 +70,13 @@ def _refused_or_clean(phase: str, body: Any) -> None:
 
 def _post_mocks() -> tuple[Mock, Mock]:
     response = Mock()
-    response.status = 201
+    response.status = 200
     post_ctx = AsyncMock()
     post_ctx.__aenter__ = AsyncMock(return_value=response)
     post_ctx.__aexit__ = AsyncMock(return_value=False)
     session = AsyncMock()
     session.post = Mock(return_value=post_ctx)
+    session.put = Mock(return_value=post_ctx)
     session_ctx = AsyncMock()
     session_ctx.__aenter__ = AsyncMock(return_value=session)
     session_ctx.__aexit__ = AsyncMock(return_value=False)
@@ -112,7 +113,11 @@ async def _drive(call: Any) -> list[Any]:
         ops.client._ensure_session = AsyncMock(return_value=session)
         outcome = await call(ops)
     assert outcome is not False, "the real producer's send was refused"
-    return [c.kwargs["json"] for c in session.post.call_args_list]
+    return [
+        c.kwargs["json"]
+        for method in (session.post, session.put)
+        for c in method.call_args_list
+    ]
 
 
 _CONFIG = {"model": "gpt-4o-mini", "temperature": 0.2, "use_cache": True, "k": 3}
@@ -618,33 +623,95 @@ def test_configuration_run_mode_off_is_untouched() -> None:
     assert oo.project_for_send(oo.PHASE_CONFIGURATION_RUN, body, explicit=None) is body
 
 
-@pytest.mark.asyncio
-async def test_configuration_run_producer_bodies_are_accepted() -> None:
+async def _drive_api(call: Any) -> list[tuple[str, Any]]:
+    """Run ``call(ops)`` on a real ``ApiOperations`` (mode on) against a capturing session;
+    return ``(url, json body)`` for every PUT/POST sent."""
     from traigent.cloud.api_operations import ApiOperations
 
-    session, session_ctx = _post_mocks()
-    session.put = session.post
+    session, _ = _post_mocks()
+    session_cm = AsyncMock()
+    session_cm.__aenter__ = AsyncMock(return_value=session)
+    session_cm.__aexit__ = AsyncMock(return_value=False)
     client = Mock()
     client.optimization_only = True
+    client.backend_config = Mock()
     client.backend_config.api_base_url = API
     client.auth_manager = AsyncMock()
     client.auth_manager.augment_headers = AsyncMock(return_value={})
-    client._map_to_backend_status = Mock(return_value="COMPLETED")
     ops = ApiOperations(client)
-    bodies = [
-        {"status": "COMPLETED"},
-        {"status": "FAILED", "error_message": "trial_failed"},
-        {"measures": [dict(_METRICS)]},
-        {"measures": None},
-        {"summary_stats": {"metrics": {"accuracy": {"mean": 0.5}}}},
-    ]
-    for body in bodies:
-        projected = oo.project_for_send(oo.PHASE_CONFIGURATION_RUN, body, explicit=True)
-        oo.enforce_outgoing(
-            "PUT", _CONFIG_RUN_URL, {}, json.dumps(projected).encode(), explicit=True
+    with (
+        patch("traigent.cloud.api_operations.AIOHTTP_AVAILABLE", True),
+        patch("traigent.cloud.api_operations.gate_session", return_value=session_cm),
+        patch("traigent.cloud.api_operations.aiohttp"),
+        patch.object(ApiOperations, "_build_connector", return_value=None),
+    ):
+        outcome = await call(ops)
+    assert outcome is not False, "the real producer's send was refused"
+    sent = []
+    for method in (session.put, session.post):
+        sent += [(c.args[0], c.kwargs["json"]) for c in method.call_args_list]
+    assert sent, "producer sent nothing"
+    return sent
+
+
+def _judge_put(url: str, body: Any) -> None:
+    oo.enforce_outgoing("PUT", url, {}, json.dumps(body).encode(), explicit=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "error"),
+    [("running", None), ("completed", None), ("failed", "prompt 'Alice' failed")],
+)
+async def test_real_config_run_status_body_is_accepted(
+    status: str, error: str | None
+) -> None:
+    sent = await _drive_api(
+        lambda ops: ops.update_config_run_status("c1", status, error)
+    )
+    url, body = sent[0]
+    assert url.endswith("/configuration-runs/c1/status")
+    assert "Alice" not in json.dumps(body)
+    _judge_put(url, body)
+
+
+@pytest.mark.asyncio
+async def test_real_config_run_measures_body_is_accepted() -> None:
+    sent = await _drive_api(
+        lambda ops: ops.update_config_run_measures(
+            "c1", {"accuracy": 0.9, "cost": 0.01, "latency": 1.5}, execution_time=0.2
         )
-    assert ops is not None
-    # intermediate report and finalize producers
+    )
+    url, body = sent[0]
+    assert url.endswith("/configuration-runs/c1/measures")
+    assert set(body) == {"measures"}
+    _judge_put(url, body)
+
+
+@pytest.mark.asyncio
+async def test_real_experiment_run_status_body_is_accepted() -> None:
+    sent = await _drive_api(
+        lambda ops: ops.update_experiment_run_status_on_completion("run_1", "completed")
+    )
+    url, body = sent[0]
+    assert url.endswith("/experiment-runs/runs/run_1")
+    _judge_put(url, body)
+
+
+@pytest.mark.asyncio
+async def test_real_weighted_score_summary_stats_body_is_accepted() -> None:
+    bodies = await _drive(
+        lambda ops: ops.update_trial_weighted_scores(
+            "trial_1", 0.5, {"accuracy": [0, 1]}, {"accuracy": 1.0}
+        )
+    )
+    body = bodies[0]
+    assert set(body) == {"summary_stats"}
+    _judge_put(f"{API}/configuration-runs/trial_1/summary-stats", body)
+
+
+@pytest.mark.asyncio
+async def test_intermediate_report_and_finalize_bodies_are_accepted() -> None:
     report = {
         "session_id": SID,
         "trial_id": "t1",
@@ -679,3 +746,58 @@ async def test_configuration_run_producer_bodies_are_accepted() -> None:
             json.dumps(fin).encode(),
             explicit=True,
         )
+
+
+# ---------------------------------------- configuration_run is judged in its wire form
+
+
+class _LyingStr(str):
+    """Compares and hashes as ``known`` but serializes as its (secret) content."""
+
+    def __init__(self, _value: str) -> None:
+        super().__init__()
+
+    def __hash__(self) -> int:
+        return hash(self.known)
+
+    def __eq__(self, other: object) -> bool:
+        return other == self.known
+
+    known = "status"
+
+
+class _LyingKey(_LyingStr):
+    known = "status"
+
+
+class _LyingErrorMessage(str):
+    """``in WIRE_ERROR_CODES`` says yes; the bytes written are free text."""
+
+    def __hash__(self) -> int:
+        return hash("trial_failed")
+
+    def __eq__(self, other: object) -> bool:
+        return other == "trial_failed"
+
+
+def test_configuration_run_unknown_key_via_str_subclass_is_refused() -> None:
+    body = {_LyingKey(SECRET): "COMPLETED"}
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_for_send(oo.PHASE_CONFIGURATION_RUN, body, explicit=True)
+
+
+def test_configuration_run_error_message_subclass_never_reaches_the_wire() -> None:
+    body = {"status": "FAILED", "error_message": _LyingErrorMessage(SECRET)}
+    projected = oo.project_for_send(oo.PHASE_CONFIGURATION_RUN, body, explicit=True)
+    assert projected["error_message"] in oo.WIRE_ERROR_CODES
+    assert SECRET not in json.dumps(projected)
+
+
+def test_configuration_run_nan_measure_is_still_dropped_not_refused() -> None:
+    out = oo.project_for_send(
+        oo.PHASE_CONFIGURATION_RUN,
+        {"measures": [{"accuracy": math.nan, "cost": 0.1}]},
+        explicit=True,
+    )
+    json.dumps(out, allow_nan=False)
+    assert "accuracy" not in json.dumps(out)

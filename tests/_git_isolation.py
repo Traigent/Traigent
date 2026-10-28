@@ -18,10 +18,22 @@ REPO_REDIRECT_VARS = (
     "GIT_OBJECT_DIRECTORY",
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_COMMON_DIR",
+    # ``GIT_CONFIG`` makes ``git config`` write to that file; the others inject configuration.
+    "GIT_CONFIG",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_SYSTEM",
+    "GIT_CONFIG_NOSYSTEM",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
 )
+_REDIRECT_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
 
 
 def scrubbed_git_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
     """``base`` (default: the process environment) without the repo-redirecting variables."""
     source = os.environ if base is None else base
-    return {k: v for k, v in source.items() if k not in REPO_REDIRECT_VARS}
+    return {
+        k: v
+        for k, v in source.items()
+        if k not in REPO_REDIRECT_VARS and not k.startswith(_REDIRECT_PREFIXES)
+    }
