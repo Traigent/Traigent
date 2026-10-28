@@ -1218,6 +1218,17 @@ def project_session_create(data: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _project_legacy_dataset(out: dict[str, Any], ctx: _Ctx) -> None:
+    dataset = dict(out["dataset"])
+    if "name" in dataset:  # the envelope's label and description reach run metadata
+        try:
+            dataset["name"] = s_tok("dn")(dataset["name"], ctx, 0)
+        except _Drop:
+            dataset.pop("name")
+    dataset.pop("description", None)
+    out["dataset"] = dataset
+
+
 def project_legacy_session_create(data: dict[str, Any]) -> dict[str, Any]:
     """Legacy ``POST /sessions`` / ``/sessions/optimize`` body."""
     if not isinstance(data, dict):
@@ -1236,14 +1247,7 @@ def project_legacy_session_create(data: dict[str, Any]) -> dict[str, Any]:
         ctx = _Ctx(declared_metric_names(config.get("objectives")))
         out["optimization_config"] = _run(_LEGACY_OPTIMIZATION_CONFIG, config, ctx)
     if isinstance(out.get("dataset"), dict):
-        dataset = dict(out["dataset"])
-        if "name" in dataset:  # the envelope's label and description reach run metadata
-            try:
-                dataset["name"] = s_tok("dn")(dataset["name"], ctx, 0)
-            except _Drop:
-                dataset.pop("name")
-        dataset.pop("description", None)
-        out["dataset"] = dataset
+        _project_legacy_dataset(out, ctx)
     if "metadata" in out and out["metadata"] is not None:
         out["metadata"] = _run(_SESSION_METADATA, out["metadata"], ctx)
     return out

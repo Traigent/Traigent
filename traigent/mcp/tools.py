@@ -93,6 +93,20 @@ def _optimization_failure(exc: Exception, *, mode: str) -> dict[str, Any]:
     return _failure(message, code="optimization_failed")
 
 
+def _open_after_lstat_checks(
+    path: Path, root: Path, rel_parts: tuple[str, ...], flags: int
+) -> int:
+    """Reduced-guarantee open: refuse symlinked components, then a plain open."""
+    current = root
+    for part in rel_parts[:-1]:
+        current = current / part
+        if current.is_symlink():
+            raise OSError(f"refusing to write through symlink: {current}")
+    if path.is_symlink():
+        raise OSError(f"refusing to write through symlink: {path}")
+    return os.open(path, flags, 0o644)
+
+
 def _write_text_nofollow(
     path: Path, text: str, *, overwrite: bool, root: Path | None = None
 ) -> None:
@@ -135,14 +149,7 @@ def _write_text_nofollow(
         finally:
             os.close(fd)
     else:
-        current = root
-        for part in rel_parts[:-1]:
-            current = current / part
-            if current.is_symlink():
-                raise OSError(f"refusing to write through symlink: {current}")
-        if path.is_symlink():
-            raise OSError(f"refusing to write through symlink: {path}")
-        file_fd = os.open(path, flags, 0o644)
+        file_fd = _open_after_lstat_checks(path, root, rel_parts, flags)
     with os.fdopen(file_fd, "w", encoding="utf-8") as handle:
         handle.write(text)
 
