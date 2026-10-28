@@ -23,7 +23,7 @@ from urllib.parse import urlparse
 
 from traigent.cloud.client import raise_if_cloud_egress_disabled
 from traigent.cloud.url_security import validate_always_blocked_cloud_url
-from traigent.config.backend_config import BackendConfig
+from traigent.config.backend_config import BackendConfig, is_strict_endpoint_mode
 from traigent.labels.transport_gate import gate_session
 from traigent.utils import optimization_only_egress as oo_egress
 
@@ -184,8 +184,16 @@ class DatasetConverter:
         if self._explicit_backend_base_url:
             return self._explicit_backend_base_url
         if self._resolved_backend_base_url is None:
+            # Strict-endpoint mode resolves the configured backend (raising
+            # EndpointNotConfiguredError when none is set); otherwise the
+            # vendor default is kept.
+            default_url = (
+                BackendConfig.get_cloud_backend_url()
+                if is_strict_endpoint_mode()
+                else BackendConfig.get_default_cloud_url_or_raise()
+            )
             self._resolved_backend_base_url = self._validate_backend_base_url(
-                BackendConfig.get_default_cloud_url_or_raise()
+                default_url
             )
         return self._resolved_backend_base_url
 

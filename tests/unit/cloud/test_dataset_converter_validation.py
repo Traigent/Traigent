@@ -12,7 +12,10 @@ import pytest
 
 from traigent.cloud.dataset_converter import DatasetConverter, is_sensitive_metadata_key
 from traigent.cloud.url_security import CloudUrlUnreachableError
-from traigent.config.backend_config import DEFAULT_CLOUD_URL
+from traigent.config.backend_config import (
+    DEFAULT_CLOUD_URL,
+    EndpointNotConfiguredError,
+)
 
 _PRIVATE_BACKEND = "https://bank.internal.example"
 
@@ -56,6 +59,26 @@ class TestDatasetConverterValidation:
         """Default constructor should use the cloud backend, not localhost."""
         converter = DatasetConverter()
         assert converter.backend_base_url == DEFAULT_CLOUD_URL
+
+    def test_strict_mode_resolves_configured_backend(self, monkeypatch):
+        """Strict mode must use the configured endpoint, not raise unconditionally."""
+        monkeypatch.setenv("TRAIGENT_REQUIRE_EXPLICIT_ENDPOINT", "1")
+        monkeypatch.setenv("TRAIGENT_BACKEND_URL", "https://customer.example")
+        converter = DatasetConverter()
+        assert converter.backend_base_url == "https://customer.example"
+
+    def test_strict_mode_without_endpoint_raises(self, monkeypatch):
+        """Strict mode with no configured endpoint still fails closed."""
+        monkeypatch.setenv("TRAIGENT_REQUIRE_EXPLICIT_ENDPOINT", "1")
+        monkeypatch.delenv("TRAIGENT_BACKEND_URL", raising=False)
+        monkeypatch.delenv("TRAIGENT_API_URL", raising=False)
+        with patch(
+            "traigent.config.backend_config.BackendConfig._get_configured_backend_origin",
+            return_value=None,
+        ):
+            converter = DatasetConverter()
+            with pytest.raises(EndpointNotConfiguredError):
+                _ = converter.backend_base_url
 
     def test_validate_example_set_id_allows_uuid(self):
         """Example set identifiers should accept UUIDs and trim whitespace."""
