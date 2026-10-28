@@ -386,3 +386,18 @@ def test_source_file_with_false_truth_is_treated_as_missing() -> None:
 
     script = _Script(source_file=_Name("/p/agent.py"), revision=(None, set(), None))
     assert _survey(script).entry_file is None
+
+
+def test_limit_gap_is_appended_once_and_the_loop_stops() -> None:
+    loaded = {f"m{i}.py": Path(f"/p/m{i}.py") for i in range(5)}
+    script = _Script(revision=(None, set(), Path("/p")), loaded=loaded)
+    survey = _survey(script, _MAX_ASSETS_PER_CATEGORY=1)
+    assert list(survey.helper_files) == ["m0.py"]
+    assert script.gaps_seen[0] == ["helper_modules_over_limit"]
+
+
+def test_name_gap_is_appended_once_per_unrepresentable_file() -> None:
+    loaded = {"a b": Path("/p/1"), "c d": Path("/p/2")}
+    script = _Script(revision=(None, set(), Path("/p")), loaded=loaded)
+    _survey(script)
+    assert script.gaps_seen[0] == ["helper_module_name_not_representable"] * 2
