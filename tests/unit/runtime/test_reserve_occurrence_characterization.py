@@ -35,7 +35,8 @@ def state(tmp_path: Path) -> Path:
 
 
 def _path(state: Path) -> Path:
-    return manifest._occ_path(state, AGENT)
+    path: Path = manifest._occ_path(state, AGENT)
+    return path
 
 
 def _seed(state: Path, doc: Any) -> None:
@@ -52,9 +53,10 @@ def _reserve(
     state: Path, key: str = "b1|fix|0", info: Any = None, **kwargs: Any
 ) -> bool:
     kwargs.setdefault("now", NOW)
-    return manifest.reserve_occurrence(
+    reserved: bool = manifest.reserve_occurrence(
         state, AGENT, key, {} if info is None else info, **kwargs
     )
+    return reserved
 
 
 def _refused(
@@ -516,7 +518,8 @@ def test_collaborator_call_sequences(
 
     def breach(key: str) -> str:
         events.append(("breach", key))
-        return real_breach(key)
+        episode: str = real_breach(key)
+        return episode
 
     def read(path: Path, default: Any) -> Any:
         events.append(("read", path.name))
