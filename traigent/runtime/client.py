@@ -149,6 +149,7 @@ class RuntimeClient:
 
         from traigent.cloud.user_agent import get_sdk_user_agent
         from traigent.labels.transport_gate import (
+            freeze_json_body,
             observe_requests_response,
             preflight_requests,
         )
@@ -160,7 +161,7 @@ class RuntimeClient:
         }
         kwargs: dict[str, Any] = {}
         if body is not None:
-            kwargs["json"] = body
+            kwargs["json"] = freeze_json_body(body)
         if params:
             kwargs["params"] = params
         try:

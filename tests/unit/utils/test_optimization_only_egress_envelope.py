@@ -662,3 +662,153 @@ def test_typed_handlers_with_str_subclass_values(key: str, value: Any) -> None:
     body: dict[str, Any] = {"configuration_space": {"a": [1]}}
     body[_SubStr(key)] = wrap(value)
     _assert_refused_or_clean(oo.PHASE_SESSION_CREATE_AUTO, body)
+
+
+# ----------------------------------- sent bytes == checked bytes (requests, aiohttp form)
+
+from unittest.mock import patch  # noqa: E402
+
+import requests as _requests  # noqa: E402
+
+_FINALIZE_URL = "https://example.test/api/v1/sessions/s/finalize"
+
+
+class _ChangingDict(dict):  # type: ignore[type-arg]
+    """Serializes harmlessly the first two times, then as a secret."""
+
+    def __init__(self) -> None:
+        super().__init__(session_id="s")
+        self.n = 0
+
+    def items(self) -> Any:  # type: ignore[override]
+        self.n += 1
+        return {"session_id": "s" if self.n <= 2 else SECRET}.items()
+
+
+class _OnceDict(dict):  # type: ignore[type-arg]
+    def __init__(self) -> None:
+        super().__init__(session_id="s")
+        self.n = 0
+
+    def items(self) -> Any:  # type: ignore[override]
+        self.n += 1
+        if self.n > 1:
+            raise ValueError("serializer consumed twice")
+        return super().items()
+
+
+@pytest.fixture
+def _gate_off(monkeypatch: pytest.MonkeyPatch) -> Any:
+    tg.set_mode("off")
+    yield
+    tg.set_mode("off")
+
+
+def test_requests_path_sends_exactly_the_checked_bytes(
+    monkeypatch: pytest.MonkeyPatch, _gate_off: Any
+) -> None:
+    from traigent.runtime.client import RuntimeClient
+
+    monkeypatch.setenv(oo.ENV_VAR, "1")
+    sent: list[bytes] = []
+
+    def capture(self: Any, request: Any, **kw: Any) -> Any:
+        sent.append(request.body)
+        response = _requests.Response()
+        response.status_code = 200
+        response._content = b"{}"
+        response.request = request
+        return response
+
+    client = RuntimeClient("p", base_url="https://example.test", api_key="dummy")
+    with (
+        patch.object(_requests.Session, "send", capture),
+        patch(
+            "traigent.cloud.client.cloud_backend_egress_disabled", lambda *a, **k: False
+        ),
+    ):
+        client.send("POST", _FINALIZE_URL, _ChangingDict())
+    assert len(sent) == 1
+    assert SECRET.encode() not in sent[0]
+
+
+def test_preflight_judges_data_when_it_takes_precedence_over_json(
+    monkeypatch: pytest.MonkeyPatch, _gate_off: Any
+) -> None:
+    monkeypatch.setenv(oo.ENV_VAR, "1")
+    # requests sends ``data`` when it is non-empty, never the (clean) json body.
+    with pytest.raises(oo.OptimizationOnlyRefusal):
+        tg.preflight_requests(
+            "POST",
+            _FINALIZE_URL,
+            json={"session_id": "s"},
+            data=json.dumps({"session_id": SECRET, "x": SECRET}),
+        )
+
+
+def test_mode_off_preflight_serializes_nothing(
+    monkeypatch: pytest.MonkeyPatch, _gate_off: Any
+) -> None:
+    monkeypatch.delenv(oo.ENV_VAR, raising=False)
+    once = _OnceDict()
+    tg.preflight_requests("POST", _FINALIZE_URL, json=once)
+    assert once.n == 0
+    assert tg.freeze_json_body(once) is once
+    prepared = _requests.Request("POST", _FINALIZE_URL, json=once).prepare()
+    assert prepared.body == b'{"session_id": "s"}'
+
+
+def test_mode_off_aiohttp_wrapper_serializes_once_and_untouched() -> None:
+    calls: list[int] = []
+
+    def serializer(value: Any) -> str:
+        calls.append(1)
+        return json.dumps(value)
+
+    class _Plain(_FakeTransport):
+        _traigent_oo_explicit = None
+        _json_serialize = staticmethod(serializer)
+
+    _Plain.sent = []
+    session = tg._build_aiohttp(_Plain)()
+    asyncio.run(session._request("POST", _SESSIONS_URL, json={"a": 1}))
+    assert calls == []  # the gate added no serialization of its own while off
+
+
+def test_aiohttp_form_is_encoded_once_and_lying_str_is_refused() -> None:
+    class _LyingGrant(str):
+        def __eq__(self, other: object) -> bool:
+            return other == "refresh_token"
+
+        def __hash__(self) -> int:
+            return hash("refresh_token")
+
+    _FakeTransport.sent = []
+    session = tg._build_aiohttp(_FakeTransport)()
+    url = "https://api.example.test/api/v1/oauth/token"
+    with pytest.raises(oo.OptimizationOnlyRefusal):
+        asyncio.run(
+            session._request("POST", url, data={"grant_type": _LyingGrant(SECRET)})
+        )
+    assert all(SECRET.encode() not in b for b in _FakeTransport.sent)
+    # a legitimate form still goes out as urlencoded bytes
+    asyncio.run(session._request("POST", url, data={"grant_type": "refresh_token"}))
+    assert _FakeTransport.sent[-1] == b"grant_type=refresh_token"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="pre-existing on develop; follow-up: default-deny result projectors",
+)
+def test_results_projector_keeps_unknown_content_keys() -> None:
+    class _Key(str):
+        def __hash__(self) -> int:
+            return hash("config")
+
+        def __eq__(self, other: object) -> bool:
+            return other == "config"
+
+    body = {_Key(SECRET): 1}
+    projected = oo.project_for_send(oo.PHASE_RESULTS, body, explicit=True)
+    raw = json.dumps(projected).encode()
+    assert SECRET.encode() not in raw

@@ -34,6 +34,7 @@ from traigent.cloud.token_manager import TokenManager
 from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.labels.transport_gate import (
+    freeze_json_body,
     gate_session,
     observe_requests_response,
     preflight_requests,
@@ -1973,6 +1974,7 @@ class AuthManager:
             return "backend egress disabled"
 
         try:
+            validation_payload = freeze_json_body(validation_payload)
             preflight_requests("POST", url, json=validation_payload)
             response = requests.post(
                 url,
