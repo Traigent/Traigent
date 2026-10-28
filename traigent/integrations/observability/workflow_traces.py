@@ -53,6 +53,7 @@ from traigent.cloud.url_security import (
 )
 from traigent.config.backend_config import BackendConfig
 from traigent.labels.transport_gate import (
+    freeze_json_body,
     gate_session,
     observe_requests_response,
     preflight_requests,
@@ -904,6 +905,7 @@ class WorkflowTracesClient:
             ingest_url = f"{self.backend_url}/api/v1/traces/ingest"
             # Under the self-hosted opt-in the credential-bearing origin never
             # follows a redirect; a 3xx is reported as a refusal below.
+            request_payload = freeze_json_body(request_payload)
             preflight_requests("POST", ingest_url, json=request_payload)
             response = requests.post(
                 ingest_url,

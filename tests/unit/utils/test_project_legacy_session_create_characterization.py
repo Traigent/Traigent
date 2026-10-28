@@ -242,8 +242,9 @@ def test_config_just_under_the_size_cap_is_accepted() -> None:
 
 
 @pytest.mark.parametrize("value", [[1, 2], "text", 5, None])
-def test_non_dict_config_is_passed_through_untouched(value: Any) -> None:
-    assert _project({"optimization_config": value}) == {"optimization_config": value}
+def test_non_dict_config_is_refused(value: Any) -> None:
+    with pytest.raises(MetadataContractViolation):
+        _project({"optimization_config": value})
 
 
 def test_config_get_is_read_exactly_twice_for_objectives_with_second_result_used(
@@ -325,22 +326,25 @@ def test_collaborator_sequence_with_all_sections(
     )
     assert [(run[0], run[1]) for run in trace.runs] == [
         (egress._LEGACY_OPTIMIZATION_CONFIG, config),
+        (egress._LEGACY_DATASET, {"size": 1}),
         (egress._SESSION_METADATA, metadata),
     ]
     assert trace.ctxs == [(), (["acc"],)]
-    # both sections run with the context created after the declared names were read
+    # all sections run with the context created after the declared names were read
     assert trace.runs[0][2] is trace.ctx_objects[1]
     assert trace.runs[1][2] is trace.ctx_objects[1]
+    assert trace.runs[2][2] is trace.ctx_objects[1]
 
 
-def test_metadata_uses_default_context_when_config_is_not_a_dict(
+def test_non_dict_config_is_refused_before_metadata_is_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     trace = _Trace(monkeypatch)
-    _project({"optimization_config": "text", "metadata": {"optimization_id": "o-1"}})
-    assert trace.ctxs == [()]
-    assert len(trace.runs) == 1
-    assert trace.runs[0][2] is trace.ctx_objects[0]
+    with pytest.raises(MetadataContractViolation):
+        _project(
+            {"optimization_config": "text", "metadata": {"optimization_id": "o-1"}}
+        )
+    assert trace.runs == []
 
 
 # ------------------------------------------------------------------------ dataset
@@ -357,7 +361,7 @@ def test_dataset_name_token_description_dropped_and_other_keys_kept() -> None:
             }
         }
     )
-    assert out == {"dataset": {"name": _TOKEN_MY_DATASET, "size": 3, "extra": {"a": 1}}}
+    assert out == {"dataset": {"name": _TOKEN_MY_DATASET, "size": 3}}
 
 
 def test_dataset_identifier_shaped_name_is_kept_verbatim() -> None:
@@ -382,8 +386,9 @@ def test_dataset_empty_dict_stays_empty() -> None:
 
 
 @pytest.mark.parametrize("value", ["free text", [1], 5, None])
-def test_non_dict_dataset_is_passed_through_untouched(value: Any) -> None:
-    assert _project({"dataset": value}) == {"dataset": value}
+def test_non_dict_dataset_is_refused(value: Any) -> None:
+    with pytest.raises(MetadataContractViolation):
+        _project({"dataset": value})
 
 
 def test_dataset_is_copied_so_input_keeps_its_name_and_description() -> None:
@@ -399,7 +404,8 @@ def test_dataset_dict_subclass_is_converted_before_membership_checks() -> None:
             return False
 
     out = _project({"dataset": Hostile(name="My Dataset", description="d", size=1)})
-    assert out == {"dataset": {"name": _TOKEN_MY_DATASET, "size": 1}}
+    # a hostile membership test can only cause fields to be dropped, never leaked
+    assert out == {"dataset": {}}
     assert type(out["dataset"]) is dict
 
 
@@ -427,74 +433,6 @@ def test_dataset_name_strip_returning_empty_drops_the_name() -> None:
             return ""
 
     assert _project({"dataset": {"name": EmptyStrip("My Dataset")}}) == {"dataset": {}}
-
-
-def test_dataset_name_is_resolved_through_the_module_level_tokenizer(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prefixes: list[str] = []
-    real = egress.s_tok
-
-    def spy(prefix: str) -> Any:
-        prefixes.append(prefix)
-        return real(prefix)
-
-    monkeypatch.setattr(egress, "s_tok", spy)
-    _project({"dataset": {"name": "My Dataset"}})
-    assert prefixes == ["dn"]
-    prefixes.clear()
-    _project({"dataset": {"size": 1}})
-    assert prefixes == []
-
-
-def test_dataset_tokenizer_is_not_resolved_when_name_absent_or_dataset_not_dict(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prefixes: list[str] = []
-
-    def spy(prefix: str) -> Any:
-        prefixes.append(prefix)
-        raise AssertionError("must not be called")
-
-    monkeypatch.setattr(egress, "s_tok", spy)
-    assert _project({"dataset": {"size": 1}}) == {"dataset": {"size": 1}}
-    assert _project({"dataset": "text"}) == {"dataset": "text"}
-    assert prefixes == []
-
-
-def test_dataset_name_drop_is_the_only_swallowed_condition(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def failing(prefix: str) -> Any:
-        def spec(value: Any, ctx: Any, depth: int) -> Any:
-            raise ValueError("not a drop")
-
-        return spec
-
-    monkeypatch.setattr(egress, "s_tok", failing)
-    with pytest.raises(ValueError, match="not a drop"):
-        _project({"dataset": {"name": "My Dataset"}})
-
-
-def test_dataset_tokenizer_receives_context_and_depth_zero(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    seen: list[tuple[Any, Any, Any]] = []
-
-    def factory(prefix: str) -> Any:
-        def spec(value: Any, ctx: Any, depth: int) -> Any:
-            seen.append((value, ctx, depth))
-            return "tokenized"
-
-        return spec
-
-    trace = _Trace(monkeypatch)
-    monkeypatch.setattr(egress, "s_tok", factory)
-    out = _project(
-        {"optimization_config": {"objectives": ["acc"]}, "dataset": {"name": "n"}}
-    )
-    assert out["dataset"] == {"name": "tokenized"}
-    assert seen == [("n", trace.ctx_objects[1], 0)]
 
 
 # ----------------------------------------------------------------------- metadata
@@ -580,14 +518,7 @@ def test_dataset_is_processed_before_metadata_is_run(
         events.append("run")
         return real_run(spec, value, ctx, **kwargs)
 
-    real_tok = egress.s_tok
-
-    def recording_tok(prefix: str) -> Any:
-        events.append("tok")
-        return real_tok(prefix)
-
     monkeypatch.setattr(egress, "_run", recording_run)
-    monkeypatch.setattr(egress, "s_tok", recording_tok)
     _project(
         {
             "optimization_config": {"objectives": ["acc"]},
@@ -595,7 +526,7 @@ def test_dataset_is_processed_before_metadata_is_run(
             "metadata": {"optimization_id": "o-1"},
         }
     )
-    assert events == ["run", "tok", "run"]
+    assert events == ["run", "run", "run"]
 
 
 def test_result_key_order_follows_input_order() -> None:
