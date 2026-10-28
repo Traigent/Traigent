@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from typing import Any, Final, Protocol, cast
 from urllib.parse import urlparse, urlunparse
 
 __all__ = ["BackendG1Transport", "G1RequestError", "G1Response", "G1Transport"]
@@ -40,6 +40,18 @@ class G1Transport(Protocol):
     ) -> G1Response: ...
 
 
+_FORBIDDEN_PATH_SUBSTRINGS: Final = ("..", "//", "?", "#", "%", "\\")
+
+
+def _path_is_safe(path: str) -> bool:
+    """A closed request-path shape: absolute, no traversal, query, fragment or escapes."""
+    if not isinstance(path, str) or not path.startswith("/"):
+        return False
+    if any(token in path for token in _FORBIDDEN_PATH_SUBSTRINGS):
+        return False
+    return all(ch.isprintable() and not ch.isspace() for ch in path)
+
+
 class BackendG1Transport:
     """Default transport over ``BackendIntegratedClient`` auth and the transport gate."""
 
@@ -49,6 +61,8 @@ class BackendG1Transport:
     def _url(self, path: str) -> str | None:
         from traigent.cloud.url_security import is_plain_http_origin_parts
 
+        if not _path_is_safe(path):
+            return None
         parsed = urlparse(str(self._client.api_base_url))
         if not is_plain_http_origin_parts(parsed):
             return None

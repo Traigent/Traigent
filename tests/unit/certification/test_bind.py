@@ -332,3 +332,69 @@ def test_pins_file_modes_and_validation(tmp_path: Path) -> None:
     with pytest.raises(pins_module.PinError):
         pins_module.write_pins(source, tmp_path / "f" / "pins.json")
     assert not (tmp_path / "e").exists() or not (tmp_path / "e" / "pins.json").exists()
+
+
+class _IssuingTransport:
+    """Records every request; answers session issue with a chosen reference."""
+
+    def __init__(self, ref: Any) -> None:
+        self.ref = ref
+        self.paths: list[str] = []
+
+    def request(self, method: str, path: str, body: Any = None) -> Any:
+        from traigent.certification.transport import G1Response
+
+        self.paths.append(path)
+        return G1Response(201, {"build_session_ref": self.ref, "state": "open"})
+
+
+_GOOD_BSN = "bsn:" + "A" * 43
+
+
+@pytest.mark.parametrize(
+    "bad_ref",
+    [
+        "../x",
+        "bsn:short",
+        _GOOD_BSN + "/a",
+        _GOOD_BSN + "?x=1",
+        "bsn:" + "A" * 42 + "%",
+        7,
+    ],
+)
+def test_server_issued_session_ref_must_match_the_bsn_shape(
+    key: ck.ClientKey, pins: pins_module.Pins, bad_ref: Any
+) -> None:
+    transport = _IssuingTransport(bad_ref)
+    with pytest.raises(bind_module.BindError) as caught:
+        bind_module.bind_g1(
+            transport,
+            _evidence(),
+            key,
+            pins,
+            run_id="run_1",
+            sdk_ref="a" * 40,
+            sdk_version="1.0.0",
+            declared_mode="snapshot",
+        )
+    assert caught.value.code == "SESSION_REFUSED"
+    assert transport.paths == [bind_module.SESSIONS_PATH]
+
+
+@pytest.mark.parametrize(
+    "bad_ref", ["../x", "bsn:short", _GOOD_BSN + "/a", "", "bsn:" + "A" * 44]
+)
+def test_abandon_session_refuses_a_malformed_ref_before_any_request(
+    bad_ref: str,
+) -> None:
+    transport = _IssuingTransport(_GOOD_BSN)
+    with pytest.raises(bind_module.BindError) as caught:
+        bind_module.abandon_session(transport, bad_ref)
+    assert caught.value.code == "ABANDON_REFUSED"
+    assert transport.paths == []
+
+
+def test_abandon_session_accepts_a_valid_ref() -> None:
+    transport = _IssuingTransport(_GOOD_BSN)
+    bind_module.abandon_session(transport, _GOOD_BSN)
+    assert transport.paths == [f"{bind_module.SESSIONS_PATH}/{_GOOD_BSN}/abandon"]

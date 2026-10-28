@@ -364,3 +364,34 @@ def test_snapshot_capture_path_sends_nothing_but_the_readiness_probe(
         evidence,
         extra=(result.snapshot_ref.locator, result.snapshot_ref.manifest_digest),
     )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "relative/path",
+        "",
+        "/a/../b",
+        "/a//b",
+        "/a?x=1",
+        "/a#f",
+        "/a%2fb",
+        "/a\\b",
+        "/a b",
+        "/a\tb",
+        "/a\nb",
+        "/a\x00b",
+    ],
+)
+def test_url_refuses_unsafe_request_paths(path: str) -> None:
+    assert BackendG1Transport(_Client())._url(path) is None
+
+
+def test_url_still_builds_catalog_paths() -> None:
+    transport = BackendG1Transport(_Client())
+    url = transport._url(f"{bind_module.SESSIONS_PATH}/bsn:{'A' * 43}/abandon")
+    assert (
+        url
+        == f"https://api.example.test{bind_module.SESSIONS_PATH}/bsn:{'A' * 43}/abandon"
+    )
+    assert transport._url(bind_module.SESSIONS_PATH) is not None

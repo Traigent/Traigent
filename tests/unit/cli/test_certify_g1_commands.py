@@ -331,3 +331,13 @@ def test_abandon_requires_exactly_one_target_and_a_plain_run_id(
     result = CliRunner().invoke(certify, ["abandon", *args])
     assert result.exit_code != 0
     assert backend.requests == []
+
+
+def test_abandon_with_a_malformed_session_ref_makes_no_request(
+    backend: FakeG1Backend,
+) -> None:
+    result = CliRunner().invoke(certify, ["abandon", "../x"])
+    assert result.exit_code == 1
+    assert "ABANDON_REFUSED" in result.output
+    assert "../x" not in result.output
+    assert backend.requests == []

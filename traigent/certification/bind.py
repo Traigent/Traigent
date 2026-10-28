@@ -184,7 +184,7 @@ def bind_g1(
         None,
     )
     session_ref = issued.get("build_session_ref")
-    if type(session_ref) is not str:
+    if type(session_ref) is not str or _BSN_RE.fullmatch(session_ref) is None:
         raise BindError("SESSION_REFUSED")
     base = f"{SESSIONS_PATH}/{session_ref}"
     _post(
@@ -273,6 +273,7 @@ def bind_g1(
 
 
 _RUN_ID_RE = re.compile(r"[A-Za-z0-9_.:-]{1,100}")
+_BSN_RE = re.compile(r"bsn:[A-Za-z0-9_-]{43}")
 
 
 def abandon_run(transport: G1Transport, run_id: str) -> None:
@@ -293,7 +294,12 @@ def abandon_run(transport: G1Transport, run_id: str) -> None:
 
 
 def abandon_session(transport: G1Transport, build_session_ref: str) -> None:
-    """Abandon a build session (no body). Failure is the closed ``ABANDON_REFUSED``."""
+    """Abandon a build session (no body). Failure is the closed ``ABANDON_REFUSED``.
+
+    The reference is validated locally so it can never alter the request path.
+    """
+    if _BSN_RE.fullmatch(build_session_ref) is None:
+        raise BindError("ABANDON_REFUSED")
     _post(
         transport,
         f"{SESSIONS_PATH}/{build_session_ref}/abandon",

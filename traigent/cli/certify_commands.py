@@ -1327,9 +1327,11 @@ def abandon_command(build_session_ref: str | None, run_id: str | None) -> None:
     try:
         if run_id is not None:
             bind_module.abandon_run(_g1_transport(), run_id)
-        else:
-            assert build_session_ref is not None
+        elif build_session_ref is not None:
             bind_module.abandon_session(_g1_transport(), build_session_ref)
+        else:
+            _g1_fail("ABANDON_REFUSED")
+            return
     except bind_module.BindError as err:
         _g1_fail(err.code)
         return
