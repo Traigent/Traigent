@@ -1,0 +1,409 @@
+"""Optimization-only session-create projection is default-deny at the top level.
+
+Sol review of #2777: the projectors copied the whole body and validated selected fields, so
+``budget={"prompt": ...}``, a sentence in a constraint, a ``10**400`` integer, a smart-pruning
+error echoing customer keys, and a ``content_identity``-named tunable escaped the closed
+contract. Every top-level key now needs an entry in the envelope allowlist.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
+
+from traigent.cloud.api_operations import ApiOperations
+from traigent.cloud.client import TraigentCloudClient
+from traigent.cloud.models import SessionCreationRequest
+from traigent.cloud.smart_pruning import normalize_smart_pruning_options
+from traigent.utils import optimization_only_egress as oo
+
+PROMPT = "You are a careful medical assistant who never reveals patient notes"
+SYNTHETIC_KEY = "zq_customer_secret_key"
+SYNTHETIC_VALUE = "zq_customer_secret_value"
+
+_PROJECTORS = [
+    pytest.param(oo.project_session_create, "configuration_space", id="typed"),
+    pytest.param(oo.project_legacy_session_create, "search_space", id="legacy"),
+]
+
+
+@pytest.fixture(autouse=True)
+def _clean(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    for name in (
+        oo.ENV_VAR,
+        "TRAIGENT_CONTENT_LESS",
+        "TRAIGENT_AGENT_REF",
+        "TRAIGENT_ENVIRONMENT",
+        "OTEL_RESOURCE_ATTRIBUTES",
+        "ENVIRONMENT",
+        "TRAIGENT_ENV",
+        "TRAIGENT_SESSION_CONTRACT",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path))
+    oo.reset_latch()
+    yield
+    oo.reset_latch()
+
+
+# ----------------------------------------------------------- the real producers' bodies
+
+
+def _full_request(**overrides: Any) -> SessionCreationRequest:
+    fingerprints = {
+        "dataset": "fp1:" + "a" * 64,
+        "agent": "fp1:" + "b" * 64,
+        "evaluator": "fp1:" + "c" * 64,
+        "config_space": "fp1:" + "d" * 64,
+    }
+    base: dict[str, Any] = {
+        "function_name": "pkg.mod.fn",
+        "agent_key": "agent_one",
+        "run_title": PROMPT,
+        "run_description": PROMPT,
+        "configuration_space": {"temperature": [0.1, 0.9], "model": ["gpt-4o-mini"]},
+        "objectives": ["accuracy", {"name": "cost", "orientation": "minimize"}],
+        "dataset_metadata": {"size": 4, "name": "eval_set", "privacy_mode": True},
+        "max_trials": 5,
+        "budget": {"max_cost_usd": 2.5, "max_wallclock_ms": 30000},
+        "constraints": {
+            "structural": [{"id": "c1", "require": "params.temperature <= 0.9"}],
+            "derived": [
+                {
+                    "when": 'params.model == "gpt-4o-mini"',
+                    "then": "metrics.accuracy >= 0.5",
+                }
+            ],
+        },
+        "default_config": {"temperature": 0.5},
+        "warm_start_from": "prior_exp_1",
+        "smart_pruning": {"label": "balanced", "epsilon": 0.1, "confidence": 0.9},
+        "promotion_policy": {"min_improvement": 0.01},
+        "tvl_governance": None,
+        "optimization_strategy": {
+            "algorithm": "optuna",
+            "tracking_mode": "native_local",
+        },
+        "user_id": None,
+        "billing_tier": "standard",
+        "metadata": {"evaluation_set": "eval_set", "privacy_mode": True},
+        "artifact_fingerprints": fingerprints,
+        "fingerprint_meta": {
+            "algorithm": "fp1",
+            "dataset_example_count": 4,
+            "source_available": True,
+        },
+        "evaluator_id": "evaluator_one",
+        "task_type": "multiple_choice",
+        "dataset_id": "dataset_one",
+        "content_identity": {"scheme": "ci1", "provenance": "declared"},
+    }
+    base.update(overrides)
+    return SessionCreationRequest(**base)
+
+
+def _ops() -> ApiOperations:
+    client = MagicMock()
+    client.backend_config.api_base_url = "https://api.example.test"
+    return ApiOperations(client)
+
+
+def _cloud_client_body(request: SessionCreationRequest) -> dict[str, Any]:
+    stub = SimpleNamespace(_ensure_owner_metadata=lambda metadata: metadata or {})
+    return TraigentCloudClient._serialize_session_request(stub, request)
+
+
+def _sync_manager_body() -> dict[str, Any]:
+    from traigent.cloud.sync_manager import SyncManager
+    from traigent.storage.local_storage import OptimizationSession
+
+    session = OptimizationSession(
+        session_id="s1",
+        function_name="pkg.mod.fn",
+        created_at="2026-10-28T00:00:00",
+        updated_at="2026-10-28T00:00:00",
+        status="completed",
+        total_trials=0,
+        completed_trials=0,
+        best_score=None,
+        best_config=None,
+        optimization_config={"search_space": {"temperature": [0.1, 0.9]}},
+        trials=[],
+        metadata={"agent_key": "agent_one", "evaluation_set": "eval_set"},
+    )
+    manager = object.__new__(SyncManager)
+    return SyncManager.convert_session_to_traigent_format(manager, session)[
+        "session_create"
+    ]
+
+
+def _producer_bodies(monkeypatch: pytest.MonkeyPatch) -> dict[str, dict[str, Any]]:
+    request = _full_request()
+    typed = _ops()._build_session_payload(request, max_trials=5)
+    monkeypatch.setenv("TRAIGENT_SESSION_CONTRACT", "legacy")
+    legacy = _ops()._build_session_payload(
+        _full_request(optimization_strategy=None, promotion_policy=None),
+        max_trials=5,
+    )
+    monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT")
+    monkeypatch.setenv("TRAIGENT_CONTENT_LESS", "1")
+    monkeypatch.setenv("TRAIGENT_ENVIRONMENT", "test")
+    content_less = _ops()._build_session_payload(request, max_trials=5)
+    monkeypatch.delenv("TRAIGENT_CONTENT_LESS")
+    return {
+        "typed": typed,
+        "legacy": legacy,
+        "content_less": content_less,
+        "cloud_client": _cloud_client_body(request),
+        "sync_manager": _sync_manager_body(),
+    }
+
+
+@pytest.mark.parametrize(
+    "producer", ["typed", "legacy", "content_less", "cloud_client", "sync_manager"]
+)
+def test_allowlist_covers_every_real_producer_body(
+    producer: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = _producer_bodies(monkeypatch)[producer]
+    # Producer bodies reach the projector through the AUTO phase; run it the same way.
+    projected = oo.project_for_phase(oo.PHASE_SESSION_CREATE_AUTO, body)
+    assert set(projected) <= set(body)
+    text = json.dumps(projected, default=str)
+    assert PROMPT not in text  # run_title / run_description are dropped
+
+
+def test_producer_bodies_exercise_the_budget_and_smart_pruning_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    typed = _producer_bodies(monkeypatch)["typed"]
+    assert typed["budget"] == {"max_cost_usd": 2.5, "max_wallclock_ms": 30000}
+    assert typed["smart_pruning"]["label"] == "balanced"
+    assert set(typed["artifact_versions"]) == {
+        "agent",
+        "dataset",
+        "evaluator",
+        "config_space",
+    }
+    projected = oo.project_session_create(typed)
+    assert projected["budget"] == typed["budget"]
+    assert projected["artifact_versions"] == typed["artifact_versions"]
+
+
+# ------------------------------------------------------------------- default-deny
+
+
+@pytest.mark.parametrize(("project", "space_key"), _PROJECTORS)
+def test_unknown_top_level_key_is_refused(project: Any, space_key: str) -> None:
+    with pytest.raises(oo.MetadataContractViolation):
+        project({space_key: {"a": [1, 2]}, "brand_new_field": "x"})
+
+
+@pytest.mark.parametrize(("project", "space_key"), _PROJECTORS)
+def test_unknown_key_with_content_value_is_refused_without_echo(
+    project: Any, space_key: str
+) -> None:
+    with pytest.raises(oo.MetadataContractViolation) as caught:
+        project({space_key: {"a": [1]}, SYNTHETIC_KEY: SYNTHETIC_VALUE})
+    assert SYNTHETIC_KEY not in str(caught.value) + repr(caught.value)
+    assert SYNTHETIC_VALUE not in str(caught.value) + repr(caught.value)
+
+
+def test_typed_budget_with_prompt_is_refused() -> None:
+    body = {"configuration_space": {"a": [1]}, "budget": {"prompt": PROMPT}}
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_session_create(body)
+
+
+@pytest.mark.parametrize(
+    "budget",
+    [
+        {"prompt": "private customer prompt"},
+        {"max_cost_usd": "free text here"},
+        {"max_cost_usd": -1},
+        {"max_cost_usd": {"nested": 1}},
+        {"bad key": 1},
+        ["max_cost_usd"],
+    ],
+)
+def test_budget_must_be_closed_numbers(budget: Any) -> None:
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_session_create({"configuration_space": {"a": [1]}, "budget": budget})
+
+
+def test_budget_of_numbers_passes() -> None:
+    budget = {"max_cost_usd": 1.5, "max_wallclock_ms": 1000}
+    out = oo.project_session_create(
+        {"configuration_space": {"a": [1]}, "budget": budget}
+    )
+    assert out["budget"] == budget
+
+
+def test_typed_alternate_search_space_key_is_checked() -> None:
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_session_create(
+            {"configuration_space": {"a": [1]}, "search_space": {"p": PROMPT}}
+        )
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("smart_pruning", {"label": PROMPT}),
+        ("smart_pruning", {"label": "balanced", "note": PROMPT}),
+        ("artifact_fingerprints", {"dataset": PROMPT}),
+        ("artifact_versions", {"agent": {"schema": PROMPT}}),
+        ("user_id", PROMPT),
+        ("billing_tier", PROMPT),
+        ("evaluator_code_digest", PROMPT),
+        ("environment", PROMPT),
+        ("capabilities", [PROMPT]),
+    ],
+)
+def test_envelope_specs_refuse_free_text(key: str, value: Any) -> None:
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_session_create({"configuration_space": {"a": [1]}, key: value})
+
+
+def test_legacy_smart_pruning_and_fingerprints_are_checked() -> None:
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_legacy_session_create(
+            {"search_space": {"a": [1]}, "smart_pruning": {"label": PROMPT}}
+        )
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_legacy_session_create(
+            {"search_space": {"a": [1]}, "artifact_fingerprints": {"agent": PROMPT}}
+        )
+
+
+# ------------------------------------------------------------- constraint syntax
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "You are a careful medical assistant",
+        "never reveal patient notes please",
+        "the quick brown fox",
+        "hello world; import os",
+    ],
+)
+def test_constraint_sentence_is_refused(expr: str) -> None:
+    for key in ("require", "when", "then", "expr"):
+        with pytest.raises(oo.MetadataContractViolation):
+            oo.project_session_create(
+                {
+                    "configuration_space": {"a": [1]},
+                    "constraints": {"structural": [{key: expr}]},
+                }
+            )
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "params.temperature <= 0.9",
+        "metrics.accuracy >= 0.8",
+        'params.model == "accurate"',
+        "params.max_tokens >= 64",
+        "env.quota > 0",
+        "True",
+        "params.x > 1 and params.y < 2 or not params.z",
+        "min(params.a, params.b) + abs(params.c) * 2 > 3",
+        "math.sqrt(params.x) < 3",
+        "params.x > 1 && params.y < 2",
+        "params.x = 3",
+    ],
+)
+def test_real_constraint_expressions_still_pass(expr: str) -> None:
+    out = oo.project_session_create(
+        {
+            "configuration_space": {"a": [1]},
+            "constraints": {"derived": [{"require": expr}]},
+        }
+    )
+    assert out["constraints"]["derived"] == [{"require": expr}]
+
+
+@pytest.mark.parametrize(
+    "expr", ["__import__('os')", "open(params.x)", "params.__class__ > 1", "x ** 2"]
+)
+def test_constraint_outside_the_dsl_is_refused(expr: str) -> None:
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_session_create(
+            {
+                "configuration_space": {"a": [1]},
+                "constraints": {"derived": [{"require": expr}]},
+            }
+        )
+
+
+# ---------------------------------------------------------------- numeric overflow
+
+
+@pytest.mark.parametrize(("project", "space_key"), _PROJECTORS)
+def test_huge_int_in_search_space_is_a_contract_violation(
+    project: Any, space_key: str
+) -> None:
+    for value in (10**400, -(10**400), {"low": 0, "high": [10**400]}):
+        with pytest.raises(oo.MetadataContractViolation):
+            project({space_key: {"nested": {"deep": [value]}}})
+
+
+@pytest.mark.parametrize(("project", "space_key"), _PROJECTORS)
+def test_huge_int_in_default_config_is_a_contract_violation(
+    project: Any, space_key: str
+) -> None:
+    with pytest.raises(oo.MetadataContractViolation):
+        project({space_key: {"a": [1]}, "default_config": {"a": 10**400}})
+
+
+def test_huge_int_in_closed_tree_is_dropped_not_raised() -> None:
+    assert oo.s_num()(5, oo._Ctx(), 0) == 5
+    with pytest.raises(oo._Drop):
+        oo.s_num()(10**400, oo._Ctx(), 0)
+    with pytest.raises(oo._Drop):
+        oo.s_closed_tree(10**400, oo._Ctx(), 0)
+
+
+# --------------------------------------------------------------- smart-pruning errors
+
+
+def test_smart_pruning_error_names_no_key_or_value() -> None:
+    with pytest.raises(ValueError) as caught:
+        normalize_smart_pruning_options(
+            {"label": "balanced", SYNTHETIC_KEY: SYNTHETIC_VALUE}
+        )
+    exc = caught.value
+    assert SYNTHETIC_KEY not in str(exc) + repr(exc)
+    assert SYNTHETIC_VALUE not in str(exc) + repr(exc)
+    assert exc.__cause__ is None
+    assert "smart_pruning" in str(exc)
+
+
+def test_smart_pruning_bad_value_is_not_echoed() -> None:
+    with pytest.raises(ValueError) as caught:
+        normalize_smart_pruning_options({"label": SYNTHETIC_VALUE})
+    assert SYNTHETIC_VALUE not in str(caught.value) + repr(caught.value)
+    assert caught.value.__cause__ is None
+
+
+# ------------------------------------------------------------------- size accounting
+
+
+@pytest.mark.parametrize(("project", "space_key"), _PROJECTORS)
+def test_content_identity_named_tunable_gets_no_size_exemption(
+    project: Any, space_key: str
+) -> None:
+    chunk = {f"k{i}": ["x" * 128] * 256 for i in range(24)}
+    space = {"content_identity": chunk, "ordinary": chunk}
+    # ``x`` * 128 is identifier-shaped, so only the size limit can refuse it.
+    with pytest.raises(oo.MetadataContractViolation):
+        project({space_key: space})
+    with pytest.raises(oo.MetadataContractViolation):
+        project({space_key: {"renamed": chunk, "ordinary": chunk}})

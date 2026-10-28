@@ -170,6 +170,14 @@ def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def _is_finite(value: Any) -> bool:
+    """``math.isfinite`` that treats an int too large for a float as not finite."""
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
 def s_int(lo: int = 0, hi: int = 2**53) -> Spec:
     def spec(value: Any, _c: _Ctx, _d: int) -> Any:
         if (
@@ -185,7 +193,7 @@ def s_int(lo: int = 0, hi: int = 2**53) -> Spec:
 
 def s_num(lo: float = -MAX_NUM, hi: float = MAX_NUM) -> Spec:
     def spec(value: Any, _c: _Ctx, _d: int) -> Any:
-        if not _is_number(value) or not math.isfinite(value) or not lo <= value <= hi:
+        if not _is_number(value) or not _is_finite(value) or not lo <= value <= hi:
             raise _Drop
         return value
 
@@ -365,7 +373,7 @@ def s_closed_tree(value: Any, _c: _Ctx, depth: int) -> Any:
     if value is None or isinstance(value, bool):
         return value
     if _is_number(value):
-        if not math.isfinite(value) or abs(value) > MAX_NUM:
+        if not _is_finite(value) or abs(value) > MAX_NUM:
             raise _Drop
         return value
     if isinstance(value, str):
@@ -1108,6 +1116,20 @@ _LEGACY_DATASET = s_obj(
 _CONSTRAINT_EXPR_MAX = 512
 
 
+def _is_constraint_syntax(expr: str) -> bool:
+    """True when ``expr`` is one expression in the constraint DSL (the same translation and node
+    allowlist ``traigent.tvl.spec_loader`` compiles with). A sentence of words is not an
+    expression, so a prompt cannot ride in a constraint field."""
+    try:
+        from traigent.tvl import spec_loader
+
+        tree = ast.parse(spec_loader._translate_expression(expr).strip(), mode="eval")
+        spec_loader._validate_expression_ast(tree, "constraint")
+    except Exception:  # noqa: BLE001 - any parse/validation failure is a refusal
+        return False
+    return True
+
+
 def expression_is_closed(expr: Any) -> bool:
     """A constraint expression is accepted for a flagged tenant only when it carries no comment
     and every string literal is identifier-shaped (so it cannot hold free text)."""
@@ -1116,6 +1138,8 @@ def expression_is_closed(expr: Any) -> bool:
         or not expr.strip()
         or len(expr) > _CONSTRAINT_EXPR_MAX
     ):
+        return False
+    if not _is_constraint_syntax(expr):
         return False
     try:
         for tok in tokenize.generate_tokens(io.StringIO(expr).readline):
@@ -1232,13 +1256,168 @@ def _project_search_fields(out: dict[str, Any], keys: Iterable[str], ctx: _Ctx) 
     """Refuse free text in the search space / default config (owner ruling 2026-10-28).
 
     Each present field must be a closed tree; ``warm_start_from`` must be an identifier.
-    Raises the closed :class:`MetadataContractViolation` without echoing key or value.
+    Raises the closed :class:`MetadataContractViolation` without echoing key or value. The
+    size cap covers the whole value: a tunable named ``content_identity`` earns no exemption.
     """
     for key in keys:
         if out.get(key) is None:
             continue
         spec = s_id if key == "warm_start_from" else s_search_value
-        out[key] = _run(spec, out[key], ctx, limit=MAX_MEASURES_BYTES)
+        _check_contract_version(out[key])
+        try:
+            projected = spec(out[key], ctx, 0)
+        except _Drop:
+            raise MetadataContractViolation from None
+        if _json_size(projected) > MAX_MEASURES_BYTES:
+            raise MetadataContractViolation
+        out[key] = projected
+
+
+# ---- top-level envelope: default-deny ---------------------------------------------------
+#: Closed specs for the top-level session-create keys that the generic projection did not
+#: already cover. Every spec refuses (never drops) a value that does not fit.
+def _s_exact_obj(fields: dict[str, Spec]) -> Spec:
+    """An object whose keys are all known and whose present values all fit: nothing is dropped,
+    so an unknown key or a malformed value refuses the whole object."""
+    inner = s_obj(fields, strict_keys=tuple(fields))
+
+    def spec(value: Any, ctx: _Ctx, depth: int) -> Any:
+        if not isinstance(value, dict) or any(key not in fields for key in value):
+            raise _Drop
+        return inner(value, ctx, depth)
+
+    return spec
+
+
+def _s_exact_list(item: Spec, max_len: int = 32) -> Spec:
+    def spec(value: Any, ctx: _Ctx, depth: int) -> Any:
+        if not isinstance(value, (list, tuple)) or len(value) > max_len:
+            raise _Drop
+        return [item(entry, ctx, depth + 1) for entry in value]
+
+    return spec
+
+
+_SMART_PRUNING = _s_exact_obj(
+    {
+        "label": s_enum("aggressive", "balanced", "conservative"),
+        "min_completed_trials": s_int(),
+        "warmup_steps": s_int(),
+        "epsilon": s_num(0),
+        "cost_threshold": s_num(0),
+        "confidence": s_num(0, 1),
+        "min_samples_per_config": s_int(),
+        "warmup_trials": s_int(),
+    },
+)
+_FP1_RE = re.compile(r"^fp1:[0-9a-f]{64}$")
+_s_fp1 = _s_regex(_FP1_RE)
+_ARTIFACT_FINGERPRINT_KEYS = ("dataset", "agent", "evaluator", "config_space")
+_ARTIFACT_FINGERPRINTS = _s_exact_obj(
+    {key: s_null(_s_fp1) for key in _ARTIFACT_FINGERPRINT_KEYS}
+)
+_ARTIFACT_VERSION = _s_exact_obj(
+    {"schema": s_id, "digest": s_null(s_digest), "state": s_id}
+)
+_ARTIFACT_VERSIONS = _s_exact_obj(
+    dict.fromkeys(_ARTIFACT_FINGERPRINT_KEYS, _ARTIFACT_VERSION)
+)
+_CONTENT_LESS_ENVIRONMENTS = ("production", "staging", "development", "test", "default")
+
+
+def _s_budget(value: Any, ctx: _Ctx, depth: int) -> Any:
+    """A run budget: identifier-named caps with finite non-negative number values."""
+    if not isinstance(value, dict) or len(value) > MAX_LIST:
+        raise _Drop
+    return {
+        s_id(key, ctx, depth): s_null(s_num(0))(item, ctx, depth + 1)
+        for key, item in value.items()
+    }
+
+
+_s_wire_id = s_null(s_id)
+
+#: Typed ``POST /sessions`` top-level keys. Keys marked ``None`` are validated by dedicated
+#: code in :func:`project_session_create`; the rest by the spec shown. Any other key refuses.
+_TYPED_ENVELOPE: dict[str, Spec | None] = {
+    # dedicated handling in project_session_create
+    "function_name": None,
+    "agent_key": None,
+    "agent_id": None,
+    "dataset_id": None,
+    "evaluator_id": None,
+    "evaluator_definition_id": None,
+    "run_title": None,
+    "run_description": None,
+    "objectives": None,
+    "metadata": None,
+    "dataset_metadata": None,
+    "content_identity": None,
+    "code_revision": None,
+    "optimization_strategy": None,
+    "promotion_policy": None,
+    "tvl_governance": None,
+    "fingerprint_meta": None,
+    "task_type": None,
+    "constraints": None,
+    "configuration_space": None,
+    "search_space": None,
+    "default_config": None,
+    "warm_start_from": None,
+    # specs applied by the envelope check
+    "max_trials": s_null(s_int()),
+    "user_id": _s_wire_id,
+    "billing_tier": s_id,
+    "budget": _s_budget,
+    "smart_pruning": _SMART_PRUNING,
+    "artifact_fingerprints": _ARTIFACT_FINGERPRINTS,
+    "artifact_versions": _ARTIFACT_VERSIONS,
+    "identity_version": s_int(),
+    "agent_id_source": s_id,
+    "dataset_id_source": s_id,
+    "evaluator_id_source": s_id,
+    "evaluator_code_digest": s_sha,
+    "capabilities": _s_exact_list(s_id),
+    "environment": s_enum(*_CONTENT_LESS_ENVIRONMENTS),
+    "agent_ref": s_id,
+    "dataset_ref": s_id,
+    "evaluation_set_ref": s_id,
+    "evaluator_ref": s_id,
+}
+
+#: Legacy ``POST /sessions`` top-level keys (``None`` = dedicated handling).
+_LEGACY_ENVELOPE: dict[str, Spec | None] = {
+    "problem_statement": None,
+    "optimization_config": None,
+    "dataset": None,
+    "metadata": None,
+    "search_space": None,
+    "default_config": None,
+    "warm_start_from": None,
+    "evaluator_id": None,
+    "evaluator_definition_id": None,
+    "smart_pruning": _SMART_PRUNING,
+    "artifact_fingerprints": _ARTIFACT_FINGERPRINTS,
+    "fingerprint_meta": None,
+}
+
+
+def _enforce_envelope(
+    out: dict[str, Any], envelope: dict[str, Spec | None], ctx: _Ctx
+) -> None:
+    """Default-deny the top level: a key outside ``envelope`` refuses the whole request
+    (never silently dropped, so a producer that grows a field is noticed), and every
+    spec-checked key must fit its closed spec."""
+    for key in out:
+        if key not in envelope:
+            raise MetadataContractViolation
+    for key, spec in envelope.items():
+        if spec is None or key not in out:
+            continue
+        try:
+            out[key] = spec(out[key], ctx, 0)
+        except _Drop:
+            raise MetadataContractViolation from None
 
 
 def _project_optional(out: dict[str, Any], key: str, spec: Spec, ctx: _Ctx) -> None:
@@ -1256,6 +1435,7 @@ def project_session_create(data: dict[str, Any]) -> dict[str, Any]:
     out.pop(CONTRACT_VERSION_KEY, None)
     for key in ("run_title", "run_description"):  # free text: dropped
         out.pop(key, None)
+    _enforce_envelope(out, _TYPED_ENVELOPE, ctx)
     _tokenize_identity_fields(out, ctx)
     if "objectives" in out:
         out["objectives"] = _project_objectives(out["objectives"], ctx)
@@ -1279,7 +1459,9 @@ def project_session_create(data: dict[str, Any]) -> dict[str, Any]:
     if "constraints" in out:
         out["constraints"] = _project_constraints(out["constraints"], ctx)
     _project_search_fields(
-        out, ("configuration_space", "default_config", "warm_start_from"), ctx
+        out,
+        ("configuration_space", "search_space", "default_config", "warm_start_from"),
+        ctx,
     )
     return out
 
@@ -1292,6 +1474,9 @@ def project_legacy_session_create(data: dict[str, Any]) -> dict[str, Any]:
     _check_contract_version(data)
     out = dict(data)
     out.pop(CONTRACT_VERSION_KEY, None)
+    _enforce_envelope(out, _LEGACY_ENVELOPE, ctx)
+    _tokenize_identity_fields(out, ctx)
+    _project_optional(out, "fingerprint_meta", _FINGERPRINT_META, ctx)
     if "problem_statement" in out:  # free text; the field is required downstream
         out["problem_statement"] = DEFAULT_PROBLEM_STATEMENT
     if "optimization_config" in out:
@@ -2102,7 +2287,7 @@ def _closed_passthrough(value: Any) -> Any:
     if value is None or isinstance(value, bool):
         return value
     if _is_number(value):
-        if not math.isfinite(value) or abs(value) > MAX_NUM:
+        if not _is_finite(value) or abs(value) > MAX_NUM:
             raise _Drop
         return value
     if isinstance(value, str) and ID_RE.fullmatch(value):
@@ -2280,7 +2465,7 @@ def _strict_closed(value: Any, depth: int = 0) -> None:
     if value is None or isinstance(value, bool):
         return
     if _is_number(value):
-        if not math.isfinite(value):
+        if not _is_finite(value):
             raise _Drop
         return
     if isinstance(value, str):
