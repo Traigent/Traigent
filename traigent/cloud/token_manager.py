@@ -467,8 +467,10 @@ class TokenManager:
             )
 
     async def _build_oauth2_token_url(self) -> str:
+        from traigent.config.backend_config import BackendConfig
+
         cloud_base_url = await validate_cloud_base_url_async(
-            self.config.cloud_base_url,
+            self.config.cloud_base_url or BackendConfig.get_cloud_backend_url(),
             purpose="OAuth2 cloud_base_url",
         )
         return f"{cloud_base_url}/oauth/token"

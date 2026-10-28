@@ -65,6 +65,15 @@ def _endpoint_required_error() -> EndpointNotConfiguredError:
     )
 
 
+def endpoint_missing_message(operation: str) -> str:
+    """Warning text naming the setting a skipped backend operation needs."""
+    return (
+        f"Skipping {operation}: no Traigent backend endpoint is configured. "
+        "Set TRAIGENT_BACKEND_URL (or TRAIGENT_API_URL); strict-endpoint "
+        "(self-hosted) mode has no default."
+    )
+
+
 def get_signup_url() -> str | None:
     """Return the vendor signup URL, or None in strict-endpoint mode."""
     return None if is_strict_endpoint_mode() else SIGNUP_URL

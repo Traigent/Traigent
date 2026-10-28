@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from traigent.cloud.url_security import validate_cloud_base_url
-from traigent.config.backend_config import BackendConfig
+from traigent.config.backend_config import BackendConfig, EndpointNotConfiguredError
 from traigent.config.project import read_optional_project_env, scope_api_path
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
 from traigent.identity.workload import resolve_environment
@@ -73,6 +73,23 @@ _OFFLINE_MODE_ENV_VARS = (
     "TRAIGENT_OFFLINE",
     "TRAIGENT_DISABLE_TELEMETRY",
 )
+
+
+# Sentinel for "the default factory could not resolve an endpoint" (strict
+# self-hosted mode with none configured). Never a valid URL.
+_ENDPOINT_UNRESOLVED = "\x00endpoint-unresolved"
+
+
+def _default_backend_origin() -> str:
+    """Resolve the backend origin, deferring the strict-mode failure.
+
+    ``ObservabilityConfig`` must construct with ``offline_mode=True`` and no
+    endpoint; ``__post_init__`` raises the endpoint error when it is needed.
+    """
+    try:
+        return BackendConfig.get_backend_url()
+    except EndpointNotConfiguredError:
+        return _ENDPOINT_UNRESOLVED
 
 
 def describe_offline_mode_cause() -> str:
@@ -444,7 +461,7 @@ class ObservabilityConfig:
     deliver more.
     """
 
-    backend_origin: str = field(default_factory=BackendConfig.get_backend_url)
+    backend_origin: str = field(default_factory=_default_backend_origin)
     api_key: str | None = field(default_factory=BackendConfig.get_api_key)
     jwt_token: str | None = field(
         default_factory=lambda: os.getenv("TRAIGENT_JWT_TOKEN")
@@ -485,10 +502,19 @@ class ObservabilityConfig:
     warn_on_undelivered_at_exit: bool = True
 
     def __post_init__(self) -> None:
-        self.backend_origin = validate_cloud_base_url(
-            self.backend_origin,
-            purpose="observability backend",
-        )
+        if self.backend_origin == _ENDPOINT_UNRESOLVED:
+            if not self.offline_mode:
+                # Not offline and no endpoint configured: raise the real error
+                # (EndpointNotConfiguredError in strict-endpoint mode).
+                self.backend_origin = BackendConfig.get_backend_url()
+            else:
+                # Offline never sends anything, so no endpoint is needed.
+                self.backend_origin = ""
+        if self.backend_origin or not self.offline_mode:
+            self.backend_origin = validate_cloud_base_url(
+                self.backend_origin,
+                purpose="observability backend",
+            )
         self.default_environment = resolve_environment(
             self.default_environment
         ).environment

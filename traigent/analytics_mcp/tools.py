@@ -512,9 +512,16 @@ def _resolved_backend_url(client: Any | None = None) -> str | None:
     candidate = getattr(client, "backend_url", None)
     if not candidate:
         try:
-            from traigent.config.backend_config import BackendConfig
+            from traigent.config.backend_config import (
+                BackendConfig,
+                EndpointNotConfiguredError,
+                endpoint_missing_message,
+            )
 
             candidate = BackendConfig.get_backend_url()
+        except EndpointNotConfiguredError:
+            logger.warning(endpoint_missing_message("backend URL lookup"))
+            return None
         except Exception:  # pragma: no cover - defensive structured fallback
             return None
     return _sanitize_url(str(candidate))

@@ -17,7 +17,12 @@ from typing import Any
 
 from traigent._version import get_version
 from traigent.api.types import OptimizationStatus
-from traigent.config.backend_config import DEFAULT_CLOUD_URL, is_strict_endpoint_mode
+from traigent.config.backend_config import (
+    DEFAULT_CLOUD_URL,
+    EndpointNotConfiguredError,
+    endpoint_missing_message,
+    is_strict_endpoint_mode,
+)
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.storage.local_storage import LocalStorageManager
 
@@ -358,6 +363,9 @@ class LocalAnalytics:
         except ImportError:
             logger.debug("Backend client not available for analytics submission")
             return {"success": False, "reason": "Backend client not available"}
+        except EndpointNotConfiguredError:
+            logger.debug(endpoint_missing_message("analytics submission"))
+            return {"success": False, "reason": "No backend endpoint configured"}
         except Exception as e:
             logger.debug(f"Analytics submission failed: {e}")
             return {"success": False, "reason": str(e)}
