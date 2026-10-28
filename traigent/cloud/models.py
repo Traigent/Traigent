@@ -284,7 +284,7 @@ def session_task_type_to_wire(session_request: Any) -> dict[str, str]:
     return {"task_type": cleaned} if cleaned else {}
 
 
-def session_g1_required_to_wire(session_request: Any) -> dict[str, bool]:
+def session_g1_required_to_wire(session_request: Any) -> dict[str, Any]:
     """The closed G1 intent flag for the run-registration request.
 
     Exactly ``{"snapshot_g1_required": True}`` when the request declares G1
@@ -293,9 +293,16 @@ def session_g1_required_to_wire(session_request: Any) -> dict[str, bool]:
     Without it the Backend issues the plain certificate at run completion and a
     later ``certify bind`` can never upgrade it. Shared by both session-create
     serializers so neither can drop the flag.
+
+    ``snapshot_g1_deadline_days`` (a plain integer 1-30) rides along only with
+    the flag and only when set; omitted otherwise (the Backend default applies).
     """
     if getattr(session_request, "snapshot_g1_required", False) is True:
-        return {"snapshot_g1_required": True}
+        wire: dict[str, Any] = {"snapshot_g1_required": True}
+        days = getattr(session_request, "snapshot_g1_deadline_days", None)
+        if isinstance(days, int) and not isinstance(days, bool) and 1 <= days <= 30:
+            wire["snapshot_g1_deadline_days"] = days
+        return wire
     return {}
 
 
@@ -741,6 +748,8 @@ class SessionCreationRequest:
     #: available). Serialized by ``session_g1_required_to_wire`` as the closed
     #: boolean ``snapshot_g1_required``; never anything else about the snapshot.
     snapshot_g1_required: bool = False
+    #: Optional co-sign deadline (days, 1-30) sent only with the flag above.
+    snapshot_g1_deadline_days: int | None = None
 
     def __post_init__(self) -> None:
         """Handle default values and alternative parameter names."""

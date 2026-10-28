@@ -405,6 +405,10 @@ class ExecutionOptions(BaseModel):
             terminal best configuration after the run (S1). Only blinded
             commitments are ever sent to Traigent, and only when you later bind.
             ``None`` (default) changes nothing: no snapshot code is imported.
+        snapshot_g1_deadline_days: Optional co-sign deadline for the G1
+            certificate, an integer from 1 to 30 days (the Backend default is 7
+            when unset). Meaningful only with ``snapshot_store``; setting it
+            without a store is refused.
     """
 
     model_config = ConfigDict(
@@ -447,6 +451,7 @@ class ExecutionOptions(BaseModel):
     example_timeout: float | None = None
     require_run_id: bool | None = None
     snapshot_store: Any = None
+    snapshot_g1_deadline_days: int | None = None
 
     @model_validator(mode="wrap")
     @classmethod
@@ -556,6 +561,23 @@ class ExecutionOptions(BaseModel):
         ):
             raise ValueError("snapshot_store must be a SnapshotStore")
         return v
+
+    @field_validator("snapshot_g1_deadline_days", mode="before")
+    @classmethod
+    def _validate_snapshot_g1_deadline_days(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if isinstance(v, bool) or not isinstance(v, int) or not 1 <= v <= 30:
+            raise ValueError(
+                "snapshot_g1_deadline_days must be an integer from 1 to 30"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _validate_snapshot_g1_deadline_needs_store(self) -> ExecutionOptions:
+        if self.snapshot_g1_deadline_days is not None and self.snapshot_store is None:
+            raise ValueError("snapshot_g1_deadline_days requires snapshot_store")
+        return self
 
     @field_validator("offline")
     @classmethod
@@ -3408,6 +3430,11 @@ def optimize(  # NOSONAR(S107)
     snapshot_store_value = (
         execution_bundle.snapshot_store if execution_bundle is not None else None
     )
+    snapshot_g1_deadline_value = (
+        execution_bundle.snapshot_g1_deadline_days
+        if execution_bundle is not None
+        else None
+    )
     smart_pruning_config = _normalize_smart_pruning_options(smart_pruning_value)
     external_service_evaluator = _resolve_external_service_evaluator(
         evaluator_value,
@@ -3643,7 +3670,14 @@ def optimize(  # NOSONAR(S107)
             **(
                 {}
                 if snapshot_store_value is None
-                else {"snapshot_store": snapshot_store_value}
+                else {
+                    "snapshot_store": snapshot_store_value,
+                    **(
+                        {}
+                        if snapshot_g1_deadline_value is None
+                        else {"snapshot_g1_deadline_days": snapshot_g1_deadline_value}
+                    ),
+                }
             ),
             smart_pruning=smart_pruning_config,
             parallel_config=combined_parallel_config,

@@ -1511,6 +1511,7 @@ class OptimizedFunction[**P, R]:
         # Opt-in G1 client evidence store; ``None`` (the default) means no snapshot
         # code is ever imported or run. Not a runtime override of the wrapped call.
         self.snapshot_store = kwargs.pop("snapshot_store", None)
+        self.snapshot_g1_deadline_days = kwargs.pop("snapshot_g1_deadline_days", None)
         self.optimization_history_limit = kwargs.pop("optimization_history_limit", 100)
         if (
             not isinstance(self.optimization_history_limit, int)
@@ -1562,6 +1563,7 @@ class OptimizedFunction[**P, R]:
             "smart_pruning",
             "require_run_id",
             "snapshot_store",
+            "snapshot_g1_deadline_days",
             # Multi-agent configuration
             "agents",
             "agent_prefixes",
@@ -3695,10 +3697,11 @@ class OptimizedFunction[**P, R]:
             **orchestrator_kwargs,
         )
 
+        deadline_days = getattr(self, "snapshot_g1_deadline_days", None)
         if snapshot_g1_required:
-            orchestrator.set_snapshot_g1_required()
+            orchestrator.set_snapshot_g1_required(deadline_days)
         if snapshot_g1_pending:
-            orchestrator.set_snapshot_g1_pending()
+            orchestrator.set_snapshot_g1_pending(deadline_days)
 
         no_usage_stop = _make_no_usage_stop_condition(self.objectives)
         if no_usage_stop is not None:

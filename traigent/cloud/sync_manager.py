@@ -478,6 +478,9 @@ class SyncManager:
         if not legacy_shape and session_metadata.get("snapshot_g1_pending") is True:
             # Local G1 intent from an offline capture; resolved at registration.
             converted["snapshot_g1_pending"] = True
+            days = session_metadata.get("snapshot_g1_deadline_days")
+            if isinstance(days, int) and not isinstance(days, bool):
+                converted["snapshot_g1_deadline_days"] = days
         return converted
 
     @staticmethod
@@ -1037,6 +1040,13 @@ class SyncManager:
                     )
                     return
                 create_payload = {**create_payload, "snapshot_g1_required": True}
+                days = traigent_data.get("snapshot_g1_deadline_days")
+                if (
+                    isinstance(days, int)
+                    and not isinstance(days, bool)
+                    and 1 <= days <= 30
+                ):
+                    create_payload["snapshot_g1_deadline_days"] = days
             create_result = self._sync_create_session(create_payload)
             if not create_result["success"]:
                 sync_result["status"] = "error"

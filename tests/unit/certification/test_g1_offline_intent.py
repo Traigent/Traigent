@@ -140,3 +140,50 @@ def test_sync_without_marker_never_declares_or_probes(
     manager.sync_session_to_cloud(result.sync_session_id)
     assert len(seen) == 1
     assert "snapshot_g1_required" not in seen[0]
+
+
+def _run_with_deadline(tmp_path: Path, days: int) -> Any:
+    @traigent.optimize(
+        eval_dataset=Dataset([EvaluationExample({"text": "q"}, "YES")], name="g1"),
+        objectives=["accuracy"],
+        configuration_space={"temperature": [0.1, 0.2]},
+        scoring_function=_scorer,
+        execution={
+            "offline": True,
+            "snapshot_store": LocalDirStore(tmp_path / "store"),
+            "snapshot_g1_deadline_days": days,
+        },
+    )
+    def agent(text: str) -> Any:
+        return with_usage("YES", total_cost=0.0)
+
+    return agent.optimize_sync(max_trials=1)
+
+
+def test_offline_deadline_is_persisted_and_synced_with_the_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _run_with_deadline(tmp_path, 12)
+    session = LocalStorageManager(str(tmp_path / "results")).load_session(
+        result.sync_session_id
+    )
+    assert session is not None
+    assert session.metadata.get("snapshot_g1_deadline_days") == 12
+    monkeypatch.setattr(snapshot_binding, "default_transport", lambda: FakeG1Backend())
+    manager = _sync_manager(tmp_path)
+    seen = _capture_create(manager, monkeypatch)
+    manager.sync_session_to_cloud(result.sync_session_id)
+    assert seen[0]["snapshot_g1_required"] is True
+    assert seen[0]["snapshot_g1_deadline_days"] == 12
+
+
+def test_offline_without_a_deadline_sends_none_on_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _run(tmp_path)
+    monkeypatch.setattr(snapshot_binding, "default_transport", lambda: FakeG1Backend())
+    manager = _sync_manager(tmp_path)
+    seen = _capture_create(manager, monkeypatch)
+    manager.sync_session_to_cloud(result.sync_session_id)
+    assert seen[0]["snapshot_g1_required"] is True
+    assert "snapshot_g1_deadline_days" not in seen[0]

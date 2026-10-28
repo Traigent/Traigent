@@ -6003,13 +6003,13 @@ class OptimizationOrchestrator:
         if cost_enforcer is not None:
             cost_enforcer.waive_unknown_cost_trial_cap()
 
-    def set_snapshot_g1_required(self) -> None:
-        """Send the closed ``snapshot_g1_required`` flag at run registration."""
-        self.backend_session_manager.set_snapshot_g1_required()
+    def set_snapshot_g1_required(self, deadline_days: int | None = None) -> None:
+        """Send the closed ``snapshot_g1_required`` flag (and deadline) at run registration."""
+        self.backend_session_manager.set_snapshot_g1_required(deadline_days)
 
-    def set_snapshot_g1_pending(self) -> None:
+    def set_snapshot_g1_pending(self, deadline_days: int | None = None) -> None:
         """Mark the offline local session as carrying pending G1 intent."""
-        self.backend_session_manager.set_snapshot_g1_pending()
+        self.backend_session_manager.set_snapshot_g1_pending(deadline_days)
 
     def add_stop_condition(self, condition: StopCondition) -> None:
         """Register an extra stop condition (e.g. the strict cost-usage guard)."""

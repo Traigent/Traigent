@@ -792,6 +792,7 @@ class BackendSessionManager:
         # online, readiness available). A closed boolean; see create_session.
         self._snapshot_g1_required = False
         self._snapshot_g1_pending = False
+        self._snapshot_g1_deadline_days: int | None = None
 
         # Tracks (session_id, trial_id) pairs that have already been registered
         # with the backend, so retries of submit_trial don't re-register and
@@ -860,13 +861,15 @@ class BackendSessionManager:
 
             raise SnapshotBindingError("READINESS_UNAVAILABLE")
 
-    def set_snapshot_g1_required(self) -> None:
-        """Declare G1 intent at run registration (a closed boolean, nothing else)."""
+    def set_snapshot_g1_required(self, deadline_days: int | None = None) -> None:
+        """Declare G1 intent at run registration (a closed boolean and optional 1-30 day deadline)."""
         self._snapshot_g1_required = True
+        self._snapshot_g1_deadline_days = deadline_days
 
-    def set_snapshot_g1_pending(self) -> None:
+    def set_snapshot_g1_pending(self, deadline_days: int | None = None) -> None:
         """Record G1 intent on the offline local session (synced after readiness)."""
         self._snapshot_g1_pending = True
+        self._snapshot_g1_deadline_days = deadline_days
 
     @property
     def backend_tracking_enabled(self) -> bool:
@@ -1876,6 +1879,11 @@ class BackendSessionManager:
             g1_kwargs: dict[str, Any] = (
                 {"snapshot_g1_required": True} if self._snapshot_g1_required else {}
             )
+            if (
+                self._snapshot_g1_required
+                and self._snapshot_g1_deadline_days is not None
+            ):
+                g1_kwargs["snapshot_g1_deadline_days"] = self._snapshot_g1_deadline_days
             raw_result = self._backend_client.create_session(
                 function_name=portal_name,
                 agent_key=declared_agent_key,
@@ -2146,6 +2154,10 @@ class BackendSessionManager:
                 metadata["agent_key"] = agent_key.strip()
             if self._snapshot_g1_pending:
                 metadata["snapshot_g1_pending"] = True
+                if self._snapshot_g1_deadline_days is not None:
+                    metadata["snapshot_g1_deadline_days"] = (
+                        self._snapshot_g1_deadline_days
+                    )
             if content_less_active:
                 from traigent.cloud import content_less as content_less_session
 

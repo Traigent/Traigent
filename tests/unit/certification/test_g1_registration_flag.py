@@ -278,3 +278,76 @@ def test_g1_intent_requires_a_run_id_independent_of_require_run_id(
         _create(manager)
     with pytest.raises(RunIdMissingError):
         manager.ensure_run_id_recorded("s1")
+
+
+DEADLINE = "snapshot_g1_deadline_days"
+
+
+@pytest.mark.parametrize(
+    "builder", ["_build_typed_session_payload", "_build_legacy_session_payload"]
+)
+@pytest.mark.parametrize("days", [1, 7, 30])
+def test_deadline_rides_with_the_flag_and_adds_exactly_one_integer(
+    builder: str, days: int
+) -> None:
+    ops = _ops()
+    flag_only = getattr(ops, builder)(_request(snapshot_g1_required=True), 2)
+    both = getattr(ops, builder)(
+        _request(snapshot_g1_required=True, snapshot_g1_deadline_days=days), 2
+    )
+    assert DEADLINE not in flag_only  # omitted when None
+    assert both[DEADLINE] == days and type(both[DEADLINE]) is int
+    assert {k: v for k, v in both.items() if k != DEADLINE} == flag_only
+
+
+@pytest.mark.parametrize("value", [0, 31, True, "7", 7.5, None])
+def test_deadline_that_is_not_a_closed_integer_never_reaches_the_wire(
+    value: Any,
+) -> None:
+    payload = _ops()._build_typed_session_payload(
+        _request(snapshot_g1_required=True, snapshot_g1_deadline_days=value), 2
+    )
+    assert DEADLINE not in payload
+
+
+def test_deadline_is_never_sent_without_the_flag() -> None:
+    payload = _ops()._build_typed_session_payload(
+        _request(snapshot_g1_deadline_days=7), 2
+    )
+    assert DEADLINE not in payload and FLAG not in payload
+
+
+def test_manager_passes_the_deadline_only_with_the_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    declared = _backend(SessionCreationResult.connected(session_id="s3"))
+    manager = _manager(declared)
+    manager.set_snapshot_g1_required(12)
+    _create(manager)
+    kwargs = declared.create_session.call_args.kwargs
+    assert kwargs[FLAG] is True and kwargs[DEADLINE] == 12
+
+    default = _backend(SessionCreationResult.connected(session_id="s4"))
+    manager = _manager(default)
+    manager.set_snapshot_g1_required()
+    _create(manager)
+    assert DEADLINE not in default.create_session.call_args.kwargs
+
+
+def test_execution_options_validate_the_deadline() -> None:
+    from pydantic import ValidationError
+
+    from traigent.api.decorators import ExecutionOptions
+    from traigent.snapshot.backends import LocalDirStore
+
+    store = LocalDirStore(Path("."))
+    assert ExecutionOptions().snapshot_g1_deadline_days is None
+    for days in (1, 30):
+        opts = ExecutionOptions(snapshot_store=store, snapshot_g1_deadline_days=days)
+        assert opts.snapshot_g1_deadline_days == days
+    for bad in (0, 31, True, "7", 7.5):
+        with pytest.raises(ValidationError):
+            ExecutionOptions(snapshot_store=store, snapshot_g1_deadline_days=bad)
+    with pytest.raises(ValidationError):
+        ExecutionOptions(snapshot_g1_deadline_days=7)
