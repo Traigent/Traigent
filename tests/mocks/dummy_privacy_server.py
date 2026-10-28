@@ -426,6 +426,8 @@ class DummyPrivacyServer:
                 is not None,
                 "evaluator_code_digest_sent": request_dict.get("evaluator_code_digest")
                 is not None,
+                "snapshot_g1_sent": bool(request_dict.get("snapshot_g1_required"))
+                or request_dict.get("snapshot_g1_deadline_days") is not None,
             }
         )
 

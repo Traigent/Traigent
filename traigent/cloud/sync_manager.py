@@ -1303,9 +1303,19 @@ class SyncManager:
                     self.api_key, no_egress=self.no_egress
                 )
             )
-        except BindError:
+        except BindError as err:
+            # Closed reason only: BindError.code is a fixed token.
+            logger.error(
+                "G1 readiness probe refused (reason=%s); sync will not register G1",
+                err.code,
+            )
             return False
         except Exception:
+            # Never log the exception text: it may carry URLs or key material.
+            logger.error(
+                "G1 readiness probe failed (reason=READINESS_UNAVAILABLE); "
+                "sync will not register G1"
+            )
             return False
         return True
 

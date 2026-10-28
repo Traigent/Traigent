@@ -735,6 +735,12 @@ class BackendSessionManager:
     - Session aggregation and summary generation
     """
 
+    # G1 intent defaults live on the class so an instance built without
+    # ``__init__`` (partial construction, test doubles) reads "no G1 intent".
+    _snapshot_g1_required: bool = False
+    _snapshot_g1_pending: bool = False
+    _snapshot_g1_deadline_days: int | None = None
+
     def __init__(
         self,
         backend_client: BackendIntegratedClient | None,
