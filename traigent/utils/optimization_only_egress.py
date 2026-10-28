@@ -1048,6 +1048,26 @@ _DATASET_METADATA = s_obj(
 )
 
 
+def _s_empty_list(value: Any, _c: _Ctx, _d: int) -> Any:
+    """The legacy dataset's ``examples`` slot carries no rows: only ``[]`` is allowed."""
+    if value != [] or not isinstance(value, list):
+        raise _Drop
+    return []
+
+
+# Legacy ``POST /sessions`` dataset: label, size and the same closed metadata the typed
+# body allows. Rows, paths, descriptions and free-text metadata are not part of it.
+_LEGACY_DATASET = s_obj(
+    {
+        "name": s_tok("dn"),
+        "size": s_int(),
+        "metadata": s_null(_DATASET_METADATA),
+        "examples": _s_empty_list,
+    },
+    strict_keys=("metadata",),
+)
+
+
 _CONSTRAINT_EXPR_MAX = 512
 
 
@@ -1221,22 +1241,18 @@ def project_legacy_session_create(data: dict[str, Any]) -> dict[str, Any]:
     out.pop(CONTRACT_VERSION_KEY, None)
     if "problem_statement" in out:  # free text; the field is required downstream
         out["problem_statement"] = DEFAULT_PROBLEM_STATEMENT
-    if isinstance(out.get("optimization_config"), dict):
+    if "optimization_config" in out:
         config = out["optimization_config"]
+        if not isinstance(config, dict):  # fail closed: no unprojected section
+            raise MetadataContractViolation
         for name in declared_metric_names(config.get("objectives")):
             if METRIC_KEY_RE.fullmatch(name) is None:
                 raise MetadataContractViolation
         ctx = _Ctx(declared_metric_names(config.get("objectives")))
         out["optimization_config"] = _run(_LEGACY_OPTIMIZATION_CONFIG, config, ctx)
-    if isinstance(out.get("dataset"), dict):
-        dataset = dict(out["dataset"])
-        if "name" in dataset:  # the envelope's label and description reach run metadata
-            try:
-                dataset["name"] = s_tok("dn")(dataset["name"], ctx, 0)
-            except _Drop:
-                dataset.pop("name")
-        dataset.pop("description", None)
-        out["dataset"] = dataset
+    if "dataset" in out:
+        # keep only allowlisted non-content fields; anything else is dropped
+        out["dataset"] = _run(_LEGACY_DATASET, out["dataset"], ctx)
     if "metadata" in out and out["metadata"] is not None:
         out["metadata"] = _run(_SESSION_METADATA, out["metadata"], ctx)
     return out
