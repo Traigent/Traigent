@@ -27,7 +27,10 @@ from traigent.snapshot.backends import LocalDirStore
 
 _FIXTURE: dict[str, Any] = json.loads(
     (
-        Path(__file__).parents[1] / "certification" / "data" / "g1_cosign_fixture.json"
+        Path(__file__).parents[2]
+        / "fixtures"
+        / "certification"
+        / "g1_cosign_fixture.json"
     ).read_text()
 )
 _PROJECT_REF = _FIXTURE["pins"]["project_ref"]
@@ -292,3 +295,39 @@ def test_abandon(backend: FakeG1Backend) -> None:
     result = CliRunner().invoke(certify, ["abandon", ref])
     assert result.exit_code == 1
     assert "ABANDON_REFUSED" in result.output
+
+
+def test_abandon_by_run_uses_the_run_route_when_no_session_exists(
+    backend: FakeG1Backend,
+) -> None:
+    result = CliRunner().invoke(certify, ["abandon", "--run", "run_123"])
+    assert result.exit_code == 0, result.output
+    assert "ABANDONED run run_123" in result.output
+    assert backend.requests == [
+        (
+            "POST",
+            "/api/v1beta/certificate-build-sessions/runs/run_123/abandon",
+            None,
+        )
+    ]
+    backend.refuse_step = "abandon-run"
+    refused = CliRunner().invoke(certify, ["abandon", "--run", "run_123"])
+    assert refused.exit_code == 1 and "ABANDON_REFUSED" in refused.output
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [],
+        ["bsn:" + "A" * 43, "--run", "run_1"],
+        ["--run", "../x"],
+        ["--run", "a/b"],
+        ["--run", "x" * 101],
+    ],
+)
+def test_abandon_requires_exactly_one_target_and_a_plain_run_id(
+    backend: FakeG1Backend, args: list[str]
+) -> None:
+    result = CliRunner().invoke(certify, ["abandon", *args])
+    assert result.exit_code != 0
+    assert backend.requests == []

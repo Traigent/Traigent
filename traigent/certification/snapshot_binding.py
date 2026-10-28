@@ -92,6 +92,9 @@ class SnapshotRun:
     _inputs: dict[str, Any] = field(default_factory=dict, repr=False)
     #: True once S0 passed for an online run: run registration must declare G1.
     g1_required: bool = field(default=False, repr=False)
+    #: True once S0 passed for an offline run: the local session is marked so a
+    #: later sync registers with G1 intent after the readiness check.
+    g1_pending: bool = field(default=False, repr=False)
 
     def capture_s0(
         self,
@@ -120,7 +123,8 @@ class SnapshotRun:
         if (
             not _present(dataset_state)
             or not _present(space_state)
-            or not any(_present(state) for state in evaluators.values())
+            or not evaluators
+            or not all(_present(state) for state in evaluators.values())
         ):
             raise SnapshotBindingError("SNAPSHOT_INCOMPLETE")
         try:
@@ -139,6 +143,8 @@ class SnapshotRun:
         self._s0_evaluators = evaluators
         # Online and ready: declare G1 intent at run registration.
         self.g1_required = not offline
+        # Offline capture cannot declare at registration: keep the intent locally.
+        self.g1_pending = offline
 
     def capture_s1(self, result: Any, *, custody: Any = None) -> None:
         """Capture from the terminal ``result.best_config``; attach local-only handles."""

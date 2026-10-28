@@ -471,10 +471,14 @@ class SyncManager:
             )
         )
 
-        return {
+        converted: dict[str, Any] = {
             "session_create": session_create,
             "configuration_runs": configuration_runs,
         }
+        if not legacy_shape and session_metadata.get("snapshot_g1_pending") is True:
+            # Local G1 intent from an offline capture; resolved at registration.
+            converted["snapshot_g1_pending"] = True
+        return converted
 
     @staticmethod
     def _derive_objectives(
@@ -1018,7 +1022,22 @@ class SyncManager:
             prior_state.get("cloud_experiment_run_id") if reuse else None
         )
         if not session_cloud_id:
-            create_result = self._sync_create_session(traigent_data["session_create"])
+            create_payload = traigent_data["session_create"]
+            if traigent_data.get("snapshot_g1_pending") is True:
+                # Offline G1 intent: register with the closed flag only after the
+                # readiness probe says available; otherwise refuse the sync
+                # closed. Never register plain: B1 could then make a later bind
+                # impossible.
+                if not self._g1_ready():
+                    sync_result["status"] = "error"
+                    sync_result["error_code"] = "READINESS_UNAVAILABLE"
+                    sync_result["errors"].append(
+                        "G1 certificate issuance is not available; sync refused "
+                        "(READINESS_UNAVAILABLE). Retry later."
+                    )
+                    return
+                create_payload = {**create_payload, "snapshot_g1_required": True}
+            create_result = self._sync_create_session(create_payload)
             if not create_result["success"]:
                 sync_result["status"] = "error"
                 sync_result["errors"].append(
@@ -1261,6 +1280,20 @@ class SyncManager:
             "session_results": session_results,
             "overall_status": overall_status,
         }
+
+    def _g1_ready(self) -> bool:
+        """True only when the Backend readiness probe says G1 issuance is available."""
+        from traigent.certification import snapshot_binding
+        from traigent.certification.bind import BindError, check_g1_readiness
+
+        self._raise_if_backend_egress_disabled("check G1 readiness")
+        try:
+            check_g1_readiness(snapshot_binding.default_transport())
+        except BindError:
+            return False
+        except Exception:
+            return False
+        return True
 
     def _sync_create_session(self, session_create: dict[str, Any]) -> dict[str, Any]:
         """Create the content-free backend_guided typed session.

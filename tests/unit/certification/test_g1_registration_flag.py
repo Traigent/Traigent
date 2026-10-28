@@ -257,3 +257,24 @@ def test_online_ready_run_declares_g1_and_refusal_stops_before_spend(
     assert caught.value.result is None
     assert calls == []  # refused before any trial ran
     assert refused.create_session.call_args.kwargs[FLAG] is True
+
+
+@pytest.mark.parametrize("option", [None, False])
+def test_g1_intent_requires_a_run_id_independent_of_require_run_id(
+    monkeypatch: pytest.MonkeyPatch, option: bool | None
+) -> None:
+    from traigent.cloud.client import RunIdMissingError
+
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    monkeypatch.delenv("TRAIGENT_REQUIRE_RUN_ID", raising=False)
+    backend = _backend(SessionCreationResult.connected(session_id="s1"))
+    backend.get_session_mapping = Mock(
+        return_value=SimpleNamespace(experiment_run_id=None)
+    )
+    manager = _manager(backend)
+    manager._require_run_id_option = option
+    manager.set_snapshot_g1_required()
+    with pytest.raises(RunIdMissingError):
+        _create(manager)
+    with pytest.raises(RunIdMissingError):
+        manager.ensure_run_id_recorded("s1")

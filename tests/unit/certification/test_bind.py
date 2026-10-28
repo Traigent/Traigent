@@ -30,7 +30,12 @@ from traigent.certification.client_evidence import (
 from traigent.certification.transport import G1RequestError
 
 _FIXTURE: dict[str, Any] = json.loads(
-    (Path(__file__).parent / "data" / "g1_cosign_fixture.json").read_text()
+    (
+        Path(__file__).parents[2]
+        / "fixtures"
+        / "certification"
+        / "g1_cosign_fixture.json"
+    ).read_text()
 )
 
 

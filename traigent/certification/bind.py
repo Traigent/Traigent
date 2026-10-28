@@ -272,6 +272,26 @@ def bind_g1(
     )
 
 
+_RUN_ID_RE = re.compile(r"[A-Za-z0-9_.:-]{1,100}")
+
+
+def abandon_run(transport: G1Transport, run_id: str) -> None:
+    """Abandon a run's G1 intent before any build session exists (no body).
+
+    Backend-private route. Failure is the closed ``ABANDON_REFUSED``; the run id
+    is validated locally so it can never alter the request path.
+    """
+    if _RUN_ID_RE.fullmatch(run_id) is None or run_id in {".", ".."}:
+        raise BindError("ABANDON_REFUSED")
+    _post(
+        transport,
+        f"{SESSIONS_PATH}/runs/{run_id}/abandon",
+        None,
+        "ABANDON_REFUSED",
+        None,
+    )
+
+
 def abandon_session(transport: G1Transport, build_session_ref: str) -> None:
     """Abandon a build session (no body). Failure is the closed ``ABANDON_REFUSED``."""
     _post(

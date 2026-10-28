@@ -3638,6 +3638,7 @@ class OptimizedFunction[**P, R]:
         requested_algorithm: str | None = None,
         execution_budget: ExecutionBudget | None = None,
         snapshot_g1_required: bool = False,
+        snapshot_g1_pending: bool = False,
     ) -> OptimizationOrchestrator:
         """Build the optimization orchestrator with all configuration."""
         orchestrator_kwargs = collect_orchestrator_kwargs(
@@ -3696,6 +3697,8 @@ class OptimizedFunction[**P, R]:
 
         if snapshot_g1_required:
             orchestrator.set_snapshot_g1_required()
+        if snapshot_g1_pending:
+            orchestrator.set_snapshot_g1_pending()
 
         no_usage_stop = _make_no_usage_stop_condition(self.objectives)
         if no_usage_stop is not None:
@@ -4717,6 +4720,8 @@ Remediation:
 
         # G1 intent for run registration: online run whose readiness probe passed.
         g1_required = snapshot_run is not None and snapshot_run.g1_required
+        # Offline capture: mark the local session so a later sync keeps the intent.
+        g1_pending = snapshot_run is not None and snapshot_run.g1_pending
 
         # Phase 4: Resolve parallel configuration
         effective_parallel_trials, effective_batch_size, effective_thread_workers = (
@@ -4807,6 +4812,7 @@ Remediation:
             requested_algorithm=algorithm,
             execution_budget=execution_budget,
             snapshot_g1_required=g1_required,
+            snapshot_g1_pending=g1_pending,
         )
 
         if resume_source is not None:

@@ -16,7 +16,12 @@ import pytest
 
 from traigent.certification import client_evidence as ce
 
-_VECTOR_PATH = Path(__file__).parent / "data" / "client_evidence_kats.json"
+_VECTOR_PATH = (
+    Path(__file__).parents[2]
+    / "fixtures"
+    / "certification"
+    / "client_evidence_kats.json"
+)
 # Split in 8-hex-character groups so the secret scanner does not flag a digest.
 _VECTOR_SHA256 = "".join(
     (

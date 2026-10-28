@@ -1310,14 +1310,30 @@ def bind_command(
 
 
 @certify.command("abandon")
-@click.argument("build_session_ref")
-def abandon_command(build_session_ref: str) -> None:
-    """Abandon a build session by its bsn: reference."""
+@click.argument("build_session_ref", required=False)
+@click.option(
+    "--run",
+    "run_id",
+    default=None,
+    help="Abandon this run's G1 intent when no build session exists yet.",
+)
+def abandon_command(build_session_ref: str | None, run_id: str | None) -> None:
+    """Abandon a build session (its bsn: reference), or a run's G1 intent with --run."""
     from traigent.certification import bind as bind_module
 
+    if (build_session_ref is None) == (run_id is None):
+        _g1_fail("ABANDON_REFUSED")
+        return
     try:
-        bind_module.abandon_session(_g1_transport(), build_session_ref)
+        if run_id is not None:
+            bind_module.abandon_run(_g1_transport(), run_id)
+        else:
+            assert build_session_ref is not None
+            bind_module.abandon_session(_g1_transport(), build_session_ref)
     except bind_module.BindError as err:
         _g1_fail(err.code)
         return
-    click.echo(f"ABANDONED {build_session_ref}")
+    if run_id is not None:
+        click.echo(f"ABANDONED run {run_id}")
+    else:
+        click.echo(f"ABANDONED {build_session_ref}")

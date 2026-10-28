@@ -791,6 +791,7 @@ class BackendSessionManager:
         # G1 intent for this run's registration (ExecutionOptions.snapshot_store,
         # online, readiness available). A closed boolean; see create_session.
         self._snapshot_g1_required = False
+        self._snapshot_g1_pending = False
 
         # Tracks (session_id, trial_id) pairs that have already been registered
         # with the backend, so retries of submit_trial don't re-register and
@@ -862,6 +863,10 @@ class BackendSessionManager:
     def set_snapshot_g1_required(self) -> None:
         """Declare G1 intent at run registration (a closed boolean, nothing else)."""
         self._snapshot_g1_required = True
+
+    def set_snapshot_g1_pending(self) -> None:
+        """Record G1 intent on the offline local session (synced after readiness)."""
+        self._snapshot_g1_pending = True
 
     @property
     def backend_tracking_enabled(self) -> bool:
@@ -970,7 +975,12 @@ class BackendSessionManager:
         An explicit option (True or False) always wins; ``None`` (not
         supplied) defers to ``TRAIGENT_REQUIRE_RUN_ID``, read fresh each call
         rather than cached (G1 §1, addendum F9).
+
+        A run that declared G1 intent always requires the run id, whatever the
+        option says: ``link-run`` needs the authoritative run to bind to.
         """
+        if self._snapshot_g1_required:
+            return True
         if self._require_run_id_option is not None:
             return self._require_run_id_option
         return _read_bool_env("TRAIGENT_REQUIRE_RUN_ID")
@@ -2134,6 +2144,8 @@ class BackendSessionManager:
             }
             if isinstance(agent_key, str) and agent_key.strip():
                 metadata["agent_key"] = agent_key.strip()
+            if self._snapshot_g1_pending:
+                metadata["snapshot_g1_pending"] = True
             if content_less_active:
                 from traigent.cloud import content_less as content_less_session
 

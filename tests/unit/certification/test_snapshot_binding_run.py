@@ -271,3 +271,24 @@ def test_default_off_changes_nothing(tmp_path: Path) -> None:
         check=False,
     )
     assert done.stdout.strip().splitlines()[-1] == "[]", done.stdout + done.stderr
+
+
+def test_s0_requires_every_evaluator_part_present(store: LocalDirStore) -> None:
+    import functools
+
+    from traigent.snapshot import EvaluatorInputs
+
+    unsourced = functools.partial(_scorer)  # inspect.getsource raises TypeError
+    run = snapshot_binding.SnapshotRun(store)
+    with pytest.raises(SnapshotBindingError) as caught:
+        run.capture_s0(
+            dataset=_dataset(),
+            configuration_space={"temperature": [0.1]},
+            agent=_scorer,
+            evaluator=EvaluatorInputs(
+                scoring_function=_scorer,
+                metric_functions={"m": unsourced},
+            ),
+            offline=True,
+        )
+    assert caught.value.code == "SNAPSHOT_INCOMPLETE"

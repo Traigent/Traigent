@@ -63,6 +63,12 @@ class FakeG1Backend:
             return G1Response(
                 200, {"readiness_version": 1, "g1_issuance": self.readiness}
             )
+        if method == "POST" and path.startswith(f"{SESSIONS}/runs/"):
+            # Pre-bind abandonment by run (Backend-private route): no body.
+            assert path.endswith("/abandon") and body is None
+            if self.refuse_step == "abandon-run":
+                raise G1RequestError(404, "not_found")
+            return G1Response(200, {"state": "abandoned"})
         if self.fixture is not None:
             return self._g1_flow(method, path, body)
         raise AssertionError(f"unexpected request {method} {path}")
