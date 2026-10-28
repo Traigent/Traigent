@@ -429,3 +429,28 @@ def test_real_scrubbers_redact_email_in_output_and_fallback(events: list[Any]) -
 
     _record(events, actual_output=_Opaque())
     assert events[1][2] == "***EMAIL***"
+
+
+def test_span_attribute_lookup_happens_after_the_output_is_prepared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    log: list[str] = []
+
+    class _LazySpan:
+        def __getattr__(self, name: str) -> Any:
+            log.append(f"getattr {name}")
+            return lambda *args, **kwargs: log.append(f"call {name} {args[0]}")
+
+    def _scrub(value: Any) -> Any:
+        log.append("scrub")
+        return value
+
+    monkeypatch.setattr(tracing, "_scrub_for_export", _scrub)
+    tracing.record_example_result(_LazySpan(), True, actual_output="o")
+    assert log == [
+        "getattr set_attribute",
+        "call set_attribute example.success",
+        "scrub",
+        "getattr set_attribute",
+        "call set_attribute example.actual_output",
+    ]
