@@ -66,7 +66,7 @@ def _manager(
     trace: _Trace, constructors: dict[str, Any], methods: dict[str, Any]
 ) -> BaseOverrideManager:
     manager = BaseOverrideManager()
-    setattr(manager, "_state", _State(trace, constructors, methods))
+    object.__setattr__(manager, "_state", _State(trace, constructors, methods))
     return manager
 
 
