@@ -33,7 +33,22 @@ def _canon(value: Any) -> str:
 
 def _sdk(case: dict[str, Any]) -> Any:
     phase = case["phase"]
-    return oo.project_for_phase(phase, case["input"], declared=case["declared"])
+    data = case["input"]
+    if phase == "configuration_run":
+        # Same stricter-than-backend difference as below (``experiment_parameters`` is held to
+        # the closed check) plus the forged ``id``/``tenant_id`` the backend silently drops and the SDK
+        # refuses; both are pinned as refusals in the dedicated tests.
+        data = {
+            k: v
+            for k, v in data.items()
+            if k not in ("experiment_parameters", "id", "tenant_id")
+        }
+    if phase in ("results", "summary_submission") and "config" in data:
+        # The backend leaves a trial's ``config`` unprojected; the SDK holds it to the closed
+        # search-space check and refuses free text (covered in the envelope tests). Parity
+        # compares only the five free-form members, so judge the body without it.
+        data = {k: v for k, v in data.items() if k != "config"}
+    return oo.project_for_phase(phase, data, declared=case["declared"])
 
 
 @pytest.fixture(autouse=True)
@@ -65,6 +80,8 @@ def test_parity_with_backend_projection(name: str) -> None:
             if key in case["input"]:
                 assert _canon(got[key]) == _canon(want[key]), key
         return
+    if case["phase"] == "configuration_run":
+        want = {k: v for k, v in want.items() if k != "experiment_parameters"}
     assert _canon(got) == _canon(want)
 
 
@@ -183,13 +200,22 @@ def test_free_text_labels_and_nested_unknown_keys_are_dropped() -> None:
                 "nested": {"a": {"b": ["secret"]}},
                 "comparability": {"label": "text", "scope": "x y", "n": 3},
             },
-            "free_text_top_level": "Alice has diabetes",
-            "free_dict_top_level": {"a": "b"},
         },
     )
     blob = json.dumps(out)
-    assert "Alice" not in blob and "secret" not in blob and "free_" not in blob
+    assert "Alice" not in blob and "secret" not in blob
     assert out["metadata"]["comparability"] == {"n": 3}
+
+
+@pytest.mark.parametrize(
+    "extra", [{"free_text_top_level": "Alice has diabetes"}, {"free_dict": {"a": "b"}}]
+)
+def test_unknown_top_level_result_key_is_refused_without_echo(
+    extra: dict[str, Any],
+) -> None:
+    with pytest.raises(oo.MetadataContractViolation) as caught:
+        oo.project_for_phase(oo.PHASE_RESULTS, {"trial_id": "t1", **extra})
+    assert "Alice" not in str(caught.value) and "free_" not in str(caught.value)
 
 
 def test_error_message_collapses_to_closed_vocabulary() -> None:
@@ -920,3 +946,27 @@ def test_legacy_session_create_with_allowed_fields_still_succeeds() -> None:
     }
     assert out["search_space"] == {"model": ["a", "b"]}
     assert out["optimization_config"]["max_trials"] == 3
+
+
+def test_free_text_config_parity_fixtures_are_refused_by_the_sdk() -> None:
+    """The backend leaves ``config``/``experiment_parameters`` unprojected; the SDK is
+    deliberately stricter. Pin that the fixtures the parity runner strips are REFUSED."""
+    results = CASES["results_text_labels_and_unknown_nested"]
+    assert (
+        results["input"]["config"]["prompt"] == "config values are an allowed channel"
+    )
+    assert "ok" in EXPECTED["results_text_labels_and_unknown_nested"]  # backend accepts
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_for_phase(
+            results["phase"], results["input"], declared=results["declared"]
+        )
+    run = CASES["config_run_full"]
+    assert "ok" in EXPECTED["config_run_full"]  # backend accepts
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_for_phase(run["phase"], run["input"], declared=run["declared"])
+    # with only the free text removed it is still refused for the forged identity column
+    no_text = {**run["input"], "experiment_parameters": {"model": "gpt-4o"}}
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_for_phase(run["phase"], no_text, declared=run["declared"])
+    no_id = {k: v for k, v in no_text.items() if k not in ("id", "tenant_id")}
+    oo.project_for_phase(run["phase"], no_id, declared=run["declared"])

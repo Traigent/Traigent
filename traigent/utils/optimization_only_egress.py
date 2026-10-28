@@ -401,6 +401,34 @@ def s_closed_tree(value: Any, _c: _Ctx, depth: int) -> Any:
     raise _Drop
 
 
+def _closed_search_value(
+    value: Any, ctx: _Ctx, depth: int, extra: re.Pattern[str] | None
+) -> Any:
+    """Body of :func:`s_search_value`; ``extra`` is one more closed string shape to accept."""
+    if depth > MAX_DEPTH:
+        raise _Drop
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return s_num()(value, ctx, depth)
+    if isinstance(value, str):
+        if extra is not None and extra.fullmatch(value):
+            return value
+        return s_id(value, ctx, depth)
+    if isinstance(value, (list, tuple)):
+        if len(value) > MAX_LIST:
+            raise _Drop
+        return [_closed_search_value(item, ctx, depth + 1, extra) for item in value]
+    if isinstance(value, dict):
+        if len(value) > MAX_LIST:
+            raise _Drop
+        return {
+            s_id(key, ctx, depth): _closed_search_value(item, ctx, depth + 1, extra)
+            for key, item in value.items()
+        }
+    raise _Drop
+
+
 def s_search_value(value: Any, ctx: _Ctx, depth: int) -> Any:
     """Strict closed tree for the optimizer's search space and default config.
 
@@ -409,26 +437,25 @@ def s_search_value(value: Any, ctx: _Ctx, depth: int) -> Any:
     silently dropped or truncated: any other string (free text such as a prompt), an
     over-long container, a non-identifier key or excess depth rejects the whole value.
     """
-    if depth > MAX_DEPTH:
+    return _closed_search_value(value, ctx, depth, None)
+
+
+#: The marker privacy mode writes in place of a redacted config value
+#: (``TrialOperations._redaction_marker``): it carries at most a length or a container type.
+_REDACTION_MARKER_RE = re.compile(
+    r"^\[REDACTED(?::(?:[0-9]{1,6} chars|list|dict|tuple|set))?\]$"
+)
+
+
+def s_config(value: Any, ctx: _Ctx, depth: int) -> Any:
+    """A trial's chosen configuration: a mapping held to the same closed value check as the
+    search space (the values it carries are the chosen search-space values), plus privacy
+    mode's content-free redaction marker. ``None`` is an absent config."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
         raise _Drop
-    if value is None or isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return s_num()(value, ctx, depth)
-    if isinstance(value, str):
-        return s_id(value, ctx, depth)
-    if isinstance(value, (list, tuple)):
-        if len(value) > MAX_LIST:
-            raise _Drop
-        return [s_search_value(item, ctx, depth + 1) for item in value]
-    if isinstance(value, dict):
-        if len(value) > MAX_LIST:
-            raise _Drop
-        return {
-            s_id(key, ctx, depth): s_search_value(item, ctx, depth + 1)
-            for key, item in value.items()
-        }
-    raise _Drop
+    return _closed_search_value(value, ctx, depth, _REDACTION_MARKER_RE)
 
 
 # ---------------------------------------------------------------------------------------
@@ -1534,20 +1561,15 @@ _TRIAL_METADATA_FIELDS: dict[str, Spec] = {
     "provider": s_id,
     "llm_provider": s_id,
     "model_provider": s_id,
-    "config": lambda v, _c, _d: _plain_dict(v),
+    "config": s_config,
 }
-
-
-def _plain_dict(value: Any) -> dict[str, Any]:
-    """``config`` values are an explicitly allowed channel; only the shape is checked."""
-    if not isinstance(value, dict):
-        raise _Drop
-    return value
 
 
 def _trial_metadata_spec(ctx: _Ctx) -> Spec:
     """Fixed fields plus dynamic top-level numeric metric keys (declared/standard only)."""
-    fixed = s_obj(_TRIAL_METADATA_FIELDS, strict_keys=("trial_id", "trial_number"))
+    fixed = s_obj(
+        _TRIAL_METADATA_FIELDS, strict_keys=("trial_id", "trial_number", "config")
+    )
 
     def spec(value: Any, c: _Ctx, depth: int) -> Any:
         out = fixed(value, c, depth)
@@ -1701,7 +1723,7 @@ CONFIG_RUN_FIELDS = frozenset(
 def project_workflow_metadata(workflow_metadata: Any) -> Any:
     """Workflow / agent display names are free text: replaced by the (validated) ids."""
     if not isinstance(workflow_metadata, dict):
-        return workflow_metadata
+        raise MetadataContractViolation  # never a bare value in a rebuilt slot
     ctx = _Ctx()
     if workflow_metadata.get("workflow_id") is None:
         raise MetadataContractViolation
@@ -1720,7 +1742,7 @@ def project_workflow_metadata(workflow_metadata: Any) -> Any:
 
 def project_summary_stats(summary_stats: Any, declared: Iterable[str] = ()) -> Any:
     if not isinstance(summary_stats, dict):
-        return summary_stats  # the service's own shape validation answers
+        raise MetadataContractViolation  # never a bare value in a rebuilt slot
     return _run(_SUMMARY_STATS, summary_stats, _Ctx(declared))
 
 
@@ -1741,17 +1763,24 @@ def project_configuration_run(
     data: dict[str, Any], declared: Iterable[str] = ()
 ) -> dict[str, Any]:
     """Create/update body for a configuration run. Only the model's client-writable fields are
-    kept; every other key (including identity/tenant columns) is dropped."""
+    allowed; any other key (including identity/tenant columns) refuses. ``experiment_parameters``
+    (the chosen configuration) is held to the closed search-space check."""
     ctx = _Ctx(declared)
     if not isinstance(data, dict):
         raise MetadataContractViolation
     _check_contract_version(data)
     out: dict[str, Any] = {}
+    if any(key not in CONFIG_RUN_FIELDS for key in data if key != CONTRACT_VERSION_KEY):
+        raise MetadataContractViolation  # default-deny: an unknown member refuses
     for key, value in data.items():
-        if key not in CONFIG_RUN_FIELDS:
+        if key == CONTRACT_VERSION_KEY:
             continue
-        if key == "experiment_parameters" or key == "status":
-            out[key] = value
+        if key in ("experiment_parameters", "status"):
+            spec = s_config if key == "experiment_parameters" else s_id
+            try:
+                out[key] = spec(value, ctx, 0)
+            except _Drop:
+                raise MetadataContractViolation from None
         elif key == "measures":
             out[key] = project_measures(value, declared) if value is not None else None
         elif key == "summary_stats":
@@ -1831,6 +1860,30 @@ _RUN_METADATA = s_obj(
 )
 
 
+#: Top-level keys of ``POST /experiments/<id>/runs`` (``name``/``description`` are free text:
+#: dropped). Any other key refuses.
+_PARENT_RUN_ENVELOPE: dict[str, Spec | None] = {
+    "name": None,
+    "description": None,
+    "id": None,
+    "run_id": None,
+    "metadata": None,
+    "experiment_data": None,
+}
+_EXPERIMENT_DATA_KEYS = frozenset(
+    {
+        "name",
+        "description",
+        "id",
+        "run_id",
+        "agent_id",
+        "benchmark_id",
+        "measures",
+        "metadata",
+    }
+)
+
+
 def project_parent_run_create(payload: dict[str, Any]) -> dict[str, Any]:
     """``POST /experiments/<id>/runs`` body: name/description dropped, metadata rebuilt."""
     if not isinstance(payload, dict):
@@ -1839,6 +1892,7 @@ def project_parent_run_create(payload: dict[str, Any]) -> dict[str, Any]:
     _check_contract_version(payload)
     out = dict(payload)
     out.pop(CONTRACT_VERSION_KEY, None)
+    _enforce_envelope(out, _PARENT_RUN_ENVELOPE, ctx)
     for key in ("name", "description"):
         out.pop(key, None)
     for key in ("id", "run_id"):
@@ -1846,13 +1900,16 @@ def project_parent_run_create(payload: dict[str, Any]) -> dict[str, Any]:
             out[key] = _strict_id(out[key], ctx)
     if out.get("metadata") is not None:
         out["metadata"] = _run(_RUN_METADATA, out["metadata"], ctx)
-    experiment_data = out.get("experiment_data")
-    if isinstance(experiment_data, dict):
+    if "experiment_data" in out and out["experiment_data"] is not None:
+        experiment_data = out["experiment_data"]
+        if not isinstance(experiment_data, dict) or any(
+            key not in _EXPERIMENT_DATA_KEYS for key in experiment_data
+        ):
+            raise MetadataContractViolation
         experiment_data = dict(experiment_data)
-        for key in ("id", "run_id"):
-            if experiment_data.get(key) is not None:
-                experiment_data[key] = _strict_id(experiment_data[key], ctx)
-        for key in ("agent_id", "benchmark_id"):
+        for key in ("name", "description"):
+            experiment_data.pop(key, None)
+        for key in ("id", "run_id", "agent_id", "benchmark_id"):
             if experiment_data.get(key) is not None:
                 experiment_data[key] = _strict_id(experiment_data[key], ctx)
         if "measures" in experiment_data:
@@ -2328,7 +2385,43 @@ _RESULT_FREEFORM_KEYS = (
     "metadata",
     "error_message",
 )
-_RESULT_KEPT_KEYS = frozenset({"config"})
+_s_wire_scalar_id = s_null(s_id)
+
+#: Top-level keys of a ``POST /sessions/<id>/results`` body (trial registration, trial result,
+#: privacy-mode summary submission, content-less session import). ``None`` = dedicated handling
+#: in :func:`_project_trial_body`. Any other key refuses the whole request. Producers:
+#: ``TrialOperations.register_trial_start`` / ``submit_trial_result_via_session`` /
+#: ``submit_summary_stats``, ``TraigentCloudClient._serialize_trial_result`` and the
+#: ``sync_manager`` session import.
+_RESULT_ENVELOPE: dict[str, Spec | None] = {
+    "trial_id": None,
+    "metrics": None,
+    "measures": None,
+    "summary_stats": None,
+    "metadata": None,
+    "error_message": None,
+    "config": s_config,
+    "session_id": _s_wire_scalar_id,
+    "status": _s_wire_scalar_id,
+    "duration": s_null(s_num(0)),
+    "cost_floor_usd": s_null(s_num(0)),
+}
+
+#: Top-level keys of one optimizer-direct metric submission
+#: (``OptimizerDirectClient.submit_metrics``).
+_OPTIMIZER_METRICS_ENVELOPE: dict[str, Spec | None] = {
+    "trial_id": None,
+    "metrics": None,
+    "metadata": None,
+    "execution_time": s_null(s_num(0)),
+}
+
+#: Top-level keys of a ``next-trial`` body (``NextTrialRequest``).
+_NEXT_TRIAL_ENVELOPE: dict[str, Spec | None] = {
+    "session_id": _s_wire_scalar_id,
+    "previous_results": None,
+    "request_metadata": None,
+}
 
 
 def project_session_create_auto(data: dict[str, Any]) -> dict[str, Any]:
@@ -2346,16 +2439,22 @@ def project_session_create_auto(data: dict[str, Any]) -> dict[str, Any]:
     raise MetadataContractViolation
 
 
-def project_results_payload(
-    payload: dict[str, Any], declared: Iterable[str] = ()
+def _project_trial_body(
+    payload: Any, declared: Iterable[str], envelope: dict[str, Spec | None]
 ) -> dict[str, Any]:
-    """A ``POST /sessions/<id>/results`` body (trial result, summary submission)."""
+    """Default-deny a trial-shaped body: the top level must be inside ``envelope`` (an unknown
+    key refuses, never dropped), spec-checked keys must fit their closed spec, and the
+    free-form parts are rebuilt by :func:`project_trial_result`."""
     if not isinstance(payload, dict):
         raise MetadataContractViolation
     declared = tuple(declared)
+    ctx = _Ctx(declared)
     _check_contract_version(payload)
     out = dict(payload)
     out.pop(CONTRACT_VERSION_KEY, None)
+    _enforce_envelope(out, envelope, ctx)
+    if out.get("metrics") is not None and not isinstance(out["metrics"], dict):
+        raise MetadataContractViolation  # never a bare value in the metrics slot
     projected = project_trial_result(
         metrics=out.get("metrics"),
         measures=out.get("measures"),
@@ -2368,19 +2467,22 @@ def project_results_payload(
         if key in out:
             out[key] = projected[key]
     if out.get("trial_id") is not None:
-        out["trial_id"] = _strict_id(out["trial_id"], _Ctx(declared))
-    for key in list(out):
-        if (
-            key in _RESULT_FREEFORM_KEYS
-            or key in _RESULT_KEPT_KEYS
-            or key == "trial_id"
-        ):
-            continue
-        try:
-            out[key] = _closed_passthrough(out[key])
-        except _Drop:
-            del out[key]
+        out["trial_id"] = _strict_id(out["trial_id"], ctx)
     return out
+
+
+def project_results_payload(
+    payload: dict[str, Any], declared: Iterable[str] = ()
+) -> dict[str, Any]:
+    """A ``POST /sessions/<id>/results`` body (trial result, summary submission)."""
+    return _project_trial_body(payload, declared, _RESULT_ENVELOPE)
+
+
+def project_optimizer_metrics_payload(
+    payload: dict[str, Any], declared: Iterable[str] = ()
+) -> dict[str, Any]:
+    """One optimizer-direct metric submission."""
+    return _project_trial_body(payload, declared, _OPTIMIZER_METRICS_ENVELOPE)
 
 
 def project_next_trial_payload(
@@ -2389,7 +2491,11 @@ def project_next_trial_payload(
     """``next-trial`` body: ``previous_results`` are results; request metadata is closed."""
     if not isinstance(payload, dict):
         raise MetadataContractViolation
+    ctx = _Ctx(tuple(declared))
+    _check_contract_version(payload)
     out = dict(payload)
+    out.pop(CONTRACT_VERSION_KEY, None)
+    _enforce_envelope(out, _NEXT_TRIAL_ENVELOPE, ctx)
     previous = out.get("previous_results")
     if previous is not None:
         if not isinstance(previous, list):
@@ -2402,13 +2508,6 @@ def project_next_trial_payload(
             out["request_metadata"] = s_closed_tree(out["request_metadata"], _Ctx(), 0)
         except _Drop:
             raise MetadataContractViolation from None
-    for key in list(out):
-        if key in ("previous_results", "request_metadata"):
-            continue
-        try:
-            out[key] = _closed_passthrough(out[key])
-        except _Drop:
-            del out[key]
     return out
 
 
@@ -3074,7 +3173,7 @@ _PROJECTORS: dict[str, Callable[[Any, tuple[str, ...]], Any]] = {
     PHASE_SESSION_CREATE_LEGACY: lambda p, d: project_legacy_session_create(p),
     PHASE_RESULTS: lambda p, d: project_results_payload(p, d),
     PHASE_SUMMARY_SUBMISSION: lambda p, d: project_results_payload(p, d),
-    PHASE_OPTIMIZER_METRICS: lambda p, d: project_results_payload(p, d),
+    PHASE_OPTIMIZER_METRICS: lambda p, d: project_optimizer_metrics_payload(p, d),
     PHASE_NEXT_TRIAL: lambda p, d: project_next_trial_payload(p, d),
     PHASE_FINALIZE: lambda p, d: project_finalize_payload(p),
     PHASE_CONFIGURATION_RUN: lambda p, d: project_configuration_run(p, d),
@@ -3094,14 +3193,27 @@ _SESSION_CREATE_PHASES = frozenset(
 )
 
 
-def _canonical_wire(payload: Any) -> Any:
+_RESULT_WIRE_PHASES = frozenset(
+    {
+        PHASE_RESULTS,
+        PHASE_SUMMARY_SUBMISSION,
+        PHASE_OPTIMIZER_METRICS,
+        PHASE_NEXT_TRIAL,
+        PHASE_CONFIGURATION_RUN,
+    }
+)
+
+
+def _canonical_wire(payload: Any, *, allow_nan: bool = False) -> Any:
     """The payload as the transport will serialize it: plain ``str``/``int``/``float``/``bool``/
     ``None``/``list``/``dict`` only. A ``str`` or ``dict`` subclass with an overridden
     ``__eq__``/``__hash__``/``keys``/``__iter__`` is judged by what it WRITES, not by what it
     claims to be, so a check can never pass a value that serializes to something else.
-    NaN/infinity and unserializable values refuse."""
+    NaN/infinity and unserializable values refuse, unless ``allow_nan``: the result phases
+    keep their rule that a non-finite metric is dropped (not refused), and every projector
+    spec rejects a non-finite number, so none can reach the wire."""
     try:
-        return json.loads(json.dumps(payload, allow_nan=False))
+        return json.loads(json.dumps(payload, allow_nan=allow_nan))
     except (TypeError, ValueError, RecursionError):
         raise MetadataContractViolation from None
 
@@ -3116,13 +3228,14 @@ def project_for_phase(
     """Project ``payload`` for ``phase`` unconditionally. Returns a new object; the input is
     never mutated. Raises :class:`MetadataContractViolation` for a payload the server would
     refuse, and ``ValueError`` for an unknown phase (an unclassified send must not happen)."""
-    # Session-create bodies are judged in their wire form; other phases' projectors already
-    # rebuild every value and rely on dropping (not refusing) NaN/infinity.
-    detached = (
-        _canonical_wire(payload)
-        if phase in _SESSION_CREATE_PHASES
-        else copy.deepcopy(payload)
-    )
+    # Session-create and parent-run bodies are judged in their wire form (NaN refuses); the
+    # result-shaped phases too, with NaN tolerated so a non-finite metric is dropped.
+    if phase in _SESSION_CREATE_PHASES or phase == PHASE_PARENT_RUN:
+        detached = _canonical_wire(payload)
+    elif phase in _RESULT_WIRE_PHASES:
+        detached = _canonical_wire(payload, allow_nan=True)
+    else:
+        detached = copy.deepcopy(payload)
     if phase == PHASE_SESSION_CREATE_AUTO:
         return project_session_create_auto(detached)
     projector = _PROJECTORS.get(phase)
