@@ -1116,3 +1116,208 @@ def _emit_agent_quality(
     else:
         for line in lines:
             click.echo(line)
+
+
+# --- G1 client commands (keygen, pin, enroll, bind, abandon) ----------------
+#
+# All output is closed: fixed tokens, server-issued references and local paths.
+# Nothing from a Backend response body or a local exception message is echoed.
+
+
+def _g1_transport() -> Any:
+    """The authenticated, egress-gated Backend transport (replaced in tests)."""
+    from traigent.certification.transport import BackendG1Transport
+
+    return BackendG1Transport(_make_backend_client())
+
+
+def _g1_fail(message: str) -> Any:
+    click.echo(message)
+    raise click.exceptions.Exit(1)
+
+
+@certify.command("keygen")
+@click.option(
+    "--out",
+    "out_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Key file to create (default: ~/.traigent/certification/keys/).",
+)
+def keygen_command(out_path: Path | None) -> None:
+    """Generate a client signing key; prints the file path and public key only."""
+    from traigent.certification.client_keys import ClientKeyError, generate_client_key
+
+    try:
+        key = generate_client_key(out_path)
+    except ClientKeyError as err:
+        _g1_fail(f"KEYGEN_REFUSED {err.code}")
+        return
+    click.echo(f"key_file={key.path}")
+    click.echo(f"public_key_der_b64={key.public_key_der_b64}")
+
+
+@certify.command("pin")
+@click.option(
+    "--from",
+    "source",
+    required=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Trusted pin document (issuer key, trust ring, project ref, ...).",
+)
+@click.option(
+    "--pins",
+    "pins_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Pin file to write (default: ~/.traigent/certification/pins.json).",
+)
+def pin_command(source: Path, pins_path: Path | None) -> None:
+    """Install the trusted local pin file that also carries the project ref."""
+    from traigent.certification.pins import PinError, write_pins
+
+    try:
+        pins = write_pins(source, pins_path)
+    except PinError as err:
+        _g1_fail(err.code)
+        return
+    click.echo(f"PINNED project_ref={pins.project_ref}")
+
+
+@certify.command("enroll")
+@click.option(
+    "--key",
+    "key_path",
+    required=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+)
+@click.option(
+    "--pins",
+    "pins_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+)
+def enroll_command(key_path: Path, pins_path: Path | None) -> None:
+    """Enrol the client public key for the pinned project and pin its reference."""
+    from traigent.certification.client_keys import (
+        ClientKeyError,
+        enroll_client_key,
+        load_client_key,
+    )
+    from traigent.certification.pins import PinError, load_pins
+
+    try:
+        project_ref = load_pins(pins_path).project_ref
+        key = load_client_key(key_path)
+        ref = enroll_client_key(_g1_transport(), key, project_ref)
+    except PinError as err:
+        _g1_fail(err.code)
+        return
+    except ClientKeyError as err:
+        _g1_fail(f"ENROLL_REFUSED {err.code}")
+        return
+    click.echo(f"ENROLLED client_key_ref={ref}")
+
+
+@certify.command("bind")
+@click.argument("root")
+@click.option(
+    "--key", "key_path", required=True, type=click.Path(dir_okay=False, path_type=Path)
+)
+@click.option("--run-id", required=True)
+@click.option(
+    "--store-dir",
+    required=True,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Local snapshot store holding the tes1 snapshot.",
+)
+@click.option(
+    "--pins", "pins_path", type=click.Path(dir_okay=False, path_type=Path), default=None
+)
+@click.option(
+    "--evidence-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Local client-evidence directory (default: ~/.traigent/certification/evidence).",
+)
+@click.option("--sdk-ref", default=None, help="40-hex git SHA of this SDK build.")
+@click.option(
+    "--declared-mode",
+    type=click.Choice(["offline", "current_online"]),
+    default="current_online",
+    show_default=True,
+)
+def bind_command(
+    root: str,
+    key_path: Path,
+    run_id: str,
+    store_dir: Path,
+    pins_path: Path | None,
+    evidence_dir: Path | None,
+    sdk_ref: str | None,
+    declared_mode: str,
+) -> None:
+    """Bind retained client evidence (ROOT is sha256:...) and obtain the certificate."""
+    from traigent.certification import bind as bind_module
+    from traigent.certification.client_evidence import (
+        ClientEvidenceError,
+        LocalFileCustody,
+        reconstruct_and_compare,
+    )
+    from traigent.certification.client_keys import ClientKeyError, load_client_key
+    from traigent.certification.pins import PinError, load_pins
+    from traigent.snapshot.backends import LocalDirStore
+
+    # Local reconstruction first: a failure here makes no network call.
+    try:
+        evidence = reconstruct_and_compare(
+            root,
+            custody=LocalFileCustody(evidence_dir),
+            store=LocalDirStore(store_dir),
+        )
+    except ClientEvidenceError as err:
+        _g1_fail(f"BIND_REFUSED {err.code}")
+        return
+    except Exception:
+        _g1_fail("BIND_REFUSED EVIDENCE_STALE_OR_CORRUPT")
+        return
+    try:
+        transport = _g1_transport()
+        bind_module.check_g1_readiness(transport)
+        resolved_ref, sdk_version = bind_module.resolve_sdk_identity(sdk_ref)
+        pins = load_pins(pins_path)
+        key = load_client_key(key_path)
+        result = bind_module.bind_g1(
+            transport,
+            evidence,
+            key,
+            pins,
+            run_id=run_id,
+            sdk_ref=resolved_ref,
+            sdk_version=sdk_version,
+            declared_mode=declared_mode,
+        )
+    except bind_module.BindError as err:
+        click.echo(f"BIND_REFUSED {err.code}")
+        session_ref = getattr(err, "session_ref", None)
+        if session_ref:
+            click.echo(f"session_ref={session_ref}")
+        raise click.exceptions.Exit(1) from None
+    except (PinError, ClientKeyError) as err:
+        _g1_fail(f"BIND_REFUSED {err.code}")
+        return
+    click.echo(f"BOUND certificate_ref={result.certificate_ref or 'none'}")
+
+
+@certify.command("abandon")
+@click.argument("build_session_ref")
+def abandon_command(build_session_ref: str) -> None:
+    """Abandon a build session by its bsn: reference."""
+    from traigent.certification import bind as bind_module
+
+    try:
+        bind_module.abandon_session(_g1_transport(), build_session_ref)
+    except bind_module.BindError as err:
+        _g1_fail(err.code)
+        return
+    click.echo(f"ABANDONED {build_session_ref}")
