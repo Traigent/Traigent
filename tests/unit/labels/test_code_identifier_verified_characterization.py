@@ -404,3 +404,40 @@ def test_path_form_root_is_resolved_and_target_resolved_once_each(
 
     assert CodeIdentifier.verified("m.py", root=_CountingPath(tmp_path))
     assert counts["resolve"] >= 2
+
+
+class _FalsyPath(PosixPath):
+    """A path whose truth value is false."""
+
+    def __bool__(self) -> bool:
+        return False
+
+
+def test_module_search_tests_root_against_none_not_truthiness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(tmp_path, "mod.py")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.setattr(sys, "path", [str(elsewhere)])
+    assert CodeIdentifier.verified("mod:fn", root=_FalsyPath(tmp_path)) == "mod:fn"
+
+
+def test_path_form_tests_root_truthiness_and_falls_back_to_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inside = tmp_path / "inside"
+    _write(inside, "m.py")
+    monkeypatch.chdir(inside)
+    other = tmp_path / "other"
+    other.mkdir()
+    assert CodeIdentifier.verified("m.py", root=_FalsyPath(other)) == "m.py"
+
+
+def test_none_entry_in_sys_path_is_read_as_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(tmp_path, "mod.py")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "path", [None])
+    assert CodeIdentifier.verified("mod:fn") == "mod:fn"
