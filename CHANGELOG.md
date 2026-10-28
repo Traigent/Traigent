@@ -6,12 +6,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Agent decision tools on the analytics MCP server.** `agent_decision_ensure`, `agent_decision_latest` and `agent_decision_answer` let a coding agent ask whether Traigent has a question about an agent, show the fixed question and options to the human in the host's own question UI, and post exactly the human's choice. Inputs are ids and closed enums only; backend errors map to the contract's closed reasons. A YES means prepare the baseline evaluation; it never authorises spend.
+
 ### Security
 
 - **Explicit opt-in for a private self-hosted backend (`TRAIGENT_ALLOW_PRIVATE_BACKEND=1`).** Private and loopback backend URLs are still refused by default. With the opt-in set, they are allowed only when the URL's scheme, host and port match `TRAIGENT_BACKEND_URL`. HTTPS, metadata and link-local blocking, redirect refusal and DNS-failure refusal are unchanged. The opt-in is documented in `docs/features/safety-gates.md`.
 
 ### Fixed
 
+- **Portal experiment links now open in the right workspace.** `build_experiment_url` adds the `projectId` query parameter the portal reads (alongside `project_id`), and `build_agent_url` builds project-qualified agent links.
 - **Cloud-brain runs now execute the runtime `custom_evaluator` override.** `optimize(custom_evaluator=...)` was ignored on the cloud path (it ran the decorator's evaluator while the evaluator fingerprint named the override). The effective custom evaluator is now resolved once per `optimize()` entry and used for both execution and identity on every path. The session-create body also gains an optional `evaluator_code_digest` (an `ecd1` digest of the user-code scorer that actually runs) in the typed identity-v2 shape; it is never sent next to an evaluator id, in privacy mode or in content-less mode. Legacy fp1 output is unchanged.
 - **Evaluator `target_filters` is a closed, typed contract (TraigentSchema `36de73e9`).** `EvaluationClient.create_evaluator` and `update_evaluator` now validate `target_filters` client-side against the schema (`environment`, `release`, `name`, `tags`: each a list of 1-20 unique strings; unknown keys and the old string form are rejected without echoing values) and send the schema's wire format. A typed `traigent.evaluation.TargetFilters` is exported; plain dicts of the same shape still work. On update, omitting `target_filters` or passing `None` leaves the filters unchanged, and `{}` clears them. Only meaningful for `observability_trace` evaluators.
 - **`traigent hooks uninstall` now removes Traigent's pre-commit hook and restores the customer's `pre-commit` (#2707).** Uninstall recognised only the pre-push marker, so the pre-commit hook was never removed and its `.backup` was never restored.

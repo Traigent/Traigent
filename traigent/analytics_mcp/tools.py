@@ -25,10 +25,18 @@ from __future__ import annotations
 
 import math
 import re
+import uuid
 from datetime import datetime, timedelta
 from typing import Any, cast
 
 from traigent.cloud.analytics_client import (
+    AGENT_DECISION_ANSWERS,
+    AGENT_DECISION_DIGEST_RE,
+    AGENT_DECISION_ERROR_REASONS,
+    AGENT_DECISION_ID_RE,
+    AGENT_DECISION_NONCE_RE,
+    AGENT_DECISION_OPTIONS_VERSIONS,
+    AGENT_DECISION_POLICY_VERSIONS,
     AnalyticsClientError,
     _project_observability_analysis_insights,
     _project_observability_cohort_comparison,
@@ -85,6 +93,9 @@ ANALYTICS_TOOL_NAMES: tuple[str, ...] = (
     "director_start",
     "director_turn",
     "director_state",
+    "agent_decision_ensure",
+    "agent_decision_latest",
+    "agent_decision_answer",
     "analytics_list_experiment_groups",
     "analytics_get_experiment_group",
     "analytics_list_experiment_group_configuration_runs",
@@ -666,7 +677,9 @@ def _http_status_failure(
     )
 
 
-async def _call_backend(coro_factory: Any, *, what: str) -> dict[str, Any]:
+async def _call_backend(
+    coro_factory: Any, *, what: str, http_error_mapper: Any | None = None
+) -> dict[str, Any]:
     """Run a backend read coroutine and normalize failures to structured output.
 
     ``coro_factory`` is a callable that takes the opened client and returns the
@@ -709,6 +722,10 @@ async def _call_backend(coro_factory: Any, *, what: str) -> dict[str, Any]:
             what,
             getattr(getattr(exc, "response", None), "status_code", None),
         )
+        if http_error_mapper is not None:
+            mapped = http_error_mapper(exc, backend_url)
+            if mapped is not None:
+                return cast("dict[str, Any]", mapped)
         return _http_status_failure(exc, what=what, backend_url=backend_url)
     except _HTTP_TRANSPORT_ERRORS as exc:
         logger.debug("Analytics %s transport failed (%s)", what, type(exc).__name__)
@@ -1929,3 +1946,222 @@ async def director_state_tool(session_id: str) -> dict[str, Any]:
     return await _call_backend(
         lambda reader: reader.director_state(sid), what="director state"
     )
+
+
+# === Agent decision (host-prompt) tools ===
+#
+# The backend issues a CLOSED question about an agent ("Prepare the baseline evaluation for
+# this agent now?"); the customer's coding agent shows it to the human in the host's own
+# question UI and posts back exactly the human's choice. Inputs are ids and closed enums only;
+# results are the backend's closed fields unchanged. A YES means "prepare / preflight the
+# baseline" -- it never authorises spend.
+
+_AGENT_ID_MAX = 255
+# Project ids are opaque server-issued references; the same safe-identifier style as the other
+# tools' ids, and nothing that could break out of a header or a URL query.
+_PROJECT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+
+
+def _validate_agent_id(value: str | None) -> str:
+    # The agent id is the customer's own id (the backend accepts any 1-255 character value),
+    # so it is not narrowed to a character class here; it is sent URL-encoded as a single
+    # path segment and never echoed.
+    if (
+        not isinstance(value, str)
+        or value != value.strip()
+        or value in {".", ".."}
+        or not value
+        or len(value) > _AGENT_ID_MAX
+        or any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+    ):
+        raise _ToolInputError("agent_id is not a valid agent identifier.")
+    return value
+
+
+def _validate_optional_project_id(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or _PROJECT_ID_PATTERN.fullmatch(value) is None:
+        raise _ToolInputError("project_id is not a valid project identifier.")
+    return value
+
+
+def _agent_decision_error_mapper(exc: BaseException, backend_url: str | None) -> Any:
+    """Map a backend error to a closed failure; never falls back to a message-echoing path.
+
+    A body matching the contract's closed error shape surfaces its ``reason``. Anything else
+    -- whatever the status -- becomes a fixed failure that carries no backend text.
+    """
+    response = getattr(exc, "response", None)
+    raw_status = getattr(response, "status_code", None)
+    status = raw_status if isinstance(raw_status, int) else None
+    payload = _response_payload(response)
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"error"}
+        or not isinstance(error, dict)
+        or error.get("reason") not in AGENT_DECISION_ERROR_REASONS
+    ):
+        if status in (401, 403):
+            # Both outcomes carry fixed text only (no backend text on either path).
+            return _http_status_failure(
+                exc, what="agent decision", backend_url=backend_url
+            )
+        if status is None or status >= 500:
+            return _failure(
+                "Could not retrieve agent decision from the backend.",
+                code="backend_unavailable",
+                http_status=status,
+                backend_url=backend_url,
+            )
+        return _failure(
+            "The backend refused the agent decision request.",
+            code="request_rejected",
+            http_status=status,
+            backend_url=backend_url,
+        )
+    reason = str(error["reason"])
+    result = _failure(
+        f"The backend refused the agent decision request ({reason}).",
+        code=reason,
+        http_status=status,
+        backend_url=backend_url,
+    )
+    result["reason"] = reason
+    retry_after = error.get("retry_after_seconds")
+    if isinstance(retry_after, int) and not isinstance(retry_after, bool):
+        result["retry_after_seconds"] = max(0, min(86400, retry_after))
+    return result
+
+
+def _agent_url(agent_id: str, project_id: str | None) -> str | None:
+    if project_id is None:
+        return None
+    from traigent.cloud.sync_manager import build_agent_url
+    from traigent.config.backend_config import BackendConfig
+
+    try:
+        url: str = build_agent_url(
+            BackendConfig.get_cloud_web_url(), agent_id, project_id=project_id
+        )
+        return url
+    except Exception as exc:  # noqa: BLE001 - a link is optional
+        logger.debug("Agent portal link construction failed (%s)", type(exc).__name__)
+        return None
+
+
+async def _agent_decision_read(
+    coro_factory: Any, *, agent_id: str, project_id: str | None
+) -> dict[str, Any]:
+    result = await _call_backend(
+        coro_factory,
+        what="agent decision",
+        http_error_mapper=_agent_decision_error_mapper,
+    )
+    if result.get("ok") is True:
+        url = _agent_url(agent_id, project_id)
+        if url is not None:
+            result["agent_url"] = url
+    return result
+
+
+async def agent_decision_ensure_tool(
+    agent_id: str, project_id: str | None = None
+) -> dict[str, Any]:
+    """Ask whether Traigent has a question for the human about this agent.
+
+    Returns ``{"decision": null}`` when none applies now, or the OPEN decision with its closed
+    ``prompt`` (question and options). Show that question and exactly those options to the
+    human, then post their choice with ``agent_decision_answer``.
+    """
+    try:
+        aid = _validate_agent_id(agent_id)
+        pid = _validate_optional_project_id(project_id)
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _agent_decision_read(
+        lambda reader: reader.agent_decision_ensure(aid, project_id=pid),
+        agent_id=aid,
+        project_id=pid,
+    )
+
+
+async def agent_decision_latest_tool(
+    agent_id: str, project_id: str | None = None
+) -> dict[str, Any]:
+    """Read the latest decision for this agent in any status (read-only).
+
+    After a YES, ``execution_ref`` and ``next_action`` say what to do next.
+    """
+    try:
+        aid = _validate_agent_id(agent_id)
+        pid = _validate_optional_project_id(project_id)
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _agent_decision_read(
+        lambda reader: reader.agent_decision_latest(aid, project_id=pid),
+        agent_id=aid,
+        project_id=pid,
+    )
+
+
+async def agent_decision_answer_tool(
+    decision_id: str,
+    answer: str,
+    options_version: str,
+    policy_version: str,
+    basis_digest: str,
+    retry_nonce: str | None = None,
+    project_id: str | None = None,
+) -> dict[str, Any]:
+    """Post the human's closed answer to a decision.
+
+    ``answer`` must be exactly the option the human chose. ``options_version``,
+    ``policy_version`` and ``basis_digest`` are echoed from the decision. ``retry_nonce`` is
+    generated when omitted and returned, so a retry of the same attempt can reuse it.
+    """
+    nonce = retry_nonce
+    try:
+        did = _require_identifier(decision_id, field="decision_id")
+        if AGENT_DECISION_ID_RE.fullmatch(did) is None:
+            raise _ToolInputError("decision_id is not a valid decision id.")
+        if answer not in AGENT_DECISION_ANSWERS:
+            raise _ToolInputError(
+                f"answer must be one of: {', '.join(AGENT_DECISION_ANSWERS)}."
+            )
+        if options_version not in AGENT_DECISION_OPTIONS_VERSIONS:
+            raise _ToolInputError("options_version is not a supported version.")
+        if policy_version not in AGENT_DECISION_POLICY_VERSIONS:
+            raise _ToolInputError("policy_version is not a supported version.")
+        if (
+            not isinstance(basis_digest, str)
+            or AGENT_DECISION_DIGEST_RE.fullmatch(basis_digest) is None
+        ):
+            raise _ToolInputError("basis_digest is not a valid digest.")
+        if nonce is None:
+            nonce = f"rn_{uuid.uuid4().hex}"
+        elif (
+            not isinstance(nonce, str)
+            or AGENT_DECISION_NONCE_RE.fullmatch(nonce) is None
+        ):
+            raise _ToolInputError("retry_nonce is not a valid retry nonce.")
+        pid = _validate_optional_project_id(project_id)
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    final_nonce = nonce
+    result = await _call_backend(
+        lambda reader: reader.agent_decision_answer(
+            did,
+            answer=answer,
+            options_version=options_version,
+            policy_version=policy_version,
+            basis_digest=basis_digest,
+            retry_nonce=final_nonce,
+            project_id=pid,
+        ),
+        what="agent decision",
+        http_error_mapper=_agent_decision_error_mapper,
+    )
+    result["retry_nonce"] = final_nonce
+    return result
