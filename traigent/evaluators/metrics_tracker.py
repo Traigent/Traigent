@@ -2396,38 +2396,58 @@ def _calculate_cost_for_metrics(
         return
 
     if not model_name:
-        # Tokens were captured, so there WAS spend: recording $0 here is the
-        # same "unpriced call scores free" defect as an unknown model, and
-        # under strict accounting it must fail instead. A response with no
-        # tokens at all is a different case (nothing to price) and stays a
-        # warning in both modes.
-        if strict_cost_accounting and (
-            metrics.tokens.input_tokens > 0 or metrics.tokens.output_tokens > 0
-        ):
-            from traigent.utils.cost_calculator import UnknownModelError
-
-            raise UnknownModelError(
-                "Cost accounting is strict for this run and tokens were "
-                f"captured (in={metrics.tokens.input_tokens}, "
-                f"out={metrics.tokens.output_tokens}) but no model name was "
-                "available to price them, so the call is not recorded as $0. "
-                "Fix by choosing one of: 1) expose the model name on the LLM "
-                "response (a 'model' or 'model_name' attribute or key, or "
-                "LangChain response_metadata/llm_output), 2) include a "
-                "'model' key in the optimization configuration, 3) set "
-                "TRAIGENT_STRICT_COST_ACCOUNTING=false to accept $0 for "
-                "calls that cannot be priced."
-            )
-        logger.warning(
-            "Cost calculation skipped: model_name is None/empty. "
-            "Ensure the optimization config includes a 'model' key or "
-            "the LLM response exposes the model name. "
-            "tokens=(in=%d, out=%d)",
-            metrics.tokens.input_tokens,
-            metrics.tokens.output_tokens,
-        )
+        _skip_cost_for_unnamed_model(metrics, strict_cost_accounting)
         return
 
+    _price_call_and_check_zero_cost(
+        metrics, model_name, original_prompt, response_text, strict_cost_accounting
+    )
+
+
+def _skip_cost_for_unnamed_model(
+    metrics: ExampleMetrics, strict_cost_accounting: bool
+) -> None:
+    """Fail (strict, tokens captured) or warn when no model name can price a call."""
+    # Tokens were captured, so there WAS spend: recording $0 here is the
+    # same "unpriced call scores free" defect as an unknown model, and
+    # under strict accounting it must fail instead. A response with no
+    # tokens at all is a different case (nothing to price) and stays a
+    # warning in both modes.
+    if strict_cost_accounting and (
+        metrics.tokens.input_tokens > 0 or metrics.tokens.output_tokens > 0
+    ):
+        from traigent.utils.cost_calculator import UnknownModelError
+
+        raise UnknownModelError(
+            "Cost accounting is strict for this run and tokens were "
+            f"captured (in={metrics.tokens.input_tokens}, "
+            f"out={metrics.tokens.output_tokens}) but no model name was "
+            "available to price them, so the call is not recorded as $0. "
+            "Fix by choosing one of: 1) expose the model name on the LLM "
+            "response (a 'model' or 'model_name' attribute or key, or "
+            "LangChain response_metadata/llm_output), 2) include a "
+            "'model' key in the optimization configuration, 3) set "
+            "TRAIGENT_STRICT_COST_ACCOUNTING=false to accept $0 for "
+            "calls that cannot be priced."
+        )
+    logger.warning(
+        "Cost calculation skipped: model_name is None/empty. "
+        "Ensure the optimization config includes a 'model' key or "
+        "the LLM response exposes the model name. "
+        "tokens=(in=%d, out=%d)",
+        metrics.tokens.input_tokens,
+        metrics.tokens.output_tokens,
+    )
+
+
+def _price_call_and_check_zero_cost(
+    metrics: ExampleMetrics,
+    model_name: str,
+    original_prompt: Any,
+    response_text: str | None,
+    strict_cost_accounting: bool,
+) -> None:
+    """Price one call; warn on a suspicious zero cost, log and maybe re-raise errors."""
     try:
         _compute_cost(
             metrics,

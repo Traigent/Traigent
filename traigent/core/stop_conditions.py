@@ -241,6 +241,16 @@ def _coerce_bounded_float(
     return number
 
 
+def _normalize_selector_entries(value: Sequence[Any], name: str) -> tuple[str, ...]:
+    normalized: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item:
+            raise ValueError(f"{name} entries must be non-empty strings")
+        if item not in normalized:
+            normalized.append(item)
+    return tuple(normalized)
+
+
 def _normalize_metric_selector(value: Any, name: str) -> tuple[str, ...] | None:
     if value is None or value == _AUTO_SELECTOR:
         return None
@@ -249,13 +259,7 @@ def _normalize_metric_selector(value: Any, name: str) -> tuple[str, ...] | None:
             raise ValueError(f"{name} entries must be non-empty strings")
         return (value,)
     if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
-        normalized: list[str] = []
-        for item in value:
-            if not isinstance(item, str) or not item:
-                raise ValueError(f"{name} entries must be non-empty strings")
-            if item not in normalized:
-                normalized.append(item)
-        return tuple(normalized)
+        return _normalize_selector_entries(value, name)
     raise ValueError(f"{name} must be 'auto', a string, or a list of strings")
 
 

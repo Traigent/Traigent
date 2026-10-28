@@ -119,7 +119,10 @@ class TraigentClient:
             orchestration. Offline local execution works without backend/cloud
             dependencies installed.
         """
-        from traigent.config.backend_config import BackendConfig
+        from traigent.config.backend_config import (
+            BackendConfig,
+            EndpointNotConfiguredError,
+        )
 
         execution_mode, has_execution_mode = self._pop_legacy_execution_mode(
             legacy_kwargs
@@ -154,8 +157,20 @@ class TraigentClient:
 
         # Use provided values or get from centralized config
         self.api_key = api_key or BackendConfig.get_api_key()
-        self.backend_url = backend_url or BackendConfig.get_backend_url()
         self.no_egress = bool(offline or no_egress)
+        # Resolve the endpoint only when a backend call can happen: an offline /
+        # no-egress client must construct in strict-endpoint (self-hosted) mode
+        # with no endpoint configured.
+        self.backend_url: str | None
+        if backend_url:
+            self.backend_url = backend_url
+        elif self.no_egress or is_backend_offline():
+            try:
+                self.backend_url = BackendConfig.get_backend_url()
+            except EndpointNotConfiguredError:
+                self.backend_url = None
+        else:
+            self.backend_url = BackendConfig.get_backend_url()
 
         # Determine execution policy first (before initializing cloud components).
         #
@@ -188,7 +203,7 @@ class TraigentClient:
 
         # Initialize backend client only if needed for non-local modes.
         # Local mode runs fully locally without any cloud dependencies.
-        if self.execution_mode != ExecutionMode.LOCAL:
+        if self.execution_mode != ExecutionMode.LOCAL and self.backend_url is not None:
             _require_cloud()
             self.backend_client = BackendIntegratedClient(
                 api_key=self.api_key,
@@ -196,6 +211,8 @@ class TraigentClient:
                 no_egress=self.no_egress or is_backend_offline(),
             )
         else:
+            # Local mode, or offline / no-egress with no endpoint configured:
+            # there is no backend to talk to.
             self.backend_client = None  # type: ignore[assignment]
 
         # Initialize execution adapter

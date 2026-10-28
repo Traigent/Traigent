@@ -47,7 +47,13 @@ from traigent.cloud.auth import (
 )
 from traigent.cloud.credential_manager import CredentialManager
 from traigent.cloud.url_security import validate_cloud_base_url
-from traigent.config.backend_config import SIGNUP_URL, BackendConfig
+from traigent.config.backend_config import (
+    SIGNUP_URL,
+    BackendConfig,
+    EndpointNotConfiguredError,
+    _endpoint_required_error,
+    get_signup_url,
+)
 from traigent.config.project import PROJECT_ENV_VAR, read_optional_project_env
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
 from traigent.security.credentials import (
@@ -253,6 +259,7 @@ _AUTH_CLI_REQUEST = "auth CLI request"
 _APPLICATION_JSON = "application/json"
 _TRAIGENT_SDK_CLI_1_0 = "Traigent-SDK-CLI/1.0"
 _DEVICE_TOKEN = "device token"
+_BACKEND_NOT_CONFIGURED = "(not configured)"
 
 
 class TraigentAuthCLI:
@@ -268,30 +275,65 @@ class TraigentAuthCLI:
         self.config_dir = TRAIGENT_CONFIG_DIR
         self.credentials_file = CREDENTIALS_FILE
         self.auth_manager = AuthManager()
+        self._backend_url: str | None = None
+        self._backend_api_url: str | None = None
+        self._endpoint_error: EndpointNotConfiguredError | None = None
         if backend_url_override:
             origin, path = BackendConfig.split_api_url(backend_url_override)
             normalized = origin or BackendConfig.normalize_backend_origin(
                 backend_url_override
             )
             backend_origin = normalized or backend_url_override
-            self.backend_url = validate_cloud_base_url(
+            self._backend_url = validate_cloud_base_url(
                 backend_origin.rstrip("/"), purpose=_AUTH_CLI_REQUEST
             )
             api_base_candidate = (
-                f"{self.backend_url}{path or BackendConfig.get_default_api_path()}"
+                f"{self._backend_url}{path or BackendConfig.get_default_api_path()}"
+            )
+            self._backend_api_url = validate_cloud_base_url(
+                api_base_candidate.rstrip("/"), purpose=_AUTH_CLI_REQUEST
             )
         else:
-            self.backend_url = validate_cloud_base_url(
-                BackendConfig.get_cloud_backend_url().rstrip("/"),
-                purpose=_AUTH_CLI_REQUEST,
-            )
-            api_base_candidate = BackendConfig.get_cloud_api_url()
-        self.backend_api_url = validate_cloud_base_url(
-            api_base_candidate.rstrip("/"), purpose=_AUTH_CLI_REQUEST
-        )
+            # Resolved lazily: in strict-endpoint (self-hosted) mode there may be
+            # no endpoint yet, and `auth configure`, `auth status` and
+            # `auth logout` must still work locally. Network paths read the
+            # `backend_url` / `backend_api_url` properties, which raise.
+            try:
+                self._backend_url = validate_cloud_base_url(
+                    BackendConfig.get_cloud_backend_url().rstrip("/"),
+                    purpose=_AUTH_CLI_REQUEST,
+                )
+                self._backend_api_url = validate_cloud_base_url(
+                    BackendConfig.get_cloud_api_url().rstrip("/"),
+                    purpose=_AUTH_CLI_REQUEST,
+                )
+            except EndpointNotConfiguredError as exc:
+                self._endpoint_error = exc
 
         # Ensure config directory exists
         self.config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+    @property
+    def backend_url(self) -> str:
+        """Backend origin; raises EndpointNotConfiguredError in strict mode."""
+        if self._backend_url is None:
+            raise self._endpoint_error or _endpoint_required_error()
+        return self._backend_url
+
+    @backend_url.setter
+    def backend_url(self, value: str) -> None:
+        self._backend_url = value
+
+    @property
+    def backend_api_url(self) -> str:
+        """Backend API base; raises EndpointNotConfiguredError in strict mode."""
+        if self._backend_api_url is None:
+            raise self._endpoint_error or _endpoint_required_error()
+        return self._backend_api_url
+
+    @backend_api_url.setter
+    def backend_api_url(self, value: str) -> None:
+        self._backend_api_url = value
 
     @property
     def device_login_target_url(self) -> str:
@@ -1437,7 +1479,8 @@ class TraigentAuthCLI:
             self._record_password_login_failure()
             console.print(f"\n[red]❌ Authentication failed: {e}[/red]")
             console.print("\nPlease check your credentials and try again.")
-            console.print(f"If you don't have an account, visit: {SIGNUP_URL}\n")
+            if get_signup_url():
+                console.print(f"If you don't have an account, visit: {SIGNUP_URL}\n")
             return False
         except TimeoutError as e:
             self._record_password_login_failure()
@@ -1580,7 +1623,7 @@ class TraigentAuthCLI:
                 "Status", "[green]✅ Authenticated (environment variable)[/green]"
             )
             env_table.add_row("TRAIGENT_API_KEY", "configured (environment variable)")
-            env_table.add_row("Backend", self.backend_url)
+            env_table.add_row("Backend", self._backend_url or _BACKEND_NOT_CONFIGURED)
             if creds and creds.get("api_key"):
                 env_table.add_row(
                     "Stored login",
@@ -1604,7 +1647,10 @@ class TraigentAuthCLI:
         table.add_row("Status", "[green]✅ Authenticated[/green]")
         table.add_row("Email", user.get("email", "Unknown"))
         table.add_row("User ID", str(user.get("id", "Unknown")))
-        table.add_row("Backend", creds.get("backend_url", self.backend_url))
+        table.add_row(
+            "Backend",
+            creds.get("backend_url") or self._backend_url or _BACKEND_NOT_CONFIGURED,
+        )
 
         if creds.get("api_key"):
             table.add_row("API Key", "configured")
@@ -1750,15 +1796,37 @@ class TraigentAuthCLI:
         console.print("Configure your Traigent SDK settings.\n")
 
         # Backend URL configuration
-        current_backend = BackendConfig.get_cloud_backend_url()
-        console.print(f"Current backend: [cyan]{current_backend}[/cyan]")
+        try:
+            current_backend: str | None = BackendConfig.get_cloud_backend_url()
+        except EndpointNotConfiguredError:
+            current_backend = None
 
-        change_backend = Prompt.ask(
-            "Change backend URL?", choices=["y", "n"], default="n"
-        )
+        if current_backend is None:
+            # Strict-endpoint (self-hosted) mode with nothing configured yet:
+            # there is no vendor default to keep, so the endpoint is required.
+            console.print(
+                "[yellow]No backend configured (strict-endpoint mode).[/yellow]"
+            )
+            change_backend = "y"
+        else:
+            console.print(f"Current backend: [cyan]{current_backend}[/cyan]")
+            change_backend = Prompt.ask(
+                "Change backend URL?", choices=["y", "n"], default="n"
+            )
 
         if change_backend.lower() == "y":
-            new_backend = Prompt.ask("Backend URL", default=current_backend)
+            if current_backend is None:
+                new_backend = Prompt.ask("Backend URL").strip()
+                try:
+                    new_backend = validate_cloud_base_url(
+                        new_backend.rstrip("/"), purpose=_AUTH_CLI_REQUEST
+                    )
+                except ValueError as exc:
+                    console.print(f"[red]❌ Invalid backend URL: {exc}[/red]\n")
+                    return False
+                current_backend = new_backend
+            else:
+                new_backend = Prompt.ask("Backend URL", default=current_backend)
 
             console.print("\nTo use this backend, set the environment variable:")
             console.print(f"[cyan]export TRAIGENT_BACKEND_URL={new_backend}[/cyan]")

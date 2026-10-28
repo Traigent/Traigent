@@ -721,12 +721,20 @@ def preview_cloud_benefits() -> None:
                 f"   • Team collaboration on {status['completed_sessions']} optimizations"
             )
 
-        from traigent.config.backend_config import DEFAULT_CLOUD_URL, SIGNUP_URL
+        from traigent.config.backend_config import (
+            DEFAULT_CLOUD_URL,
+            SIGNUP_URL,
+            is_strict_endpoint_mode,
+        )
 
         click.echo("\n🎯 Ready to upgrade?")
-        click.echo(f"   1. Get API key: {SIGNUP_URL}")
-        click.echo("   2. Run: traigent local sync --api-key YOUR_KEY")
-        click.echo(f"   3. Access portal: {DEFAULT_CLOUD_URL}")
+        if is_strict_endpoint_mode():
+            click.echo("   1. Get an API key from your self-hosted portal")
+            click.echo("   2. Run: traigent local sync --api-key YOUR_KEY")
+        else:
+            click.echo(f"   1. Get API key: {SIGNUP_URL}")
+            click.echo("   2. Run: traigent local sync --api-key YOUR_KEY")
+            click.echo(f"   3. Access portal: {DEFAULT_CLOUD_URL}")
 
     except Exception as e:
         click.echo(f"Error previewing cloud benefits: {e}", err=True)

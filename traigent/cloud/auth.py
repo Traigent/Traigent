@@ -34,6 +34,7 @@ from traigent.cloud.token_manager import TokenManager
 from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.labels.transport_gate import (
+    freeze_json_body,
     gate_session,
     observe_requests_response,
     preflight_requests,
@@ -388,12 +389,21 @@ class UnifiedAuthConfig:
 
     def __post_init__(self) -> None:
         """Set backend/cloud URLs from centralized config if not provided."""
-        from traigent.config.backend_config import BackendConfig
+        from traigent.config.backend_config import (
+            BackendConfig,
+            EndpointNotConfiguredError,
+        )
 
-        if self.backend_base_url is None:
-            self.backend_base_url = BackendConfig.get_cloud_backend_url()
-        if not self.cloud_base_url:
-            self.cloud_base_url = BackendConfig.get_cloud_backend_url()
+        # Strict-endpoint (self-hosted) mode with no endpoint: leave the URLs
+        # unset so local-only use constructs; every request path re-resolves
+        # (and raises) at the point a backend call is actually made.
+        try:
+            if self.backend_base_url is None:
+                self.backend_base_url = BackendConfig.get_cloud_backend_url()
+            if not self.cloud_base_url:
+                self.cloud_base_url = BackendConfig.get_cloud_backend_url()
+        except EndpointNotConfiguredError:
+            logger.debug("No backend endpoint configured; auth URLs left unset")
 
 
 @dataclass
@@ -1222,27 +1232,7 @@ class AuthManager:
         Returns:
             Dictionary of authentication headers
         """
-        auth_state = self.is_authenticated()
-        if inspect.isawaitable(auth_state):
-            auth_state = await auth_state
-        if not bool(auth_state):
-            auth_result = await self.authenticate()
-            if not auth_result.success or self._credentials is None:
-                self._authenticated = False
-                # Fail closed: never emit headers built from an unverified or
-                # backend-rejected API key. Doing so would defeat backend
-                # validation by allowing the SDK to send the raw key anyway.
-                failure_detail = auth_result.session_creation_failure
-                if failure_detail is not None:
-                    raise _InvalidCredentialsWithSessionFailure(
-                        auth_result.error_message
-                        or "Authentication failed; refusing to emit auth headers.",
-                        failure_detail,
-                    )
-                raise InvalidCredentialsError(
-                    auth_result.error_message
-                    or "Authentication failed; refusing to emit auth headers."
-                )
+        await self._ensure_authenticated_for_headers()
 
         if not self._credentials:
             self._authenticated = False
@@ -1252,22 +1242,50 @@ class AuthManager:
 
         # Generate headers based on authentication mode
         mode = self._credentials.mode
-        if mode == AuthMode.API_KEY:
-            headers = self._get_api_key_headers()
-        elif mode == AuthMode.JWT_TOKEN:
-            headers = await self._get_jwt_headers()
-        elif mode == AuthMode.OAUTH2:
-            headers = self._get_oauth_headers()
-        elif mode == AuthMode.SERVICE_TO_SERVICE:
-            headers = self._get_service_headers(target)
-        elif mode == AuthMode.DEVELOPMENT:
-            headers = self._get_dev_headers()
-        else:
-            headers = {}
+        headers = await self._headers_for_mode(mode, target)
 
         self._latch_emitted_credential(headers)
         self._add_common_headers(headers, target)
         return headers
+
+    async def _ensure_authenticated_for_headers(self) -> None:
+        """Authenticate when needed; fail closed when that does not succeed."""
+        auth_state = self.is_authenticated()
+        if inspect.isawaitable(auth_state):
+            auth_state = await auth_state
+        if bool(auth_state):
+            return
+        auth_result = await self.authenticate()
+        if not auth_result.success or self._credentials is None:
+            self._authenticated = False
+            # Fail closed: never emit headers built from an unverified or
+            # backend-rejected API key. Doing so would defeat backend
+            # validation by allowing the SDK to send the raw key anyway.
+            failure_detail = auth_result.session_creation_failure
+            if failure_detail is not None:
+                raise _InvalidCredentialsWithSessionFailure(
+                    auth_result.error_message
+                    or "Authentication failed; refusing to emit auth headers.",
+                    failure_detail,
+                )
+            raise InvalidCredentialsError(
+                auth_result.error_message
+                or "Authentication failed; refusing to emit auth headers."
+            )
+
+    async def _headers_for_mode(self, mode: AuthMode, target: str) -> dict[str, str]:
+        """Build the credential headers for one authentication mode."""
+        if mode == AuthMode.API_KEY:
+            return self._get_api_key_headers()
+        if mode == AuthMode.JWT_TOKEN:
+            return await self._get_jwt_headers()
+        if mode == AuthMode.OAUTH2:
+            return self._get_oauth_headers()
+        if mode == AuthMode.SERVICE_TO_SERVICE:
+            return self._get_service_headers(target)
+        if mode == AuthMode.DEVELOPMENT:
+            return self._get_dev_headers()
+        return {}
 
     async def get_headers(self, target: str = "both") -> dict[str, str]:
         """Compatibility wrapper that proxies to :meth:`get_auth_headers`."""
@@ -1965,6 +1983,7 @@ class AuthManager:
             return "backend egress disabled"
 
         try:
+            validation_payload = freeze_json_body(validation_payload)
             preflight_requests("POST", url, json=validation_payload)
             response = requests.post(
                 url,
@@ -2077,9 +2096,12 @@ class AuthManager:
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not available for OAuth2 flow") from None
 
+        from traigent.config.backend_config import BackendConfig
+
         try:
             cloud_base_url = await validate_cloud_base_url_async(
-                self.config.cloud_base_url, purpose="OAuth2 client credentials"
+                self.config.cloud_base_url or BackendConfig.get_cloud_backend_url(),
+                purpose="OAuth2 client credentials",
             )
         except ValueError as exc:
             logger.warning("Rejected unsafe OAuth2 cloud_base_url: %s", exc)

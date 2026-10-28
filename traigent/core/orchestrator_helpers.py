@@ -441,6 +441,25 @@ def _total_cost_from_examples(
     return total_cost_examples
 
 
+def _aggregated_total_cost(eval_result: Any) -> Any:
+    """Total cost reported by the aggregated metrics, with the legacy ``cost`` fallback."""
+    agg_metrics = eval_result.aggregated_metrics or {}
+    total_cost = agg_metrics.get("total_cost")
+    if total_cost is None:
+        # Backward-compatible fallback for evaluators that still emit "cost".
+        total_cost = agg_metrics.get("cost")
+    return total_cost
+
+
+def _cap_examples_attempted(eval_result: Any, examples_attempted: Any) -> Any:
+    """Prefer the evaluator-reported example total over a larger or missing count."""
+    result_total = getattr(eval_result, "total_examples", None)
+    if isinstance(result_total, int) and result_total > 0:
+        if examples_attempted is None or examples_attempted > result_total:
+            examples_attempted = result_total
+    return examples_attempted
+
+
 def extract_cost_from_results(
     eval_result: Any,
     progress_state: dict[str, Any] | None,
@@ -477,11 +496,7 @@ def extract_cost_from_results(
 
     # Fallback to aggregated metrics
     if total_cost is None and hasattr(eval_result, "aggregated_metrics"):
-        agg_metrics = eval_result.aggregated_metrics or {}
-        total_cost = agg_metrics.get("total_cost")
-        if total_cost is None:
-            # Backward-compatible fallback for evaluators that still emit "cost".
-            total_cost = agg_metrics.get("cost")
+        total_cost = _aggregated_total_cost(eval_result)
 
     # A trial the evaluator flagged unmeasured has no cost, whatever the
     # progress state or a stray number says (#2517).
@@ -489,9 +504,6 @@ def extract_cost_from_results(
         total_cost = None
 
     # Prefer evaluator-reported totals when available to avoid double counting
-    result_total = getattr(eval_result, "total_examples", None)
-    if isinstance(result_total, int) and result_total > 0:
-        if examples_attempted is None or examples_attempted > result_total:
-            examples_attempted = result_total
+    examples_attempted = _cap_examples_attempted(eval_result, examples_attempted)
 
     return examples_attempted, total_cost

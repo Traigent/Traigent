@@ -15,7 +15,13 @@ from rich.console import Console
 from rich.table import Table
 
 from traigent.analytics.optimization_plan import OptimizationPlanClient
-from traigent.config.backend_config import DEFAULT_LOCAL_URL, BackendConfig
+from traigent.config.backend_config import (
+    DEFAULT_LOCAL_URL,
+    BackendConfig,
+    EndpointNotConfiguredError,
+    _endpoint_required_error,
+    is_strict_endpoint_mode,
+)
 
 _STYLE_BOLD_MAGENTA = "bold magenta"
 
@@ -35,6 +41,9 @@ def _resolve_backend_url(explicit: str | None) -> tuple[str, bool]:
     if explicit:
         return explicit, True
     configured = BackendConfig.get_configured_backend_url()
+    if not configured and is_strict_endpoint_mode():
+        # Strict (self-hosted) mode: no implicit localhost fallback either.
+        raise _endpoint_required_error()
     return (configured or DEFAULT_LOCAL_URL), False
 
 
@@ -126,7 +135,10 @@ def plan(
     api_key: str | None,
 ) -> None:
     """Show a backend-provided pre-run optimization plan."""
-    resolved_backend_url, backend_url_explicit = _resolve_backend_url(backend_url)
+    try:
+        resolved_backend_url, backend_url_explicit = _resolve_backend_url(backend_url)
+    except EndpointNotConfiguredError as exc:
+        raise click.ClickException(str(exc)) from exc
     resolved_api_key = _resolve_api_key(api_key)
 
     if not output_json and not backend_url_explicit:

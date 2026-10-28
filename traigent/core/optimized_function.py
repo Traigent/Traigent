@@ -677,21 +677,28 @@ _NO_USAGE_CAPTURED_MESSAGE = (
 )
 
 
+def _metrics_report_positive_cost(metrics: dict[Any, Any]) -> bool:
+    """Return True when a metrics mapping carries a positive cost value."""
+    for key in _TRIAL_COST_METRIC_KEYS:
+        value = metrics.get(key)
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            if float(value) > 0.0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
 def _any_trial_reported_cost(result: Any) -> bool:
     """Return True when at least one trial recorded non-zero spend."""
     for trial in getattr(result, "trials", None) or []:
         metrics = getattr(trial, "metrics", None)
         if not isinstance(metrics, dict):
             continue
-        for key in _TRIAL_COST_METRIC_KEYS:
-            value = metrics.get(key)
-            if value is None or isinstance(value, bool):
-                continue
-            try:
-                if float(value) > 0.0:
-                    return True
-            except (TypeError, ValueError):
-                continue
+        if _metrics_report_positive_cost(metrics):
+            return True
     return False
 
 

@@ -482,6 +482,9 @@ def _aiohttp_body(kwargs: dict[str, Any]) -> Any:
         return bytes(data)
     if isinstance(data, str):
         return data
+    value = getattr(data, "_value", None)
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)  # a serialized payload: judge exactly the bytes sent
     if isinstance(data, dict):
         return dict(data)  # form fields (auth/oauth routes judge the field names)
     return oo_egress.UNREADABLE_BODY
@@ -555,6 +558,29 @@ def _effective_headers(session: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
+def _serialize_once(
+    session: Any, kwargs: dict[str, Any], payload: Any
+) -> dict[str, Any]:
+    """Turn ``json=`` or form ``data=`` into the payload aiohttp itself would build, ONCE, so the
+    bytes that are judged are the bytes that are sent (no second serialization or encoding)."""
+    import aiohttp
+
+    data = kwargs.get("data")
+    try:
+        if kwargs.get("json") is not None and data is None:
+            sb = getattr(session, "_json_serialize_bytes", None)
+            if sb is not None:
+                pl = payload.JsonBytesPayload(kwargs["json"], dumps=sb)
+            else:
+                pl = payload.JsonPayload(kwargs["json"], dumps=session._json_serialize)
+            return {**{k: v for k, v in kwargs.items() if k != "json"}, "data": pl}
+        if kwargs.get("json") is None and isinstance(data, (dict, list, tuple)):
+            return {**kwargs, "data": aiohttp.FormData(data)()}
+    except Exception:  # noqa: BLE001 - never fall back to judging the Python object
+        raise oo_egress.OptimizationOnlyRefusal("body_unreadable") from None
+    return kwargs
+
+
 def _build_aiohttp(base: type) -> type:
     from aiohttp import payload
 
@@ -568,6 +594,12 @@ def _build_aiohttp(base: type) -> type:
                 url = str(base_url).rstrip("/") + "/" + url.lstrip("/")
             url = _with_params(url, kwargs.get("params"))
             _check_strict(self, url)
+            if not getattr(self, "_traigent_oo_external", False) and (
+                oo_egress.outgoing_may_be_active(
+                    getattr(self, "_traigent_oo_explicit", None)
+                )
+            ):
+                kwargs = _serialize_once(self, kwargs, payload)
             replacement = _enforce_for_session(
                 self,
                 str(method),
@@ -576,7 +608,17 @@ def _build_aiohttp(base: type) -> type:
                 lambda: _aiohttp_body(kwargs),
             )
             if replacement is not None and kwargs.get("json") is None:
-                kwargs["data"] = replacement  # send exactly what was judged
+                sent = kwargs.get("data")
+                content_type = getattr(sent, "content_type", None)
+                if isinstance(content_type, str) and isinstance(
+                    getattr(sent, "_value", None), (bytes, bytearray)
+                ):
+                    # keep the Content-Type the serializer chose for these exact bytes
+                    kwargs["data"] = payload.BytesPayload(
+                        replacement, content_type=content_type
+                    )
+                else:
+                    kwargs["data"] = replacement  # send exactly what was judged
                 if kwargs.get("headers"):
                     kwargs["headers"] = _drop_content_length(kwargs["headers"])
             extra = _instance_origins(self)
@@ -865,42 +907,78 @@ def mark_explicit(session: Any, explicit: bool | None) -> Any:
     return session
 
 
+def freeze_json_body(value: Any) -> Any:
+    """Return ``value`` as plain JSON types when a gate is active, so the object that is checked
+    and the object that is sent serialize identically (no second, different serialization).
+    Nothing is touched while every gate is off. A value that cannot be serialized refuses the
+    request (never returned as the original object) while enforcement is active."""
+    active = oo_egress.outgoing_may_be_active(None)
+    if not active and current_mode() == "off":
+        return value
+    try:
+        return json.loads(json.dumps(value, allow_nan=False))
+    except (TypeError, ValueError, RecursionError):
+        if active:
+            raise oo_egress.OptimizationOnlyRefusal("body_unreadable") from None
+        return value  # gate mode only: preflight_requests inspects and classifies it
+
+
 def preflight_requests(
     method: str, url: str, *, external: bool = False, **kwargs: Any
 ) -> None:
     """Inspect a module-level ``requests.<method>(url, ...)`` call before it is made.
 
-    The body is prepared exactly as ``requests`` will prepare it (deterministic JSON
-    encoding); the caller then makes its normal call.
+    The request is prepared ONCE, exactly as ``requests`` will prepare it, and the prepared
+    body is what gets judged (so ``data=`` taking precedence over ``json=`` is honoured). Pass
+    ``json=`` through :func:`freeze_json_body` first so the real send serializes the same
+    bytes. While every gate is off nothing is serialized.
     """
+    active = oo_egress.outgoing_may_be_active(None)
+    if not external and not active and current_mode() == "off":
+        return
     if external:
-        if oo_egress.outgoing_may_be_active(None):
+        if active:
             _refuse_external_to_traigent(_with_params(str(url), kwargs.get("params")))
-    else:
+        if current_mode() == "off":
+            return
+    prepared: Any = None
+    prep_error: Exception | None = None
+    try:
+        import requests
+
+        if (not external and active) or applies_to(method, str(url)):
+            prepared = requests.Request(
+                method.upper(),
+                url,
+                params=kwargs.get("params"),
+                data=kwargs.get("data"),
+                json=kwargs.get("json"),
+            ).prepare()
+    except Exception as exc:  # noqa: BLE001
+        if active and not external:
+            raise oo_egress.OptimizationOnlyRefusal("body_unreadable") from None
+        prepared, prep_error = None, exc
+    if not external and active:
+        pbody = prepared.body if prepared is not None else None
+        if isinstance(pbody, str):
+            pbody = pbody.encode("utf-8")
+        elif isinstance(pbody, bytearray):
+            pbody = bytes(pbody)
+        elif pbody is not None and not isinstance(pbody, bytes):
+            pbody = oo_egress.UNREADABLE_BODY
         enforce_optimization_only(
             method,
             _with_params(str(url), kwargs.get("params")),
             headers=kwargs.get("headers"),
-            body=(
-                kwargs["json"]
-                if kwargs.get("json") is not None
-                else _aiohttp_body({"data": kwargs.get("data")})
-            ),
+            body=pbody,
         )
     if current_mode() == "off":
         return
     try:
-        import requests
-
-        if not applies_to(method, str(url)):
+        if prep_error is not None:
+            raise prep_error
+        if prepared is None:
             return
-        prepared = requests.Request(
-            method.upper(),
-            url,
-            params=kwargs.get("params"),
-            data=kwargs.get("data"),
-            json=kwargs.get("json"),
-        ).prepare()
         body = prepared.body
         readable = body is None or isinstance(body, (bytes, str, bytearray))
         outgoing_body: bytes | None

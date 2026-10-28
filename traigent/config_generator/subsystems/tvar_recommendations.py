@@ -453,6 +453,22 @@ def _augment_recommendations_with_value_hints(
     return augmented
 
 
+def _usable_value_hints(
+    value_recommendations: Sequence[Any],
+) -> list[tuple[Any, float]]:
+    # Consume hints as provided, keeping only well-formed value+score items.
+    usable: list[tuple[Any, float]] = []
+    for item in value_recommendations:
+        if not isinstance(item, Mapping) or "value" not in item:
+            continue
+        try:
+            score = float(item["score"])
+        except (TypeError, ValueError):
+            continue
+        usable.append((item["value"], score))
+    return usable
+
+
 def _gated_value_recommendations_by_tvar(
     rows: Sequence[Mapping[str, Any]],
 ) -> dict[str, tuple[tuple[Any, float], ...]]:
@@ -463,16 +479,7 @@ def _gated_value_recommendations_by_tvar(
         if not tvar_name or not isinstance(value_recommendations, Sequence):
             continue
 
-        # Consume hints as provided, keeping only well-formed value+score items.
-        usable: list[tuple[Any, float]] = []
-        for item in value_recommendations:
-            if not isinstance(item, Mapping) or "value" not in item:
-                continue
-            try:
-                score = float(item["score"])
-            except (TypeError, ValueError):
-                continue
-            usable.append((item["value"], score))
+        usable = _usable_value_hints(value_recommendations)
 
         ordered = _dedupe_recommended_values(usable)
         if ordered:

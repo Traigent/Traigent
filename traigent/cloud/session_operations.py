@@ -40,7 +40,10 @@ from traigent.cloud.session_types import (
     SessionCreationResult,
 )
 from traigent.cloud.smart_pruning import normalize_smart_pruning_options
-from traigent.config.backend_config import BackendConfig
+from traigent.config.backend_config import (
+    BackendConfig,
+    EndpointNotConfiguredError,
+)
 from traigent.core.session_types import safe_http_error_summary
 from traigent.labels.transport_gate import client_origins, gate_session, mark_explicit
 from traigent.utils import optimization_only_egress as oo_egress
@@ -1378,7 +1381,7 @@ class SessionOperations:
                     certified_selection=certified_selection,
                     session_aggregation=session_aggregation,
                 )
-            except CloudServiceError:
+            except (CloudServiceError, EndpointNotConfiguredError):
                 raise
             except Exception as e:
                 logger.debug(f"Backend finalization API not available: {e}")
@@ -1735,6 +1738,9 @@ class SessionOperations:
         except CloudServiceError:
             # Ownership (403) / auth (401) failures must reach the caller's
             # explicit rethrow; they are not "endpoint unavailable" (#2510).
+            raise
+        except EndpointNotConfiguredError:
+            # Strict self-hosted mode: fail closed, never degrade silently.
             raise
         except Exception as e:  # silent-ok: transport-level failure or non-auth HTTP status means the finalize endpoint is unavailable; None is the documented fallback signal, caller logs it and backend auto-finalizes (#890)
             # Class name only: the exception text can echo server/client content.
