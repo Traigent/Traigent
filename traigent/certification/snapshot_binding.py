@@ -50,12 +50,20 @@ _CONFIG_SPACE = "config/config_space.json"
 _EVALUATOR_PREFIX = "evaluator/"
 
 
-def default_transport() -> G1Transport:
-    """The authenticated, egress-gated Backend transport (replaced in tests)."""
+def default_transport(
+    api_key: str | None = None, *, no_egress: bool = False
+) -> G1Transport:
+    """The authenticated, egress-gated Backend transport (replaced in tests).
+
+    ``api_key`` is the caller's explicit credential (e.g. ``traigent sync
+    --api-key``); without it the client resolves the ambient one.
+    """
     from traigent.certification.transport import BackendG1Transport
     from traigent.cloud.backend_client import BackendIntegratedClient
 
-    return BackendG1Transport(BackendIntegratedClient())
+    return BackendG1Transport(
+        BackendIntegratedClient(api_key=api_key, no_egress=no_egress)
+    )
 
 
 def _part_state(snapshot: ExecutionSnapshot, path: str) -> tuple[str, str | None]:

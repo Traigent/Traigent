@@ -101,7 +101,7 @@ def test_sync_registers_with_the_flag_after_readiness(
 ) -> None:
     result = _run(tmp_path)
     fake = FakeG1Backend()
-    monkeypatch.setattr(snapshot_binding, "default_transport", lambda: fake)
+    monkeypatch.setattr(snapshot_binding, "default_transport", lambda *_a, **_k: fake)
     manager = _sync_manager(tmp_path)
     seen = _capture_create(manager, monkeypatch)
     manager.sync_session_to_cloud(result.sync_session_id)
@@ -117,7 +117,7 @@ def test_sync_refuses_closed_when_readiness_is_unavailable(
     result = _run(tmp_path)
     fake = FakeG1Backend()
     fake.readiness = readiness
-    monkeypatch.setattr(snapshot_binding, "default_transport", lambda: fake)
+    monkeypatch.setattr(snapshot_binding, "default_transport", lambda *_a, **_k: fake)
     manager = _sync_manager(tmp_path)
     seen = _capture_create(manager, monkeypatch)
     outcome = manager.sync_session_to_cloud(result.sync_session_id)
@@ -131,7 +131,7 @@ def test_sync_without_marker_never_declares_or_probes(
 ) -> None:
     result = _run(tmp_path, with_store=False)
 
-    def _no_probe() -> Any:
+    def _no_probe(*_a: Any, **_k: Any) -> Any:
         raise AssertionError("no readiness probe without a pending marker")
 
     monkeypatch.setattr(snapshot_binding, "default_transport", _no_probe)
@@ -169,7 +169,9 @@ def test_offline_deadline_is_persisted_and_synced_with_the_flag(
     )
     assert session is not None
     assert session.metadata.get("snapshot_g1_deadline_days") == 12
-    monkeypatch.setattr(snapshot_binding, "default_transport", lambda: FakeG1Backend())
+    monkeypatch.setattr(
+        snapshot_binding, "default_transport", lambda *_a, **_k: FakeG1Backend()
+    )
     manager = _sync_manager(tmp_path)
     seen = _capture_create(manager, monkeypatch)
     manager.sync_session_to_cloud(result.sync_session_id)
@@ -181,7 +183,9 @@ def test_offline_without_a_deadline_sends_none_on_sync(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     result = _run(tmp_path)
-    monkeypatch.setattr(snapshot_binding, "default_transport", lambda: FakeG1Backend())
+    monkeypatch.setattr(
+        snapshot_binding, "default_transport", lambda *_a, **_k: FakeG1Backend()
+    )
     manager = _sync_manager(tmp_path)
     seen = _capture_create(manager, monkeypatch)
     manager.sync_session_to_cloud(result.sync_session_id)

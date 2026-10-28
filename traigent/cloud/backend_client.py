@@ -2096,6 +2096,7 @@ class BackendIntegratedClient:
         content_less: Any = None,
         evaluator_code_digest: str | None = None,
         snapshot_g1_required: bool = False,
+        snapshot_g1_deadline_days: int | None = None,
     ) -> SessionCreationResult:
         """Synchronous wrapper for creating a session.
         Delegates to session_operations module. Phase 8: objectives are
@@ -2128,6 +2129,7 @@ class BackendIntegratedClient:
             content_less=content_less,
             evaluator_code_digest=evaluator_code_digest,
             snapshot_g1_required=snapshot_g1_required,
+            snapshot_g1_deadline_days=snapshot_g1_deadline_days,
         )
 
     async def create_hybrid_session(

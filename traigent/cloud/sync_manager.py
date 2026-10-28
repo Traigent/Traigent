@@ -1298,7 +1298,11 @@ class SyncManager:
 
         self._raise_if_backend_egress_disabled("check G1 readiness")
         try:
-            check_g1_readiness(snapshot_binding.default_transport())
+            check_g1_readiness(
+                snapshot_binding.default_transport(
+                    self.api_key, no_egress=self.no_egress
+                )
+            )
         except BindError:
             return False
         except Exception:
@@ -1318,6 +1322,7 @@ class SyncManager:
         the backend did not mint one — never substituted with session_id.
         """
         self._raise_if_backend_egress_disabled("sync session create")
+        g1_registration = session_create.get("snapshot_g1_required") is True
         try:
             declared_metrics = oo_egress.declared_from_session_payload(session_create)
             session_create = oo_egress.project_for_send(
@@ -1380,6 +1385,12 @@ class SyncManager:
                         "experiment_run_id, and TRAIGENT_REQUIRE_RUN_ID is set"
                     ),
                 }
+            if experiment_run_id is None and g1_registration:
+                # G1 link-run needs the authoritative run to bind to, whatever
+                # TRAIGENT_REQUIRE_RUN_ID says: same refusal as the online guard.
+                from traigent.cloud.client import RunIdMissingError
+
+                return {"success": False, "error": str(RunIdMissingError())}
             project_id = self._optional_context_id(
                 payload.get("project_id") or metadata.get("project_id")
             )
