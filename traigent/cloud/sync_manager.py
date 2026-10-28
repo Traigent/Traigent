@@ -36,7 +36,11 @@ try:
 except ImportError:
     AIOHTTP_AVAILABLE = False
 
-from ..config.backend_config import BackendConfig, get_no_credentials_hint
+from ..config.backend_config import (
+    BackendConfig,
+    EndpointNotConfiguredError,
+    get_no_credentials_hint,
+)
 from ..config.types import TraigentConfig, _read_bool_env
 from ..storage.local_storage import (
     TRIAL_COST_FIELDS,
@@ -131,19 +135,59 @@ class SyncManager:
         self.storage = LocalStorageManager(config.get_local_storage_path())
         self.api_key = api_key
         self.no_egress = bool(no_egress)
-        backend_api_url = BackendConfig.get_cloud_api_url().rstrip("/")
-        self.base_url = validate_cloud_base_url(backend_api_url, purpose="sync request")
-
-        # Setup HTTP client - always create a requests session for sync operations
-        # X-API-Key only — Authorization: Bearer is reserved for JWTs.
         self.headers = {"X-API-Key": api_key} if api_key else {}
-        # Always create requests session for synchronous operations
-        self._session = gate_session(
-            requests.Session(), origins=[self.base_url], strict=True
-        )
-        if api_key:
-            self._session.headers.update(self.headers)
+        # The backend endpoint is resolved lazily: local status, previews and
+        # dry runs must work in strict-endpoint (self-hosted) mode with no
+        # endpoint configured. Resolution is attempted here so a configured
+        # endpoint is validated at construction as before; only the
+        # "not configured" case is deferred to first transport use.
+        self._base_url: str | None = None
+        self._http_session: requests.Session | None = None
+        try:
+            self._ensure_base_url()
+            self._ensure_http_session()
+        except EndpointNotConfiguredError:
+            logger.debug(
+                "No backend endpoint configured; cloud transport unavailable "
+                "until TRAIGENT_BACKEND_URL is set"
+            )
         self._request_timeout = self._resolve_request_timeout()
+
+    def _ensure_base_url(self) -> str:
+        if self._base_url is None:
+            backend_api_url = BackendConfig.get_cloud_api_url().rstrip("/")
+            self._base_url = validate_cloud_base_url(
+                backend_api_url, purpose="sync request"
+            )
+        return self._base_url
+
+    def _ensure_http_session(self) -> requests.Session:
+        if self._http_session is None:
+            # X-API-Key only - Authorization: Bearer is reserved for JWTs.
+            session = gate_session(
+                requests.Session(), origins=[self._ensure_base_url()], strict=True
+            )
+            if self.api_key:
+                session.headers.update(self.headers)
+            self._http_session = session
+        return self._http_session
+
+    @property
+    def base_url(self) -> str:
+        """Backend API base URL; raises EndpointNotConfiguredError in strict mode."""
+        return self._ensure_base_url()
+
+    @base_url.setter
+    def base_url(self, value: str) -> None:
+        self._base_url = value
+
+    @property
+    def _session(self) -> requests.Session:
+        return self._ensure_http_session()
+
+    @_session.setter
+    def _session(self, value: requests.Session) -> None:
+        self._http_session = value
 
     @property
     def session(self):

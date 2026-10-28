@@ -699,6 +699,15 @@ def _need_digest(value: Any, field: str) -> str:
     return _need(_DIGEST, value, field)
 
 
+def _check_candidate_join_inputs(out: dict[str, Any]) -> None:
+    # Valid evidence carries the promotion join inputs; invalid evidence carries none.
+    if out["evidence_valid"]:
+        if "legacy_decision" not in out or "monitor_verdicts" not in out:
+            raise RuntimeRequirementError("invalid_request", "candidate")
+    elif set(out) != {"evidence_valid"}:
+        raise RuntimeRequirementError("invalid_request", "candidate")
+
+
 def build_candidate(candidate: Mapping[str, Any]) -> dict[str, Any]:
     """A closed candidate fact; any other key is refused (never dropped silently)."""
     allowed = {
@@ -727,12 +736,7 @@ def build_candidate(candidate: Mapping[str, Any]) -> dict[str, Any]:
     for name in ("fingerprint", "gate_result_digest"):
         if name in candidate:
             out[name] = _need_digest(candidate[name], "candidate")
-    # Valid evidence carries the promotion join inputs; invalid evidence carries none.
-    if out["evidence_valid"]:
-        if "legacy_decision" not in out or "monitor_verdicts" not in out:
-            raise RuntimeRequirementError("invalid_request", "candidate")
-    elif set(out) != {"evidence_valid"}:
-        raise RuntimeRequirementError("invalid_request", "candidate")
+    _check_candidate_join_inputs(out)
     return out
 
 

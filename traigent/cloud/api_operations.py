@@ -43,7 +43,11 @@ from traigent.cloud.smart_pruning import (
     normalize_intermediate_report_payload,
     normalize_smart_pruning_options,
 )
-from traigent.config.backend_config import BackendConfig
+from traigent.config.backend_config import (
+    BackendConfig,
+    EndpointNotConfiguredError,
+    endpoint_missing_message,
+)
 from traigent.config.types import _warn_deprecated_once
 from traigent.core.session_types import (
     SessionCreationFailureDetail,
@@ -1316,6 +1320,9 @@ class ApiOperations:
                         )
                         return False
 
+        except EndpointNotConfiguredError:
+            # Strict self-hosted mode: fail closed, never degrade silently.
+            raise
         except Exception as e:
             logger.debug(f"Error updating config run status: {e}")
             return False
@@ -1507,6 +1514,9 @@ class ApiOperations:
                         )
                         return False
 
+        except EndpointNotConfiguredError:
+            # Strict self-hosted mode: fail closed, never degrade silently.
+            raise
         except Exception as e:
             logger.debug(f"Error updating config run measures: {e}")
             return False
@@ -1586,6 +1596,8 @@ class ApiOperations:
                             f"Failed to update experiment run status: "
                             f"{safe_http_error_summary(response.status, error_text)}"
                         )
+        except EndpointNotConfiguredError:
+            logger.warning(endpoint_missing_message("experiment run status update"))
         except Exception as e:
             logger.warning(f"Error updating experiment run status: {e}")
 

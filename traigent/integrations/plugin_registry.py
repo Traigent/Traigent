@@ -61,6 +61,20 @@ def _is_allowed_plugin_module_path(module_path: str) -> bool:
     )
 
 
+def _update_class_mappings(
+    registry: "PluginRegistry", plugin: "IntegrationPlugin", name: str
+) -> None:
+    """Point each of the plugin's target classes at it, higher priority winning."""
+    for class_name in plugin.get_target_classes():
+        if class_name not in registry._class_to_plugin:
+            registry._class_to_plugin[class_name] = name
+        else:
+            # Check priority
+            existing_plugin = registry._plugins[registry._class_to_plugin[class_name]]
+            if plugin.metadata.priority.value > existing_plugin.metadata.priority.value:
+                registry._class_to_plugin[class_name] = name
+
+
 class PluginRegistry:
     """Central registry for managing integration plugins.
 
@@ -160,17 +174,7 @@ class PluginRegistry:
         self._plugins[name] = plugin
 
         # Update class mappings
-        for class_name in plugin.get_target_classes():
-            if class_name not in self._class_to_plugin:
-                self._class_to_plugin[class_name] = name
-            else:
-                # Check priority
-                existing_plugin = self._plugins[self._class_to_plugin[class_name]]
-                if (
-                    plugin.metadata.priority.value
-                    > existing_plugin.metadata.priority.value
-                ):
-                    self._class_to_plugin[class_name] = name
+        _update_class_mappings(self, plugin, name)
 
         # Update package mappings
         for package in plugin.metadata.supported_packages:

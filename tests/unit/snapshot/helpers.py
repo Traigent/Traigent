@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from tests._git_isolation import scrubbed_git_env
+
 FIXED_CLOCK_ARGS = (2026, 10, 27, 12, 30, 45)
 
 
@@ -34,7 +36,11 @@ def sample_agent(question: str) -> str:
 
 def git(cwd: Path, *args: str) -> str:
     completed = subprocess.run(
-        ["git", "-C", str(cwd), *args], capture_output=True, text=True, check=True
+        ["git", "-C", str(cwd), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=scrubbed_git_env(),
     )
     return completed.stdout
 
