@@ -812,3 +812,145 @@ def test_results_projector_keeps_unknown_content_keys() -> None:
     projected = oo.project_for_send(oo.PHASE_RESULTS, body, explicit=True)
     raw = json.dumps(projected).encode()
     assert SECRET.encode() not in raw
+
+
+# ------------------------------------------------ fail closed when serialization fails
+
+
+class _Unserializable(dict):  # type: ignore[type-arg]
+    def items(self) -> Any:  # type: ignore[override]
+        raise ValueError("cannot serialize")
+
+
+def test_freeze_refuses_instead_of_returning_the_original(
+    monkeypatch: pytest.MonkeyPatch, _gate_off: Any
+) -> None:
+    monkeypatch.setenv(oo.ENV_VAR, "1")
+    with pytest.raises(oo.OptimizationOnlyRefusal):
+        tg.freeze_json_body(_Unserializable(a=1))
+    with pytest.raises(oo.OptimizationOnlyRefusal):
+        tg.freeze_json_body({"a": float("nan")})
+
+
+def test_freeze_mode_off_returns_the_object_untouched(
+    monkeypatch: pytest.MonkeyPatch, _gate_off: Any
+) -> None:
+    monkeypatch.delenv(oo.ENV_VAR, raising=False)
+    value = _Unserializable(a=1)
+    assert tg.freeze_json_body(value) is value
+
+
+def test_runtime_client_refuses_an_unserializable_body(
+    monkeypatch: pytest.MonkeyPatch, _gate_off: Any
+) -> None:
+    from traigent.runtime.client import RuntimeClient
+
+    monkeypatch.setenv(oo.ENV_VAR, "1")
+    sent: list[Any] = []
+    client = RuntimeClient("p", base_url="https://example.test", api_key="dummy")
+    with (
+        patch.object(_requests.Session, "send", lambda *a, **k: sent.append(a)),
+        patch(
+            "traigent.cloud.client.cloud_backend_egress_disabled", lambda *a, **k: False
+        ),
+        pytest.raises(Exception),  # noqa: B017 - any closed refusal, nothing sent
+    ):
+        client.send("POST", _FINALIZE_URL, _Unserializable(session_id="s"))
+    assert all(SECRET.encode() not in repr(a).encode() for a in sent)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"json": {"a": 1}},
+        {"data": {"grant_type": "refresh_token"}},
+    ],
+)
+def test_aiohttp_encoding_failure_refuses_and_sends_nothing(
+    kwargs: dict[str, Any],
+) -> None:
+    def boom(_value: Any) -> str:
+        raise ValueError("serializer failed")
+
+    class _Broken(_FakeTransport):
+        _json_serialize = staticmethod(boom)
+
+    _Broken.sent = []
+    session = tg._build_aiohttp(_Broken)()
+    url = (
+        "https://api.example.test/api/v1/oauth/token"
+        if "data" in kwargs
+        else _SESSIONS_URL
+    )
+    with (
+        patch("aiohttp.FormData", side_effect=ValueError("encode failed")),
+        pytest.raises(oo.OptimizationOnlyRefusal),
+    ):
+        asyncio.run(session._request("POST", url, **kwargs))
+    assert _Broken.sent == []
+
+
+def test_every_gated_json_call_site_passes_a_frozen_body() -> None:
+    """Census of every ``preflight_requests(..., json=X)`` under traigent/: X must be assigned
+    from ``freeze_json_body`` in the same function (or ``kwargs["json"]`` be). Sites known at
+    writing: RuntimeClient.send, cloud/auth.py API-key validation, workflow_traces ingest, and
+    BackendIntegratedClient publish_best_config / process-record request / example-feature
+    upload. External-endpoint calls (nous_auth refresh) are exempt: only the origin is judged. A new json-sending gated call that skips freezing fails here."""
+    import ast
+
+    root = Path(oo.__file__).resolve().parents[1]
+    problems: list[str] = []
+    for path in root.rglob("*.py"):
+        if path.name == "transport_gate.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            frozen: set[str] = set()
+            frozen_kwargs = False
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+                    f = node.value.func
+                    name = f.id if isinstance(f, ast.Name) else getattr(f, "attr", "")
+                    if name == "freeze_json_body":
+                        for target in node.targets:
+                            if isinstance(target, ast.Name):
+                                frozen.add(target.id)
+                            elif isinstance(target, ast.Subscript):
+                                frozen_kwargs = True
+            for node in ast.walk(fn):
+                if not (
+                    isinstance(node, ast.Call)
+                    and getattr(node.func, "id", getattr(node.func, "attr", ""))
+                    == "preflight_requests"
+                ):
+                    continue
+                if any(
+                    kw.arg == "external"
+                    and isinstance(kw.value, ast.Constant)
+                    and kw.value.value is True
+                    for kw in node.keywords
+                ):
+                    continue  # external endpoints: only the origin is judged, never the body
+                for kw in node.keywords:
+                    if kw.arg == "json" and not (
+                        isinstance(kw.value, ast.Name) and kw.value.id in frozen
+                    ):
+                        problems.append(f"{path.name}:{node.lineno} json not frozen")
+                    if kw.arg is None and not frozen_kwargs:
+                        problems.append(
+                            f"{path.name}:{node.lineno} **kwargs not frozen"
+                        )
+    assert problems == []
+
+
+def test_publish_best_config_sends_the_frozen_body(
+    monkeypatch: pytest.MonkeyPatch, _gate_off: Any
+) -> None:
+    import inspect
+
+    from traigent.cloud import backend_client
+
+    source = inspect.getsource(backend_client)
+    assert source.count("freeze_json_body(payload)") >= 2

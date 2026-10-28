@@ -566,18 +566,18 @@ def _serialize_once(
     import aiohttp
 
     data = kwargs.get("data")
-    if kwargs.get("json") is not None and data is None:
-        sb = getattr(session, "_json_serialize_bytes", None)
-        if sb is not None:
-            pl = payload.JsonBytesPayload(kwargs["json"], dumps=sb)
-        else:
-            pl = payload.JsonPayload(kwargs["json"], dumps=session._json_serialize)
-        return {**{k: v for k, v in kwargs.items() if k != "json"}, "data": pl}
-    if kwargs.get("json") is None and isinstance(data, (dict, list, tuple)):
-        try:
+    try:
+        if kwargs.get("json") is not None and data is None:
+            sb = getattr(session, "_json_serialize_bytes", None)
+            if sb is not None:
+                pl = payload.JsonBytesPayload(kwargs["json"], dumps=sb)
+            else:
+                pl = payload.JsonPayload(kwargs["json"], dumps=session._json_serialize)
+            return {**{k: v for k, v in kwargs.items() if k != "json"}, "data": pl}
+        if kwargs.get("json") is None and isinstance(data, (dict, list, tuple)):
             return {**kwargs, "data": aiohttp.FormData(data)()}
-        except Exception:  # noqa: BLE001 - aiohttp would fail to encode it too
-            return kwargs
+    except Exception:  # noqa: BLE001 - never fall back to judging the Python object
+        raise oo_egress.OptimizationOnlyRefusal("body_unreadable") from None
     return kwargs
 
 
@@ -910,14 +910,17 @@ def mark_explicit(session: Any, explicit: bool | None) -> Any:
 def freeze_json_body(value: Any) -> Any:
     """Return ``value`` as plain JSON types when a gate is active, so the object that is checked
     and the object that is sent serialize identically (no second, different serialization).
-    Nothing is touched while every gate is off; an unserializable value is returned unchanged
-    and refused by :func:`preflight_requests`."""
-    if not oo_egress.outgoing_may_be_active(None) and current_mode() == "off":
+    Nothing is touched while every gate is off. A value that cannot be serialized refuses the
+    request (never returned as the original object) while enforcement is active."""
+    active = oo_egress.outgoing_may_be_active(None)
+    if not active and current_mode() == "off":
         return value
     try:
         return json.loads(json.dumps(value, allow_nan=False))
     except (TypeError, ValueError, RecursionError):
-        return value
+        if active:
+            raise oo_egress.OptimizationOnlyRefusal("body_unreadable") from None
+        return value  # gate mode only: preflight_requests inspects and classifies it
 
 
 def preflight_requests(

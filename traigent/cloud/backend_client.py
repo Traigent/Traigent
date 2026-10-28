@@ -98,6 +98,7 @@ from traigent.evaluators.base import Dataset
 from traigent.labels.transport_gate import (
     TransportGateRefusal,
     client_origins,
+    freeze_json_body,
     gate_session,
     observe_requests_response,
     preflight_requests,
@@ -2882,10 +2883,11 @@ class BackendIntegratedClient:
 
         def _post_best_config() -> Any:
             try:
-                preflight_requests("POST", url, json=payload)
+                body_json = freeze_json_body(payload)
+                preflight_requests("POST", url, json=body_json)
                 response = requests.post(  # nosec B113 - timeout is provided
                     url,
-                    json=payload,
+                    json=body_json,
                     headers=headers,
                     timeout=min(self.timeout, 30.0),
                     allow_redirects=False,
@@ -3163,6 +3165,7 @@ class BackendIntegratedClient:
         status = 0
         code: str | None = None
         try:
+            body = freeze_json_body(body)
             preflight_requests(method, url, json=body)
             response = requests.request(  # nosec B113 - timeout is provided
                 method,
@@ -3269,10 +3272,11 @@ class BackendIntegratedClient:
 
         def _post_example_features() -> Any:
             try:
-                preflight_requests("POST", url, json=payload)
+                body_json = freeze_json_body(payload)
+                preflight_requests("POST", url, json=body_json)
                 response = requests.post(  # nosec B113 - timeout is provided
                     url,
-                    json=payload,
+                    json=body_json,
                     headers=headers,
                     timeout=min(self.timeout, 30.0),
                     allow_redirects=False,
