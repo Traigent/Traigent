@@ -14,6 +14,22 @@ but the four slots can no longer be opened or re-derived, and a delayed bind of
 that evidence is impossible. There is no escrow; a customer who needs recovery
 supplies a custody hook backed by their own secret manager.
 
+Slot documents (producer-defined, digest-only; the only normative shape is
+the ``build_process_evidence`` one, the other three are this producer's own
+and carry no ids, counts, names, paths, config values or customer text):
+
+- ``agent_revision``: ``{schema, agent_fp1, agent_build_digest,
+  selected_config_sha256, config_space_fp1}``
+- ``evaluation_dataset``: ``{schema, dataset_fp1, dataset_part_sha256}``
+- ``evaluator``: ``{schema, evaluator_fp1, evaluator_code_identity,
+  evaluator_part_sha256s}`` (sorted list of part digests)
+- ``build_process_evidence``: ``{"snapshot_format": "tes1", "manifest_digest"}``
+
+Each ``schema`` value is ``traigent.client_slot.<kind>.v1``. Documents are
+plain str/int/bool/None/list/dict trees; floats and integers beyond 2**53-1
+raise ``ClientEvidenceError("UNSUPPORTED_VALUE")``. The Schema known-answer
+vectors are exercised in ``tests/unit/certification/test_schema_vectors.py``.
+
 This binds the client's declaration of what was captured. It does not certify
 that the agent ran, matches the snapshot, or is complete.
 """
@@ -112,7 +128,12 @@ def _reject_unsupported(value: Any) -> None:
 def _jcs(document: Mapping[str, Any]) -> bytes:
     document = dict(document)
     _reject_unsupported(document)
-    return str(fp2.canonicalize(document)).encode("utf-8")
+    try:
+        return str(fp2.canonicalize(document)).encode("utf-8")
+    except Exception:
+        # fp2 refuses e.g. integers beyond 2**53-1; surface the producer's closed
+        # error, never fp2's (which can describe the offending value).
+        raise ClientEvidenceError("UNSUPPORTED_VALUE") from None
 
 
 def slot_commitment_digest(blind: bytes, kind: str, document: Mapping[str, Any]) -> str:

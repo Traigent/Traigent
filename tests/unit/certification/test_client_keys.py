@@ -112,3 +112,13 @@ def test_tampered_pin_in_key_file_is_not_trusted(tmp_path: Path) -> None:
     with pytest.raises(ck.ClientKeyError) as caught:
         ck.load_client_key(key.path).pinned_ref(PROJECT_REF)
     assert caught.value.code == "KEY_NOT_PINNED"
+
+
+def test_ecdsa_key_file_is_refused_closed(tmp_path: Path) -> None:
+    key = ck.generate_client_key(tmp_path / "k.json")
+    document = json.loads(key.path.read_text())
+    document["algorithm"] = "ecdsa_p256_sha256"
+    key.path.write_text(json.dumps(document))
+    with pytest.raises(ck.ClientKeyError) as caught:
+        ck.load_client_key(key.path)
+    assert caught.value.code == "KEY_FILE_INVALID"

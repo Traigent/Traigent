@@ -5,7 +5,9 @@ never sent anywhere. Only the SPKI public key is enrolled, and the Backend's
 answer is accepted only if its ``client_key_ref`` equals the reference derived
 locally with the Schema helper from the pinned project reference.
 
-Only ed25519 is supported by this producer.
+Only ed25519 is supported by this producer. ``ecdsa_p256_sha256`` (also in the
+Schema registry) is not yet supported and is refused closed: keygen, load and
+enrol never produce or accept it.
 """
 
 from __future__ import annotations
