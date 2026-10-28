@@ -601,3 +601,23 @@ def test_raise_once_target_action_is_not_retried() -> None:
     )
     with pytest.raises(RuntimeError, match="action failed"):
         _validate_trigger(requirement, rule, _WHERE, [])
+
+
+def test_target_is_compared_with_none_never_truth_tested() -> None:
+    class Falsy:
+        id = "fix"
+        action = "optimize"
+        deploy = "if_promoted"
+
+        def __bool__(self) -> bool:
+            raise AssertionError("target truth must not be evaluated")
+
+    class Requirement:
+        window_hours = 6
+
+        def __init__(self, rules: list[Any]) -> None:
+            self.rules = rules
+
+    rule = _outcome("deploy_failed")
+    requirement = Requirement([Falsy(), rule])
+    assert _issues(requirement, rule) == []
