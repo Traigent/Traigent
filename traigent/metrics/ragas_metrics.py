@@ -295,27 +295,25 @@ def _extract_candidate(
     return None
 
 
+def _context_item_text(item: Any) -> str:
+    """Render one context item as text (``text``/``content`` of mappings)."""
+    if isinstance(item, str):
+        return item
+    if isinstance(item, Mapping):
+        if "text" in item and item["text"]:
+            return str(item["text"])
+        if "content" in item and item["content"]:
+            return str(item["content"])
+    return str(item)
+
+
 def _normalise_contexts(value: Any) -> list[str] | None:
     if value is None:
         return None
     if isinstance(value, str):
         return [value]
     if isinstance(value, (list, tuple)):
-        items = []
-        for item in value:
-            if item is None:
-                continue
-            if isinstance(item, str):
-                items.append(item)
-            elif isinstance(item, Mapping):
-                if "text" in item and item["text"]:
-                    items.append(str(item["text"]))
-                elif "content" in item and item["content"]:
-                    items.append(str(item["content"]))
-                else:
-                    items.append(str(item))
-            else:
-                items.append(str(item))
+        items = [_context_item_text(item) for item in value if item is not None]
         return items or None
     if isinstance(value, Mapping):
         return _normalise_contexts(list(value.values()))
@@ -331,6 +329,65 @@ def _determine_column_keys(
     return DEFAULT_COLUMN_CANDIDATES.get(key, ())
 
 
+def _sample_sources(
+    result: ExampleResult, dataset_example: Any | None
+) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]]]:
+    """Return (metadata sources, input sources) for one example row."""
+    metadata_sources: list[Mapping[str, Any]] = []
+    if result.metadata:
+        metadata_sources.append(result.metadata)
+    if dataset_example is not None:
+        example_metadata = getattr(dataset_example, "metadata", None)
+        if example_metadata:
+            metadata_sources.append(example_metadata)
+    input_sources: list[Mapping[str, Any]] = []
+    if isinstance(result.input_data, Mapping):
+        input_sources.append(result.input_data)
+    if dataset_example is not None:
+        dataset_input = getattr(dataset_example, "input_data", None)
+        if isinstance(dataset_input, Mapping):
+            input_sources.append(dataset_input)
+    return metadata_sources, input_sources
+
+
+def _sample_reference(
+    result: ExampleResult,
+    config: RagasConfig,
+    metadata_sources: list[Mapping[str, Any]],
+    input_sources: list[Mapping[str, Any]],
+) -> Any | None:
+    """A mapped ``reference`` column wins; expected_output is the fallback."""
+    reference = None
+    if config.column_map and "reference" in config.column_map:
+        reference_keys = _determine_column_keys(config.column_map, "reference")
+        reference = _extract_candidate(
+            [*metadata_sources, *input_sources], reference_keys
+        )
+    if reference is None:
+        reference = result.expected_output
+    return reference
+
+
+def _sample_user_input(
+    result: ExampleResult,
+    config: RagasConfig,
+    input_sources: list[Mapping[str, Any]],
+    reference: Any | None,
+) -> Any | None:
+    user_input_keys = _determine_column_keys(config.column_map, "user_input")
+    user_input = _extract_candidate(input_sources, user_input_keys)
+    if user_input is None and hasattr(result, "input_data"):
+        user_input = str(result.input_data)
+    if user_input is None and reference is not None:
+        user_input = str(reference)
+    return user_input
+
+
+def _sample_is_incomplete(fields: Mapping[str, Any], required: set[str]) -> bool:
+    """True when any required column is missing (None or empty list)."""
+    return any(fields.get(col) is None or fields.get(col) == [] for col in required)
+
+
 def _prepare_samples(
     example_results: Sequence[ExampleResult],
     *,
@@ -342,20 +399,12 @@ def _prepare_samples(
     samples: list[SingleTurnSample] = []
 
     for index, result in enumerate(example_results):
-        metadata_sources: list[Mapping[str, Any]] = []
-        if result.metadata:
-            metadata_sources.append(result.metadata)
-        if dataset_examples is not None and index < len(dataset_examples):
-            example_metadata = getattr(dataset_examples[index], "metadata", None)
-            if example_metadata:
-                metadata_sources.append(example_metadata)
-        input_sources: list[Mapping[str, Any]] = []
-        if isinstance(result.input_data, Mapping):
-            input_sources.append(result.input_data)
-        if dataset_examples is not None and index < len(dataset_examples):
-            dataset_input = getattr(dataset_examples[index], "input_data", None)
-            if isinstance(dataset_input, Mapping):
-                input_sources.append(dataset_input)
+        dataset_example = (
+            dataset_examples[index]
+            if dataset_examples is not None and index < len(dataset_examples)
+            else None
+        )
+        metadata_sources, input_sources = _sample_sources(result, dataset_example)
 
         response = result.actual_output
         if response is None and outputs is not None and index < len(outputs):
@@ -363,24 +412,10 @@ def _prepare_samples(
         if response is None:
             continue
 
-        # A mapped ``reference`` column wins; expected_output is the fallback
-        # (and the only source when the column is unmapped). A missing reference
-        # drops the row only when the selected metrics require it (#2472).
-        reference = None
-        if config.column_map and "reference" in config.column_map:
-            reference_keys = _determine_column_keys(config.column_map, "reference")
-            reference = _extract_candidate(
-                [*metadata_sources, *input_sources], reference_keys
-            )
-        if reference is None:
-            reference = result.expected_output
-
-        user_input_keys = _determine_column_keys(config.column_map, "user_input")
-        user_input = _extract_candidate(input_sources, user_input_keys)
-        if user_input is None and hasattr(result, "input_data"):
-            user_input = str(result.input_data)
-        if user_input is None and reference is not None:
-            user_input = str(reference)
+        # A missing reference drops the row only when the selected metrics
+        # require it (#2472).
+        reference = _sample_reference(result, config, metadata_sources, input_sources)
+        user_input = _sample_user_input(result, config, input_sources, reference)
 
         contexts_keys = _determine_column_keys(config.column_map, "retrieved_contexts")
         contexts_raw = _extract_candidate(metadata_sources, contexts_keys)
@@ -402,11 +437,7 @@ def _prepare_samples(
             "reference_contexts": reference_contexts,
         }
 
-        if any(
-            col in required_columns
-            and (fields.get(col) is None or fields.get(col) == [])
-            for col in required_columns
-        ):
+        if _sample_is_incomplete(fields, required_columns):
             continue
 
         samples.append(

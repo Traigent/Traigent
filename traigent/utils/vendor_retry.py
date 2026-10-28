@@ -204,6 +204,23 @@ def _number(value: Any) -> float | None:
     return out if math.isfinite(out) and out >= 0 else None
 
 
+def _retry_after_header_seconds(headers: Any) -> float | None:
+    """Seconds named by one ``retry-after`` header (number or HTTP-date)."""
+    raw = _header(headers, "retry-after")
+    seconds = _number(raw)
+    if seconds is not None:
+        return seconds
+    if not (isinstance(raw, str) and raw.strip()):
+        return None
+    try:
+        when = parsedate_to_datetime(raw.strip())
+    except (TypeError, ValueError):
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return max(0.0, (when - datetime.now(UTC)).total_seconds())
+
+
 def vendor_wait_seconds(exc: BaseException) -> float | None:
     """The wait the vendor asked for, in seconds, or ``None`` if it gave none.
 
@@ -225,18 +242,9 @@ def vendor_wait_seconds(exc: BaseException) -> float | None:
     if attr is not None:
         return attr
     for headers in sources:
-        raw = _header(headers, "retry-after")
-        seconds = _number(raw)
-        if seconds is not None:
-            return seconds
-        if isinstance(raw, str) and raw.strip():
-            try:
-                when = parsedate_to_datetime(raw.strip())
-            except (TypeError, ValueError):
-                continue
-            if when.tzinfo is None:
-                when = when.replace(tzinfo=UTC)
-            return max(0.0, (when - datetime.now(UTC)).total_seconds())
+        wait = _retry_after_header_seconds(headers)
+        if wait is not None:
+            return wait
     return None
 
 

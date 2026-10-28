@@ -89,8 +89,8 @@ def test_manifest_covers_every_optimization_result_field() -> None:
         "A field cannot be both restored and reset; the manifest contradicts "
         f"itself for: {sorted(RESULT_RESTORE & RESULT_RESET)}"
     )
-    assert len(declared) == 28, (
-        f"OptimizationResult now declares {len(declared)} fields, not 28. If you "
+    assert len(declared) == 29, (
+        f"OptimizationResult now declares {len(declared)} fields, not 29. If you "
         f"added one, updating this number is the LAST step, not the first: a "
         f"restorable field also needs a _SENTINELS entry, a bumped "
         f"RESULT_SCHEMA_VERSION, a FIELD_INTRODUCED_IN entry at that bumped "
@@ -104,14 +104,22 @@ def test_manifest_covers_every_optimization_result_field() -> None:
     assert len(RESULT_RESTORE) + len(RESULT_RESET) == len(declared)
 
 
-def test_reset_set_is_exactly_the_two_documented_non_durable_fields() -> None:
+def test_reset_set_is_exactly_the_three_documented_non_durable_fields() -> None:
     """Non-restoration is a contract, not an omission — so name the members.
 
     ``sync_session_id`` is pinned by the #2020 suites; ``_experiment_stats`` is
     an ``init=False`` memo cache recomputed from ``trials``. Anything else
     landing in RESET is a fidelity regression and must be argued for here.
+
+    ``promotion_decisions`` (TRAIG-101): the closed per-candidate decision the
+    optimizer's promotion gate made during THIS run (config hash -> enum string).
+    It is evidence for the hosted deploy path, produced by the run that is still in
+    memory; a reloaded artifact has no run to deploy from, and a restored value
+    would assert a gate decision for an optimizer that never ran in this process.
     """
-    assert RESULT_RESET == frozenset({"sync_session_id", "_experiment_stats"})
+    assert RESULT_RESET == frozenset(
+        {"sync_session_id", "_experiment_stats", "promotion_decisions"}
+    )
 
 
 def test_sentinel_table_covers_every_restored_field() -> None:

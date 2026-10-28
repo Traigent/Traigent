@@ -312,6 +312,9 @@ def _anchor(payload: dict[str, Any], schema: SimpleNamespace) -> TrustAnchorKeyV
         raise click.UsageError("anchor is invalid") from exc
 
 
+_CONTEXT_IS_INVALID = "context is invalid"
+
+
 def _process_context(
     payload: dict[str, Any], anchor: TrustAnchorKeyV1, schema: SimpleNamespace
 ) -> ProcessRecordVerificationContext:
@@ -354,7 +357,7 @@ def _process_context(
             trust_anchor=None if allow_unchecked else anchor,
         )
     except (TypeError, ValueError) as exc:
-        raise click.UsageError("context is invalid") from exc
+        raise click.UsageError(_CONTEXT_IS_INVALID) from exc
 
 
 def _dataset_context(
@@ -383,7 +386,7 @@ def _dataset_context(
             require_leaf_lists=_required(payload, "require_leaf_lists"),
         )
     except (TypeError, ValueError) as exc:
-        raise click.UsageError("context is invalid") from exc
+        raise click.UsageError(_CONTEXT_IS_INVALID) from exc
 
 
 def _evaluator_quality_context(
@@ -401,7 +404,7 @@ def _evaluator_quality_context(
             trust_anchor=None if allow_unchecked else anchor,
         )
     except (TypeError, ValueError) as exc:
-        raise click.UsageError("context is invalid") from exc
+        raise click.UsageError(_CONTEXT_IS_INVALID) from exc
 
 
 def _agent_quality_context(
@@ -445,7 +448,7 @@ def _agent_quality_context(
     except schema.AgentQualityVerificationError:
         raise
     except (TypeError, ValueError) as exc:
-        raise click.UsageError("context is invalid") from exc
+        raise click.UsageError(_CONTEXT_IS_INVALID) from exc
 
 
 def _resolve_kind(kind: str | None, context_payload: dict[str, Any]) -> str:

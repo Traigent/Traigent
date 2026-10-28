@@ -71,6 +71,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Execution snapshots you store yourself (`traigent.snapshot`).** `build_execution_snapshot` captures the dataset rows, configuration, agent and evaluator source (and, only with `capture_dirty_diff=True`, your uncommitted git diff) into one `tes1` bundle; `publish_snapshot`, `verify_snapshot` and `load_snapshot` write it to and check it in storage you own (`LocalDirStore`; `S3Store` via `pip install "traigent[snapshot-s3]"`; `GCSStore` via `traigent[snapshot-gcs]`; `AzureBlobStore` via `traigent[snapshot-azure]`; or `GitHubStore`, which uses a private repository and an existing branch, never overwrites, caps parts at 50 MiB, honours GitHub rate limits and sends the token only to the API host). Reading an opt-in dirty diff is streamed and stopped at the 10 MiB cap. S3-compatible endpoints are supported only if they pass the one-time conditional-write probe. Stores use atomic create-if-absent, remote endpoints must be HTTPS, errors carry no provider text or content, and nothing contacts Traigent. A v1 snapshot is an unbound client declaration, not proof of what ran. See `docs/user-guide/execution-snapshot.md`.
 - **Per-call vendor retry, fault-injection hook, strict retry settings (SDK-41).**
   With `TRAIGENT_VENDOR_MAX_RETRIES` > 0 the LiteLLM interceptor retries the
   same provider call on 429/503 (retry_after, else exponential backoff), instead

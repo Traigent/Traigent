@@ -1,0 +1,168 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/best_config_schema.json",
+  "title": "Traigent Best Config",
+  "description": "Canonical promoted runtime configuration selected by an optimization run (legacy envelope traigent.best_config.v1). Its spec_hash is defined once, below, in x-traigent-spec-hash; the Backend and every SDK must produce exactly that digest.",
+  "x-traigent-spec-hash": {
+    "applies_to": "traigent.best_config.v1",
+    "not_applicable_to": "traigent.best_config.v2 specs, which are hashed by best_config_hash_contract_schema.json (fp2 canonicalization, domain separation, complete spec including provenance). The hash_algorithm value \"v1\" in that contract names its hash algorithm, not this legacy spec envelope; do not apply the rule below to a v2 spec or the fp2 contract to a v1 spec.",
+    "scope": "Defined over a spec that passed publish validation. This is the rule the Backend has applied since #819; frozen here without change.",
+    "digest_format": "sha256:<64 lowercase hex>",
+    "steps": [
+      "0. Refuse first: check the ORIGINAL spec, as received (before NFC and before the validation exclusions of step 6), and refuse, never hash, a NaN, +Infinity or -Infinity number anywhere in it and a spec nested deeper than 16 levels. The order matters: a non-finite value inside a member that step 6 removes, or under an object key that step 1 collapses into another key, is still refused.",
+      "1. NFC: apply Unicode NFC to every string value and every object key of the spec, recursively.",
+      "2. config_id: replace by the ORIGINAL config_id with surrounding whitespace removed (str.strip). This value is not NFC-normalized.",
+      "3. function_ref: when present and not null, replace by the original with surrounding whitespace removed (a no-op on contract-valid input, whose pattern admits none).",
+      "4. environment: the effective environment is spec.environment when present; otherwise the publish request's environment; otherwise \"default\". It is trimmed and lower-cased (a no-op on contract-valid input, which admits only the canonical enum values). The effective environment is always part of the hashed payload.",
+      "5. Covered keys: keep only covered_keys that are present. provenance and forward_compat (excluded_keys) and any other key are not hashed.",
+      "6. validation: when present and an object, remove recursively, at any depth and inside arrays, every object member whose key is in validation_excluded_keys (by key name, not by meaning: an ordinary nested \"status\" is removed too). When the result is an empty object, omit validation from the payload; otherwise keep the cleaned object.",
+      "7. Serialize the payload with the options in serialization (Python json.dumps), encode as UTF-8, take SHA-256, and prefix with \"sha256:\"."
+    ],
+    "covered_keys": ["schema_version", "config_id", "function_ref", "environment", "config", "validation"],
+    "excluded_keys": ["provenance", "forward_compat"],
+    "validation_excluded_keys": ["guaranteed_selection", "certified_selection", "status", "deployable", "selected_config", "fallback_config", "certificate"],
+    "serialization": {
+      "ensure_ascii": false,
+      "sort_keys": true,
+      "separators": [",", ":"],
+      "allow_nan": false,
+      "numbers": "Python json rendering: integers exact; floats shortest round-trip repr (1.0, 1e-07); true, false and null as JSON literals."
+    },
+    "edge_cases": [
+      "Refused, never hashed (no digest is produced), checked over the original spec before NFC and before exclusions: a NaN, +Infinity or -Infinity number anywhere in the spec, including inside a validation member the hash would exclude and under a key that an NFC collision would discard; a spec nested deeper than 16 levels (spec = depth 0; an array nested 14 deep under config.a is the last accepted, 15 is refused).",
+      "Hash rule, not refused: object keys that become equal after NFC collapse to one key and the LATER key in document order wins (so the order is part of the rule). This keeps already-stored specs verifiable and revalidatable (rollback). PUBLISH INGRESS differs: a NEW publish whose spec holds two object keys that are equal after NFC is refused before anything is persisted or sent (Backend: the closed head_body_invalid 400 on the protected path, the legacy validation 400 otherwise, never echoing the keys; SDK: ConfigurationError before the request). The hash function itself never refuses such keys.",
+      "Distinct digests: -0.0 and 0.0; the integer 1 and the float 1.0 at the same position (rendered 1 and 1.0)."
+    ],
+    "verification": "A client verifies a Backend response by applying this rule to the spec the Backend RETURNED (not to its original request, which the Backend may have normalized) and comparing with the returned spec_hash; it never just accepts the returned digest. For a publish the returned digest must also equal the rule applied to the spec the client SENT (with the request environment), which binds the answer to the request's environment, function and content while allowing exactly the normalization above.",
+    "vectors": "tests/data/best_config_v1_spec_hash_vectors.json"
+  },
+  "type": "object",
+  "required": [
+    "schema_version",
+    "config_id",
+    "config"
+  ],
+  "properties": {
+    "schema_version": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "const": "traigent.best_config.v1"
+    },
+    "config_id": {
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV B1-2 (OPEN): config_id",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "not": {
+        "pattern": "[/\\\\\\u0000]"
+      }
+    },
+    "function_ref": {
+      "x-content-class": "code_identifier",
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 512,
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*:[A-Za-z_][A-Za-z0-9_]*(\\.(<locals>|[A-Za-z_][A-Za-z0-9_]*))*$"
+    },
+    "environment": {
+      "$ref": "#/definitions/best_config_environment"
+    },
+    "config": {
+      "x-content-key-class": "legacy_content",
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV B1-5 (LEAK): config",
+      "type": "object",
+      "maxProperties": 512,
+      "additionalProperties": true
+    },
+    "provenance": {
+      "type": "object",
+      "maxProperties": 128,
+      "properties": {
+        "algorithm": {
+          "$ref": "./optimization_strategy_schema.json#/definitions/SupportedOptimizationStrategyName"
+        },
+        "created_at": {
+          "x-content-class": "timestamp",
+          "type": "string",
+          "format": "date-time"
+        },
+        "exported_at": {
+          "x-content-class": "timestamp",
+          "type": "string",
+          "format": "date-time"
+        },
+        "optimization_id": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV B1-6 (OPEN): optimization_id",
+          "type": "string",
+          "maxLength": 512
+        },
+        "published_at": {
+          "x-content-class": "timestamp",
+          "type": "string",
+          "format": "date-time"
+        },
+        "source": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV B1-6 (OPEN): source",
+          "type": "string",
+          "maxLength": 512
+        },
+        "source_optimization_id": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV B1-6 (OPEN): source_optimization_id",
+          "type": "string",
+          "maxLength": 512
+        },
+        "source_session_id": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV B1-6 (OPEN): source_session_id",
+          "type": "string",
+          "maxLength": 512
+        },
+        "traigent_version": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV B1-6 (OPEN): traigent_version",
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "validation": {
+      "x-content-key-class": "legacy_content",
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV-GAP B1,B2: not inventoried (free object/array): validation",
+      "type": "object",
+      "maxProperties": 128,
+      "properties": {
+        "winner_stability": {
+          "$ref": "./best_config_v2_schema.json#/definitions/winner_stability"
+        }
+      },
+      "additionalProperties": true
+    },
+    "forward_compat": {
+      "x-content-class": "closed_enum",
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "best_config_environment": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "default",
+        "dev",
+        "development",
+        "test",
+        "staging",
+        "prod",
+        "production"
+      ]
+    }
+  }
+}

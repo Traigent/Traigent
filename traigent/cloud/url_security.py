@@ -509,7 +509,10 @@ def _reject_unsafe_hostname(
             ) from None
 
 
-def validate_cloud_base_url(base_url: str, *, purpose: str = "cloud request") -> str:
+_CLOUD_REQUEST = "cloud request"
+
+
+def validate_cloud_base_url(base_url: str, *, purpose: str = _CLOUD_REQUEST) -> str:
     """Validate and normalize a cloud base URL before sending credentials.
 
     Production calls must use a public HTTP(S) host. Localhost and private
@@ -602,7 +605,7 @@ def validate_cloud_base_url(base_url: str, *, purpose: str = "cloud request") ->
 
 
 def validate_always_blocked_cloud_url(
-    base_url: str, *, purpose: str = "cloud request", resolve: bool = True
+    base_url: str, *, purpose: str = _CLOUD_REQUEST, resolve: bool = True
 ) -> None:
     """Refuse metadata/link-local destinations and, outside development, plaintext HTTP.
 
@@ -676,7 +679,7 @@ def _validation_needs_dns_resolution(base_url: str) -> bool:
 
 
 async def validate_cloud_base_url_async(
-    base_url: str, *, purpose: str = "cloud request"
+    base_url: str, *, purpose: str = _CLOUD_REQUEST
 ) -> str:
     """Validate a cloud URL without blocking the event loop on DNS resolution."""
     if not _validation_needs_dns_resolution(base_url):

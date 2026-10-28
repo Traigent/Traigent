@@ -1892,6 +1892,21 @@ def note_response(status: int | None, body: Any, scope: str | None = None) -> bo
     return False
 
 
+def note_key_validation(body: Any, scope: str | None = None) -> bool:
+    """Latch the mode on for ``scope`` when a 2xx ``/keys/validate`` body says so.
+
+    Only the exact field ``optimization_only`` holding the JSON boolean ``true`` counts
+    (``"true"``, ``1`` and absent/false do nothing). It never un-latches and ignores any
+    explicit client setting, like the closed 403 latch. Returns True when latched.
+    """
+    if scope is None or not isinstance(body, dict):
+        return False
+    if body.get("valid") is not True or body.get("optimization_only") is not True:
+        return False
+    latch_on(scope)
+    return True
+
+
 # ---- per-session declared objectives (objective-aware metric rules need them) -----------
 
 _MAX_TRACKED_SESSIONS = 1024

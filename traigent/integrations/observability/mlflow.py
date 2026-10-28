@@ -74,27 +74,27 @@ except ImportError:
 
         @staticmethod
         def end_run(*args, **kwargs) -> None:
-            pass
+            """Stand-in used when mlflow is not installed: intentionally a no-op."""
 
         @staticmethod
         def log_param(*args, **kwargs) -> None:
-            pass
+            """Stand-in used when mlflow is not installed: intentionally a no-op."""
 
         @staticmethod
         def log_metric(*args, **kwargs) -> None:
-            pass
+            """Stand-in used when mlflow is not installed: intentionally a no-op."""
 
         @staticmethod
         def log_artifact(*args, **kwargs) -> None:
-            pass
+            """Stand-in used when mlflow is not installed: intentionally a no-op."""
 
         @staticmethod
         def log_dict(*args, **kwargs) -> None:
-            pass
+            """Stand-in used when mlflow is not installed: intentionally a no-op."""
 
         @staticmethod
         def set_tag(*args, **kwargs) -> None:
-            pass
+            """Stand-in used when mlflow is not installed: intentionally a no-op."""
 
 else:
     _mlflow_module: Any = None
@@ -277,6 +277,44 @@ class TraigentMLflowTracker:
         # Clean up temporary file
         Path(trial_file).unlink(missing_ok=True)
 
+    @staticmethod
+    def _log_result_metadata(metadata: dict[str, Any]) -> None:
+        for key, value in metadata.items():
+            if isinstance(value, (int, float)):
+                mlflow.log_metric(f"metadata_{key}", value)
+            else:
+                mlflow.log_param(f"metadata_{key}", str(value))
+
+    @staticmethod
+    def _log_trial_statistics(result: OptimizationResult) -> None:
+        """Log success counts and per-metric mean/std over successful trials."""
+        successful_trials = [
+            t
+            for t in result.trials
+            if hasattr(t, "status") and t.status.value == "completed"
+        ]
+        mlflow.log_metric("successful_trials", len(successful_trials))
+        mlflow.log_metric("success_rate", len(successful_trials) / len(result.trials))
+
+        # Log metric statistics
+        if not (successful_trials and result.best_metrics):
+            return
+        for metric_name in result.best_metrics.keys():
+            metric_values = [
+                t.metrics.get(metric_name, 0)
+                for t in successful_trials
+                if hasattr(t, "metrics") and metric_name in t.metrics
+            ]
+            if not metric_values:
+                continue
+            mean = sum(metric_values) / len(metric_values)
+            mlflow.log_metric(f"{metric_name}_mean", mean)
+            mlflow.log_metric(
+                f"{metric_name}_std",
+                (sum((x - mean) ** 2 for x in metric_values) / len(metric_values))
+                ** 0.5,
+            )
+
     def log_optimization_result(
         self, result: OptimizationResult, dataset_path: str | None = None
     ) -> None:
@@ -307,48 +345,11 @@ class TraigentMLflowTracker:
 
         # Log trial statistics
         if result.trials:
-            successful_trials = [
-                t
-                for t in result.trials
-                if hasattr(t, "status") and t.status.value == "completed"
-            ]
-            mlflow.log_metric("successful_trials", len(successful_trials))
-            mlflow.log_metric(
-                "success_rate", len(successful_trials) / len(result.trials)
-            )
-
-            # Log metric statistics
-            if successful_trials and result.best_metrics:
-                for metric_name in result.best_metrics.keys():
-                    metric_values = [
-                        t.metrics.get(metric_name, 0)
-                        for t in successful_trials
-                        if hasattr(t, "metrics") and metric_name in t.metrics
-                    ]
-                    if metric_values:
-                        mlflow.log_metric(
-                            f"{metric_name}_mean",
-                            sum(metric_values) / len(metric_values),
-                        )
-                        mlflow.log_metric(
-                            f"{metric_name}_std",
-                            (
-                                sum(
-                                    (x - sum(metric_values) / len(metric_values)) ** 2
-                                    for x in metric_values
-                                )
-                                / len(metric_values)
-                            )
-                            ** 0.5,
-                        )
+            self._log_trial_statistics(result)
 
         # Log metadata if available
         if result.metadata:
-            for key, value in result.metadata.items():
-                if isinstance(value, (int, float)):
-                    mlflow.log_metric(f"metadata_{key}", value)
-                else:
-                    mlflow.log_param(f"metadata_{key}", str(value))
+            self._log_result_metadata(result.metadata)
 
         # Log complete result as artifact
         result_data = {

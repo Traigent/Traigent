@@ -42,6 +42,19 @@ def _require_pandas() -> Any:
     return pd
 
 
+def _apply_example_count_columns(row: Any, metadata: Any) -> None:
+    """Copy the example-count entries of ``metadata`` onto a dataframe ``row``."""
+    if "successful_examples" in metadata:
+        row["successful_examples"] = metadata.get("successful_examples")
+    if "examples_attempted" in metadata:
+        row["examples_attempted"] = metadata.get("examples_attempted")
+    if "successful_examples" in metadata and "examples_attempted" in metadata:
+        row["example_success_summary"] = (
+            f"{metadata.get('successful_examples')}/"
+            f"{metadata.get('examples_attempted')} examples succeeded"
+        )
+
+
 def _name_suggests_minimize(name: str) -> bool:
     """Return the exact canonical SDK direction for a bare metric name."""
     return resolve_objective_orientation(name) == "minimize"
@@ -916,6 +929,23 @@ class EvalAudit:
         }
 
 
+def _sum_numeric_metrics(
+    trials: list[TrialResult],
+) -> tuple[dict[str, float], dict[str, int]]:
+    """Per-metric (sum, count) over numeric metrics, excluding bools and
+    ``examples_attempted``."""
+    numeric_sums: dict[str, float] = {}
+    numeric_counts: dict[str, int] = {}
+    for trial in trials:
+        for name, value in trial.metrics.items():
+            if name == "examples_attempted" or isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)):
+                numeric_sums[name] = numeric_sums.get(name, 0.0) + float(value)
+                numeric_counts[name] = numeric_counts.get(name, 0) + 1
+    return numeric_sums, numeric_counts
+
+
 # Adding a field here? Classify it in the round-trip manifest at
 # traigent/utils/optimization_result_persistence.py (RESULT_RESTORE vs
 # RESULT_RESET) — otherwise both persisted formats silently drop it on load
@@ -1147,6 +1177,16 @@ class OptimizationResult:
     # all-successful-trials range, unchanged.
     ranking_eligible_trial_ids: list[str] | None = None
 
+    # The closed promotion decision made for each candidate config (key: config
+    # hash, ``traigent.utils.hashing.generate_config_hash``): ``promote``,
+    # ``reject``, ``no_decision`` (the statistical gate), or why there was no gate
+    # answer: ``no_incumbent`` (the first candidate: nothing to compare against,
+    # recorded explicitly), ``insufficient_samples``, ``no_gate``,
+    # ``withheld_no_gate`` (strict evidence mode), ``gate_error``. Additive record of
+    # what the optimizer already decided; it never changes which config wins. Live
+    # state of this run: not restored from persisted artifacts.
+    promotion_decisions: dict[str, str] = field(default_factory=dict, repr=False)
+
     _experiment_stats: ExperimentStats | None = field(
         default=None, init=False, repr=False
     )
@@ -1312,6 +1352,19 @@ class OptimizationResult:
             summary.get("samples_per_config")
         )
 
+    def _stamped_winning_trial_ids(self) -> set[str] | None:
+        """Winner replicate ids stamped by result selection, if present."""
+        metadata = self.metadata
+        if not isinstance(metadata, dict):
+            return None
+        summary = metadata.get("session_summary")
+        if not isinstance(summary, dict):
+            return None
+        stamped = summary.get("winning_trial_ids")
+        if isinstance(stamped, list) and stamped:
+            return {str(trial_id) for trial_id in stamped}
+        return None
+
     def _aggregated_mean_metrics(self) -> dict[str, float] | None:
         """Reconstruct the winning config's MEAN metrics for aggregated runs.
 
@@ -1339,14 +1392,7 @@ class OptimizationResult:
         # config, so full-dict equality silently drops replicates whose aux
         # keys differ. Config equality remains only as a fallback for older
         # persisted results that predate the stamp.
-        winning_ids: set[str] | None = None
-        metadata = self.metadata
-        if isinstance(metadata, dict):
-            summary = metadata.get("session_summary")
-            if isinstance(summary, dict):
-                stamped = summary.get("winning_trial_ids")
-                if isinstance(stamped, list) and stamped:
-                    winning_ids = {str(trial_id) for trial_id in stamped}
+        winning_ids = self._stamped_winning_trial_ids()
         if winning_ids is not None:
             replicates = [
                 trial
@@ -1365,17 +1411,7 @@ class OptimizationResult:
             ]
         if not replicates:
             return None
-        numeric_sums: dict[str, float] = {}
-        numeric_counts: dict[str, int] = {}
-        for trial in replicates:
-            for name, value in trial.metrics.items():
-                if name == "examples_attempted":
-                    continue
-                if isinstance(value, bool):
-                    continue
-                if isinstance(value, (int, float)):
-                    numeric_sums[name] = numeric_sums.get(name, 0.0) + float(value)
-                    numeric_counts[name] = numeric_counts.get(name, 0) + 1
+        numeric_sums, numeric_counts = _sum_numeric_metrics(replicates)
         if not numeric_sums:
             return None
         mean_metrics: dict[str, float] = {
@@ -1411,18 +1447,26 @@ class OptimizationResult:
         if aggregated_metrics is not None:
             return aggregated_metrics
         if not self.objectives:
-            for trial in self.trials:
-                if (
-                    trial.metrics
-                    and trial.is_successful
-                    and self.best_config
-                    and trial.config == self.best_config
-                ):
-                    return dict(trial.metrics)
-            for trial in self.trials:
-                if trial.metrics:
-                    return dict(trial.metrics)
-            return {}
+            return self._best_metrics_without_objectives()
+        return self._best_metrics_with_objectives()
+
+    def _best_metrics_without_objectives(self) -> dict[str, float]:
+        """Winner metrics for a result that declares no objectives."""
+        for trial in self.trials:
+            if (
+                trial.metrics
+                and trial.is_successful
+                and self.best_config
+                and trial.config == self.best_config
+            ):
+                return dict(trial.metrics)
+        for trial in self.trials:
+            if trial.metrics:
+                return dict(trial.metrics)
+        return {}
+
+    def _best_metrics_with_objectives(self) -> dict[str, float]:
+        """Winner metrics for a result with objectives (config, id, then any)."""
         # F-C fix: match the trial whose config equals best_config so that
         # best_metrics is always consistent with the actual winning trial, not
         # the highest-scoring trial (which differs for minimize-primary or
@@ -1431,6 +1475,17 @@ class OptimizationResult:
             for trial in self.trials:
                 if trial.metrics and trial.config == self.best_config:
                     return dict(trial.metrics)
+        by_id = self._best_metrics_by_trial_id()
+        if by_id is not None:
+            return by_id
+        # Last resort: return any successful trial's metrics.
+        for trial in self.trials:
+            if trial.metrics and trial.is_successful:
+                return dict(trial.metrics)
+        return {}
+
+    def _best_metrics_by_trial_id(self) -> dict[str, float] | None:
+        """Metrics of the trial named by ``metadata['best_trial_id']``, if any."""
         # Fall back to best_trial_id stored in metadata (set by result_selection)
         # when no config match is found (aggregated configs, degenerate configs).
         best_trial_id = self.metadata.get("best_trial_id") if self.metadata else None
@@ -1438,11 +1493,7 @@ class OptimizationResult:
             for trial in self.trials:
                 if trial.trial_id == best_trial_id and trial.metrics:
                     return dict(trial.metrics)
-        # Last resort: return any successful trial's metrics.
-        for trial in self.trials:
-            if trial.metrics and trial.is_successful:
-                return dict(trial.metrics)
-        return {}
+        return None
 
     @staticmethod
     def _cost_flagged_for_objective(trial: TrialResult, objective: str) -> bool:
@@ -2417,15 +2468,7 @@ class OptimizationResult:
                 else None
             )
             metadata = trial.metadata or {}
-            if "successful_examples" in metadata:
-                row["successful_examples"] = metadata.get("successful_examples")
-            if "examples_attempted" in metadata:
-                row["examples_attempted"] = metadata.get("examples_attempted")
-            if "successful_examples" in metadata and "examples_attempted" in metadata:
-                row["example_success_summary"] = (
-                    f"{metadata.get('successful_examples')}/"
-                    f"{metadata.get('examples_attempted')} examples succeeded"
-                )
+            _apply_example_count_columns(row, metadata)
             if "total_example_cost" in metadata:
                 row["total_cost"] = metadata.get("total_example_cost")
             elif "total_cost" not in row:

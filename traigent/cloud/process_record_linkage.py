@@ -443,9 +443,27 @@ def _send(
 ) -> dict[str, Any]:
     if link and bundle is not None:
         payload["openings"] = {role: _b64(o) for role, o in bundle.openings.items()}
-    # Failures are translated to closed codes OUTSIDE the except blocks so no
-    # original exception (which could embed the request body) stays attached
-    # as ``__context__``.
+    failure, body = _finalize_with_closed_failure(client, build_session_row_id, payload)
+    if failure == "DUPLICATE_ISSUANCE" and link:
+        # A row already exists: an earlier attempt may have committed. GET it,
+        # never re-mint; the bundle's openings are the ones that attempt used.
+        body, failure = _get(client, build_session_row_id)
+    if failure is not None:
+        raise CommitmentLinkageClientError(failure)
+    return _record_result(body, bundle, link=link)
+
+
+def _finalize_with_closed_failure(
+    client: ProcessRecordTransport,
+    build_session_row_id: str,
+    payload: dict[str, Any],
+) -> tuple[str | None, dict[str, Any]]:
+    """Send the finalize request; return ``(closed failure code or None, body)``.
+
+    Failures are translated to closed codes OUTSIDE the except blocks so no
+    original exception (which could embed the request body) stays attached
+    as ``__context__``.
+    """
     failure: str | None = None
     body: dict[str, Any] = {}
     try:
@@ -456,13 +474,13 @@ def _send(
         failure = "TRANSPORT_ERROR"
     finally:
         payload.pop("openings", None)
-    if failure == "DUPLICATE_ISSUANCE" and link:
-        # A row already exists: an earlier attempt may have committed. GET it,
-        # never re-mint; the bundle's openings are the ones that attempt used.
-        body, failure = _get(client, build_session_row_id)
-    if failure is not None:
-        raise CommitmentLinkageClientError(failure)
+    return failure, body
 
+
+def _record_result(
+    body: dict[str, Any], bundle: CommitmentBundle | None, *, link: bool
+) -> dict[str, Any]:
+    """Validate a successful response body and record it on the bundle."""
     record = body.get("data") if isinstance(body, dict) else None
     linkage = body.get("commitment_linkage") if isinstance(body, dict) else None
     if not isinstance(record, dict):

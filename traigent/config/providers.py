@@ -230,6 +230,33 @@ class ContextBasedProvider(ConfigurationProvider):
         return True
 
 
+def _select_parameter_config(
+    active: TraigentConfig | dict[str, Any] | None,
+    fallback: TraigentConfig,
+) -> TraigentConfig:
+    """Prefer an APPLIED configuration over the wrap-time snapshot.
+
+    During optimization the evaluator wraps every trial call in
+    ``ConfigurationContext(<per-trial config>)``; injecting the
+    wrap-time ``config_obj`` here would hand the function the SAME
+    default configuration on every trial — silently making
+    parameter-mode optimization results meaningless (#1109).
+
+    The discriminator is ``applied_config_context``: only a real
+    ``ConfigurationContext`` application sets it (the evaluator's
+    per-trial wrap, or an explicit user ``with ConfigurationContext``)
+    — a bare global ``set_config()`` does not, so direct calls keep
+    the wrap-time default.
+    """
+    if active is None:
+        return fallback
+    if isinstance(active, TraigentConfig):
+        return active
+    if isinstance(active, dict):
+        return TraigentConfig.from_dict(active)
+    return fallback
+
+
 class ParameterBasedProvider(ConfigurationProvider):
     """Provider that injects configuration as a function parameter.
 
@@ -283,35 +310,10 @@ class ParameterBasedProvider(ConfigurationProvider):
             except LookupError:
                 return None
 
-        def _parameter_config(
-            active: TraigentConfig | dict[str, Any] | None,
-        ) -> TraigentConfig:
-            """Prefer an APPLIED configuration over the wrap-time snapshot.
-
-            During optimization the evaluator wraps every trial call in
-            ``ConfigurationContext(<per-trial config>)``; injecting the
-            wrap-time ``config_obj`` here would hand the function the SAME
-            default configuration on every trial — silently making
-            parameter-mode optimization results meaningless (#1109).
-
-            The discriminator is ``applied_config_context``: only a real
-            ``ConfigurationContext`` application sets it (the evaluator's
-            per-trial wrap, or an explicit user ``with ConfigurationContext``)
-            — a bare global ``set_config()`` does not, so direct calls keep
-            the wrap-time default.
-            """
-            if active is None:
-                return config_obj
-            if isinstance(active, TraigentConfig):
-                return active
-            if isinstance(active, dict):
-                return TraigentConfig.from_dict(active)
-            return config_obj
-
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             active = _active_applied_config()
-            effective = _parameter_config(active)
+            effective = _select_parameter_config(active, config_obj)
             # Only inject configuration if not already provided
             if param_name not in kwargs:
                 kwargs[param_name] = effective
@@ -326,7 +328,7 @@ class ParameterBasedProvider(ConfigurationProvider):
             @wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 active = _active_applied_config()
-                effective = _parameter_config(active)
+                effective = _select_parameter_config(active, config_obj)
                 # Only inject configuration if not already provided
                 if param_name not in kwargs:
                     kwargs[param_name] = effective
@@ -358,6 +360,19 @@ class SeamlessNoInjectableTargetsError(ConfigurationError):
     the runtime-shim fallback path, which would otherwise silently no-op the
     same way and defeat the fail-closed behavior this exists for.
     """
+
+
+def _merge_context_config(
+    active_config: dict[str, Any],
+    current_config: TraigentConfig | dict[str, Any],
+) -> None:
+    """Fold the context configuration into ``active_config`` in place."""
+    if isinstance(current_config, TraigentConfig):
+        context_dict = current_config.to_dict()
+        if context_dict:
+            active_config.update(context_dict)
+    elif isinstance(current_config, dict) and current_config:
+        active_config.update(current_config)
 
 
 class SeamlessParameterProvider(ConfigurationProvider):
@@ -439,12 +454,7 @@ class SeamlessParameterProvider(ConfigurationProvider):
             raw_ctx = _config_context.get(None)
             if raw_ctx is not None:
                 current_config = get_config()
-                if isinstance(current_config, TraigentConfig):
-                    context_dict = current_config.to_dict()
-                    if context_dict:
-                        active_config.update(context_dict)
-                elif isinstance(current_config, dict) and current_config:
-                    active_config.update(current_config)
+                _merge_context_config(active_config, current_config)
 
             # If no config at all, just call original function
             if not active_config:

@@ -199,6 +199,9 @@ def _publish_boundary_failure(exc: BaseException) -> ConfigurationError:
     )
 
 
+_FAILED_TO_SAVE_OPTIMIZATION_RESULTS = "Failed to save optimization results"
+
+
 class ConfigStateManager:
     """Manages optimization config state: results, history, load/save/export.
 
@@ -966,6 +969,41 @@ class ConfigStateManager:
             provenance=thaw_config(snapshot.provenance),
         )
 
+    def _resolve_agent_head_best_config(self) -> BestConfigSnapshot:
+        """The exact version the agent head pins (``agent_head`` source; no fallback).
+
+        The agent comes from ``TRAIGENT_AGENT_REF``.  The read returns the head's
+        pinned version and generation together; the spec is validated for schema and
+        environment but not bound to this function's id (the head is the agent's).
+        """
+        import os
+
+        from traigent.runtime.head_loader import config_values, load_pinned_config
+        from traigent.runtime.hosted import ReactiveClient, TokenMap
+
+        agent_ref = os.environ.get("TRAIGENT_AGENT_REF", "")
+        pinned = load_pinned_config(ReactiveClient(agent_ref, TokenMap()))
+        snapshot = snapshot_from_spec(
+            pinned.spec,
+            configuration_space=self.configuration_space,
+            expected_environment=self.best_config_environment,
+            source=BestConfigSource.AGENT_HEAD.value,
+        )
+        merged = {**self.default_config, **thaw_config(snapshot.config)}
+        config_values(pinned)  # fail closed on a spec without knob values
+        return BestConfigSnapshot.from_config(
+            merged,
+            config_id=snapshot.config_id,
+            source=BestConfigSource.AGENT_HEAD.value,
+            spec_hash=snapshot.spec_hash,
+            loaded_at=snapshot.loaded_at,
+            provenance={
+                **thaw_config(snapshot.provenance),
+                "head_generation": pinned.generation,
+                "head_version": pinned.version,
+            },
+        )
+
     def _resolve_mode_snapshot(self) -> BestConfigSnapshot | None:
         for source in source_order_for_mode(self.best_config_source):
             try:
@@ -991,6 +1029,8 @@ class ConfigStateManager:
                     )
                 elif source is BestConfigSource.CLOUD_FETCH:
                     snapshot = self._resolve_cloud_fetch_best_config()
+                elif source is BestConfigSource.AGENT_HEAD:
+                    snapshot = self._resolve_agent_head_best_config()
                 else:
                     snapshot = None
             except Exception as exc:
@@ -1017,6 +1057,14 @@ class ConfigStateManager:
                     raise self._unavailable(
                         CloudPublishUnavailableReason.REQUEST_FAILED,
                         "Cloud best-config fetch failed",
+                        diag.Category.FETCH_FAILED,
+                        exc,
+                    ) from None
+                if source is BestConfigSource.AGENT_HEAD:
+                    # Pure mode: the pinned version or nothing, never a fallback.
+                    raise self._unavailable(
+                        CloudPublishUnavailableReason.REQUEST_FAILED,
+                        "Agent head config read failed",
                         diag.Category.FETCH_FAILED,
                         exc,
                     ) from None
@@ -1183,7 +1231,7 @@ class ConfigStateManager:
 
     @diag.boundary(
         diag.Category.RESULT_INVALID,
-        "Failed to save optimization results",
+        _FAILED_TO_SAVE_OPTIMIZATION_RESULTS,
     )
     def save_optimization_results(self, path: str) -> None:
         """Save optimization results to file.
@@ -1241,7 +1289,7 @@ class ConfigStateManager:
         _redact_example_content_for_disk_save(result_dict)
 
         try:
-            with diag.fs_guard("Failed to save optimization results"):
+            with diag.fs_guard(_FAILED_TO_SAVE_OPTIMIZATION_RESULTS):
                 output_path = Path(path).expanduser()
                 base_dir = (
                     output_path.parent
@@ -1257,7 +1305,7 @@ class ConfigStateManager:
             # a value's own __str__ can raise ConfigurationError(<customer text>):
             # only a refusal built by this SDK passes unchanged
             raise diag.refusal(
-                "Failed to save optimization results",
+                _FAILED_TO_SAVE_OPTIMIZATION_RESULTS,
                 category=diag.Category.FILESYSTEM_FAILED,
                 cause=exc,
             ) from None
@@ -1265,7 +1313,7 @@ class ConfigStateManager:
             # PathTraversalError / secure_path's ValueError quote the path, and a
             # value's own __str__ can raise customer text: fixed refusal, type only
             raise diag.refusal(
-                "Failed to save optimization results",
+                _FAILED_TO_SAVE_OPTIMIZATION_RESULTS,
                 category=diag.Category.FILESYSTEM_FAILED,
                 cause=exc,
             ) from None

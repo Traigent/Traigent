@@ -579,24 +579,8 @@ def session_identity_v2_to_wire(session_request: Any) -> dict[str, Any]:
     )
     dataset = session_dataset_identity_to_wire(session_request)
     dataset_id = dataset.get("dataset_id")
-    artifact_fingerprints = (
-        artifact_fingerprints_to_wire(
-            getattr(session_request, "artifact_fingerprints", None)
-        )
-        or {}
-    )
-    artifact_versions = {
-        key: _artifact_version_from_fp1(artifact_fingerprints.get(key))
-        for key in _IDENTITY_ARTIFACT_KEYS
-    }
-    evaluator_id = getattr(session_request, "evaluator_id", None)
-    if not isinstance(evaluator_id, str) or not evaluator_id.strip():
-        evaluator_id = getattr(session_request, "evaluator_definition_id", None)
-    evaluator_id = (
-        evaluator_id.strip()
-        if isinstance(evaluator_id, str) and evaluator_id.strip()
-        else None
-    )
+    artifact_versions = _artifact_versions_to_wire(session_request)
+    evaluator_id = _declared_evaluator_id(session_request)
     evaluator_id_source = getattr(session_request, "evaluator_id_source", None)
     if evaluator_id_source is None:
         evaluator_id_source = "registered" if evaluator_id is not None else "unknown"
@@ -613,19 +597,56 @@ def session_identity_v2_to_wire(session_request: Any) -> dict[str, Any]:
     if evaluator_id is not None:
         identity["evaluator_id"] = evaluator_id
     else:
-        # Code evaluator identity (TraigentSchema evaluator_code_digest): typed
-        # v2 shape only, and only INSTEAD of every evaluator id alias -- an id
-        # could carry a customer label next to a code identity. evaluator_id_source
-        # is then "unknown" (set above), which the schema allows.
-        code_digest = getattr(session_request, "evaluator_code_digest", None)
-        if (
-            isinstance(code_digest, str)
-            and EVALUATOR_CODE_DIGEST_RE.fullmatch(code_digest)
-            and evaluator_id_source == "unknown"
-            and not getattr(session_request, "evaluator_ref", None)
-        ):
-            identity["evaluator_code_digest"] = code_digest
+        _add_evaluator_code_digest(identity, session_request, evaluator_id_source)
     return identity
+
+
+def _artifact_versions_to_wire(
+    session_request: Any,
+) -> dict[str, dict[str, str | None]]:
+    """The four identity-v2 artifact slots derived from the sanitized fingerprints."""
+    artifact_fingerprints = (
+        artifact_fingerprints_to_wire(
+            getattr(session_request, "artifact_fingerprints", None)
+        )
+        or {}
+    )
+    return {
+        key: _artifact_version_from_fp1(artifact_fingerprints.get(key))
+        for key in _IDENTITY_ARTIFACT_KEYS
+    }
+
+
+def _declared_evaluator_id(session_request: Any) -> str | None:
+    """The stripped evaluator id, falling back to the definition-id spelling."""
+    evaluator_id = getattr(session_request, "evaluator_id", None)
+    if not isinstance(evaluator_id, str) or not evaluator_id.strip():
+        evaluator_id = getattr(session_request, "evaluator_definition_id", None)
+    return (
+        evaluator_id.strip()
+        if isinstance(evaluator_id, str) and evaluator_id.strip()
+        else None
+    )
+
+
+def _add_evaluator_code_digest(
+    identity: dict[str, Any], session_request: Any, evaluator_id_source: Any
+) -> None:
+    """Add the code digest to ``identity`` when no evaluator id alias exists.
+
+    Code evaluator identity (TraigentSchema evaluator_code_digest): typed v2
+    shape only, and only INSTEAD of every evaluator id alias -- an id could
+    carry a customer label next to a code identity. ``evaluator_id_source`` is
+    then "unknown" (set by the caller), which the schema allows.
+    """
+    code_digest = getattr(session_request, "evaluator_code_digest", None)
+    if (
+        isinstance(code_digest, str)
+        and EVALUATOR_CODE_DIGEST_RE.fullmatch(code_digest)
+        and evaluator_id_source == "unknown"
+        and not getattr(session_request, "evaluator_ref", None)
+    ):
+        identity["evaluator_code_digest"] = code_digest
 
 
 @dataclass

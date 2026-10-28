@@ -211,8 +211,11 @@ def _schema_checkout(tmp_path: Path) -> tuple[Path, str, str]:
     return schema, first, head
 
 
-def _run_schema_gate(repo: Path, schema: Path) -> subprocess.CompletedProcess[str]:
+def _run_schema_gate(
+    repo: Path, schema: Path, extra_env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
+    env.update(extra_env or {})
     env.update(
         {
             "TRAIGENT_SCHEMA_REPO": str(schema),
@@ -252,6 +255,29 @@ def test_local_gate_exports_pin_even_when_checkout_is_at_pin_and_dirty(
     out = result.stdout + result.stderr
     assert "exported to a temp dir" in out
     assert f"\nSCHEMA_REPO={schema}\n" not in out
+
+
+def test_local_gate_schema_check_ignores_hook_exported_git_env(
+    tmp_path: Path,
+) -> None:
+    """A pre-push hook exports GIT_DIR for the SDK repo; the schema checkout's
+    git calls must not be redirected to it."""
+    schema, pinned, _head = _schema_checkout(tmp_path)
+    repo = _schema_gate_script(tmp_path, pinned)
+    result = _run_schema_gate(repo, schema, {"GIT_DIR": str(repo / ".git")})
+    out = result.stdout + result.stderr
+    assert "lacks pinned commit" not in out
+    assert "exported to a temp dir" in out
+
+
+def test_local_gate_schema_check_still_fails_closed_when_pin_absent(
+    tmp_path: Path,
+) -> None:
+    schema, _first, _head = _schema_checkout(tmp_path)
+    repo = _schema_gate_script(tmp_path, "0" * 39 + "1")
+    result = _run_schema_gate(repo, schema, {"GIT_DIR": str(repo / ".git")})
+    assert result.returncode != 0
+    assert "lacks pinned commit" in result.stdout + result.stderr
 
 
 def test_local_gate_fails_closed_without_a_readable_pin(tmp_path: Path) -> None:

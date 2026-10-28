@@ -1,0 +1,331 @@
+{
+ "basic": {
+  "request": [
+   {
+    "example_id": "a",
+    "input_id": "a",
+    "output": "o1",
+    "target": "ea"
+   },
+   {
+    "example_id": "b",
+    "input_id": "b",
+    "output": "o2",
+    "target": "eb"
+   }
+  ],
+  "results": [
+   {
+    "actual_output": "o1",
+    "cost_unmeasured": false,
+    "cost_usd": 0.5,
+    "error": null,
+    "example_id": "a",
+    "expected_output": "ea",
+    "input_id": "a",
+    "latency_ms": 11.0,
+    "metadata": {
+     "accuracy_derivation_path": "explicit",
+     "evaluation_mode": "evaluated"
+    },
+    "metrics": {
+     "accuracy": 1.0
+    }
+   },
+   {
+    "actual_output": "o2",
+    "cost_unmeasured": false,
+    "cost_usd": 0.1,
+    "error": null,
+    "example_id": "b",
+    "expected_output": "eb",
+    "input_id": "b",
+    "latency_ms": 40.0,
+    "metadata": {
+     "accuracy_derivation_path": "overall_accuracy",
+     "evaluation_mode": "evaluated"
+    },
+    "metrics": {
+     "accuracy": 0.5,
+     "overall_accuracy": 0.5
+    }
+   }
+  ]
+ },
+ "eval_error_and_expected_behavior": {
+  "request": [
+   {
+    "example_id": "a",
+    "input_id": "a",
+    "output": "o",
+    "target": null
+   },
+   {
+    "example_id": "b",
+    "input_id": "b",
+    "output": "o",
+    "target": "given"
+   }
+  ],
+  "results": [
+   {
+    "actual_output": "o",
+    "cost_unmeasured": false,
+    "cost_usd": 0.0,
+    "error": "eval-fail",
+    "example_id": "a",
+    "expected_output": "should say hi",
+    "input_id": "a",
+    "latency_ms": 40.0,
+    "metadata": {
+     "accuracy_derivation_path": "explicit",
+     "evaluation_mode": "evaluated"
+    },
+    "metrics": {
+     "accuracy": 0.0
+    }
+   },
+   {
+    "actual_output": "o",
+    "cost_unmeasured": false,
+    "cost_usd": 0.0,
+    "error": null,
+    "example_id": "b",
+    "expected_output": "given",
+    "input_id": "b",
+    "latency_ms": 40.0,
+    "metadata": {
+     "accuracy_derivation_path": "explicit",
+     "evaluation_mode": "evaluated"
+    },
+    "metrics": {
+     "accuracy": 1.0
+    }
+   }
+  ]
+ },
+ "exec_error_only": {
+  "request": [
+   {
+    "example_id": "a",
+    "input_id": "a",
+    "output": null,
+    "target": "ea"
+   }
+  ],
+  "results": [
+   {
+    "actual_output": null,
+    "cost_unmeasured": false,
+    "cost_usd": 0.1,
+    "error": "boom",
+    "example_id": "a",
+    "expected_output": "ea",
+    "input_id": "a",
+    "latency_ms": 40.0,
+    "metadata": {
+     "accuracy_derivation_path": "none",
+     "evaluation_mode": "evaluated"
+    },
+    "metrics": {}
+   }
+  ]
+ },
+ "malformed_eval_results_fall_back": {
+  "request": [
+   {
+    "example_id": "a",
+    "input_id": "a",
+    "output": "o",
+    "target": "ea"
+   }
+  ],
+  "results": [
+   {
+    "actual_output": "o",
+    "cost_unmeasured": false,
+    "cost_usd": 0.1,
+    "error": null,
+    "example_id": "a",
+    "expected_output": "ea",
+    "input_id": "a",
+    "latency_ms": 40.0,
+    "metadata": {
+     "accuracy_derivation_path": "none",
+     "evaluation_mode": "evaluate_fallback"
+    },
+    "metrics": {}
+   }
+  ]
+ },
+ "metrics_none_and_missing_eval_row": {
+  "request": [
+   {
+    "example_id": "a",
+    "input_id": "a",
+    "output": "o",
+    "target": "ea"
+   },
+   {
+    "example_id": "b",
+    "input_id": "b",
+    "output": "o",
+    "target": "eb"
+   }
+  ],
+  "results": [
+   {
+    "actual_output": "o",
+    "cost_unmeasured": false,
+    "cost_usd": 0.05,
+    "error": null,
+    "example_id": "a",
+    "expected_output": "ea",
+    "input_id": "a",
+    "latency_ms": 40.0,
+    "metadata": {
+     "accuracy_derivation_path": "none",
+     "evaluation_mode": "evaluated"
+    },
+    "metrics": {}
+   },
+   {
+    "actual_output": "o",
+    "cost_unmeasured": false,
+    "cost_usd": 0.05,
+    "error": null,
+    "example_id": "b",
+    "expected_output": "eb",
+    "input_id": "b",
+    "latency_ms": 40.0,
+    "metadata": {
+     "accuracy_derivation_path": "none",
+     "evaluation_mode": "evaluated"
+    },
+    "metrics": {}
+   }
+  ]
+ },
+ "negative_item_cost": {
+  "request": [
+   {
+    "example_id": "a",
+    "input_id": "a",
+    "output": "o",
+    "target": "ea"
+   }
+  ],
+  "results": [
+   {
+    "actual_output": "o",
+    "cost_unmeasured": true,
+    "cost_usd": 0.0,
+    "error": null,
+    "example_id": "a",
+    "expected_output": "ea",
+    "input_id": "a",
+    "latency_ms": 40.0,
+    "metadata": {
+     "accuracy_derivation_path": "explicit",
+     "evaluation_mode": "evaluated"
+    },
+    "metrics": {
+     "accuracy": 1.0
+    }
+   }
+  ]
+ },
+ "no_matching_outputs_falls_back": {
+  "request": null,
+  "results": [
+   {
+    "actual_output": null,
+    "cost_unmeasured": true,
+    "cost_usd": 0.0,
+    "error": "Execute response did not include output for example_id 'a'",
+    "example_id": "a",
+    "expected_output": "ea",
+    "input_id": "a",
+    "latency_ms": 0.0,
+    "metadata": {
+     "accuracy_derivation_path": "none",
+     "evaluation_mode": "evaluate_fallback"
+    },
+    "metrics": {}
+   }
+  ]
+ },
+ "output_id_only_and_missing_output": {
+  "request": [
+   {
+    "example_id": "a",
+    "input_id": "a",
+    "output_id": "oid1",
+    "target": "ea"
+   }
+  ],
+  "results": [
+   {
+    "actual_output": {
+     "output_id": "oid1"
+    },
+    "cost_unmeasured": true,
+    "cost_usd": 0.0,
+    "error": null,
+    "example_id": "a",
+    "expected_output": "ea",
+    "input_id": "a",
+    "latency_ms": 40.0,
+    "metadata": {
+     "accuracy_derivation_path": "explicit",
+     "evaluation_mode": "evaluated"
+    },
+    "metrics": {
+     "accuracy": 0.3
+    }
+   },
+   {
+    "actual_output": null,
+    "cost_unmeasured": true,
+    "cost_usd": 0.0,
+    "error": "Execute response did not include output for example_id 'b'",
+    "example_id": "b",
+    "expected_output": "eb",
+    "input_id": "b",
+    "latency_ms": 0.0,
+    "metadata": {
+     "accuracy_derivation_path": "none",
+     "evaluation_mode": "evaluated"
+    },
+    "metrics": {}
+   }
+  ]
+ },
+ "transport_error_falls_back": {
+  "request": [
+   {
+    "example_id": "a",
+    "input_id": "a",
+    "output": "o",
+    "target": "ea"
+   }
+  ],
+  "results": [
+   {
+    "actual_output": "o",
+    "cost_unmeasured": false,
+    "cost_usd": 0.1,
+    "error": null,
+    "example_id": "a",
+    "expected_output": "ea",
+    "input_id": "a",
+    "latency_ms": 40.0,
+    "metadata": {
+     "accuracy_derivation_path": "none",
+     "evaluation_mode": "evaluate_fallback"
+    },
+    "metrics": {}
+   }
+  ]
+ }
+}

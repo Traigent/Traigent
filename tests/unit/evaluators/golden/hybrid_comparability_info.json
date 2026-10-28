@@ -1,0 +1,325 @@
+{
+ "cost_objective_unmeasured": {
+  "coverage_ratio": 0.5,
+  "derivation_path": "none",
+  "evaluation_mode": "unknown",
+  "examples_with_primary_metric": 1,
+  "missing_example_ids": [
+   "a"
+  ],
+  "per_metric_coverage": {
+   "cost": {
+    "present": 1,
+    "ratio": 0.5,
+    "total": 2
+   }
+  },
+  "primary_objective": "cost",
+  "ranking_eligible": false,
+  "schema_version": "1.0",
+  "total_examples": 2,
+  "warning_codes": [
+   "MCI-002"
+  ]
+ },
+ "duplicate_ids": {
+  "coverage_ratio": 0.0,
+  "derivation_path": "none",
+  "evaluation_mode": "evaluated",
+  "examples_with_primary_metric": 0,
+  "missing_example_ids": [
+   "dup",
+   "dup"
+  ],
+  "per_metric_coverage": {},
+  "primary_objective": "score",
+  "ranking_eligible": false,
+  "schema_version": "1.0",
+  "total_examples": 2,
+  "warning_codes": [
+   "MCI-004",
+   "MCI-007"
+  ]
+ },
+ "empty": {
+  "coverage_ratio": 0.0,
+  "derivation_path": "none",
+  "evaluation_mode": "unknown",
+  "examples_with_primary_metric": 0,
+  "missing_example_ids": [],
+  "per_metric_coverage": {},
+  "primary_objective": "accuracy",
+  "ranking_eligible": false,
+  "schema_version": "1.0",
+  "total_examples": 0,
+  "warning_codes": [
+   "MCI-001"
+  ]
+ },
+ "empty_cost_objective": {
+  "coverage_ratio": 0.0,
+  "derivation_path": "none",
+  "evaluation_mode": "unknown",
+  "examples_with_primary_metric": 0,
+  "missing_example_ids": [],
+  "per_metric_coverage": {},
+  "primary_objective": "cost",
+  "ranking_eligible": false,
+  "schema_version": "1.0",
+  "total_examples": 0,
+  "warning_codes": [
+   "MCI-001"
+  ]
+ },
+ "failed_rows": {
+  "coverage_ratio": 0.5,
+  "derivation_path": "explicit",
+  "evaluation_mode": "evaluated",
+  "examples_with_primary_metric": 1,
+  "missing_example_ids": [
+   "b"
+  ],
+  "per_metric_coverage": {
+   "accuracy": {
+    "present": 1,
+    "ratio": 0.5,
+    "total": 2
+   }
+  },
+  "primary_objective": "accuracy",
+  "ranking_eligible": false,
+  "schema_version": "1.0",
+  "total_examples": 2,
+  "warning_codes": [
+   "MCI-002",
+   "MCI-007"
+  ]
+ },
+ "full_evaluated": {
+  "coverage_ratio": 1.0,
+  "derivation_path": "explicit",
+  "evaluation_mode": "evaluated",
+  "examples_with_primary_metric": 2,
+  "missing_example_ids": [],
+  "per_metric_coverage": {
+   "accuracy": {
+    "present": 2,
+    "ratio": 1.0,
+    "total": 2
+   }
+  },
+  "primary_objective": "accuracy",
+  "ranking_eligible": true,
+  "schema_version": "1.0",
+  "total_examples": 2,
+  "warning_codes": []
+ },
+ "latency_objective": {
+  "coverage_ratio": 1.0,
+  "derivation_path": "none",
+  "evaluation_mode": "unknown",
+  "examples_with_primary_metric": 2,
+  "missing_example_ids": [],
+  "per_metric_coverage": {
+   "latency": {
+    "present": 2,
+    "ratio": 1.0,
+    "total": 2
+   }
+  },
+  "primary_objective": "latency",
+  "ranking_eligible": true,
+  "schema_version": "1.0",
+  "total_examples": 2,
+  "warning_codes": []
+ },
+ "legacy_forces_eligible": {
+  "coverage_ratio": 0.0,
+  "derivation_path": "none",
+  "evaluation_mode": "evaluated",
+  "examples_with_primary_metric": 0,
+  "missing_example_ids": [
+   "a"
+  ],
+  "per_metric_coverage": {},
+  "primary_objective": "accuracy",
+  "ranking_eligible": true,
+  "schema_version": "1.0",
+  "total_examples": 1,
+  "warning_codes": [
+   "MCI-004"
+  ]
+ },
+ "metadata_derivation_path": {
+  "coverage_ratio": 1.0,
+  "derivation_path": "custom",
+  "evaluation_mode": "evaluated",
+  "examples_with_primary_metric": 1,
+  "missing_example_ids": [],
+  "per_metric_coverage": {
+   "accuracy": {
+    "present": 1,
+    "ratio": 1.0,
+    "total": 1
+   }
+  },
+  "primary_objective": "accuracy",
+  "ranking_eligible": true,
+  "schema_version": "1.0",
+  "total_examples": 1,
+  "warning_codes": []
+ },
+ "metadata_path_none_falls_back": {
+  "coverage_ratio": 1.0,
+  "derivation_path": "overall_accuracy",
+  "evaluation_mode": "evaluated",
+  "examples_with_primary_metric": 1,
+  "missing_example_ids": [],
+  "per_metric_coverage": {
+   "overall_accuracy": {
+    "present": 1,
+    "ratio": 1.0,
+    "total": 1
+   }
+  },
+  "primary_objective": "overall_accuracy",
+  "ranking_eligible": true,
+  "schema_version": "1.0",
+  "total_examples": 1,
+  "warning_codes": []
+ },
+ "metric_value_none_not_counted": {
+  "coverage_ratio": 0.0,
+  "derivation_path": "none",
+  "evaluation_mode": "evaluated",
+  "examples_with_primary_metric": 0,
+  "missing_example_ids": [
+   "a"
+  ],
+  "per_metric_coverage": {
+   "accuracy": {
+    "present": 0,
+    "ratio": 0.0,
+    "total": 1
+   }
+  },
+  "primary_objective": "accuracy",
+  "ranking_eligible": false,
+  "schema_version": "1.0",
+  "total_examples": 1,
+  "warning_codes": [
+   "MCI-004"
+  ]
+ },
+ "mixed_derivation_paths": {
+  "coverage_ratio": 1.0,
+  "derivation_path": "p1",
+  "evaluation_mode": "evaluated",
+  "examples_with_primary_metric": 2,
+  "missing_example_ids": [],
+  "per_metric_coverage": {
+   "accuracy": {
+    "present": 2,
+    "ratio": 1.0,
+    "total": 2
+   }
+  },
+  "primary_objective": "accuracy",
+  "ranking_eligible": true,
+  "schema_version": "1.0",
+  "total_examples": 2,
+  "warning_codes": [
+   "MCI-003"
+  ]
+ },
+ "mixed_modes": {
+  "coverage_ratio": 1.0,
+  "derivation_path": "explicit",
+  "evaluation_mode": "mixed",
+  "examples_with_primary_metric": 2,
+  "missing_example_ids": [],
+  "per_metric_coverage": {
+   "accuracy": {
+    "present": 2,
+    "ratio": 1.0,
+    "total": 2
+   }
+  },
+  "primary_objective": "accuracy",
+  "ranking_eligible": false,
+  "schema_version": "1.0",
+  "total_examples": 2,
+  "warning_codes": [
+   "MCI-004"
+  ]
+ },
+ "partial_coverage": {
+  "coverage_ratio": 0.5,
+  "derivation_path": "explicit",
+  "evaluation_mode": "evaluated",
+  "examples_with_primary_metric": 1,
+  "missing_example_ids": [
+   "b"
+  ],
+  "per_metric_coverage": {
+   "accuracy": {
+    "present": 1,
+    "ratio": 0.5,
+    "total": 2
+   }
+  },
+  "primary_objective": "accuracy",
+  "ranking_eligible": false,
+  "schema_version": "1.0",
+  "total_examples": 2,
+  "warning_codes": [
+   "MCI-002"
+  ]
+ },
+ "split_mean_and_split_keys": {
+  "coverage_ratio": 1.0,
+  "derivation_path": "split_mean",
+  "evaluation_mode": "evaluated",
+  "examples_with_primary_metric": 2,
+  "missing_example_ids": [],
+  "per_metric_coverage": {
+   "x_accuracy": {
+    "present": 2,
+    "ratio": 1.0,
+    "total": 2
+   },
+   "y_accuracy": {
+    "present": 1,
+    "ratio": 0.5,
+    "total": 2
+   }
+  },
+  "primary_objective": "x_accuracy",
+  "ranking_eligible": true,
+  "schema_version": "1.0",
+  "total_examples": 2,
+  "warning_codes": [
+   "MCI-005",
+   "MCI-006"
+  ]
+ },
+ "unknown_objective": {
+  "coverage_ratio": 1.0,
+  "derivation_path": "none",
+  "evaluation_mode": "unknown",
+  "examples_with_primary_metric": 1,
+  "missing_example_ids": [],
+  "per_metric_coverage": {
+   "f1": {
+    "present": 1,
+    "ratio": 1.0,
+    "total": 1
+   }
+  },
+  "primary_objective": "f1",
+  "ranking_eligible": true,
+  "schema_version": "1.0",
+  "total_examples": 1,
+  "warning_codes": []
+ }
+}

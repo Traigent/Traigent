@@ -96,6 +96,35 @@ def _headers_to_lower_dict(headers: Any | None) -> dict[str, str]:
     return {str(key).lower(): str(value).lower() for key, value in items()}
 
 
+def _latch_key_validation(url: str, headers: dict[str, str], data: Any) -> bool:
+    """Latch optimization_only for this credential when ``/keys/validate`` says so.
+
+    Runs before the validation result is returned, so the first content-bearing send
+    after authentication is already judged under the mode. Returns True when the
+    response asked for the mode. Never raises, and fails closed: if latching itself
+    fails, the error class is logged and a flagged response still returns True, so the
+    caller restricts this auth manager rather than letting content out.
+    """
+    flagged = (
+        isinstance(data, dict)
+        and data.get("valid") is True
+        and data.get("optimization_only") is True
+    )
+    try:
+        from traigent.utils import optimization_only_egress as oo_egress
+
+        return oo_egress.note_key_validation(
+            data, oo_egress.credential_scope(url, headers)
+        )
+    except Exception as exc:  # noqa: BLE001 - authentication must not break; fail closed
+        logger.error(
+            "optimization_only: key-validation latch failed (%s); "
+            "restricting this auth manager",
+            type(exc).__name__,
+        )
+        return flagged
+
+
 def _parse_validation_payload(data: Any | None, raw_body: str | None) -> dict[str, Any]:
     if isinstance(data, dict):
         return data
@@ -572,6 +601,8 @@ class AuthManager:
 
         self.config = config or UnifiedAuthConfig()
         self.no_egress = bool(no_egress)
+        #: Sticky: set when /keys/validate answered optimization_only true; never cleared.
+        self._server_optimization_only = False
 
         # Authentication state
         self._credentials: AuthCredentials | None = None
@@ -648,6 +679,12 @@ class AuthManager:
             auth_lock=self._auth_lock,
         )
 
+        # Latch-on-read: every getter of a stored credential latches it first (flagged only).
+        self._token_manager.read_guard = self._latch_emitted_credential
+        self._api_key_manager.read_guard = self._latch_emitted_credential
+        self._token_manager.guard_active = lambda: self._server_optimization_only
+        self._api_key_manager.guard_active = lambda: self._server_optimization_only
+
         self._last_auth_result: AuthResult | None = None
 
         # Statistics
@@ -707,8 +744,58 @@ class AuthManager:
         self, credentials: AuthCredentials | None, status: AuthStatus
     ) -> None:
         """Helper for TokenManager callback to set credentials and status."""
+        # The ONLY place self._credentials is assigned a credential (a test enforces it), so
+        # a stored token is latched before any direct-header sender (observability) can use it.
+        # Latch first: if a flagged manager cannot latch, it raises and stores nothing.
+        if credentials is not None:
+            stored: dict[str, str] = {}
+            if credentials.jwt_token:
+                stored["Authorization"] = f"Bearer {credentials.jwt_token}"
+            if credentials.api_key:
+                stored["X-API-Key"] = credentials.api_key
+            if stored:
+                self._latch_emitted_credential(stored)
+            if credentials.refresh_token:
+                # a refresh token is a credential of its own scope
+                self._latch_emitted_credential(
+                    {"Authorization": f"Bearer {credentials.refresh_token}"}
+                )
         self._credentials = credentials
         self._auth_status = status
+
+    def _latch_emitted_credential(self, headers: dict[str, str]) -> None:
+        """Latch the scope of every credential this manager is about to emit or hand out.
+
+        Once ``/keys/validate`` has said ``optimization_only: true`` through this manager
+        (``_server_optimization_only``, never cleared) EVERY credential it emits belongs to
+        the client it authenticated, so each credential's scope is latched: the API key, a
+        login/exchange JWT, a refreshed JWT, whatever. Each header is latched on its own
+        (``credential_scope`` keys on a single credential, so a combined header set would
+        latch only the first). This is deliberately over-inclusive: a user-supplied JWT on a
+        flagged manager is restricted too. Unflagged managers pay one attribute check and
+        never raise. A flagged manager fails closed: if latching raises, the error class is
+        logged and ``OptimizationOnlyRefusal`` is raised so the credential is never handed
+        out unlatched. It is also the read guard of the token/API-key managers, so a
+        credential stored before the latch could be applied is latched when read.
+        """
+        if not self._server_optimization_only:
+            return
+        try:
+            from traigent.config.backend_config import BackendConfig
+            from traigent.utils import optimization_only_egress as oo_egress
+
+            base = self.config.backend_base_url or BackendConfig.get_cloud_backend_url()
+            for name, value in headers.items():
+                oo_egress.latch_on(oo_egress.credential_scope(base, {name: value}))
+        except Exception as exc:  # noqa: BLE001 - fail closed on a flagged manager
+            logger.error(
+                "optimization_only: could not latch an emitted credential (%s); "
+                "refusing to emit it",
+                type(exc).__name__,
+            )
+            from traigent.utils.optimization_only_egress import OptimizationOnlyRefusal
+
+            raise OptimizationOnlyRefusal("credential_latch") from None
 
     # ------------------------------------------------------------------
     # API key state delegators (backward compatibility)
@@ -718,7 +805,13 @@ class AuthManager:
         """Header carrying the configured credential, with no network call or refresh.
 
         Used only to name the credential (for scoping a server refusal); never sent.
+        On a flagged manager the credential is latched before it is returned.
         """
+        headers = self._configured_credential_headers()
+        self._latch_emitted_credential(headers)
+        return headers
+
+    def _configured_credential_headers(self) -> dict[str, str]:
         credentials = self._credentials
         if credentials is not None and credentials.jwt_token:
             return {"Authorization": f"Bearer {credentials.jwt_token}"}
@@ -825,8 +918,11 @@ class AuthManager:
         return bool(self._api_key_manager.has_key())
 
     def _get_api_key_for_internal_use(self) -> str | None:
-        """Delegate to APIKeyManager.get_key_for_internal_use."""
-        return cast(str | None, self._api_key_manager.get_key_for_internal_use())
+        """Delegate to APIKeyManager.get_key_for_internal_use (latched first if flagged)."""
+        key = cast(str | None, self._api_key_manager.get_key_for_internal_use())
+        if key:
+            self._latch_emitted_credential({"X-API-Key": key})
+        return key
 
     # Primary Authentication Interface
 
@@ -978,8 +1074,7 @@ class AuthManager:
     async def _handle_dict_success(self, result: AuthResult) -> None:
         """Apply state updates for successful dict-based authentication."""
 
-        self._credentials = result.credentials
-        self._auth_status = result.status
+        self._set_credentials_and_status(result.credentials, result.status)
         self._stats["successful_authentications"] += 1
         self._authenticated = True
 
@@ -1018,8 +1113,7 @@ class AuthManager:
     ) -> None:
         """Update state after a successful authentication attempt."""
 
-        self._credentials = credentials
-        self._auth_status = result.status
+        self._set_credentials_and_status(credentials, result.status)
         self._stats["successful_authentications"] += 1
         self._authenticated = True
 
@@ -1128,27 +1222,7 @@ class AuthManager:
         Returns:
             Dictionary of authentication headers
         """
-        auth_state = self.is_authenticated()
-        if inspect.isawaitable(auth_state):
-            auth_state = await auth_state
-        if not bool(auth_state):
-            auth_result = await self.authenticate()
-            if not auth_result.success or self._credentials is None:
-                self._authenticated = False
-                # Fail closed: never emit headers built from an unverified or
-                # backend-rejected API key. Doing so would defeat backend
-                # validation by allowing the SDK to send the raw key anyway.
-                failure_detail = auth_result.session_creation_failure
-                if failure_detail is not None:
-                    raise _InvalidCredentialsWithSessionFailure(
-                        auth_result.error_message
-                        or "Authentication failed; refusing to emit auth headers.",
-                        failure_detail,
-                    )
-                raise InvalidCredentialsError(
-                    auth_result.error_message
-                    or "Authentication failed; refusing to emit auth headers."
-                )
+        await self._ensure_authenticated_for_headers()
 
         if not self._credentials:
             self._authenticated = False
@@ -1158,21 +1232,50 @@ class AuthManager:
 
         # Generate headers based on authentication mode
         mode = self._credentials.mode
-        if mode == AuthMode.API_KEY:
-            headers = self._get_api_key_headers()
-        elif mode == AuthMode.JWT_TOKEN:
-            headers = await self._get_jwt_headers()
-        elif mode == AuthMode.OAUTH2:
-            headers = self._get_oauth_headers()
-        elif mode == AuthMode.SERVICE_TO_SERVICE:
-            headers = self._get_service_headers(target)
-        elif mode == AuthMode.DEVELOPMENT:
-            headers = self._get_dev_headers()
-        else:
-            headers = {}
+        headers = await self._headers_for_mode(mode, target)
 
+        self._latch_emitted_credential(headers)
         self._add_common_headers(headers, target)
         return headers
+
+    async def _ensure_authenticated_for_headers(self) -> None:
+        """Authenticate when needed; fail closed when that does not succeed."""
+        auth_state = self.is_authenticated()
+        if inspect.isawaitable(auth_state):
+            auth_state = await auth_state
+        if bool(auth_state):
+            return
+        auth_result = await self.authenticate()
+        if not auth_result.success or self._credentials is None:
+            self._authenticated = False
+            # Fail closed: never emit headers built from an unverified or
+            # backend-rejected API key. Doing so would defeat backend
+            # validation by allowing the SDK to send the raw key anyway.
+            failure_detail = auth_result.session_creation_failure
+            if failure_detail is not None:
+                raise _InvalidCredentialsWithSessionFailure(
+                    auth_result.error_message
+                    or "Authentication failed; refusing to emit auth headers.",
+                    failure_detail,
+                )
+            raise InvalidCredentialsError(
+                auth_result.error_message
+                or "Authentication failed; refusing to emit auth headers."
+            )
+
+    async def _headers_for_mode(self, mode: AuthMode, target: str) -> dict[str, str]:
+        """Build the credential headers for one authentication mode."""
+        if mode == AuthMode.API_KEY:
+            return self._get_api_key_headers()
+        if mode == AuthMode.JWT_TOKEN:
+            return await self._get_jwt_headers()
+        if mode == AuthMode.OAUTH2:
+            return self._get_oauth_headers()
+        if mode == AuthMode.SERVICE_TO_SERVICE:
+            return self._get_service_headers(target)
+        if mode == AuthMode.DEVELOPMENT:
+            return self._get_dev_headers()
+        return {}
 
     async def get_headers(self, target: str = "both") -> dict[str, str]:
         """Compatibility wrapper that proxies to :meth:`get_auth_headers`."""
@@ -1726,6 +1829,8 @@ class AuthManager:
                             data = await response.json(content_type=None)
                         except Exception:
                             return "backend returned non-JSON success body"
+                        if _latch_key_validation(url, headers, data):
+                            self._server_optimization_only = True
                         return self._interpret_backend_key_validation_response(
                             response.status,
                             data,
@@ -1897,6 +2002,8 @@ class AuthManager:
                 data = response.json()
             except Exception:
                 return "backend returned non-JSON success body"
+            if _latch_key_validation(url, headers, data):
+                self._server_optimization_only = True
             return self._interpret_backend_key_validation_response(
                 status,
                 data,

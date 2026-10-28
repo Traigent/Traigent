@@ -249,6 +249,12 @@ def _parse_expires_at(raw: Any) -> str | None:
     return raw.strip()
 
 
+_AUTH_CLI_REQUEST = "auth CLI request"
+_APPLICATION_JSON = "application/json"
+_TRAIGENT_SDK_CLI_1_0 = "Traigent-SDK-CLI/1.0"
+_DEVICE_TOKEN = "device token"
+
+
 class TraigentAuthCLI:
     """Modern CLI authentication manager for Traigent SDK."""
 
@@ -269,7 +275,7 @@ class TraigentAuthCLI:
             )
             backend_origin = normalized or backend_url_override
             self.backend_url = validate_cloud_base_url(
-                backend_origin.rstrip("/"), purpose="auth CLI request"
+                backend_origin.rstrip("/"), purpose=_AUTH_CLI_REQUEST
             )
             api_base_candidate = (
                 f"{self.backend_url}{path or BackendConfig.get_default_api_path()}"
@@ -277,11 +283,11 @@ class TraigentAuthCLI:
         else:
             self.backend_url = validate_cloud_base_url(
                 BackendConfig.get_cloud_backend_url().rstrip("/"),
-                purpose="auth CLI request",
+                purpose=_AUTH_CLI_REQUEST,
             )
             api_base_candidate = BackendConfig.get_cloud_api_url()
         self.backend_api_url = validate_cloud_base_url(
-            api_base_candidate.rstrip("/"), purpose="auth CLI request"
+            api_base_candidate.rstrip("/"), purpose=_AUTH_CLI_REQUEST
         )
 
         # Ensure config directory exists
@@ -598,9 +604,9 @@ class TraigentAuthCLI:
         """Start the RFC 8628 device authorization flow."""
         url = self._api_url("auth/device/authorize")
         headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "User-Agent": "Traigent-SDK-CLI/1.0",
+            "Accept": _APPLICATION_JSON,
+            "Content-Type": _APPLICATION_JSON,
+            "User-Agent": _TRAIGENT_SDK_CLI_1_0,
         }
         async with session.post(
             url,
@@ -619,30 +625,30 @@ class TraigentAuthCLI:
 
     def _validate_device_token_success(self, data: dict[str, Any]) -> dict[str, Any]:
         """Validate and normalize a successful device token envelope."""
-        token_data = _require_success_envelope(data, context="device token")
+        token_data = _require_success_envelope(data, context=_DEVICE_TOKEN)
 
-        api_key = _require_non_empty_str(token_data, "api_key", context="device token")
+        api_key = _require_non_empty_str(token_data, "api_key", context=_DEVICE_TOKEN)
         if not api_key.startswith("sk_"):
             raise AuthenticationError(
                 "Malformed device token response: invalid api_key"
             )
 
         tenant_id = _require_non_empty_str(
-            token_data, "tenant_id", context="device token"
+            token_data, "tenant_id", context=_DEVICE_TOKEN
         )
         project_id = _require_non_empty_str(
-            token_data, "project_id", context="device token"
+            token_data, "project_id", context=_DEVICE_TOKEN
         )
         subscription_tier = _require_non_empty_str(
-            token_data, "subscription_tier", context="device token"
+            token_data, "subscription_tier", context=_DEVICE_TOKEN
         )
 
         user = token_data.get("user")
         if not isinstance(user, dict):
             raise AuthenticationError("Malformed device token response: user missing")
         normalized_user = {
-            "id": _require_non_empty_str(user, "id", context="device token"),
-            "email": _require_non_empty_str(user, "email", context="device token"),
+            "id": _require_non_empty_str(user, "id", context=_DEVICE_TOKEN),
+            "email": _require_non_empty_str(user, "email", context=_DEVICE_TOKEN),
         }
 
         quota = token_data.get("quota")
@@ -697,9 +703,9 @@ class TraigentAuthCLI:
         """Poll the token endpoint once."""
         url = self._api_url("auth/device/token")
         headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "User-Agent": "Traigent-SDK-CLI/1.0",
+            "Accept": _APPLICATION_JSON,
+            "Content-Type": _APPLICATION_JSON,
+            "User-Agent": _TRAIGENT_SDK_CLI_1_0,
         }
         async with session.post(
             url,
@@ -1054,8 +1060,8 @@ class TraigentAuthCLI:
                 message += f" {PROJECT_ENV_VAR} is set, but project-bound keys also require a tenant."
             raise AuthenticationError(message)
         login_headers = {
-            "Content-Type": "application/json",
-            "User-Agent": "Traigent-SDK-CLI/1.0",
+            "Content-Type": _APPLICATION_JSON,
+            "User-Agent": _TRAIGENT_SDK_CLI_1_0,
             TENANT_HEADER_NAME: tenant_id,
         }
 
@@ -1141,8 +1147,8 @@ class TraigentAuthCLI:
             key_payload["project_id"] = project_id
         key_headers = {
             "Authorization": f"Bearer {jwt_token}",
-            "Content-Type": "application/json",
-            "User-Agent": "Traigent-SDK-CLI/1.0",
+            "Content-Type": _APPLICATION_JSON,
+            "User-Agent": _TRAIGENT_SDK_CLI_1_0,
             TENANT_HEADER_NAME: tenant_id,
         }
 
@@ -2285,12 +2291,12 @@ async def _check_api_key(backend_api_url: str, key: str) -> bool:
 
     backend_api_url = validate_cloud_base_url(
         _resolve_api_base_url(backend_api_url).rstrip("/"),
-        purpose="auth CLI request",
+        purpose=_AUTH_CLI_REQUEST,
     )
     url = _compose_api_url(backend_api_url, "keys/validate")
     headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
+        "Accept": _APPLICATION_JSON,
+        "Content-Type": _APPLICATION_JSON,
         "X-API-Key": key,
     }
 

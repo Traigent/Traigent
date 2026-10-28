@@ -3528,23 +3528,38 @@ class BackendSessionManager:
         update_payload: dict[str, Any] = {"local_session_id": session_id}
         if session_summary is not None:
             update_payload["local_session_summary"] = session_summary
-            # session_summary may be a plain dict OR an OptimizationFinalizationResponse
-            # dataclass (the real cloud finalize path), which exposes ``.metadata`` as an
-            # attribute and has no ``.get()``. Calling ``.get()`` on the dataclass raised
-            # AttributeError, which the persistence try/except swallowed as
-            # "persistence failed" on every cloud run. Guard the type before extracting.
-            if isinstance(session_summary, dict):
-                summary_metadata = session_summary.get("metadata")
-            else:
-                summary_metadata = getattr(session_summary, "metadata", None)
-            if isinstance(summary_metadata, dict):
-                warm_start_transfer = summary_metadata.get("warm_start_transfer")
-                if isinstance(warm_start_transfer, dict):
-                    update_payload["warm_start_transfer"] = dict(warm_start_transfer)
+            self._add_warm_start_transfer(update_payload, session_summary)
         if owning_context := self._session_owning_context.get(session_id):
             update_payload.update(owning_context)
 
-        # Add experiment_id from session mapping if available
+        self._add_experiment_mapping(update_payload, session_id)
+
+        result.metadata.update(update_payload)
+        self._warn_on_refused_warm_start(result.metadata)
+
+    @staticmethod
+    def _add_warm_start_transfer(
+        update_payload: dict[str, Any], session_summary: Any
+    ) -> None:
+        """Copy the backend's warm-start transfer metadata into the payload."""
+        # session_summary may be a plain dict OR an OptimizationFinalizationResponse
+        # dataclass (the real cloud finalize path), which exposes ``.metadata`` as an
+        # attribute and has no ``.get()``. Calling ``.get()`` on the dataclass raised
+        # AttributeError, which the persistence try/except swallowed as
+        # "persistence failed" on every cloud run. Guard the type before extracting.
+        if isinstance(session_summary, dict):
+            summary_metadata = session_summary.get("metadata")
+        else:
+            summary_metadata = getattr(session_summary, "metadata", None)
+        if isinstance(summary_metadata, dict):
+            warm_start_transfer = summary_metadata.get("warm_start_transfer")
+            if isinstance(warm_start_transfer, dict):
+                update_payload["warm_start_transfer"] = dict(warm_start_transfer)
+
+    def _add_experiment_mapping(
+        self, update_payload: dict[str, Any], session_id: str
+    ) -> None:
+        """Add experiment_id from the session mapping when it is available."""
         if self._backend_client is not None:
             try:
                 mapping = self._backend_client.get_session_mapping(session_id)
@@ -3553,9 +3568,6 @@ class BackendSessionManager:
                     update_payload["experiment_run_id"] = mapping.experiment_run_id
             except Exception:
                 pass  # Silently ignore if mapping not available
-
-        result.metadata.update(update_payload)
-        self._warn_on_refused_warm_start(result.metadata)
 
     @staticmethod
     def _warn_on_refused_warm_start(result_metadata: dict[str, Any]) -> None:

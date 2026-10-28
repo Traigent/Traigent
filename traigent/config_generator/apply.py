@@ -149,15 +149,15 @@ def _find_function(
     tree: ast.Module, name: str
 ) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
     """Find a top-level or class-level function by name."""
+    func_types = (ast.FunctionDef, ast.AsyncFunctionDef)
     for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(node, func_types):
             if node.name == name:
                 return node
         elif isinstance(node, ast.ClassDef):
             for child in node.body:
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    if child.name == name:
-                        return child
+                if isinstance(child, func_types) and child.name == name:
+                    return child
 
     return None
 

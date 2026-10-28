@@ -1225,6 +1225,18 @@ class MetricsTracker:
             return next(iter(sources))
         return COST_SOURCE_MIXED
 
+    @staticmethod
+    def _builtin_accuracy_value(metric: ExampleMetrics, raw_accuracy: Any) -> float:
+        """Accuracy of one eligible, measured row under built-in exact match."""
+        if metric.success:
+            # Existing tracker-only callers may not have emitted a
+            # per-example exact-match value. Preserve their established
+            # success fallback while making it identical in both formats.
+            return float(raw_accuracy) if raw_accuracy is not None else 1.0
+        # Built-in exact match: an error is an attempted miss, never
+        # numerator credit from a retained matching output.
+        return 0.0
+
     def _accuracy_values_for_formatters(
         self, *, user_supplied_accuracy: bool
     ) -> list[float]:
@@ -1255,15 +1267,7 @@ class MetricsTracker:
                 # Unmeasured, not a miss and not a hit (#2495).
                 continue
 
-            if metric.success:
-                # Existing tracker-only callers may not have emitted a
-                # per-example exact-match value. Preserve their established
-                # success fallback while making it identical in both formats.
-                values.append(float(raw_accuracy) if raw_accuracy is not None else 1.0)
-            else:
-                # Built-in exact match: an error is an attempted miss, never
-                # numerator credit from a retained matching output.
-                values.append(0.0)
+            values.append(self._builtin_accuracy_value(metric, raw_accuracy))
 
         return values
 
@@ -1390,22 +1394,7 @@ class MetricsTracker:
             user_supplied_accuracy=user_supplied_accuracy
         )
 
-        metrics_data: dict[str, list[int | float]] = {
-            "accuracy": accuracy_values,
-            "input_tokens": [m.tokens.input_tokens for m in measured_metrics],
-            "output_tokens": [m.tokens.output_tokens for m in measured_metrics],
-            "total_tokens": [m.tokens.total_tokens for m in measured_metrics],
-            "response_time_ms": [m.response.response_time_ms for m in measured_metrics],
-            "input_cost": [
-                m.cost.input_cost for m in measured_metrics if m.cost_measured
-            ],
-            "output_cost": [
-                m.cost.output_cost for m in measured_metrics if m.cost_measured
-            ],
-            "total_cost": [
-                m.cost.total_cost for m in measured_metrics if m.cost_measured
-            ],
-        }
+        metrics_data = self._built_in_metric_values(accuracy_values, measured_metrics)
         # These built-in keys must always appear in the output (with a
         # zero-count describe structure if nothing was measured) even when
         # every tracked example is `measured=False` -- callers rely on their
@@ -1424,33 +1413,7 @@ class MetricsTracker:
             metrics_data["tokens_per_second"] = tps_values
 
         # Add any other custom metrics that appear in all examples
-        if self.example_metrics:
-            # Find common custom metrics across all examples
-            all_custom_keys: set[str] = set()
-            custom_rows = self._custom_metric_rows()
-            user_evaluation_cost = not self.sdk_evaluation_cost_only
-            for row in custom_rows:
-                all_custom_keys.update(row.keys())
-
-            # Add custom metrics that we haven't already handled
-            for key in all_custom_keys:
-                if (
-                    key not in metrics_data and key != "accuracy"
-                ):  # Skip accuracy as we've already handled it
-                    custom_values = []
-                    for row in custom_rows:
-                        if key in row:
-                            custom_values.append(row[key])
-                        elif key == "evaluation_cost" and user_evaluation_cost:
-                            # An excluded SDK entry is not a user measurement
-                            # of zero. Use the same samples as the scalar mean.
-                            continue
-                        else:
-                            custom_values.append(
-                                0.0
-                            )  # Default value if metric not present
-                    if custom_values:
-                        metrics_data[key] = custom_values
+        self._add_custom_summary_values(metrics_data)
 
         # Generate pandas.describe()-compatible statistics for each metric.
         # Built-in keys (`always_emit_keys`) are always emitted, even with an
@@ -1476,13 +1439,88 @@ class MetricsTracker:
             },
         }
 
-        # Completeness of the cost aggregates above. ``total_cost`` etc. are
-        # describe() over the examples that HAD a cost measurement; an example
-        # with none contributes nothing, so a zero-count (or partial) describe
-        # is not a $0 trial. Say so with the same flag/floor vocabulary the
-        # per-trial formatter uses, so the submission path can send the flag
-        # (and the reported lower bound) instead of the placeholder zero means
-        # (#2517).
+        self._apply_summary_cost_completeness(
+            summary_metrics, all_metrics, measured_metrics
+        )
+
+        return summary_stats
+
+    @staticmethod
+    def _built_in_metric_values(
+        accuracy_values: list[float], measured_metrics: list[ExampleMetrics]
+    ) -> dict[str, list[int | float]]:
+        return {
+            "accuracy": accuracy_values,
+            "input_tokens": [m.tokens.input_tokens for m in measured_metrics],
+            "output_tokens": [m.tokens.output_tokens for m in measured_metrics],
+            "total_tokens": [m.tokens.total_tokens for m in measured_metrics],
+            "response_time_ms": [m.response.response_time_ms for m in measured_metrics],
+            "input_cost": [
+                m.cost.input_cost for m in measured_metrics if m.cost_measured
+            ],
+            "output_cost": [
+                m.cost.output_cost for m in measured_metrics if m.cost_measured
+            ],
+            "total_cost": [
+                m.cost.total_cost for m in measured_metrics if m.cost_measured
+            ],
+        }
+
+    def _add_custom_summary_values(
+        self, metrics_data: dict[str, list[int | float]]
+    ) -> None:
+        """Add per-row values for custom metrics not already in ``metrics_data``."""
+        if not self.example_metrics:
+            return
+        # Find common custom metrics across all examples
+        all_custom_keys: set[str] = set()
+        custom_rows = self._custom_metric_rows()
+        user_evaluation_cost = not self.sdk_evaluation_cost_only
+        for row in custom_rows:
+            all_custom_keys.update(row.keys())
+
+        # Add custom metrics that we haven't already handled
+        for key in all_custom_keys:
+            # Skip accuracy as we've already handled it
+            if key in metrics_data or key == "accuracy":
+                continue
+            custom_values = self._custom_values_for_key(
+                key, custom_rows, user_evaluation_cost
+            )
+            if custom_values:
+                metrics_data[key] = custom_values
+
+    @staticmethod
+    def _custom_values_for_key(
+        key: str, custom_rows: list[dict[str, Any]], user_evaluation_cost: bool
+    ) -> list[Any]:
+        custom_values: list[Any] = []
+        for row in custom_rows:
+            if key in row:
+                custom_values.append(row[key])
+            elif key == "evaluation_cost" and user_evaluation_cost:
+                # An excluded SDK entry is not a user measurement
+                # of zero. Use the same samples as the scalar mean.
+                continue
+            else:
+                custom_values.append(0.0)  # Default value if metric not present
+        return custom_values
+
+    def _apply_summary_cost_completeness(
+        self,
+        summary_metrics: dict[str, Any],
+        all_metrics: list[ExampleMetrics],
+        measured_metrics: list[ExampleMetrics],
+    ) -> None:
+        """Flag incomplete cost aggregates inside ``summary_metrics`` (#2517).
+
+        ``total_cost`` etc. are describe() over the examples that HAD a cost
+        measurement; an example with none contributes nothing, so a zero-count
+        (or partial) describe is not a $0 trial. Say so with the same
+        flag/floor vocabulary the per-trial formatter uses, so the submission
+        path can send the flag (and the reported lower bound) instead of the
+        placeholder zero means.
+        """
         cost_measured_metrics = [m for m in measured_metrics if m.cost_measured]
         if not cost_measured_metrics:
             # No cost sample at all: describe([]) would post zero means for a
@@ -1490,28 +1528,27 @@ class MetricsTracker:
             for cost_key in _COST_DESCRIBE_KEYS:
                 if cost_key in summary_metrics:
                     summary_metrics[cost_key] = None
-        if (
+        if not (
             any(m.cost.unmeasured or m.cost.unpriced for m in all_metrics)
             or not cost_measured_metrics
             or self.unattributed_spend
         ):
-            # Scalars inside ``metrics``: the summary_stats schema allows a
-            # number next to the describe() dicts, but no extra top-level keys.
-            summary_metrics["cost_unmeasured"] = 1.0
-            lower_bound = (
-                sum(float(m.cost.total_cost) for m in cost_measured_metrics)
-                + sum(float(m.cost.known_cost) for m in all_metrics)
-                + self.unattributed_known_cost
-                + sum(
-                    float(m.cost.total_cost)
-                    for m in measured_metrics
-                    if m.cost.unpriced and not m.cost.unmeasured
-                )
+            return
+        # Scalars inside ``metrics``: the summary_stats schema allows a
+        # number next to the describe() dicts, but no extra top-level keys.
+        summary_metrics["cost_unmeasured"] = 1.0
+        lower_bound = (
+            sum(float(m.cost.total_cost) for m in cost_measured_metrics)
+            + sum(float(m.cost.known_cost) for m in all_metrics)
+            + self.unattributed_known_cost
+            + sum(
+                float(m.cost.total_cost)
+                for m in measured_metrics
+                if m.cost.unpriced and not m.cost.unmeasured
             )
-            if lower_bound > 0:
-                summary_metrics["cost_lower_bound"] = lower_bound
-
-        return summary_stats
+        )
+        if lower_bound > 0:
+            summary_metrics["cost_lower_bound"] = lower_bound
 
     def _empty_summary_stats(self) -> dict[str, Any]:
         """Return empty summary stats structure."""
@@ -2369,38 +2406,58 @@ def _calculate_cost_for_metrics(
         return
 
     if not model_name:
-        # Tokens were captured, so there WAS spend: recording $0 here is the
-        # same "unpriced call scores free" defect as an unknown model, and
-        # under strict accounting it must fail instead. A response with no
-        # tokens at all is a different case (nothing to price) and stays a
-        # warning in both modes.
-        if strict_cost_accounting and (
-            metrics.tokens.input_tokens > 0 or metrics.tokens.output_tokens > 0
-        ):
-            from traigent.utils.cost_calculator import UnknownModelError
-
-            raise UnknownModelError(
-                "Cost accounting is strict for this run and tokens were "
-                f"captured (in={metrics.tokens.input_tokens}, "
-                f"out={metrics.tokens.output_tokens}) but no model name was "
-                "available to price them, so the call is not recorded as $0. "
-                "Fix by choosing one of: 1) expose the model name on the LLM "
-                "response (a 'model' or 'model_name' attribute or key, or "
-                "LangChain response_metadata/llm_output), 2) include a "
-                "'model' key in the optimization configuration, 3) set "
-                "TRAIGENT_STRICT_COST_ACCOUNTING=false to accept $0 for "
-                "calls that cannot be priced."
-            )
-        logger.warning(
-            "Cost calculation skipped: model_name is None/empty. "
-            "Ensure the optimization config includes a 'model' key or "
-            "the LLM response exposes the model name. "
-            "tokens=(in=%d, out=%d)",
-            metrics.tokens.input_tokens,
-            metrics.tokens.output_tokens,
-        )
+        _skip_cost_for_unnamed_model(metrics, strict_cost_accounting)
         return
 
+    _price_call_and_check_zero_cost(
+        metrics, model_name, original_prompt, response_text, strict_cost_accounting
+    )
+
+
+def _skip_cost_for_unnamed_model(
+    metrics: ExampleMetrics, strict_cost_accounting: bool
+) -> None:
+    """Fail (strict, tokens captured) or warn when no model name can price a call."""
+    # Tokens were captured, so there WAS spend: recording $0 here is the
+    # same "unpriced call scores free" defect as an unknown model, and
+    # under strict accounting it must fail instead. A response with no
+    # tokens at all is a different case (nothing to price) and stays a
+    # warning in both modes.
+    if strict_cost_accounting and (
+        metrics.tokens.input_tokens > 0 or metrics.tokens.output_tokens > 0
+    ):
+        from traigent.utils.cost_calculator import UnknownModelError
+
+        raise UnknownModelError(
+            "Cost accounting is strict for this run and tokens were "
+            f"captured (in={metrics.tokens.input_tokens}, "
+            f"out={metrics.tokens.output_tokens}) but no model name was "
+            "available to price them, so the call is not recorded as $0. "
+            "Fix by choosing one of: 1) expose the model name on the LLM "
+            "response (a 'model' or 'model_name' attribute or key, or "
+            "LangChain response_metadata/llm_output), 2) include a "
+            "'model' key in the optimization configuration, 3) set "
+            "TRAIGENT_STRICT_COST_ACCOUNTING=false to accept $0 for "
+            "calls that cannot be priced."
+        )
+    logger.warning(
+        "Cost calculation skipped: model_name is None/empty. "
+        "Ensure the optimization config includes a 'model' key or "
+        "the LLM response exposes the model name. "
+        "tokens=(in=%d, out=%d)",
+        metrics.tokens.input_tokens,
+        metrics.tokens.output_tokens,
+    )
+
+
+def _price_call_and_check_zero_cost(
+    metrics: ExampleMetrics,
+    model_name: str,
+    original_prompt: Any,
+    response_text: str | None,
+    strict_cost_accounting: bool,
+) -> None:
+    """Price one call; warn on a suspicious zero cost, log and maybe re-raise errors."""
     try:
         _compute_cost(
             metrics,

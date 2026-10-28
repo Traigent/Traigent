@@ -26,28 +26,30 @@ __all__ = [
     "build_per_agent_objectives",
 ]
 
+_TRAIGENT_CORE_NAMESPACE = "traigent.core.namespace"
+
 _EXPORT_MAP = {
     "OptimizationOrchestrator": (
         "traigent.core.orchestrator",
         "OptimizationOrchestrator",
     ),
     "OptimizedFunction": ("traigent.core.optimized_function", "OptimizedFunction"),
-    "NAMESPACE_DELIMITER": ("traigent.core.namespace", "NAMESPACE_DELIMITER"),
-    "ParsedNamespace": ("traigent.core.namespace", "ParsedNamespace"),
-    "is_namespaced": ("traigent.core.namespace", "is_namespaced"),
-    "parse_namespaced_param": ("traigent.core.namespace", "parse_namespaced_param"),
-    "parse_namespace": ("traigent.core.namespace", "parse_namespace"),
-    "create_namespaced_param": ("traigent.core.namespace", "create_namespaced_param"),
+    "NAMESPACE_DELIMITER": (_TRAIGENT_CORE_NAMESPACE, "NAMESPACE_DELIMITER"),
+    "ParsedNamespace": (_TRAIGENT_CORE_NAMESPACE, "ParsedNamespace"),
+    "is_namespaced": (_TRAIGENT_CORE_NAMESPACE, "is_namespaced"),
+    "parse_namespaced_param": (_TRAIGENT_CORE_NAMESPACE, "parse_namespaced_param"),
+    "parse_namespace": (_TRAIGENT_CORE_NAMESPACE, "parse_namespace"),
+    "create_namespaced_param": (_TRAIGENT_CORE_NAMESPACE, "create_namespaced_param"),
     "extract_agents_from_config": (
-        "traigent.core.namespace",
+        _TRAIGENT_CORE_NAMESPACE,
         "extract_agents_from_config",
     ),
-    "group_params_by_agent": ("traigent.core.namespace", "group_params_by_agent"),
-    "flatten_agent_config": ("traigent.core.namespace", "flatten_agent_config"),
-    "sanitize_metric_name": ("traigent.core.namespace", "sanitize_metric_name"),
-    "extract_agent_metrics": ("traigent.core.namespace", "extract_agent_metrics"),
+    "group_params_by_agent": (_TRAIGENT_CORE_NAMESPACE, "group_params_by_agent"),
+    "flatten_agent_config": (_TRAIGENT_CORE_NAMESPACE, "flatten_agent_config"),
+    "sanitize_metric_name": (_TRAIGENT_CORE_NAMESPACE, "sanitize_metric_name"),
+    "extract_agent_metrics": (_TRAIGENT_CORE_NAMESPACE, "extract_agent_metrics"),
     "build_per_agent_objectives": (
-        "traigent.core.namespace",
+        _TRAIGENT_CORE_NAMESPACE,
         "build_per_agent_objectives",
     ),
 }

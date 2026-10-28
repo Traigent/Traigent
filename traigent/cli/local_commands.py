@@ -7,6 +7,7 @@ import os
 import sys
 from datetime import UTC
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -58,6 +59,45 @@ def local_commands() -> None:
     pass
 
 
+def _echo_sessions_json(storage: LocalStorageManager, sessions: list[Any]) -> None:
+    summaries = []
+    for session in sessions:
+        summary = storage.get_session_summary(session.session_id)
+        if summary:
+            summaries.append(summary)
+    click.echo(json.dumps(summaries, indent=2, default=str))
+
+
+def _echo_sessions_table(storage: LocalStorageManager, sessions: list[Any]) -> None:
+    if not sessions:
+        click.echo("No sessions found.")
+        return
+
+    click.echo(
+        f"{'Session ID':<30} {'Function':<20} {'Status':<12} {'Trials':<8} {'Best Score':<12} {'Created'}"
+    )
+    click.echo("-" * 100)
+
+    for session in sessions:
+        summary = storage.get_session_summary(session.session_id)
+        if not summary:
+            continue
+        created_at = str(summary.get("created_at", ""))[:10]  # Just the date
+        best_score = (
+            f"{summary['best_score']:.3f}"
+            if summary["best_score"] is not None
+            else "N/A"
+        )
+        click.echo(
+            f"{session.session_id:<30} "
+            f"{summary['function_name']:<20} "
+            f"{summary['status']:<12} "
+            f"{summary['completed_trials']:<8} "
+            f"{best_score:<12} "
+            f"{created_at}"
+        )
+
+
 @local_commands.command(name="list")
 @click.option(
     "--status",
@@ -88,46 +128,117 @@ def list_sessions(status: str | None, limit: int, output_format: str) -> None:
                 logger.debug(f"Analytics submission failed: {e}")
 
         if output_format == "json":
-            summaries = []
-            for session in sessions:
-                summary = storage.get_session_summary(session.session_id)
-                if summary:
-                    summaries.append(summary)
-            click.echo(json.dumps(summaries, indent=2, default=str))
+            _echo_sessions_json(storage, sessions)
         else:
-            # Table format
-            if not sessions:
-                click.echo("No sessions found.")
-                return
-
-            click.echo(
-                f"{'Session ID':<30} {'Function':<20} {'Status':<12} {'Trials':<8} {'Best Score':<12} {'Created'}"
-            )
-            click.echo("-" * 100)
-
-            for session in sessions:
-                summary = storage.get_session_summary(session.session_id)
-                if summary:
-                    created_at = str(summary.get("created_at", ""))[
-                        :10
-                    ]  # Just the date
-                    best_score = (
-                        f"{summary['best_score']:.3f}"
-                        if summary["best_score"] is not None
-                        else "N/A"
-                    )
-                    click.echo(
-                        f"{session.session_id:<30} "
-                        f"{summary['function_name']:<20} "
-                        f"{summary['status']:<12} "
-                        f"{summary['completed_trials']:<8} "
-                        f"{best_score:<12} "
-                        f"{created_at}"
-                    )
+            _echo_sessions_table(storage, sessions)
 
     except Exception as e:
         click.echo(f"Error listing sessions: {e}", err=True)
         sys.exit(1)
+
+
+def _echo_session_json(session: Any) -> None:
+    session_data = {
+        "session_id": session.session_id,
+        "function_name": session.function_name,
+        "created_at": session.created_at,
+        "updated_at": session.updated_at,
+        "status": session.status,
+        "total_trials": session.total_trials,
+        "completed_trials": session.completed_trials,
+        "best_config": session.best_config,
+        "best_score": session.best_score,
+        "baseline_score": session.baseline_score,
+        "optimization_config": session.optimization_config,
+        "trials": [
+            {
+                "trial_id": trial.trial_id,
+                "config": trial.config,
+                "score": trial.score,
+                "timestamp": trial.timestamp,
+                "error": trial.error,
+            }
+            for trial in (session.trials or [])
+        ],
+    }
+    click.echo(json.dumps(session_data, indent=2, default=str))
+
+
+def _echo_best_score_lines(session: Any, summary: dict[str, Any] | None) -> None:
+    if session.best_score is not None:
+        click.echo(f"Best Score: {session.best_score:.4f}")
+        improvement = (summary or {}).get("improvement")
+        if improvement:
+            click.echo(f"Improvement: {improvement * 100:.1f}%")
+
+
+def _echo_session_detailed(
+    session: Any, storage: LocalStorageManager, session_id: str
+) -> None:
+    summary = storage.get_session_summary(session_id)
+    click.echo(f"\n📊 Session Details: {session_id}")
+    click.echo("=" * 60)
+    click.echo(f"Function: {session.function_name}")
+    click.echo(f"Status: {session.status}")
+    click.echo(f"Created: {session.created_at}")
+    click.echo(f"Updated: {session.updated_at}")
+    # A single count, not "completed/total": since #2032 total_trials
+    # *is* the recorded count, so both halves are len(trials) and the
+    # ratio could only ever render "n/n" — a run that stopped after 3
+    # of a declared 10 printed "3/3", which reads as a completed budget
+    # and hides the early stop. "3/0" was obviously broken and ignored;
+    # "3/3" is plausible and would be believed. The summary view at
+    # :211 already prints the bare count.
+    #
+    # The second reason this comment used to give — that
+    # metadata["max_trials"] is fabricated upstream, so a real budget of
+    # 10 is indistinguishable from no budget — no longer holds: #2049
+    # stopped `backend_session_manager` substituting 10, so the key is
+    # now present only when the caller actually set a budget. An honest
+    # denominator IS therefore available for sessions that have one.
+    # Restoring a ratio is still a display decision (it would have to
+    # read the metadata rather than total_trials, and say something
+    # sensible for the no-budget case), so it is deliberately NOT done
+    # here — only the stale justification is corrected.
+    click.echo(f"Trials: {session.completed_trials}")
+
+    _echo_best_score_lines(session, summary)
+
+    if session.best_config:
+        click.echo("\n🎯 Best Configuration:")
+        for key, value in session.best_config.items():
+            click.echo(f"  {key}: {value}")
+
+    if session.trials:
+        click.echo("\n📈 Trial History:")
+        for trial in session.trials[-5:]:  # Show last 5 trials
+            status_icon = "✅" if trial.error is None else "❌"
+            score_str = f"{trial.score:.4f}" if trial.score is not None else "N/A"
+            click.echo(f"  {status_icon} Trial {trial.trial_id}: {score_str}")
+
+
+def _echo_session_summary(
+    session: Any, storage: LocalStorageManager, session_id: str, config: Any
+) -> None:
+    summary = storage.get_session_summary(session_id)
+    click.echo(f"\n📊 {session.function_name} Optimization")
+    click.echo(f"Status: {session.status} | Trials: {session.completed_trials}")
+
+    _echo_best_score_lines(session, summary)
+
+    if session.best_config:
+        click.echo(f"Best Config: {session.best_config}")
+
+    # Show context-specific upgrade hints for completed local sessions.
+    if config.is_local_mode() and session.status == "completed":
+        try:
+            show_upgrade_hint(
+                "cli_usage",
+                trial_count=session.completed_trials,
+                best_score=session.best_score,
+            )
+        except Exception as e:
+            logger.debug(f"Failed to show upgrade hint: {e}")
 
 
 @local_commands.command(name="show")
@@ -151,105 +262,11 @@ def show_session(session_id: str, output_format: str) -> None:
             sys.exit(1)
 
         if output_format == "json":
-            session_data = {
-                "session_id": session.session_id,
-                "function_name": session.function_name,
-                "created_at": session.created_at,
-                "updated_at": session.updated_at,
-                "status": session.status,
-                "total_trials": session.total_trials,
-                "completed_trials": session.completed_trials,
-                "best_config": session.best_config,
-                "best_score": session.best_score,
-                "baseline_score": session.baseline_score,
-                "optimization_config": session.optimization_config,
-                "trials": [
-                    {
-                        "trial_id": trial.trial_id,
-                        "config": trial.config,
-                        "score": trial.score,
-                        "timestamp": trial.timestamp,
-                        "error": trial.error,
-                    }
-                    for trial in (session.trials or [])
-                ],
-            }
-            click.echo(json.dumps(session_data, indent=2, default=str))
-
+            _echo_session_json(session)
         elif output_format == "detailed":
-            summary = storage.get_session_summary(session_id)
-            click.echo(f"\n📊 Session Details: {session_id}")
-            click.echo("=" * 60)
-            click.echo(f"Function: {session.function_name}")
-            click.echo(f"Status: {session.status}")
-            click.echo(f"Created: {session.created_at}")
-            click.echo(f"Updated: {session.updated_at}")
-            # A single count, not "completed/total": since #2032 total_trials
-            # *is* the recorded count, so both halves are len(trials) and the
-            # ratio could only ever render "n/n" — a run that stopped after 3
-            # of a declared 10 printed "3/3", which reads as a completed budget
-            # and hides the early stop. "3/0" was obviously broken and ignored;
-            # "3/3" is plausible and would be believed. The summary view at
-            # :211 already prints the bare count.
-            #
-            # The second reason this comment used to give — that
-            # metadata["max_trials"] is fabricated upstream, so a real budget of
-            # 10 is indistinguishable from no budget — no longer holds: #2049
-            # stopped `backend_session_manager` substituting 10, so the key is
-            # now present only when the caller actually set a budget. An honest
-            # denominator IS therefore available for sessions that have one.
-            # Restoring a ratio is still a display decision (it would have to
-            # read the metadata rather than total_trials, and say something
-            # sensible for the no-budget case), so it is deliberately NOT done
-            # here — only the stale justification is corrected.
-            click.echo(f"Trials: {session.completed_trials}")
-
-            if session.best_score is not None:
-                click.echo(f"Best Score: {session.best_score:.4f}")
-                improvement = (summary or {}).get("improvement")
-                if improvement:
-                    click.echo(f"Improvement: {improvement * 100:.1f}%")
-
-            if session.best_config:
-                click.echo("\n🎯 Best Configuration:")
-                for key, value in session.best_config.items():
-                    click.echo(f"  {key}: {value}")
-
-            if session.trials and output_format == "detailed":
-                click.echo("\n📈 Trial History:")
-                for trial in session.trials[-5:]:  # Show last 5 trials
-                    status_icon = "✅" if trial.error is None else "❌"
-                    score_str = (
-                        f"{trial.score:.4f}" if trial.score is not None else "N/A"
-                    )
-                    click.echo(f"  {status_icon} Trial {trial.trial_id}: {score_str}")
-
+            _echo_session_detailed(session, storage, session_id)
         else:
-            # Summary format
-            summary = storage.get_session_summary(session_id)
-            click.echo(f"\n📊 {session.function_name} Optimization")
-            click.echo(f"Status: {session.status} | Trials: {session.completed_trials}")
-
-            if session.best_score is not None:
-                click.echo(f"Best Score: {session.best_score:.4f}")
-                improvement = (summary or {}).get("improvement")
-                if improvement:
-                    click.echo(f"Improvement: {improvement * 100:.1f}%")
-
-            if session.best_config:
-                click.echo(f"Best Config: {session.best_config}")
-
-            # Show context-specific upgrade hints for completed local sessions.
-            if config.is_local_mode() and session.status == "completed":
-                try:
-                    show_upgrade_hint(
-                        "cli_usage",
-                        trial_count=session.completed_trials,
-                        best_score=session.best_score,
-                    )
-                except Exception as e:
-                    logger.debug(f"Failed to show upgrade hint: {e}")
-
+            _echo_session_summary(session, storage, session_id, config)
     except Exception as e:
         click.echo(f"Error showing session: {e}", err=True)
         sys.exit(1)
@@ -346,6 +363,29 @@ def delete_session(session_id: str, force: bool) -> None:
         sys.exit(1)
 
 
+def _echo_sessions_older_than(storage: LocalStorageManager, days: int) -> None:
+    """Print the sessions a cleanup of ``days`` days would delete."""
+    from datetime import datetime, timedelta
+
+    cutoff_date = datetime.now(UTC) - timedelta(days=days)
+
+    old_sessions = []
+    for session in storage.list_sessions():
+        session_date = datetime.fromisoformat(session.created_at)
+        # Normalize to timezone-aware for safe comparison
+        if session_date.tzinfo is None:
+            session_date = session_date.replace(tzinfo=UTC)
+        if session_date < cutoff_date:
+            old_sessions.append(session)
+
+    if old_sessions:
+        click.echo(f"Would delete {len(old_sessions)} sessions older than {days} days:")
+        for session in old_sessions:
+            click.echo(f"  - {session.session_id} ({session.function_name})")
+    else:
+        click.echo(f"No sessions older than {days} days found.")
+
+
 @local_commands.command(name="cleanup")
 @click.option("--days", default=30, help="Delete sessions older than N days")
 @click.option(
@@ -358,28 +398,7 @@ def cleanup_sessions(days: int, dry_run: bool) -> None:
         storage = LocalStorageManager(config.get_local_storage_path())
 
         if dry_run:
-            # Show what would be deleted
-            from datetime import datetime, timedelta
-
-            cutoff_date = datetime.now(UTC) - timedelta(days=days)
-
-            old_sessions = []
-            for session in storage.list_sessions():
-                session_date = datetime.fromisoformat(session.created_at)
-                # Normalize to timezone-aware for safe comparison
-                if session_date.tzinfo is None:
-                    session_date = session_date.replace(tzinfo=UTC)
-                if session_date < cutoff_date:
-                    old_sessions.append(session)
-
-            if old_sessions:
-                click.echo(
-                    f"Would delete {len(old_sessions)} sessions older than {days} days:"
-                )
-                for session in old_sessions:
-                    click.echo(f"  - {session.session_id} ({session.function_name})")
-            else:
-                click.echo(f"No sessions older than {days} days found.")
+            _echo_sessions_older_than(storage, days)
         else:
             deleted_count = storage.cleanup_old_sessions(days)
             click.echo(f"✅ Cleaned up {deleted_count} sessions older than {days} days")
@@ -498,6 +517,81 @@ def manage_config(show: bool, set_path: str | None, reset: bool) -> None:
         sys.exit(1)
 
 
+def _echo_sync_status(status: dict[str, Any]) -> None:
+    click.echo("\n📊 Sync Status")
+    click.echo("=" * 30)
+    click.echo(f"Total sessions: {status['total_sessions']}")
+    click.echo(f"Completed sessions: {status['completed_sessions']}")
+    click.echo(f"Sync eligible: {status['sync_eligible']}")
+    click.echo(f"Total trials: {status['total_trials']}")
+
+
+def _sync_single_session(
+    sync_manager: SyncManager, session_id: str, dry_run: bool
+) -> None:
+    click.echo(f"\n🔄 Syncing session: {session_id}")
+    result = sync_manager.sync_session_to_cloud(session_id, dry_run)
+
+    if result["status"] != "success":
+        click.echo("❌ Sync failed:")
+        for error in result["errors"]:
+            click.echo(f"   • {error}")
+        return
+    click.echo("✅ Session synced successfully!")
+    if not dry_run:
+        click.echo(f"   Portal URL: {result.get('cloud_url', 'N/A')}")
+
+
+def _sync_all_sessions(
+    sync_manager: SyncManager,
+    status: dict[str, Any],
+    dry_run: bool,
+    cleanup: bool,
+) -> bool:
+    """Sync every eligible session; return False when the user cancelled."""
+    click.echo(f"\n🔄 Syncing all {status['sync_eligible']} eligible sessions...")
+
+    if not dry_run and not click.confirm("Continue with portal sync?"):
+        click.echo("Sync cancelled.")
+        return False
+
+    result = sync_manager.sync_all_sessions(dry_run)
+
+    click.echo("\n📈 Sync Results:")
+    click.echo(f"   Total sessions: {result['total_sessions']}")
+    click.echo(f"   Synced successfully: {result['synced_successfully']}")
+    click.echo(f"   Errors: {result['sync_errors']}")
+
+    if result["sync_errors"] > 0:
+        click.echo("\n❌ Sessions with errors:")
+        for session_result in result["session_results"]:
+            if session_result["status"] != "success":
+                click.echo(
+                    f"   • {session_result['session_id']}: {session_result.get('errors', ['Unknown error'])}"
+                )
+
+    # Cleanup if requested and successful
+    if cleanup and not dry_run and result["synced_successfully"] > 0:
+        _cleanup_synced_sessions(sync_manager, result)
+    return True
+
+
+def _cleanup_synced_sessions(sync_manager: SyncManager, result: dict[str, Any]) -> None:
+    successful_sessions = [
+        r["session_id"] for r in result["session_results"] if r["status"] == "success"
+    ]
+
+    if successful_sessions and click.confirm(
+        f"\nClean up {len(successful_sessions)} successfully synced local sessions?"
+    ):
+        cleanup_result = sync_manager.cleanup_after_sync(
+            successful_sessions, keep_backup=True
+        )
+        click.echo(
+            f"✅ Cleaned up {cleanup_result['sessions_deleted']} sessions (backed up first)"
+        )
+
+
 @local_commands.command(name="sync")
 @click.option("--api-key", help="API key for portal sync")
 @click.option("--session-id", help="Sync specific session (if not provided, syncs all)")
@@ -536,12 +630,7 @@ def sync_to_cloud(
 
         # Show sync status first
         status = sync_manager.get_sync_status()
-        click.echo("\n📊 Sync Status")
-        click.echo("=" * 30)
-        click.echo(f"Total sessions: {status['total_sessions']}")
-        click.echo(f"Completed sessions: {status['completed_sessions']}")
-        click.echo(f"Sync eligible: {status['sync_eligible']}")
-        click.echo(f"Total trials: {status['total_trials']}")
+        _echo_sync_status(status)
 
         if status["sync_eligible"] == 0:
             click.echo(
@@ -554,60 +643,9 @@ def sync_to_cloud(
 
         # Sync sessions
         if session_id:
-            # Sync specific session
-            click.echo(f"\n🔄 Syncing session: {session_id}")
-            result = sync_manager.sync_session_to_cloud(session_id, dry_run)
-
-            if result["status"] == "success":
-                click.echo("✅ Session synced successfully!")
-                if not dry_run:
-                    click.echo(f"   Portal URL: {result.get('cloud_url', 'N/A')}")
-            else:
-                click.echo("❌ Sync failed:")
-                for error in result["errors"]:
-                    click.echo(f"   • {error}")
-        else:
-            # Sync all sessions
-            click.echo(
-                f"\n🔄 Syncing all {status['sync_eligible']} eligible sessions..."
-            )
-
-            if not dry_run and not click.confirm("Continue with portal sync?"):
-                click.echo("Sync cancelled.")
-                return
-
-            result = sync_manager.sync_all_sessions(dry_run)
-
-            click.echo("\n📈 Sync Results:")
-            click.echo(f"   Total sessions: {result['total_sessions']}")
-            click.echo(f"   Synced successfully: {result['synced_successfully']}")
-            click.echo(f"   Errors: {result['sync_errors']}")
-
-            if result["sync_errors"] > 0:
-                click.echo("\n❌ Sessions with errors:")
-                for session_result in result["session_results"]:
-                    if session_result["status"] != "success":
-                        click.echo(
-                            f"   • {session_result['session_id']}: {session_result.get('errors', ['Unknown error'])}"
-                        )
-
-            # Cleanup if requested and successful
-            if cleanup and not dry_run and result["synced_successfully"] > 0:
-                successful_sessions = [
-                    r["session_id"]
-                    for r in result["session_results"]
-                    if r["status"] == "success"
-                ]
-
-                if successful_sessions and click.confirm(
-                    f"\nClean up {len(successful_sessions)} successfully synced local sessions?"
-                ):
-                    cleanup_result = sync_manager.cleanup_after_sync(
-                        successful_sessions, keep_backup=True
-                    )
-                    click.echo(
-                        f"✅ Cleaned up {cleanup_result['sessions_deleted']} sessions (backed up first)"
-                    )
+            _sync_single_session(sync_manager, session_id, dry_run)
+        elif not _sync_all_sessions(sync_manager, status, dry_run, cleanup):
+            return
 
         # Show portal analytics preview
         if not dry_run and status["sync_eligible"] > 0:

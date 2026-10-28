@@ -389,39 +389,10 @@ class ProgressBarCallback(OptimizationCallback):
         """Called when optimization completes."""
         # Draw final 100% progress bar (throttle may have skipped the last update)
         if self._last_progress is not None:
-            bar = "█" * self.width
-            elapsed = time.strftime(
-                "%M:%S", time.gmtime(self._last_progress.elapsed_time)
-            )
-            best_score_str = (
-                f"{self._last_progress.best_score:.3f}"
-                if self._last_progress.best_score is not None
-                else "N/A"
-            )
-            total = self._last_progress.total_trials
-            # Using print for final progress display output
-            _safe_print(
-                f"\r[{bar}] 100.0% "
-                f"({total}/{total}) "
-                f"✅ {self._last_progress.successful_trials} "
-                f"❌ {self._last_progress.failed_trials} "
-                f"{self._timeout_segment()}"
-                f"⏱️  {elapsed}"
-                + (f" 🏆 {best_score_str}" if self._table_show_best else ""),
-                flush=True,
-            )
+            self._print_final_progress_bar(self._last_progress)
 
         _safe_print("\n")
-        if _is_user_cancelled(result):
-            _safe_print("🛑 Optimization CANCELLED BY USER; results are partial.")
-        elif result.stop_reason == "timeout" or result.status == "cancelled":
-            timeout_value = None
-            if isinstance(result.metadata, dict):
-                timeout_value = result.metadata.get("timeout")
-            timeout_hint = f" ({timeout_value}s)" if timeout_value else ""
-            _safe_print(f"⚠️ Optimization stopped: timeout reached{timeout_hint}.")
-        else:
-            _safe_print("✅ Optimization complete!")
+        self._print_completion_status(result)
         best_score_str = (
             f"{result.best_score:.3f}" if result.best_score is not None else "N/A"
         )
@@ -433,6 +404,47 @@ class ProgressBarCallback(OptimizationCallback):
         if result.stop_reason and result.stop_reason != "timeout":
             _safe_print(f"🛑 Stop reason: {result.stop_reason}")
 
+        self._print_run_links(result)
+
+        self._print_results_table(result)
+
+    def _print_final_progress_bar(self, progress: ProgressInfo) -> None:
+        """Print the closing 100% progress line from the last recorded progress."""
+        bar = "█" * self.width
+        elapsed = time.strftime("%M:%S", time.gmtime(progress.elapsed_time))
+        best_score_str = (
+            f"{progress.best_score:.3f}" if progress.best_score is not None else "N/A"
+        )
+        total = progress.total_trials
+        # Using print for final progress display output
+        _safe_print(
+            f"\r[{bar}] 100.0% "
+            f"({total}/{total}) "
+            f"✅ {progress.successful_trials} "
+            f"❌ {progress.failed_trials} "
+            f"{self._timeout_segment()}"
+            f"⏱️  {elapsed}"
+            + (f" 🏆 {best_score_str}" if self._table_show_best else ""),
+            flush=True,
+        )
+
+    @staticmethod
+    def _print_completion_status(result: OptimizationResult) -> None:
+        """Print the headline outcome line (cancelled, timeout or complete)."""
+        if _is_user_cancelled(result):
+            _safe_print("🛑 Optimization CANCELLED BY USER; results are partial.")
+        elif result.stop_reason == "timeout" or result.status == "cancelled":
+            timeout_value = None
+            if isinstance(result.metadata, dict):
+                timeout_value = result.metadata.get("timeout")
+            timeout_hint = f" ({timeout_value}s)" if timeout_value else ""
+            _safe_print(f"⚠️ Optimization stopped: timeout reached{timeout_hint}.")
+        else:
+            _safe_print("✅ Optimization complete!")
+
+    @staticmethod
+    def _print_run_links(result: OptimizationResult) -> None:
+        """Print the run label and where to view (or sync) the run."""
         if result.run_label:
             _safe_print(f"🔖 Run: {result.run_label}")
         if result.cloud_url:
@@ -443,8 +455,6 @@ class ProgressBarCallback(OptimizationCallback):
             and result.metadata.get("offline_mode")
         ):
             _safe_print("   Run locally — sync to cloud with `traigent sync`")
-
-        self._print_results_table(result)
 
     def _print_results_table(self, result: OptimizationResult) -> None:
         """Render the canonical optimization results table when enough context exists."""
@@ -719,6 +729,37 @@ def _declared_objective_score(trial: Any, primary_objective: str | None) -> Any:
     return value if value is not None else metrics.get("score")
 
 
+def _parameter_importance_for_values(stats_owner: Any, values: list[Any]) -> float:
+    """Calculate one parameter's between-value score variance."""
+    if len(values) < 2:
+        return 0.0
+
+    # Group scores by parameter value.
+    value_scores: dict[Any, list[float]] = {}
+    for i, value in enumerate(values):
+        if (
+            i < len(stats_owner.stats["scores_by_trial"])
+            and stats_owner.stats["scores_by_trial"][i] is not None
+        ):
+            if value not in value_scores:
+                value_scores[value] = []
+            value_scores[value].append(stats_owner.stats["scores_by_trial"][i])
+
+    if len(value_scores) < 2:
+        return 0.0
+
+    # Calculate variance between different parameter values.
+    group_means = [
+        sum(scores) / len(scores) for scores in value_scores.values() if scores
+    ]
+    if len(group_means) >= 2:
+        overall_mean = sum(group_means) / len(group_means)
+        return sum((mean - overall_mean) ** 2 for mean in group_means) / len(
+            group_means
+        )
+    return 0.0
+
+
 class StatisticsCallback(OptimizationCallback):
     """Callback that collects optimization statistics."""
 
@@ -782,37 +823,7 @@ class StatisticsCallback(OptimizationCallback):
         importance = {}
 
         for param, values in self.stats["parameter_values"].items():
-            if len(values) < 2:
-                importance[param] = 0.0
-                continue
-
-            # Group scores by parameter value
-            value_scores: dict[Any, list[float]] = {}
-            for i, value in enumerate(values):
-                if (
-                    i < len(self.stats["scores_by_trial"])
-                    and self.stats["scores_by_trial"][i] is not None
-                ):
-                    if value not in value_scores:
-                        value_scores[value] = []
-                    value_scores[value].append(self.stats["scores_by_trial"][i])
-
-            if len(value_scores) < 2:
-                importance[param] = 0.0
-                continue
-
-            # Calculate variance between different parameter values
-            group_means = [
-                sum(scores) / len(scores) for scores in value_scores.values() if scores
-            ]
-            if len(group_means) >= 2:
-                overall_mean = sum(group_means) / len(group_means)
-                variance = sum(
-                    (mean - overall_mean) ** 2 for mean in group_means
-                ) / len(group_means)
-                importance[param] = variance
-            else:
-                importance[param] = 0.0
+            importance[param] = _parameter_importance_for_values(self, values)
 
         # Normalize importance scores
         max_importance = max(importance.values()) if importance.values() else 1.0
@@ -820,6 +831,29 @@ class StatisticsCallback(OptimizationCallback):
             importance = {k: v / max_importance for k, v in importance.items()}
 
         return importance
+
+
+def _format_trial_config(config: dict[str, Any]) -> str:
+    """Format the details shown when a trial starts."""
+    config_parts = []
+
+    # Prioritize showing model/approach/method first
+    primary_param = (
+        config.get("model") or config.get("approach") or config.get("method")
+    )
+    if primary_param:
+        config_parts.append(str(primary_param))
+
+    # Add other important parameters
+    for key, value in config.items():
+        if key not in ["model", "approach", "method"] and value is not None:
+            # Format the value nicely
+            if isinstance(value, float):
+                config_parts.append(f"{key}={value:.1f}")
+            else:
+                config_parts.append(f"{key}={value}")
+
+    return ", ".join(config_parts) if config_parts else "config"
 
 
 class SimpleProgressCallback(OptimizationCallback):
@@ -887,26 +921,7 @@ class SimpleProgressCallback(OptimizationCallback):
         self.current_trial = trial_number + 1
 
         if self.show_details:
-            # Build a descriptive string of the configuration
-            config_parts = []
-
-            # Prioritize showing model/approach/method first
-            primary_param = (
-                config.get("model") or config.get("approach") or config.get("method")
-            )
-            if primary_param:
-                config_parts.append(str(primary_param))
-
-            # Add other important parameters
-            for key, value in config.items():
-                if key not in ["model", "approach", "method"] and value is not None:
-                    # Format the value nicely
-                    if isinstance(value, float):
-                        config_parts.append(f"{key}={value:.1f}")
-                    else:
-                        config_parts.append(f"{key}={value}")
-
-            config_str = ", ".join(config_parts) if config_parts else "config"
+            config_str = _format_trial_config(config)
             self._output(
                 f"[{self.current_trial}/{self.total_trials}] Testing: {config_str}"
             )
@@ -1431,15 +1446,26 @@ class DetailedProgressCallback(OptimizationCallback):
         if self.show_metrics and trial.metrics:
             _safe_print("   Metrics:")
             for metric, value in trial.metrics.items():
-                if isinstance(value, float):
-                    _safe_print(f"     • {metric}: {value:.3f}")
-                else:
-                    _safe_print(f"     • {metric}: {value}")
+                shown = f"{value:.3f}" if isinstance(value, float) else value
+                _safe_print(f"     • {metric}: {shown}")
 
         if progress.best_score is not None:
             _safe_print(f"   🏆 Best score so far: {progress.best_score:.3f}")
 
-        # Progress bar
+        bar, percent = self._progress_bar(progress)
+        _safe_print(f"   Progress: [{bar}] {percent:.0f}%")
+        # Flush once, at the end of the trial's block. `_safe_print` defaults to
+        # flush=False, so without this the whole report sits in stdout's buffer
+        # whenever output is redirected (a pipe, a log file, nohup) -- which is
+        # exactly the non-interactive managed run this callback is trusted to
+        # keep from going silent. The heartbeat defers to this callback, so
+        # "it printed" has to mean "the user received it", not "it reached the
+        # buffer". Flushing here rather than on all seven writes keeps one
+        # syscall per trial instead of seven.
+        _safe_print(flush=True)
+
+    def _progress_bar(self, progress: ProgressInfo) -> tuple[str, float]:
+        """Render the 40-cell progress bar and the completed percentage."""
         denominator_candidates = [
             progress.total_trials,
             self.total_trials,
@@ -1463,16 +1489,7 @@ class DetailedProgressCallback(OptimizationCallback):
         bar_length = 40
         filled = int(bar_length * percent / 100)
         bar = "█" * filled + "░" * (bar_length - filled)
-        _safe_print(f"   Progress: [{bar}] {percent:.0f}%")
-        # Flush once, at the end of the trial's block. `_safe_print` defaults to
-        # flush=False, so without this the whole report sits in stdout's buffer
-        # whenever output is redirected (a pipe, a log file, nohup) -- which is
-        # exactly the non-interactive managed run this callback is trusted to
-        # keep from going silent. The heartbeat defers to this callback, so
-        # "it printed" has to mean "the user received it", not "it reached the
-        # buffer". Flushing here rather than on all seven writes keeps one
-        # syscall per trial instead of seven.
-        _safe_print(flush=True)
+        return bar, percent
 
     def _print_header(self, result: OptimizationResult) -> None:
         """Print the completion header."""

@@ -135,6 +135,8 @@ class BestConfigSourceMode(StrEnum):
     CLOUD = "cloud"
     REPO_THEN_CLOUD = "repo_then_cloud"
     CLOUD_THEN_REPO = "cloud_then_repo"
+    #: The exact version the agent head pins (TRAIG-101 plan 8.5); fail closed.
+    AGENT_HEAD = "agent_head"
 
 
 class BestConfigSource(StrEnum):
@@ -148,6 +150,7 @@ class BestConfigSource(StrEnum):
     REPO = "repo"
     CLOUD_CACHE = "cloud_cache"
     CLOUD_FETCH = "cloud_fetch"
+    AGENT_HEAD = "agent_head"
     DEV_LOG = "dev_log"
 
 
@@ -480,7 +483,7 @@ def source_order_for_mode(
     if normalized is None:
         raise diag.refusal(
             "Unknown best_config_source. "
-            "Use one of: off, repo, cloud, repo_then_cloud, cloud_then_repo.",
+            "Use one of: off, repo, cloud, repo_then_cloud, cloud_then_repo, agent_head.",
             category=diag.Category.SOURCE_MODE,
             best_config_source_type=type(mode).__name__,
         ) from None
@@ -491,6 +494,8 @@ def source_order_for_mode(
         return (BestConfigSource.REPO,)
     if normalized is BestConfigSourceMode.CLOUD:
         return (BestConfigSource.CLOUD_CACHE, BestConfigSource.CLOUD_FETCH)
+    if normalized is BestConfigSourceMode.AGENT_HEAD:
+        return (BestConfigSource.AGENT_HEAD,)
     if normalized is BestConfigSourceMode.REPO_THEN_CLOUD:
         return (
             BestConfigSource.REPO,

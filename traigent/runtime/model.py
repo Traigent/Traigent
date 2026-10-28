@@ -21,6 +21,8 @@ import yaml
 
 KIND_LATENCY = "latency_violation_rate"
 TVL_VERSION = "1.3"
+#: Declared by any document that uses a TVL 1.4 reactive construct (RFC 0004 section 2.1).
+TVL_VERSION_REACTIVE = "1.4"
 DEFAULT_ENVIRONMENT = "production"
 
 #: Window strings accepted by the sugar (hours under the ``backend_v1`` profile).
@@ -64,6 +66,18 @@ _INT_RANGES: Mapping[str, tuple[int, int]] = {
 ENVIRONMENT_MAX_LENGTH = 64
 
 EVENTS = ("episode_opened", "episode_resolved", "episode_withdrawn")
+#: TVL 1.4 additions (RFC 0004): a prolonged undecided verdict on the rule's monitor...
+UNKNOWN_FOR = "unknown_for"
+#: ...and the repair outcomes an ``optimize`` rule of the same response can record.
+OUTCOME_EVENTS = (
+    "optimize_no_candidate",
+    "optimize_failed",
+    "deploy_refused",
+    "deploy_failed",
+)
+DEPLOY_OUTCOME_EVENTS = ("deploy_refused", "deploy_failed")
+DEPLOY_MODES = ("never", "if_promoted")
+GUARD_STATES = {"monitor": "episode_open", "rule": "attempt_open"}
 ACTIONS = ("notify", "open_next_step", "optimize")
 SEVERITIES = ("info", "warning", "critical")
 ON_BREACH_VALUES = ("log", "alert", "fix")
@@ -82,6 +96,10 @@ E_FIX_CEILING = "fix_ceiling_required"
 E_ACTION_UNSUPPORTED = "response_action_unsupported"
 E_CAPABILITY = "runtime_unsupported_capability"
 E_FRAGMENT = "tvl_fragment_invalid"
+E_NOTIFY_ONLY = "runtime_notify_only"
+E_VERSION_REQUIRED = "runtime_version_required"
+E_VERSION_BELOW = "declared_version_below_constructs"
+E_HOURS_RANGE = "runtime_trigger_hours_out_of_range"
 E_COMPILER = "tvl_compiler_unavailable"
 E_EXISTS = "requirement_exists"
 E_DISABLED = "production_requirements_disabled"
@@ -135,38 +153,119 @@ class Receipt:
     provenance: str
     status: str
     created: bool | None = None  # True 201, False 200/no-op
+    # Set only for a zero-native contract: the ReactiveImportReceipt carries no head.
+    policy_revision_ref: str | None = None
+    contract_digest: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        doc: dict[str, Any] = {
             "head_id": self.head_id,
             "revision_id": self.revision_id,
             "revision_number": self.revision_number,
             "provenance": self.provenance,
             "status": self.status,
         }
+        if self.policy_revision_ref is not None:
+            doc["policy_revision_ref"] = self.policy_revision_ref
+            doc["contract_digest"] = self.contract_digest
+        return doc
+
+
+@dataclass(frozen=True)
+class NotifyGuard:
+    """A condition on a ``notify`` rule (RFC 0004 section 2.4).
+
+    ``kind`` is ``"monitor"`` (state ``episode_open``) or ``"rule"`` (state
+    ``attempt_open``); ``ref`` is a monitor name or an ``optimize`` rule id.
+    """
+
+    kind: str
+    ref: str
+
+    def to_doc(self) -> dict[str, Any]:
+        return {self.kind: self.ref, "state": GUARD_STATES[self.kind]}
 
 
 @dataclass(frozen=True)
 class ResponseRule:
-    """One rung of the response ladder (``log``/``alert``/``fix`` compile to these)."""
+    """One rung of the response ladder (``log``/``alert``/``fix`` compile to these).
+
+    ``trigger_rule`` makes the trigger an outcome trigger ``{rule, event}``
+    (RFC 0004 section 2.2); ``hours`` belongs to ``unknown_for``; ``only_while`` /
+    ``unless`` are the notification guards; ``deploy`` is the ``optimize`` deploy
+    mode (RFC 0003 section 7.6).
+    """
 
     id: str
     event: str
     action: str
     severity: str | None = None
     approval: str | None = None
+    trigger_rule: str | None = None
+    hours: int | None = None
+    only_while: tuple[NotifyGuard, ...] = ()
+    unless: tuple[NotifyGuard, ...] = ()
+    deploy: str | None = None
+
+    def is_reactive(self) -> bool:
+        """True when the rule uses a TVL 1.4 construct (so the contract is /2)."""
+        return bool(
+            self.trigger_rule
+            or self.event == UNKNOWN_FOR
+            or self.only_while
+            or self.unless
+        )
 
     def to_doc(self, monitor: str) -> dict[str, Any]:
+        trigger: dict[str, Any] = (
+            {"rule": self.trigger_rule, "event": self.event}
+            if self.trigger_rule is not None
+            else {"monitor": monitor, "event": self.event}
+        )
+        if self.hours is not None:
+            trigger["hours"] = self.hours
         rule: dict[str, Any] = {
             "id": self.id,
-            "trigger": {"monitor": monitor, "event": self.event},
+            "trigger": trigger,
             "do": self.action,
         }
         if self.action == "notify":
             rule["severity"] = self.severity
         if self.action == "optimize":
             rule["approval"] = self.approval or "human"
+            if self.deploy is not None:
+                rule["deploy"] = self.deploy
+        if self.only_while:
+            rule["only_while"] = [g.to_doc() for g in self.only_while]
+        if self.unless:
+            rule["unless"] = [g.to_doc() for g in self.unless]
         return rule
+
+
+@dataclass(frozen=True)
+class PromotionMonitor:
+    """The promotion-phase monitor a ``deploy: if_promoted`` rule needs (RFC 0003 section 6.11).
+
+    It judges a candidate once, on the evaluation set; nothing about it runs
+    against production traffic.
+    """
+
+    name: str
+    confidence: float
+    false_alarm_budget: float
+
+    def to_doc(self, requirement: str) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "requirement": requirement,
+            "phase": "promotion",
+            "evidence": {"source": "evaluation_set"},
+            "decision": {
+                "method": "clopper_pearson_rational_v2",
+                "confidence": self.confidence,
+                "false_alarm_budget": self.false_alarm_budget,
+            },
+        }
 
 
 @dataclass(frozen=True)
@@ -305,6 +404,7 @@ class RuntimeRequirement:
     agent_id: str | None = None
     source: str = "kwargs"  # "kwargs" -> native create, "tvl" -> tvl-import
     fragment_path: str | None = None
+    promotion: PromotionMonitor | None = None
     on_event: Callable[[RuntimeEvent], None] | None = field(
         default=None, compare=False, repr=False
     )
@@ -334,6 +434,10 @@ class RuntimeRequirement:
         body["environment"] = self.environment.strip()
         return body
 
+    def is_reactive(self) -> bool:
+        """True when any rule uses a TVL 1.4 construct (hosted contract is ``/2``)."""
+        return any(rule.is_reactive() for rule in self.rules)
+
     def has_optimize_rule(self) -> bool:
         return any(rule.action == "optimize" for rule in self.rules)
 
@@ -341,7 +445,7 @@ class RuntimeRequirement:
     def to_doc(self) -> dict[str, Any]:
         """TVL 1.3 runtime blocks (requirement, monitor, responses) as a mapping."""
         doc: dict[str, Any] = {
-            "tvl_version": TVL_VERSION,
+            "tvl_version": TVL_VERSION_REACTIVE if self.is_reactive() else TVL_VERSION,
             "requirements": [
                 {
                     "name": self.name,
@@ -383,6 +487,8 @@ class RuntimeRequirement:
                 }
             ],
         }
+        if self.promotion is not None:
+            doc["monitors"].append(self.promotion.to_doc(self.name))
         if self.rules:
             doc["responses"] = [
                 {
@@ -438,8 +544,7 @@ class RuntimeRequirement:
             if rule.id in seen or not _NAME_RE.fullmatch(rule.id):
                 bad(f"{where}.id")
             seen.add(rule.id)
-            if rule.event not in EVENTS:
-                bad(f"{where}.event")
+            _validate_trigger(self, rule, where, issues)
             if rule.action not in ACTIONS:
                 issues.append(Issue(E_ACTION_UNSUPPORTED, f"{where}.do", "error"))
             if (
@@ -453,6 +558,15 @@ class RuntimeRequirement:
                 bad(f"{where}.severity")
             if rule.action == "optimize" and (rule.approval or "human") != "human":
                 issues.append(Issue(E_ACTION_UNSUPPORTED, f"{where}.approval", "error"))
+            if rule.deploy is not None and (
+                rule.action != "optimize" or rule.deploy not in DEPLOY_MODES
+            ):
+                bad(f"{where}.deploy")
+            if rule.deploy == "if_promoted" and self.promotion is None:
+                bad(f"{where}.deploy")  # needs a promotion monitor (RFC 0003 7.6)
+            if rule.is_reactive() and rule.action != "notify":
+                issues.append(Issue(E_NOTIFY_ONLY, f"{where}.do", "error"))
+            _validate_guards(self, rule, where, issues)
         optimize_rules = [
             index
             for index, rule in enumerate(self.rules)
@@ -462,11 +576,66 @@ class RuntimeRequirement:
             1:
         ]:  # respond runs exactly one fix rule: refuse more
             issues.append(Issue(E_MULTIPLE_OPTIMIZE, f"rules[{index}]", "error"))
+        if self.promotion is not None:
+            promo = self.promotion
+            if (
+                not _NAME_RE.fullmatch(promo.name)
+                or promo.name == self.monitor_name
+                or promo.confidence not in CONFIDENCE_VALUES
+                or not _is_number(promo.false_alarm_budget)
+                or not 0 < promo.false_alarm_budget <= 0.5
+            ):
+                bad("promotion")
         if self.max_fix_cost_usd is not None and not positive_finite(
             self.max_fix_cost_usd
         ):
             bad("max_fix_cost_usd")
         return issues
+
+
+def _validate_trigger(
+    requirement: RuntimeRequirement, rule: ResponseRule, where: str, issues: list[Issue]
+) -> None:
+    by_id = {r.id: r for r in requirement.rules}
+    if rule.trigger_rule is not None:
+        target = by_id.get(rule.trigger_rule)
+        if (
+            rule.event not in OUTCOME_EVENTS
+            or target is None
+            or target.id == rule.id
+            or target.action != "optimize"
+        ):
+            issues.append(Issue(E_INVALID, f"{where}.trigger", "error"))
+        elif rule.event in DEPLOY_OUTCOME_EVENTS and target.deploy != "if_promoted":
+            issues.append(Issue(E_INVALID, f"{where}.trigger.event", "error"))
+        if rule.hours is not None:
+            issues.append(Issue(E_INVALID, f"{where}.trigger.hours", "error"))
+        return
+    if rule.event not in EVENTS and rule.event != UNKNOWN_FOR:
+        issues.append(Issue(E_INVALID, f"{where}.event", "error"))
+    if rule.event == UNKNOWN_FOR:
+        hours = rule.hours
+        if type(hours) is not int or hours < 1:
+            issues.append(Issue(E_INVALID, f"{where}.trigger.hours", "error"))
+        elif hours < requirement.window_hours:
+            issues.append(Issue(E_HOURS_RANGE, f"{where}.trigger.hours", "error"))
+    elif rule.hours is not None:
+        issues.append(Issue(E_INVALID, f"{where}.trigger.hours", "error"))
+
+
+def _validate_guards(
+    requirement: RuntimeRequirement, rule: ResponseRule, where: str, issues: list[Issue]
+) -> None:
+    optimize_ids = {r.id for r in requirement.rules if r.action == "optimize"}
+    for key, guards in (("only_while", rule.only_while), ("unless", rule.unless)):
+        for index, guard in enumerate(guards):
+            path = f"{where}.{key}[{index}]"
+            if guard.kind == "monitor" and guard.ref != requirement.monitor_name:
+                issues.append(Issue(E_CAPABILITY, f"{path}.monitor", "error"))
+            elif guard.kind == "rule" and guard.ref not in optimize_ids:
+                issues.append(Issue(E_INVALID, f"{path}.rule", "error"))
+            elif guard.kind not in GUARD_STATES:
+                issues.append(Issue(E_INVALID, path, "error"))
 
 
 def build_rules(on_breach: str, approval: str = "human") -> tuple[ResponseRule, ...]:
