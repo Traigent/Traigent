@@ -664,7 +664,9 @@ def _size_ok(value: Any, limit: int, *, identity: bool = False) -> None:
         if _json_size(value) > MAX_IDENTITY_BYTES:
             raise MetadataContractViolation
         return
-    if _json_size(_without_content_identity(value)) > limit:
+    stripped = _without_content_identity(value)
+    size = _json_size(stripped)
+    if size > limit:
         raise MetadataContractViolation
 
 
