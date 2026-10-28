@@ -175,6 +175,10 @@ class DatasetConverter:
             else None
         )
         self._resolved_backend_base_url: str | None = None
+        # Provenance of the cached value: True when it is the vendor default
+        # (resolved outside strict mode), which must not outlive a switch into
+        # strict-endpoint mode.
+        self._resolved_from_vendor_default = False
         self.no_egress = bool(no_egress)
         self._session: aiohttp.ClientSession | None = None
 
@@ -183,18 +187,26 @@ class DatasetConverter:
         """Backend base URL; vendor default only outside strict-endpoint mode."""
         if self._explicit_backend_base_url:
             return self._explicit_backend_base_url
+        strict = is_strict_endpoint_mode()
+        if self._resolved_backend_base_url is not None and (
+            strict and self._resolved_from_vendor_default
+        ):
+            # Cached before strict mode was enabled: drop the vendor default
+            # and re-resolve (configured endpoint, or EndpointNotConfiguredError).
+            self._resolved_backend_base_url = None
         if self._resolved_backend_base_url is None:
             # Strict-endpoint mode resolves the configured backend (raising
             # EndpointNotConfiguredError when none is set); otherwise the
             # vendor default is kept.
             default_url = (
                 BackendConfig.get_cloud_backend_url()
-                if is_strict_endpoint_mode()
+                if strict
                 else BackendConfig.get_default_cloud_url_or_raise()
             )
             self._resolved_backend_base_url = self._validate_backend_base_url(
                 default_url
             )
+            self._resolved_from_vendor_default = not strict
         return self._resolved_backend_base_url
 
     @backend_base_url.setter

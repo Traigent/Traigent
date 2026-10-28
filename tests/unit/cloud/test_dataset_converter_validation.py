@@ -80,6 +80,35 @@ class TestDatasetConverterValidation:
             with pytest.raises(EndpointNotConfiguredError):
                 _ = converter.backend_base_url
 
+    def test_cached_vendor_default_is_not_reused_after_strict_mode(self, monkeypatch):
+        """A default cached before strict mode must be re-resolved, not reused."""
+        monkeypatch.delenv("TRAIGENT_REQUIRE_EXPLICIT_ENDPOINT", raising=False)
+        monkeypatch.delenv("TRAIGENT_BACKEND_URL", raising=False)
+        converter = DatasetConverter()
+        assert converter.backend_base_url == DEFAULT_CLOUD_URL  # warm the cache
+
+        monkeypatch.setenv("TRAIGENT_REQUIRE_EXPLICIT_ENDPOINT", "1")
+        monkeypatch.setenv("TRAIGENT_BACKEND_URL", "https://customer.example")
+        assert converter.backend_base_url == "https://customer.example"
+
+    def test_cached_vendor_default_raises_after_strict_mode_without_endpoint(
+        self, monkeypatch
+    ):
+        """With strict mode on and nothing configured, the stale default is rejected."""
+        monkeypatch.delenv("TRAIGENT_REQUIRE_EXPLICIT_ENDPOINT", raising=False)
+        converter = DatasetConverter()
+        assert converter.backend_base_url == DEFAULT_CLOUD_URL
+
+        monkeypatch.setenv("TRAIGENT_REQUIRE_EXPLICIT_ENDPOINT", "1")
+        monkeypatch.delenv("TRAIGENT_BACKEND_URL", raising=False)
+        monkeypatch.delenv("TRAIGENT_API_URL", raising=False)
+        with patch(
+            "traigent.config.backend_config.BackendConfig._get_configured_backend_origin",
+            return_value=None,
+        ):
+            with pytest.raises(EndpointNotConfiguredError):
+                _ = converter.backend_base_url
+
     def test_validate_example_set_id_allows_uuid(self):
         """Example set identifiers should accept UUIDs and trim whitespace."""
         converter = DatasetConverter()
