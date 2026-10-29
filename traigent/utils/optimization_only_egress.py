@@ -365,21 +365,28 @@ def s_metric_name(value: Any, ctx: _Ctx, depth: int) -> Any:
     return _metric_key(value, ctx, depth)
 
 
+def _closed_tree_scalar(value: Any) -> tuple[bool, Any]:
+    if value is None or isinstance(value, bool):
+        return True, value
+    if _is_number(value):
+        if not _is_finite(value) or abs(value) > MAX_NUM:
+            raise _Drop
+        return True, value
+    if isinstance(value, str):
+        if SHA256_RE.fullmatch(value) or ID_RE.fullmatch(value):
+            return True, value
+        raise _Drop
+    return False, None
+
+
 def s_closed_tree(value: Any, _c: _Ctx, depth: int) -> Any:
     """Generic closed-leaf tree (content identity): keys are identifiers; leaves are numbers,
     booleans, digests or identifiers. Any other string leaf is dropped."""
     if depth > MAX_DEPTH:
         raise _Drop
-    if value is None or isinstance(value, bool):
-        return value
-    if _is_number(value):
-        if not _is_finite(value) or abs(value) > MAX_NUM:
-            raise _Drop
-        return value
-    if isinstance(value, str):
-        if SHA256_RE.fullmatch(value) or ID_RE.fullmatch(value):
-            return value
-        raise _Drop
+    scalar, result = _closed_tree_scalar(value)
+    if scalar:
+        return result
     if isinstance(value, (list, tuple)):
         out_list: list[Any] = []
         for item in list(value)[:MAX_LIST]:
@@ -388,17 +395,17 @@ def s_closed_tree(value: Any, _c: _Ctx, depth: int) -> Any:
             except _Drop:
                 continue
         return out_list
-    if isinstance(value, dict):
-        out: dict[str, Any] = {}
-        for key, item in list(value.items())[:MAX_LIST]:
-            if not isinstance(key, str) or ID_RE.fullmatch(key) is None:
-                continue
-            try:
-                out[key] = s_closed_tree(item, _c, depth + 1)
-            except _Drop:
-                continue
-        return out
-    raise _Drop
+    if not isinstance(value, dict):
+        raise _Drop
+    out: dict[str, Any] = {}
+    for key, item in list(value.items())[:MAX_LIST]:
+        if not isinstance(key, str) or ID_RE.fullmatch(key) is None:
+            continue
+        try:
+            out[key] = s_closed_tree(item, _c, depth + 1)
+        except _Drop:
+            continue
+    return out
 
 
 def _closed_search_value(
@@ -658,6 +665,21 @@ _MEASURE_ROW = s_obj(
 )
 
 
+def _project_measure_row(item: Any, ctx: _Ctx, depth: int) -> Any:
+    row = _MEASURE_ROW(item, ctx, depth + 1)
+    if "example_id" not in row:
+        raise MetadataContractViolation
+    return row
+
+
+def _measures_dict_spec(value: Any, ctx: _Ctx, depth: int) -> Any:
+    if "metrics" in value:
+        return s_obj({"metrics": s_metric_map(), "execution_time": s_num(0)})(
+            value, ctx, depth
+        )
+    return s_metric_map()(value, ctx, depth)
+
+
 def _measures_spec(value: Any, ctx: _Ctx, depth: int) -> Any:
     """``measures``: a flat metrics map, or a list of per-example rows."""
     if isinstance(value, list):
@@ -672,17 +694,10 @@ def _measures_spec(value: Any, ctx: _Ctx, depth: int) -> Any:
                 except _Drop:
                     pass
                 continue
-            row = _MEASURE_ROW(item, ctx, depth + 1)
-            if "example_id" not in row:
-                raise MetadataContractViolation
-            rows.append(row)
+            rows.append(_project_measure_row(item, ctx, depth))
         return rows
     if isinstance(value, dict):
-        if "metrics" in value:
-            return s_obj({"metrics": s_metric_map(), "execution_time": s_num(0)})(
-                value, ctx, depth
-            )
-        return s_metric_map()(value, ctx, depth)
+        return _measures_dict_spec(value, ctx, depth)
     raise _Drop
 
 
@@ -1191,6 +1206,20 @@ _FSTRING_TOKENS = {
 _CONSTRAINT_EXPR_KEYS = ("require", "expr", "when", "then")
 
 
+def _project_constraint_entry(entry: Any, ctx: _Ctx) -> dict[str, Any]:
+    if not isinstance(entry, dict):
+        raise MetadataContractViolation
+    new_entry: dict[str, Any] = {}
+    if entry.get("id") is not None:
+        new_entry["id"] = _strict_id(entry["id"], ctx)
+    for key in _CONSTRAINT_EXPR_KEYS:
+        if key in entry and entry[key] is not None:
+            if not expression_is_closed(entry[key]):
+                raise MetadataContractViolation
+            new_entry[key] = entry[key]
+    return new_entry
+
+
 def _project_constraints(value: Any, ctx: _Ctx) -> Any:
     """Constraint definitions: ids validated, caller error messages dropped (the server
     generates ``"... constraint <id> violated"``), expressions comment-free with identifier-only
@@ -1208,17 +1237,7 @@ def _project_constraints(value: Any, ctx: _Ctx) -> Any:
             raise MetadataContractViolation
         cleaned: list[Any] = []
         for entry in entries:
-            if not isinstance(entry, dict):
-                raise MetadataContractViolation
-            new_entry: dict[str, Any] = {}
-            if entry.get("id") is not None:
-                new_entry["id"] = _strict_id(entry["id"], ctx)
-            for key in _CONSTRAINT_EXPR_KEYS:
-                if key in entry and entry[key] is not None:
-                    if not expression_is_closed(entry[key]):
-                        raise MetadataContractViolation
-                    new_entry[key] = entry[key]
-            cleaned.append(new_entry)
+            cleaned.append(_project_constraint_entry(entry, ctx))
         out[group] = cleaned
     return out
 
@@ -1785,6 +1804,44 @@ def project_error_message(error_message: Any) -> str | None:
     return _error_code(error_message)
 
 
+def _project_configuration_run_remaining(
+    key: str, value: Any, out: dict[str, Any], ctx: _Ctx, declared: Iterable[str]
+) -> None:
+    if key == "summary_stats":
+        out[key] = project_summary_stats(value, declared) if value is not None else None
+    elif key == "workflow_metadata":
+        out[key] = project_workflow_metadata(value) if value is not None else None
+    elif key in ("metadata", "run_metadata"):
+        out[key] = (
+            project_trial_metadata(value, declared) if value is not None else None
+        )
+    elif key == "error_message":
+        out[key] = _error_code(value)
+    else:  # start_time / end_time
+        if value is None:
+            out[key] = None
+        else:
+            try:
+                out[key] = s_ts(value, ctx, 0)
+            except _Drop:
+                raise MetadataContractViolation from None
+
+
+def _project_configuration_run_item(
+    key: str, value: Any, out: dict[str, Any], ctx: _Ctx, declared: Iterable[str]
+) -> None:
+    if key in ("experiment_parameters", "status"):
+        spec = s_config if key == "experiment_parameters" else s_id
+        try:
+            out[key] = spec(value, ctx, 0)
+        except _Drop:
+            raise MetadataContractViolation from None
+    elif key == "measures":
+        out[key] = project_measures(value, declared) if value is not None else None
+    else:
+        _project_configuration_run_remaining(key, value, out, ctx, declared)
+
+
 def project_configuration_run(
     data: dict[str, Any], declared: Iterable[str] = ()
 ) -> dict[str, Any]:
@@ -1801,34 +1858,7 @@ def project_configuration_run(
     for key, value in data.items():
         if key == CONTRACT_VERSION_KEY:
             continue
-        if key in ("experiment_parameters", "status"):
-            spec = s_config if key == "experiment_parameters" else s_id
-            try:
-                out[key] = spec(value, ctx, 0)
-            except _Drop:
-                raise MetadataContractViolation from None
-        elif key == "measures":
-            out[key] = project_measures(value, declared) if value is not None else None
-        elif key == "summary_stats":
-            out[key] = (
-                project_summary_stats(value, declared) if value is not None else None
-            )
-        elif key == "workflow_metadata":
-            out[key] = project_workflow_metadata(value) if value is not None else None
-        elif key in ("metadata", "run_metadata"):
-            out[key] = (
-                project_trial_metadata(value, declared) if value is not None else None
-            )
-        elif key == "error_message":
-            out[key] = _error_code(value)
-        else:  # start_time / end_time
-            if value is None:
-                out[key] = None
-            else:
-                try:
-                    out[key] = s_ts(value, ctx, 0)
-                except _Drop:
-                    raise MetadataContractViolation from None
+        _project_configuration_run_item(key, value, out, ctx, declared)
     return out
 
 
@@ -1910,6 +1940,28 @@ _EXPERIMENT_DATA_KEYS = frozenset(
 )
 
 
+def _project_parent_experiment_data(experiment_data: Any, ctx: _Ctx) -> Any:
+    if not isinstance(experiment_data, dict) or any(
+        key not in _EXPERIMENT_DATA_KEYS for key in experiment_data
+    ):
+        raise MetadataContractViolation
+    experiment_data = dict(experiment_data)
+    for key in ("name", "description"):
+        experiment_data.pop(key, None)
+    for key in ("id", "run_id", "agent_id", "benchmark_id"):
+        if experiment_data.get(key) is not None:
+            experiment_data[key] = _strict_id(experiment_data[key], ctx)
+    if "measures" in experiment_data:
+        experiment_data["measures"] = _project_measure_list(
+            experiment_data["measures"], ctx
+        )
+    if experiment_data.get("metadata") is not None:
+        experiment_data["metadata"] = _run(
+            _RUN_METADATA, experiment_data["metadata"], ctx
+        )
+    return experiment_data
+
+
 def project_parent_run_create(payload: dict[str, Any]) -> dict[str, Any]:
     """``POST /experiments/<id>/runs`` body: name/description dropped, metadata rebuilt."""
     if not isinstance(payload, dict):
@@ -1927,26 +1979,9 @@ def project_parent_run_create(payload: dict[str, Any]) -> dict[str, Any]:
     if out.get("metadata") is not None:
         out["metadata"] = _run(_RUN_METADATA, out["metadata"], ctx)
     if "experiment_data" in out and out["experiment_data"] is not None:
-        experiment_data = out["experiment_data"]
-        if not isinstance(experiment_data, dict) or any(
-            key not in _EXPERIMENT_DATA_KEYS for key in experiment_data
-        ):
-            raise MetadataContractViolation
-        experiment_data = dict(experiment_data)
-        for key in ("name", "description"):
-            experiment_data.pop(key, None)
-        for key in ("id", "run_id", "agent_id", "benchmark_id"):
-            if experiment_data.get(key) is not None:
-                experiment_data[key] = _strict_id(experiment_data[key], ctx)
-        if "measures" in experiment_data:
-            experiment_data["measures"] = _project_measure_list(
-                experiment_data["measures"], ctx
-            )
-        if experiment_data.get("metadata") is not None:
-            experiment_data["metadata"] = _run(
-                _RUN_METADATA, experiment_data["metadata"], ctx
-            )
-        out["experiment_data"] = experiment_data
+        out["experiment_data"] = _project_parent_experiment_data(
+            out["experiment_data"], ctx
+        )
     return out
 
 
@@ -2537,12 +2572,7 @@ def project_next_trial_payload(
     return out
 
 
-def project_finalize_payload(data: Any) -> dict[str, Any]:
-    """Finalize body: the backend's projection (``project_session_finalize``) plus an SDK-side
-    closure the backend does not apply: ``certified_selection`` and ``session_aggregation``
-    keep only identifier/digest/number leaves (the backend leaves them unprojected), and
-    any other top-level member is kept only if it is a closed scalar."""
-    out = project_session_finalize(data)
+def _project_finalize_selections(out: dict[str, Any]) -> None:
     for key in ("certified_selection", "session_aggregation"):
         if out.get(key) is not None:
             if not isinstance(out[key], dict):
@@ -2551,6 +2581,15 @@ def project_finalize_payload(data: Any) -> dict[str, Any]:
                 out[key] = s_closed_tree(out[key], _Ctx(), 0)
             except _Drop:
                 raise MetadataContractViolation from None
+
+
+def project_finalize_payload(data: Any) -> dict[str, Any]:
+    """Finalize body: the backend's projection (``project_session_finalize``) plus an SDK-side
+    closure the backend does not apply: ``certified_selection`` and ``session_aggregation``
+    keep only identifier/digest/number leaves (the backend leaves them unprojected), and
+    any other top-level member is kept only if it is a closed scalar."""
+    out = project_session_finalize(data)
+    _project_finalize_selections(out)
     if out.get("request_metadata") is not None:
         # free-form like ``metadata``: the backend empties finalize metadata, so do the same
         if not isinstance(out["request_metadata"], dict):
@@ -2589,6 +2628,20 @@ def project_closed_scalars(
     return out
 
 
+def _strict_closed_collection(value: Any, depth: int) -> None:
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _strict_closed(item, depth + 1)
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str) or ID_RE.fullmatch(key) is None:
+                raise _Drop
+            _strict_closed(item, depth + 1)
+        return
+    raise _Drop
+
+
 def _strict_closed(value: Any, depth: int = 0) -> None:
     """Raise ``_Drop`` unless every key is identifier-shaped and every string leaf is an
     identifier or digest (numbers, booleans and null are closed)."""
@@ -2604,17 +2657,7 @@ def _strict_closed(value: Any, depth: int = 0) -> None:
         if ID_RE.fullmatch(value) or SHA256_RE.fullmatch(value):
             return
         raise _Drop
-    if isinstance(value, (list, tuple)):
-        for item in value:
-            _strict_closed(item, depth + 1)
-        return
-    if isinstance(value, dict):
-        for key, item in value.items():
-            if not isinstance(key, str) or ID_RE.fullmatch(key) is None:
-                raise _Drop
-            _strict_closed(item, depth + 1)
-        return
-    raise _Drop
+    _strict_closed_collection(value, depth)
 
 
 def is_closed_value(value: Any) -> bool:
@@ -2695,6 +2738,22 @@ DIRECTOR_TURN_ALLOWLIST: Mapping[str, Any] = {
 _DIRECTOR_TURN_PATH_RE = re.compile(r"^/api/v1/director/sessions/[^/]+/turn/?$")
 
 
+def _director_value_conforms(value: Any, spec: Any) -> bool:
+    if spec is None:
+        if not is_closed_value(value):
+            return False
+    elif isinstance(spec, Mapping):
+        if not _director_conforms(value, spec):
+            return False
+    elif isinstance(spec, list):
+        if not isinstance(value, list):
+            return False
+        if not all(_director_conforms(item, spec[0]) for item in value):
+            return False
+
+    return True
+
+
 def _director_conforms(payload: Any, allowed: Mapping[str, Any]) -> bool:
     if not isinstance(payload, Mapping) or set(payload) - set(allowed):
         return False
@@ -2702,17 +2761,8 @@ def _director_conforms(payload: Any, allowed: Mapping[str, Any]) -> bool:
         if key not in payload or payload[key] is None:
             continue
         value = payload[key]
-        if spec is None:
-            if not is_closed_value(value):
-                return False
-        elif isinstance(spec, Mapping):
-            if not _director_conforms(value, spec):
-                return False
-        elif isinstance(spec, list):
-            if not isinstance(value, list):
-                return False
-            if not all(_director_conforms(item, spec[0]) for item in value):
-                return False
+        if not _director_value_conforms(value, spec):
+            return False
     return True
 
 
@@ -2734,6 +2784,12 @@ def assert_director_request(
         raise OptimizationOnlyRefusal("director_request")
 
 
+def _project_best_config_ids(spec: dict[str, Any]) -> None:
+    for key in ("schema_version", "config_id", "function_ref", "environment"):
+        if spec.get(key) is not None:
+            spec[key] = _strict_id(spec[key], _Ctx())
+
+
 def project_best_config_payload(payload: Any) -> dict[str, Any]:
     """A best-config publish body ``{"spec": ..., "environment"?}``.
 
@@ -2749,9 +2805,7 @@ def project_best_config_payload(payload: Any) -> dict[str, Any]:
     if out.get("environment") is not None:
         out["environment"] = _strict_id(out["environment"], _Ctx())
     spec = dict(out["spec"])
-    for key in ("schema_version", "config_id", "function_ref", "environment"):
-        if spec.get(key) is not None:
-            spec[key] = _strict_id(spec[key], _Ctx())
+    _project_best_config_ids(spec)
     if "provenance" in spec and spec["provenance"] is not None:
         try:
             spec["provenance"] = s_closed_tree(spec["provenance"], _Ctx(), 0)
@@ -3054,29 +3108,13 @@ def enforce_outgoing(
     return canonical_json_bytes(parsed)
 
 
-def _judge_outgoing(
-    method: str,
-    url: Any,
-    headers: Any,
-    body: Any,
-    *,
-    explicit: bool | Policy | None = None,
-    api_prefixes: Iterable[str] = (),
-) -> Any:
-    """Transport backstop for one request (FINAL url/headers/body).
+def _judge_query(query: str, parse_qsl: Any) -> None:
+    for key, value in parse_qsl(query, keep_blank_values=True):
+        if ID_RE.fullmatch(key) is None or (value and ID_RE.fullmatch(value) is None):
+            raise OptimizationOnlyRefusal("query_not_closed")
 
-    Mode inactive for the request's credential: returns at once. Mode active: DEFAULT-DENY.
-    The path must be free of dot segments and percent-encoded separators, every segment must
-    be identifier-shaped once decoded, and the route (after the client's API base) must be in
-    :data:`ALLOWED_ROUTES`. A body route passes only if its JSON body is a fixed point of its
-    phase projector (Director bodies must match their allowlist, auth bodies carry credential
-    fields only); query values must be identifier-shaped. Anything else raises
-    :class:`OptimizationOnlyRefusal` before a byte is sent.
-    """
-    headers_scope = credential_scope(url, headers) if scope_required(None) else None
-    base = explicit.explicit if isinstance(explicit, Policy) else explicit
-    if not is_active(Policy(base, headers_scope)):
-        return _INACTIVE
+
+def _judge_route(method: str, url: Any, api_prefixes: Iterable[str]) -> Any:
     from urllib.parse import parse_qsl, unquote
 
     parts = urlsplit(str(url))
@@ -3108,18 +3146,38 @@ def _judge_outgoing(
     for segment in tail.split("/"):
         if segment and ID_RE.fullmatch(unquote(segment)) is None:
             raise OptimizationOnlyRefusal("path_parameter_not_closed")
-    for key, value in parse_qsl(parts.query, keep_blank_values=True):
-        if ID_RE.fullmatch(key) is None or (value and ID_RE.fullmatch(value) is None):
-            raise OptimizationOnlyRefusal("query_not_closed")
-    has_body = body is not None and body != b"" and body != ""
-    if route.kind == "read":
-        if has_body:
-            raise OptimizationOnlyRefusal("body_not_allowed")
-        return None
-    if route.kind == "auth":
-        if not _auth_body_ok(tail, body):
-            raise OptimizationOnlyRefusal("auth_body_not_closed")
-        return None
+    _judge_query(parts.query, parse_qsl)
+    return route, tail
+
+
+def _judge_optimizer_metrics(route: Any, tail: str, parsed: Any) -> Any:
+    segs = tail.rstrip("/").split("/")
+    session_id = segs[-2] if segs[-1] == "batch" else segs[-1]
+    if isinstance(parsed, dict) and "submissions" in parsed:
+        if set(parsed) != {"submissions"} or not isinstance(
+            parsed["submissions"], list
+        ):
+            raise OptimizationOnlyRefusal("body_not_projected")
+        items = parsed["submissions"]
+    else:
+        items = [parsed]
+    if not all(_is_fixed_point(route.phase, item, session_id) for item in items):
+        raise OptimizationOnlyRefusal("body_not_projected")
+    return parsed
+
+
+def _judge_director_body(tail: str, parsed: Any) -> Any:
+    allowed = (
+        DIRECTOR_CREATE_ALLOWLIST
+        if tail.rstrip("/").endswith("/director/sessions")
+        else DIRECTOR_TURN_ALLOWLIST
+    )
+    if not _director_conforms(parsed, allowed):
+        raise OptimizationOnlyRefusal("director_request")
+    return parsed
+
+
+def _judge_route_body(route: Any, tail: str, body: Any) -> Any:
     if body is UNREADABLE_BODY:
         raise OptimizationOnlyRefusal("body_unreadable")
     parsed = body
@@ -3129,38 +3187,55 @@ def _judge_outgoing(
         except ValueError:
             raise OptimizationOnlyRefusal("body_not_json") from None
     if route.kind == "director":
-        allowed = (
-            DIRECTOR_CREATE_ALLOWLIST
-            if tail.rstrip("/").endswith("/director/sessions")
-            else DIRECTOR_TURN_ALLOWLIST
-        )
-        if not _director_conforms(parsed, allowed):
-            raise OptimizationOnlyRefusal("director_request")
-        return parsed
+        return _judge_director_body(tail, parsed)
     if route.phase is None:
         return parsed
     if not isinstance(parsed, (dict, list)):
         raise OptimizationOnlyRefusal("body_missing")
     session_id = session_id_from_url(tail)
     if route.phase == PHASE_OPTIMIZER_METRICS:
-        segs = tail.rstrip("/").split("/")
-        session_id = segs[-2] if segs[-1] == "batch" else segs[-1]
-        if isinstance(parsed, dict) and "submissions" in parsed:
-            if set(parsed) != {"submissions"} or not isinstance(
-                parsed["submissions"], list
-            ):
-                raise OptimizationOnlyRefusal("body_not_projected")
-            items = parsed["submissions"]
-        else:
-            items = [parsed]
-        if not all(_is_fixed_point(route.phase, item, session_id) for item in items):
-            raise OptimizationOnlyRefusal("body_not_projected")
-        return parsed
+        return _judge_optimizer_metrics(route, tail, parsed)
     if not _is_fixed_point(route.phase, parsed, session_id):
         raise OptimizationOnlyRefusal("body_not_projected")
     if route.phase == PHASE_SESSION_CREATE_AUTO and _payload_embeds_examples(parsed):
         raise OptimizationOnlyRefusal("embedded_examples")
     return parsed
+
+
+def _judge_outgoing(
+    method: str,
+    url: Any,
+    headers: Any,
+    body: Any,
+    *,
+    explicit: bool | Policy | None = None,
+    api_prefixes: Iterable[str] = (),
+) -> Any:
+    """Transport backstop for one request (FINAL url/headers/body).
+
+    Mode inactive for the request's credential: returns at once. Mode active: DEFAULT-DENY.
+    The path must be free of dot segments and percent-encoded separators, every segment must
+    be identifier-shaped once decoded, and the route (after the client's API base) must be in
+    :data:`ALLOWED_ROUTES`. A body route passes only if its JSON body is a fixed point of its
+    phase projector (Director bodies must match their allowlist, auth bodies carry credential
+    fields only); query values must be identifier-shaped. Anything else raises
+    :class:`OptimizationOnlyRefusal` before a byte is sent.
+    """
+    headers_scope = credential_scope(url, headers) if scope_required(None) else None
+    base = explicit.explicit if isinstance(explicit, Policy) else explicit
+    if not is_active(Policy(base, headers_scope)):
+        return _INACTIVE
+    route, tail = _judge_route(method, url, api_prefixes)
+    has_body = body is not None and body != b"" and body != ""
+    if route.kind == "read":
+        if has_body:
+            raise OptimizationOnlyRefusal("body_not_allowed")
+        return None
+    if route.kind == "auth":
+        if not _auth_body_ok(tail, body):
+            raise OptimizationOnlyRefusal("auth_body_not_closed")
+        return None
+    return _judge_route_body(route, tail, body)
 
 
 def explicit_of(client: Any) -> bool | None:
