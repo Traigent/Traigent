@@ -313,20 +313,9 @@ class HttpKernel:
         except TimeoutError as error:
             raise DeadlineExceeded(_REQUEST_DEADLINE_MSG) from error
 
-    async def _request_with_retries(
-        self,
-        client: httpx.AsyncClient,
-        method: str,
-        path: str,
-        headers: Mapping[str, str] | None,
-        timeout: float | None,
-    ) -> HttpResponse:
-        if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
-            raise ValueError("request timeout must be finite and positive")
-        url = urljoin(self._base_url, path.lstrip("/"))
-        parsed = urlsplit(url)
-        if self._origin_for(parsed) != self._origin:
-            raise ValueError("request URL must remain on the configured host")
+    def _build_request_headers(
+        self, headers: Mapping[str, str] | None
+    ) -> dict[str, str]:
         authority_headers = {
             "host",
             ":authority",
@@ -336,65 +325,108 @@ class HttpKernel:
         }
         if any(name.lower() in authority_headers for name in (headers or {})):
             raise ValueError("request headers must not override authority")
-        end = self._clock() + self._deadline
         request_headers = {
             name: value
             for name, value in (headers or {}).items()
             if name.lower() not in {"authorization", "cookie"}
         }
         request_headers["Authorization"] = self._credentials.authorization
+        return request_headers
+
+    def _refuse_redirect(self, response: HttpResponse, url: str) -> None:
+        """Always raises: redirects are never followed."""
+        location = response.headers.get("location") or response.headers.get("Location")
+        target = urlsplit(urljoin(url, location or ""))
+        target_origin = self._origin_for(target)
+        if target_origin != self._origin:
+            raise ValueError(
+                "refusing cross-host redirect; credentials were not forwarded"
+            )
+        raise ValueError("redirects are not followed by the connector transport")
+
+    def _retry_delay(self, response: HttpResponse, attempt: int) -> float:
+        delay = min(self._max_backoff, self._backoff_base * (2**attempt))
+        retry_after = response.headers.get("Retry-After") or response.headers.get(
+            "retry-after"
+        )
+        server_delay = self._retry_after_delay(retry_after) if retry_after else None
+        if server_delay is None:
+            return random.uniform(0.0, delay)
+        return server_delay
+
+    @staticmethod
+    async def _fetch_once(
+        client: httpx.AsyncClient,
+        method: str,
+        url: str,
+        headers: Mapping[str, str],
+        attempt_timeout: float,
+    ) -> HttpResponse:
+        async with client.stream(
+            method, url, headers=headers, timeout=attempt_timeout
+        ) as raw_response:
+            chunks = [chunk async for chunk in raw_response.aiter_bytes()]
+            return HttpResponse(
+                raw_response.status_code,
+                dict(raw_response.headers),
+                b"".join(chunks),
+            )
+
+    @staticmethod
+    def _accept_final_response(response: HttpResponse) -> HttpResponse:
+        if response.status_code >= 400:
+            raise RuntimeError(f"connector HTTP status {response.status_code}")
+        return response
+
+    async def _pause(self, delay: float) -> None:
+        if self._sleep is time.sleep:
+            await asyncio.sleep(delay)
+        else:
+            self._sleep(delay)
+
+    def _prepare_request(
+        self, path: str, headers: Mapping[str, str] | None, timeout: float | None
+    ) -> tuple[str, dict[str, str]]:
+        if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
+            raise ValueError("request timeout must be finite and positive")
+        url = urljoin(self._base_url, path.lstrip("/"))
+        parsed = urlsplit(url)
+        if self._origin_for(parsed) != self._origin:
+            raise ValueError("request URL must remain on the configured host")
+        return url, self._build_request_headers(headers)
+
+    async def _request_with_retries(
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        path: str,
+        headers: Mapping[str, str] | None,
+        timeout: float | None,
+    ) -> HttpResponse:
+        url, request_headers = self._prepare_request(path, headers, timeout)
+        end = self._clock() + self._deadline
         for attempt in range(self._max_retries + 1):
             remaining = end - self._clock()
             if remaining <= 0:
                 raise DeadlineExceeded(_REQUEST_DEADLINE_MSG)
             attempt_timeout = min(self._timeout, timeout or self._timeout, remaining)
-            async with client.stream(
-                method, url, headers=request_headers, timeout=attempt_timeout
-            ) as raw_response:
-                chunks = [chunk async for chunk in raw_response.aiter_bytes()]
-                response = HttpResponse(
-                    raw_response.status_code,
-                    dict(raw_response.headers),
-                    b"".join(chunks),
-                )
+            response = await self._fetch_once(
+                client, method, url, request_headers, attempt_timeout
+            )
             if self._clock() > end:
                 raise DeadlineExceeded(_REQUEST_DEADLINE_MSG)
             if response.status_code in {301, 302, 303, 307, 308}:
-                location = response.headers.get("location") or response.headers.get(
-                    "Location"
-                )
-                target = urlsplit(urljoin(url, location or ""))
-                target_origin = self._origin_for(target)
-                if target_origin != self._origin:
-                    raise ValueError(
-                        "refusing cross-host redirect; credentials were not forwarded"
-                    )
-                raise ValueError(
-                    "redirects are not followed by the connector transport"
-                )
+                self._refuse_redirect(response, url)
             if response.status_code not in {429, 500, 502, 503, 504}:
-                if response.status_code >= 400:
-                    raise RuntimeError(f"connector HTTP status {response.status_code}")
-                return response
+                return self._accept_final_response(response)
             if attempt >= self._max_retries:
                 raise RuntimeError(
                     f"connector HTTP status {response.status_code} after bounded retries"
                 )
-            delay = min(self._max_backoff, self._backoff_base * (2**attempt))
-            retry_after = response.headers.get("Retry-After") or response.headers.get(
-                "retry-after"
-            )
-            server_delay = self._retry_after_delay(retry_after) if retry_after else None
-            if server_delay is None:
-                delay = random.uniform(0.0, delay)
-            else:
-                delay = server_delay
+            delay = self._retry_delay(response, attempt)
             if self._clock() + delay >= end:
                 raise DeadlineExceeded(_REQUEST_DEADLINE_MSG)
-            if self._sleep is time.sleep:
-                await asyncio.sleep(delay)
-            else:
-                self._sleep(delay)
+            await self._pause(delay)
         raise AssertionError("unreachable")
 
 
