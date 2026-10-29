@@ -2406,6 +2406,15 @@ def _edge_signal_present(signal: str, lowered_body: str) -> bool:
     return signal in lowered_body
 
 
+def _body_says_key_invalid(body: str) -> bool:
+    """The /keys/validate verdict shape: ``{"valid": false, ...}``."""
+    try:
+        parsed = json.loads((body or "").strip())
+    except (ValueError, TypeError):  # silent-ok: not JSON means no verdict here
+        return False
+    return isinstance(parsed, dict) and parsed.get("valid") is False
+
+
 def _is_traigent_error_body(body: str) -> bool:
     """True when the body parses as a JSON object shaped like our own API error.
 
@@ -2459,11 +2468,10 @@ def _key_check_from_response(
         if isinstance(data, dict):
             if data.get("valid") is True:
                 payload = data.get("data")
-                if not isinstance(payload, dict):
-                    return KeyCheckResult(
-                        KeyCheckState.INDETERMINATE, reason="unexpected reply"
-                    )
-                return KeyCheckResult(KeyCheckState.VALID, metadata=dict(payload))
+                return KeyCheckResult(
+                    KeyCheckState.VALID,
+                    metadata=dict(payload) if isinstance(payload, dict) else {},
+                )
             if data.get("valid") is False:
                 return KeyCheckResult(KeyCheckState.REJECTED)
         return KeyCheckResult(KeyCheckState.INDETERMINATE, reason="unexpected reply")
@@ -2471,7 +2479,10 @@ def _key_check_from_response(
         # Deleting stored credentials needs evidence that Traigent itself said
         # no: a proxy/SSO/captive-portal 401 (HTML, edge headers) says nothing
         # about the key.
-        if _classify_403(body, headers) == "authorization":
+        # Body evidence only: the production host sits behind Cloudflare, which
+        # stamps edge headers on every response, so a header cannot outrank a
+        # Traigent-shaped body.
+        if _is_traigent_error_body(body) and _body_says_key_invalid(body):
             return KeyCheckResult(KeyCheckState.REJECTED)
         return KeyCheckResult(KeyCheckState.INDETERMINATE, reason="HTTP 401")
     if status == 403 and _classify_403(body, headers) == "authorization":

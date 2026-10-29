@@ -82,8 +82,19 @@ def test_user_service_401_is_not_key_failure() -> None:
 
 
 def test_wrapped_explicit_key_verdict_is_key_failure() -> None:
-    exc = RuntimeError("Authentication failed: invalid api key")
+    exc = RuntimeError("Error: Incorrect API key provided: sk-placeholder")
     assert is_provider_api_key_failure(exc) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "weather tool returned: Invalid API key",
+        "Unexpected label 'invalid_api_key' in row 4",
+    ],
+)
+def test_user_tool_key_wording_is_not_a_provider_verdict(text: str) -> None:
+    assert is_provider_api_key_failure(RuntimeError(text)) is False
 
 
 def test_provider_400_echoing_prompt_text_is_not_key_failure() -> None:
@@ -104,6 +115,33 @@ def test_botocore_style_dict_response_status_is_read() -> None:
     class ClientError(Exception):
         def __init__(self) -> None:
             super().__init__("An error occurred (UnrecognizedClientException)")
-            self.response = {"ResponseMetadata": {"HTTPStatusCode": 403}}
+            self.response = {
+                "Error": {"Code": "UnrecognizedClientException"},
+                "ResponseMetadata": {"HTTPStatusCode": 403},
+            }
 
     assert http_status_of(ClientError()) == 403
+
+
+def test_429_credit_balance_with_retry_hint_stays_fatal() -> None:
+    exc = _SdkError(
+        429, "Your credit balance is too low. Please retry after topping up"
+    )
+    assert classify_vendor_error(exc) is VendorErrorCategory.INSUFFICIENT_FUNDS
+    exc = _SdkError(429, "insufficient_quota: retry later")
+    assert classify_vendor_error(exc) is VendorErrorCategory.QUOTA_EXHAUSTED
+
+
+def test_aws_access_denied_is_not_a_credential_failure() -> None:
+    from traigent.core.exception_handler import http_status_of
+
+    class ClientError(Exception):
+        def __init__(self, code: str, status: int) -> None:
+            super().__init__(code)
+            self.response = {
+                "Error": {"Code": code},
+                "ResponseMetadata": {"HTTPStatusCode": status},
+            }
+
+    assert http_status_of(ClientError("AccessDenied", 403)) is None
+    assert http_status_of(ClientError("UnrecognizedClientException", 403)) == 403

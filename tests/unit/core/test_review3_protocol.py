@@ -70,12 +70,38 @@ def test_proxy_401_is_not_a_verdict_on_the_key(body, headers) -> None:
 
 
 def test_traigent_401_is_a_rejection() -> None:
-    body = json.dumps({"error": "invalid api key", "error_code": "invalid_key"})
+    body = json.dumps(
+        {
+            "valid": False,
+            "error": "Invalid API key",
+            "error_code": "API_KEY_VALIDATION_FAILED",
+        }
+    )
     assert _key_check_from_response(401, body, {}).state is KeyCheckState.REJECTED
 
 
-@pytest.mark.parametrize(
-    "body", ['{"valid": true, "data": null}', '{"valid": "false"}']
-)
+def test_proxy_json_401_without_a_validate_verdict_is_not_a_rejection() -> None:
+    body = json.dumps({"message": "Missing Authentication Token", "error": "x"})
+    assert _key_check_from_response(401, body, {}).state is KeyCheckState.INDETERMINATE
+
+
+def test_real_backend_valid_reply_without_data_is_valid() -> None:
+    body = '{"valid": true, "optimization_only": false}'
+    assert _key_check_from_response(200, body, {}).state is KeyCheckState.VALID
+
+
+def test_traigent_401_behind_cloudflare_is_still_a_rejection() -> None:
+    body = json.dumps(
+        {
+            "valid": False,
+            "error": "Invalid API key",
+            "error_code": "API_KEY_VALIDATION_FAILED",
+        }
+    )
+    headers = {"CF-RAY": "abc", "Server": "cloudflare"}
+    assert _key_check_from_response(401, body, headers).state is KeyCheckState.REJECTED
+
+
+@pytest.mark.parametrize("body", ['{"valid": "false"}', '{"valid": 1}'])
 def test_odd_200_shapes_are_indeterminate(body) -> None:
     assert _key_check_from_response(200, body, {}).state is KeyCheckState.INDETERMINATE

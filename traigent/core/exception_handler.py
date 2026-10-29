@@ -166,6 +166,18 @@ def _is_local_exception(exc: BaseException) -> bool:
     return isinstance(exc, (OSError, LookupError, ArithmeticError, sqlite3.Error))
 
 
+_AWS_CREDENTIAL_ERROR_CODES = frozenset(
+    {
+        "UnrecognizedClientException",
+        "InvalidSignatureException",
+        "InvalidClientTokenId",
+        "SignatureDoesNotMatch",
+        "ExpiredToken",
+        "ExpiredTokenException",
+    }
+)
+
+
 def http_status_of(exc: BaseException) -> int | None:
     """Structured HTTP status carried by ``exc`` or its ``response``, if any."""
     response = getattr(exc, "response", None)
@@ -173,7 +185,13 @@ def http_status_of(exc: BaseException) -> int | None:
         # botocore ClientError: response["ResponseMetadata"]["HTTPStatusCode"]
         meta = response.get("ResponseMetadata")
         value = meta.get("HTTPStatusCode") if isinstance(meta, dict) else None
+        error = response.get("Error")
+        code = error.get("Code") if isinstance(error, dict) else None
         if isinstance(value, int) and not isinstance(value, bool):
+            # A 401/403 from AWS is a verdict on the credentials only for the
+            # credential error codes; AccessDenied on S3 etc. is the user's IAM.
+            if value in (401, 403) and code not in _AWS_CREDENTIAL_ERROR_CODES:
+                return None
             if 100 <= value <= 599:
                 return value
         response = None
@@ -209,19 +227,21 @@ _QUOTA_CATEGORIES = frozenset(
 )
 
 
+_STRONG_FUNDS_MARKERS = ("credit balance", "insufficient funds", "insufficient credits")
+_STRONG_QUOTA_MARKERS = ("insufficient_quota", "exceeded your current quota")
+
+
 def _quota_category_from_text(msg: str) -> VendorErrorCategory | None:
+    # Terminal wording wins even when a retry hint is also present.
+    if any(m in msg for m in _STRONG_FUNDS_MARKERS):
+        return VendorErrorCategory.INSUFFICIENT_FUNDS
+    if any(m in msg for m in _STRONG_QUOTA_MARKERS):
+        return VendorErrorCategory.QUOTA_EXHAUSTED
     # Per-window limits ("Quota exceeded ... per minute", "Rate limit reached")
     # recover on their own; only an exhausted account/plan is fatal.
     if any(
         w in msg
-        for w in (
-            "rate limit",
-            "rate_limit",
-            "per minute",
-            "per second",
-            "per min",
-            "retry",
-        )
+        for w in ("rate limit", "rate_limit", "per minute", "per second", "per min")
     ):
         return None
     for pattern, category in _VENDOR_ERROR_PATTERNS:
@@ -347,17 +367,17 @@ _MISSING_KEY_RE = re.compile(
 _API_KEY_TEXT_TOKENS = ("api key", "api_key", "authentication", "openai_api_key")
 #: Wording that is a provider's own verdict on a key, whatever wrapper re-raised it.
 _EXPLICIT_KEY_VERDICTS = (
-    "incorrect api key",
-    "invalid api key",
-    "invalid_api_key",
+    # Provider-specific phrasing only. The generic "invalid api key" is what a
+    # user's own tool (weather, Stripe ...) says, so it proves nothing.
+    "incorrect api key provided",
     "invalid x-api-key",
-    "api key not valid",
+    "api key not valid. please pass a valid api key",
 )
 _PROVIDER_HOSTS = (
     "api.openai.com",
     "api.anthropic.com",
     "generativelanguage.googleapis.com",
-    "api.cohere",
+    "api.cohere.com",
     "api.mistral.ai",
     "api.groq.com",
     "openrouter.ai",

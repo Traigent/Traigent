@@ -114,7 +114,7 @@ def test_unanswered_validation_keeps_stored_credentials(
 
 @pytest.mark.parametrize(
     ("status", "body"),
-    [(401, '{"error":"invalid"}'), (200, '{"valid": false}')],
+    [(401, '{"valid": false, "error": "Invalid API key"}'), (200, '{"valid": false}')],
 )
 def test_rejected_key_still_clears_credentials(
     tmp_path, monkeypatch, capsys, status, body
