@@ -289,3 +289,17 @@ def test_positional_only_required_usage_param_is_accepted_or_flagged_consistentl
     # Names output/expected are recognized, `usage` is not an alias: flagged.
     with pytest.raises(ValidationError, match="positional parameter 3"):
         validate_metric_function_bindability({"accuracy": required}, ["accuracy"])
+
+
+def test_collector_named_like_recognized_param_does_not_count() -> None:
+    """A **metadata / *config collector must not make (a, b, c) 'mixed'."""
+
+    def kw_collector(a, b, c, **metadata) -> float:  # noqa: ANN001
+        return float(a == b and c["total_tokens"] == 2)
+
+    def star_collector(a, b, c, *config) -> float:  # noqa: ANN001
+        return 1.0
+
+    validate_metric_function_bindability(
+        {"accuracy": kw_collector, "other": star_collector}, ["accuracy", "other"]
+    )

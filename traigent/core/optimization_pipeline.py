@@ -580,7 +580,12 @@ def _positional_fill_stray(
     if binding.binding_mode != "positional_3":
         return None
     params = list(inspect.signature(metric_func).parameters.values())
-    if not any(p.name in recognized_set for p in params):
+    # *args/**kwargs collector names never affect binding; ignore them.
+    collectors = (
+        inspect.Parameter.VAR_POSITIONAL,
+        inspect.Parameter.VAR_KEYWORD,
+    )
+    if not any(p.name in recognized_set for p in params if p.kind not in collectors):
         return None
     positional = [
         p
