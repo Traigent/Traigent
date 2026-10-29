@@ -607,18 +607,24 @@ def _tvar_assignment_domain(tvar_def: dict[str, Any]) -> _AssignmentDomain:
     )
 
 
+def _collect_list_tvar_domains(
+    tvars: list[Any], domains: dict[str, _AssignmentDomain]
+) -> None:
+    for tvar_def in tvars:
+        if not isinstance(tvar_def, dict):
+            continue
+        name = tvar_def.get("name")
+        if isinstance(name, str) and name:
+            domains[name] = _tvar_assignment_domain(tvar_def)
+
+
 def _collect_tvar_domains(tvars: Any, domains: dict[str, _AssignmentDomain]) -> None:
     if isinstance(tvars, dict):
         for name, tvar_def in tvars.items():
             if isinstance(name, str) and isinstance(tvar_def, dict):
                 domains[name] = _tvar_assignment_domain(tvar_def)
     elif isinstance(tvars, list):
-        for tvar_def in tvars:
-            if not isinstance(tvar_def, dict):
-                continue
-            name = tvar_def.get("name")
-            if isinstance(name, str) and name:
-                domains[name] = _tvar_assignment_domain(tvar_def)
+        _collect_list_tvar_domains(tvars, domains)
 
 
 def _collect_legacy_parameter_domains(
@@ -1211,6 +1217,17 @@ def load_tvl_spec(
     )
 
 
+def _bind_constraint_names(context: dict[str, Any], config: dict[str, Any]) -> None:
+    for key, value in (config or {}).items():
+        root = key.split(".", 1)[0]
+        if root in context:
+            continue
+        if root == key:
+            context[root] = _AttributeView.wrap_value(value)
+        elif root not in (config or {}):
+            context[root] = _DottedPrefixView(config or {}, root)
+
+
 def compile_constraint_expression(
     expression: str, *, label: str
 ) -> Callable[[dict[str, Any], dict[str, Any] | None], bool]:
@@ -1275,14 +1292,7 @@ def compile_constraint_expression(
         # Canonical TVL atoms reference tvars by BARE name (`zero_shot`) and
         # treat dotted names as FLAT keys (`retriever.k` is one name). Bind
         # each config-key root into the context — reserved names always win.
-        for key, value in (config or {}).items():
-            root = key.split(".", 1)[0]
-            if root in context:
-                continue
-            if root == key:
-                context[root] = _AttributeView.wrap_value(value)
-            elif root not in (config or {}):
-                context[root] = _DottedPrefixView(config or {}, root)
+        _bind_constraint_names(context, config)
         try:
             # SECURITY: This eval() is safe because:
             # 1. Expression is parsed and validated by _validate_expression_ast()
@@ -2560,6 +2570,15 @@ def _merge_inherited_constraints(
     return merged
 
 
+def _quote_is_unescaped(expression: str, index: int) -> bool:
+    backslashes = 0
+    j = index - 1
+    while j >= 0 and expression[j] == "\\":
+        backslashes += 1
+        j -= 1
+    return backslashes % 2 == 0
+
+
 def _translate_expression(expression: str) -> str:
     """Translate canonical/CEL-like surface syntax to the Python dialect.
 
@@ -2597,12 +2616,7 @@ def _translate_expression(expression: str) -> str:
         # inside a quoted span: a quote closes it only if preceded by an
         # EVEN number of backslashes (odd means the quote is escaped)
         if ch == quote:
-            backslashes = 0
-            j = i - 1
-            while j >= 0 and expression[j] == "\\":
-                backslashes += 1
-                j -= 1
-            if backslashes % 2 == 0:
+            if _quote_is_unescaped(expression, i):
                 out.append(expression[segment_start : i + 1])
                 segment_start = i + 1
                 quote = None
