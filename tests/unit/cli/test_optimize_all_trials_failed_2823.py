@@ -186,3 +186,27 @@ def test_raised_error_with_rich_markup_is_reported_not_a_markup_crash(
     assert result.exit_code == 1, output
     assert "boom [/oops] tag" in output
     assert "Error loading file" not in output
+
+
+def test_verbose_traceback_with_markup_and_c1_controls_does_not_crash(
+    plain: Callable[[str], str],
+) -> None:
+    path = _module("None")
+    path.write_text(
+        path.read_text().replace(
+            "    return None\n",
+            "    raise RuntimeError('boom [/oops] \\x9b31m tag')\n",
+        )
+    )
+    try:
+        with patch("traigent.cli.main.PersistenceManager") as persistence:
+            persistence.return_value = Mock()
+            result = CliRunner().invoke(cli, ["optimize", str(path), "--verbose"])
+        output = plain(result.output)
+    finally:
+        _cleanup(path)
+
+    assert result.exit_code == 1, output
+    assert "Error loading file" not in output
+    assert "\x9b" not in output
+    assert "[/oops]" in output

@@ -114,6 +114,7 @@ def test_non_finite_grid_inputs_yield_an_empty_grid_not_a_hang() -> None:
         {"t": {"low": 0.0, "high": 1.0, "step": INF}},
         {"t": [NAN, 0.2]},
         {"t": {"values": [0.1, INF]}},
+        {"t": (__import__("numpy").float32("nan"), 1.0)},
     ],
 )
 def test_optimizer_rejects_raw_non_finite_space(space) -> None:

@@ -242,14 +242,14 @@ def _failed_run_reason(result: Any) -> str | None:
 
 
 _MAX_ERROR_CHARS = 500
-_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+_CONTROL_CHARS = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
 
 
-def _safe_error_text(error: object) -> str:
+def _safe_error_text(error: object, limit: int | None = _MAX_ERROR_CHARS) -> str:
     """Redacted, control-stripped, length-capped, markup-escaped error text."""
     text = _CONTROL_CHARS.sub("", redact_sensitive_text(str(error)))
-    if len(text) > _MAX_ERROR_CHARS:
-        text = text[:_MAX_ERROR_CHARS] + "... (truncated)"
+    if limit is not None and len(text) > limit:
+        text = text[:limit] + "... (truncated)"
     return str(escape(text))
 
 
@@ -460,7 +460,7 @@ def _run_single_optimization(
             f"❌ [red]Error optimizing {escape(func_name)}: {_safe_error_text(e)}[/red]"
         )
         if verbose:
-            console.print(traceback.format_exc())
+            console.print(_safe_error_text(traceback.format_exc(), limit=None))
         return None
 
 
@@ -894,7 +894,7 @@ async def _run_optimizations(
                 f"{_safe_error_text(e)}[/red]"
             )
             if verbose:
-                console.print(traceback.format_exc())
+                console.print(_safe_error_text(traceback.format_exc(), limit=None))
             failed_functions.append(func_name)
     return results, failed_functions
 
@@ -1021,7 +1021,7 @@ def optimize(
     except Exception as e:
         console.print(f"[red]Error loading file: {e}[/red]")
         if verbose:
-            console.print(traceback.format_exc())
+            console.print(_safe_error_text(traceback.format_exc(), limit=None))
         sys.exit(1)
     finally:
         if str(parent_dir) in sys.path:

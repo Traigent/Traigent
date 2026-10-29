@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import math
+import numbers
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -153,7 +154,7 @@ def _non_finite_numbers(values: Any) -> list[Any]:
     return [
         v
         for v in values
-        if isinstance(v, (int, float))
+        if isinstance(v, numbers.Real)
         and not isinstance(v, bool)
         and not math.isfinite(v)
     ]
