@@ -19,16 +19,16 @@ pip install -e ".[dev]"
 ```bash
 # Run all tests through the legacy shell fixture path
 # (may emit DeprecationWarning; prefer enable_mock_mode_for_quickstart() in code)
-TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE=1 pytest
+TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE=1 pytest
 
 # Run with coverage through the same legacy shell fixture path
-TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE=1 pytest --cov=traigent --cov-report=html
+TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE=1 pytest --cov=traigent --cov-report=html
 
 # Run all unit tests with repo-default ignores
-TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE=1 pytest tests/unit -q --tb=short
+TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE=1 pytest tests/unit -q --tb=short
 
 # Run tests matching a pattern
-TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE=1 pytest -k "test_optimization" -v
+TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE=1 pytest -k "test_optimization" -v
 ```
 
 ## Failing a Provider Call on Purpose
@@ -159,19 +159,27 @@ enable_mock_mode_for_quickstart()
 For shell-only fixtures and older scripts, the legacy env var still works outside production, but direct user-set activation emits `DeprecationWarning`:
 
 ```bash
-TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true pytest tests/
-TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true python examples/core/rag-optimization/run.py
+TRAIGENT_MOCK_LLM=true pytest tests/
+TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py
 ```
 
 **Mock Mode Features:**
-- No API keys required when optimized functions use LiteLLM or LangChain.
-- Fast execution — LiteLLM and LangChain LLM calls are intercepted and replaced
-  with canned responses so those trials don't hit the provider network.
+- No API keys required when optimized functions call LiteLLM `completion`/
+  `acompletion` or the LangChain `ChatOpenAI`, `ChatAnthropic` or `langchain_aws`
+  Bedrock chat classes.
+- Fast execution — those calls are intercepted and replaced with canned
+  responses so those trials don't hit the provider network. Embeddings
+  (`litellm.embedding`, LangChain `Embeddings`) and other chat classes (for
+  example `ChatGoogleGenerativeAI`) are not mocked.
 - Raw SDK calls such as `openai.chat.completions.create(...)` and
-  `anthropic.messages.create(...)` are not intercepted by mock mode.
-- Cost approval still runs in mock mode. Use `cost_approved=True` in code or
-  `TRAIGENT_COST_APPROVED=true` in shell dry runs; there is no separate
-  `dry_run` flag.
+  `anthropic.messages.create(...)` are not intercepted by mock mode. A request to
+  a known provider host over httpx, aiohttp, requests, botocore (boto3) or gRPC
+  is blocked with an error; other transports and unlisted hosts are not blocked.
+- The pre-run cost estimate still runs in mock mode. For a dry run use a smaller
+  dataset slice, or `TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT=true` with
+  `ENVIRONMENT=development`; do not use `cost_approved=True` /
+  `TRAIGENT_COST_APPROVED=true`, which also approves the later real run. There
+  is no separate `dry_run` flag.
 - Evaluator scoring is unchanged — your `metric_functions`, custom
   evaluator, or the built-in `LocalEvaluator` accuracy calculator runs
   the same scoring logic in both mock and real modes. There is no
@@ -205,10 +213,10 @@ pip install -e ".[dev]"
 
 ```bash
 # Run all tests through the legacy shell fixture path
-TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE=1 pytest
+TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE=1 pytest
 
 # Run with coverage through the same legacy shell fixture path
-TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE=1 pytest --cov=traigent --cov-report=term-missing
+TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE=1 pytest --cov=traigent --cov-report=term-missing
 
 # Run linters
 ruff check traigent/

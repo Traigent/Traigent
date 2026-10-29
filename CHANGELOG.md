@@ -60,6 +60,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   with a value-free warning naming only the constraint id, instead of being
   written as an unloadable `code` entry.
 
+- **Mock mode: honest refusals, request-shaped LiteLLM replies, wider transport guard (#2795, #2796, #2798, #2801, #2810, #2811, #2812, #2813, #2814, #2816, #2817).** A mock run refused by the pre-run cost preflight is now told the dry-run route (`TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT` with a non-production environment, or a smaller slice) instead of spend approval, in the estimator, unpriced-model, non-interactive and MCP paths. The end-of-run banner, error hints and `traigent diagnose` no longer point at the deprecated `TRAIGENT_MOCK_LLM`, and diagnose sees the in-code flag. Under mock mode LiteLLM `mock_response=`, `n=` and `stream=True` (sync and async) get a reply of that shape; LangChain `with_structured_output` raises `MockModeStructuredOutputError` instead of crashing or returning `None`; Bedrock `ainvoke_stream` no longer depends on `aioboto3`. The transport guard now also covers `boto3`/botocore and gRPC channels and the hosts of every SDK provider, logs one warning per blocked host, and an all-failed run records `MOCK_TRANSPORT_BLOCKED`. The activation banner and docs name exactly which classes are mocked (embeddings and other chat classes are not).
+
 ### Changed
 
 - **Breaking: Python 3.11 is no longer supported; the SDK requires Python >=3.12 (numpy>=2.5.3 security fix, Aikido).** `numpy>=2.5.3` now applies on every supported Python.

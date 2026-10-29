@@ -118,14 +118,16 @@ class MockLiteLLMStream:
 class MockAdapter:
     """Lightweight mock adapter for testing without API calls.
 
-    Mock activation is **never** auto-enabled via environment variables.
-    The single source of truth is
-    :func:`traigent.testing.is_mock_mode_enabled`, which is only flipped
-    on by an explicit in-code call to
-    :func:`traigent.testing.enable_mock_mode_for_quickstart`. Tests that
-    want a one-off mock response without flipping the global flag can
-    still call :meth:`get_mock_response` directly from inside a
-    ``unittest.mock.patch`` of the underlying client.
+    Mock mode is never switched on implicitly. It is on only after an
+    explicit in-code call to
+    :func:`traigent.testing.enable_mock_mode_for_quickstart` (the
+    recommended path) or, outside production, when the deprecated
+    ``TRAIGENT_MOCK_LLM`` environment variable is set.
+    :func:`traigent.utils.env_config.is_mock_llm` is the single source of
+    truth for both. Tests that want a one-off mock response without
+    flipping the global flag can still call :meth:`get_mock_response`
+    directly from inside a ``unittest.mock.patch`` of the underlying
+    client.
     """
 
     _pending_tasks: ClassVar[set[asyncio.Task]] = set()
@@ -197,10 +199,11 @@ class MockAdapter:
     ) -> Any:
         """Get a provider-appropriate mock response object.
 
-        This method is intended to be invoked **explicitly** from test
-        code (e.g. inside a ``unittest.mock.patch`` of the real client).
-        It is no longer reachable from any production code path via an
-        environment toggle.
+        Every mock interception point serves its response through here, once
+        :func:`traigent.utils.env_config.is_mock_llm` says mock mode is on
+        (the in-code opt-in, or the deprecated environment variable outside
+        production). Test code may also call it directly (e.g. inside a
+        ``unittest.mock.patch`` of the real client).
 
         Args:
             provider: Provider name.
