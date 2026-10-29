@@ -177,3 +177,22 @@ def test_wrapped_provider_missing_key_wording_is_key_failure() -> None:
     assert (
         is_provider_api_key_failure(RuntimeError("No auth credentials found")) is True
     )
+
+
+@pytest.mark.parametrize(
+    ("text", "category"),
+    [
+        (
+            "Function call failed: Error code: 429 - {'error': {'message': 'You "
+            "exceeded your current quota', 'type': 'insufficient_quota'}}",
+            VendorErrorCategory.QUOTA_EXHAUSTED,
+        ),
+        (
+            "Function call failed: Error code: 400 - Your credit balance is too low "
+            "to access the API",
+            VendorErrorCategory.INSUFFICIENT_FUNDS,
+        ),
+    ],
+)
+def test_exhausted_account_text_reaches_the_string_abort_net(text, category) -> None:
+    assert classify_systematic_provider_failure(text) is category

@@ -318,6 +318,10 @@ def classify_vendor_error(exc: Exception) -> VendorErrorCategory | None:
     msg = str(exc).lower()
     if _LOCAL_ERROR_TEXT_RE.search(msg) and not _PROVIDER_MARKER_RE.search(msg):
         return None
+    # Terminal account wording wins over an earlier generic "code: 429" pattern,
+    # so the string-based abort net still sees an exhausted account.
+    if any(m in msg for m in _STRONG_FUNDS_MARKERS + _STRONG_QUOTA_MARKERS):
+        return _quota_category_from_text(msg)
     for pattern, category in _VENDOR_ERROR_PATTERNS:
         if _matches_pattern(pattern, msg):
             return category
