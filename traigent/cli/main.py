@@ -1019,7 +1019,7 @@ def optimize(
             sys.exit(1)
 
     except Exception as e:
-        console.print(f"[red]Error loading file: {e}[/red]")
+        console.print(f"[red]Error loading file: {_safe_error_text(e)}[/red]")
         if verbose:
             console.print(_safe_error_text(traceback.format_exc(), limit=None))
         sys.exit(1)

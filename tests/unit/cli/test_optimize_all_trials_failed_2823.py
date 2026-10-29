@@ -210,3 +210,21 @@ def test_verbose_traceback_with_markup_and_c1_controls_does_not_crash(
     assert "Error loading file" not in output
     assert "\x9b" not in output
     assert "[/oops]" in output
+
+
+def test_import_time_error_with_markup_is_reported_not_a_markup_crash(
+    plain: Callable[[str], str],
+) -> None:
+    _MODULES_DIR.mkdir(exist_ok=True)
+    path = _MODULES_DIR / f"optimize_import_error_{uuid4().hex}.py"
+    path.write_text("raise RuntimeError('import boom [/oops] \\x9b31m tag')\n")
+    try:
+        result = CliRunner().invoke(cli, ["optimize", str(path)])
+        output = plain(result.output)
+    finally:
+        _cleanup(path)
+
+    assert result.exit_code == 1, output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "import boom [/oops]" in output
+    assert "\x9b" not in output
