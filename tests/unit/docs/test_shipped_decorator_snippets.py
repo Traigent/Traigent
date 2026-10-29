@@ -235,3 +235,23 @@ def test_code_generator_emits_only_accepted_decorator_kwargs(monkeypatch) -> Non
         )
     )
     _assert_kwargs_accepted(source, "generated module")
+
+
+def test_generated_plugin_problem_actually_decorates(monkeypatch) -> None:
+    """Apply the real decorator to a shipped generated problem (not only a scan)."""
+    monkeypatch.syspath_prepend(str(PLUGIN_UI))
+    import importlib
+
+    base = importlib.import_module("traigent_ui.langchain_problems.base")
+    pkg = importlib.import_module("traigent_ui.langchain_problems")
+    fake_examples = type(sys)("examples")
+    fake_examples.__path__ = []  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "examples", fake_examples)
+    monkeypatch.setitem(sys.modules, "examples.langchain_problems", pkg)
+    monkeypatch.setitem(sys.modules, "examples.langchain_problems.base", base)
+    module = importlib.import_module(
+        "traigent_ui.langchain_problems.javascript_coding_puzzles"
+    )
+    problem = module.JavascriptCodingPuzzles()
+    func = problem.create_optimized_function(problem.create_dataset())
+    assert func.configuration_space["model"]

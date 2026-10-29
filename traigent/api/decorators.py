@@ -3771,7 +3771,7 @@ def optimize(  # NOSONAR(S107)
         # the decorator's own value, because it is also passed explicitly to
         # ``OptimizedFunction`` and would otherwise raise "got multiple values
         # for keyword argument 'parallel_config'".
-        tvl_parallel_config = combined_runtime_overrides.pop("parallel_config", None)
+        tvl_parallel_config = combined_runtime_overrides.get("parallel_config")
         combined_parallel_config, parallel_sources = merge_parallel_configs(
             [
                 (coerce_parallel_config(tvl_parallel_config), "tvl"),
@@ -3869,7 +3869,11 @@ def optimize(  # NOSONAR(S107)
             experiment_name=experiment_name_value,
             _default_experiment_name=default_experiment_name,
             **optimized_function_kwargs,
-            **combined_runtime_overrides,
+            **{
+                key: value
+                for key, value in combined_runtime_overrides.items()
+                if key != "parallel_config"
+            },
         )
         _attach_optimized_function_extras(
             optimized_func,

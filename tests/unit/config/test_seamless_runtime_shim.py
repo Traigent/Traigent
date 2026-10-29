@@ -678,3 +678,35 @@ def test_seamless_real_transform_failure_still_falls_back(monkeypatch) -> None:
     wrapped = provider.inject_config(agent, {"model": "gpt-4o"})
     assert wrapped("hi") == "gpt-4o"
     assert provider.get_stats()["fallback_triggers"]["transform_failure"]
+
+
+def test_seamless_user_exception_runs_once_when_no_targets_allowed(
+    monkeypatch,
+) -> None:
+    """The pass-through (no injectable target, opt-out env) must not re-run either."""
+    monkeypatch.setenv("TRAIGENT_ALLOW_SEAMLESS_NO_TARGETS", "true")
+    provider = _reset_provider()
+    calls: list[int] = []
+
+    def agent(q: str) -> str:
+        calls.append(1)
+        raise RuntimeError("boom")
+
+    wrapped = provider.inject_config(agent, {"zzz": 1})
+    with pytest.raises(RuntimeError, match="boom"):
+        wrapped("hi")
+    assert calls == [1]
+
+
+def test_seamless_user_configuration_error_propagates_unchanged() -> None:
+    class MyConfigError(ConfigurationError):
+        pass
+
+    provider = _reset_provider()
+
+    def agent(q: str, model: str = "x") -> str:
+        raise MyConfigError("mine")
+
+    wrapped = provider.inject_config(agent, {"model": "gpt-4o"})
+    with pytest.raises(MyConfigError, match="^mine$"):
+        wrapped("hi")

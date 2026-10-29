@@ -171,6 +171,15 @@ class {class_name}(ProblemDefinition):
                 f.write("\\n")
             return f.name
 
+    def _objective_schema(self) -> Any:
+        """Objective schema with an explicit orientation for every name."""
+        from traigent.core.objectives import create_default_objectives
+
+        names = self.get_optimization_objectives()
+        return create_default_objectives(
+            names, orientations={{name: "maximize" for name in names}}
+        )
+
     def create_optimized_function(self, dataset: List[Dict[str, Any]]) -> callable:
         """Create optimized version using Traigent."""
         import traigent
@@ -179,7 +188,7 @@ class {class_name}(ProblemDefinition):
 
         @traigent.optimize(
             eval_dataset=self._write_dataset_file(dataset),
-            objectives=self.get_optimization_objectives(),
+            objectives=self._objective_schema(),
             configuration_space=self.config.get_config_space(),
             offline=True,
         )

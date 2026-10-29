@@ -54,3 +54,20 @@ def test_decorator_parallel_config_wins_over_tvl_spec(tmp_path) -> None:
         return q
 
     assert agent.parallel_config.trial_concurrency == 1
+
+
+def test_reused_decorator_keeps_tvl_parallelism(tmp_path) -> None:
+    spec = tmp_path / "parallel.tvl.yml"
+    spec.write_text(SPEC)
+    decorate = optimize(
+        tvl_spec=spec, eval_dataset=[{"input": {"q": "a"}, "output": "a"}]
+    )
+
+    def first(q: str) -> str:
+        return q
+
+    def second(q: str) -> str:
+        return q
+
+    assert decorate(first).parallel_config.trial_concurrency == 3
+    assert decorate(second).parallel_config.trial_concurrency == 3

@@ -654,7 +654,7 @@ class SeamlessParameterProvider(ConfigurationProvider):
             # except for a typed "unknown model" signal, which is a
             # configuration problem rather than a bug in user code (#2841).
             model_value = active_config.get("model")
-            if isinstance(exc, ConfigurationError) or _is_provider_model_not_found(exc):
+            if _is_provider_model_not_found(exc):
                 error: BaseException = ConfigurationError(
                     "Failed to execute with injected configuration"
                     + (f" (model='{model_value}')" if model_value is not None else "")
@@ -802,7 +802,11 @@ class SeamlessParameterProvider(ConfigurationProvider):
         with self._cache_lock:
             self._compiled_cache[cache_key] = func
             self._cache_access_count[cache_key] = 1
-        return func(*args, **kwargs)
+        try:
+            return func(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            error_handler(exc)
+            raise  # pragma: no cover - handler always raises
 
     def _seamless_fallback(
         self,
