@@ -34,6 +34,8 @@ from traigent.security.redaction import (
     redact_sensitive_text,
 )
 
+ERROR_TYPE = "error.type"
+
 _SCALARS = (str, bool, int, float)
 
 
@@ -384,7 +386,7 @@ class ContentPolicy:
                     StatusCode.ERROR,
                     _record_text(text, C.MAX_RECORD_STATUS_LEN) if text else None,
                 )
-            etype = attrs.get("error.type")
+            etype = attrs.get(ERROR_TYPE)
             return Status(StatusCode.ERROR, etype if isinstance(etype, str) else None)
         return Status(status.status_code)
 
@@ -396,11 +398,11 @@ class ContentPolicy:
         attrs.pop(C.CONTENT_MODE_ATTRIBUTE, None)  # only re-added if it tightens
         # error.type falls back to the exception event's type for status text
         events, ev_dropped = self._events(span.events, mode)
-        if "error.type" not in attrs:
+        if ERROR_TYPE not in attrs:
             for event in events:
                 etype = (event.attributes or {}).get("exception.type")
                 if isinstance(etype, str) and event.name == "exception":
-                    attrs.setdefault("error.type", etype)
+                    attrs.setdefault(ERROR_TYPE, etype)
                     break
         links, link_dropped = self._links(span.links, mode)
         dropped += ev_dropped + link_dropped
