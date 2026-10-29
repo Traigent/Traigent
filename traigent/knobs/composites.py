@@ -406,19 +406,7 @@ class StopDecl:
                 "unknown_stop_kind", f"stop kind outside the v1 registry: {self.kind!r}"
             )
         if self.kind is StopKind.SIGNAL_ACCEPT:
-            if not isinstance(self.threshold, str) or not self.threshold:
-                raise _reject(
-                    "missing_stop_threshold", "signal_accept stop requires a threshold"
-                )
-            if self.signal is None:
-                raise _reject(
-                    "missing_stop_signal", "signal_accept stop requires a signal"
-                )
-            if self.predicate is not None:
-                raise _reject(
-                    "unknown_composite_field",
-                    "signal_accept stop carries no predicate field",
-                )
+            _check_signal_stop(self)
         elif self.kind is StopKind.EXTERNAL_ACCEPT:
             if not isinstance(self.predicate, str) or not self.predicate:
                 raise _reject(
@@ -439,6 +427,20 @@ class StopDecl:
                 "unknown_composite_field",
                 "exhausted stop carries no threshold/signal/predicate field",
             )
+
+
+def _check_signal_stop(stop: StopDecl) -> None:
+    if not isinstance(stop.threshold, str) or not stop.threshold:
+        raise _reject(
+            "missing_stop_threshold", "signal_accept stop requires a threshold"
+        )
+    if stop.signal is None:
+        raise _reject("missing_stop_signal", "signal_accept stop requires a signal")
+    if stop.predicate is not None:
+        raise _reject(
+            "unknown_composite_field",
+            "signal_accept stop carries no predicate field",
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -889,15 +891,7 @@ def _check_node_semantics(program: CompositeProgram, node: CompositeNode) -> Non
     """Per-node threshold/signal/placement checks with the registry present."""
     body = node.body
     if isinstance(body, CascadeBody):
-        body._check_gate_placement(
-            registry=program.composites
-        )  # final margin-bearing verdict
-        for gate in body.gates:
-            _check_threshold(program, gate.threshold)
-            inputs = gate.signal.inputs if gate.signal is not None else ()
-            _check_signal_binding(
-                program, gate.threshold, _sig_of_construct(gate=gate), inputs
-            )
+        _check_cascade_semantics(program, body)
     elif isinstance(body, EnsembleBody):
         if body.cardinality is not None:
             _check_cardinality(program, body.cardinality)
@@ -915,6 +909,18 @@ def _check_node_semantics(program: CompositeProgram, node: CompositeNode) -> Non
             _check_signal_binding(
                 program, stop.threshold, _sig_of_construct(stop=stop), inputs
             )
+
+
+def _check_cascade_semantics(program: CompositeProgram, body: CascadeBody) -> None:
+    body._check_gate_placement(
+        registry=program.composites
+    )  # final margin-bearing verdict
+    for gate in body.gates:
+        _check_threshold(program, gate.threshold)
+        inputs = gate.signal.inputs if gate.signal is not None else ()
+        _check_signal_binding(
+            program, gate.threshold, _sig_of_construct(gate=gate), inputs
+        )
 
 
 def validate_program(program: CompositeProgram) -> None:
@@ -1101,20 +1107,28 @@ def _cal_of_node(
             members |= _cal_of_arm(arm, registry)
         members |= {gate.threshold for gate in body.gates}
     elif isinstance(body, EnsembleBody):
-        for arm in body.arms:
-            members |= _cal_of_arm(arm, registry)
-        if body.aggregate.judge is not None:
-            members |= _cal_of_arm(body.aggregate.judge, registry)
-        if body.aggregate.accept is not None:
-            members |= {body.aggregate.accept.threshold}
-        # ({k} ∩ N_C) — a Calibrated cardinality is a Cal member. The N_C test
-        # needs the program; cal_fold(program, ...) intersects below.
-        if body.cardinality is not None:
-            members |= {body.cardinality}
+        members |= _cal_of_ensemble(body, registry)
     else:  # LoopBody
         members |= _cal_of_arm(body.body, registry)
         if body.stop.kind is StopKind.SIGNAL_ACCEPT and body.stop.threshold is not None:
             members |= {body.stop.threshold}
+    return members
+
+
+def _cal_of_ensemble(
+    body: EnsembleBody, registry: Mapping[str, CompositeNode]
+) -> frozenset[str]:
+    members: frozenset[str] = frozenset()
+    for arm in body.arms:
+        members |= _cal_of_arm(arm, registry)
+    if body.aggregate.judge is not None:
+        members |= _cal_of_arm(body.aggregate.judge, registry)
+    if body.aggregate.accept is not None:
+        members |= {body.aggregate.accept.threshold}
+    # ({k} ∩ N_C) — a Calibrated cardinality is a Cal member. The N_C test
+    # needs the program; cal_fold(program, ...) intersects below.
+    if body.cardinality is not None:
+        members |= {body.cardinality}
     return members
 
 
