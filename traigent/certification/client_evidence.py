@@ -53,6 +53,8 @@ from traigent_schema import fp2
 from traigent.snapshot.manifest import ExecutionSnapshot, is_valid_digest
 from traigent.snapshot.store import SnapshotStore, load_snapshot, verify_snapshot
 
+_SHA256_VALUE = "sha256:"
+
 __all__ = [
     "BLIND_BYTES",
     "COMMITMENT_SCHEME",
@@ -80,7 +82,7 @@ MANIFEST_SCHEMA_VERSION: Final = "traigent.certificate_client_evidence_manifest.
 _SLOT_DOMAIN: Final = b"traigent.cert.v0.slot_commitment.v1"
 _ROOT_DOMAIN: Final = b"traigent.agent_certificate.client_evidence_manifest_root.v1"
 _EVIDENCE_VERSION: Final = 1
-_ZERO_ROOT: Final = "sha256:" + "0" * 64
+_ZERO_ROOT: Final = _SHA256_VALUE + "0" * 64
 _DIGEST_HEX_RE = re.compile(r"[0-9a-f]{64}")
 
 
@@ -143,7 +145,7 @@ def slot_commitment_digest(blind: bytes, kind: str, document: Mapping[str, Any])
     if type(blind) is not bytes or len(blind) != BLIND_BYTES:
         raise ClientEvidenceError("BLIND_INVALID")
     message = _SLOT_DOMAIN + b"\x00" + kind.encode("ascii") + b"\x00" + _jcs(document)
-    return "sha256:" + hmac.new(blind, message, hashlib.sha256).hexdigest()
+    return _SHA256_VALUE + hmac.new(blind, message, hashlib.sha256).hexdigest()
 
 
 def _manifest_document(commitments: Mapping[str, str]) -> dict[str, Any]:
@@ -162,7 +164,7 @@ def _manifest_document(commitments: Mapping[str, str]) -> dict[str, Any]:
 def manifest_root_digest(commitments: Mapping[str, str]) -> str:
     """``sha256:`` + SHA-256(root domain || 0x00 || jcs_v1(manifest))."""
     message = _ROOT_DOMAIN + b"\x00" + _jcs(_manifest_document(commitments))
-    return "sha256:" + hashlib.sha256(message).hexdigest()
+    return _SHA256_VALUE + hashlib.sha256(message).hexdigest()
 
 
 def _part_sha(snapshot: ExecutionSnapshot, path: str) -> str:
@@ -292,7 +294,7 @@ class ClientEvidence:
 
     @property
     def root_hex(self) -> str:
-        return self.root[len("sha256:") :]
+        return self.root[len(_SHA256_VALUE) :]
 
     def __repr__(self) -> str:
         return f"ClientEvidence(root={self.root})"
@@ -379,7 +381,7 @@ def reconstruct_and_compare(
     """
     if not is_valid_digest(root):
         raise ClientEvidenceError("EVIDENCE_STALE_OR_CORRUPT")
-    record = custody.load(root[len("sha256:") :])
+    record = custody.load(root[len(_SHA256_VALUE) :])
     if record is None:
         raise ClientEvidenceError("EVIDENCE_NOT_FOUND")
     evidence = ClientEvidence.from_record(record)
