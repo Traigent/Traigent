@@ -776,6 +776,34 @@ def models(
         raise click.exceptions.Exit(1)
 
 
+async def _run_optimizations(
+    optimizable_functions: list[tuple[str, Any]],
+    optimize_kwargs: dict[str, Any],
+    persistence: Any,
+    algorithm: str,
+    max_trials: int,
+    verbose: bool,
+) -> tuple[list[tuple[str, Any]], list[str]]:
+    import traceback
+
+    results: list[tuple[str, Any]] = []
+    failed_functions: list[str] = []
+    for func_name, func in optimizable_functions:
+        console.print(f"\n[bold blue]Optimizing: {func_name}[/bold blue]")
+        try:
+            result = await func.optimize(**optimize_kwargs)
+            _display_optimization_result(
+                func_name, result, persistence, algorithm, max_trials
+            )
+            results.append((func_name, result))
+        except Exception as e:
+            console.print(f"❌ [red]Error optimizing {func_name}: {e}[/red]")
+            if verbose:
+                console.print(traceback.format_exc())
+            failed_functions.append(func_name)
+    return results, failed_functions
+
+
 @cli.command()
 @click.argument("file_path", type=click.Path(exists=True))
 @click.option("--algorithm", "-a", default="grid", help="Optimization algorithm to use")
@@ -876,25 +904,16 @@ def optimize(
         )
         persistence = PersistenceManager(str(output_dir_resolved))
 
-        async def run_optimizations() -> tuple[list[tuple[str, Any]], list[str]]:
-            results: list[tuple[str, Any]] = []
-            failed_functions: list[str] = []
-            for func_name, func in optimizable_functions:
-                console.print(f"\n[bold blue]Optimizing: {func_name}[/bold blue]")
-                try:
-                    result = await func.optimize(**optimize_kwargs)
-                    _display_optimization_result(
-                        func_name, result, persistence, algorithm, max_trials
-                    )
-                    results.append((func_name, result))
-                except Exception as e:
-                    console.print(f"❌ [red]Error optimizing {func_name}: {e}[/red]")
-                    if verbose:
-                        console.print(traceback.format_exc())
-                    failed_functions.append(func_name)
-            return results, failed_functions
-
-        results, failed_functions = asyncio.run(run_optimizations())
+        results, failed_functions = asyncio.run(
+            _run_optimizations(
+                optimizable_functions,
+                optimize_kwargs,
+                persistence,
+                algorithm,
+                max_trials,
+                verbose,
+            )
+        )
         _display_optimization_summary(results, output_dir_resolved)
         if failed_functions:
             console.print(
@@ -1820,6 +1839,76 @@ def results_compare(result1: str, result2: str, storage_dir: str | None) -> None
         ) from e
 
 
+def _is_rerank_eligible(trial: Any, primary: str, recorded_mode: Any) -> bool:
+    from traigent.core.result_selection import _is_ranking_eligible
+
+    if recorded_mode not in ("legacy", "warn", "strict"):
+        return True
+    eligible, unknown, _codes = _is_ranking_eligible(trial, primary, recorded_mode)
+    return eligible or unknown
+
+
+def _score_trials_for_rerank(
+    result: Any, weight_dict: dict[str, float]
+) -> list[tuple[float, Any]]:
+    """Re-score trials using helper, applying the same ranking eligibility
+    as the terminal selector (partially covered trials are excluded;
+    trials without comparability data, e.g. old results, are kept)."""
+    result_objectives = getattr(result, "objectives", None) or []
+    primary = (
+        str(result_objectives[0])
+        if result_objectives
+        else max(weight_dict, key=lambda k: weight_dict[k])
+    )
+
+    # Use the eligibility mode the run recorded; a run without one is
+    # not filtered (the pre-existing behaviour).
+    metadata = getattr(result, "metadata", None) or {}
+    summary = metadata.get("session_summary") if isinstance(metadata, dict) else None
+    ranking = summary.get("ranking") if isinstance(summary, dict) else None
+    recorded_mode = (
+        ranking.get("comparability_mode") if isinstance(ranking, dict) else None
+    )
+
+    declared_orientations = _declared_result_orientations(result)
+    try:
+        return [
+            (score, trial)
+            for trial in result.trials
+            if _is_rerank_eligible(trial, primary, recorded_mode)
+            and (
+                score := _calculate_trial_score(
+                    trial, weight_dict, declared_orientations
+                )
+            )
+            is not None
+        ]
+    except ValueError as exc:
+        # Direction is never guessed for a custom metric: say how to fix it.
+        raise click.ClickException(
+            "Cannot re-rank: a weighted metric has no declared orientation "
+            "(maximize/minimize) in this run and no built-in default. "
+            "Re-run with explicit objective orientations."
+        ) from exc
+
+
+def _print_rerank_best(result: Any, best_trial: Any) -> None:
+    # Show new best config
+    console.print("\n[bold green]New Best Configuration:[/bold green]")
+    config_syntax = Syntax(
+        json.dumps(best_trial.config, indent=2), "json", theme="monokai"
+    )
+    console.print(config_syntax)
+
+    # Compare with original best
+    if result.best_config != best_trial.config:
+        console.print(
+            "\n[yellow]Note: This differs from the original best config.[/yellow]"
+        )
+        console.print("[dim]Original best config:[/dim]")
+        console.print(json.dumps(result.best_config, indent=2))
+
+
 @results.command("rerank")
 @click.argument("result_name")
 @click.option(
@@ -1868,57 +1957,7 @@ def results_rerank(
             console.print("[yellow]No trials found in this result[/yellow]")
             return
 
-        # Re-score trials using helper, applying the same ranking eligibility
-        # as the terminal selector (partially covered trials are excluded;
-        # trials without comparability data, e.g. old results, are kept).
-        from traigent.core.result_selection import _is_ranking_eligible
-
-        result_objectives = getattr(result, "objectives", None) or []
-        primary = (
-            str(result_objectives[0])
-            if result_objectives
-            else max(weight_dict, key=lambda k: weight_dict[k])
-        )
-
-        # Use the eligibility mode the run recorded; a run without one is
-        # not filtered (the pre-existing behaviour).
-        metadata = getattr(result, "metadata", None) or {}
-        summary = (
-            metadata.get("session_summary") if isinstance(metadata, dict) else None
-        )
-        ranking = summary.get("ranking") if isinstance(summary, dict) else None
-        recorded_mode = (
-            ranking.get("comparability_mode") if isinstance(ranking, dict) else None
-        )
-
-        def _rerank_eligible(trial: Any) -> bool:
-            if recorded_mode not in ("legacy", "warn", "strict"):
-                return True
-            eligible, unknown, _codes = _is_ranking_eligible(
-                trial, primary, recorded_mode
-            )
-            return eligible or unknown
-
-        declared_orientations = _declared_result_orientations(result)
-        try:
-            scored_trials = [
-                (score, trial)
-                for trial in result.trials
-                if _rerank_eligible(trial)
-                and (
-                    score := _calculate_trial_score(
-                        trial, weight_dict, declared_orientations
-                    )
-                )
-                is not None
-            ]
-        except ValueError as exc:
-            # Direction is never guessed for a custom metric: say how to fix it.
-            raise click.ClickException(
-                "Cannot re-rank: a weighted metric has no declared orientation "
-                "(maximize/minimize) in this run and no built-in default. "
-                "Re-run with explicit objective orientations."
-            ) from exc
+        scored_trials = _score_trials_for_rerank(result, weight_dict)
 
         if not scored_trials:
             console.print(
@@ -1934,21 +1973,7 @@ def results_rerank(
         console.print("\n[bold]Top 5 Configurations (re-ranked)[/bold]")
         console.print(_build_rerank_table(scored_trials))
 
-        # Show new best config
-        _, best_trial = scored_trials[0]
-        console.print("\n[bold green]New Best Configuration:[/bold green]")
-        config_syntax = Syntax(
-            json.dumps(best_trial.config, indent=2), "json", theme="monokai"
-        )
-        console.print(config_syntax)
-
-        # Compare with original best
-        if result.best_config != best_trial.config:
-            console.print(
-                "\n[yellow]Note: This differs from the original best config.[/yellow]"
-            )
-            console.print("[dim]Original best config:[/dim]")
-            console.print(json.dumps(result.best_config, indent=2))
+        _print_rerank_best(result, scored_trials[0][1])
 
     except click.ClickException:
         raise
@@ -2763,6 +2788,28 @@ if __name__ == "__main__":
 '''
 
 
+async def _run_validations(
+    validator: Any, discovered_functions: list[Any]
+) -> tuple[list[Any], int, int]:
+    results: list[Any] = []
+    passed, failed = 0, 0
+    for func_info in discovered_functions:
+        console.print(f"\n[bold cyan]Validating: {func_info.name}[/bold cyan]")
+        try:
+            result = await validator.validate_optimization(func_info)
+            results.append(result)
+            if result.should_block:
+                console.print(f"[red]{result.get_summary()}[/red]")
+                failed += 1
+            else:
+                console.print(f"[green]{result.get_summary()}[/green]")
+                passed += 1
+        except Exception as e:
+            console.print(f"[red]❌ Error validating {func_info.name}: {e}[/red]")
+            failed += 1
+    return results, passed, failed
+
+
 @cli.command()
 @click.argument("module_path", type=str)
 @click.option("--functions", help="Comma-separated function names to check")
@@ -2867,28 +2914,9 @@ def check(
         )
         validator = OptimizationValidator(threshold_pct=threshold)
 
-        async def run_validations() -> tuple[list[Any], int, int]:
-            results: list[Any] = []
-            passed, failed = 0, 0
-            for func_info in discovered_functions:
-                console.print(f"\n[bold cyan]Validating: {func_info.name}[/bold cyan]")
-                try:
-                    result = await validator.validate_optimization(func_info)
-                    results.append(result)
-                    if result.should_block:
-                        console.print(f"[red]{result.get_summary()}[/red]")
-                        failed += 1
-                    else:
-                        console.print(f"[green]{result.get_summary()}[/green]")
-                        passed += 1
-                except Exception as e:
-                    console.print(
-                        f"[red]❌ Error validating {func_info.name}: {e}[/red]"
-                    )
-                    failed += 1
-            return results, passed, failed
-
-        results, passed_count, failed_count = asyncio.run(run_validations())
+        results, passed_count, failed_count = asyncio.run(
+            _run_validations(validator, discovered_functions)
+        )
         _print_check_summary(discovered_functions, passed_count, failed_count, results)
         _handle_check_exit(failed_count)
 
