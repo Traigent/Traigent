@@ -601,14 +601,23 @@ class ExampleMetrics:
     # A false value means the built-in exact-match accuracy is not meaningful
     # for this row (for example, the expected output is blank), so formatter
     # aggregations must not put it in the built-in accuracy denominator. It
-    # defaults to true for tracker callers that do not have dataset context;
-    # that preserves their established success/error fallback semantics.
+    # defaults to true for tracker callers that do not have dataset context.
     accuracy_eligible: bool = True
     # ``LocalEvaluator`` sets this when the row had a gold value but built-in
     # accuracy could not be computed (e.g. no output to compare). The row is
     # then UNMEASURED for accuracy: it is left out of the accuracy denominator
-    # and never gets the tracker-only "success means 1.0" fallback (#2495).
+    # and never gets a success-derived 1.0 (#2495).
     accuracy_unavailable: bool = False
+    # Explicit measurement provenance: ``LocalEvaluator`` sets this when the
+    # built-in exact-match accuracy was declared and applied to this row's
+    # attempt. Only such a row can count as a miss when the attempt failed.
+    # A row with neither an accuracy value nor this provenance is UNMEASURED:
+    # success alone never implies a hit.
+    accuracy_builtin: bool = False
+    # True when the row's ``accuracy`` was written by a metric function or a
+    # returned mapping. A supplied value wins over exact match and over the
+    # failed-attempt zero.
+    accuracy_supplied: bool = False
     # True (the default) when ``tokens``/``cost``/``response`` were actually
     # extracted or estimated from a real provider response. False marks an
     # example whose zeros are the ABSENCE of a measurement, not a measured
@@ -949,10 +958,9 @@ class MetricsTracker:
         user-supplied tuple keys cannot overwrite an evaluator-computed value
         during the user-metric aggregation pass below.
 
-        ``user_supplied_accuracy`` is explicit provenance from the owning
-        evaluator: a configured ``metric_functions["accuracy"]`` owns that
-        objective and its scores must not be reinterpreted as built-in
-        exact-match results when an example execution fails.
+        ``user_supplied_accuracy`` is accepted for compatibility and has no
+        effect: accuracy provenance is per row (``accuracy_supplied`` /
+        ``accuracy_builtin``) and read by ``_accuracy_values_for_formatters``.
         """
         try:
             aggregated = self.aggregate_metrics()
@@ -989,23 +997,14 @@ class MetricsTracker:
 
         # Calculate accuracy from the shared formatter helper so this backend
         # payload and privacy summary_stats use the same denominator.
+        # Unmeasured accuracy (no rows, no gold, built-in comparison skipped)
+        # is None: never a success-derived 1.0 and never a default 0.0. A
+        # measured zero stays 0.0.
         accuracy_value: float | None = None
         if self.example_metrics:
-            accuracy_scores = self._accuracy_values_for_formatters(
-                user_supplied_accuracy=user_supplied_accuracy
-            )
+            accuracy_scores = self._accuracy_values_for_formatters()
             if accuracy_scores:
                 accuracy_value = sum(accuracy_scores) / len(accuracy_scores)
-        else:
-            # Fallback to success rate if no example metrics
-            accuracy_value = safe_get(aggregated, "success_rate")
-
-        accuracy_unmeasured = any(
-            m.accuracy_unavailable and m.custom_metrics.get("accuracy") is None
-            for m in self.example_metrics
-        )
-        if accuracy_value is None and not strict_nulls and not accuracy_unmeasured:
-            accuracy_value = 0.0
 
         duration_value = safe_get(aggregated, "duration")
 
@@ -1225,50 +1224,53 @@ class MetricsTracker:
             return next(iter(sources))
         return COST_SOURCE_MIXED
 
-    @staticmethod
-    def _builtin_accuracy_value(metric: ExampleMetrics, raw_accuracy: Any) -> float:
-        """Accuracy of one eligible, measured row under built-in exact match."""
-        if metric.success:
-            # Existing tracker-only callers may not have emitted a
-            # per-example exact-match value. Preserve their established
-            # success fallback while making it identical in both formats.
-            return float(raw_accuracy) if raw_accuracy is not None else 1.0
-        # Built-in exact match: an error is an attempted miss, never
-        # numerator credit from a retained matching output.
-        return 0.0
+    def _accuracy_values_for_formatters(self) -> list[float]:
+        """Return the per-row accuracy values: the one contract for every view.
 
-    def _accuracy_values_for_formatters(
-        self, *, user_supplied_accuracy: bool
-    ) -> list[float]:
-        """Return the one accuracy denominator shared by tracker formatters.
+        The trial accuracy, ``format_for_backend`` and
+        ``format_as_summary_stats`` all read this list, so they share one
+        population and one mean. A row's value is, in order:
 
-        Built-in exact-match accuracy counts every eligible execution attempt;
-        an error is therefore a zero, even if a retained output happens to
-        match. A user ``metric_functions["accuracy"]`` score is a different
-        contract: its author owns its error semantics, so the tracker preserves
-        the value the metric function returned. This explicit provenance avoids
-        guessing from a score value such as ``0.0`` or ``1.0``.
+        1. a supplied accuracy (a metric function, or a returned mapping that
+           sets ``accuracy``), regardless of gold and of success; it overrides
+           exact match and the failed-attempt zero;
+        2. otherwise, when built-in accuracy is configured and the row has
+           gold: a failed new attempt is ``0.0``; a successful new row carries
+           its exact-match ``1.0``/``0.0`` (``0.0`` for a missing output); a
+           resumed row carries its stored numeric accuracy, or no value;
+        3. otherwise no value (unmeasured; never derived from success, and no
+           zero-fill for a row a metric function left without a value).
         """
         values: list[float] = []
         for metric in self.example_metrics:
             raw_accuracy = metric.custom_metrics.get("accuracy")
-
-            if user_supplied_accuracy:
-                # Objective metric-function failures fail closed before this
-                # point. A missing value is still a real attempted row, so it
-                # is a zero rather than a silently removed denominator entry.
-                values.append(float(raw_accuracy) if raw_accuracy is not None else 0.0)
+            if metric.accuracy_supplied and raw_accuracy is not None:
+                values.append(float(raw_accuracy))
                 continue
-
-            if not metric.accuracy_eligible:
+            if (
+                metric.accuracy_builtin
+                and metric.accuracy_unavailable
+                and raw_accuracy is None
+            ):
+                # Declared built-in accuracy that could not be computed: the
+                # row is unmeasured, not a miss (#2495).
                 continue
-
-            if raw_accuracy is None and metric.accuracy_unavailable:
-                # Unmeasured, not a miss and not a hit (#2495).
+            if (
+                metric.accuracy_builtin
+                and metric.accuracy_eligible
+                and not metric.success
+            ):
+                # Declared built-in exact match: a failed eligible attempt is a
+                # miss even when it retained a matching output or produced no
+                # output at all.
+                values.append(0.0)
                 continue
-
-            values.append(self._builtin_accuracy_value(metric, raw_accuracy))
-
+            if metric.accuracy_builtin and not metric.accuracy_eligible:
+                # Built-in exact match is not meaningful without gold.
+                continue
+            if raw_accuracy is not None:
+                values.append(float(raw_accuracy))
+            # Otherwise unmeasured: neither a hit nor a miss (#2495).
         return values
 
     def _aggregate_user_custom_metrics(
@@ -1332,8 +1334,9 @@ class MetricsTracker:
         missing_default = None if strict_nulls else 0.0
 
         return {
-            "score": missing_default,
-            "accuracy": missing_default,
+            # Accuracy was never measured on this path: always unmeasured.
+            "score": None,
+            "accuracy": None,
             "duration": missing_default,
             "input_tokens": missing_default,
             "output_tokens": missing_default,
@@ -1390,9 +1393,7 @@ class MetricsTracker:
         # ``format_for_backend``. It intentionally remains independent of
         # ``measured``: missing cost/token telemetry does not erase an
         # execution attempt from an accuracy objective.
-        accuracy_values = self._accuracy_values_for_formatters(
-            user_supplied_accuracy=user_supplied_accuracy
-        )
+        accuracy_values = self._accuracy_values_for_formatters()
 
         metrics_data = self._built_in_metric_values(accuracy_values, measured_metrics)
         # These built-in keys must always appear in the output (with a

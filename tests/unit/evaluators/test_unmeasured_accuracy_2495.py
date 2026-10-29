@@ -9,11 +9,13 @@ from traigent.evaluators.local import LocalEvaluator
 from traigent.evaluators.metrics_tracker import ExampleMetrics, MetricsTracker
 
 
-def test_tracker_only_success_fallback_is_unchanged() -> None:
-    """Legacy tracker-only callers (no dataset context) keep the fallback."""
+def test_success_without_value_or_provenance_is_unmeasured() -> None:
+    """Success alone never becomes accuracy: a row with neither a value nor
+    measurement provenance is unmeasured in both formatters."""
     tracker = MetricsTracker()
     tracker.add_example_metrics(ExampleMetrics(success=True))
-    assert tracker.format_for_backend()["accuracy"] == 1.0
+    assert tracker.format_for_backend()["accuracy"] is None
+    assert tracker.format_as_summary_stats()["metrics"]["accuracy"]["count"] == 0
 
 
 def test_unavailable_accuracy_is_not_reported_as_perfect() -> None:

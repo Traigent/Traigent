@@ -634,6 +634,8 @@ class LocalEvaluator(BaseEvaluator):
         # evaluator instance is shared across a run's trials, so a flag here
         # emits the notice once per run rather than once per example/trial.
         self._dual_scorer_notice_logged = False
+        # One-shot guard for the skipped built-in accuracy notice.
+        self._builtin_accuracy_skipped_logged = False
         # One-shot guard for the high-empty-output-rate run warning (issue
         # #1851). Same rationale as the dual-scorer flag: the evaluator instance
         # is shared across the run's trials, so this emits ONE warning per run
@@ -1018,6 +1020,8 @@ class LocalEvaluator(BaseEvaluator):
         example_id: str,
         example_index: int,
         config: dict[str, Any],
+        *,
+        failure_mode: str = "returned_none",
     ) -> EvaluationError:
         """Build the fail-closed error for an objective metric returning None.
 
@@ -1030,8 +1034,9 @@ class LocalEvaluator(BaseEvaluator):
         legacy ``0.0``/skip behaviour.
         """
         return EvaluationError(
-            f"Objective metric '{metric_name}' returned None for example "
-            f"{example_id}. Refusing to substitute a fabricated 0.0 score for "
+            f"Objective metric '{metric_name}' returned "
+            f"{'None' if failure_mode == 'returned_none' else 'a non-finite value'}"
+            f" for example {example_id}. Refusing to substitute a fabricated 0.0 score for "
             "an optimization objective.",
             config=config,
             details={
@@ -1042,9 +1047,49 @@ class LocalEvaluator(BaseEvaluator):
                 # Mirror the exception-path record shape (error_type) so
                 # downstream consumers parse both failure modes uniformly.
                 "error_type": "NoneReturn",
-                "failure_mode": "returned_none",
+                "failure_mode": failure_mode,
             },
         )
+
+    def _invalidate_supplied_accuracy(
+        self,
+        example_metric: Any,
+        metric_name: str,
+        example_id: str,
+        example_index: int,
+        config: dict[str, Any],
+        metric_errors: list[dict[str, Any]] | None,
+        failure_mode: str,
+    ) -> None:
+        """A supplied accuracy that is None or non-finite owns the row.
+
+        An objective fails closed exactly as an objective ``None`` return does.
+        Otherwise the reason is recorded like ``returned_none`` and the row's
+        built-in exact-match value is cleared, so the row is unmeasured rather
+        than silently scored by exact match.
+        """
+        if metric_name in self.metrics:
+            raise self._objective_returned_none_error(
+                metric_name,
+                example_id,
+                example_index,
+                config,
+                failure_mode=failure_mode,
+            )
+        if metric_errors is not None:
+            metric_errors.append(
+                {
+                    "metric_name": metric_name,
+                    "example_id": example_id,
+                    "example_index": example_index,
+                    "error_type": "NoneReturn",
+                    "failure_mode": failure_mode,
+                    "is_objective": False,
+                }
+            )
+        example_metric.custom_metrics.pop("accuracy", None)
+        example_metric.accuracy_builtin = False
+        example_metric.accuracy_supplied = False
 
     def _handle_metric_function_exception(
         self,
@@ -1224,6 +1269,17 @@ class LocalEvaluator(BaseEvaluator):
                             example_index,
                             metric_errors=metric_errors,
                         )
+                        if result_value is None and str(result_name) == "accuracy":
+                            self._invalidate_supplied_accuracy(
+                                example_metric,
+                                "accuracy",
+                                example_id,
+                                example_index,
+                                config,
+                                metric_errors,
+                                "returned_none",
+                            )
+                            continue
                         if result_value is None:
                             if str(result_name) in self.metrics:
                                 raise self._objective_returned_none_error(
@@ -1245,7 +1301,20 @@ class LocalEvaluator(BaseEvaluator):
                                 )
                             continue
                         key = str(result_name)
+                        if key == "accuracy" and not math.isfinite(float(result_value)):
+                            self._invalidate_supplied_accuracy(
+                                example_metric,
+                                key,
+                                example_id,
+                                example_index,
+                                config,
+                                metric_errors,
+                                "non_finite_return",
+                            )
+                            continue
                         example_metric.custom_metrics[key] = float(result_value)
+                        if key == "accuracy":
+                            example_metric.accuracy_supplied = True
                         produced_keys.append(key)
                 except BaseException:
                     # An objective sub-value that raised (or returned None,
@@ -1259,6 +1328,17 @@ class LocalEvaluator(BaseEvaluator):
                         if inspect.iscoroutine(pending_value):
                             pending_value.close()
                     raise
+                continue
+            if value is None and metric_name == "accuracy":
+                self._invalidate_supplied_accuracy(
+                    example_metric,
+                    metric_name,
+                    example_id,
+                    example_index,
+                    config,
+                    metric_errors,
+                    "returned_none",
+                )
                 continue
             if value is None:
                 if metric_name in self.metrics:
@@ -1279,9 +1359,27 @@ class LocalEvaluator(BaseEvaluator):
                             "is_objective": False,
                         }
                     )
+                if metric_name == "accuracy":
+                    # No accuracy was supplied for this row: unmeasured, not a
+                    # fabricated zero. Other metrics keep their legacy 0.0.
+                    continue
                 example_metric.custom_metrics[metric_name] = 0.0
             else:
-                example_metric.custom_metrics[metric_name] = float(value)
+                numeric = float(value)
+                if metric_name == "accuracy" and not math.isfinite(numeric):
+                    self._invalidate_supplied_accuracy(
+                        example_metric,
+                        metric_name,
+                        example_id,
+                        example_index,
+                        config,
+                        metric_errors,
+                        "non_finite_return",
+                    )
+                    continue
+                example_metric.custom_metrics[metric_name] = numeric
+            if metric_name == "accuracy":
+                example_metric.accuracy_supplied = True
             produced_keys.append(metric_name)
         return produced_keys
 
@@ -2273,6 +2371,17 @@ class LocalEvaluator(BaseEvaluator):
         )
         metric.accuracy_eligible = not _is_empty_expected_output(expected)
         metric.custom_metrics.update(stored)
+        # Accuracy provenance comes only from the stored row: a stored
+        # measurement is reused as-is; a successful row with gold but no stored
+        # accuracy stays unmeasured (no builtin provenance, so never 1.0).
+        stored_accuracy = stored.get("accuracy")
+        if isinstance(stored_accuracy, bool) or not (
+            isinstance(stored_accuracy, (int, float)) and math.isfinite(stored_accuracy)
+        ):
+            metric.custom_metrics.pop("accuracy", None)
+            # Explicit provenance: this row was never scored for accuracy, so
+            # every accuracy aggregate leaves it out (it is not a miss).
+            metric.accuracy_unavailable = True
         if progress_callback:
             progress_callback(
                 index,
@@ -2399,13 +2508,34 @@ class LocalEvaluator(BaseEvaluator):
         )
         # Compare the output as-is: the comparator unwraps a real response
         # wrapper itself and leaves a structured answer intact (#2523).
-        accuracy_value = self._calculate_example_accuracy(output, expected_output)
-        if accuracy_value is not None:
-            example_metric.custom_metrics.setdefault("accuracy", accuracy_value)
-        elif example_metric.accuracy_eligible:
-            # Gold exists but nothing could be compared: unmeasured, never the
-            # tracker's success-implies-1.0 fallback (#2495).
-            example_metric.accuracy_unavailable = True
+        if "accuracy" not in self.metrics:
+            # Exact-match accuracy is not a configured metric, so it is not
+            # computed or uploaded (it would read as a fake 0.0 whenever the
+            # function output is not meant to equal the expected value). The
+            # row carries no built-in provenance, so it is unmeasured; an
+            # accuracy the user supplies explicitly still counts.
+            self._log_builtin_accuracy_skipped_once()
+        else:
+            # Built-in exact match is declared: a failed eligible attempt is a
+            # miss in the tracker summary, as in the aggregate.
+            example_metric.accuracy_builtin = True
+            # Only a row with gold has a built-in value (a blank expected
+            # output is no gold).
+            accuracy_value = (
+                self._calculate_example_accuracy(output, expected_output)
+                if example_metric.accuracy_eligible
+                else None
+            )
+            if (
+                accuracy_value is None
+                and example_metric.accuracy_eligible
+                and example_metric.success
+            ):
+                # A new row with gold whose successful call produced no output
+                # is a miss, not unmeasured (one per-row contract).
+                accuracy_value = 0.0
+            if accuracy_value is not None:
+                example_metric.custom_metrics.setdefault("accuracy", accuracy_value)
 
         # Merge per-example user metrics into custom_metrics, never overriding
         # an evaluator-computed key (e.g. accuracy stays the computed value).
@@ -2760,6 +2890,42 @@ class LocalEvaluator(BaseEvaluator):
             example_metric.cost.known_cost += example_metric.cost.total_cost
             example_metric.cost.unmeasured = True
         LocalEvaluator._withdraw_numeric_cost(example_metric, example_result)
+
+    @staticmethod
+    def _apply_row_accuracy_to_aggregate(
+        aggregated_metrics: dict[str, Any],
+        metrics_tracker: Any,
+    ) -> None:
+        """Set the trial accuracy (and score alias) from the per-row values.
+
+        The single per-row accuracy contract lives in
+        ``MetricsTracker._accuracy_values_for_formatters``; the trial
+        aggregate, ``format_for_backend`` and ``format_as_summary_stats`` all
+        read it, so they share one population and one mean. The trial accuracy
+        is absent when no row has a value.
+        """
+        values = metrics_tracker._accuracy_values_for_formatters()
+        previous = aggregated_metrics.get("accuracy")
+        if values:
+            value = sum(values) / len(values)
+            aggregated_metrics["accuracy"] = value
+            if aggregated_metrics.get("score") in (None, previous):
+                aggregated_metrics["score"] = value
+            return
+        aggregated_metrics.pop("accuracy", None)
+        if aggregated_metrics.get("score") == previous:
+            aggregated_metrics.pop("score", None)
+
+    def _log_builtin_accuracy_skipped_once(self) -> None:
+        """Emit one informational notice per evaluator when accuracy is skipped."""
+        if self._builtin_accuracy_skipped_logged:
+            return
+        self._builtin_accuracy_skipped_logged = True
+        logger.info(
+            "Built-in exact-match accuracy is not computed or uploaded because "
+            "'accuracy' is not one of the configured metrics. Add 'accuracy' "
+            "to the objectives to measure it."
+        )
 
     def _log_dual_scorer_notice_once(self) -> None:
         """Emit a single run-level notice when both scorers appear (issue #1845).
@@ -3298,29 +3464,32 @@ class LocalEvaluator(BaseEvaluator):
         accuracy_is_custom_objective = (
             "accuracy" in self.metrics and "accuracy" in self.metric_functions
         )
-        accuracy_is_user_metric = "accuracy" in self.metric_functions
 
-        if "accuracy" in self.metrics:
+        if accuracy_is_custom_objective:
             accuracy_value, _ = self._compute_accuracy_aggregated(
                 outputs, dataset, errors
             )
             if accuracy_value is not None:
-                if accuracy_is_custom_objective:
-                    # Keep the default exact-match value as a labelled
-                    # diagnostic; the custom aggregate below owns "accuracy"
-                    # and "score" (set to the objective value).
-                    aggregated_metrics["exact_match_default"] = accuracy_value
-                    self._log_dual_scorer_notice_once()
-                else:
-                    # No custom scorer: the default exact-match IS the objective,
-                    # so it is correctly both "accuracy" and "score".
-                    aggregated_metrics["accuracy"] = accuracy_value
-                    aggregated_metrics.setdefault("score", accuracy_value)
+                # Keep the default exact-match value as a labelled diagnostic;
+                # the custom aggregate below owns "accuracy" and "score" (set
+                # to the objective value).
+                aggregated_metrics["exact_match_default"] = accuracy_value
+                self._log_dual_scorer_notice_once()
 
         # Aggregate custom metric functions using helper
         if self.metric_functions:
             custom_aggregated = self._compute_aggregated_custom_metrics(example_results)
+            # Accuracy has exactly one producer: the shared per-row helper.
+            custom_aggregated.pop("accuracy", None)
             aggregated_metrics.update(custom_aggregated)
+
+        # One per-row contract (see MetricsTracker.
+        # _accuracy_values_for_formatters): the trial accuracy is the mean of
+        # the rows that have a value, the same population and mean the tracker
+        # formatters report. Nothing writes accuracy after this point.
+        self._apply_row_accuracy_to_aggregate(aggregated_metrics, metrics_tracker)
+
+        if self.metric_functions:
             # metrics["score"] is the optimization signal. When a custom scorer
             # owns the objective, that signal is the objective value (the custom
             # scorer mean == metrics["accuracy"]), NOT the default exact-match
@@ -3366,7 +3535,6 @@ class LocalEvaluator(BaseEvaluator):
         # tracker's user-metric aggregation pass.
         comprehensive_metrics = metrics_tracker.format_for_backend(
             extra_reserved=self._evaluator_computable_metric_names(),
-            user_supplied_accuracy=accuracy_is_user_metric,
         )
         self._merge_comprehensive_metrics(
             aggregated_metrics,
@@ -3425,9 +3593,7 @@ class LocalEvaluator(BaseEvaluator):
         # Generate summary_stats (needed for insights)
         summary_stats = None
         if self.execution_mode_enum:
-            summary_stats = metrics_tracker.format_as_summary_stats(
-                user_supplied_accuracy=accuracy_is_user_metric
-            )
+            summary_stats = metrics_tracker.format_as_summary_stats()
             if isinstance(summary_stats.get("metrics"), dict):
                 enforce_unknown_cost_invariant(
                     summary_stats["metrics"],
@@ -3583,7 +3749,9 @@ class LocalEvaluator(BaseEvaluator):
         # ``random.uniform()`` plus output-string heuristics, which would
         # silently replace real evaluation results with fake scores
         # whenever the env var was set in a production environment.
-        if "accuracy" in self.metrics:
+        if "accuracy" in self.metrics and not _is_empty_expected_output(
+            expected_output
+        ):
             metrics["accuracy"] = self._compute_real_accuracy(
                 actual_output, expected_output
             )
