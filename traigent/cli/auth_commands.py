@@ -15,6 +15,7 @@ import secrets
 import sys
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -263,6 +264,100 @@ _APPLICATION_JSON = "application/json"
 _TRAIGENT_SDK_CLI_1_0 = "Traigent-SDK-CLI/1.0"
 _DEVICE_TOKEN = "device token"
 _BACKEND_NOT_CONFIGURED = "(not configured)"
+
+
+@dataclass
+class _DevicePollState:
+    """Mutable state shared by the device-token polling helpers."""
+
+    interval: int
+    now: Callable[[], float]
+    deadline: float
+    device_code: str
+    consecutive_transport_errors: int = 0
+    consecutive_rate_limits_without_retry_after: int = 0
+
+
+def _device_poll_terminal_result(
+    status: str, credentials: dict[str, Any] | None
+) -> tuple[dict[str, Any] | None] | None:
+    """Terminal poll outcome as a 1-tuple, or None when polling continues."""
+    if status == "success":
+        return (credentials,)
+    if status == "access_denied":
+        console.print("[red]Device login was denied in the browser.[/red]")
+        return (None,)
+    if status == "expired_token":
+        console.print("[red]Device login expired. Please run login again.[/red]")
+        return (None,)
+    return None
+
+
+def _append_missing_env_keys(
+    next_lines: list[str], seen: set[str], updates: dict[str, str]
+) -> None:
+    if next_lines and next_lines[-1] != "":
+        next_lines.append("")
+    for key in _ENV_FILE_KEYS:
+        if key not in seen:
+            next_lines.append(f"{key}={_format_env_value(updates[key])}")
+
+
+def _merge_env_lines(existing_lines: list[str], updates: dict[str, str]) -> list[str]:
+    """Merge ``updates`` into the lines of an existing ``.env`` file."""
+    seen: set[str] = set()
+    next_lines: list[str] = []
+
+    for line in existing_lines:
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            next_lines.append(line)
+            continue
+
+        key = _env_assignment_key(line)
+        if key is not None and key in updates:
+            if key not in seen:
+                next_lines.append(
+                    _format_env_assignment_from_existing(line, key, updates[key])
+                )
+                seen.add(key)
+        else:
+            next_lines.append(line)
+
+    _append_missing_env_keys(next_lines, seen, updates)
+    return next_lines
+
+
+def _interpret_api_key_response(
+    status: int, response_text: str
+) -> tuple[str | None, str | None]:
+    """Parse the API-key creation response into ``(api_key, expires_at)``."""
+    api_key = None
+    api_key_expires_at: str | None = None
+    if status == 201:
+        try:
+            api_key_data = json.loads(response_text)
+            api_key = api_key_data["data"]["key"]
+            api_key_expires_at = _parse_expires_at(
+                api_key_data["data"].get("expires_at")
+            )
+            console.print("[green]✓ API key created[/green]")
+        except (json.JSONDecodeError, KeyError) as e:
+            console.print("\n[yellow]--- API Key Response ---[/yellow]")
+            console.print(f"[yellow]Status: {status}[/yellow]")
+            console.print("[yellow]Body: <suppressed>[/yellow]")
+            console.print(f"[yellow]⚠️ Could not parse API key: {e}[/yellow]")
+    elif status == 409:
+        # Key name conflict - shouldn't happen with unique names, but handle it
+        console.print("[yellow]⚠️ API key name conflict (409). Try again.[/yellow]")
+    else:
+        console.print("\n[yellow]--- API Key Response ---[/yellow]")
+        console.print(f"[yellow]Status Code: {status}[/yellow]")
+        console.print("[yellow]Body: <suppressed>[/yellow]")
+        console.print(
+            "[yellow]⚠️ API key creation failed, using JWT token only[/yellow]"
+        )
+    return api_key, api_key_expires_at
 
 
 class TraigentAuthCLI:
@@ -523,30 +618,7 @@ class TraigentAuthCLI:
             PROJECT_ENV_VAR: project_id,
             "TRAIGENT_BACKEND_URL": backend_url,
         }
-        seen: set[str] = set()
-        next_lines: list[str] = []
-
-        for line in existing_lines:
-            stripped = line.lstrip()
-            if not stripped or stripped.startswith("#") or "=" not in line:
-                next_lines.append(line)
-                continue
-
-            key = _env_assignment_key(line)
-            if key is not None and key in updates:
-                if key not in seen:
-                    next_lines.append(
-                        _format_env_assignment_from_existing(line, key, updates[key])
-                    )
-                    seen.add(key)
-            else:
-                next_lines.append(line)
-
-        if next_lines and next_lines[-1] != "":
-            next_lines.append("")
-        for key in _ENV_FILE_KEYS:
-            if key not in seen:
-                next_lines.append(f"{key}={_format_env_value(updates[key])}")
+        next_lines = _merge_env_lines(existing_lines, updates)
 
         env_path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(
@@ -801,110 +873,132 @@ class TraigentAuthCLI:
         clock: Callable[[], float] | None = None,
     ) -> dict[str, Any] | None:
         """Poll the token endpoint until success, denial, or expiry."""
-        interval = int(authorization["interval"])
         now = clock or time.monotonic
-        deadline = now() + int(authorization["expires_in"])
-        device_code = str(authorization["device_code"])
-        consecutive_transport_errors = 0
-        consecutive_rate_limits_without_retry_after = 0
+        state = _DevicePollState(
+            interval=int(authorization["interval"]),
+            now=now,
+            deadline=now() + int(authorization["expires_in"]),
+            device_code=str(authorization["device_code"]),
+        )
 
         while True:
-            remaining = deadline - now()
-            if remaining <= 0:
-                console.print(RED_DEVICE_LOGIN_EXPIRED_BEFORE_AUTHORIZATION_COMPLETED)
-                return None
+            finished, result = await self._poll_device_token_step(session, state, sleep)
+            if finished:
+                return result
 
-            try:
-                status, credentials, new_interval = await self._poll_device_token_once(
-                    session,
-                    device_code,
-                    min(MAX_DEVICE_POLL_TIMEOUT_SECONDS, remaining),
+    async def _poll_device_token_step(
+        self, session: Any, state: _DevicePollState, sleep: Any
+    ) -> tuple[bool, dict[str, Any] | None]:
+        """Run one poll iteration; returns ``(finished, credentials)``."""
+        remaining = state.deadline - state.now()
+        if remaining <= 0:
+            console.print(RED_DEVICE_LOGIN_EXPIRED_BEFORE_AUTHORIZATION_COMPLETED)
+            return True, None
+
+        try:
+            status, credentials, new_interval = await self._poll_device_token_once(
+                session,
+                state.device_code,
+                min(MAX_DEVICE_POLL_TIMEOUT_SECONDS, remaining),
+            )
+            state.consecutive_transport_errors = 0
+        except NETWORK_ERRORS as exc:
+            return await self._backoff_after_transport_error(exc, state, sleep)
+
+        if status == "rate_limited":
+            return await self._backoff_after_rate_limit(new_interval, state, sleep)
+
+        state.consecutive_rate_limits_without_retry_after = 0
+
+        terminal = _device_poll_terminal_result(status, credentials)
+        if terminal is not None:
+            return True, terminal[0]
+        if status == "slow_down":
+            if new_interval is None:
+                raise AuthenticationError(
+                    "Malformed slow_down response: missing interval"
                 )
-                consecutive_transport_errors = 0
-            except NETWORK_ERRORS as exc:
-                consecutive_transport_errors += 1
-                consecutive_rate_limits_without_retry_after = 0
-                if consecutive_transport_errors >= MAX_DEVICE_POLL_TRANSPORT_ERRORS:
-                    console.print(
-                        "[red]Device token polling failed after "
-                        f"{consecutive_transport_errors} consecutive transport "
-                        "errors. Please check your network and run login again.[/red]"
-                    )
-                    return None
-                sleep_seconds = min(float(interval), max(0.0, deadline - now()))
-                if sleep_seconds <= 0:
-                    console.print(
-                        RED_DEVICE_LOGIN_EXPIRED_BEFORE_AUTHORIZATION_COMPLETED
-                    )
-                    return None
+            state.interval = new_interval
+            console.print(
+                f"[yellow]Backend requested slower polling; waiting {state.interval}s.[/yellow]"
+            )
+
+        slept = await self._sleep_within_deadline(state, state.interval, sleep)
+        return (not slept), None
+
+    @staticmethod
+    async def _sleep_within_deadline(
+        state: _DevicePollState,
+        delay: float,
+        sleep: Any,
+        announce: Callable[[float], str] | None = None,
+    ) -> bool:
+        """Sleep ``delay`` capped by the deadline; False if the login expired."""
+        sleep_seconds = min(float(delay), max(0.0, state.deadline - state.now()))
+        if sleep_seconds <= 0:
+            console.print(RED_DEVICE_LOGIN_EXPIRED_BEFORE_AUTHORIZATION_COMPLETED)
+            return False
+        if announce is not None:
+            console.print(announce(sleep_seconds))
+        await sleep(sleep_seconds)
+        return True
+
+    async def _backoff_after_transport_error(
+        self, exc: BaseException, state: _DevicePollState, sleep: Any
+    ) -> tuple[bool, dict[str, Any] | None]:
+        state.consecutive_transport_errors += 1
+        state.consecutive_rate_limits_without_retry_after = 0
+        if state.consecutive_transport_errors >= MAX_DEVICE_POLL_TRANSPORT_ERRORS:
+            console.print(
+                "[red]Device token polling failed after "
+                f"{state.consecutive_transport_errors} consecutive transport "
+                "errors. Please check your network and run login again.[/red]"
+            )
+            return True, None
+        slept = await self._sleep_within_deadline(
+            state,
+            state.interval,
+            sleep,
+            lambda sleep_seconds: (
+                "[yellow]Device token polling transport error "
+                f"({type(exc).__name__}); retrying in {sleep_seconds:g}s.[/yellow]"
+            ),
+        )
+        return (not slept), None
+
+    async def _backoff_after_rate_limit(
+        self, new_interval: int | None, state: _DevicePollState, sleep: Any
+    ) -> tuple[bool, dict[str, Any] | None]:
+        if new_interval is None:
+            state.consecutive_rate_limits_without_retry_after += 1
+            if (
+                state.consecutive_rate_limits_without_retry_after
+                >= MAX_DEVICE_POLL_RATE_LIMITS_WITHOUT_RETRY_AFTER
+            ):
                 console.print(
-                    "[yellow]Device token polling transport error "
-                    f"({type(exc).__name__}); retrying in {sleep_seconds:g}s.[/yellow]"
+                    "[red]Device token polling is still rate-limited after "
+                    f"{state.consecutive_rate_limits_without_retry_after} "
+                    "consecutive 429 responses without Retry-After. "
+                    "Please run login again later.[/red]"
                 )
-                await sleep(sleep_seconds)
-                continue
+                return True, None
+            retry_after = state.interval + 5
+            reason = "without Retry-After"
+        else:
+            state.consecutive_rate_limits_without_retry_after = 0
+            retry_after = new_interval
+            reason = "per Retry-After"
 
-            if status == "rate_limited":
-                if new_interval is None:
-                    consecutive_rate_limits_without_retry_after += 1
-                    if (
-                        consecutive_rate_limits_without_retry_after
-                        >= MAX_DEVICE_POLL_RATE_LIMITS_WITHOUT_RETRY_AFTER
-                    ):
-                        console.print(
-                            "[red]Device token polling is still rate-limited after "
-                            f"{consecutive_rate_limits_without_retry_after} "
-                            "consecutive 429 responses without Retry-After. "
-                            "Please run login again later.[/red]"
-                        )
-                        return None
-                    retry_after = interval + 5
-                    reason = "without Retry-After"
-                else:
-                    consecutive_rate_limits_without_retry_after = 0
-                    retry_after = new_interval
-                    reason = "per Retry-After"
-
-                sleep_seconds = min(float(retry_after), max(0.0, deadline - now()))
-                if sleep_seconds <= 0:
-                    console.print(
-                        RED_DEVICE_LOGIN_EXPIRED_BEFORE_AUTHORIZATION_COMPLETED
-                    )
-                    return None
-                console.print(
-                    "[yellow]Device token polling rate-limited "
-                    f"({reason}); retrying in {sleep_seconds:g}s.[/yellow]"
-                )
-                await sleep(sleep_seconds)
-                continue
-
-            consecutive_rate_limits_without_retry_after = 0
-
-            if status == "success":
-                return credentials
-            if status == "access_denied":
-                console.print("[red]Device login was denied in the browser.[/red]")
-                return None
-            if status == "expired_token":
-                console.print(
-                    "[red]Device login expired. Please run login again.[/red]"
-                )
-                return None
-            if status == "slow_down":
-                if new_interval is None:
-                    raise AuthenticationError(
-                        "Malformed slow_down response: missing interval"
-                    )
-                interval = new_interval
-                console.print(
-                    f"[yellow]Backend requested slower polling; waiting {interval}s.[/yellow]"
-                )
-
-            sleep_seconds = min(float(interval), max(0.0, deadline - now()))
-            if sleep_seconds <= 0:
-                console.print(RED_DEVICE_LOGIN_EXPIRED_BEFORE_AUTHORIZATION_COMPLETED)
-                return None
-            await sleep(sleep_seconds)
+        slept = await self._sleep_within_deadline(
+            state,
+            retry_after,
+            sleep,
+            lambda sleep_seconds: (
+                "[yellow]Device token polling rate-limited "
+                f"({reason}); retrying in {sleep_seconds:g}s.[/yellow]"
+            ),
+        )
+        return (not slept), None
 
     def _display_device_authorization(self, authorization: dict[str, Any]) -> None:
         """Print the browser URL and user code prominently."""
@@ -1205,33 +1299,9 @@ class TraigentAuthCLI:
             ) as response:
                 response_text = await response.text()
 
-                if response.status == 201:
-                    try:
-                        api_key_data = json.loads(response_text)
-                        api_key = api_key_data["data"]["key"]
-                        api_key_expires_at = _parse_expires_at(
-                            api_key_data["data"].get("expires_at")
-                        )
-                        console.print("[green]✓ API key created[/green]")
-                    except (json.JSONDecodeError, KeyError) as e:
-                        console.print("\n[yellow]--- API Key Response ---[/yellow]")
-                        console.print(f"[yellow]Status: {response.status}[/yellow]")
-                        console.print("[yellow]Body: <suppressed>[/yellow]")
-                        console.print(
-                            f"[yellow]⚠️ Could not parse API key: {e}[/yellow]"
-                        )
-                elif response.status == 409:
-                    # Key name conflict - shouldn't happen with unique names, but handle it
-                    console.print(
-                        "[yellow]⚠️ API key name conflict (409). Try again.[/yellow]"
-                    )
-                else:
-                    console.print("\n[yellow]--- API Key Response ---[/yellow]")
-                    console.print(f"[yellow]Status Code: {response.status}[/yellow]")
-                    console.print("[yellow]Body: <suppressed>[/yellow]")
-                    console.print(
-                        "[yellow]⚠️ API key creation failed, using JWT token only[/yellow]"
-                    )
+                api_key, api_key_expires_at = _interpret_api_key_response(
+                    response.status, response_text
+                )
 
         # Get user info from stored token data (if available)
         # Note: SecureAuthManager doesn't expose user info directly
@@ -1600,6 +1670,35 @@ class TraigentAuthCLI:
             return f"expires in {days:.0f} days"
         return None
 
+    def _print_env_api_key_status(self, creds: dict[str, Any] | None) -> None:
+        env_table = Table(show_header=False, box=None)
+        env_table.add_column("Field", style="cyan")
+        env_table.add_column("Value")
+        env_table.add_row(
+            "Status", "[green]✅ Authenticated (environment variable)[/green]"
+        )
+        env_table.add_row("TRAIGENT_API_KEY", "configured (environment variable)")
+        env_table.add_row("Backend", self._backend_url or _BACKEND_NOT_CONFIGURED)
+        if creds and creds.get("api_key"):
+            env_table.add_row(
+                "Stored login",
+                "present but not used (environment variable takes precedence)",
+            )
+        console.print(env_table)
+        console.print()
+
+    @staticmethod
+    def _print_jwt_only_notice(creds: dict[str, Any]) -> None:
+        console.print("[yellow]ℹ️  Using JWT token authentication[/yellow]")
+        if creds.get("refresh_token"):
+            console.print("JWT tokens expire and need periodic refresh.\n")
+        else:
+            console.print(
+                "No refresh token is available. Run "
+                "[cyan]traigent auth login[/cyan] again before the JWT expires, "
+                "or create an API key for long-lived authentication.\n"
+            )
+
     def status(self) -> bool:
         """Show current authentication status.
 
@@ -1615,21 +1714,7 @@ class TraigentAuthCLI:
         # the same order CredentialManager uses for every request.
         env_api_key = os.environ.get("TRAIGENT_API_KEY")
         if env_api_key:
-            env_table = Table(show_header=False, box=None)
-            env_table.add_column("Field", style="cyan")
-            env_table.add_column("Value")
-            env_table.add_row(
-                "Status", "[green]✅ Authenticated (environment variable)[/green]"
-            )
-            env_table.add_row("TRAIGENT_API_KEY", "configured (environment variable)")
-            env_table.add_row("Backend", self._backend_url or _BACKEND_NOT_CONFIGURED)
-            if creds and creds.get("api_key"):
-                env_table.add_row(
-                    "Stored login",
-                    "present but not used (environment variable takes precedence)",
-                )
-            console.print(env_table)
-            console.print()
+            self._print_env_api_key_status(creds)
             return True
 
         if not creds:
@@ -1664,15 +1749,7 @@ class TraigentAuthCLI:
 
         # Check if token needs refresh
         if creds.get("jwt_token") and not creds.get("api_key"):
-            console.print("[yellow]ℹ️  Using JWT token authentication[/yellow]")
-            if creds.get("refresh_token"):
-                console.print("JWT tokens expire and need periodic refresh.\n")
-            else:
-                console.print(
-                    "No refresh token is available. Run "
-                    "[cyan]traigent auth login[/cyan] again before the JWT expires, "
-                    "or create an API key for long-lived authentication.\n"
-                )
+            self._print_jwt_only_notice(creds)
 
         return True
 
@@ -1785,16 +1862,8 @@ class TraigentAuthCLI:
             console.print(MSG_RUN_LOGIN_AGAIN)
             return False
 
-    def configure(self) -> bool:
-        """Interactive configuration wizard.
-
-        Returns:
-            True if configuration successful
-        """
-        console.print("\n[bold blue]⚙️  Traigent Configuration[/bold blue]")
-        console.print("Configure your Traigent SDK settings.\n")
-
-        # Backend URL configuration
+    def _configure_backend_url(self) -> tuple[bool, str | None]:
+        """Prompt for a backend URL; returns ``(proceed, current_backend)``."""
         try:
             current_backend: str | None = BackendConfig.get_cloud_backend_url()
         except EndpointNotConfiguredError:
@@ -1822,7 +1891,7 @@ class TraigentAuthCLI:
                     )
                 except ValueError as exc:
                     console.print(f"[red]❌ Invalid backend URL: {exc}[/red]\n")
-                    return False
+                    return False, current_backend
                 current_backend = new_backend
             else:
                 new_backend = Prompt.ask("Backend URL", default=current_backend)
@@ -1831,19 +1900,11 @@ class TraigentAuthCLI:
             console.print(f"[cyan]export TRAIGENT_BACKEND_URL={new_backend}[/cyan]")
             console.print("\nOr add to your .env file:")
             console.print(f"[cyan]TRAIGENT_BACKEND_URL={new_backend}[/cyan]\n")
+        return True, current_backend
 
-        # Authentication method
-        console.print("\n[bold]Authentication Methods:[/bold]")
-        console.print("1. Email/Password (recommended) - Get long-lived API key")
-        console.print("2. API Key - Use existing API key")
-        console.print(
-            "3. Environment Variable - Use TRAIGENT_API_KEY from environment\n"
-        )
-
-        auth_method = Prompt.ask(
-            "Select authentication method", choices=["1", "2", "3"], default="1"
-        )
-
+    def _configure_auth_method(
+        self, auth_method: str, current_backend: str | None
+    ) -> None:
         if auth_method == "1":
             console.print("\nRun [cyan]traigent auth login[/cyan] to authenticate.\n")
         elif auth_method == "2":
@@ -1858,6 +1919,34 @@ class TraigentAuthCLI:
         else:
             console.print("\nSet the environment variable:")
             console.print("[cyan]export TRAIGENT_API_KEY=your_api_key_here[/cyan]\n")
+
+    def configure(self) -> bool:
+        """Interactive configuration wizard.
+
+        Returns:
+            True if configuration successful
+        """
+        console.print("\n[bold blue]⚙️  Traigent Configuration[/bold blue]")
+        console.print("Configure your Traigent SDK settings.\n")
+
+        # Backend URL configuration
+        proceed, current_backend = self._configure_backend_url()
+        if not proceed:
+            return False
+
+        # Authentication method
+        console.print("\n[bold]Authentication Methods:[/bold]")
+        console.print("1. Email/Password (recommended) - Get long-lived API key")
+        console.print("2. API Key - Use existing API key")
+        console.print(
+            "3. Environment Variable - Use TRAIGENT_API_KEY from environment\n"
+        )
+
+        auth_method = Prompt.ask(
+            "Select authentication method", choices=["1", "2", "3"], default="1"
+        )
+
+        self._configure_auth_method(auth_method, current_backend)
 
         return True
 
