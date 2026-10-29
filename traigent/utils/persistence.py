@@ -712,52 +712,8 @@ class PersistenceManager:
 
         return str(result_dir)
 
-    def load_result(self, name: str) -> OptimizationResult:
-        """Load optimization result from disk.
-
-        Args:
-            name: Name of the saved result
-
-        Returns:
-            Loaded optimization result
-
-        Raises:
-            FileNotFoundError: If result doesn't exist
-            ValueError: If result data is corrupted, fails its sha256
-                integrity check, or its best_config lies outside the saved
-                configuration space
-
-        Integrity (#1961): ``save_result`` writes ``integrity.sha256.json``
-        with digests of ``metadata.json`` and ``trials.json.gz``; they are
-        verified here. Results saved before that change have no manifest and
-        load with one warning. This detects corruption and casual edits only;
-        it is not tamper-proof, because someone who can rewrite the files can
-        rewrite the manifest as well.
-        """
-        result_dir = self._resolve_path(self.base_dir / name)
-
-        if not result_dir.exists():
-            raise FileNotFoundError(
-                f"Optimization result '{name}' not found in {self.base_dir}"
-            )
-
-        has_manifest = verify_integrity_manifest(result_dir, list(_INTEGRITY_FILES))
-        if not has_manifest:
-            logger.warning(
-                "Result '%s' has no integrity manifest (saved by an older "
-                "version); loading without integrity verification. Re-save it "
-                "to add one.",
-                name,
-            )
-
-        # Load metadata
-        metadata_file = self._resolve_path(result_dir / METADATA_FILE)
-        if not metadata_file.exists():
-            raise ValueError(f"Metadata file missing for result '{name}'")
-
-        with safe_open(metadata_file, self.base_dir, mode="r") as f:
-            metadata = json.load(f)
-
+    def _load_trials(self, name: str, result_dir: Path) -> list[TrialResult]:
+        """Read the saved trials: JSON first, legacy pickle with a warning."""
         # Load trials using JSON instead of pickle for security
         trials_file = self._resolve_path(result_dir / TRIALS_JSON_FILE)
         pkl_file = self._resolve_path(result_dir / TRIALS_PKL_FILE)
@@ -813,6 +769,55 @@ class PersistenceManager:
                 trials = cast(list[TrialResult], RestrictedUnpickler(fp).load())
         else:
             raise ValueError(f"Trials file missing for result '{name}'")
+        return trials
+
+    def load_result(self, name: str) -> OptimizationResult:
+        """Load optimization result from disk.
+
+        Args:
+            name: Name of the saved result
+
+        Returns:
+            Loaded optimization result
+
+        Raises:
+            FileNotFoundError: If result doesn't exist
+            ValueError: If result data is corrupted, fails its sha256
+                integrity check, or its best_config lies outside the saved
+                configuration space
+
+        Integrity (#1961): ``save_result`` writes ``integrity.sha256.json``
+        with digests of ``metadata.json`` and ``trials.json.gz``; they are
+        verified here. Results saved before that change have no manifest and
+        load with one warning. This detects corruption and casual edits only;
+        it is not tamper-proof, because someone who can rewrite the files can
+        rewrite the manifest as well.
+        """
+        result_dir = self._resolve_path(self.base_dir / name)
+
+        if not result_dir.exists():
+            raise FileNotFoundError(
+                f"Optimization result '{name}' not found in {self.base_dir}"
+            )
+
+        has_manifest = verify_integrity_manifest(result_dir, list(_INTEGRITY_FILES))
+        if not has_manifest:
+            logger.warning(
+                "Result '%s' has no integrity manifest (saved by an older "
+                "version); loading without integrity verification. Re-save it "
+                "to add one.",
+                name,
+            )
+
+        # Load metadata
+        metadata_file = self._resolve_path(result_dir / METADATA_FILE)
+        if not metadata_file.exists():
+            raise ValueError(f"Metadata file missing for result '{name}'")
+
+        with safe_open(metadata_file, self.base_dir, mode="r") as f:
+            metadata = json.load(f)
+
+        trials = self._load_trials(name, result_dir)
 
         # Validate required metadata fields before reconstruction so a
         # truncated / hand-edited / legacy metadata.json surfaces as the
