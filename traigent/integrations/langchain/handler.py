@@ -178,46 +178,59 @@ def _iter_generation_payloads(response: Any) -> list[Any]:
     return payloads
 
 
-def _extract_response_token_usage(response: Any) -> tuple[int, int, int]:
-    llm_output = getattr(response, "llm_output", None)
-    if isinstance(llm_output, dict):
-        for key in ("token_usage", "usage", "usage_metadata"):
-            tokens = _tokens_from_usage(llm_output.get(key))
-            if tokens is not None:
-                return tokens
+_USAGE_KEYS = ("token_usage", "usage", "usage_metadata")
 
+
+def _tokens_from_usage_container(container: Any) -> tuple[int, int, int] | None:
+    """First usable usage entry of a dict, in ``_USAGE_KEYS`` order."""
+    if not isinstance(container, dict):
+        return None
+    for key in _USAGE_KEYS:
+        tokens = _tokens_from_usage(container.get(key))
+        if tokens is not None:
+            return tokens
+    return None
+
+
+def _tokens_from_usage_attrs(holder: Any) -> tuple[int, int, int] | None:
+    """Usable ``usage_metadata`` then ``usage`` attribute of ``holder``."""
     for source in (
-        getattr(response, "usage_metadata", None),
-        getattr(response, "usage", None),
+        getattr(holder, "usage_metadata", None),
+        getattr(holder, "usage", None),
     ):
         tokens = _tokens_from_usage(source)
         if tokens is not None:
             return tokens
+    return None
 
-    response_metadata = getattr(response, "response_metadata", None)
-    if isinstance(response_metadata, dict):
-        for key in ("token_usage", "usage", "usage_metadata"):
-            tokens = _tokens_from_usage(response_metadata.get(key))
-            if tokens is not None:
-                return tokens
 
+def _tokens_from_generation(generation: Any) -> tuple[int, int, int] | None:
+    for candidate in (getattr(generation, "message", None), generation):
+        tokens = _tokens_from_usage_attrs(candidate)
+        if tokens is not None:
+            return tokens
+        tokens = _tokens_from_usage_container(
+            getattr(candidate, "response_metadata", None)
+        )
+        if tokens is not None:
+            return tokens
+    return None
+
+
+def _extract_response_token_usage(response: Any) -> tuple[int, int, int]:
+    tokens = _tokens_from_usage_container(getattr(response, "llm_output", None))
+    if tokens is not None:
+        return tokens
+    tokens = _tokens_from_usage_attrs(response)
+    if tokens is not None:
+        return tokens
+    tokens = _tokens_from_usage_container(getattr(response, "response_metadata", None))
+    if tokens is not None:
+        return tokens
     for generation in _iter_generation_payloads(response):
-        for candidate in (getattr(generation, "message", None), generation):
-            for source in (
-                getattr(candidate, "usage_metadata", None),
-                getattr(candidate, "usage", None),
-            ):
-                tokens = _tokens_from_usage(source)
-                if tokens is not None:
-                    return tokens
-
-            metadata = getattr(candidate, "response_metadata", None)
-            if isinstance(metadata, dict):
-                for key in ("token_usage", "usage", "usage_metadata"):
-                    tokens = _tokens_from_usage(metadata.get(key))
-                    if tokens is not None:
-                        return tokens
-
+        tokens = _tokens_from_generation(generation)
+        if tokens is not None:
+            return tokens
     return 0, 0, 0
 
 
