@@ -1040,6 +1040,143 @@ def get_global_parallel_config() -> ParallelConfig:
     return coerced
 
 
+def _normalize_total_cost(total_cost: Any) -> float:
+    """Validate and normalise the billed ``total_cost`` argument."""
+    if isinstance(total_cost, bool) or not isinstance(total_cost, (int, float, str)):
+        raise TypeError(
+            "with_usage() requires total_cost to be a number, got "
+            f"{type(total_cost).__name__}."
+        )
+    try:
+        normalized_total_cost = float(total_cost)
+    except (TypeError, ValueError) as exc:
+        raise TypeError(
+            f"with_usage() requires total_cost to be a number, got {total_cost!r}."
+        ) from exc
+    if not math.isfinite(normalized_total_cost) or normalized_total_cost < 0:
+        raise ValueError(
+            "with_usage() requires total_cost to be finite and non-negative, got "
+            f"{total_cost!r}."
+        )
+    return normalized_total_cost
+
+
+def _build_usage_dict(
+    input_tokens: int | None,
+    output_tokens: int | None,
+    response_time_ms: float | None,
+) -> dict[str, Any] | None:
+    # Only include usage metadata if any field is explicitly provided (not None)
+    # This avoids overwriting existing extracted values with zeros
+    if input_tokens is None and output_tokens is None and response_time_ms is None:
+        return None
+    usage: dict[str, Any] = {}
+    if input_tokens is not None:
+        usage["input_tokens"] = int(input_tokens)
+    if output_tokens is not None:
+        usage["output_tokens"] = int(output_tokens)
+    if response_time_ms is not None:
+        usage["response_time_ms"] = float(response_time_ms)
+    return usage
+
+
+def _apply_cache_usage(meta: dict[str, Any], provider_usage: dict[str, Any]) -> None:
+    cache_usage = normalize_cache_usage(provider_usage)
+    meta["cache_usage"] = cache_usage.as_metadata()
+    if cache_usage.input_tokens is not None:
+        # The NORMALIZED figure wins, even over an explicit caller value.
+        #
+        # TraigentSchema's contract defines input_tokens as EXCLUDING
+        # cache_read_tokens (the disjoint convention). A caller passing the
+        # provider's own number is usually passing a cache-INCLUSIVE one --
+        # OpenAI's prompt_tokens counts cached tokens inside it -- so storing
+        # that verbatim alongside cache_read_tokens double-counts: a natural
+        # OpenAI call recorded input_tokens=2006 next to cache_read_tokens=1920,
+        # and anything summing them got 3926 against a truth of 2006.
+        #
+        # Preferring the normalized value is also what the JS SDK does
+        # (integrations/shared.ts). The two SDKs previously disagreed on exactly
+        # the question this feature exists to settle, each with a green test
+        # asserting its own answer. Where a provider already reports disjointly
+        # (Bedrock), the two values are equal and this changes nothing.
+        meta.setdefault("usage", {})["input_tokens"] = cache_usage.input_tokens
+
+
+def _validate_model_cost_token_field(
+    index: int, field_name: str, field_value: Any
+) -> None:
+    if field_value is None:
+        return
+    if (
+        isinstance(field_value, bool)
+        or not isinstance(field_value, (int, float))
+        or not math.isfinite(field_value)
+        or field_value < 0
+    ):
+        raise TypeError(
+            f"with_usage() model_costs[{index}] requires a finite, "
+            f"non-negative numeric '{field_name}' key, got "
+            f"{field_value!r}."
+        )
+
+
+def _normalize_model_cost_call(i: int, call: Any) -> dict[str, Any]:
+    if not isinstance(call, dict):
+        raise TypeError(
+            f"with_usage() model_costs[{i}] must be a dict, got {type(call).__name__}."
+        )
+    model = call.get("model")
+    if not isinstance(model, str) or not model:
+        raise TypeError(
+            f"with_usage() model_costs[{i}] requires a non-empty string 'model' key."
+        )
+    # `bool` is a subclass of `int`, so a bare isinstance(..., (int, float))
+    # admits True/False and float(True) is 1.0 -- a boolean would land in
+    # the ledger as a $1.00 charge. The meta-side validator in
+    # traigent/core/meta_types.py rejects bools explicitly, but it never
+    # sees them from this path: we normalise to float here first, so the
+    # bool is already gone by the time it runs. Reject at the entry point.
+    cost = call.get("cost")
+    if (
+        "cost" not in call
+        or isinstance(cost, bool)
+        or not isinstance(cost, (int, float))
+        or not math.isfinite(cost)
+        or cost < 0
+    ):
+        raise TypeError(
+            f"with_usage() model_costs[{i}] requires a finite, "
+            f"non-negative numeric 'cost' key."
+        )
+    # Validate the RAW values, before any `or 0` coercion: `False or 0`
+    # evaluates to 0, so a coerced value can no longer be recognised as
+    # a bool and the check below would never fire for it. Measured
+    # before this ordering: `input_tokens=False` was accepted.
+    raw_tokens = (
+        ("input_tokens", call.get("input_tokens", 0)),
+        ("output_tokens", call.get("output_tokens", 0)),
+    )
+    for field_name, field_value in raw_tokens:
+        _validate_model_cost_token_field(i, field_name, field_value)
+    input_tokens = call.get("input_tokens", 0) or 0
+    output_tokens = call.get("output_tokens", 0) or 0
+    return {
+        "model": model,
+        "input_tokens": int(input_tokens),
+        "output_tokens": int(output_tokens),
+        "cost": float(cost),
+    }
+
+
+def _normalize_model_costs(model_costs: Any) -> list[dict[str, Any]]:
+    if not isinstance(model_costs, list):
+        raise TypeError(
+            f"with_usage() requires model_costs to be a list of dicts, "
+            f"got {type(model_costs).__name__}."
+        )
+    return [_normalize_model_cost_call(i, call) for i, call in enumerate(model_costs)]
+
+
 def with_usage(
     text: Any,
     total_cost: float,
@@ -1196,38 +1333,13 @@ def with_usage(
     # (bool subclasses int), and nan / inf / -1.0 all reached the ledger as-is.
     # A negative total is a credit against a run's spend, which is the same
     # defect class as the usage.cost regression fixed in #2342.
-    if isinstance(total_cost, bool) or not isinstance(total_cost, (int, float, str)):
-        raise TypeError(
-            "with_usage() requires total_cost to be a number, got "
-            f"{type(total_cost).__name__}."
-        )
-    try:
-        normalized_total_cost = float(total_cost)
-    except (TypeError, ValueError) as exc:
-        raise TypeError(
-            f"with_usage() requires total_cost to be a number, got {total_cost!r}."
-        ) from exc
-    if not math.isfinite(normalized_total_cost) or normalized_total_cost < 0:
-        raise ValueError(
-            "with_usage() requires total_cost to be finite and non-negative, got "
-            f"{total_cost!r}."
-        )
+    normalized_total_cost = _normalize_total_cost(total_cost)
     meta: dict[str, Any] = {"total_cost": normalized_total_cost}
 
     # Only include usage metadata if any field is explicitly provided (not None)
     # This avoids overwriting existing extracted values with zeros
-    if (
-        input_tokens is not None
-        or output_tokens is not None
-        or response_time_ms is not None
-    ):
-        usage: dict[str, Any] = {}
-        if input_tokens is not None:
-            usage["input_tokens"] = int(input_tokens)
-        if output_tokens is not None:
-            usage["output_tokens"] = int(output_tokens)
-        if response_time_ms is not None:
-            usage["response_time_ms"] = float(response_time_ms)
+    usage = _build_usage_dict(input_tokens, output_tokens, response_time_ms)
+    if usage is not None:
         meta["usage"] = usage
 
     # Prompt-cache dimensions (Traigent#2068). Passing the provider's raw usage
@@ -1237,25 +1349,7 @@ def with_usage(
     # "the provider did not report this" distinct from "zero", so a cached workload
     # is never silently priced as if it had no cache.
     if provider_usage is not None:
-        cache_usage = normalize_cache_usage(provider_usage)
-        meta["cache_usage"] = cache_usage.as_metadata()
-        if cache_usage.input_tokens is not None:
-            # The NORMALIZED figure wins, even over an explicit caller value.
-            #
-            # TraigentSchema's contract defines input_tokens as EXCLUDING
-            # cache_read_tokens (the disjoint convention). A caller passing the
-            # provider's own number is usually passing a cache-INCLUSIVE one --
-            # OpenAI's prompt_tokens counts cached tokens inside it -- so storing
-            # that verbatim alongside cache_read_tokens double-counts: a natural
-            # OpenAI call recorded input_tokens=2006 next to cache_read_tokens=1920,
-            # and anything summing them got 3926 against a truth of 2006.
-            #
-            # Preferring the normalized value is also what the JS SDK does
-            # (integrations/shared.ts). The two SDKs previously disagreed on exactly
-            # the question this feature exists to settle, each with a green test
-            # asserting its own answer. Where a provider already reports disjointly
-            # (Bedrock), the two values are equal and this changes nothing.
-            meta.setdefault("usage", {})["input_tokens"] = cache_usage.input_tokens
+        _apply_cache_usage(meta, provider_usage)
 
     # Per-call/per-model breakdown for multi-model/multi-step agents (#1598).
     # Validated eagerly (TypeError on the caller's own line) rather than
@@ -1263,75 +1357,7 @@ def with_usage(
     # breakdown fails loudly at the call site instead of being silently
     # dropped several layers downstream.
     if model_costs is not None:
-        if not isinstance(model_costs, list):
-            raise TypeError(
-                f"with_usage() requires model_costs to be a list of dicts, "
-                f"got {type(model_costs).__name__}."
-            )
-        normalized_calls: list[dict[str, Any]] = []
-        for i, call in enumerate(model_costs):
-            if not isinstance(call, dict):
-                raise TypeError(
-                    f"with_usage() model_costs[{i}] must be a dict, got "
-                    f"{type(call).__name__}."
-                )
-            model = call.get("model")
-            if not isinstance(model, str) or not model:
-                raise TypeError(
-                    f"with_usage() model_costs[{i}] requires a non-empty "
-                    f"string 'model' key."
-                )
-            # `bool` is a subclass of `int`, so a bare isinstance(..., (int, float))
-            # admits True/False and float(True) is 1.0 -- a boolean would land in
-            # the ledger as a $1.00 charge. The meta-side validator in
-            # traigent/core/meta_types.py rejects bools explicitly, but it never
-            # sees them from this path: we normalise to float here first, so the
-            # bool is already gone by the time it runs. Reject at the entry point.
-            cost = call.get("cost")
-            if (
-                "cost" not in call
-                or isinstance(cost, bool)
-                or not isinstance(cost, (int, float))
-                or not math.isfinite(cost)
-                or cost < 0
-            ):
-                raise TypeError(
-                    f"with_usage() model_costs[{i}] requires a finite, "
-                    f"non-negative numeric 'cost' key."
-                )
-            # Validate the RAW values, before any `or 0` coercion: `False or 0`
-            # evaluates to 0, so a coerced value can no longer be recognised as
-            # a bool and the check below would never fire for it. Measured
-            # before this ordering: `input_tokens=False` was accepted.
-            raw_tokens = (
-                ("input_tokens", call.get("input_tokens", 0)),
-                ("output_tokens", call.get("output_tokens", 0)),
-            )
-            for field_name, field_value in raw_tokens:
-                if field_value is None:
-                    continue
-                if (
-                    isinstance(field_value, bool)
-                    or not isinstance(field_value, (int, float))
-                    or not math.isfinite(field_value)
-                    or field_value < 0
-                ):
-                    raise TypeError(
-                        f"with_usage() model_costs[{i}] requires a finite, "
-                        f"non-negative numeric '{field_name}' key, got "
-                        f"{field_value!r}."
-                    )
-            input_tokens = call.get("input_tokens", 0) or 0
-            output_tokens = call.get("output_tokens", 0) or 0
-            normalized_calls.append(
-                {
-                    "model": model,
-                    "input_tokens": int(input_tokens),
-                    "output_tokens": int(output_tokens),
-                    "cost": float(cost),
-                }
-            )
-        meta["calls"] = normalized_calls
+        meta["calls"] = _normalize_model_costs(model_costs)
 
     result["__traigent_meta__"] = meta
 
