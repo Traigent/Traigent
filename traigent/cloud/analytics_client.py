@@ -87,6 +87,9 @@ if TYPE_CHECKING:
         ObservabilityVariantListDTO,
     )
 
+OBSERVABILITY_TRACE_SEARCH = "observability trace search"
+DECISION_BRIEF = "decision brief"
+
 logger = get_logger(__name__)
 
 try:
@@ -787,12 +790,12 @@ _OBSERVABILITY_COST_STATUSES = frozenset(
 
 def _project_observability_trace_search(payload: Any) -> dict[str, Any]:
     """Rebuild the safe subset of the ordinary trace-summary response."""
-    source = _require_object(payload, what="observability trace search")
+    source = _require_object(payload, what=OBSERVABILITY_TRACE_SEARCH)
     allowed_top = frozenset(
         {"items", "pagination", "page", "per_page", "total", "has_more"}
     )
     _require_exact_keys(
-        source, allowed_top, what="observability trace search", require_all=False
+        source, allowed_top, what=OBSERVABILITY_TRACE_SEARCH, require_all=False
     )
     items = _require_bounded_list(
         source.get("items"), what="observability trace search items", maximum=100
@@ -2622,13 +2625,13 @@ class BackendAnalyticsClient:
         )
         payload = await self._get_json(
             path,
-            what="decision brief",
+            what=DECISION_BRIEF,
             headers=self._project_headers(project_id),
             params={"intent": normalized_intent},
         )
-        _require_keys(payload, _DECISION_PAYLOAD_REQUIRED_KEYS, what="decision brief")
+        _require_keys(payload, _DECISION_PAYLOAD_REQUIRED_KEYS, what=DECISION_BRIEF)
         if "attribution" in payload:
-            _validate_attribution(payload["attribution"], what="decision brief")
+            _validate_attribution(payload["attribution"], what=DECISION_BRIEF)
         return payload
 
     async def get_single_run_pareto(
@@ -2899,7 +2902,7 @@ class BackendAnalyticsClient:
             params["tags"] = clean_tags
         payload = await self._get_json(
             f"{_observability_path(project_id)}/traces",
-            what="observability trace search",
+            what=OBSERVABILITY_TRACE_SEARCH,
             params=params,
         )
         return cast(
