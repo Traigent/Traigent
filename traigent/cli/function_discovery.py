@@ -57,6 +57,7 @@ def discover_optimized_functions(
     module_path: str,
     function_filter: list[str] | None = None,
     workspace_root: str | Path | None = None,
+    available_names: list[str] | None = None,
 ) -> list[OptimizedFunction]:
     """Discover all functions decorated with @traigent.optimize in a module.
 
@@ -64,6 +65,9 @@ def discover_optimized_functions(
         module_path: Path to Python file containing optimizable functions
         function_filter: Optional list of function names to include (None = all functions)
         workspace_root: Optional user workspace root. Defaults to the caller's CWD.
+        available_names: Optional list the names of EVERY decorated function in
+            the module are appended to (ignoring ``function_filter``), so a
+            caller can list them without loading the module a second time.
 
     Returns:
         List of OptimizedFunction objects containing function metadata
@@ -77,6 +81,8 @@ def discover_optimized_functions(
     module_path_obj = _resolve_module_path(module_path, workspace_root)
 
     module = load_user_module(module_path_obj)
+    if available_names is not None:
+        available_names.extend(name for name, _ in find_optimized_functions(module))
     discovered_functions = []
 
     for name, obj in find_optimized_functions(module, function_filter):

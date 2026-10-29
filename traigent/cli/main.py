@@ -1980,7 +1980,7 @@ def results_rerank(
         if not any(key in (t.metrics or {}) for t in result.trials for key in positive):
             raise click.ClickException(
                 "No trials have the specified metrics. "
-                f"Available metrics: {list(result.trials[0].metrics.keys())}"
+                f"Available metrics: {list((result.trials[0].metrics or {}).keys())}"
             )
 
         scored_trials = _score_trials_for_rerank(result, weight_dict)
@@ -2000,7 +2000,7 @@ def results_rerank(
                 return
             raise click.ClickException(
                 "No trials have the specified metrics. "
-                f"Available metrics: {list(result.trials[0].metrics.keys())}"
+                f"Available metrics: {list((result.trials[0].metrics or {}).keys())}"
             )
 
         # Sort by new score (highest first)
@@ -2835,17 +2835,6 @@ def _missing_requested_functions(
     return [name for name in function_filter if name not in found]
 
 
-def _available_function_names(module_path: str) -> list[str]:
-    """Names of every decorated function in the module (ignoring --functions).
-
-    Only called on the error path (a requested name matched nothing); a load
-    failure here propagates, as it would have on the first load.
-    """
-    from traigent.cli.function_discovery import discover_optimized_functions
-
-    return [f.name for f in discover_optimized_functions(module_path)]
-
-
 async def _run_validations(
     validator: Any, discovered_functions: list[Any]
 ) -> tuple[list[Any], int, int]:
@@ -2954,8 +2943,9 @@ def check(
         _print_filter_info(function_filter, objectives_filter)
 
         console.print("\n[bold yellow]📋 Step 1: Function Discovery[/bold yellow]")
+        available_names: list[str] = []
         discovered_functions = discover_optimized_functions(
-            module_path, function_filter
+            module_path, function_filter, available_names=available_names
         )
 
         blocking_issues, notes = classify_discovered_functions(discovered_functions)
@@ -2963,7 +2953,7 @@ def check(
 
         missing = _missing_requested_functions(function_filter, discovered_functions)
         if missing:
-            available = _available_function_names(module_path)
+            available = available_names
             console.print(
                 f"\n[red]❌ Requested function(s) not found: {', '.join(missing)}[/red]"
             )

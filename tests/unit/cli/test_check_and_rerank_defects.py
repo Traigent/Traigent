@@ -101,7 +101,9 @@ def test_check_loads_module_by_dotted_name_2800(tmp_path: Path) -> None:
 
 
 def test_dotted_name_outside_workspace_is_rejected_2800() -> None:
-    with pytest.raises(ValueError):
+    # Dotted names are resolved under the workspace only; an installed or stdlib
+    # module is not found there (nothing is imported to look for it).
+    with pytest.raises((ValueError, FileNotFoundError)):
         discover_optimized_functions("json.tool")
 
 
@@ -744,3 +746,39 @@ def test_relative_import_in_untrusted_package_names_the_real_cause(
         os.chmod(pkg, 0o755)
     assert "writable by other users" in str(err.value)
     assert "no __init__.py" not in str(err.value)
+
+
+def test_dotted_name_resolution_never_runs_package_init(tmp_path: Path) -> None:
+    """Locating ``pkg.mod`` must not execute ``pkg/__init__.py``."""
+    from traigent.utils.module_loading import resolve_dotted_module
+
+    marker = tmp_path / "ran.txt"
+    _write(tmp_path, "evilpkg/__init__.py", f"open({str(marker)!r}, 'w').write('x')\n")
+    _write(tmp_path, "evilpkg/mod.py", "X = 1\n")
+    found = resolve_dotted_module("evilpkg.mod", tmp_path)
+    assert found == (tmp_path / "evilpkg" / "mod.py").resolve()
+    assert not marker.exists()
+    with pytest.raises(FileNotFoundError):
+        resolve_dotted_module("evilpkg.nope", tmp_path)
+
+
+def test_shadowing_package_does_not_evict_the_real_module(tmp_path: Path) -> None:
+    """A user package named like an imported module is refused, json stays loaded."""
+    import json
+
+    from traigent.utils.module_loading import load_user_module
+
+    shadow = _write(tmp_path, "json/__init__.py", "")
+    with pytest.raises(ImportError, match="shadow"):
+        load_user_module(shadow)
+    assert sys.modules.get("json") is json
+
+
+def test_missing_function_error_does_not_reload_the_module(tmp_path: Path) -> None:
+    counter = tmp_path / "loads.txt"
+    source = _agent() + f"\nopen({str(counter)!r}, 'a').write('x')\n"
+    _write(tmp_path, "good.py", source)
+    result = _invoke("check", "good.py", "--functions", "answr", "--dry-run")
+    assert result.exit_code != 0
+    assert "answer" in result.output.replace("answr", "")
+    assert counter.read_text() == "x"

@@ -131,20 +131,23 @@ def _explain_relative_import(
 
 
 def resolve_dotted_module(name: str, search_dir: Path | None = None) -> Path:
-    """Resolve ``pkg.mod`` to its source file, searching ``search_dir`` (cwd)."""
+    """Resolve ``pkg.mod`` to its source file under ``search_dir`` (default cwd).
+
+    Looks for ``pkg/mod.py`` and ``pkg/mod/__init__.py`` on disk. It never
+    imports anything: ``importlib.util.find_spec`` would execute every parent
+    package's ``__init__.py`` (and any installed package of that name) just to
+    locate a file, which the trust check in ``package_parts`` is there to avoid.
+    """
     base = (search_dir or Path.cwd()).resolve()
-    with _sys_path_entry(base, keep=False):
-        try:
-            spec = importlib.util.find_spec(name)
-        except (ImportError, ValueError):
-            spec = None
-    origin = getattr(spec, "origin", None)
-    if spec is None or not origin or not origin.endswith(".py"):
-        raise FileNotFoundError(
-            f"Module not found: {name}. Pass a path to a .py file, or a dotted "
-            f"module path importable from {base}."
-        )
-    return Path(origin)
+    parts = name.split(".")
+    leaf = base.joinpath(*parts[:-1])
+    for candidate in (leaf / f"{parts[-1]}.py", leaf / parts[-1] / "__init__.py"):
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(
+        f"Module not found: {name}. Pass a path to a .py file, or a dotted "
+        f"module path under {base}."
+    )
 
 
 def load_user_module(
@@ -195,6 +198,7 @@ def _import_packaged(path: Path, qualified_name: str, root: Path) -> ModuleType:
         # the import fails half way, so a later load from another root evicts
         # it instead of inheriting the half-imported package.
         _LOADED_PACKAGE_ROOTS[top_level] = root
+    already_loaded = sys.modules.get(qualified_name)
     try:
         module = importlib.import_module(qualified_name)
     except ImportError as exc:
@@ -206,8 +210,11 @@ def _import_packaged(path: Path, qualified_name: str, root: Path) -> ModuleType:
     loaded_from = getattr(module, "__file__", None)
     if loaded_from is None or Path(loaded_from).resolve() != path:
         # The qualified name resolved to a different module than the file the
-        # caller asked for (e.g. a package named like an installed one).
-        sys.modules.pop(qualified_name, None)
+        # caller asked for (e.g. a package named like an installed one). Only
+        # forget the entry if this call introduced it: an already-imported
+        # stdlib or installed module must stay registered.
+        if module is not already_loaded:
+            sys.modules.pop(qualified_name, None)
         raise ImportError(
             f"{path} imports as '{qualified_name}', which resolves to "
             f"{loaded_from} instead. Rename the package so it does not shadow "

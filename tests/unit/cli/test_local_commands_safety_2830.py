@@ -88,12 +88,12 @@ def test_cleanup_dry_run_does_not_list_active_sessions(store):
     assert "(done)" in result.output and "(running)" not in result.output
 
 
-def _sync_run(args, one=None, all_=None):
+def _sync_run(args, one=None, all_=None, eligible=1):
     manager = MagicMock()
     manager.get_sync_status.return_value = {
         "total_sessions": 1,
         "completed_sessions": 1,
-        "sync_eligible": 1,
+        "sync_eligible": eligible,
         "total_trials": 1,
     }
     manager.sync_session_to_cloud.return_value = one
@@ -174,3 +174,15 @@ def test_naive_created_at_is_read_as_utc_not_local_time(store, monkeypatch):
     finally:
         monkeypatch.undo()
         time.tzset()
+
+
+def test_local_sync_named_session_that_is_not_eligible_still_fails():
+    """`--session-id` with nothing eligible must report the session, not exit 0."""
+    result, manager = _sync_run(
+        ["--api-key", "k", "--session-id", "nope"],
+        one={"status": "failed", "errors": ["Session 'nope' not found"]},
+        eligible=0,
+    )
+    manager.sync_session_to_cloud.assert_called_once()
+    assert result.exit_code == 1
+    assert "not found" in result.output

@@ -682,7 +682,7 @@ def sync_to_cloud(
         status = sync_manager.get_sync_status()
         _echo_sync_status(status)
 
-        if status["sync_eligible"] == 0:
+        if status["sync_eligible"] == 0 and not session_id:
             click.echo(
                 "\n💡 No completed sessions to sync. Complete some optimizations first!"
             )
