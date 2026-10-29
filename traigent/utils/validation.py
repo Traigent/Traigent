@@ -14,6 +14,7 @@ developer-friendly and user-friendly.
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -145,6 +146,17 @@ class ValidationResult:
             lines.append("✅ Validation passed!")
 
         return "\n".join(lines)
+
+
+def _non_finite_numbers(values: Any) -> list[Any]:
+    """NaN/inf entries among the numeric ``values`` (bool is not numeric here)."""
+    return [
+        v
+        for v in values
+        if isinstance(v, (int, float))
+        and not isinstance(v, bool)
+        and not math.isfinite(v)
+    ]
 
 
 class Validators:
@@ -570,6 +582,12 @@ class Validators:
                 "Parameter list cannot be empty",
                 error_code="EMPTY_LIST",
             )
+        elif _non_finite_numbers(param_values):
+            result.add_error(
+                f"configuration_space.{param_name}",
+                "Parameter values must be finite numbers (found NaN or inf)",
+                error_code="INVALID_RANGE",
+            )
         elif len(param_values) == 1:
             result.add_warning(
                 f"configuration_space.{param_name}",
@@ -589,6 +607,12 @@ class Validators:
             result.add_error(
                 f"configuration_space.{param_name}",
                 "Range values must be numeric",
+                error_code="INVALID_RANGE",
+            )
+        elif _non_finite_numbers(param_values):
+            result.add_error(
+                f"configuration_space.{param_name}",
+                f"Range bounds must be finite, got ({min_val}, {max_val})",
                 error_code="INVALID_RANGE",
             )
         elif min_val >= max_val:
@@ -622,6 +646,13 @@ class Validators:
                 error_code="INVALID_RANGE",
             )
             return
+        if _non_finite_numbers((low, high)):
+            result.add_error(
+                f"configuration_space.{param_name}",
+                f"Range bounds must be finite, got low={low}, high={high}",
+                error_code="INVALID_RANGE",
+            )
+            return
         if low >= high:
             result.add_error(
                 f"configuration_space.{param_name}",
@@ -632,7 +663,12 @@ class Validators:
 
         step = param_values.get("step")
         if step is not None:
-            if not isinstance(step, (int, float)) or step <= 0:
+            if (
+                not isinstance(step, (int, float))
+                or isinstance(step, bool)
+                or not math.isfinite(step)
+                or step <= 0
+            ):
                 result.add_error(
                     f"configuration_space.{param_name}",
                     f"Step must be a positive number, got {step!r}",

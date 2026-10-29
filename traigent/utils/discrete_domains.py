@@ -24,6 +24,10 @@ def float_step_divides_span(low: float, high: float, step: float) -> bool:
     return abs(intervals - nearest) <= tolerance
 
 
+def _finite_grid(low: float, high: float, step: float) -> bool:
+    return math.isfinite(low) and math.isfinite(high) and math.isfinite(step)
+
+
 def stepped_int_values(low: int, high: int, step: int) -> tuple[int, ...]:
     """Build the integer grid, preserving the inclusive high endpoint."""
 
@@ -61,11 +65,23 @@ def stepped_int_cardinality(low: int, high: int, step: int) -> int:
     return count
 
 
+def _grid_round_digits(step: float) -> int:
+    """Decimal digits that keep distinct grid points distinct for ``step``.
+
+    The default of 6 digits is kept for ordinary steps; a step below 1e-3 needs
+    more, otherwise rounding collapses neighbouring points or rounds the first
+    point below ``low`` to ``0.0`` (#2822).
+    """
+
+    return max(FLOAT_GRID_ROUND_DIGITS, math.ceil(-math.log10(step)) + 3)
+
+
 def stepped_float_values(low: float, high: float, step: float) -> tuple[float, ...]:
     """Build the stepped float grid, preserving the inclusive high endpoint."""
 
-    if step <= 0 or low > high:
+    if not _finite_grid(low, high, step) or step <= 0 or low > high:
         return ()
+    digits = _grid_round_digits(step)
 
     values: list[float] = []
     epsilon = _FLOAT_STEP_TOLERANCE * max(1.0, abs(high - low), abs(step))
@@ -75,12 +91,12 @@ def stepped_float_values(low: float, high: float, step: float) -> tuple[float, .
         if value > high + epsilon:
             break
         value = min(max(value, low), high)
-        rounded = round(value, FLOAT_GRID_ROUND_DIGITS)
+        rounded = round(value, digits)
         if not values or values[-1] != rounded:
             values.append(rounded)
         index += 1
 
-    high_value = round(high, FLOAT_GRID_ROUND_DIGITS)
+    high_value = round(high, digits)
     if not values or values[-1] != high_value:
         values.append(high_value)
     return tuple(values)
@@ -91,6 +107,9 @@ def stepped_float_cardinality(low: float, high: float, step: float) -> int:
 
     if step <= 0 or low > high:
         return 0
+    digits = (
+        _grid_round_digits(step) if math.isfinite(step) else FLOAT_GRID_ROUND_DIGITS
+    )
 
     epsilon = _FLOAT_STEP_TOLERANCE * max(1.0, abs(high - low), abs(step))
     interval_count = (high - low + epsilon) / step
@@ -99,8 +118,8 @@ def stepped_float_cardinality(low: float, high: float, step: float) -> int:
 
     count = max(math.floor(interval_count) + 1, 1)
     value = low + ((count - 1) * step)
-    rounded = round(min(max(value, low), high), FLOAT_GRID_ROUND_DIGITS)
-    high_value = round(high, FLOAT_GRID_ROUND_DIGITS)
+    rounded = round(min(max(value, low), high), digits)
+    high_value = round(high, digits)
     if rounded != high_value:
         count += 1
     return count
