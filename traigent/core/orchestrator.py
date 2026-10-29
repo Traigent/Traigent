@@ -6738,9 +6738,10 @@ class OptimizationOrchestrator:
             warning += (
                 " The failures look like a network/connection problem. To try "
                 "Traigent without calling a provider, set TRAIGENT_MOCK_LLM=true "
-                "(mock mode replaces provider calls only). For a run with no "
-                "backend communication, use the offline quickstart "
-                "(python -m traigent.examples.quickstart)."
+                "(mock mode replaces provider calls only). To also keep Traigent "
+                "offline, set TRAIGENT_OFFLINE_MODE=true, or run the packaged "
+                "quickstart (python -m traigent.examples.quickstart), which "
+                "forces offline mode when TRAIGENT_API_KEY is unset."
             )
         result_warnings.append(warning)
         result_warning_codes.append(_ALL_TRIALS_FAILED_WARNING_CODE)

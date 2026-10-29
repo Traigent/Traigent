@@ -56,17 +56,10 @@ def _may_return_mapping(func: Callable[..., Any]) -> bool:
         signature = inspect.signature(func)
     except (TypeError, ValueError):
         return True
-    if any(
-        p.kind is inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values()
-    ):
-        return True
+    # Only a known scalar return annotation proves the scorer cannot emit a
+    # mapping; unannotated scorers may return {"accuracy": ...}.
     annotation = signature.return_annotation
-    return annotation is not inspect.Signature.empty and annotation not in (
-        float,
-        int,
-        "float",
-        "int",
-    )
+    return annotation not in (float, int, bool, "float", "int", "bool")
 
 
 def _warn_misnamed_metric_keys(

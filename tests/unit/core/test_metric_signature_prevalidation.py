@@ -268,3 +268,24 @@ def test_stray_third_param_with_var_kwargs_is_flagged() -> None:
 
     with pytest.raises(ValidationError, match="positional parameter 3"):
         validate_metric_function_bindability({"accuracy": scorer}, ["accuracy"])
+
+
+def test_positional_only_defaulted_usage_param_is_accepted() -> None:
+    def with_default(output, expected, usage=None, /) -> float:  # noqa: ANN001
+        return 1.0
+
+    validate_metric_function_bindability({"accuracy": with_default}, ["accuracy"])
+
+
+def test_positional_only_required_usage_param_is_accepted_or_flagged_consistently() -> (
+    None
+):
+    """Required positional-only third param binds positional_3; with a
+    recognized name present it is flagged because it is not an llm alias."""
+
+    def required(output, expected, usage, /) -> float:  # noqa: ANN001
+        return 1.0
+
+    # Names output/expected are recognized, `usage` is not an alias: flagged.
+    with pytest.raises(ValidationError, match="positional parameter 3"):
+        validate_metric_function_bindability({"accuracy": required}, ["accuracy"])

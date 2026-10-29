@@ -442,6 +442,7 @@ class TestAllTrialsFailed:
         assert warning.startswith("All trials failed: 1 of 1 trial(s)")
         assert "TRAIGENT_MOCK_LLM=true" in warning
         assert "python -m traigent.examples.quickstart" in warning
+        assert "TRAIGENT_OFFLINE_MODE=true" in warning
 
     def test_per_example_connection_failure_hints_mock_mode(self, env, monkeypatch):
         monkeypatch.setattr(orch_mod, "is_mock_llm", lambda: False)

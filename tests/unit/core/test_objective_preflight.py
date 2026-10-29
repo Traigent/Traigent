@@ -48,10 +48,14 @@ def test_hostile_objective_name_is_not_echoed(caplog):
     assert "\n" not in text
 
 
+def _scalar(output, expected) -> float:
+    return 1.0
+
+
 def test_misnamed_metric_key_warns_without_echoing_names(caplog):
     # objectives=["accuracy"], metric_functions={"acc": f}: the user's scorer is
     # silently ignored and the built-in accuracy is used instead.
-    _warn(caplog, ["accuracy"], {"acc": lambda output, expected: 1.0})
+    _warn(caplog, ["accuracy"], {"acc": _scalar})
     text = " ".join(r.getMessage() for r in caplog.records)
     assert "built-in objective 'accuracy'" in text
     assert "may not be scored" in text
@@ -88,5 +92,14 @@ def test_scoring_function_already_supplying_objective_does_not_warn(caplog):
         ["accuracy"],
         {"acc": lambda output, expected: 1.0},
         lambda output, expected: 1.0,
+    )
+    assert not caplog.records
+
+
+def test_unannotated_scorer_may_return_mapping_so_no_warning(caplog):
+    _warn(
+        caplog,
+        ["accuracy"],
+        {"accuracy_bundle": lambda output, expected: {"accuracy": 0.9}},
     )
     assert not caplog.records

@@ -593,6 +593,9 @@ def _positional_fill_stray(
     ]
     if len(positional) < 3 or positional[2].name in _LLM_METRIC_PARAM_NAMES:
         return None
+    # A defaulted parameter is an intentional (optional) usage-dict receiver.
+    if positional[2].default is not inspect.Parameter.empty:
+        return None
     return 3
 
 
