@@ -182,7 +182,19 @@ def _requested_mock_text(kwargs: dict[str, Any]) -> str | None:
     if isinstance(requested, BaseException):
         raise requested
     if isinstance(requested, type) and issubclass(requested, BaseException):
-        raise requested("Mock exception raised by mock_response")
+        message = "Mock exception raised by mock_response"
+        try:
+            error = requested(message)
+        except TypeError:
+            # litellm's own exceptions (RateLimitError, ...) require the
+            # provider and model; build them the way litellm's mock does.
+            factory: Any = requested
+            error = factory(
+                message=message,
+                llm_provider="mock",
+                model=str(kwargs.get("model", "mock-model")),
+            )
+        raise error
     raise TypeError(
         "Traigent mock mode supports litellm mock_response as a str or an "
         f"Exception, not {type(requested).__name__}."

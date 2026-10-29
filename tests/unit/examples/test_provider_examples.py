@@ -359,6 +359,12 @@ def test_demo_cost_exemption_restores_a_blank_environment(monkeypatch, request):
     from traigent.testing import disable_mock_mode
 
     request.addfinalizer(disable_mock_mode)
+    # Importing _demo seeds TRAIGENT_DATASET_ROOT process-wide; record the prior
+    # value so monkeypatch removes it again and later tests in this worker
+    # (dataset-path validation) do not inherit it.
+    for leaky in ("TRAIGENT_DATASET_ROOT", "TRAIGENT_OFFLINE_MODE"):
+        monkeypatch.setenv(leaky, "placeholder")
+        monkeypatch.delenv(leaky)
     from traigent.examples.providers import _demo
 
     for name in (

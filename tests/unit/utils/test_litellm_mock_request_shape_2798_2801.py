@@ -111,3 +111,12 @@ def test_stream_honours_mock_response_and_n_2801() -> None:
 
 def test_stream_false_is_a_plain_response_2801() -> None:
     assert _complete(stream=False).choices[0].message.content == CANNED
+
+
+@pytest.mark.parametrize("call", [_complete, _acomplete])
+def test_mock_response_litellm_exception_class_is_raised_not_a_typeerror_2798(
+    call: object,
+) -> None:
+    """litellm's own exceptions need provider/model args; the class form works."""
+    with pytest.raises(litellm.RateLimitError):
+        call(mock_response=litellm.RateLimitError)  # type: ignore[operator]

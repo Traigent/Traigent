@@ -163,6 +163,11 @@ TRAIGENT_MOCK_LLM=true pytest tests/
 TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py
 ```
 
+If the pre-run cost preflight refuses a simulated run (estimated cost over the
+limit or an unpriced model), add `ENVIRONMENT=development
+TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT=true`; an unset `ENVIRONMENT` counts as
+production, where the exemption does not apply.
+
 **Mock Mode Features:**
 - No API keys required when optimized functions call LiteLLM `completion`/
   `acompletion` or the LangChain `ChatOpenAI`, `ChatAnthropic` or `langchain_aws`

@@ -29,16 +29,19 @@ the HTTP send boundary instead:
   channel to the provider host (#2811). The target is checked at channel
   creation, before any connection.
 
-Direct ``urllib3`` use that bypasses ``requests`` and ``botocore`` is NOT
-covered.
+NOT covered: direct ``urllib3``, ``http.client``, ``urllib.request`` and
+``websockets`` use; ``httpx`` transports called without ``Client.send``; and a
+gRPC ``secure_channel`` / ``insecure_channel`` reference imported with
+``from grpc import ...`` before the guard was installed.
 
 httpx/httpx2 are guarded at ``_send_single_request`` (called once per redirect
 hop by ``_send_handling_redirects``) as well as at ``send``, so a redirect from
 an allowed host to a provider host is blocked before the second hop is sent.
 
 The mock flag is read at call time, so the guard is inert when mock mode is
-off. Errors are closed: only the (fixed-list) host name is named, never the
-path, query, headers, body or credentials.
+off. Errors are closed: only the matched host name is named (for pattern families
+it includes the user's own resource label), never the path, query, headers,
+body or credentials.
 
 The covered hosts are per SDK provider (``PROVIDER_HOSTS``); a test pins that
 every provider in ``traigent.config.provider_support.PROVIDER_SPECS`` has at
