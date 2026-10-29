@@ -66,7 +66,7 @@ from traigent.core.cost_enforcement import (
     run_cost_limit_env_is_set,
     validate_cost_limit,
 )
-from traigent.core.cost_estimator import CostEstimator
+from traigent.core.cost_estimator import OUTPUT_TOKEN_CAP_KEYS, CostEstimator
 from traigent.core.exception_handler import (
     VendorErrorCategory,
     classify_systematic_provider_failure,
@@ -93,6 +93,7 @@ from traigent.core.metrics_aggregator import (
     aggregate_metrics,
     build_safeguards_telemetry,
 )
+from traigent.core.model_config_keys import is_model_config_key
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.orchestrator_helpers import (
     EFFECTIVE_SUBSET_ATTR,
@@ -752,6 +753,9 @@ class OptimizationOrchestrator:
                     getattr(self.optimizer, "config_space", None)
                 )
             ),
+            max_output_tokens_key=self._max_output_tokens_key(
+                getattr(self.optimizer, "config_space", None)
+            ),
         )
 
         self._trial_lifecycle = TrialLifecycle(self)
@@ -801,39 +805,65 @@ class OptimizationOrchestrator:
         if not isinstance(config_space, dict):
             return ()
 
-        for key in ("model", "model_name"):
-            normalized_candidates = (
+        # Every model-bearing key, not just ``model``/``model_name``: the
+        # estimate is an upper bound, so a cascade's ``expert_model`` arm must
+        # be priced too (#2807). The same predicate drives both preflights.
+        candidates: list[str] = []
+        for key, definition in config_space.items():
+            if not is_model_config_key(key):
+                continue
+            candidates.extend(
                 OptimizationOrchestrator._normalize_model_candidates(
-                    OptimizationOrchestrator._extract_raw_model_candidates(
-                        config_space.get(key)
-                    )
+                    OptimizationOrchestrator._extract_raw_model_candidates(definition)
                 )
             )
-            if normalized_candidates:
-                return normalized_candidates
+        return tuple(dict.fromkeys(candidates))
 
-        return ()
+    @staticmethod
+    def _extract_max_output_tokens_with_key(
+        config_space: dict[str, Any] | None,
+    ) -> tuple[int, str] | None:
+        """Largest output-token cap in the config space and the key it came from.
+
+        Every spelling of the cap counts (``max_tokens`` plus the provider
+        aliases), and the maximum over all of them is used so the pre-run
+        estimate is never below a cap the run may actually apply (#2815).
+        """
+        if not isinstance(config_space, dict):
+            return None
+        best: tuple[int, str] | None = None
+        for key in OUTPUT_TOKEN_CAP_KEYS:
+            definition = config_space.get(key)
+            if isinstance(definition, dict):
+                definition = definition.get("values", definition.get("high"))
+            raw = (
+                definition
+                if isinstance(definition, Sequence)
+                and not isinstance(definition, (str, bytes, bytearray))
+                else (definition,)
+            )
+            for v in raw:
+                if isinstance(v, int) and not isinstance(v, bool) and v > 0:
+                    if best is None or v > best[0]:
+                        best = (v, key)
+        return best
+
+    @staticmethod
+    def _max_output_tokens_key(config_space: dict[str, Any] | None) -> str | None:
+        found = OptimizationOrchestrator._extract_max_output_tokens_with_key(
+            config_space
+        )
+        return found[1] if found else None
 
     @staticmethod
     def _extract_max_output_tokens_from_config_space(
         config_space: dict[str, Any] | None,
     ) -> int | None:
-        """Largest ``max_tokens`` value in the config space, used as output cap."""
-        if not isinstance(config_space, dict):
-            return None
-        definition = config_space.get("max_tokens")
-        if isinstance(definition, dict):
-            definition = definition.get("values", definition.get("high"))
-        raw = (
-            definition
-            if isinstance(definition, Sequence)
-            and not isinstance(definition, (str, bytes, bytearray))
-            else (definition,)
+        """Largest output-token cap value in the config space, or None."""
+        found = OptimizationOrchestrator._extract_max_output_tokens_with_key(
+            config_space
         )
-        values = [
-            v for v in raw if isinstance(v, int) and not isinstance(v, bool) and v > 0
-        ]
-        return max(values) if values else None
+        return found[0] if found else None
 
     @staticmethod
     def _extract_estimated_tokens_per_example(
@@ -4105,6 +4135,7 @@ class OptimizationOrchestrator:
                 configured_max_output_tokens=(
                     self._extract_max_output_tokens_from_config_space(space)
                 ),
+                max_output_tokens_key=self._max_output_tokens_key(space),
             )
             estimates.append((estimator.estimate_optimization_cost(dataset), estimator))
         if not estimates:
