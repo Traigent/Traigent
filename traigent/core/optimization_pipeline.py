@@ -561,47 +561,49 @@ def validate_metric_function_keys(
 def _positional_fill_stray(
     metric_func: Callable[..., Any],
     binding: Any,
+    usage_probe: dict[str, Any],
     recognized_set: set[str],
 ) -> int | None:
-    """1-based position of a parameter that only binds by positional accident.
+    """1-based position of a required, non-alias parameter fed the usage dict.
 
-    Mirrors ``resolve_metric_call_binding``: in ``positional_3`` mode the third
-    positional parameter receives the per-example LLM usage dict. That is
-    intended only when it is a known llm-metrics alias. For
-    ``def accuracy(output, expected, threshold)`` it is unrelated data and the
-    scorer silently returns garbage. A signature with no recognized names at all
-    (``def m(a, b, c)``) is an intentional positional scorer and is left alone.
-    Returns None when nothing is wrong. Parameter names are never returned.
+    Derived from the real runtime binder: ``binding`` came from
+    ``resolve_metric_call_binding`` called with ``usage_probe`` as the LLM usage
+    payload, so applying its exact args/kwargs to the signature shows which
+    parameter would receive the usage dict (by identity), with no re-derivation
+    of the binder's mode selection. A parameter is a stray only when it is
+    REQUIRED (no default), receives the usage dict, and is not a known
+    llm-metrics alias -- and only when another REQUIRED parameter has a
+    recognized name (the user is clearly naming parameters, so a stray name is
+    a mistake). Fully positional scorers (``def m(a, b, c)``) and optional
+    recognized names (``*, config=None``) are intentional and left alone.
+    Parameter names are never returned.
     """
     import inspect
 
     from traigent.evaluators.local import _LLM_METRIC_PARAM_NAMES
 
-    if binding.binding_mode != "positional_3":
+    signature = inspect.signature(metric_func)
+    try:
+        bound = signature.bind(*binding.args, **binding.kwargs)
+    except TypeError:
         return None
-    params = list(inspect.signature(metric_func).parameters.values())
-    # *args/**kwargs collector names never affect binding; ignore them.
-    collectors = (
-        inspect.Parameter.VAR_POSITIONAL,
-        inspect.Parameter.VAR_KEYWORD,
-    )
-    if not any(p.name in recognized_set for p in params if p.kind not in collectors):
-        return None
-    positional = [
-        p
-        for p in params
-        if p.kind
-        in (
-            inspect.Parameter.POSITIONAL_ONLY,
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-        )
+    required = [
+        (position, p)
+        for position, p in enumerate(signature.parameters.values(), start=1)
+        if p.default is inspect.Parameter.empty
+        and p.kind
+        not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
     ]
-    if len(positional) < 3 or positional[2].name in _LLM_METRIC_PARAM_NAMES:
-        return None
-    # A defaulted parameter is an intentional (optional) usage-dict receiver.
-    if positional[2].default is not inspect.Parameter.empty:
-        return None
-    return 3
+    for position, param in required:
+        if bound.arguments.get(param.name) is not usage_probe:
+            continue
+        if param.name in _LLM_METRIC_PARAM_NAMES:
+            continue
+        if any(
+            other.name in recognized_set for _, other in required if other is not param
+        ):
+            return position
+    return None
 
 
 def validate_metric_function_bindability(
@@ -646,6 +648,7 @@ def validate_metric_function_bindability(
     from traigent.utils.exceptions import ValidationError
 
     synthetic_example = EvaluationExample(input_data={}, expected_output=None)
+    usage_probe: dict[str, Any] = {}
     recognized_names = sorted(
         _OUTPUT_METRIC_PARAM_NAMES
         | _EXPECTED_METRIC_PARAM_NAMES
@@ -673,7 +676,7 @@ def validate_metric_function_bindability(
 
         try:
             binding = resolve_metric_call_binding(
-                metric_func, None, synthetic_example, {}, {}, 0
+                metric_func, None, synthetic_example, {}, usage_probe, 0
             )
         except (TypeError, ValueError) as exc:
             message = (
@@ -690,7 +693,9 @@ def validate_metric_function_bindability(
             continue
 
         if binding.bind_ok:
-            stray = _positional_fill_stray(metric_func, binding, recognized_set)
+            stray = _positional_fill_stray(
+                metric_func, binding, usage_probe, recognized_set
+            )
             if stray is None:
                 continue
             kind = "an objective metric" if is_objective else "an auxiliary metric"

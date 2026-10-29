@@ -303,3 +303,94 @@ def test_collector_named_like_recognized_param_does_not_count() -> None:
     validate_metric_function_bindability(
         {"accuracy": kw_collector, "other": star_collector}, ["accuracy", "other"]
     )
+
+
+def _s_stray(output, expected, threshold):  # noqa: ANN001
+    return 1.0
+
+
+def _s_alias3(output, gold, llm_metrics):  # noqa: ANN001
+    return 1.0
+
+
+def _s_alias3_kw(output, gold, llm_metrics, **kw):  # noqa: ANN001
+    return 1.0
+
+
+def _s_posonly_default(output, expected, usage=None, /):  # noqa: ANN001
+    return 1.0
+
+
+def _s_posonly_required(output, expected, usage, /):  # noqa: ANN001
+    return 1.0
+
+
+def _s_all_positional(a, b, c):  # noqa: ANN001
+    return 1.0
+
+
+def _s_collector_kw(a, b, c, **metadata):  # noqa: ANN001
+    return 1.0
+
+
+def _s_collector_star(a, b, c, *config):  # noqa: ANN001
+    return 1.0
+
+
+def _s_kwonly_optional(a, b, c, *, config=None):  # noqa: ANN001
+    return 1.0
+
+
+def _s_kwargs_only(**kwargs):  # noqa: ANN003
+    return 1.0
+
+
+def _s_recognized_names(output, expected):  # noqa: ANN001
+    return 1.0
+
+
+def _s_recognized_with_metrics(output, expected, metrics):  # noqa: ANN001
+    return 1.0
+
+
+def _s_stray_with_kwargs(output, expected, threshold, **kw):  # noqa: ANN001
+    return 1.0
+
+
+def _s_stray_default(output, expected, threshold=0.5):  # noqa: ANN001
+    return 1.0
+
+
+def _s_stray_with_optional_recognized(output, expected, threshold, *, config=None):  # noqa: ANN001
+    return 1.0
+
+
+@pytest.mark.parametrize(
+    ("scorer", "rejected"),
+    [
+        (_s_stray, True),
+        (_s_stray_with_kwargs, True),
+        (_s_posonly_required, True),
+        (_s_stray_with_optional_recognized, True),
+        (_s_alias3, False),
+        (_s_alias3_kw, False),
+        (_s_posonly_default, False),
+        (_s_all_positional, False),
+        (_s_collector_kw, False),
+        (_s_collector_star, False),
+        (_s_kwonly_optional, False),
+        (_s_kwargs_only, False),
+        (_s_recognized_names, False),
+        (_s_recognized_with_metrics, False),
+        (_s_stray_default, False),
+    ],
+)
+def test_prevalidation_rejects_iff_usage_dict_feeds_required_stray(
+    scorer, rejected
+) -> None:
+    """Rejection tracks the real runtime binder, not a re-derived heuristic."""
+    if rejected:
+        with pytest.raises(ValidationError, match="positional parameter"):
+            validate_metric_function_bindability({"accuracy": scorer}, ["accuracy"])
+    else:
+        validate_metric_function_bindability({"accuracy": scorer}, ["accuracy"])
