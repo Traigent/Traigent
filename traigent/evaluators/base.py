@@ -1652,6 +1652,11 @@ class BaseEvaluator(ABC):
         # timed-out/cancelled call still occupies one evaluator worker until
         # its underlying thread future settles.
         self._sync_worker_slots = threading.BoundedSemaphore(max_workers)
+        # Non-Exception BaseExceptions (KeyboardInterrupt/SystemExit) raised by
+        # a worker cleanup callback.  They are recorded on the executor thread
+        # (re-raising there would kill the worker) and re-raised in the
+        # awaiting caller.  ``list.append``/``pop`` are atomic.
+        self._worker_cleanup_interrupts: list[BaseException] = []
 
         # Initialize metric registry with defaults
         self._metric_registry: dict[str, Any] = {
@@ -2859,10 +2864,20 @@ class BaseEvaluator(ABC):
         if worker_done_callback is not None:
             try:
                 worker_done_callback()
-            except BaseException:
+            except Exception:
                 # Cleanup runs from the executor callback thread and
                 # must never turn into an unobserved callback failure.
                 logger.exception("Sync worker cleanup callback failed")
+            except (KeyboardInterrupt, SystemExit) as interrupt:
+                # Raising here would escape ``Future.set_result`` and kill the
+                # executor worker thread.  Record it; the awaiting caller
+                # re-raises it (``_raise_pending_worker_interrupt``).
+                self._worker_cleanup_interrupts.append(interrupt)
+
+    def _raise_pending_worker_interrupt(self) -> None:
+        """Re-raise an interrupt recorded by a worker cleanup callback."""
+        if self._worker_cleanup_interrupts:
+            raise self._worker_cleanup_interrupts.pop(0)
 
     @staticmethod
     def _consume_late_future_result(done_future: asyncio.Future[Any]) -> None:
@@ -2928,6 +2943,7 @@ class BaseEvaluator(ABC):
         Returns:
             Tuple of (output, error_message)
         """
+        self._raise_pending_worker_interrupt()
         caller_context = copy_context()
 
         def call_with_config() -> Any:
@@ -2988,6 +3004,7 @@ class BaseEvaluator(ABC):
             output, timeout_error = await self._await_sync_worker_output(
                 future, async_future, apply_timeout
             )
+            self._raise_pending_worker_interrupt()
             if timeout_error is not None:
                 return None, timeout_error
 
