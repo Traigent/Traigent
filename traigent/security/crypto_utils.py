@@ -502,6 +502,32 @@ _credential_storage_instance: (
 _credential_storage_lock = threading.Lock()
 
 
+def _build_credential_storage() -> SecureCredentialStorage | FallbackCredentialStorage:
+    """Select the storage backend; production never falls back to base64."""
+    non_prod = _is_non_production_environment()
+    if not CRYPTOGRAPHY_AVAILABLE:
+        if not non_prod:
+            raise RuntimeError(
+                "cryptography library is required in production for "
+                "credential storage. The base64 fallback is dev-only "
+                "(regression). Install with: pip install cryptography, or "
+                "set TRAIGENT_ENV=development to opt into the local "
+                "fallback for development."
+            )
+        return FallbackCredentialStorage()
+    try:
+        return SecureCredentialStorage()
+    except RuntimeError:
+        # SecureCredentialStorage already raised the production-
+        # safety RuntimeError (e.g. TRAIGENT_ENCRYPTION_KEY
+        # missing). DO NOT swallow it in production — that was
+        # the regression fail-open. Only fall back when the caller
+        # has explicitly opted into a non-production environment.
+        if not non_prod:
+            raise
+        return FallbackCredentialStorage()
+
+
 def get_credential_storage() -> SecureCredentialStorage | FallbackCredentialStorage:
     """Get appropriate credential storage implementation (thread-safe).
 
@@ -530,29 +556,7 @@ def get_credential_storage() -> SecureCredentialStorage | FallbackCredentialStor
         with _credential_storage_lock:
             # Double-checked locking pattern
             if _credential_storage_instance is None:
-                non_prod = _is_non_production_environment()
-                if not CRYPTOGRAPHY_AVAILABLE:
-                    if not non_prod:
-                        raise RuntimeError(
-                            "cryptography library is required in production for "
-                            "credential storage. The base64 fallback is dev-only "
-                            "(regression). Install with: pip install cryptography, or "
-                            "set TRAIGENT_ENV=development to opt into the local "
-                            "fallback for development."
-                        )
-                    _credential_storage_instance = FallbackCredentialStorage()
-                else:
-                    try:
-                        _credential_storage_instance = SecureCredentialStorage()
-                    except RuntimeError:
-                        # SecureCredentialStorage already raised the production-
-                        # safety RuntimeError (e.g. TRAIGENT_ENCRYPTION_KEY
-                        # missing). DO NOT swallow it in production — that was
-                        # the regression fail-open. Only fall back when the caller
-                        # has explicitly opted into a non-production environment.
-                        if not non_prod:
-                            raise
-                        _credential_storage_instance = FallbackCredentialStorage()
+                _credential_storage_instance = _build_credential_storage()
 
     if _credential_storage_instance is None:
         raise RuntimeError(

@@ -663,154 +663,192 @@ class _Observe:
         return self.__exit__(exc_type, exc, tb)
 
     # -- decorator ----------------------------------------------------------
-    def __call__(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        name: str = self._name or str(getattr(func, "__name__", "observe"))
+    @staticmethod
+    def _step_scope(state: _CallerAttributes, span: Span) -> contextlib.ExitStack:
+        """Context for ONE resume of a stream: entered and left within it."""
+        stack = contextlib.ExitStack()
+        stack.enter_context(activate(state))
+        stack.enter_context(
+            use_span(
+                span,
+                end_on_exit=False,
+                record_exception=False,
+                set_status_on_exception=False,
+            )
+        )
+        return stack
+
+    @staticmethod
+    def _open_stream(
+        run: _Observe, name: str, args: tuple, kwargs: dict
+    ) -> tuple[contextvars.Context, str, Span]:
+        """Start the stream's span and its PRIVATE execution context.
+
+        Every resume, throw and close of the wrapped generator runs inside
+        this one context (``Context.run``), so scopes the generator opens
+        itself survive its yields, its cleanup sees the stream's mode,
+        identity and parent rather than the closing caller's, and nothing
+        leaks into the consumer between resumes.
+        """
+        ctx = contextvars.copy_context()
+
+        def begin() -> tuple[str, Span]:
+            state, mode = run._prepare()
+            span = run._start(name, args, kwargs, state, mode)
+            set_current(state)
+            otel_context.attach(trace.set_span_in_context(span))
+            return mode, span
+
+        mode, span = ctx.run(begin)
+        return ctx, mode, span
+
+    @staticmethod
+    async def _resume_agen(
+        ctx: contextvars.Context,
+        agen: Any,
+        value: Any,
+        error: BaseException | None,
+        run: _Observe,
+        span: Span,
+        mode: str,
+    ) -> tuple[bool, Any]:
+        try:
+            if error is not None:
+                return False, await _InContext(ctx, agen.athrow(error))
+            return False, await _InContext(ctx, agen.asend(value))
+        except StopAsyncIteration:
+            run._finish(span, mode)
+            return True, None
+
+    @staticmethod
+    def _resume_gen(
+        ctx: contextvars.Context,
+        gen: Any,
+        value: Any,
+        error: BaseException | None,
+        run: _Observe,
+        span: Span,
+        mode: str,
+    ) -> tuple[bool, Any]:
+        try:
+            if error is not None:
+                return False, ctx.run(gen.throw, error)
+            return False, ctx.run(gen.send, value)
+        except StopIteration as stop:
+            run._finish(span, mode, result=stop.value, has_result=True)
+            return True, stop.value
+
+    @staticmethod
+    def _finish_stream(
+        run: _Observe, span: Span | None, mode: str, error: BaseException | None = None
+    ) -> None:
+        if span is not None:
+            if error is None:
+                run._finish(span, mode)
+            else:
+                run._finish(span, mode, error=error)
+
+    def _wrap_agen(self, func: Callable[..., Any], name: str) -> Callable[..., Any]:
         run = self
 
-        def step_scope(state: _CallerAttributes, span: Span) -> contextlib.ExitStack:
-            """Context for ONE resume of a stream: entered and left within it."""
-            stack = contextlib.ExitStack()
-            stack.enter_context(activate(state))
-            stack.enter_context(
-                use_span(
-                    span,
-                    end_on_exit=False,
-                    record_exception=False,
-                    set_status_on_exception=False,
-                )
-            )
-            return stack
-
-        def open_stream(
-            args: tuple, kwargs: dict
-        ) -> tuple[contextvars.Context, str, Span]:
-            """Start the stream's span and its PRIVATE execution context.
-
-            Every resume, throw and close of the wrapped generator runs inside
-            this one context (``Context.run``), so scopes the generator opens
-            itself survive its yields, its cleanup sees the stream's mode,
-            identity and parent rather than the closing caller's, and nothing
-            leaks into the consumer between resumes.
-            """
-            ctx = contextvars.copy_context()
-
-            def begin() -> tuple[str, Span]:
-                state, mode = run._prepare()
-                span = run._start(name, args, kwargs, state, mode)
-                set_current(state)
-                otel_context.attach(trace.set_span_in_context(span))
-                return mode, span
-
-            mode, span = ctx.run(begin)
-            return ctx, mode, span
-
-        if inspect.isasyncgenfunction(func):
-
-            @functools.wraps(func)
-            async def agen_wrapper(*args: Any, **kwargs: Any):
-                ctx, mode, started = open_stream(args, kwargs)
-                span: Span | None = started
-                agen = func(*args, **kwargs)
-                to_send: Any = None
-                to_throw: BaseException | None = None
-                try:
-                    while True:
-                        try:
-                            if to_throw is not None:
-                                exc, to_throw = to_throw, None
-                                item = await _InContext(ctx, agen.athrow(exc))
-                            else:
-                                item = await _InContext(ctx, agen.asend(to_send))
-                        except StopAsyncIteration:
-                            run._finish(started, mode)
-                            span = None
-                            return
-                        try:
-                            to_send = yield item
-                        except GeneratorExit:
-                            await _InContext(ctx, agen.aclose())
-                            raise
-                        except BaseException as exc:  # thrown into the wrapper
-                            to_throw, to_send = exc, None
-                except GeneratorExit:
-                    raise
-                except BaseException as exc:
-                    if span is not None:
-                        run._finish(span, mode, error=exc)
+        @functools.wraps(func)
+        async def agen_wrapper(*args: Any, **kwargs: Any):
+            ctx, mode, started = _Observe._open_stream(run, name, args, kwargs)
+            span: Span | None = started
+            agen = func(*args, **kwargs)
+            to_send: Any = None
+            to_throw: BaseException | None = None
+            try:
+                while True:
+                    exc, to_throw = to_throw, None
+                    done, item = await _Observe._resume_agen(
+                        ctx, agen, to_send, exc, run, started, mode
+                    )
+                    if done:
                         span = None
-                    raise
-                finally:
-                    if span is not None:  # abandoned / closed early
-                        run._finish(span, mode)
+                        return
+                    try:
+                        to_send = yield item
+                    except GeneratorExit:
+                        await _InContext(ctx, agen.aclose())
+                        raise
+                    except BaseException as exc:  # thrown into the wrapper
+                        to_throw, to_send = exc, None
+            except GeneratorExit:
+                raise
+            except BaseException as exc:
+                _Observe._finish_stream(run, span, mode, exc)
+                span = None
+                raise
+            finally:
+                _Observe._finish_stream(run, span, mode)
 
-            return agen_wrapper
+        return agen_wrapper
 
-        if inspect.isgeneratorfunction(func):
+    def _wrap_gen(self, func: Callable[..., Any], name: str) -> Callable[..., Any]:
+        run = self
 
-            @functools.wraps(func)
-            def gen_wrapper(*args: Any, **kwargs: Any):
-                ctx, mode, started = open_stream(args, kwargs)
-                span: Span | None = started
-                gen = func(*args, **kwargs)
-                to_send: Any = None
-                to_throw: BaseException | None = None
-                try:
-                    while True:
-                        try:
-                            if to_throw is not None:
-                                exc, to_throw = to_throw, None
-                                item = ctx.run(gen.throw, exc)
-                            else:
-                                item = ctx.run(gen.send, to_send)
-                        except StopIteration as stop:
-                            run._finish(
-                                started, mode, result=stop.value, has_result=True
-                            )
-                            span = None
-                            return stop.value
-                        try:
-                            to_send = yield item
-                        except GeneratorExit:
-                            ctx.run(gen.close)
-                            raise
-                        except BaseException as exc:
-                            to_throw, to_send = exc, None
-                except GeneratorExit:
-                    raise
-                except BaseException as exc:
-                    if span is not None:
-                        run._finish(span, mode, error=exc)
+        @functools.wraps(func)
+        def gen_wrapper(*args: Any, **kwargs: Any):
+            ctx, mode, started = _Observe._open_stream(run, name, args, kwargs)
+            span: Span | None = started
+            gen = func(*args, **kwargs)
+            to_send: Any = None
+            to_throw: BaseException | None = None
+            try:
+                while True:
+                    exc, to_throw = to_throw, None
+                    done, item = _Observe._resume_gen(
+                        ctx, gen, to_send, exc, run, started, mode
+                    )
+                    if done:
                         span = None
-                    raise
-                finally:
-                    if span is not None:
-                        run._finish(span, mode)
+                        return item
+                    try:
+                        to_send = yield item
+                    except GeneratorExit:
+                        ctx.run(gen.close)
+                        raise
+                    except BaseException as exc:
+                        to_throw, to_send = exc, None
+            except GeneratorExit:
+                raise
+            except BaseException as exc:
+                _Observe._finish_stream(run, span, mode, exc)
+                span = None
+                raise
+            finally:
+                _Observe._finish_stream(run, span, mode)
 
-            return gen_wrapper
+        return gen_wrapper
 
-        if inspect.iscoroutinefunction(func):
+    def _wrap_async(self, func: Callable[..., Any], name: str) -> Callable[..., Any]:
+        run = self
 
-            @functools.wraps(func)
-            async def async_wrapper(*args: Any, **kwargs: Any):
-                state, mode = run._prepare()
-                span = run._start(name, args, kwargs, state, mode)
-                try:
-                    with step_scope(state, span):
-                        result = await func(*args, **kwargs)
-                except BaseException as exc:
-                    run._finish(span, mode, error=exc)
-                    raise
-                run._finish(span, mode, result=result, has_result=True)
-                return result
+        @functools.wraps(func)
+        async def async_wrapper(*args: Any, **kwargs: Any):
+            state, mode = run._prepare()
+            span = run._start(name, args, kwargs, state, mode)
+            try:
+                with _Observe._step_scope(state, span):
+                    result = await func(*args, **kwargs)
+            except BaseException as exc:
+                run._finish(span, mode, error=exc)
+                raise
+            run._finish(span, mode, result=result, has_result=True)
+            return result
 
-            return async_wrapper
+        return async_wrapper
+
+    def _wrap_sync(self, func: Callable[..., Any], name: str) -> Callable[..., Any]:
+        run = self
 
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any):
             state, mode = run._prepare()
             span = run._start(name, args, kwargs, state, mode)
             try:
-                with step_scope(state, span):
+                with _Observe._step_scope(state, span):
                     result = func(*args, **kwargs)
             except BaseException as exc:
                 run._finish(span, mode, error=exc)
@@ -819,6 +857,16 @@ class _Observe:
             return result
 
         return wrapper
+
+    def __call__(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        name: str = self._name or str(getattr(func, "__name__", "observe"))
+        if inspect.isasyncgenfunction(func):
+            return _Observe._wrap_agen(self, func, name)
+        if inspect.isgeneratorfunction(func):
+            return _Observe._wrap_gen(self, func, name)
+        if inspect.iscoroutinefunction(func):
+            return _Observe._wrap_async(self, func, name)
+        return _Observe._wrap_sync(self, func, name)
 
 
 def observe(name: Any = None, **options: Any) -> Any:
