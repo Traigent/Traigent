@@ -268,16 +268,7 @@ def patch_litellm_for_metadata_capture(
     patched_any = False
     out: dict[str, str] = outcomes if outcomes is not None else {}
 
-    # Env-var mock mode (TRAIGENT_MOCK_LLM) never goes through
-    # enable_mock_mode_for_quickstart(); install the provider-host transport
-    # guard here so raw openai/anthropic clients are blocked too (#2418).
-    # Failure is not swallowed: mock mode must fail closed.
-    from traigent.integrations.utils.mock_adapter import MockAdapter
-
-    if MockAdapter.is_mock_enabled("litellm"):
-        from traigent.utils.mock_transport_guard import install_mock_transport_guard
-
-        install_mock_transport_guard()
+    _install_litellm_mock_transport_guard()
 
     try:
         import litellm
@@ -307,6 +298,48 @@ def patch_litellm_for_metadata_capture(
             raise
         logger.warning("LiteLLM mock guard could not be installed")
 
+    patched_sync = _patch_litellm_sync(litellm)
+    patched_async = _patch_litellm_async(litellm)
+    patched_any = patched_sync or patched_async
+
+    _rebind_litellm_interceptors(litellm)
+
+    # This invocation's final outcome, assigned explicitly so a successful
+    # retry with a reused dict does not keep a stale "failed".
+    if guard_failed:
+        out["litellm"] = "failed"
+    else:
+        out["litellm"] = "installed" if patched_any else "already-installed"
+    if not patched_any:
+        logger.debug("LiteLLM functions already patched, skipping")
+
+    return patched_any
+
+
+def _install_litellm_mock_transport_guard() -> None:
+    # Env-var mock mode (TRAIGENT_MOCK_LLM) never goes through
+    # enable_mock_mode_for_quickstart(); install the provider-host transport
+    # guard here so raw openai/anthropic clients are blocked too (#2418).
+    # Failure is not swallowed: mock mode must fail closed.
+    from traigent.integrations.utils.mock_adapter import MockAdapter
+
+    if MockAdapter.is_mock_enabled("litellm"):
+        from traigent.utils.mock_transport_guard import install_mock_transport_guard
+
+        install_mock_transport_guard()
+
+
+def _rebind_litellm_interceptors(litellm: Any) -> None:
+    # Names bound by ``from litellm import completion`` before (or between)
+    # patch calls keep the original function; rebind them on every call.
+    for attr in ("completion", "acompletion"):
+        wrapper = getattr(litellm, attr, None)
+        original = getattr(wrapper, "_traigent_original", None)
+        if original is not None and _rebind_imported_names(original, wrapper):
+            logger.debug("Rebound imported litellm.%s names to the interceptor", attr)
+
+
+def _patch_litellm_sync(litellm: Any) -> bool:
     # Patch litellm.completion (sync)
     if not getattr(litellm, "_traigent_patched_completion", False):
         original_completion = getattr(litellm, "completion", None)
@@ -328,8 +361,12 @@ def patch_litellm_for_metadata_capture(
             litellm.completion = completion_with_capture
             litellm._traigent_patched_completion = True
             logger.info("Patched litellm.completion for metadata capture")
-            patched_any = True
+            return True
 
+    return False
+
+
+def _patch_litellm_async(litellm: Any) -> bool:
     # Patch litellm.acompletion (async)
     if not getattr(litellm, "_traigent_patched_acompletion", False):
         original_acompletion = getattr(litellm, "acompletion", None)
@@ -352,23 +389,6 @@ def patch_litellm_for_metadata_capture(
             litellm.acompletion = acompletion_with_capture
             litellm._traigent_patched_acompletion = True
             logger.info("Patched litellm.acompletion for metadata capture")
-            patched_any = True
+            return True
 
-    # Names bound by ``from litellm import completion`` before (or between)
-    # patch calls keep the original function; rebind them on every call.
-    for attr in ("completion", "acompletion"):
-        wrapper = getattr(litellm, attr, None)
-        original = getattr(wrapper, "_traigent_original", None)
-        if original is not None and _rebind_imported_names(original, wrapper):
-            logger.debug("Rebound imported litellm.%s names to the interceptor", attr)
-
-    # This invocation's final outcome, assigned explicitly so a successful
-    # retry with a reused dict does not keep a stale "failed".
-    if guard_failed:
-        out["litellm"] = "failed"
-    else:
-        out["litellm"] = "installed" if patched_any else "already-installed"
-    if not patched_any:
-        logger.debug("LiteLLM functions already patched, skipping")
-
-    return patched_any
+    return False
