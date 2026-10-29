@@ -541,6 +541,17 @@ def mcp_serve() -> None:
         raise click.ClickException(str(exc)) from exc
 
 
+#: Features the local SDK always reports False because they run in the cloud.
+_CLOUD_ONLY_FEATURES = frozenset({"tpe_optimization", "bayesian_optimization"})
+
+
+def _has_traigent_credentials() -> bool:
+    """True when the SDK would resolve a Traigent API key (env, login, dev key)."""
+    from traigent.cloud.credential_manager import CredentialManager
+
+    return CredentialManager.get_api_key_with_source()[0] is not None
+
+
 @cli.command()
 def info() -> None:
     """Show Traigent SDK version and system information."""
@@ -558,7 +569,12 @@ def info() -> None:
     features_table.add_column("Status")
 
     for feature, enabled in version_info["features"].items():
-        status = "[green]✓ Enabled[/green]" if enabled else "[red]✗ Disabled[/red]"
+        if feature in _CLOUD_ONLY_FEATURES and not enabled:
+            # Same message as `traigent algorithms`: these run in the Traigent
+            # cloud, so "Disabled" contradicts that table (#2835).
+            status = "[yellow]☁ Cloud only (requires login)[/yellow]"
+        else:
+            status = "[green]✓ Enabled[/green]" if enabled else "[red]✗ Disabled[/red]"
         features_table.add_row(feature.replace("_", " ").title(), status)
 
     console.print(features_table)
@@ -571,7 +587,9 @@ def info() -> None:
 
     for framework, enabled in version_info["integrations"].items():
         status = (
-            "[green]✓ Available[/green]" if enabled else "[yellow]○ Planned[/yellow]"
+            "[green]✓ Available[/green]"
+            if enabled
+            else "[yellow]○ Not installed (pip install traigent\\[integrations])[/yellow]"
         )
         integrations_table.add_row(framework.title(), status)
 
@@ -597,9 +615,15 @@ def algorithms() -> None:
         elif name in {"grid", "random"}:
             availability = "[green]local[/green]"
             notes = "Runs in-process; can sync results when authenticated."
-        else:
+        elif _has_traigent_credentials():
             availability = "[yellow]connected[/yellow]"
             notes = "Accepted public smart name; routed through Traigent cloud."
+        else:
+            availability = "[yellow]requires login[/yellow]"
+            notes = (
+                "Accepted public smart name; routed through Traigent cloud. "
+                "Run `traigent auth login` first."
+            )
 
         table.add_row(name, availability, notes)
 

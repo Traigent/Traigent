@@ -2640,3 +2640,72 @@ class TestStrictModeMissingEndpointFailsClosed:
                 await self.ops.update_config_run_measures(
                     "config_123", {"accuracy": 0.9}
                 )
+
+
+class TestLegacyRetryEligibility:
+    """#2818: the typed-to-legacy retry is only for failures about the typed shape."""
+
+    @staticmethod
+    def _run(monkeypatch, status, body):
+        from traigent.cloud.client import CloudServiceError
+        from traigent.cloud.session_types import SessionCreationFailureDetail
+
+        monkeypatch.setenv("TRAIGENT_SESSION_CONTRACT", "auto")
+        client = Mock()
+        client.auth_manager.augment_headers = AsyncMock(return_value={})
+        ops = ApiOperations(client)
+        request = SessionCreationRequest(
+            function_name="test_func",
+            configuration_space={"param": [1, 2, 3]},
+            objectives=["maximize"],
+            max_trials=10,
+        )
+        exc = CloudServiceError(f"Session creation failed: HTTP {status}")
+        exc.session_creation_failure = SessionCreationFailureDetail.from_http_response(
+            status, body
+        )
+        post = AsyncMock(side_effect=[exc, ("sid", "exp", "run")])
+        return ops, request, exc, post
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("status", "body"),
+        [
+            (413, '{"error_code": "PAYLOAD_TOO_LARGE"}'),
+            (429, '{"error_code": "rate_limited"}'),
+            (500, '{"error_code": "internal_error"}'),
+            (503, '{"error_code": "service_unavailable"}'),
+        ],
+    )
+    async def test_non_shape_failures_post_exactly_once(
+        self, monkeypatch, status, body
+    ):
+        from traigent.cloud.client import CloudServiceError
+
+        ops, request, exc, post = self._run(monkeypatch, status, body)
+        with (
+            patch("traigent.cloud.api_operations.is_backend_offline", return_value=False),
+            patch("traigent.cloud.api_operations.AIOHTTP_AVAILABLE", True),
+            patch.object(ops, "_post_session_creation", new=post),
+            patch.object(ops, "_is_governed_request", return_value=False),
+        ):
+            with pytest.raises(CloudServiceError):
+                await ops.create_traigent_session_via_api(request)
+        assert post.await_count == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [400, 404, 405, 415, 422, 426])
+    async def test_typed_shape_failures_still_retry_once(self, monkeypatch, status):
+        ops, request, exc, post = self._run(
+            monkeypatch, status, '{"error_code": "validation_error"}'
+        )
+        with (
+            patch("traigent.cloud.api_operations.is_backend_offline", return_value=False),
+            patch("traigent.cloud.api_operations.AIOHTTP_AVAILABLE", True),
+            patch.object(ops, "_post_session_creation", new=post),
+            patch.object(ops, "_is_governed_request", return_value=False),
+            patch.object(ops, "_build_legacy_session_payload", return_value={}),
+        ):
+            result = await ops.create_traigent_session_via_api(request)
+        assert post.await_count == 2
+        assert result == ("sid", "exp", "run")

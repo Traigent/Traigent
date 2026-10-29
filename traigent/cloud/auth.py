@@ -1941,52 +1941,53 @@ class AuthManager:
     def _backend_validation_category(
         status: int, body_text: str, lower_headers: dict[str, str]
     ) -> str:
-        edge_blocked = status == 403 and (
+        """Categorise a failed ``/keys/validate`` reply, HTTP status first.
+
+        The status class decides; body text only refines inside 401/403.
+        Letting body words win meant a 503 whose text said "unable to verify
+        authentication" read as an invalid key, so users rotated a good key
+        during an outage instead of retrying (#2845).
+        """
+        if status == 429:
+            return "rate limited"
+        if status == 408 or status >= 500:
+            return "backend temporarily unavailable"
+        if status not in (401, 403):
+            return "backend validation failed"
+
+        if status == 403 and AuthManager._validation_edge_blocked(
+            body_text, lower_headers
+        ):
+            return "edge blocked"
+        if "expired" in body_text or "expiration" in body_text:
+            return "expired API key"
+        if status == 403:
+            return "insufficient scope"
+        return "invalid API key"
+
+    @staticmethod
+    def _validation_edge_blocked(body_text: str, lower_headers: dict[str, str]) -> bool:
+        if (
             "cf-ray" in lower_headers
             or "cf-mitigated" in lower_headers
+            or "x-amzn-waf-action" in lower_headers
             or lower_headers.get("server") == "cloudflare"
-            or any(
-                marker in body_text
-                for marker in (
-                    "cloudflare",
-                    "error code: 1010",
-                    "browser_signature_banned",
-                    "cf-ray",
-                    "cf-mitigated",
-                    "waf",
-                )
-            )
-        )
-
-        if edge_blocked:
-            return "edge blocked"
-        elif "expired" in body_text or "expiration" in body_text:
-            return "expired API key"
-        elif status == 403 or any(
+        ):
+            return True
+        if any(
             marker in body_text
             for marker in (
-                "insufficient",
-                "permission",
-                "forbidden",
-                "scope",
+                "cloudflare",
+                "error code: 1010",
+                "browser_signature_banned",
+                "cf-ray",
+                "cf-mitigated",
             )
         ):
-            return "insufficient scope"
-        elif status == 401 or any(
-            marker in body_text
-            for marker in (
-                "invalid",
-                "revoked",
-                "unauthorized",
-                "rejected",
-                "authentication",
-            )
-        ):
-            return "invalid API key"
-        elif status == 429:
-            return "rate limited"
-        else:
-            return "backend validation failed"
+            return True
+        # "waf" is three letters: as a bare substring it matched request ids
+        # such as "zx9wafq1kp" and turned a scope problem into "edge blocked".
+        return re.search(r"\bwaf\b", body_text) is not None
 
     def _validate_api_key_with_backend_sync(
         self,

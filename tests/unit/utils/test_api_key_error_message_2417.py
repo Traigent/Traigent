@@ -62,7 +62,10 @@ def test_error_never_echoes_exception_text(monkeypatch):
 def test_original_exception_stays_chained_at_call_site():
     from traigent.evaluators.base import SimpleScoringEvaluator
 
-    exc = ValueError("authentication failed sk-SECRETMARKER123")
+    class AuthenticationError(Exception):
+        """Stand-in for a provider SDK auth error (decided by class, #2842)."""
+
+    exc = AuthenticationError("authentication failed sk-SECRETMARKER123")
     try:
         SimpleScoringEvaluator._check_api_key_error(None, exc)
     except APIKeyError as err:

@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import os
+import shlex
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -94,7 +95,10 @@ def _validate_legacy_token(token_data: dict[str, Any]) -> bool:
         expires_at = _parse_expiry_utc(token_data["expires_at"])
         now = datetime.now(UTC)
         if expires_at - now > _LEGACY_TOKEN_MAX_TTL:
-            logger.warning("Legacy CI approval token TTL exceeds 24 hours, rejecting")
+            logger.warning(
+                "Legacy CI approval token rejected: expires_at is more than "
+                "24 hours ahead (the maximum lifetime is 24 hours)."
+            )
             return False
         if expires_at > now:
             logger.warning(
@@ -106,8 +110,16 @@ def _validate_legacy_token(token_data: dict[str, Any]) -> bool:
                 ),
             )
             return True
+        logger.warning(
+            "Legacy CI approval token rejected: it expired at %s. Write a new "
+            "token whose expires_at is in the future and at most 24 hours ahead.",
+            expires_at.isoformat(),
+        )
     except (ValueError, KeyError):
-        pass
+        logger.warning(
+            "Legacy CI approval token rejected: expires_at is missing or not a "
+            "valid ISO-8601 timestamp."
+        )
     return False
 
 
@@ -179,6 +191,39 @@ def _check_token_file_approval(token_file: Path, base_dir: Path) -> bool:
     return False
 
 
+def _approval_required_message(token_file: Path) -> str:
+    """Build the CI approval error with an example that validates when copied.
+
+    The example expiry is generated now (two hours ahead, inside the 24 hour
+    cap) and the path is the one the gate actually reads, which follows
+    ``TRAIGENT_RESULTS_FOLDER`` (#2834).
+    """
+    example_expiry = (datetime.now(UTC) + timedelta(hours=2)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    max_hours = int(_LEGACY_TOKEN_MAX_TTL.total_seconds() // 3600)
+    return f"""
+CI/CD Approval Required
+
+This optimization was triggered in a CI environment and requires approval.
+Mock and offline runs in CI are also covered; TRAIGENT_RUN_APPROVED=1 is the intended explicit approval signal.
+
+To approve, use one of these methods:
+
+1. Environment variable (recommended for CI):
+   export TRAIGENT_RUN_APPROVED=1
+   export TRAIGENT_APPROVED_BY="your_name"
+
+2. Approval token file (timestamps are interpreted as UTC; expires_at must be
+   in the future and at most {max_hours} hours ahead):
+   mkdir -p {shlex.quote(str(token_file.parent))} && echo '{{"approved_by": "your_name", "expires_at": "{example_expiry}"}}' > {shlex.quote(str(token_file))}
+
+3. GitHub Actions with environment protection: protection only holds the job
+   until reviewers approve. The job must still export TRAIGENT_RUN_APPROVED=1
+   (method 1) after approval; Traigent does not read the protection state.
+        """
+
+
 def check_ci_approval(traigent_config: TraigentConfig) -> None:
     """Check if approval is required and granted for CI runs.
 
@@ -216,21 +261,4 @@ def check_ci_approval(traigent_config: TraigentConfig) -> None:
     if _check_token_file_approval(token_file, storage_root):
         return
 
-    raise OptimizationError("""
-CI/CD Approval Required
-
-This optimization was triggered in a CI environment and requires approval.
-Mock and offline runs in CI are also covered; TRAIGENT_RUN_APPROVED=1 is the intended explicit approval signal.
-
-To approve, use one of these methods:
-
-1. Environment variable (recommended for CI):
-   export TRAIGENT_RUN_APPROVED=1
-   export TRAIGENT_APPROVED_BY="your_name"
-
-2. Approval token file (timestamps are interpreted as UTC):
-   echo '{"approved_by": "your_name", "expires_at": "2024-12-31T23:59:59Z"}' > ~/.traigent/approval.token
-
-3. GitHub Actions with environment protection:
-   Use 'environment: production' with required reviewers
-        """)
+    raise OptimizationError(_approval_required_message(token_file))
