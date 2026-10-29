@@ -1090,9 +1090,7 @@ class TestAinvokeStreamMockWithAioboto3Installed:
     async def _collect(self, client: BedrockChatClient) -> list[str]:
         return [
             chunk
-            async for chunk in client.ainvoke_stream(
-                model_id=self.MODEL, messages="hi"
-            )
+            async for chunk in client.ainvoke_stream(model_id=self.MODEL, messages="hi")
         ]
 
     @pytest.mark.asyncio
@@ -1121,9 +1119,7 @@ class TestAinvokeStreamMockWithAioboto3Installed:
 
         chunks = await self._collect(client)
 
-        assert chunks == list(
-            client.invoke_stream(model_id=self.MODEL, messages="hi")
-        )
+        assert chunks == list(client.invoke_stream(model_id=self.MODEL, messages="hi"))
 
     @pytest.mark.asyncio
     async def test_mock_off_with_aioboto3_keeps_the_native_path(

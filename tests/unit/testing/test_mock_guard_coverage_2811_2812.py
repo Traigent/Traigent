@@ -22,6 +22,15 @@ from traigent.utils.mock_transport_guard import (
     is_known_llm_provider_host,
 )
 
+FAKE_AWS_KEY_ID = "AKIAMOCKMOCKMOCKMOCK"  # pragma: allowlist secret
+FAKE_AWS_SECRET = "mock-secret"  # pragma: allowlist secret
+
+
+def _fake_aws_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", FAKE_AWS_KEY_ID)
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", FAKE_AWS_SECRET)
+
+
 REPRO_HOSTS = (
     "inference-api.nousresearch.com",
     "us-central1-aiplatform.googleapis.com",
@@ -56,7 +65,11 @@ def test_missing_host_families_are_known_2811(host: str) -> None:
 
 @pytest.mark.parametrize(
     "host",
-    ["example.com", "bedrock.us-east-1.amazonaws.com.evil.example", "notaiplatform.com"],
+    [
+        "example.com",
+        "bedrock.us-east-1.amazonaws.com.evil.example",
+        "notaiplatform.com",
+    ],
 )
 def test_unrelated_hosts_are_not_blocked_2811(host: str) -> None:
     assert not is_known_llm_provider_host(host)
@@ -77,8 +90,7 @@ def test_boto3_bedrock_runtime_is_blocked_before_any_socket_2811(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     boto3 = pytest.importorskip("boto3")
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAMOCKMOCKMOCKMOCK")  # pragma: allowlist secret
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "mock-secret")  # pragma: allowlist secret
+    _fake_aws_credentials(monkeypatch)
     client = boto3.client("bedrock-runtime", region_name="us-east-1")
     with pytest.raises(MockModeTransportBlockedError, match="bedrock-runtime"):
         client.converse(
@@ -92,8 +104,7 @@ def test_boto3_non_provider_service_is_not_blocked_2811(
 ) -> None:
     """A non-LLM AWS host reaches the send boundary (and the socket stub)."""
     boto3 = pytest.importorskip("boto3")
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAMOCKMOCKMOCKMOCK")  # pragma: allowlist secret
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "mock-secret")  # pragma: allowlist secret
+    _fake_aws_credentials(monkeypatch)
     client = boto3.client("sts", region_name="us-east-1")
     with pytest.raises(Exception) as excinfo:  # noqa: PT011 - any non-guard failure
         client.get_caller_identity()

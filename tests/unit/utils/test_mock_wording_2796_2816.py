@@ -61,7 +61,9 @@ def _banner(caplog: pytest.LogCaptureFixture) -> str:
         caplog.at_level(logging.WARNING, logger="traigent.core.optimization_pipeline"),
     ):
         create_effective_evaluator(**kwargs)
-    return " ".join(r.getMessage() for r in caplog.records if "Mock mode active" in r.getMessage())
+    return " ".join(
+        r.getMessage() for r in caplog.records if "Mock mode active" in r.getMessage()
+    )
 
 
 def test_banner_for_in_code_mock_names_the_function_not_the_variable_2796(
@@ -85,7 +87,10 @@ def test_banner_for_env_mock_does_not_name_the_deprecated_variable_2796(
 
 def test_user_facing_error_text_does_not_recommend_the_variable_2796() -> None:
     texts = []
-    for handler in (ErrorHandler.handle_zero_accuracy, ErrorHandler.handle_unknown_error):
+    for handler in (
+        ErrorHandler.handle_zero_accuracy,
+        ErrorHandler.handle_unknown_error,
+    ):
         with pytest.raises(Exception) as excinfo:  # noqa: PT011 - TraigentError
             handler(RuntimeError("x"))
         texts.append(str(getattr(excinfo.value, "fix", "")))

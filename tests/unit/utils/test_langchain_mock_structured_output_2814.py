@@ -28,14 +28,16 @@ class Answer(pydantic.BaseModel):
 def _openai() -> object:
     langchain_openai = pytest.importorskip("langchain_openai")
     return langchain_openai.ChatOpenAI(
-        model="gpt-4o-mini", api_key="sk-mock"  # pragma: allowlist secret
+        model="gpt-4o-mini",
+        api_key="sk-mock",  # pragma: allowlist secret
     )
 
 
 def _anthropic() -> object:
     langchain_anthropic = pytest.importorskip("langchain_anthropic")
     return langchain_anthropic.ChatAnthropic(
-        model="claude-haiku-4-5", api_key="sk-mock"  # pragma: allowlist secret
+        model="claude-haiku-4-5",
+        api_key="sk-mock",  # pragma: allowlist secret
     )
 
 
@@ -78,7 +80,9 @@ def test_plain_invoke_and_bind_tools_are_unchanged_2814(make) -> None:
 
 
 @pytest.mark.parametrize("make", [_openai, _anthropic])
-def test_structured_output_is_untouched_when_mock_is_off_2814(make, monkeypatch) -> None:
+def test_structured_output_is_untouched_when_mock_is_off_2814(
+    make, monkeypatch
+) -> None:
     """With mock off the interceptor must not raise its own error."""
     traigent_testing.disable_mock_mode()
     # Unreachable proxy, set BEFORE the client is built (httpx reads it at
