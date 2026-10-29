@@ -67,6 +67,9 @@ from traigent.utils import env_config as _env_config  # noqa: F401
 from traigent.utils.logging import get_logger
 
 console = Console()
+RED_DEVICE_LOGIN_EXPIRED_BEFORE_AUTHORIZATION_COMPLETED = (
+    "[red]Device login expired before authorization completed.[/red]"
+)
 logger = get_logger(__name__)
 
 # Constants
@@ -808,9 +811,7 @@ class TraigentAuthCLI:
         while True:
             remaining = deadline - now()
             if remaining <= 0:
-                console.print(
-                    "[red]Device login expired before authorization completed.[/red]"
-                )
+                console.print(RED_DEVICE_LOGIN_EXPIRED_BEFORE_AUTHORIZATION_COMPLETED)
                 return None
 
             try:
@@ -833,7 +834,7 @@ class TraigentAuthCLI:
                 sleep_seconds = min(float(interval), max(0.0, deadline - now()))
                 if sleep_seconds <= 0:
                     console.print(
-                        "[red]Device login expired before authorization completed.[/red]"
+                        RED_DEVICE_LOGIN_EXPIRED_BEFORE_AUTHORIZATION_COMPLETED
                     )
                     return None
                 console.print(
@@ -867,7 +868,7 @@ class TraigentAuthCLI:
                 sleep_seconds = min(float(retry_after), max(0.0, deadline - now()))
                 if sleep_seconds <= 0:
                     console.print(
-                        "[red]Device login expired before authorization completed.[/red]"
+                        RED_DEVICE_LOGIN_EXPIRED_BEFORE_AUTHORIZATION_COMPLETED
                     )
                     return None
                 console.print(
@@ -901,9 +902,7 @@ class TraigentAuthCLI:
 
             sleep_seconds = min(float(interval), max(0.0, deadline - now()))
             if sleep_seconds <= 0:
-                console.print(
-                    "[red]Device login expired before authorization completed.[/red]"
-                )
+                console.print(RED_DEVICE_LOGIN_EXPIRED_BEFORE_AUTHORIZATION_COMPLETED)
                 return None
             await sleep(sleep_seconds)
 
