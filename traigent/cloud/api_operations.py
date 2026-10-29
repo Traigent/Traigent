@@ -287,29 +287,30 @@ def _typed_configuration_space(space: Any) -> Any:
         return space
     normalized: dict[str, Any] = {}
     for name, entry in space.items():
-        if isinstance(entry, (list, tuple)):
-            normalized[name] = {"type": "categorical", "choices": list(entry)}
-        elif isinstance(entry, dict):
-            if "type" not in entry and ("low" in entry or "high" in entry):
-                low, high = entry.get("low"), entry.get("high")
-                inferred = (
-                    "int"
-                    if isinstance(low, int)
-                    and not isinstance(low, bool)
-                    and isinstance(high, int)
-                    and not isinstance(high, bool)
-                    else "float"
-                )
-                normalized[name] = {**entry, "type": inferred}
-            else:
-                normalized[name] = entry
-        elif isinstance(entry, (bool, int, float, str)):
-            # scalar/fixed value -> single-choice categorical (must be wrapped,
-            # not passed raw to the backend, or cloud session-create 400s)
-            normalized[name] = {"type": "categorical", "choices": [entry]}
-        else:
-            normalized[name] = entry
+        normalized[name] = _typed_configuration_entry(entry)
     return normalized
+
+
+def _typed_configuration_entry(entry: Any) -> Any:
+    if isinstance(entry, (list, tuple)):
+        return {"type": "categorical", "choices": list(entry)}
+    if isinstance(entry, dict):
+        if "type" not in entry and ("low" in entry or "high" in entry):
+            low, high = entry.get("low"), entry.get("high")
+            inferred = (
+                "int"
+                if isinstance(low, int)
+                and not isinstance(low, bool)
+                and isinstance(high, int)
+                and not isinstance(high, bool)
+                else "float"
+            )
+            return {**entry, "type": inferred}
+        return entry
+    if isinstance(entry, (bool, int, float, str)):
+        # Scalar/fixed values use a single-choice categorical on the wire.
+        return {"type": "categorical", "choices": [entry]}
+    return entry
 
 
 class ApiOperations:
@@ -499,55 +500,15 @@ class ApiOperations:
                 await self._send_content_less_labels(session_request, result)
                 return result
             except CloudServiceError as typed_exc:
-                # auto-contract fallback: a failed TYPED create may retry the
-                # legacy shape ONCE — and only for NON-governed sessions
-                # (governed sessions must fail loudly; the legacy contract
-                # cannot carry strict mode and silently degrading would
-                # launder it — RFC 0001 P7).
-                if (
-                    self._session_contract() != "auto"
-                    or self._is_governed_request(session_request)
-                    or "capabilities" in session_payload
-                ):
-                    # A content-less create never falls back to the legacy shape.
-                    raise
-                # A quota/limit refusal is a definitive answer from a reachable
-                # backend: the legacy contract would be refused the same way, so
-                # do not retry it (#2550).
-                typed_failure = getattr(typed_exc, "session_creation_failure", None)
-                if getattr(typed_failure, "is_quota_refusal", False) or getattr(
-                    typed_failure, "is_closed_refusal", False
-                ):
-                    raise
-                logger.warning(
-                    "Typed session create failed; retrying once with the "
-                    "legacy contract (non-governed session, "
-                    "TRAIGENT_SESSION_CONTRACT=auto)"
-                )
-                _warn_deprecated_once(
-                    "session_contract:auto_legacy_retry",
-                    "Auto retry from typed session contract to legacy session "
-                    f"contract is deprecated. {_LEGACY_SESSION_CONTRACT_DEPRECATION}",
-                    stacklevel=3,
-                )
-                legacy_payload = self._build_legacy_session_payload(
+                return await ApiOperations._retry_legacy_session_creation(
+                    self,
                     session_request,
+                    session_payload,
                     max_trials_value,
+                    headers,
+                    connector,
+                    typed_exc,
                 )
-                try:
-                    return await self._post_session_creation(
-                        legacy_payload, headers, connector
-                    )
-                except CloudServiceError as legacy_exc:
-                    typed_detail = getattr(typed_exc, "session_creation_failure", None)
-                    legacy_detail = getattr(
-                        legacy_exc, "session_creation_failure", None
-                    )
-                    typed_status = getattr(typed_detail, "status_code", None)
-                    legacy_status = getattr(legacy_detail, "status_code", None)
-                    if typed_status == 400 and legacy_status == 400:
-                        cast(Any, legacy_exc).typed_legacy_session_create_400 = True
-                    raise
         except SessionContractError:
             # Review round 3: contract failures must reach the caller AS
             # THEMSELVES — the generic wrap below would demote them to a
@@ -582,6 +543,61 @@ class ApiOperations:
         except Exception as e:
             self._handle_generic_session_exception(e)
         raise CloudServiceError("Unexpected session creation failure")
+
+    async def _retry_legacy_session_creation(
+        self,
+        session_request: SessionCreationRequest,
+        session_payload: dict[str, Any],
+        max_trials_value: int,
+        headers: Any,
+        connector: Any,
+        typed_exc: CloudServiceError,
+    ) -> TraigentSessionApiResult:
+        # auto-contract fallback: a failed TYPED create may retry the
+        # legacy shape ONCE — and only for NON-governed sessions
+        # (governed sessions must fail loudly; the legacy contract
+        # cannot carry strict mode and silently degrading would
+        # launder it — RFC 0001 P7).
+        if (
+            self._session_contract() != "auto"
+            or self._is_governed_request(session_request)
+            or "capabilities" in session_payload
+        ):
+            # A content-less create never falls back to the legacy shape.
+            raise
+        # A quota/limit refusal is a definitive answer from a reachable
+        # backend: the legacy contract would be refused the same way, so
+        # do not retry it (#2550).
+        typed_failure = getattr(typed_exc, "session_creation_failure", None)
+        if getattr(typed_failure, "is_quota_refusal", False) or getattr(
+            typed_failure, "is_closed_refusal", False
+        ):
+            raise
+        logger.warning(
+            "Typed session create failed; retrying once with the "
+            "legacy contract (non-governed session, "
+            "TRAIGENT_SESSION_CONTRACT=auto)"
+        )
+        _warn_deprecated_once(
+            "session_contract:auto_legacy_retry",
+            "Auto retry from typed session contract to legacy session "
+            f"contract is deprecated. {_LEGACY_SESSION_CONTRACT_DEPRECATION}",
+            stacklevel=4,
+        )
+        legacy_payload = self._build_legacy_session_payload(
+            session_request,
+            max_trials_value,
+        )
+        try:
+            return await self._post_session_creation(legacy_payload, headers, connector)
+        except CloudServiceError as legacy_exc:
+            typed_detail = getattr(typed_exc, "session_creation_failure", None)
+            legacy_detail = getattr(legacy_exc, "session_creation_failure", None)
+            typed_status = getattr(typed_detail, "status_code", None)
+            legacy_status = getattr(legacy_detail, "status_code", None)
+            if typed_status == 400 and legacy_status == 400:
+                cast(Any, legacy_exc).typed_legacy_session_create_400 = True
+            raise
 
     def _resolve_max_trials(self, session_request: SessionCreationRequest) -> int:
         """Resolve max trials with logging when falling back to default."""
