@@ -506,9 +506,11 @@ def _extract_config_space_model_ids(config_space: Mapping[str, Any]) -> list[str
     model_ids: list[str] = []
     suffix_ids: list[str] = []
     for key, value in config_space.items():
-        if _is_model_config_key(key):
+        # ``engine`` and ``model_id`` may name non-LLM things (a vector index,
+        # an embedder), so they are filtered by price like ``*_model`` knobs.
+        if isinstance(key, str) and key.strip().lower() in ("model", "model_name"):
             model_ids.extend(_iter_config_model_values(value))
-        elif is_model_suffix_key(key):
+        elif _is_model_config_key(key) or is_model_suffix_key(key):
             suffix_ids.extend(_iter_config_model_values(value))
     if suffix_ids:
         # A user ``*_model`` knob (``expert_model``) may hold a non-LLM model
