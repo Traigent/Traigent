@@ -66,7 +66,7 @@ from traigent.core.cost_enforcement import (
     run_cost_limit_env_is_set,
     validate_cost_limit,
 )
-from traigent.core.cost_estimator import CostEstimator
+from traigent.core.cost_estimator import OUTPUT_TOKEN_CAP_KEYS, CostEstimator
 from traigent.core.exception_handler import (
     VendorErrorCategory,
     classify_systematic_provider_failure,
@@ -93,6 +93,7 @@ from traigent.core.metrics_aggregator import (
     aggregate_metrics,
     build_safeguards_telemetry,
 )
+from traigent.core.model_config_keys import is_model_config_key, is_model_suffix_key
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.orchestrator_helpers import (
     EFFECTIVE_SUBSET_ATTR,
@@ -154,6 +155,7 @@ from traigent.utils.function_identity import (
 from traigent.utils.hashing import generate_run_label
 from traigent.utils.logging import get_logger
 from traigent.utils.mock_provenance import MockProvenanceRecorder
+from traigent.utils.money import format_usd
 from traigent.utils.objectives import (
     coerce_finite_objective_score,
     is_minimization_objective,
@@ -791,6 +793,9 @@ class OptimizationOrchestrator:
                     getattr(self.optimizer, "config_space", None)
                 )
             ),
+            max_output_tokens_key=self._max_output_tokens_key(
+                getattr(self.optimizer, "config_space", None)
+            ),
         )
 
         self._trial_lifecycle = TrialLifecycle(self)
@@ -835,44 +840,90 @@ class OptimizationOrchestrator:
     @staticmethod
     def _extract_model_candidates_from_config_space(
         config_space: dict[str, Any] | None,
+        *,
+        priced_suffix_keys_only: bool = False,
     ) -> tuple[str, ...]:
-        """Extract model candidates from optimizer config space for estimation."""
+        """Extract model candidates from optimizer config space for estimation.
+
+        Every model-bearing key is read, not just ``model``/``model_name``: the
+        estimate is an upper bound, so a cascade's ``expert_model`` arm must be
+        priced too (#2807). Values under a user ``*_model`` knob may be non-LLM
+        models (embeddings, rerankers), so a preflight passes
+        ``priced_suffix_keys_only=True`` and receives only those whose price is
+        known; the estimate keeps unknown ones and prices them conservatively.
+        """
         if not isinstance(config_space, dict):
             return ()
 
-        for key in ("model", "model_name"):
-            normalized_candidates = (
-                OptimizationOrchestrator._normalize_model_candidates(
-                    OptimizationOrchestrator._extract_raw_model_candidates(
-                        config_space.get(key)
-                    )
-                )
+        candidates: list[str] = []
+        for key, definition in config_space.items():
+            # Only ``model``/``model_name`` are always LLM ids; ``engine`` and
+            # ``model_id`` may name non-LLM things (vector index, embedder), so
+            # preflights read them only when priced, like ``*_model`` knobs.
+            fixed = isinstance(key, str) and key.strip().lower() in (
+                "model",
+                "model_name",
             )
-            if normalized_candidates:
-                return normalized_candidates
+            if not (is_model_config_key(key) or is_model_suffix_key(key)):
+                continue
+            values = OptimizationOrchestrator._normalize_model_candidates(
+                OptimizationOrchestrator._extract_raw_model_candidates(definition)
+            )
+            if priced_suffix_keys_only and not fixed and values:
+                from traigent.utils.cost_calculator import (  # noqa: PLC0415
+                    find_models_missing_price_coverage,
+                )
 
-        return ()
+                unpriced = set(find_models_missing_price_coverage(values))
+                values = tuple(v for v in values if v not in unpriced)
+            candidates.extend(values)
+        return tuple(dict.fromkeys(candidates))
+
+    @staticmethod
+    def _extract_max_output_tokens_with_key(
+        config_space: dict[str, Any] | None,
+    ) -> tuple[int, str] | None:
+        """Largest output-token cap in the config space and the key it came from.
+
+        Every spelling of the cap counts (``max_tokens`` plus the provider
+        aliases), and the maximum over all of them is used so the pre-run
+        estimate is never below a cap the run may actually apply (#2815).
+        """
+        if not isinstance(config_space, dict):
+            return None
+        best: tuple[int, str] | None = None
+        for key in OUTPUT_TOKEN_CAP_KEYS:
+            definition = config_space.get(key)
+            if isinstance(definition, dict):
+                definition = definition.get("values", definition.get("high"))
+            raw = (
+                definition
+                if isinstance(definition, Sequence)
+                and not isinstance(definition, (str, bytes, bytearray))
+                else (definition,)
+            )
+            for v in raw:
+                if isinstance(v, int) and not isinstance(v, bool) and v > 0:
+                    if best is None or v > best[0]:
+                        best = (v, key)
+        return best
+
+    @staticmethod
+    def _max_output_tokens_key(config_space: dict[str, Any] | None) -> str | None:
+        found = OptimizationOrchestrator._extract_max_output_tokens_with_key(
+            config_space
+        )
+        return found[1] if found else None
 
     @staticmethod
     def _extract_max_output_tokens_from_config_space(
         config_space: dict[str, Any] | None,
     ) -> int | None:
-        """Largest ``max_tokens`` value in the config space, used as output cap."""
-        if not isinstance(config_space, dict):
-            return None
-        definition = config_space.get("max_tokens")
-        if isinstance(definition, dict):
-            definition = definition.get("values", definition.get("high"))
-        raw = (
-            definition
-            if isinstance(definition, Sequence)
-            and not isinstance(definition, (str, bytes, bytearray))
-            else (definition,)
+        """Largest output-token cap value in the config space, or None."""
+        found = OptimizationOrchestrator._extract_max_output_tokens_with_key(
+            config_space
         )
-        values = [
-            v for v in raw if isinstance(v, int) and not isinstance(v, bool) and v > 0
-        ]
-        return max(values) if values else None
+        return found[0] if found else None
 
     @staticmethod
     def _extract_estimated_tokens_per_example(
@@ -4144,6 +4195,7 @@ class OptimizationOrchestrator:
                 configured_max_output_tokens=(
                     self._extract_max_output_tokens_from_config_space(space)
                 ),
+                max_output_tokens_key=self._max_output_tokens_key(space),
             )
             estimates.append((estimator.estimate_optimization_cost(dataset), estimator))
         if not estimates:
@@ -4172,7 +4224,8 @@ class OptimizationOrchestrator:
             return
         models = list(
             self._extract_model_candidates_from_config_space(
-                getattr(self.optimizer, "config_space", None)
+                getattr(self.optimizer, "config_space", None),
+                priced_suffix_keys_only=True,
             )
         )
         fixed_model = getattr(self.traigent_config, "model", None)
@@ -6164,8 +6217,8 @@ class OptimizationOrchestrator:
             ):
                 return (
                     f"Stopped at {trials} trials: the cost limit "
-                    f"(${status.limit_usd:.2f}) was reached by known spend "
-                    f"of at least ${status.accumulated_cost_usd:.2f} (a "
+                    f"({format_usd(status.limit_usd)}) was reached by known spend "
+                    f"of at least {format_usd(status.accumulated_cost_usd)} (a "
                     f"minimum: cost is unmeasured for "
                     f"{status.unmeasured_trial_count} of "
                     f"{status.trial_count} trials)."

@@ -2232,14 +2232,41 @@ def _resolve_actual_execution_mode(
     return execution_mode
 
 
+def _is_minimal_logging_explicit(
+    runtime_overrides: dict[str, Any],
+    legacy_args: Any,
+    execution_bundle: ExecutionOptions | None,
+) -> bool:
+    """Return True only when the caller supplied ``minimal_logging`` themselves."""
+    if runtime_overrides.get("minimal_logging") is not None:
+        return True
+    if legacy_args and getattr(legacy_args, "minimal_logging", None) is not None:
+        return True
+    return (
+        execution_bundle is not None
+        and _explicit_bundle_value(execution_bundle, "minimal_logging") is not None
+    )
+
+
 def _log_execution_mode_warnings(
     execution_mode_enum: ExecutionMode,
     actual_execution_mode: str,
     local_storage_path: str | None,
     minimal_logging: bool,
+    minimal_logging_explicit: bool = False,
 ) -> None:
-    """Log warnings for incompatible runtime settings."""
-    if minimal_logging and execution_mode_enum is not ExecutionMode.LOCAL:
+    """Log warnings for incompatible runtime settings.
+
+    ``minimal_logging`` defaults to True, so the warning is only meaningful
+    when the caller actually asked for it (``minimal_logging_explicit``);
+    otherwise every default-configured user would be told a setting they never
+    wrote is being ignored (#2790).
+    """
+    if (
+        minimal_logging
+        and minimal_logging_explicit
+        and execution_mode_enum is not ExecutionMode.LOCAL
+    ):
         logger.warning(
             "minimal_logging is only effective for offline local runs. "
             "It will be ignored for the selected managed execution path."
@@ -3608,6 +3635,9 @@ def optimize(  # NOSONAR(S107)
     evaluator_value = resolved_execution.evaluator
     local_storage_path = resolved_execution.local_storage_path
     minimal_logging = resolved_execution.minimal_logging
+    minimal_logging_explicit = _is_minimal_logging_explicit(
+        runtime_overrides, legacy_args, execution_bundle
+    )
     parallel_config = resolved_execution.parallel_config
     max_total_examples = resolved_execution.max_total_examples
     samples_include_pruned = resolved_execution.samples_include_pruned
@@ -3763,6 +3793,7 @@ def optimize(  # NOSONAR(S107)
             actual_execution_mode,
             local_storage_path,
             minimal_logging,
+            minimal_logging_explicit=minimal_logging_explicit,
         )
 
         user_parallel_config = coerce_parallel_config(parallel_config)

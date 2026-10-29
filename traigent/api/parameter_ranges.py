@@ -33,6 +33,8 @@ Example::
 from __future__ import annotations
 
 import logging
+import math
+import numbers
 import os
 import warnings
 from abc import ABC, abstractmethod
@@ -94,6 +96,16 @@ type IntRangeConfigValue = IntRangeTuple | IntRangeConfigDict
 type ParameterRangeConfigValue = (
     FloatRangeConfigValue | IntRangeConfigValue | ChoicesConfigValue[Any]
 )
+
+
+def _require_finite(owner: str, field_name: str, value: Any) -> None:
+    """Reject NaN/inf numeric values with an error that names the field (#2822)."""
+    if (
+        isinstance(value, numbers.Real)
+        and not isinstance(value, bool)
+        and not math.isfinite(value)
+    ):
+        raise ValueError(f"{owner} {field_name} must be finite, got {value!r}")
 
 
 class ParameterRange(ABC):
@@ -185,6 +197,8 @@ class Range(NumericConstraintBuilderMixin, ParameterRange):
     agent: str | None = None
 
     def __post_init__(self) -> None:
+        for field_name in ("low", "high", "step", "default"):
+            _require_finite("Range", field_name, getattr(self, field_name))
         if self.low >= self.high:
             raise ValueError(
                 f"Range low ({self.low}) must be less than high ({self.high})"
@@ -403,6 +417,15 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
             raise ValueError(
                 f"IntRange low ({self.low}) must be less than high ({self.high})"
             )
+        if self.step is not None and (
+            isinstance(self.step, bool)
+            or not isinstance(self.step, (int, float))
+            or not math.isfinite(self.step)
+            or self.step != int(self.step)
+        ):
+            raise ValueError(
+                f"IntRange step must be a positive integer, got {self.step!r}"
+            )
         if self.step is not None and self.step <= 0:
             raise ValueError(f"IntRange step must be positive, got {self.step}")
         if self.log and self.low <= 0:
@@ -598,6 +621,8 @@ class LogRange(NumericConstraintBuilderMixin, ParameterRange):
     agent: str | None = None
 
     def __post_init__(self) -> None:
+        for field_name in ("low", "high", "default"):
+            _require_finite("LogRange", field_name, getattr(self, field_name))
         if self.low <= 0 or self.high <= 0:
             raise ValueError(
                 f"LogRange requires positive bounds, got ({self.low}, {self.high})"
@@ -681,6 +706,9 @@ class Choices[T](CategoricalConstraintBuilderMixin, ParameterRange):
         object.__setattr__(self, "values", tuple(self.values))
         if not self.values:
             raise ValueError("Choices must have at least one value")
+        for value in self.values:
+            _require_finite("Choices", "value", value)
+        _require_finite("Choices", "default", self.default)
         if self.default is not None and self.default not in self.values:
             raise ValueError(
                 f"default {self.default!r} is not in choices {list(self.values)}"

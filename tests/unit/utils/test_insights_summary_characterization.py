@@ -53,7 +53,7 @@ class _TrackingTrial:
 def _expected_metric_trace(keys: list[tuple[str, str]]) -> list[tuple]:
     trace: list[tuple] = []
     for label, key in keys:
-        trace.extend([("metrics.read", label), ("metrics.get", label, key, 0.0)])
+        trace.extend([("metrics.read", label), ("metrics.get", label, key, None)])
     return trace
 
 
@@ -62,6 +62,7 @@ def test_performance_summary_pins_exact_output_and_metric_reads() -> None:
     trials = [
         _TrackingTrial("one", {}, {"quality": 1.0, "latency": 0.2}, trace),
         _TrackingTrial("two", {}, {"quality": -1.0, "latency": 0.8}, trace),
+        # No "quality" reported: excluded from quality statistics (#2819), not 0.0.
         _TrackingTrial("three", {}, {"latency": 0.0}, trace),
     ]
 
@@ -70,9 +71,10 @@ def test_performance_summary_pins_exact_output_and_metric_reads() -> None:
     assert json.dumps(summary, separators=(",", ":")) == (
         '{"total_trials":3,"successful_trials":3,"primary_objective":"quality",'
         '"best_score":1.0,"worst_score":-1.0,"average_score":0.0,'
-        '"score_std":1.0,"improvement":0.0,"consistency":1.0,'
-        '"multi_objective_analysis":{"quality":{"best":1.0,"average":0.0,'
-        '"improvement":0.0},"latency":{"best":0.8,'
+        '"score_std":1.4142135623730951,"improvement":0.0,"consistency":1.0,'
+        '"multi_objective_analysis":{"quality":{"orientation":"maximize",'
+        '"best":1.0,"average":0.0,"improvement":0.0},"latency":'
+        '{"orientation":"maximize","best":0.8,'
         '"average":0.33333333333333337,"improvement":0.0}}}'
     )
     assert trace == _expected_metric_trace(
@@ -129,7 +131,7 @@ def test_parameter_importance_pins_output_order_and_config_metric_read_order() -
         {"quality": 1.0},
         {"quality": 1.0},
         {"quality": 0.8},
-        {},
+        {"quality": 0.0},
     ]
     labels = ["one", "two", "three", "four"]
     trials = [
@@ -166,7 +168,7 @@ def test_parameter_importance_pins_output_order_and_config_metric_read_order() -
                     [
                         ("config.read", label),
                         ("metrics.read", label),
-                        ("metrics.get", label, "quality", 0.0),
+                        ("metrics.get", label, "quality", None),
                     ]
                 )
     assert trace == expected_trace

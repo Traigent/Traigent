@@ -736,7 +736,23 @@ def capture_key(key: Any):
         _metadata_capture.clear_current_key()
 
 
-def _mock_chat_message(client: Any, provider: str, *, chunk: bool = False) -> Any:
+async def _amock_chat_message(
+    client: Any, provider: str, *, chunk: bool = False
+) -> Any:
+    """Async twin of :func:`_mock_chat_message`: awaits the mock delay.
+
+    The configured ``TRAIGENT_MOCK_DELAY_MS`` is awaited, never slept, so other
+    coroutines keep running and concurrent calls overlap their delay (#2809).
+    """
+    from traigent.integrations.utils.mock_adapter import MockAdapter
+
+    await MockAdapter.await_mock_delay(provider)
+    return _mock_chat_message(client, provider, chunk=chunk, apply_delay=False)
+
+
+def _mock_chat_message(
+    client: Any, provider: str, *, chunk: bool = False, apply_delay: bool = True
+) -> Any:
     """Build the canned LangChain message mock mode returns for ``provider``."""
     from langchain_core.messages import AIMessage, AIMessageChunk
 
@@ -747,7 +763,9 @@ def _mock_chat_message(client: Any, provider: str, *, chunk: bool = False) -> An
         model_name = getattr(client, "model_name", None) or getattr(
             client, "model", "mock-model"
         )
-        data = MockAdapter.get_mock_response("openai", model=model_name)
+        data = MockAdapter.get_mock_response(
+            "openai", model=model_name, apply_delay=apply_delay
+        )
         usage = data["usage"]
         return message_cls(
             content=data["choices"][0]["message"]["content"],
@@ -768,10 +786,14 @@ def _mock_chat_message(client: Any, provider: str, *, chunk: bool = False) -> An
             or getattr(client, "model", None)
             or "mock-model"
         )
-        data = MockAdapter.get_mock_response("bedrock", model=str(model_name))
+        data = MockAdapter.get_mock_response(
+            "bedrock", model=str(model_name), apply_delay=apply_delay
+        )
     else:
         data = MockAdapter.get_mock_response(
-            "anthropic", model=getattr(client, "model", "mock-model")
+            "anthropic",
+            model=getattr(client, "model", "mock-model"),
+            apply_delay=apply_delay,
         )
     usage = data["usage"]
     return message_cls(
@@ -860,7 +882,7 @@ def _create_stream_wrapper(original_meth: Any, provider: str = "unknown") -> Any
 def _create_astream_wrapper(original_meth: Any, provider: str = "unknown") -> Any:
     async def astream_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
         if _mock_enabled(provider):
-            response = _mock_chat_message(self, provider, chunk=True)
+            response = await _amock_chat_message(self, provider, chunk=True)
             capture_langchain_response(response)
             yield response
             return
@@ -902,7 +924,7 @@ def _create_ainvoke_wrapper(original_meth: Any, provider: str = "unknown") -> An
 
     async def ainvoke_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
         if _mock_enabled(provider):
-            response = _mock_chat_message(self, provider)
+            response = await _amock_chat_message(self, provider)
             capture_langchain_response(response)
             return response
         start_time = time.perf_counter()

@@ -1,0 +1,167 @@
+"""#2821: sub-cent costs must not print as $0.00/$0.01; the results table must
+render cost and latency metrics with their own units, never as percentages."""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
+
+from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig
+from traigent.utils.money import format_usd
+from traigent.utils.results_table import _render_metric_cell, print_results_table
+
+
+@pytest.fixture
+def unapproved(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TRAIGENT_COST_APPROVED", raising=False)
+    monkeypatch.setattr("sys.stdin", SimpleNamespace(isatty=lambda: False))
+
+
+@pytest.mark.parametrize(
+    ("amount", "expected"),
+    [
+        (0.0, "$0.00"),
+        (0.004, "$0.004"),
+        (0.0051, "$0.0051"),
+        (0.0104, "$0.0104"),
+        (0.01, "$0.01"),
+        (0.5, "$0.50"),
+        (14.123, "$14.12"),
+        (102.74, "$102.74"),
+        (0.00004, "$0.00004"),
+        (None, "unknown"),
+    ],
+)
+def test_format_usd(amount: float, expected: str) -> None:
+    assert format_usd(amount) == expected
+
+
+def test_sub_cent_limit_refusal_is_not_self_contradictory(
+    unapproved: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    enforcer = CostEnforcer(CostEnforcerConfig(limit=0.004))
+    assert enforcer.check_and_approve(0.0051) is False
+    err = capsys.readouterr().err
+    assert "$0.0051" in err
+    assert "limit $0.004" in err
+
+
+def test_estimate_just_over_a_cent_limit_shows_both_values(
+    unapproved: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    enforcer = CostEnforcer(CostEnforcerConfig(limit=0.01))
+    assert enforcer.check_and_approve(0.0104) is False
+    err = capsys.readouterr().err
+    assert "$0.0104 exceeds limit $0.01." in err
+
+
+def test_cost_and_latency_cells_use_their_units() -> None:
+    assert _render_metric_cell("total_cost", 0.0123) == "$0.01230"
+    assert _render_metric_cell("cost_per_example_mean", 0.0004) == "$0.00040"
+    assert _render_metric_cell("response_time_ms", 850.0) == "850ms"
+    assert _render_metric_cell("duration", 1.5) == "1.50s"
+    assert _render_metric_cell("accuracy", 0.9) == "90.0%"
+
+
+def test_missing_latency_renders_n_a_not_zero() -> None:
+    assert _render_metric_cell("latency", None) == "n/a"
+    assert _render_metric_cell("response_time_ms", None) == "n/a"
+
+
+def test_results_table_prints_cost_and_latency_without_percent(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def trial(model: str, acc: float, cost: float, ms: float, tid: str):
+        return SimpleNamespace(
+            config={"model": model},
+            metrics={"accuracy": acc, "total_cost": cost, "response_time_ms": ms},
+            metadata={"successful_examples": 5, "examples_attempted": 5},
+            trial_id=tid,
+            status="completed",
+            is_successful=True,
+        )
+
+    trials = [
+        trial("big", 0.9, 0.0123, 850.0, "t1"),
+        trial("mini", 0.8, 0.0004, 120.0, "t2"),
+    ]
+    results = MagicMock()
+    results.trials = trials
+    results.metadata = {}
+    results.best_trial_id = None
+    results.best_config = trials[0].config
+    results.best_score = 0.9
+    results.calculate_weighted_scores.return_value = {
+        "best_weighted_config": trials[0].config,
+        "weighted_scores": [],
+    }
+    print_results_table(
+        results,
+        config_space={"model": ["big", "mini"]},
+        objectives=["accuracy", "total_cost", "response_time_ms"],
+    )
+    out = capsys.readouterr().out
+    assert "$0.0123" in out and "$0.0004" in out
+    assert "850ms" in out and "120ms" in out
+    assert "850.0%" not in out and "1.2%" not in out
+
+
+def test_cost_limit_exceeded_message_keeps_sub_cent_amounts() -> None:
+    from traigent.utils.exceptions import CostLimitExceeded
+
+    message = str(CostLimitExceeded(accumulated=0.0051, limit=0.004))
+    assert "$0.0051" in message and "$0.004" in message
+    assert "$0.00 " not in message
+
+
+@pytest.mark.parametrize(
+    ("estimate", "limit"), [(0.01004, 0.01), (0.1004, 0.1), (0.0100004, 0.01)]
+)
+def test_estimate_above_limit_never_prints_equal_to_it(estimate, limit) -> None:
+    assert format_usd(estimate) != format_usd(limit)
+
+
+def test_negative_amount_keeps_the_sign_in_front() -> None:
+    assert format_usd(-0.004) == "-$0.004"
+
+
+@pytest.mark.parametrize(
+    ("metric", "value", "expected"),
+    [
+        ("response_time", 1.5, "1.50s"),
+        ("duration_seconds", 12.0, "12.00s"),
+        ("p95_latency", 900.0, "900ms"),
+        ("latency_p95", 900.0, "900ms"),
+        ("accuracy_per_cost", 12.0, "12.0%"),
+        ("cost_efficiency", 0.8, "80.0%"),
+    ],
+)
+def test_more_time_and_ratio_metric_names_keep_their_units(
+    metric: str, value: float, expected: str
+) -> None:
+    assert _render_metric_cell(metric, value) == expected
+
+
+def test_missing_response_time_renders_n_a() -> None:
+    assert _render_metric_cell("response_time", None) == "n/a"
+
+
+def test_budget_exhausted_message_keeps_sub_cent_budget() -> None:
+    from traigent.config_generator.llm_backend import BudgetExhausted, LiteLLMBackend
+
+    backend = LiteLLMBackend(budget_usd=0.004)
+    backend._spent_usd = 0.0051
+    with pytest.raises(BudgetExhausted, match=r"\$0\.004 exceeded"):
+        backend.complete("hi")
+
+
+def test_cost_alert_warning_keeps_sub_cent_threshold(caplog) -> None:
+    from traigent.cloud.billing import CostTracker, CostTrackingConfig
+
+    tracker = CostTracker(CostTrackingConfig(cost_alert_threshold=0.004))
+    tracker._total_cost = 0.0051
+    with caplog.at_level("WARNING"):
+        tracker._check_cost_alerts()
+    assert "$0.0051" in caplog.text and "$0.004)" in caplog.text

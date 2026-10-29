@@ -13,6 +13,7 @@ import threading
 from typing import Protocol, runtime_checkable
 
 from traigent.utils.logging import configure_litellm_logging
+from traigent.utils.money import format_usd
 
 logger = logging.getLogger(__name__)
 
@@ -91,8 +92,8 @@ class LiteLLMBackend:
         with self._lock:
             if self._spent_usd >= self._budget_usd:
                 raise BudgetExhausted(
-                    f"Budget of ${self._budget_usd:.2f} exceeded "
-                    f"(spent ${self._spent_usd:.4f})"
+                    f"Budget of {format_usd(self._budget_usd)} exceeded "
+                    f"(spent {format_usd(self._spent_usd)})"
                 )
 
             try:

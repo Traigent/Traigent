@@ -56,6 +56,7 @@ from traigent.utils.env_config import (
     strict_cost_accounting_origin,
 )
 from traigent.utils.exceptions import ConfigurationError, CostLimitExceeded
+from traigent.utils.money import format_usd
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,7 @@ def validate_cost_limit(limit: object) -> float:
             f"cost limit must be > 0 USD, got {value!r}. A nonpositive limit "
             "would block every planned trial before it starts (silent 0-trial "
             "run). Configure a positive limit or leave it unset to use the "
-            f"default ${DEFAULT_COST_LIMIT_USD:.2f}."
+            f"default {format_usd(DEFAULT_COST_LIMIT_USD)}."
         )
     return value
 
@@ -285,7 +286,7 @@ def _check_approval_token_path(
                     token_limit = float(content.split(":")[1])
                     if token_limit > 0:
                         config.limit = max(config.limit, token_limit)
-                        logger.debug(f"Token limit: ${token_limit:.2f}")
+                        logger.debug(f"Token limit: {format_usd(token_limit)}")
                 except (ValueError, IndexError):
                     logger.warning(
                         "Invalid approval token format: length=%d, contains_limit=%s",
@@ -450,15 +451,15 @@ def unmeasured_cost_stop_message(
         )
     if _spend_reached_limit(known_spend, cost_limit):
         return (
-            f"The cost limit (${cost_limit:.2f}) was reached: known spend is at "
-            f"least ${known_spend:.2f} (a minimum; some cost could not be "
+            f"The cost limit ({format_usd(cost_limit)}) was reached: known spend is at "
+            f"least {format_usd(known_spend)} (a minimum; some cost could not be "
             f"measured: {counts}{usage_note}). To get cost measured instead, "
             f"{capture} (see docs/user-guide/cost_capture.md)."
         )
     return (
         f"Cost could not be measured ({counts}{usage_note}), "
         f"so the run stopped at the default safety limit of "
-        f"{fallback_trial_limit} trials: the cost limit (${cost_limit:.2f}) "
+        f"{fallback_trial_limit} trials: the cost limit ({format_usd(cost_limit)}) "
         "cannot bound spend it cannot see. Set max_trials explicitly on "
         "@traigent.optimize or .optimize() to run more trials; the run then "
         "goes up to that many and still reports the unmeasured cost. "
@@ -513,8 +514,8 @@ def unmeasured_cost_ran_message(
         return (
             f"{unmeasured_trials} of {trial_count} trials ran with a cost that "
             f"could not be measured{usage_note}. The cost limit "
-            f"(${cost_limit:.2f}) was reached: known spend is at least "
-            f"${known_spend:.2f} (a minimum; unmeasured cost is not included). "
+            f"({format_usd(cost_limit)}) was reached: known spend is at least "
+            f"{format_usd(known_spend)} (a minimum; unmeasured cost is not included). "
             "See docs/user-guide/cost_capture.md to get cost measured."
         )
     return (
@@ -782,7 +783,7 @@ class CostEnforcer:
                     "nonpositive limit would block every planned trial before "
                     "it starts (silent 0-trial run). Set a positive limit or "
                     "unset the variable to use the default "
-                    f"${DEFAULT_COST_LIMIT_USD:.2f}."
+                    f"{format_usd(DEFAULT_COST_LIMIT_USD)}."
                 )
             return parsed
 
@@ -881,7 +882,7 @@ class CostEnforcer:
                     # #2675: measured spend stopped the run, not the trial cap.
                     cause = (
                         f"per-trial cost unknown: cost limit "
-                        f"${self.config.limit:.2f} reached at "
+                        f"{format_usd(self.config.limit)} reached at "
                         f"{self._trial_count} trials"
                     )
                 else:
@@ -889,7 +890,7 @@ class CostEnforcer:
                         f"per-trial cost unknown: fallback trial limit "
                         f"{self.config.fallback_trial_limit} reached at "
                         f"{self._trial_count} trials; cost limit "
-                        f"${self.config.limit:.2f}"
+                        f"{format_usd(self.config.limit)}"
                     )
                 return (
                     f"budget gate blocked {blocked} planned trials ({cause}). "
@@ -905,7 +906,7 @@ class CostEnforcer:
             estimated = self._accumulated_cost + self._reserved_cost
             return (
                 f"budget gate blocked {blocked} planned trials "
-                f"(estimated ${estimated:.2f} > limit ${self.config.limit:.2f})"
+                f"(estimated {format_usd(estimated)} > limit {format_usd(self.config.limit)})"
             )
 
     def check_and_approve(
@@ -940,7 +941,7 @@ class CostEnforcer:
 
         if estimated_cost <= self.config.limit:
             logger.debug(
-                f"Estimated cost ${estimated_cost:.2f} within limit ${self.config.limit:.2f}"
+                f"Estimated cost {format_usd(estimated_cost)} within limit {format_usd(self.config.limit)}"
             )
             return True
 
@@ -977,7 +978,7 @@ class CostEnforcer:
         if not sys.stdin.isatty():
             print(
                 "\nTraigent: Rough conservative upper-bound cost estimate "
-                f"${estimated:.2f} exceeds limit ${self.config.limit:.2f}.\n"
+                f"{format_usd(estimated)} exceeds limit {format_usd(self.config.limit)}.\n"
                 "Pre-run estimates use fixed token assumptions and conservative "
                 "fallback pricing when model pricing is unavailable, and "
                 f"assume {estimated_calls_per_example} LLM call(s) per example "
@@ -991,8 +992,8 @@ class CostEnforcer:
                 file=sys.stderr,
             )
             logger.warning(
-                f"Non-interactive mode: aborting (estimated ${estimated:.2f} > "
-                f"limit ${self.config.limit:.2f})"
+                f"Non-interactive mode: aborting (estimated {format_usd(estimated)} > "
+                f"limit {format_usd(self.config.limit)})"
             )
             return False  # Fail-safe: abort in non-interactive mode
 
@@ -1004,8 +1005,8 @@ class CostEnforcer:
 Traigent Cost Warning
 ================================================================================
 
-Rough conservative upper-bound cost estimate: ${estimated:.2f} USD
-Your current cost limit:     ${self.config.limit:.2f} USD
+Rough conservative upper-bound cost estimate: {format_usd(estimated)} USD
+Your current cost limit:     {format_usd(self.config.limit)} USD
 
 NOTE: This is an ESTIMATE based on maximum context. Actual billing is
       determined solely by your LLM provider.
@@ -1019,7 +1020,7 @@ NOTE: Assumes {estimated_calls_per_example} LLM call(s) per example; set
 Options:
   [y] Approve and continue with current limit
   [n] Abort optimization
-  [r] Raise limit to ${suggested_limit:.2f} and continue
+  [r] Raise limit to {format_usd(suggested_limit)} and continue
 
 ================================================================================
 """,
@@ -1035,11 +1036,11 @@ Options:
             return False
 
         if choice == "y":
-            logger.info(f"User approved estimated cost ${estimated:.2f}")
+            logger.info(f"User approved estimated cost {format_usd(estimated)}")
             return True
         elif choice == "r":
             self.config.limit = suggested_limit
-            logger.info(f"User raised limit to ${suggested_limit:.2f}")
+            logger.info(f"User raised limit to {format_usd(suggested_limit)}")
             return True
         else:
             logger.info("User declined cost approval")
@@ -1361,13 +1362,13 @@ Options:
 
         if pct >= 1.0:
             logger.warning(
-                f"COST LIMIT REACHED: ${self._accumulated_cost:.2f} "
-                f"(limit: ${self.config.limit:.2f})"
+                f"COST LIMIT REACHED: {format_usd(self._accumulated_cost)} "
+                f"(limit: {format_usd(self.config.limit)})"
             )
         elif pct >= self.config.warning_threshold and not self._warning_emitted:
             logger.info(
                 f"Cost at {pct * 100:.0f}% of limit: "
-                f"${self._accumulated_cost:.2f} / ${self.config.limit:.2f}"
+                f"{format_usd(self._accumulated_cost)} / {format_usd(self.config.limit)}"
             )
             self._warning_emitted = True
 
@@ -1598,7 +1599,7 @@ Options:
 
         if self.config.limit_explicit and not trial_failed:
             raise CostTrackingRequiredError(
-                f"Cost limit ${self.config.limit:.2f} is set but {trial_desc} "
+                f"Cost limit {format_usd(self.config.limit)} is set but {trial_desc} "
                 "completed without a reported cost, so the cap cannot be "
                 "enforced. The run is refused instead of running unbounded. "
                 "Report a cost for each trial (cost metric or priced LLM "
@@ -1910,8 +1911,8 @@ Options:
         status = self.get_status()
         return (
             f"CostEnforcer("
-            f"accumulated=${status.accumulated_cost_usd:.2f}, "
-            f"limit=${status.limit_usd:.2f}, "
+            f"accumulated={format_usd(status.accumulated_cost_usd)}, "
+            f"limit={format_usd(status.limit_usd)}, "
             f"trials={status.trial_count}, "
             f"limit_reached={status.limit_reached})"
         )

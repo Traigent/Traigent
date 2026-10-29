@@ -14,6 +14,8 @@ developer-friendly and user-friendly.
 from __future__ import annotations
 
 import json
+import math
+import numbers
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -145,6 +147,43 @@ class ValidationResult:
             lines.append("✅ Validation passed!")
 
         return "\n".join(lines)
+
+
+def _non_finite_numbers(values: Any) -> list[Any]:
+    """NaN/inf entries among the numeric ``values`` (bool is not numeric here)."""
+    return [
+        v
+        for v in values
+        if isinstance(v, numbers.Real)
+        and not isinstance(v, bool)
+        and not math.isfinite(v)
+    ]
+
+
+def ensure_finite_config_space(config_space: Any) -> None:
+    """Raise ValueError when a raw config space holds NaN/inf (#2822).
+
+    Covers the forms an optimizer receives directly: ``(low, high)`` tuples,
+    lists of values, and range/choice dicts (``low``/``high``/``min``/``max``/
+    ``step``/``default``/``values``/``choices``). Non-numeric values are ignored.
+    """
+    if not isinstance(config_space, dict):
+        return
+    for name, definition in config_space.items():
+        bad: list[Any] = []
+        if isinstance(definition, (tuple, list)):
+            bad = _non_finite_numbers(definition)
+        elif isinstance(definition, dict):
+            for field_name in ("low", "high", "min", "max", "step", "default"):
+                bad.extend(_non_finite_numbers([definition.get(field_name)]))
+            for field_name in ("values", "choices"):
+                seq = definition.get(field_name)
+                if isinstance(seq, (tuple, list)):
+                    bad.extend(_non_finite_numbers(seq))
+        if bad:
+            raise ValueError(
+                f"Configuration space parameter {name!r} must be finite, got {bad[0]!r}"
+            )
 
 
 class Validators:
@@ -570,6 +609,12 @@ class Validators:
                 "Parameter list cannot be empty",
                 error_code="EMPTY_LIST",
             )
+        elif _non_finite_numbers(param_values):
+            result.add_error(
+                f"configuration_space.{param_name}",
+                "Parameter values must be finite numbers (found NaN or inf)",
+                error_code="INVALID_RANGE",
+            )
         elif len(param_values) == 1:
             result.add_warning(
                 f"configuration_space.{param_name}",
@@ -589,6 +634,12 @@ class Validators:
             result.add_error(
                 f"configuration_space.{param_name}",
                 "Range values must be numeric",
+                error_code="INVALID_RANGE",
+            )
+        elif _non_finite_numbers(param_values):
+            result.add_error(
+                f"configuration_space.{param_name}",
+                f"Range bounds must be finite, got ({min_val}, {max_val})",
                 error_code="INVALID_RANGE",
             )
         elif min_val >= max_val:
@@ -622,6 +673,13 @@ class Validators:
                 error_code="INVALID_RANGE",
             )
             return
+        if _non_finite_numbers((low, high)):
+            result.add_error(
+                f"configuration_space.{param_name}",
+                f"Range bounds must be finite, got low={low}, high={high}",
+                error_code="INVALID_RANGE",
+            )
+            return
         if low >= high:
             result.add_error(
                 f"configuration_space.{param_name}",
@@ -632,7 +690,12 @@ class Validators:
 
         step = param_values.get("step")
         if step is not None:
-            if not isinstance(step, (int, float)) or step <= 0:
+            if (
+                not isinstance(step, (int, float))
+                or isinstance(step, bool)
+                or not math.isfinite(step)
+                or step <= 0
+            ):
                 result.add_error(
                     f"configuration_space.{param_name}",
                     f"Step must be a positive number, got {step!r}",

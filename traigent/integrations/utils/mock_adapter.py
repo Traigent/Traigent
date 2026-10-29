@@ -29,7 +29,7 @@ import os
 import time
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any, ClassVar
+from typing import Any
 
 from traigent.utils.logging import configure_litellm_logging
 
@@ -90,8 +90,6 @@ class MockAdapter:
     ``unittest.mock.patch`` of the underlying client.
     """
 
-    _pending_tasks: ClassVar[set[asyncio.Task]] = set()
-
     @classmethod
     def is_mock_enabled(cls, provider: str) -> bool:
         """Return ``True`` iff mock mode should intercept LLM calls.
@@ -120,10 +118,11 @@ class MockAdapter:
 
     @classmethod
     def _apply_mock_delay(cls, provider: str) -> None:
-        """Apply mock delay, using async sleep if in event loop.
+        """Block for the configured mock latency (synchronous callers only).
 
-        This method detects if it's running inside an async context and
-        uses the appropriate sleep function to avoid blocking the event loop.
+        Async callers must ``await`` :meth:`await_mock_delay` instead: calling
+        this from a running event loop blocks every other coroutine for the
+        whole delay (#2809).
 
         Args:
             provider: Provider name for logging.
@@ -131,23 +130,23 @@ class MockAdapter:
         delay_ms = _get_mock_delay_ms()
         if delay_ms <= 0:
             return
-
-        delay_sec = delay_ms / 1000.0
         logger.debug(f"Mock delay: {delay_ms}ms for {provider}")
+        time.sleep(delay_ms / 1000.0)
 
-        # Check if we're in an async context
-        try:
-            loop = asyncio.get_running_loop()
-            # We're in an async context - schedule async sleep
-            # This won't block synchronous callers
-            task = loop.create_task(asyncio.sleep(delay_sec))
-            cls._pending_tasks.add(task)
-            task.add_done_callback(cls._pending_tasks.discard)
-            # Also do a minimal sync sleep to ensure some delay is visible
-            time.sleep(delay_sec)
-        except RuntimeError:
-            # No running event loop - use sync sleep
-            time.sleep(delay_sec)
+    @classmethod
+    async def await_mock_delay(cls, provider: str) -> None:
+        """Wait for the configured mock latency without blocking the event loop.
+
+        Concurrent async mock calls overlap their delay instead of serializing.
+
+        Args:
+            provider: Provider name for logging.
+        """
+        delay_ms = _get_mock_delay_ms()
+        if delay_ms <= 0:
+            return
+        logger.debug(f"Mock delay (async): {delay_ms}ms for {provider}")
+        await asyncio.sleep(delay_ms / 1000.0)
 
     @classmethod
     def get_mock_response(
@@ -155,6 +154,7 @@ class MockAdapter:
         provider: str,
         response_text: str | None = None,
         model: str | None = None,
+        apply_delay: bool = True,
         **kwargs: Any,
     ) -> Any:
         """Get a provider-appropriate mock response object.
@@ -168,6 +168,9 @@ class MockAdapter:
             provider: Provider name.
             response_text: Custom response text (optional).
             model: Model name to include in response (optional).
+            apply_delay: Block for the configured ``TRAIGENT_MOCK_DELAY_MS``
+                before returning. Async callers pass ``False`` after
+                ``await``-ing :meth:`await_mock_delay` themselves.
             **kwargs: Additional kwargs (used to extract model if not provided).
 
         Returns:
@@ -175,7 +178,8 @@ class MockAdapter:
         """
         # Apply configurable delay to simulate realistic LLM latency
         # This is useful for testing parallel execution visibility in traces
-        cls._apply_mock_delay(provider)
+        if apply_delay:
+            cls._apply_mock_delay(provider)
 
         # Every mock interception point serves through here: record that a mock
         # response reached a caller, for the run's provenance (#2516).

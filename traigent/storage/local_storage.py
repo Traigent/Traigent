@@ -26,6 +26,7 @@ from ..utils.exceptions import TraigentStorageError
 from ..utils.function_identity import sanitize_identifier
 from ..utils.logging import get_logger
 from ..utils.objectives import is_minimization_objective
+from ..utils.relative_change import relative_change
 from ..utils.secure_path import PathTraversalError, safe_open, validate_path
 
 logger = get_logger(__name__)
@@ -439,6 +440,26 @@ class LocalStorageManager:
             session.updated_at = datetime.now(UTC).isoformat()
             self._save_session(session)
             logger.debug("Updated session status")
+
+    def _session_summary_orientation(self, session: Any) -> str | None:
+        """Direction of the session's primary objective, or None when unknown."""
+        primary_objective = self._resolve_primary_objective_name(
+            session.optimization_config
+        )
+        orientation = self._resolve_primary_objective_orientation(
+            session.optimization_config, primary_objective
+        )
+        if orientation == "band":
+            return "band"
+        try:
+            minimize = is_minimization_objective(
+                primary_objective, orientation=orientation
+            )
+        except ValueError:
+            # Undeclared custom objective: the direction is unknown, so the
+            # relative change is reported as unavailable rather than guessed.
+            return None
+        return "minimize" if minimize else "maximize"
 
     def _is_better_trial_score(self, session: Any, score: float) -> bool:
         """Whether ``score`` beats the session's current best for its objective."""
@@ -1082,12 +1103,11 @@ class LocalStorageManager:
         successful_trials = len(
             [trial for trial in session.trials if trial.error is None]
         )
-        improvement = None
-
-        if session.baseline_score and session.best_score:
-            improvement = (
-                session.best_score - session.baseline_score
-            ) / session.baseline_score
+        improvement = relative_change(
+            session.baseline_score,
+            session.best_score,
+            self._session_summary_orientation(session),
+        )
 
         return {
             "session_id": session_id,

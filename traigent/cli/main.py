@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any, cast
 
 import click
 from rich.console import Console
+from rich.markup import escape
 from rich.syntax import Syntax
 from rich.table import Table
 
@@ -23,6 +25,7 @@ from traigent.cli.hooks_commands import hooks
 from traigent.cli.local_commands import register_local_commands
 from traigent.cli.sync_commands import register_sync_command
 from traigent.config.types import accepted_algorithm_values
+from traigent.security.redaction import redact_sensitive_text
 from traigent.storage.local_storage import LocalStorageManager, OptimizationSession
 from traigent.utils.console import configure_stdout_encoding
 from traigent.utils.logging import setup_logging
@@ -188,6 +191,80 @@ def _display_optimization_result(
     console.print(f"   Successful trials: {len(result.successful_trials)}")
 
     # Save result
+    result_name = f"{func_name}_{algorithm}_{max_trials}"
+    persistence.save_result(result, result_name)
+    console.print(f"   Results saved as: {result_name}")
+
+
+def _failed_run_reason(result: Any) -> str | None:
+    """Why a function's run counts as failed, or None when it does not (#2823).
+
+    A run is failed when its status is FAILED, or when it executed trials and
+    none succeeded. A user-cancelled run keeps its partial-results handling.
+    """
+    if getattr(result, "stop_reason", None) == "user_cancelled":
+        return None
+    status = str(getattr(result, "status", "")).lower()
+    if status.endswith("cancelled"):
+        return None
+    trials = getattr(result, "trials", None)
+    successful = getattr(result, "successful_trials", None)
+    # Only a run that recorded a trial failure counts: all-pruned or stopped
+    # runs with nothing successful keep their previous handling.
+    any_failure = any(
+        getattr(t, "error_message", None)
+        or str(getattr(t, "status", "")).lower().endswith("failed")
+        for t in trials or ()
+    )
+    no_success = (
+        bool(trials) and any_failure and successful is not None and len(successful) == 0
+    )
+    if status.endswith("failed") or no_success:
+        first_error = next(
+            (
+                getattr(t, "error_message", None)
+                for t in trials or ()
+                if getattr(t, "error_message", None)
+            ),
+            None,
+        )
+        detail = (
+            f"; first trial error: {redact_sensitive_text(str(first_error))}"
+            if first_error
+            else ""
+        )
+        count = len(trials or ())
+        summary = (
+            f"all {count} trials failed" if count else "the run failed (no trials ran)"
+        )
+        return f"{summary}{detail}"
+    return None
+
+
+_MAX_ERROR_CHARS = 500
+_CONTROL_CHARS = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
+
+
+def _safe_error_text(error: object, limit: int | None = _MAX_ERROR_CHARS) -> str:
+    """Redacted, control-stripped, length-capped, markup-escaped error text."""
+    text = _CONTROL_CHARS.sub("", redact_sensitive_text(str(error)))
+    if limit is not None and len(text) > limit:
+        text = text[:limit] + "... (truncated)"
+    return str(escape(text))
+
+
+def _display_failed_optimization_result(
+    func_name: str,
+    result: Any,
+    reason: str,
+    persistence: PersistenceManager,
+    algorithm: str,
+    max_trials: int,
+) -> None:
+    """Report a run whose trials all failed, without the success tick."""
+    console.print(
+        f"❌ [red]Error optimizing {escape(func_name)}: {_safe_error_text(reason)}[/red]"
+    )
     result_name = f"{func_name}_{algorithm}_{max_trials}"
     persistence.save_result(result, result_name)
     console.print(f"   Results saved as: {result_name}")
@@ -368,14 +445,22 @@ def _run_single_optimization(
         import asyncio
 
         result = asyncio.run(func.optimize(**optimize_kwargs))
+        failure = _failed_run_reason(result)
+        if failure is not None:
+            _display_failed_optimization_result(
+                func_name, result, failure, persistence, algorithm, max_trials
+            )
+            return None
         _display_optimization_result(
             func_name, result, persistence, algorithm, max_trials
         )
         return (func_name, result)
     except Exception as e:
-        console.print(f"❌ [red]Error optimizing {func_name}: {e}[/red]")
+        console.print(
+            f"❌ [red]Error optimizing {escape(func_name)}: {_safe_error_text(e)}[/red]"
+        )
         if verbose:
-            console.print(traceback.format_exc())
+            console.print(_safe_error_text(traceback.format_exc(), limit=None))
         return None
 
 
@@ -792,14 +877,24 @@ async def _run_optimizations(
         console.print(f"\n[bold blue]Optimizing: {func_name}[/bold blue]")
         try:
             result = await func.optimize(**optimize_kwargs)
+            failure = _failed_run_reason(result)
+            if failure is not None:
+                _display_failed_optimization_result(
+                    func_name, result, failure, persistence, algorithm, max_trials
+                )
+                failed_functions.append(func_name)
+                continue
             _display_optimization_result(
                 func_name, result, persistence, algorithm, max_trials
             )
             results.append((func_name, result))
         except Exception as e:
-            console.print(f"❌ [red]Error optimizing {func_name}: {e}[/red]")
+            console.print(
+                f"❌ [red]Error optimizing {escape(func_name)}: "
+                f"{_safe_error_text(e)}[/red]"
+            )
             if verbose:
-                console.print(traceback.format_exc())
+                console.print(_safe_error_text(traceback.format_exc(), limit=None))
             failed_functions.append(func_name)
     return results, failed_functions
 
@@ -914,7 +1009,8 @@ def optimize(
                 verbose,
             )
         )
-        _display_optimization_summary(results, output_dir_resolved)
+        if results:
+            _display_optimization_summary(results, output_dir_resolved)
         if failed_functions:
             console.print(
                 f"\n[red]❌ {len(failed_functions)} function(s) failed to "
@@ -923,9 +1019,9 @@ def optimize(
             sys.exit(1)
 
     except Exception as e:
-        console.print(f"[red]Error loading file: {e}[/red]")
+        console.print(f"[red]Error loading file: {_safe_error_text(e)}[/red]")
         if verbose:
-            console.print(traceback.format_exc())
+            console.print(_safe_error_text(traceback.format_exc(), limit=None))
         sys.exit(1)
     finally:
         if str(parent_dir) in sys.path:
