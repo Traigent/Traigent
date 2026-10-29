@@ -416,7 +416,7 @@ class SeamlessNoInjectableTargetsError(ConfigurationError):
 _CLOSURE_STRIPPED_ATTR = "__traigent_closure_stripped__"
 
 
-_MANGLED_NAME = re.compile(r"^_[A-Za-z]\w*__\w*(?<!__)$")
+_MANGLED_NAME = re.compile(r"^_\w+?__\w*(?<!__)$")
 
 
 def _uses_mangled_names(code: types.CodeType) -> bool:

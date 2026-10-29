@@ -825,3 +825,18 @@ def test_seamless_name_mangled_method_falls_back_to_shim() -> None:
         _PrivateAttrAgent.run, {"model": "gpt", "temperature": 0.9}
     )
     assert wrapped(_PrivateAttrAgent(), "q") == (5, "x", 0.9)
+
+
+class _Ünï:  # noqa: N801 - non-ASCII class name: mangled to ``_Ünï__z``
+    def __init__(self) -> None:
+        self.__z = 1
+
+    def run(self, q: str, temperature: float = 0.1):
+        model = "x"
+        return (self.__z, model, temperature)
+
+
+def test_seamless_non_ascii_class_mangled_method_falls_back_to_shim() -> None:
+    provider = _reset_provider()
+    wrapped = provider.inject_config(_Ünï.run, {"model": "gpt", "temperature": 0.9})
+    assert wrapped(_Ünï(), "q") == (1, "x", 0.9)
