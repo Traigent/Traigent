@@ -155,6 +155,7 @@ from traigent.utils.function_identity import (
 from traigent.utils.hashing import generate_run_label
 from traigent.utils.logging import get_logger
 from traigent.utils.mock_provenance import MockProvenanceRecorder
+from traigent.utils.money import format_usd
 from traigent.utils.objectives import (
     coerce_finite_objective_score,
     is_minimization_objective,
@@ -6156,8 +6157,8 @@ class OptimizationOrchestrator:
             ):
                 return (
                     f"Stopped at {trials} trials: the cost limit "
-                    f"(${status.limit_usd:.2f}) was reached by known spend "
-                    f"of at least ${status.accumulated_cost_usd:.2f} (a "
+                    f"({format_usd(status.limit_usd)}) was reached by known spend "
+                    f"of at least {format_usd(status.accumulated_cost_usd)} (a "
                     f"minimum: cost is unmeasured for "
                     f"{status.unmeasured_trial_count} of "
                     f"{status.trial_count} trials)."

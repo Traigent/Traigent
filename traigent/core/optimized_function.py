@@ -88,7 +88,7 @@ from traigent.core.execution_policy_runtime import (
     policy_requires_cloud,
     unsupported_backend_smart_algorithm_message,
 )
-from traigent.core.model_config_keys import MODEL_CONFIG_KEYS, is_model_config_key
+from traigent.core.model_config_keys import is_model_config_key
 from traigent.core.objectives import (
     ObjectiveSchema,
     create_default_objectives,
@@ -470,7 +470,6 @@ _COST_WARNING_EMITTED = False
 _CONFIG_SPACE_TYPE_ERROR = "Configuration space must be a dictionary"
 
 _CLOUD_FALLBACK_POLICIES = frozenset({"auto", "warn", "never"})
-_MODEL_CONFIG_KEYS = MODEL_CONFIG_KEYS
 _is_model_config_key = is_model_config_key
 
 

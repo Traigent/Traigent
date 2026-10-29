@@ -15,8 +15,9 @@ import sys
 from enum import Enum
 from typing import Protocol
 
-from traigent.utils.logging import get_logger
 from traigent.utils.console import _safe_print
+from traigent.utils.logging import get_logger
+from traigent.utils.money import format_usd
 
 logger = get_logger(__name__)
 
@@ -271,7 +272,9 @@ class TerminalPausePrompt:
             )
             return "stop"
 
-        _safe_print(f"\n💰 Budget limit reached: ${accumulated:.2f} / ${limit:.2f}")
+        _safe_print(
+            f"\n💰 Budget limit reached: {format_usd(accumulated)} / {format_usd(limit)}"
+        )
         _safe_print()
         _safe_print("Options:")
         _safe_print("  Enter a new limit (e.g. 5.0) to raise and continue")
@@ -290,7 +293,7 @@ class TerminalPausePrompt:
             new_limit = float(choice)
             if new_limit <= accumulated:
                 _safe_print(
-                    f"  New limit must be greater than current spend (${accumulated:.2f})"
+                    f"  New limit must be greater than current spend ({format_usd(accumulated)})"
                 )
                 return "stop"
             if not (0 < new_limit < float("inf")):

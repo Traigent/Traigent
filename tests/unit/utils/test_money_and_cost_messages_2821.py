@@ -106,3 +106,11 @@ def test_results_table_prints_cost_and_latency_without_percent(
     assert "$0.0123" in out and "$0.0004" in out
     assert "850ms" in out and "120ms" in out
     assert "850.0%" not in out and "1.2%" not in out
+
+
+def test_cost_limit_exceeded_message_keeps_sub_cent_amounts() -> None:
+    from traigent.utils.exceptions import CostLimitExceeded
+
+    message = str(CostLimitExceeded(accumulated=0.0051, limit=0.004))
+    assert "$0.0051" in message and "$0.004" in message
+    assert "$0.00 " not in message

@@ -120,3 +120,15 @@ def test_cancelled_run_keeps_its_exit_code_and_output(
 
     assert result.exit_code == 0, output
     assert "Cancelled by user" in output or "CANCELLED BY USER" in output
+
+
+def test_trial_error_with_rich_markup_does_not_crash_the_report(
+    plain: Callable[[str], str],
+) -> None:
+    result, output = _run(
+        "FakeResult('failed', [FakeTrial(False, 'bad [/oops] tag')])", plain
+    )
+
+    assert result.exit_code == 1, output
+    assert "MarkupError" not in output
+    assert "bad [/oops] tag" in output
