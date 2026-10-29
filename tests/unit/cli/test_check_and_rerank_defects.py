@@ -637,3 +637,39 @@ def test_local_cleanup_declined_prompt_is_a_clean_cancel_2830(
     assert result.exit_code == 1
     assert "nothing was deleted" in result.output
     assert "--yes" in result.output
+
+
+def test_rerank_rejects_absent_metric_even_with_a_zero_weight_beside_it_2829(
+    stored_result: Mock,
+) -> None:
+    with patch("traigent.cli.main.PersistenceManager") as manager:
+        manager.return_value.load_result.return_value = stored_result
+        result = _invoke("results", "rerank", "run", "-w", "nosuch=1,cost=0")
+    assert result.exit_code != 0, result.output
+
+
+def test_local_cleanup_without_a_tty_names_yes_2830(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path / "store"))
+    result = CliRunner().invoke(cli, ["local", "cleanup", "--days", "30"], input="")
+    assert result.exit_code == 1
+    assert "--yes" in result.output
+    assert "Error cleaning up sessions" not in result.output
+
+
+def test_failed_package_load_does_not_poison_the_next_project_2800(
+    tmp_path: Path,
+) -> None:
+    from traigent.utils.module_loading import find_optimized_functions, load_user_module
+
+    _write(tmp_path, "c/agents/__init__.py", "")
+    _write(tmp_path, "c/agents/run.py", "raise RuntimeError('boom')\n")
+    _write(tmp_path, "d/agents/__init__.py", "")
+    _write(tmp_path, "d/agents/run.py", _agent())
+    with pytest.raises(RuntimeError):
+        load_user_module(tmp_path / "c/agents/run.py")
+    module = load_user_module(tmp_path / "d/agents/run.py")
+    assert [n for n, _ in find_optimized_functions(module)] == ["answer"]
+    for name in [m for m in sys.modules if m == "agents" or m.startswith("agents.")]:
+        sys.modules.pop(name, None)

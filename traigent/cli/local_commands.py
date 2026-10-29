@@ -419,10 +419,7 @@ def cleanup_sessions(days: int, dry_run: bool, yes: bool) -> None:
         if dry_run:
             _echo_sessions_older_than(storage, days)
         else:
-            if not yes and not click.confirm(
-                f"Permanently delete finished sessions older than {days} days? "
-                "(use --dry-run to preview)"
-            ):
+            if not yes and not _confirm_cleanup(days):
                 raise click.ClickException(
                     "Cleanup cancelled; nothing was deleted. "
                     "Pass --yes to skip the prompt (non-interactive use)."
@@ -435,6 +432,19 @@ def cleanup_sessions(days: int, dry_run: bool, yes: bool) -> None:
     except Exception as e:
         click.echo(f"Error cleaning up sessions: {e}", err=True)
         sys.exit(1)
+
+
+def _confirm_cleanup(days: int) -> bool:
+    """Ask before deleting; no answer available (EOF, no TTY) means no."""
+    try:
+        return bool(
+            click.confirm(
+                f"Permanently delete finished sessions older than {days} days? "
+                "(use --dry-run to preview)"
+            )
+        )
+    except click.Abort:  # silent-ok: no answer (EOF/no TTY) means "do not delete"; the caller reports the cancel and names --yes
+        return False
 
 
 @local_commands.command(name="info")

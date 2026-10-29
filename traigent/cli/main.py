@@ -1976,6 +1976,13 @@ def results_rerank(
         if not result.trials:
             raise click.ClickException("No trials found in this result")
 
+        positive = [key for key, weight in weight_dict.items() if weight > 0]
+        if not any(key in (t.metrics or {}) for t in result.trials for key in positive):
+            raise click.ClickException(
+                "No trials have the specified metrics. "
+                f"Available metrics: {list(result.trials[0].metrics.keys())}"
+            )
+
         scored_trials = _score_trials_for_rerank(result, weight_dict)
 
         if not scored_trials:

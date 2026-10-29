@@ -144,6 +144,11 @@ def _import_packaged(path: Path, qualified_name: str, root: Path) -> ModuleType:
         sys.modules.pop(qualified_name, None)
     top_level = qualified_name.split(".")[0]
     _evict_stale_user_package(top_level, root)
+    if top_level not in sys.modules:
+        # We are the one introducing this package: remember its root even if
+        # the import fails half way, so a later load from another root evicts
+        # it instead of inheriting the half-imported package.
+        _LOADED_PACKAGE_ROOTS[top_level] = root
     try:
         module = importlib.import_module(qualified_name)
     except ImportError as exc:
