@@ -195,6 +195,7 @@ _EMPTY_SMART_RUN_OWNED_STOP_REASONS = frozenset(
 _OBJECTIVE_UNMATCHED_WARNING_CODE = "OBJECTIVE_UNMATCHED"
 # Issue #2477: every executed trial failed (none succeeded).
 _ALL_TRIALS_FAILED_WARNING_CODE = "ALL_TRIALS_FAILED"
+_MOCK_TRANSPORT_BLOCKED_WARNING_CODE = "MOCK_TRANSPORT_BLOCKED"
 # Issue #1832: a declared, weighted, matched objective whose value is uniformly
 # constant across the ranking-eligible trials cannot influence ``best_config`` —
 # its weight is a silent no-op (e.g. cost/latency = 0 on a no-LLM-scored or
@@ -6774,6 +6775,35 @@ class OptimizationOrchestrator:
             return {}
         return dict(session_summary)
 
+    def _apply_mock_transport_blocked(
+        self, result_warnings: list[str], result_warning_codes: list[str]
+    ) -> None:
+        """Say that mock mode blocked the raw calls behind an all-failed run (#2812).
+
+        Vendor SDKs wrap the guard's error into a bare "Connection error.", so
+        the per-trial text reads like an outage. The run-scoped recorder knows
+        the guard blocked provider calls; only fixed-list host names are named.
+        """
+        recorder = getattr(self, "_mock_recorder", None)
+        blocked = getattr(recorder, "blocked_hosts", None)
+        if (
+            not isinstance(blocked, dict)
+            or not blocked
+            or any(t.is_successful for t in self._trials)
+        ):
+            return
+        blocked = dict(blocked)
+        from traigent.utils.mock_transport_guard import MOCK_SCOPE_SUMMARY
+
+        hosts = ", ".join(sorted(blocked))
+        result_warnings.append(
+            f"Mock mode blocked {sum(blocked.values())} raw provider call(s) "
+            f"to {hosts}; the per-trial 'Connection error.' is that block, not "
+            f"a network outage. {MOCK_SCOPE_SUMMARY} Route the call through a "
+            "mocked path, or turn mock mode off for a real run."
+        )
+        result_warning_codes.append(_MOCK_TRANSPORT_BLOCKED_WARNING_CODE)
+
     def _fail_if_completed(
         self, result_status: OptimizationStatus
     ) -> OptimizationStatus:
@@ -7073,6 +7103,7 @@ class OptimizationOrchestrator:
         result_status = self._apply_all_trials_failed(
             result_status, result_warnings, result_warning_codes
         )
+        self._apply_mock_transport_blocked(result_warnings, result_warning_codes)
         self._apply_partial_coverage(
             selection, primary_objective, result_warnings, result_warning_codes
         )
