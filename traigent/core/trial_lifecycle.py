@@ -266,6 +266,10 @@ async def apply_surrogate_scoring(
             trial_id,
         )
 
+    _store_surrogate_aggregate(eval_result, scored)
+
+
+def _store_surrogate_aggregate(eval_result: Any, scored: list[float]) -> None:
     if scored:
         aggregate = getattr(eval_result, "metrics", None)
         if isinstance(aggregate, dict):
