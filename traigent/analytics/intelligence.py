@@ -910,37 +910,54 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
         return records
 
     @staticmethod
+    def _usage_fields_from_dict(run: dict[str, Any]) -> tuple[Any, Any, Any, Any, Any]:
+        best_config = run.get("best_config") or {}
+        timestamp = run.get("start_time") or run.get("timestamp") or time.time()
+        return (
+            best_config,
+            timestamp,
+            run.get("total_cost", 0),
+            run.get("total_tokens", 0),
+            run.get("duration", 0),
+        )
+
+    @staticmethod
+    def _usage_fields_from_object(
+        run: Any, metadata: Any
+    ) -> tuple[Any, Any, Any, Any, Any]:
+        meta_is_dict = isinstance(metadata, dict)
+        best_config = getattr(run, "best_config", None)
+        if best_config is None and meta_is_dict:
+            best_config = metadata.get("best_config")
+        if not isinstance(best_config, dict):
+            best_config = {}
+
+        timestamp = (
+            getattr(run, "start_time", None)
+            or getattr(run, "timestamp", None)
+            or time.time()
+        )
+        total_cost = getattr(run, "total_cost", None)
+        if total_cost is None and meta_is_dict:
+            total_cost = metadata.get("total_cost")
+        total_tokens = getattr(run, "total_tokens", None)
+        if total_tokens is None and meta_is_dict:
+            total_tokens = metadata.get("total_tokens", 0)
+        duration = getattr(run, "duration", None)
+        if duration is None and meta_is_dict:
+            duration = metadata.get("duration", 0)
+        return best_config, timestamp, total_cost, total_tokens, duration
+
+    @staticmethod
     def _build_usage_entry(run: Any) -> dict[str, Any]:
         """Convert a history run/record to a usage entry dict."""
         metadata = getattr(run, "metadata", None)
 
         if isinstance(run, dict):
-            best_config = run.get("best_config") or {}
-            timestamp = run.get("start_time") or run.get("timestamp") or time.time()
-            total_cost = run.get("total_cost", 0)
-            total_tokens = run.get("total_tokens", 0)
-            duration = run.get("duration", 0)
+            fields = CostOptimizationAI._usage_fields_from_dict(run)
         else:
-            best_config = getattr(run, "best_config", None)
-            if best_config is None and isinstance(metadata, dict):
-                best_config = metadata.get("best_config")
-            if not isinstance(best_config, dict):
-                best_config = {}
-
-            timestamp = (
-                getattr(run, "start_time", None)
-                or getattr(run, "timestamp", None)
-                or time.time()
-            )
-            total_cost = getattr(run, "total_cost", None)
-            if total_cost is None and isinstance(metadata, dict):
-                total_cost = metadata.get("total_cost")
-            total_tokens = getattr(run, "total_tokens", None)
-            if total_tokens is None and isinstance(metadata, dict):
-                total_tokens = metadata.get("total_tokens", 0)
-            duration = getattr(run, "duration", None)
-            if duration is None and isinstance(metadata, dict):
-                duration = metadata.get("duration", 0)
+            fields = CostOptimizationAI._usage_fields_from_object(run, metadata)
+        best_config, timestamp, total_cost, total_tokens, duration = fields
 
         cost_value = float(total_cost) if isinstance(total_cost, (int, float)) else 0.0
         tokens_value = (
@@ -1565,6 +1582,65 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
             "utilization_improvement": 0.15,  # 15% improvement
         }
 
+    @staticmethod
+    def _summarize_provider_usage(providers, cloud_usage):
+        total_cost = 0
+        workload_distribution = {}
+
+        for provider in providers:
+            if provider in cloud_usage:
+                provider_data = cloud_usage[provider]
+                compute_cost = provider_data.get("compute", {}).get("cost", 0)
+                storage_cost = provider_data.get("storage", {}).get("cost", 0)
+                provider_total = compute_cost + storage_cost
+                total_cost += provider_total
+
+                # Calculate current distribution
+                workload_distribution[provider] = {
+                    "current_cost": provider_total,
+                    "compute_instances": provider_data.get("compute", {}).get(
+                        "instances", 0
+                    ),
+                    "storage_gb": provider_data.get("storage", {}).get("gb", 0),
+                }
+        return total_cost, workload_distribution
+
+    @staticmethod
+    def _apply_data_sovereignty(workload_distribution, constraints):
+        # Apply data sovereignty constraints
+        sovereignty = constraints.get("data_sovereignty", {})
+        for region, required_provider in sovereignty.items():
+            if required_provider in workload_distribution:
+                workload_distribution[required_provider]["regions"] = (
+                    workload_distribution[required_provider].get("regions", [])
+                    + [region]
+                )
+
+    @staticmethod
+    def _build_migration_plan(providers, workload_distribution, cloud_usage):
+        migration_plan = []
+        for provider in providers:
+            if provider in workload_distribution:
+                current_cost = workload_distribution[provider]["current_cost"]
+                if current_cost > 5000:  # Only migrate high-cost workloads
+                    migration_plan.append(
+                        {
+                            "source_provider": provider,
+                            "target_provider": min(
+                                providers,
+                                key=lambda p: (
+                                    cloud_usage.get(p, {})
+                                    .get("compute", {})
+                                    .get("cost", float("inf"))
+                                ),
+                            ),
+                            "workload_type": "compute",
+                            "estimated_effort": "medium",
+                            "potential_savings": current_cost * 0.2,
+                        }
+                    )
+        return migration_plan
+
     def optimize_multi_cloud(
         self,
         cloud_usage=None,
@@ -1587,62 +1663,21 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
             }
 
         # Analyze current usage to calculate total costs
-        total_cost = 0
-        workload_distribution = {}
-
-        for provider in providers:
-            if provider in cloud_usage:
-                provider_data = cloud_usage[provider]
-                compute_cost = provider_data.get("compute", {}).get("cost", 0)
-                storage_cost = provider_data.get("storage", {}).get("cost", 0)
-                provider_total = compute_cost + storage_cost
-                total_cost += provider_total
-
-                # Calculate current distribution
-                workload_distribution[provider] = {
-                    "current_cost": provider_total,
-                    "compute_instances": provider_data.get("compute", {}).get(
-                        "instances", 0
-                    ),
-                    "storage_gb": provider_data.get("storage", {}).get("gb", 0),
-                }
+        total_cost, workload_distribution = self._summarize_provider_usage(
+            providers, cloud_usage
+        )
 
         # Apply constraints and optimize
         if constraints:
-            # Apply data sovereignty constraints
-            sovereignty = constraints.get("data_sovereignty", {})
-            for region, required_provider in sovereignty.items():
-                if required_provider in workload_distribution:
-                    workload_distribution[required_provider]["regions"] = (
-                        workload_distribution[required_provider].get("regions", [])
-                        + [region]
-                    )
+            self._apply_data_sovereignty(workload_distribution, constraints)
 
         # Calculate estimated savings (mock 15% savings)
         estimated_savings = total_cost * 0.15
 
         # Generate migration plan
-        migration_plan = []
-        for provider in providers:
-            if provider in workload_distribution:
-                current_cost = workload_distribution[provider]["current_cost"]
-                if current_cost > 5000:  # Only migrate high-cost workloads
-                    migration_plan.append(
-                        {
-                            "source_provider": provider,
-                            "target_provider": min(
-                                providers,
-                                key=lambda p: (
-                                    cloud_usage.get(p, {})
-                                    .get("compute", {})
-                                    .get("cost", float("inf"))
-                                ),
-                            ),
-                            "workload_type": "compute",
-                            "estimated_effort": "medium",
-                            "potential_savings": current_cost * 0.2,
-                        }
-                    )
+        migration_plan = self._build_migration_plan(
+            providers, workload_distribution, cloud_usage
+        )
 
         return {
             "workload_distribution": workload_distribution,
@@ -1714,6 +1749,41 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
 
         return prioritized
 
+    @staticmethod
+    def _aggregate_departments(
+        departments, by_department, by_resource_type, inefficiencies
+    ):
+        for dept, resources in departments.items():
+            dept_total = 0
+            for resource_type, cost in resources.items():
+                dept_total += cost
+                by_resource_type[resource_type] = (
+                    by_resource_type.get(resource_type, 0) + cost
+                )
+            by_department[dept] = dept_total
+
+            # Detect inefficiencies
+            if dept_total > 10000:
+                inefficiencies.append(f"{dept} has high costs: ${dept_total}")
+
+    @staticmethod
+    def _find_reallocation_opportunities(projects):
+        opportunities = []
+        for project, details in projects.items():
+            project_cost = details.get("cost", 0)
+
+            # Check for reallocation opportunities
+            if project_cost > 5000:
+                opportunities.append(
+                    {
+                        "project": project,
+                        "current_cost": project_cost,
+                        "potential_savings": project_cost * 0.2,
+                        "recommendation": f"Consider optimizing {project}",
+                    }
+                )
+        return opportunities
+
     def analyze_cost_allocation(self, cost_data, **kwargs):
         """Analyze cost allocation across different dimensions."""
         if not cost_data:
@@ -1727,35 +1797,18 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
 
         # Process departments data
         if "departments" in cost_data:
-            for dept, resources in cost_data["departments"].items():
-                dept_total = 0
-                for resource_type, cost in resources.items():
-                    dept_total += cost
-                    by_resource_type[resource_type] = (
-                        by_resource_type.get(resource_type, 0) + cost
-                    )
-                by_department[dept] = dept_total
-
-                # Detect inefficiencies
-                if dept_total > 10000:
-                    inefficiencies.append(f"{dept} has high costs: ${dept_total}")
+            self._aggregate_departments(
+                cost_data["departments"],
+                by_department,
+                by_resource_type,
+                inefficiencies,
+            )
 
         # Process projects data
         if "projects" in cost_data:
-            for project, details in cost_data["projects"].items():
-                project_cost = details.get("cost", 0)
-                dept = details.get("department", "unknown")
-
-                # Check for reallocation opportunities
-                if project_cost > 5000:
-                    reallocation_opportunities.append(
-                        {
-                            "project": project,
-                            "current_cost": project_cost,
-                            "potential_savings": project_cost * 0.2,
-                            "recommendation": f"Consider optimizing {project}",
-                        }
-                    )
+            reallocation_opportunities = self._find_reallocation_opportunities(
+                cost_data["projects"]
+            )
 
         return {
             "by_department": by_department,
@@ -1764,6 +1817,55 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
             "reallocation_opportunities": reallocation_opportunities,
             "total_cost": sum(by_department.values()),
         }
+
+    @staticmethod
+    def _fill_pricing_from_models(pricing, providers, get_model_pricing_per_1k):
+        # Common models to check pricing for
+        model_mappings = {
+            "openai": ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo", "gpt-4-turbo"],
+            "anthropic": [
+                "claude-opus-4-8",
+                "claude-sonnet-4-6",
+                "claude-haiku-4-5-20251001",
+            ],
+        }
+
+        for provider in providers:
+            if provider in model_mappings:
+                pricing[provider] = {}
+                for model in model_mappings[provider]:
+                    try:
+                        # Compute per-1K token rates (consistent with
+                        # fallback path) via canonical pricing API.
+                        input_cost, output_cost = get_model_pricing_per_1k(model)
+                        if input_cost > 0 or output_cost > 0:
+                            pricing[provider][model] = {
+                                "input": float(input_cost),
+                                "output": float(output_cost),
+                            }
+                    except Exception as e:
+                        logger.debug("Skipping model %s: pricing error: %s", model, e)
+                        continue
+
+    @staticmethod
+    def _fill_pricing_from_estimation(pricing, providers, estimation_pricing):
+        provider_prefixes = {
+            "openai": ("gpt-",),
+            "anthropic": ("claude-",),
+        }
+        for provider in providers:
+            if provider not in provider_prefixes:
+                continue
+            prefixes = provider_prefixes[provider]
+            provider_pricing: dict[str, Any] = {}
+            for model, p in estimation_pricing.items():
+                if any(model.startswith(pfx) for pfx in prefixes):
+                    provider_pricing[model] = {
+                        "input": p["input_cost_per_token"] * 1000,
+                        "output": p["output_cost_per_token"] * 1000,
+                    }
+            if provider_pricing:
+                pricing[provider] = provider_pricing
 
     def fetch_current_pricing(self, providers=None, **kwargs):
         """Fetch current pricing data.
@@ -1779,56 +1881,14 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
         try:
             from traigent.utils.cost_calculator import get_model_pricing_per_1k
 
-            # Common models to check pricing for
-            model_mappings = {
-                "openai": ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo", "gpt-4-turbo"],
-                "anthropic": [
-                    "claude-opus-4-8",
-                    "claude-sonnet-4-6",
-                    "claude-haiku-4-5-20251001",
-                ],
-            }
-
-            for provider in providers:
-                if provider in model_mappings:
-                    pricing[provider] = {}
-                    for model in model_mappings[provider]:
-                        try:
-                            # Compute per-1K token rates (consistent with
-                            # fallback path) via canonical pricing API.
-                            input_cost, output_cost = get_model_pricing_per_1k(model)
-                            if input_cost > 0 or output_cost > 0:
-                                pricing[provider][model] = {
-                                    "input": float(input_cost),
-                                    "output": float(output_cost),
-                                }
-                        except Exception as e:
-                            logger.debug(
-                                "Skipping model %s: pricing error: %s", model, e
-                            )
-                            continue
-
+            self._fill_pricing_from_models(pricing, providers, get_model_pricing_per_1k)
         except ImportError:
             # Fallback: derive from canonical ESTIMATION_MODEL_PRICING
             from traigent.utils.cost_calculator import ESTIMATION_MODEL_PRICING
 
-            provider_prefixes = {
-                "openai": ("gpt-",),
-                "anthropic": ("claude-",),
-            }
-            for provider in providers:
-                if provider not in provider_prefixes:
-                    continue
-                prefixes = provider_prefixes[provider]
-                provider_pricing: dict[str, Any] = {}
-                for model, p in ESTIMATION_MODEL_PRICING.items():
-                    if any(model.startswith(pfx) for pfx in prefixes):
-                        provider_pricing[model] = {
-                            "input": p["input_cost_per_token"] * 1000,
-                            "output": p["output_cost_per_token"] * 1000,
-                        }
-                if provider_pricing:
-                    pricing[provider] = provider_pricing
+            self._fill_pricing_from_estimation(
+                pricing, providers, ESTIMATION_MODEL_PRICING
+            )
 
         # Add non-LLM pricing data (these aren't handled by litellm)
         if "aws" in providers:
