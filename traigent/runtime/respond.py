@@ -26,7 +26,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from traigent.runtime import manifest
 from traigent.runtime.apply import matching_heads
@@ -198,6 +198,125 @@ def _run_id(result: Any) -> str | None:
     return None
 
 
+def _validate_local_response(
+    fn: Any,
+    requirement: RuntimeRequirement,
+    interactive: bool,
+    max_fix_cost_usd: float | None,
+) -> tuple[str, float]:
+    errors = [i for i in requirement.validate() if i.severity == "error"]
+    if errors:
+        raise RuntimeRequirementError(errors[0].code, errors[0].path)
+    rule_id = _optimize_rule(requirement)
+    # Before any approval or reservation: a function without .optimize() consumes nothing.
+    if not callable(getattr(fn, "optimize", None)):
+        raise RuntimeRequirementError("function_not_optimizable")
+    ceiling = (
+        max_fix_cost_usd
+        if max_fix_cost_usd is not None
+        else requirement.max_fix_cost_usd
+    )
+    if ceiling is None or not positive_finite(ceiling):
+        raise RuntimeRequirementError(E_FIX_CEILING, "max_fix_cost_usd")
+    if not interactive:
+        raise RuntimeRequirementError(E_APPROVAL_REQUIRED)
+    return rule_id, ceiling
+
+
+def _validate_local_approval(
+    state: Path,
+    agent_id: str,
+    key: str,
+    policy_digest: str,
+    breach_id: str,
+    rule_id: str,
+    ceiling: float,
+    attempt: int,
+    clock: Callable[[], datetime],
+    fn: Any,
+    requirement: RuntimeRequirement,
+    declared_ceiling: float | None,
+) -> tuple[dict[str, Any], RuntimeRequirement]:
+    approval = manifest.read_approval(state, agent_id, key)
+    if approval is None or not manifest.approval_matches(
+        approval,
+        full_policy_digest=policy_digest,
+        breach_id=breach_id,
+        rule_id=rule_id,
+        occurrence=OCCURRENCE,
+        cost_ceiling_usd=float(ceiling),
+        attempt=attempt,
+    ):
+        raise RuntimeRequirementError(E_HOLD, "approval")
+    if manifest.approval_expired(approval, clock()):
+        raise RuntimeRequirementError(E_APPROVAL_EXPIRED)
+    # Re-read the CURRENT declaration: it may have changed while the person decided.
+    current = _current_requirement(fn, requirement)
+    if (
+        current is None
+        or current.policy_digest() != policy_digest
+        or _optimize_rule(current) != rule_id
+        or current.max_fix_cost_usd != declared_ceiling
+    ):
+        raise RuntimeRequirementError(E_POLICY_CHANGED)
+    return approval, current
+
+
+def _reserve_approved_occurrence(
+    approval: dict[str, Any],
+    state: Path,
+    agent_id: str,
+    key: str,
+    breach_id: str,
+    attempt: int,
+    clock: Callable[[], datetime],
+    occurrence_lease: timedelta,
+) -> datetime:
+    # Last moment: the second round of checks can take longer than the approval has left.
+    if manifest.approval_expired(approval, clock()):
+        raise RuntimeRequirementError(E_APPROVAL_EXPIRED)
+    # Taken before the reservation, so the verified deadline can only be early, never late.
+    reserved_at = clock()
+    if not manifest.reserve_occurrence(
+        state,
+        agent_id,
+        key,
+        {"run_id": None, "breach_id": breach_id},
+        attempt=attempt,
+        clock=clock,
+        lease=occurrence_lease,
+    ):
+        raise OccurrenceUsed()
+    # Reserving may have waited on the ledger lock across the approval's expiry.
+    if manifest.approval_expired(approval, clock()):
+        # The fix never started: undo the reservation (no retry consumed).
+        manifest.release_occurrence(state, agent_id, key, attempt=attempt)
+        raise RuntimeRequirementError(E_APPROVAL_EXPIRED)
+
+    return reserved_at
+
+
+def _lost_after_wait(run: asyncio.Future[Any], own: _Ownership) -> bool:
+    if not run.done():
+        return True
+    else:
+        # A synchronous run can block the loop past the lease with no beat
+        # having run: verify ownership once more, strictly (an error is a loss).
+        return not own.beat(strict=True)
+
+
+def _record_occurrence(
+    state: Path, agent_id: str, key: str, info: dict[str, Any], attempt: int
+) -> None:
+    if not manifest.update_occurrence(state, agent_id, key, info, attempt=attempt):
+        LOGGER.warning("stale_outcome_dropped")
+
+
+def _check_earlier_occurrence(earlier: dict[str, Any] | None) -> None:
+    if earlier is not None and earlier.get("status") != manifest.STATUS_FAILED:
+        raise OccurrenceUsed(_text(earlier.get("run_id")))
+
+
 async def respond(
     fn: Any,
     requirement: RuntimeRequirement,
@@ -235,22 +354,9 @@ async def respond(
         )
     if confirm is None:
         raise RuntimeRequirementError(E_APPROVAL_REQUIRED)
-    errors = [i for i in requirement.validate() if i.severity == "error"]
-    if errors:
-        raise RuntimeRequirementError(errors[0].code, errors[0].path)
-    rule_id = _optimize_rule(requirement)
-    # Before any approval or reservation: a function without .optimize() consumes nothing.
-    if not callable(getattr(fn, "optimize", None)):
-        raise RuntimeRequirementError("function_not_optimizable")
-    ceiling = (
-        max_fix_cost_usd
-        if max_fix_cost_usd is not None
-        else requirement.max_fix_cost_usd
+    rule_id, ceiling = _validate_local_response(
+        fn, requirement, interactive, max_fix_cost_usd
     )
-    if ceiling is None or not positive_finite(ceiling):
-        raise RuntimeRequirementError(E_FIX_CEILING, "max_fix_cost_usd")
-    if not interactive:
-        raise RuntimeRequirementError(E_APPROVAL_REQUIRED)
     state = state_dir or manifest.default_state_dir()
     api = client or RuntimeClient(project_id)
 
@@ -262,8 +368,7 @@ async def respond(
     earlier = manifest.read_occurrence(
         state, agent_id, key, now=clock(), lease=occurrence_lease
     )
-    if earlier is not None and earlier.get("status") != manifest.STATUS_FAILED:
-        raise OccurrenceUsed(_text(earlier.get("run_id")))
+    _check_earlier_occurrence(earlier)
     # The approval is for THIS attempt: failures recorded so far, plus one.
     attempt = manifest.failed_attempts(earlier) + 1
 
@@ -295,57 +400,31 @@ async def respond(
     )
 
     # Immediately before starting: approval valid and bound, then every check again.
-    approval = manifest.read_approval(state, agent_id, key)
-    if approval is None or not manifest.approval_matches(
-        approval,
-        full_policy_digest=policy_digest,
-        breach_id=breach_id,
-        rule_id=rule_id,
-        occurrence=OCCURRENCE,
-        cost_ceiling_usd=float(ceiling),
-        attempt=attempt,
-    ):
-        raise RuntimeRequirementError(E_HOLD, "approval")
-    if manifest.approval_expired(approval, clock()):
-        raise RuntimeRequirementError(E_APPROVAL_EXPIRED)
-    # Re-read the CURRENT declaration: it may have changed while the person decided.
-    current = _current_requirement(fn, requirement)
-    if (
-        current is None
-        or current.policy_digest() != policy_digest
-        or _optimize_rule(current) != rule_id
-        or current.max_fix_cost_usd != declared_ceiling
-    ):
-        raise RuntimeRequirementError(E_POLICY_CHANGED)
+    approval, current = _validate_local_approval(
+        state,
+        agent_id,
+        key,
+        policy_digest,
+        breach_id,
+        rule_id,
+        ceiling,
+        attempt,
+        clock,
+        fn,
+        requirement,
+        declared_ceiling,
+    )
     again = _fresh_checks(
         current, api, project_id=project_id, agent_id=agent_id, state=state
     )
     if again.get("breach_id") != breach_id:
         raise RuntimeRequirementError(E_HOLD, "breach")
-    # Last moment: the second round of checks can take longer than the approval has left.
-    if manifest.approval_expired(approval, clock()):
-        raise RuntimeRequirementError(E_APPROVAL_EXPIRED)
-    # Taken before the reservation, so the verified deadline can only be early, never late.
-    reserved_at = clock()
-    if not manifest.reserve_occurrence(
-        state,
-        agent_id,
-        key,
-        {"run_id": None, "breach_id": breach_id},
-        attempt=attempt,
-        clock=clock,
-        lease=occurrence_lease,
-    ):
-        raise OccurrenceUsed()
-    # Reserving may have waited on the ledger lock across the approval's expiry.
-    if manifest.approval_expired(approval, clock()):
-        # The fix never started: undo the reservation (no retry consumed).
-        manifest.release_occurrence(state, agent_id, key, attempt=attempt)
-        raise RuntimeRequirementError(E_APPROVAL_EXPIRED)
+    reserved_at = _reserve_approved_occurrence(
+        approval, state, agent_id, key, breach_id, attempt, clock, occurrence_lease
+    )
 
     def record(info: dict[str, Any]) -> None:
-        if not manifest.update_occurrence(state, agent_id, key, info, attempt=attempt):
-            LOGGER.warning("stale_outcome_dropped")
+        _record_occurrence(state, agent_id, key, info, attempt)
 
     own = _Ownership(
         state, agent_id, key, attempt, clock, occurrence_lease, reserved_at
@@ -359,12 +438,7 @@ async def respond(
             # A heartbeat the ledger refuses ends that task: this controller no longer
             # owns the occurrence, so the run is cancelled and nothing is finished.
             await asyncio.wait({run, heartbeat}, return_when=asyncio.FIRST_COMPLETED)
-            if not run.done():
-                lost = True
-            else:
-                # A synchronous run can block the loop past the lease with no beat
-                # having run: verify ownership once more, strictly (an error is a loss).
-                lost = not own.beat(strict=True)
+            lost = _lost_after_wait(run, own)
         finally:
             # Both tasks are drained on every exit, so no exception goes unretrieved.
             await _drain(heartbeat, run)
@@ -658,6 +732,77 @@ def _candidates(
     return (list(raw) if isinstance(raw, (list, tuple)) else []), configs
 
 
+def _validate_hosted_grant(
+    grant: dict[str, Any], attempt: dict[str, Any], clock: Callable[[], datetime]
+) -> None:
+    if (
+        grant["state"] != "granted"
+        or grant["effect"] != "optimize"
+        or grant["attempt_ref"] != attempt["attempt_ref"]
+    ):
+        raise RuntimeRequirementError(E_APPROVAL_REQUIRED, "grant")
+    if "expires_at" in grant and _parse_ts(grant["expires_at"]) <= clock():
+        raise RuntimeRequirementError(E_APPROVAL_EXPIRED)
+
+
+def _validate_hosted_response(fn: Any, requirement: RuntimeRequirement) -> str:
+    errors = [i for i in requirement.validate() if i.severity == "error"]
+    if errors:
+        raise RuntimeRequirementError(errors[0].code, errors[0].path)
+    rule_id = _optimize_rule(requirement)
+    if not callable(getattr(fn, "optimize", None)):
+        raise RuntimeRequirementError("function_not_optimizable")
+    return rule_id
+
+
+async def _start_hosted_attempt(
+    api: ReactiveClient,
+    reservation: ReservationHandle,
+    cache: LeaseCache,
+    sleep: Callable[[float], Any],
+    retry_delay: float,
+) -> dict[str, Any]:
+    try:
+        started = await _bounded(
+            lambda key: api.start(reservation, key=key), sleep=sleep, delay=retry_delay
+        )
+    except ReactiveError as exc:
+        if _retryable(exc):
+            # The start may have been accepted: keep the cache entry, never ask again.
+            raise RuntimeRequirementError(E_HOLD, "start_unconfirmed") from None
+        cache.release()
+        raise
+    return cast(dict[str, Any], started)
+
+
+async def _report_hosted_completion(
+    api: ReactiveClient,
+    reservation: ReservationHandle,
+    result: Any,
+    reported: list[Any],
+    cache: LeaseCache,
+    sleep: Callable[[float], Any],
+    retry_delay: float,
+) -> dict[str, Any]:
+    try:
+        receipt = await _bounded(
+            lambda key: api.report_finished(
+                reservation,
+                completion=_completion(result),
+                candidates=reported,
+                key=key,
+            ),
+            sleep=sleep,
+            delay=retry_delay,
+        )
+    except ReactiveError as exc:
+        cache.update(finished=True, unreported=True)
+        if _retryable(exc):
+            raise RuntimeRequirementError(E_HOLD, "result_unreported") from None
+        raise
+    return cast(dict[str, Any], receipt)
+
+
 async def respond_hosted(
     fn: Any,
     requirement: RuntimeRequirement,
@@ -683,25 +828,13 @@ async def respond_hosted(
     the attempt for a person to cancel.  A lost lease cancels the run.  Nothing here
     sends a prompt, an output or any text: only closed facts.
     """
-    errors = [i for i in requirement.validate() if i.severity == "error"]
-    if errors:
-        raise RuntimeRequirementError(errors[0].code, errors[0].path)
-    rule_id = _optimize_rule(requirement)
-    if not callable(getattr(fn, "optimize", None)):
-        raise RuntimeRequirementError("function_not_optimizable")
+    rule_id = _validate_hosted_response(fn, requirement)
     state = state_dir or manifest.default_state_dir()
     api = client or ReactiveClient(agent_ref, TokenMap(state))
     # The token map is read first: unavailable means nothing is asked or reserved.
     attempt = _select_attempt(api, api.tokens, requirement, rule_id, attempt_ref)
     grant = api.get_grant(attempt["grant_ref"])
-    if (
-        grant["state"] != "granted"
-        or grant["effect"] != "optimize"
-        or grant["attempt_ref"] != attempt["attempt_ref"]
-    ):
-        raise RuntimeRequirementError(E_APPROVAL_REQUIRED, "grant")
-    if "expires_at" in grant and _parse_ts(grant["expires_at"]) <= clock():
-        raise RuntimeRequirementError(E_APPROVAL_EXPIRED)
+    _validate_hosted_grant(grant, attempt, clock)
     usd, trials = _ceilings(grant, requirement, max_fix_cost_usd)
 
     cache = LeaseCache(
@@ -714,16 +847,7 @@ async def respond_hosted(
         delay=retry_delay,
     )
     cache.begin()
-    try:
-        started = await _bounded(
-            lambda key: api.start(reservation, key=key), sleep=sleep, delay=retry_delay
-        )
-    except ReactiveError as exc:
-        if _retryable(exc):
-            # The start may have been accepted: keep the cache entry, never ask again.
-            raise RuntimeRequirementError(E_HOLD, "start_unconfirmed") from None
-        cache.release()
-        raise
+    started = await _start_hosted_attempt(api, reservation, cache, sleep, retry_delay)
     cache.started()
 
     lease = _HostedLease(
@@ -767,22 +891,9 @@ async def respond_hosted(
     reported, configs = _candidates(
         result, candidates, grant, requirement=requirement, tokens=api.tokens
     )
-    try:
-        receipt = await _bounded(
-            lambda key: api.report_finished(
-                reservation,
-                completion=_completion(result),
-                candidates=reported,
-                key=key,
-            ),
-            sleep=sleep,
-            delay=retry_delay,
-        )
-    except ReactiveError as exc:
-        cache.update(finished=True, unreported=True)
-        if _retryable(exc):
-            raise RuntimeRequirementError(E_HOLD, "result_unreported") from None
-        raise
+    receipt = await _report_hosted_completion(
+        api, reservation, result, reported, cache, sleep, retry_delay
+    )
     cache.update(finished=True)
     return RespondResult(
         str(attempt["scope"]),
