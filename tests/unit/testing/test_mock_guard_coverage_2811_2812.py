@@ -210,3 +210,21 @@ def test_banner_names_exact_mocked_classes_and_guarded_transports_2813(
     for transport in ("httpx", "aiohttp", "requests", "botocore", "gRPC"):
         assert transport in banner
     assert "LiteLLM and LangChain calls are mocked" not in banner
+
+
+@pytest.mark.parametrize(
+    ("target", "host"),
+    [
+        ("generativelanguage.googleapis.com:443", "generativelanguage.googleapis.com"),
+        ("dns:///api.openai.com:443", "api.openai.com"),
+        ("dns:api.openai.com:443", "api.openai.com"),
+        ("dns://8.8.8.8/api.openai.com:443", "api.openai.com"),
+        ("passthrough:///api.openai.com:443", "api.openai.com"),
+        ("xds:///api.openai.com", "api.openai.com"),
+        ("user@api.openai.com:443", "api.openai.com"),
+        ("[::1]:443", "::1"),
+        ("localhost:50051", "localhost"),
+    ],
+)
+def test_grpc_target_host_parsing_2811(target: str, host: str) -> None:
+    assert guard._grpc_target_host(target) == host

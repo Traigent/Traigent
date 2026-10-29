@@ -25,7 +25,9 @@ def test_message_is_not_treated_as_key_name(monkeypatch):
     assert err.fix is not None
     assert "API key error detected" not in err.fix
     assert "to your .env file" not in err.fix
-    assert "TRAIGENT_MOCK_LLM=true" in err.fix
+    # #2796: the hint names the supported in-code call, not the deprecated variable.
+    assert "enable_mock_mode_for_quickstart()" in err.fix
+    assert "TRAIGENT_MOCK_LLM" not in err.fix
 
 
 def test_hint_omits_mock_advice_when_mock_already_on(monkeypatch):

@@ -4355,6 +4355,17 @@ class OptimizedFunction[**P, R]:
             )
 
         plural = "model has" if len(missing) == 1 else "models have"
+        approve_line = (
+            "Set TRAIGENT_COST_APPROVED=true to skip this prompt after acknowledging\n"
+            "    this cost concern"
+        )
+        if is_mock_llm():
+            # Simulated run: approval would also cover the later real run (#2795).
+            approve_line = (
+                "Mock mode is on: use a smaller dataset slice, or set\n"
+                "    TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT=true with ENVIRONMENT=development\n"
+                "    (not TRAIGENT_COST_APPROVED, which also approves the later real run)"
+            )
         print(
             f"""
 ================================================================================
@@ -4370,8 +4381,7 @@ provider may still bill you.
 Remediation:
   - Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON with explicit per-token pricing
   - Contact Traigent to add model pricing coverage
-  - Set TRAIGENT_COST_APPROVED=true to skip this prompt after acknowledging
-    this cost concern
+  - {approve_line}
 
 ================================================================================
 """,

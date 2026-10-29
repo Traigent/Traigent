@@ -90,6 +90,9 @@ PROVIDER_HOSTS: dict[str, tuple[frozenset[str], tuple[re.Pattern[str], ...]]] = 
         frozenset(),
         (
             re.compile(r"^[a-z0-9-]+\.openai\.azure\.com$"),
+            # Deliberately broad: Azure OpenAI is served from here too, and the
+            # host cannot tell it from Speech/Vision resources, which are then
+            # blocked in a mock run as well.
             re.compile(r"^[a-z0-9-]+\.cognitiveservices\.azure\.com$"),
             re.compile(r"^[a-z0-9-]+\.services\.ai\.azure\.com$"),
         ),
@@ -132,8 +135,9 @@ _PROVIDER_HOST_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
 #: What mock mode simulates, shared by the activation banner and the guard
 #: error so the two cannot disagree (#2811, #2813).
 MOCK_SCOPE_SUMMARY = (
-    "Mock mode simulates only LiteLLM completion/acompletion and the LangChain "
-    "ChatOpenAI, ChatAnthropic and langchain_aws Bedrock chat classes. "
+    "Mock mode simulates LiteLLM completion/acompletion, the SDK's Bedrock chat "
+    "client and the LangChain ChatOpenAI, ChatAnthropic and langchain_aws "
+    "Bedrock chat classes. "
     "Embeddings (litellm.embedding, LangChain Embeddings) and other chat "
     "classes (for example ChatGoogleGenerativeAI) are not mocked."
 )
@@ -363,13 +367,16 @@ def _grpc_target_host(target: Any) -> str | None:
     if not isinstance(target, str):
         return None
     text = target.strip()
-    for prefix in ("dns:///", "dns://", "dns:", "ipv4:", "ipv6:"):
-        if text.startswith(prefix):
-            text = text[len(prefix) :]
-            # ``dns://authority/host:port``: drop the authority.
-            if prefix == "dns://" and "/" in text:
-                text = text.split("/", 1)[1]
-            break
+    # A resolver scheme: ``dns:///h:443``, ``passthrough:///h:443``,
+    # ``xds:///h``, ``dns://authority/h:443`` or ``ipv4:h``. A bare ``host:443``
+    # has a numeric "scheme" and is left alone.
+    scheme, sep, rest = text.partition(":")
+    if sep and scheme.isalpha() and not scheme.isdigit() and not rest[:1].isdigit():
+        text = rest
+        if text.startswith("//"):
+            # ``//authority/host:port`` (empty authority for ``///``).
+            text = text[2:].split("/", 1)[1] if "/" in text[2:] else text[2:]
+    text = text.rsplit("@", 1)[-1]
     text = text.split("/", 1)[0]
     if text.startswith("["):
         return text[1:].split("]", 1)[0] or None
