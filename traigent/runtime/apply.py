@@ -159,6 +159,33 @@ def current_head(
     return active[0]
 
 
+def _resolve_apply_result(
+    item: dict[str, Any] | None,
+    status: int,
+    api: RuntimeClient,
+    requirement: RuntimeRequirement,
+    project_id: str,
+    agent: str,
+    route: str,
+) -> tuple[str, Receipt]:
+    if item is not None:
+        created = status == 201
+        outcome = "created" if created else "noop"
+        receipt = _receipt(item, created)
+    else:  # 409 requirement_exists
+        head = current_head(api, requirement, project_id, agent)
+        diff = profile_diff(requirement, head)
+        if diff:
+            raise ApplyConflict(diff)
+        if route == "tvl_import":
+            # Equal profile but not the identical import: provenance differs.
+            raise RuntimeRequirementError(E_EXISTS, "provenance")
+        receipt = _receipt(head, False)
+        outcome = "noop"
+
+    return outcome, receipt
+
+
 def apply_requirement(
     requirement: RuntimeRequirement,
     *,
@@ -218,20 +245,9 @@ def apply_requirement(
     else:
         status, item = api.import_tvl(body)
 
-    if item is not None:
-        created = status == 201
-        outcome = "created" if created else "noop"
-        receipt = _receipt(item, created)
-    else:  # 409 requirement_exists
-        head = current_head(api, requirement, project_id, agent)
-        diff = profile_diff(requirement, head)
-        if diff:
-            raise ApplyConflict(diff)
-        if route == "tvl_import":
-            # Equal profile but not the identical import: provenance differs.
-            raise RuntimeRequirementError(E_EXISTS, "provenance")
-        receipt = _receipt(head, False)
-        outcome = "noop"
+    outcome, receipt = _resolve_apply_result(
+        item, status, api, requirement, project_id, agent, route
+    )
 
     manifest.record_apply(
         state,
