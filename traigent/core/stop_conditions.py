@@ -1237,13 +1237,7 @@ class SafetyConstraintStopCondition(StopCondition):
         trial_seq = trials if isinstance(trials, Sequence) else list(trials)
 
         new_trials = trial_seq[self._last_index :]
-        for trial in new_trials:
-            if trial.status != TrialStatus.COMPLETED:
-                continue
-            metrics = trial.metrics or {}
-            config = trial.config or {}
-            for constraint in self._constraints:
-                self._validator.record_result(constraint, config, metrics)
+        SafetyConstraintStopCondition._record_new_trials(self, new_trials)
         self._last_index = len(trial_seq)
 
         for constraint in self._constraints:
@@ -1265,6 +1259,15 @@ class SafetyConstraintStopCondition(StopCondition):
                 return True
 
         return False
+
+    def _record_new_trials(self, new_trials: Iterable[TrialResult]) -> None:
+        for trial in new_trials:
+            if trial.status != TrialStatus.COMPLETED:
+                continue
+            metrics = trial.metrics or {}
+            config = trial.config or {}
+            for constraint in self._constraints:
+                self._validator.record_result(constraint, config, metrics)
 
 
 class HypervolumeConvergenceStopCondition(StopCondition):
