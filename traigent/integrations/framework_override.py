@@ -198,6 +198,32 @@ async def _capture_openai_usage_when_awaited(
     return response
 
 
+def _apply_constructor_mapping(
+    parameter_mapping: dict[str, str],
+    accepted: frozenset[str] | None,
+    config_dict: dict[str, Any],
+    config_space: Any,
+    overridden_kwargs: dict[str, Any],
+    overrides_applied: list[str],
+) -> None:
+    for traigent_param, framework_param in parameter_mapping.items():
+        if accepted is not None and framework_param not in accepted:
+            # e.g. ``openai.OpenAI(model=...)``: the mapping lists
+            # call-time params, which the client constructor rejects
+            # with a TypeError. They are injected at the method call.
+            continue
+        if traigent_param in config_dict:
+            # Only override if parameter is in configuration space (being optimized)
+            # or if no configuration space is set (not in optimization)
+            if config_space is None or traigent_param in config_space:
+                override_value = config_dict[traigent_param]
+                original_value = overridden_kwargs.get(framework_param, "not_set")
+                overridden_kwargs[framework_param] = override_value
+                overrides_applied.append(
+                    f"{framework_param}: {original_value} -> {override_value}"
+                )
+
+
 class FrameworkOverrideManager(BaseOverrideManager):
     """Manages automatic framework parameter overrides during optimization."""
 
@@ -329,24 +355,14 @@ class FrameworkOverrideManager(BaseOverrideManager):
             overridden_kwargs = kwargs.copy()
             overrides_applied = []
 
-            for traigent_param, framework_param in parameter_mapping.items():
-                if accepted is not None and framework_param not in accepted:
-                    # e.g. ``openai.OpenAI(model=...)``: the mapping lists
-                    # call-time params, which the client constructor rejects
-                    # with a TypeError. They are injected at the method call.
-                    continue
-                if traigent_param in config_dict:
-                    # Only override if parameter is in configuration space (being optimized)
-                    # or if no configuration space is set (not in optimization)
-                    if config_space is None or traigent_param in config_space:
-                        override_value = config_dict[traigent_param]
-                        original_value = overridden_kwargs.get(
-                            framework_param, "not_set"
-                        )
-                        overridden_kwargs[framework_param] = override_value
-                        overrides_applied.append(
-                            f"{framework_param}: {original_value} -> {override_value}"
-                        )
+            _apply_constructor_mapping(
+                parameter_mapping,
+                accepted,
+                config_dict,
+                config_space,
+                overridden_kwargs,
+                overrides_applied,
+            )
 
             # Record what overrides were applied
             # (logging handled separately if needed)
@@ -558,6 +574,21 @@ class FrameworkOverrideManager(BaseOverrideManager):
             return_type = getattr(func, "__annotations__", {}).get("return")
         return self._annotation_to_class(return_type, func)
 
+    @staticmethod
+    def _add_annotation_resource_module(
+        annotation_name: str, func: Callable[..., Any], candidate_modules: list[str]
+    ) -> None:
+        package_name = getattr(func, "__module__", "").split(".", 1)[0]
+        if package_name and annotation_name.isidentifier():
+            # SDKs such as openai declare ``def responses(self) -> Responses``
+            # but only import ``Responses`` under TYPE_CHECKING and do not
+            # re-export it from ``<pkg>.resources``; the class lives in
+            # ``<pkg>.resources.<lowercased name without Async>`` (Traigent#2444).
+            module_stem = annotation_name.lower().removeprefix("async")
+            sub_module = f"{package_name}.resources.{module_stem}"
+            if sub_module not in candidate_modules:
+                candidate_modules.append(sub_module)
+
     def _annotation_to_class(
         self, annotation: Any, func: Callable[..., Any]
     ) -> type | None:
@@ -580,16 +611,9 @@ class FrameworkOverrideManager(BaseOverrideManager):
         if isinstance(resolved, type):
             return cast(type, resolved)
         candidate_modules = self._annotation_candidate_modules(func)
-        package_name = getattr(func, "__module__", "").split(".", 1)[0]
-        if package_name and annotation_name.isidentifier():
-            # SDKs such as openai declare ``def responses(self) -> Responses``
-            # but only import ``Responses`` under TYPE_CHECKING and do not
-            # re-export it from ``<pkg>.resources``; the class lives in
-            # ``<pkg>.resources.<lowercased name without Async>`` (Traigent#2444).
-            module_stem = annotation_name.lower().removeprefix("async")
-            sub_module = f"{package_name}.resources.{module_stem}"
-            if sub_module not in candidate_modules:
-                candidate_modules.append(sub_module)
+        FrameworkOverrideManager._add_annotation_resource_module(
+            annotation_name, func, candidate_modules
+        )
         for module_name in candidate_modules:
             try:
                 module = importlib.import_module(module_name)
@@ -635,6 +659,15 @@ class FrameworkOverrideManager(BaseOverrideManager):
             return literal_value.strip()
         return annotation
 
+    @staticmethod
+    def _resolve_global_annotation(parts: list[str], globalns: dict[str, Any]) -> Any:
+        resolved = globalns[parts[0]]
+        for part in parts[1:]:
+            resolved = getattr(resolved, part, None)
+            if resolved is None:
+                return None
+        return resolved
+
     def _resolve_annotation_name(
         self, annotation_name: str, globalns: dict[str, Any]
     ) -> Any:
@@ -645,17 +678,12 @@ class FrameworkOverrideManager(BaseOverrideManager):
             return None
 
         if parts[0] in globalns:
-            resolved = globalns[parts[0]]
-            for part in parts[1:]:
-                resolved = getattr(resolved, part, None)
-                if resolved is None:
-                    return None
-            return resolved
+            return FrameworkOverrideManager._resolve_global_annotation(parts, globalns)
 
         for module_end in range(len(parts) - 1, 0, -1):
             module_name = ".".join(parts[:module_end])
             try:
-                resolved = importlib.import_module(module_name)
+                resolved: Any = importlib.import_module(module_name)
             except (ImportError, ValueError):
                 continue
             for part in parts[module_end:]:
@@ -1222,32 +1250,33 @@ def enable_intelligent_overrides(targets: str | list[str]) -> None:
         targets = [targets]
 
     # Check if enhanced features are available
-    if ENHANCED_FEATURES_AVAILABLE:
-        # Use enhanced auto-discovery for package patterns
-        package_patterns = []
-        class_names = []
-
-        for target in targets:
-            if "." in target and target.count(".") >= 2:
-                # Likely a specific class name
-                class_names.append(target)
-            else:
-                # Package pattern
-                package_patterns.append(target)
-
-        # Auto-discover packages if supported
-        if package_patterns and hasattr(_framework_override_manager, "discovery"):
-            for pattern in package_patterns:
-                # Use discovery to find classes
-                logger.info(f"Auto-discovering classes in {pattern}")
-                # Note: Full auto-discovery requires additional implementation
-                logger.debug("Discovery is not yet implemented for pattern %s", pattern)
-
-        # Override specific classes
-        enable_framework_overrides(class_names)
-    else:
+    if not ENHANCED_FEATURES_AVAILABLE:
         # Fallback to standard override
         enable_framework_overrides(targets)
+        return
+
+    # Use enhanced auto-discovery for package patterns
+    package_patterns = []
+    class_names = []
+
+    for target in targets:
+        if "." in target and target.count(".") >= 2:
+            # Likely a specific class name
+            class_names.append(target)
+        else:
+            # Package pattern
+            package_patterns.append(target)
+
+    # Auto-discover packages if supported
+    if package_patterns and hasattr(_framework_override_manager, "discovery"):
+        for pattern in package_patterns:
+            # Use discovery to find classes
+            logger.info(f"Auto-discovering classes in {pattern}")
+            # Note: Full auto-discovery requires additional implementation
+            logger.debug("Discovery is not yet implemented for pattern %s", pattern)
+
+    # Override specific classes
+    enable_framework_overrides(class_names)
 
 
 # Alias for backward compatibility
