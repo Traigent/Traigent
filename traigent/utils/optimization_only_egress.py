@@ -379,6 +379,10 @@ def _closed_tree_scalar(value: Any) -> tuple[bool, Any]:
     return False, None
 
 
+def _closed_tree_key_valid(key: Any) -> bool:
+    return isinstance(key, str) and ID_RE.fullmatch(key) is not None
+
+
 def s_closed_tree(value: Any, _c: _Ctx, depth: int) -> Any:
     """Generic closed-leaf tree (content identity): keys are identifiers; leaves are numbers,
     booleans, digests or identifiers. Any other string leaf is dropped."""
@@ -399,7 +403,7 @@ def s_closed_tree(value: Any, _c: _Ctx, depth: int) -> Any:
         raise _Drop
     out: dict[str, Any] = {}
     for key, item in list(value.items())[:MAX_LIST]:
-        if not isinstance(key, str) or ID_RE.fullmatch(key) is None:
+        if not _closed_tree_key_valid(key):
             continue
         try:
             out[key] = s_closed_tree(item, _c, depth + 1)
