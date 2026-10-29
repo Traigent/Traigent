@@ -235,6 +235,10 @@ def _capture_git(
     except GitOutputTooLarge:
         parts.skip(GIT_DIFF_PATH, UnavailableReason.TOO_LARGE)
         return
+    _store_git_diff(parts, diff)
+
+
+def _store_git_diff(parts: _Parts, diff: Any) -> None:
     if not isinstance(diff, bytes):
         parts.skip(GIT_DIFF_PATH, UnavailableReason.GIT_UNAVAILABLE)
     else:
@@ -252,19 +256,11 @@ def _capture_agent(
     """Capture the agent; return ``(snapshot coverage, content-free gaps)``."""
     declared = dict(declared_assets or {})
     if agent is None:
-        for path in (CALLABLE_PATH, BOUND_STATE_PATH, GIT_PATH):
-            parts.skip(path, UnavailableReason.NOT_PROVIDED)
-        for kind in _DECLARED_KINDS:
-            parts.skip(_asset_path(kind), UnavailableReason.NOT_PROVIDED)
+        _capture_missing_agent(parts)
         return "partial", ("agent_not_provided",)
 
     gaps: list[str] = []
-    source = _callable_text(agent)
-    if source is None:
-        parts.skip(CALLABLE_PATH, UnavailableReason.SOURCE_UNAVAILABLE)
-        gaps.append("callable_source_unavailable")
-    else:
-        parts.add(CALLABLE_PATH, source.encode("utf-8"), PartMediaType.PYTHON)
+    _capture_callable(parts, agent, gaps)
 
     survey = survey_agent_sources(agent)
     gaps.extend(survey.gaps)
@@ -276,12 +272,7 @@ def _capture_agent(
             parts.skip(member, UnavailableReason.SOURCE_UNAVAILABLE)
             gaps.append("helper_module_unreadable")
 
-    for kind in _DECLARED_KINDS:
-        if kind not in declared:
-            parts.skip(_asset_path(kind), UnavailableReason.NOT_PROVIDED)
-            gaps.append(f"{kind}_not_provided")
-        else:
-            parts.add_json(_asset_path(kind), declared[kind])
+    _capture_agent_assets(parts, declared, gaps)
 
     bound = agent_bound_state(agent)
     bound_bytes: bytes | None = None
@@ -309,6 +300,35 @@ def _capture_agent(
     ]
     coverage = "complete" if stored_all and not gaps else "partial"
     return coverage, tuple(sorted(set(gaps)))
+
+
+def _capture_missing_agent(parts: _Parts) -> None:
+    for path in (CALLABLE_PATH, BOUND_STATE_PATH, GIT_PATH):
+        parts.skip(path, UnavailableReason.NOT_PROVIDED)
+    for kind in _DECLARED_KINDS:
+        parts.skip(_asset_path(kind), UnavailableReason.NOT_PROVIDED)
+
+
+def _capture_callable(
+    parts: _Parts, agent: Callable[..., Any], gaps: list[str]
+) -> None:
+    source = _callable_text(agent)
+    if source is None:
+        parts.skip(CALLABLE_PATH, UnavailableReason.SOURCE_UNAVAILABLE)
+        gaps.append("callable_source_unavailable")
+    else:
+        parts.add(CALLABLE_PATH, source.encode("utf-8"), PartMediaType.PYTHON)
+
+
+def _capture_agent_assets(
+    parts: _Parts, declared: dict[str, Any], gaps: list[str]
+) -> None:
+    for kind in _DECLARED_KINDS:
+        if kind not in declared:
+            parts.skip(_asset_path(kind), UnavailableReason.NOT_PROVIDED)
+            gaps.append(f"{kind}_not_provided")
+        else:
+            parts.add_json(_asset_path(kind), declared[kind])
 
 
 def _safe_name(name: str, taken: set[str]) -> str:
