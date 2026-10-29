@@ -207,19 +207,6 @@ def classify_discovered_functions(
     return blocking, notes
 
 
-def validate_discovered_functions(functions: list[OptimizedFunction]) -> list[str]:
-    """Validate discovered functions and return any issues found.
-
-    Args:
-        functions: List of discovered functions to validate
-
-    Returns:
-        Blocking issues followed by advisory notes (empty if all valid)
-    """
-    blocking, notes = classify_discovered_functions(functions)
-    return blocking + notes
-
-
 def print_discovery_summary(
     functions: list[OptimizedFunction],
     issues: list[str],

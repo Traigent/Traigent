@@ -522,6 +522,9 @@ class OptimizationValidator:
                     # better value is an unbounded improvement and any worse
                     # value an unbounded regression. Never report it as 0.0%
                     # (#2803); the report shows the absolute delta instead.
+                    # (Assumes unit-scale metrics such as 0-1 scores: the
+                    # absolute delta is compared with the percent threshold
+                    # read as a fraction.)
                     delta = optimized_val - baseline_val
                     if not maximize:
                         delta = -delta

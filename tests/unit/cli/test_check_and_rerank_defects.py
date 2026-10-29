@@ -554,6 +554,8 @@ def test_rerank_exits_nonzero_on_invalid_input_2829(
         manager.return_value.load_result.return_value = stored_result
         result = _invoke("results", "rerank", "run", "-w", weights)
     assert result.exit_code != 0, result.output
+    # A refusal, not a crash: no traceback escaped.
+    assert isinstance(result.exception, SystemExit), repr(result.exception)
 
 
 def test_rerank_valid_weights_unchanged_2829(stored_result: Mock) -> None:
@@ -782,3 +784,23 @@ def test_missing_function_error_does_not_reload_the_module(tmp_path: Path) -> No
     assert result.exit_code != 0
     assert "answer" in result.output.replace("answr", "")
     assert counter.read_text() == "x"
+
+
+def test_functions_option_ignores_empty_items(tmp_path: Path) -> None:
+    _write(tmp_path, "good.py", _agent())
+    result = _invoke("check", "good.py", "--functions", "answer,", "--dry-run")
+    assert result.exit_code == 0, result.output
+    missing = _invoke("check", "good.py", "--functions", "typo,", "--dry-run")
+    assert missing.exit_code != 0
+    assert "not found: typo" in missing.output.replace("\n", " ")
+
+
+def test_baseline_metrics_do_not_fall_back_to_unrequested_ones() -> None:
+    """An objective the run did not measure is missing, not replaced by others."""
+    v = OptimizationValidator()
+    func = Mock()
+    func.objectives = ["accuracy"]
+    func.name = "f"
+    for mock_mode in (True, False):
+        out = v._filter_metrics_to_objectives({"cost": 0.5}, func, mock_mode)
+        assert "cost" not in out

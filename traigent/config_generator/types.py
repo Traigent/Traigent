@@ -362,8 +362,9 @@ def _structural_constraint_error(
     return (
         f"Cannot emit @traigent.optimize(...) Python code: {count} generated "
         f"structural constraint(s) would be silently dropped because the "
-        f"decorator surface does not accept them. Re-export with `-o tvl` "
-        f"(or call AutoConfigResult.to_tvl_spec()) to preserve them. "
+        f"decorator surface does not accept them. To preserve them, export "
+        f"with `-o tvl` (not combinable with --apply) or call "
+        f"AutoConfigResult.to_tvl_spec(). "
         f"Constraints: {sample}{suffix}"
     )
 

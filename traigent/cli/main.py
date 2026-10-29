@@ -261,7 +261,9 @@ def _parse_comma_separated_list(value: str | None) -> list[str] | None:
     """Parse a comma-separated string into a list of trimmed values."""
     if not value:
         return None
-    return [item.strip() for item in value.split(",")]
+    items = [item.strip() for item in value.split(",")]
+    # A trailing or doubled comma is not a name; "f," means just "f".
+    return [item for item in items if item] or None
 
 
 def _filter_functions_by_objectives(
