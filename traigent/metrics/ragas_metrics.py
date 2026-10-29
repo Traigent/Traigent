@@ -522,26 +522,9 @@ def compute_ragas_metrics(
     config = layer_over_global_defaults(config)
 
     example_results = list(example_results)
-    if (not example_results) and dataset_examples is not None:
-        example_results = []
-        for idx, example in enumerate(dataset_examples):
-            expected = getattr(example, "expected_output", None)
-            actual = None
-            if outputs is not None and idx < len(outputs):
-                actual = outputs[idx]
-            example_results.append(
-                ExampleResult(
-                    example_id=f"example_{idx}",
-                    input_data=getattr(example, "input_data", {}) or {},
-                    expected_output=expected,
-                    actual_output=actual,
-                    metrics={},
-                    execution_time=0.0,
-                    success=(actual is not None),
-                    error_message=None if (actual is not None) else "output missing",
-                    metadata=getattr(example, "metadata", {}) or {},
-                )
-            )
+    example_results = _synthesize_missing_results(
+        example_results, dataset_examples, outputs
+    )
 
     metrics: list[Metric] = []
     required_columns: set[str] = set()
@@ -568,13 +551,7 @@ def compute_ragas_metrics(
 
     # Rows the agent never answered (but that have a reference) are failures
     # of the configuration under test, not rows to drop from the mean (#2677).
-    failed_rows = 0
-    for index, result in enumerate(example_results):
-        response = result.actual_output
-        if response is None and outputs is not None and index < len(outputs):
-            response = outputs[index]
-        if response is None and result.expected_output is not None:
-            failed_rows += 1
+    failed_rows = _count_failed_rows(example_results, outputs)
 
     dataset = EvaluationDataset(samples)
 
@@ -599,42 +576,95 @@ def compute_ragas_metrics(
     )
     aggregated: dict[str, float] = {}
     for metric in metrics:
-        values = np.asarray(result[metric.name], dtype=float)
-        defined = values[~np.isnan(values)]
-        # Agent-failed rows already contribute a defined 0.0, so they are
-        # scored; only rows RAGAS left undefined are unscored (#2677).
-        rows_total = len(values) + failed_rows
-        rows_scored = len(defined) + failed_rows
-        if len(defined) == 0:
-            raise RagasConfigurationError(
-                f"ragas metric '{metric.name}' has no defined judge score on any answered row; "
-                "refusing to report NaN as an objective value."
-            )
-        if rows_scored < rows_total:
-            logger.warning(
-                "ragas metric %r: %d of %d rows scored (%d undefined, %d agent "
-                "failures counted as 0.0)",
-                metric.name,
-                rows_scored,
-                rows_total,
-                len(values) - len(defined),
-                failed_rows,
-            )
-        if rows_total and rows_scored / rows_total < floor:
-            raise RagasCoverageError(
-                f"ragas metric '{metric.name}' scored {rows_scored} of "
-                f"{rows_total} rows, below the minimum scored share of {floor:g}; "
-                "failing the trial instead of averaging the remaining rows."
-            )
-        # Scoring is unchanged (#2677): agent-failed rows contribute 0.0 and
-        # rows RAGAS left undefined are excluded from the mean; the coverage
-        # keys and the floor below are what make the exclusion visible.
-        aggregated[metric.name] = float(defined.sum() / rows_scored)
-        scored_key, total_key = ragas_coverage_keys(metric.name)
-        aggregated[scored_key] = int(rows_scored)  # type: ignore[assignment]
-        aggregated[total_key] = int(rows_total)  # type: ignore[assignment]
+        _aggregate_ragas_metric(metric, result, failed_rows, floor, aggregated)
 
     return aggregated
+
+
+def _synthesize_missing_results(
+    example_results: list[ExampleResult],
+    dataset_examples: Sequence[Any] | None,
+    outputs: Sequence[Any] | None,
+) -> list[ExampleResult]:
+    if (not example_results) and dataset_examples is not None:
+        example_results = []
+        for idx, example in enumerate(dataset_examples):
+            expected = getattr(example, "expected_output", None)
+            actual = None
+            if outputs is not None and idx < len(outputs):
+                actual = outputs[idx]
+            example_results.append(
+                ExampleResult(
+                    example_id=f"example_{idx}",
+                    input_data=getattr(example, "input_data", {}) or {},
+                    expected_output=expected,
+                    actual_output=actual,
+                    metrics={},
+                    execution_time=0.0,
+                    success=(actual is not None),
+                    error_message=None if (actual is not None) else "output missing",
+                    metadata=getattr(example, "metadata", {}) or {},
+                )
+            )
+
+    return example_results
+
+
+def _count_failed_rows(
+    example_results: Sequence[ExampleResult], outputs: Sequence[Any] | None
+) -> int:
+    failed_rows = 0
+    for index, result in enumerate(example_results):
+        response = result.actual_output
+        if response is None and outputs is not None and index < len(outputs):
+            response = outputs[index]
+        if response is None and result.expected_output is not None:
+            failed_rows += 1
+
+    return failed_rows
+
+
+def _aggregate_ragas_metric(
+    metric: Metric,
+    result: Any,
+    failed_rows: int,
+    floor: float,
+    aggregated: dict[str, float],
+) -> None:
+    values = np.asarray(result[metric.name], dtype=float)
+    defined = values[~np.isnan(values)]
+    # Agent-failed rows already contribute a defined 0.0, so they are
+    # scored; only rows RAGAS left undefined are unscored (#2677).
+    rows_total = len(values) + failed_rows
+    rows_scored = len(defined) + failed_rows
+    if len(defined) == 0:
+        raise RagasConfigurationError(
+            f"ragas metric '{metric.name}' has no defined judge score on any answered row; "
+            "refusing to report NaN as an objective value."
+        )
+    if rows_scored < rows_total:
+        logger.warning(
+            "ragas metric %r: %d of %d rows scored (%d undefined, %d agent "
+            "failures counted as 0.0)",
+            metric.name,
+            rows_scored,
+            rows_total,
+            len(values) - len(defined),
+            failed_rows,
+        )
+    if rows_total and rows_scored / rows_total < floor:
+        raise RagasCoverageError(
+            f"ragas metric '{metric.name}' scored {rows_scored} of "
+            f"{rows_total} rows, below the minimum scored share of {floor:g}; "
+            "failing the trial instead of averaging the remaining rows."
+        )
+    # Scoring is unchanged (#2677): agent-failed rows contribute 0.0 and
+    # rows RAGAS left undefined are excluded from the mean; the coverage
+    # keys and the floor below are what make the exclusion visible.
+    aggregated[metric.name] = float(defined.sum() / rows_scored)
+    scored_key, total_key = ragas_coverage_keys(metric.name)
+    aggregated[scored_key] = int(rows_scored)  # type: ignore[assignment]
+    aggregated[total_key] = int(rows_total)  # type: ignore[assignment]
 
 
 __all__ = [
