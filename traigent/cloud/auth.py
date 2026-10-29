@@ -42,6 +42,8 @@ from traigent.labels.transport_gate import (
 from traigent.security.redaction import redact_sensitive_data
 from traigent.utils.exceptions import AuthenticationError as TraigentAuthenticationError
 
+_VALIDATE_TRANSPORT_ERROR_EVENT = "auth.api_key.validate_transport_error"
+
 APPLICATION_JSON = "application/json"
 
 logger = logging.getLogger(__name__)
@@ -1811,7 +1813,7 @@ class AuthManager:
                 return "requests library not available for backend validation"
             except Exception as exc:  # pragma: no cover - defensive thread boundary
                 logger.debug(
-                    "auth.api_key.validate_transport_error",
+                    _VALIDATE_TRANSPORT_ERROR_EVENT,
                     extra={"error": str(exc)},
                 )
                 return f"transport error: {exc.__class__.__name__}"
@@ -1858,7 +1860,7 @@ class AuthManager:
         except Exception as exc:  # pragma: no cover - exercised via unit tests
             # Note: log the exception type/message but never the key.
             logger.debug(
-                "auth.api_key.validate_transport_error",
+                _VALIDATE_TRANSPORT_ERROR_EVENT,
                 extra={"error": str(exc)},
             )
             return f"transport error: {exc.__class__.__name__}"
@@ -2018,7 +2020,7 @@ class AuthManager:
             return "backend validation timed out"
         except requests.RequestException as exc:
             logger.debug(
-                "auth.api_key.validate_transport_error",
+                _VALIDATE_TRANSPORT_ERROR_EVENT,
                 extra={"error": str(exc)},
             )
             return f"transport error: {exc.__class__.__name__}"
