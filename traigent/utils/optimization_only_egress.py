@@ -1808,27 +1808,38 @@ def project_error_message(error_message: Any) -> str | None:
     return _error_code(error_message)
 
 
+def _project_unless_none(project: Callable[[Any], Any], value: Any) -> Any:
+    """``None`` stays ``None``; anything else is projected."""
+    return None if value is None else project(value)
+
+
+def _project_run_timestamp(value: Any, ctx: _Ctx) -> Any:
+    """A run's start/end time: ``None`` passes through, an unprojectable value refuses."""
+    if value is None:
+        return None
+    try:
+        return s_ts(value, ctx, 0)
+    except _Drop:
+        raise MetadataContractViolation from None
+
+
 def _project_configuration_run_remaining(
     key: str, value: Any, out: dict[str, Any], ctx: _Ctx, declared: Iterable[str]
 ) -> None:
     if key == "summary_stats":
-        out[key] = project_summary_stats(value, declared) if value is not None else None
+        out[key] = _project_unless_none(
+            lambda v: project_summary_stats(v, declared), value
+        )
     elif key == "workflow_metadata":
-        out[key] = project_workflow_metadata(value) if value is not None else None
+        out[key] = _project_unless_none(project_workflow_metadata, value)
     elif key in ("metadata", "run_metadata"):
-        out[key] = (
-            project_trial_metadata(value, declared) if value is not None else None
+        out[key] = _project_unless_none(
+            lambda v: project_trial_metadata(v, declared), value
         )
     elif key == "error_message":
         out[key] = _error_code(value)
     else:  # start_time / end_time
-        if value is None:
-            out[key] = None
-        else:
-            try:
-                out[key] = s_ts(value, ctx, 0)
-            except _Drop:
-                raise MetadataContractViolation from None
+        out[key] = _project_run_timestamp(value, ctx)
 
 
 def _project_configuration_run_item(
