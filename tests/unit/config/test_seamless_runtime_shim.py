@@ -734,6 +734,31 @@ def test_seamless_unrelated_not_found_and_client_errors_pass_through() -> None:
             wrapped("hi")
 
 
+def test_seamless_closure_function_with_local_assignment_runs_once_via_shim() -> None:
+    """A rewrite that cannot keep the closure must fall back, not raise NameError.
+
+    The AST rewrite of a nested function with a local assignment to a tuned
+    name is rebuilt without its closure; calling it raised ``NameError`` for the
+    free variable, which the user-error path would have propagated.
+    """
+    provider = _reset_provider()
+    calls: list[int] = []
+
+    def make():
+        prefix = "hello"
+
+        def agent(x: str, model: str = "d") -> str:
+            temperature = 0.0
+            calls.append(1)
+            return prefix + model + x + str(temperature)
+
+        return agent
+
+    wrapped = provider.inject_config(make(), {"model": "gpt-4o", "temperature": 0.5})
+    assert wrapped("!") == "hellogpt-4o!0.0"
+    assert calls == [1]
+
+
 def test_seamless_real_transform_failure_still_falls_back(monkeypatch) -> None:
     """A genuine AST transform failure still reaches the runtime-shim fallback."""
     provider = _reset_provider()

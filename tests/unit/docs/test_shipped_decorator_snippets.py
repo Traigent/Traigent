@@ -23,6 +23,7 @@ import inspect
 import re
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -151,11 +152,12 @@ def find_bad_decorator_kwargs(files: list[str]) -> list[str]:
 def test_scanner_flags_the_reported_kwargs() -> None:
     """The scan itself must be red on the shapes the issue reported."""
     sample = '@traigent.optimize(debug_evaluation=True, eval_dataset="x")\n'
-    path = REPO_ROOT / "docs" / "_scan_probe.md"
+    name = f"_scan_probe_{uuid.uuid4().hex}.md"  # unique: safe under xdist
+    path = REPO_ROOT / "docs" / name
     try:
         path.write_text(sample, encoding="utf-8")
-        assert find_bad_decorator_kwargs(["docs/_scan_probe.md"]) == [
-            "docs/_scan_probe.md:1: debug_evaluation="
+        assert find_bad_decorator_kwargs([f"docs/{name}"]) == [
+            f"docs/{name}:1: debug_evaluation="
         ]
     finally:
         path.unlink(missing_ok=True)

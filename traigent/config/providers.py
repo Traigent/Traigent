@@ -409,6 +409,10 @@ class SeamlessNoInjectableTargetsError(ConfigurationError):
     """
 
 
+# Marks an AST rewrite rebuilt without the original function's closure.
+_CLOSURE_STRIPPED_ATTR = "__traigent_closure_stripped__"
+
+
 class _UserFunctionError(Exception):
     """Internal carrier for an exception raised by the USER's own callable.
 
@@ -773,6 +777,13 @@ class SeamlessParameterProvider(ConfigurationProvider):
                 return result
 
         if modified_vars:
+            if getattr(transformed_func, _CLOSURE_STRIPPED_ATTR, False):
+                # Executing it would raise NameError for a free variable, which
+                # is indistinguishable from an error in the user's function. Let
+                # the runtime-shim fallback, which keeps the closure, take over.
+                raise RuntimeError(
+                    f"AST rewrite of {func.__name__!r} cannot preserve its closure"
+                )
             ok, result = self._execute_and_cache(
                 transformed_func,
                 args,
@@ -987,6 +998,7 @@ class SeamlessParameterProvider(ConfigurationProvider):
         # Note: When functions are defined inside other functions or methods,
         # they might have closures. The compiled code might not expect the same
         # closure, so we need to handle this carefully.
+        closure_stripped = False
         try:
             new_func = types.FunctionType(
                 func_code,
@@ -996,7 +1008,6 @@ class SeamlessParameterProvider(ConfigurationProvider):
                 func.__closure__,  # Keep closure
             )
         except ValueError as e:
-            # If there's a closure mismatch, try without closure
             if "closure" in str(e):
                 new_func = types.FunctionType(
                     func_code,
@@ -1005,6 +1016,9 @@ class SeamlessParameterProvider(ConfigurationProvider):
                     func.__defaults__,
                     None,  # No closure
                 )
+                # The rewrite cannot see the original free variables, so it
+                # may be analysed but must not be executed (#2841).
+                closure_stripped = bool(func.__closure__)
             else:
                 raise
 
@@ -1013,6 +1027,8 @@ class SeamlessParameterProvider(ConfigurationProvider):
         new_func.__doc__ = func.__doc__
         new_func.__annotations__ = func.__annotations__
         new_func.__module__ = func.__module__
+        if closure_stripped:
+            setattr(new_func, _CLOSURE_STRIPPED_ATTR, True)
 
         return new_func, transformer.get_modified_variables()
 
