@@ -78,6 +78,33 @@ def resolve_privacy_enabled(client: Any) -> bool:
     return False
 
 
+def _positive_finite_float(value: Any) -> float | None:
+    if (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value > 0
+    ):
+        return float(value)
+    return None
+
+
+def _summary_aggregate_scalar(aggregate: Any) -> tuple[bool, Any]:
+    """(has_scalar, scalar) for one summary aggregate entry."""
+    if isinstance(aggregate, dict):
+        if "mean" not in aggregate:
+            return False, None
+        return True, aggregate["mean"]
+    return True, aggregate
+
+
+def _is_wire_scalar(scalar: Any) -> bool:
+    """True for a null or a real number (not bool): the scalar wire contract."""
+    return scalar is None or (
+        not isinstance(scalar, bool) and isinstance(scalar, (int, float))
+    )
+
+
 def _closed_stop_reason(reason: Any) -> str | None:
     """Map a backend-supplied stop reason onto the closed SDK vocabulary (#2555).
 
@@ -557,6 +584,37 @@ class TrialOperations:
             )
             return False
 
+    @staticmethod
+    def _slot_from_next_trial_data(data: Any, session_id: str) -> TrialSlotResult:
+        suggestion = data.get("suggestion") if isinstance(data, dict) else None
+        trial_id = suggestion.get("trial_id") if isinstance(suggestion, dict) else None
+        if isinstance(trial_id, str) and trial_id:
+            logger.debug(
+                "Acquired backend trial slot %s for session %s",
+                trial_id,
+                session_id,
+            )
+            return TrialSlotResult.acquired(trial_id)
+        if isinstance(data, dict) and data.get("should_continue") is False:
+            raw = data.get("stop_reason") or data.get("reason")
+            slot = TrialSlotResult(
+                optimization_complete=True,
+                reason=_closed_stop_reason(raw),
+                raw_reason=raw if isinstance(raw, str) else None,
+            )
+            logger.info(
+                "Backend next-trial completed optimization for session %s (reason=%s)",
+                session_id,
+                slot.reason,
+            )
+            return slot
+        logger.info(
+            "Backend next-trial returned no slot for session %s (should_continue=%s)",
+            session_id,
+            (data.get("should_continue") if isinstance(data, dict) else None),
+        )
+        return TrialSlotResult.unavailable()
+
     async def request_trial_slot(
         self,
         session_id: str,
@@ -617,49 +675,7 @@ class TrialOperations:
                 ) as response:
                     if response.status in [200, 201]:
                         data = await response.json()
-                        suggestion = (
-                            data.get("suggestion") if isinstance(data, dict) else None
-                        )
-                        trial_id = (
-                            suggestion.get("trial_id")
-                            if isinstance(suggestion, dict)
-                            else None
-                        )
-                        if isinstance(trial_id, str) and trial_id:
-                            logger.debug(
-                                "Acquired backend trial slot %s for session %s",
-                                trial_id,
-                                session_id,
-                            )
-                            return TrialSlotResult.acquired(trial_id)
-                        if (
-                            isinstance(data, dict)
-                            and data.get("should_continue") is False
-                        ):
-                            raw = data.get("stop_reason") or data.get("reason")
-                            slot = TrialSlotResult(
-                                optimization_complete=True,
-                                reason=_closed_stop_reason(raw),
-                                raw_reason=raw if isinstance(raw, str) else None,
-                            )
-                            logger.info(
-                                "Backend next-trial completed optimization for session %s "
-                                "(reason=%s)",
-                                session_id,
-                                slot.reason,
-                            )
-                            return slot
-                        logger.info(
-                            "Backend next-trial returned no slot for session %s "
-                            "(should_continue=%s)",
-                            session_id,
-                            (
-                                data.get("should_continue")
-                                if isinstance(data, dict)
-                                else None
-                            ),
-                        )
-                        return TrialSlotResult.unavailable()
+                        return self._slot_from_next_trial_data(data, session_id)
                     if response.status == 403:
                         error_msg = await response.text()
                         self._log_ownership_forbidden(
@@ -774,6 +790,17 @@ class TrialOperations:
             # measures are optional metadata; don't surface as a warning to users.
             logger.debug("No measures provided for trial %s (optional)", trial_id)
 
+    @staticmethod
+    def _log_summary_stats_cost_debug(summary_stats: dict[str, Any]) -> None:
+        stats_metrics = summary_stats.get("metrics", {})
+        if isinstance(stats_metrics, dict):
+            logger.debug("  COST DEBUG - Summary stats costs:")
+            for cost_key in ["cost", "input_cost", "output_cost", "total_cost"]:
+                if cost_key in stats_metrics:
+                    logger.debug(f"    - {cost_key}: {stats_metrics[cost_key]}")
+                else:
+                    logger.debug(f"    - {cost_key}: MISSING")
+
     def _log_summary_stats_debug(self, trial_id: str, summary_stats: Any) -> None:
         """Log debug information for summary_stats."""
         if summary_stats is not None:
@@ -783,14 +810,7 @@ class TrialOperations:
                 f"  Keys: {list(summary_stats.keys()) if isinstance(summary_stats, dict) else 'N/A'}"
             )
             if isinstance(summary_stats, dict):
-                stats_metrics = summary_stats.get("metrics", {})
-                if isinstance(stats_metrics, dict):
-                    logger.debug("  COST DEBUG - Summary stats costs:")
-                    for cost_key in ["cost", "input_cost", "output_cost", "total_cost"]:
-                        if cost_key in stats_metrics:
-                            logger.debug(f"    - {cost_key}: {stats_metrics[cost_key]}")
-                        else:
-                            logger.debug(f"    - {cost_key}: MISSING")
+                self._log_summary_stats_cost_debug(summary_stats)
         else:
             # summary_stats is optional metadata; don't surface as a warning to users.
             logger.debug("No summary_stats provided for trial %s (optional)", trial_id)
@@ -916,6 +936,14 @@ class TrialOperations:
         ]
         return "; ".join(parts) or None
 
+    def _parse_backend_error_reason(self, detail: str) -> str | None:
+        parsed = json.loads(detail)
+        if isinstance(parsed, dict):
+            details = parsed.get("details") or {}
+            if isinstance(details, dict):
+                return self._format_backend_reason(details.get("reason"))
+        return None
+
     def _handle_trial_error_response(
         self,
         status: int,
@@ -940,20 +968,13 @@ class TrialOperations:
         """
         # Extract a concise user-facing message from the response body when
         # the backend returned JSON with an "error" or "message" field.
-        detail: str = error_text.strip()
         reason: str | None = None
+        detail = error_text.strip()
         if detail:
             try:
-                parsed = json.loads(detail)
-                if isinstance(parsed, dict):
-                    detail = parsed.get("error") or parsed.get("message") or detail
-                    details = parsed.get("details") or {}
-                    if isinstance(details, dict):
-                        reason = self._format_backend_reason(details.get("reason"))
+                reason = self._parse_backend_error_reason(detail)
             except (ValueError, KeyError):
                 pass
-        if reason:
-            detail = f"{detail}; reason: {reason}" if detail else f"reason: {reason}"
 
         if self._is_session_not_found_400(status, error_text):
             # Log the backend detail so the raw body is still visible even
@@ -995,6 +1016,45 @@ class TrialOperations:
             "   Trial ID: %s  Session ID: %s  URL: %s", trial_id, session_id, url
         )
         return False
+
+    async def _dispatch_results_response(
+        self,
+        response: Any,
+        session_id: str,
+        trial_id: str,
+        backend_status: str,
+        result_data: dict[str, Any],
+        clean_metrics: dict[str, Any],
+        url: str,
+    ) -> bool | None | TrialSubmissionResult:
+        if response.status in [200, 201]:
+            return await self._handle_trial_success_response(
+                response,
+                session_id,
+                trial_id,
+                backend_status,
+                result_data,
+                clean_metrics,
+            )
+        if response.status == 403:
+            error_msg = await response.text()
+            self._log_ownership_forbidden(
+                session_id,
+                "Submitting trial results",
+                response.status,
+                error_msg,
+            )
+            return False
+        error_text = await response.text()
+        error_result = self._handle_trial_error_response(
+            response.status, trial_id, session_id, url, error_text
+        )
+        # Return None for transient session-not-found (400 +
+        # "not found") so _log_trial_to_backend treats this as
+        # a skipped upload
+        # rather than a hard backend failure and does not flag
+        # the backend as degraded (BE #1194 per-worker storage).
+        return None if error_result is True else error_result
 
     async def submit_trial_result_via_session(
         self,
@@ -1148,35 +1208,15 @@ class TrialOperations:
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as response:
-                    if response.status in [200, 201]:
-                        return await self._handle_trial_success_response(
-                            response,
-                            session_id,
-                            trial_id,
-                            backend_status,
-                            result_data,
-                            clean_metrics,
-                        )
-                    elif response.status == 403:
-                        error_msg = await response.text()
-                        self._log_ownership_forbidden(
-                            session_id,
-                            "Submitting trial results",
-                            response.status,
-                            error_msg,
-                        )
-                        return False
-                    else:
-                        error_text = await response.text()
-                        error_result = self._handle_trial_error_response(
-                            response.status, trial_id, session_id, url, error_text
-                        )
-                        # Return None for transient session-not-found (400 +
-                        # "not found") so _log_trial_to_backend treats this as
-                        # a skipped upload
-                        # rather than a hard backend failure and does not flag
-                        # the backend as degraded (BE #1194 per-worker storage).
-                        return None if error_result is True else error_result
+                    return await self._dispatch_results_response(
+                        response,
+                        session_id,
+                        trial_id,
+                        backend_status,
+                        result_data,
+                        clean_metrics,
+                        url,
+                    )
 
         except Exception as exc:
             if is_backend_offline():
@@ -1216,29 +1256,16 @@ class TrialOperations:
         for metric_name, aggregate in summary_metrics.items():
             if cost_flagged and metric_name in _SUMMARY_COST_AGGREGATES:
                 continue
-            if isinstance(aggregate, dict):
-                if "mean" not in aggregate:
-                    continue
-                scalar = aggregate["mean"]
-            else:
-                scalar = aggregate
-
-            if scalar is not None and (
-                isinstance(scalar, bool) or not isinstance(scalar, (int, float))
-            ):
+            has_scalar, scalar = _summary_aggregate_scalar(aggregate)
+            if not has_scalar or not _is_wire_scalar(scalar):
                 continue
             projected[metric_name] = scalar
 
         if cost_flagged:
             projected["cost_unmeasured"] = 1.0
-            bound = summary_metrics.get("cost_lower_bound")
-            if (
-                isinstance(bound, (int, float))
-                and not isinstance(bound, bool)
-                and math.isfinite(bound)
-                and bound > 0
-            ):
-                projected["cost_lower_bound"] = float(bound)
+            bound = _positive_finite_float(summary_metrics.get("cost_lower_bound"))
+            if bound is not None:
+                projected["cost_lower_bound"] = bound
 
         return dict(MeasuresDict(projected))
 
@@ -1394,6 +1421,36 @@ class TrialOperations:
             )
             return False
 
+    async def _weighted_scores_response_result(
+        self, response: Any, trial_id: str
+    ) -> bool:
+        if response.status == 200:
+            logger.debug(f"Successfully updated weighted scores for trial {trial_id}")
+            return True
+        if response.status == 400:
+            error_msg = await response.text()
+            # Check if it's a "Configuration run not found" error
+            if "Configuration run not found" in error_msg:
+                logger.debug(
+                    f"Configuration run not found for trial {trial_id}. "
+                    "Skipping weighted score update without counting it as applied."
+                )
+                return False
+        # Auth failures: instance-scoped dedup at DEBUG
+        elif response.status in (401, 403):
+            if not self._auth_error_logged:
+                logger.debug(
+                    "Backend auth rejected weighted score update (%s)",
+                    response.status,
+                )
+                self._auth_error_logged = True
+            return False
+        logger.error(
+            "Failed to update weighted scores: HTTP %s",
+            response.status,
+        )
+        return False
+
     async def update_trial_weighted_scores(
         self,
         trial_id: str,
@@ -1467,50 +1524,9 @@ class TrialOperations:
                         headers=headers,
                         timeout=aiohttp.ClientTimeout(total=10),
                     ) as response:
-                        if response.status == 200:
-                            logger.debug(
-                                f"Successfully updated weighted scores for trial {trial_id}"
-                            )
-                            return True
-                        elif response.status == 400:
-                            error_msg = await response.text()
-                            # Check if it's a "Configuration run not found" error
-                            if "Configuration run not found" in error_msg:
-                                logger.debug(
-                                    f"Configuration run not found for trial {trial_id}. "
-                                    "Skipping weighted score update without counting it as applied."
-                                )
-                                return False
-                            else:
-                                # Auth failures: instance-scoped dedup at DEBUG
-                                if response.status in (401, 403):
-                                    if not self._auth_error_logged:
-                                        logger.debug(
-                                            "Backend auth rejected weighted score update (%s)",
-                                            response.status,
-                                        )
-                                        self._auth_error_logged = True
-                                    return False
-                                logger.error(
-                                    "Failed to update weighted scores: HTTP %s",
-                                    response.status,
-                                )
-                                return False
-                        else:
-                            # Auth failures: instance-scoped dedup at DEBUG
-                            if response.status in (401, 403):
-                                if not self._auth_error_logged:
-                                    logger.debug(
-                                        "Backend auth rejected weighted score update (%s)",
-                                        response.status,
-                                    )
-                                    self._auth_error_logged = True
-                                return False
-                            logger.error(
-                                "Failed to update weighted scores: HTTP %s",
-                                response.status,
-                            )
-                            return False
+                        return await self._weighted_scores_response_result(
+                            response, trial_id
+                        )
                 except Exception as exc:
                     # Handle connection failures gracefully
                     if AIOHTTP_AVAILABLE and isinstance(
