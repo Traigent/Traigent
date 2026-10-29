@@ -52,6 +52,8 @@ from traigent.cloud.analytics_client import (
 )
 from traigent.utils.logging import get_logger
 
+_AGENT_DECISION = "agent decision"
+
 try:
     import httpx
 except ImportError:  # pragma: no cover - BackendAnalyticsClient reports this first
@@ -2069,7 +2071,7 @@ def _agent_decision_error_mapper(exc: BaseException, backend_url: str | None) ->
         if status in (401, 403):
             # Both outcomes carry fixed text only (no backend text on either path).
             return _http_status_failure(
-                exc, what="agent decision", backend_url=backend_url
+                exc, what=_AGENT_DECISION, backend_url=backend_url
             )
         if status is None or status >= 500:
             return _failure(
@@ -2119,7 +2121,7 @@ async def _agent_decision_read(
 ) -> dict[str, Any]:
     result = await _call_backend(
         coro_factory,
-        what="agent decision",
+        what=_AGENT_DECISION,
         http_error_mapper=_agent_decision_error_mapper,
     )
     if result.get("ok") is True:
@@ -2223,7 +2225,7 @@ async def agent_decision_answer_tool(
             retry_nonce=final_nonce,
             project_id=pid,
         ),
-        what="agent decision",
+        what=_AGENT_DECISION,
         http_error_mapper=_agent_decision_error_mapper,
     )
     result["retry_nonce"] = final_nonce
