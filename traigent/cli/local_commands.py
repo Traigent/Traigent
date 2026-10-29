@@ -168,8 +168,10 @@ def _echo_best_score_lines(session: Any, summary: dict[str, Any] | None) -> None
     if session.best_score is not None:
         click.echo(f"Best Score: {session.best_score:.4f}")
         improvement = (summary or {}).get("improvement")
-        if improvement:
+        if improvement is not None:
             click.echo(f"Improvement: {improvement * 100:.1f}%")
+        elif (summary or {}).get("baseline_score") == 0:
+            click.echo("Improvement: n/a (baseline 0)")
 
 
 def _echo_session_detailed(
@@ -684,7 +686,7 @@ def preview_cloud_benefits() -> None:
             )
 
             improvement = analytics.get("average_improvement")
-            if improvement:
+            if improvement is not None:
                 click.echo(
                     f"   • {improvement * 100:.1f}% average improvement achieved"
                 )
