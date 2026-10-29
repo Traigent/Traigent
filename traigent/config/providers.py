@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import re
 import textwrap
 import types
 from collections import defaultdict
@@ -409,8 +410,23 @@ class SeamlessNoInjectableTargetsError(ConfigurationError):
     """
 
 
-# Marks an AST rewrite rebuilt without the original function's closure.
+# Marks an AST rewrite that must be analysed but never executed: it was rebuilt
+# without the original closure, or it references class-private (name-mangled)
+# attributes that only the original compilation inside the class resolves.
 _CLOSURE_STRIPPED_ATTR = "__traigent_closure_stripped__"
+
+
+_MANGLED_NAME = re.compile(r"^_[A-Za-z]\w*__\w*(?<!__)$")
+
+
+def _uses_mangled_names(code: types.CodeType) -> bool:
+    """True if *code* (or a nested code object) references ``_Class__name``."""
+    if any(_MANGLED_NAME.match(name) for name in code.co_names):
+        return True
+    return any(
+        isinstance(const, types.CodeType) and _uses_mangled_names(const)
+        for const in code.co_consts
+    )
 
 
 class _UserFunctionError(Exception):
@@ -1027,7 +1043,7 @@ class SeamlessParameterProvider(ConfigurationProvider):
         new_func.__doc__ = func.__doc__
         new_func.__annotations__ = func.__annotations__
         new_func.__module__ = func.__module__
-        if closure_stripped:
+        if closure_stripped or _uses_mangled_names(func.__code__):
             setattr(new_func, _CLOSURE_STRIPPED_ATTR, True)
 
         return new_func, transformer.get_modified_variables()
