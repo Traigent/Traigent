@@ -508,10 +508,17 @@ class BedrockChatClient:
         """Async streaming chat invocation; yields text chunks.
 
         Uses aioboto3 for true async streaming or falls back to sync streaming
-        wrapped in an executor.
+        wrapped in an executor. In mock mode the native path is never selected,
+        so the stream is the same deterministic mock ``invoke_stream`` yields
+        whether or not the optional ``aioboto3`` package is installed (#2810).
         """
-        # Try aioboto3 for true async streaming
+        # Try aioboto3 for true async streaming, unless mock mode is on: the
+        # native path would open a provider client instead of returning mock
+        # output, and which one runs would depend on an optional install.
+        use_native = not self._is_mock_enabled()
         try:
+            if not use_native:
+                raise ImportError("mock mode uses the synchronous mock stream")
             import aioboto3  # noqa: F401 - used for availability check and async stream
 
             async for chunk in self._ainvoke_stream_aioboto3(
