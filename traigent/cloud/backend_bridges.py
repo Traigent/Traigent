@@ -659,6 +659,25 @@ Response:"""
 
         return {"model_parameters_id": str(uuid.uuid4()), **model_params}
 
+    def _config_param_candidate(
+        self, config_value: Any, allow_scalar_config: bool
+    ) -> tuple[bool, Any]:
+        if isinstance(config_value, (list, tuple, set)) and not config_value:
+            config_value = None
+
+        if config_value is not None:
+            candidate = self._first_config_value(config_value)
+            if candidate is not None:
+                config_is_sequence = isinstance(config_value, (list, tuple, set))
+                if (
+                    allow_scalar_config
+                    or config_is_sequence
+                    or isinstance(config_value, dict)
+                ):
+                    return True, candidate
+
+        return False, None
+
     def _extract_model_param(
         self,
         configuration_space: dict[str, Any],
@@ -683,19 +702,11 @@ Response:"""
                     return None
                 break
 
-        if isinstance(config_value, (list, tuple, set)) and not config_value:
-            config_value = None
-
-        if config_value is not None:
-            candidate = self._first_config_value(config_value)
-            if candidate is not None:
-                config_is_sequence = isinstance(config_value, (list, tuple, set))
-                if (
-                    allow_scalar_config
-                    or config_is_sequence
-                    or isinstance(config_value, dict)
-                ):
-                    return candidate
+        found, candidate = SDKBackendBridge._config_param_candidate(
+            self, config_value, allow_scalar_config
+        )
+        if found:
+            return candidate
 
         for candidate_key in keys_to_check:
             if candidate_key in agent_defaults:
