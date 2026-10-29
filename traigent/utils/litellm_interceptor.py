@@ -197,9 +197,11 @@ async def _acompletion_once(
     from traigent.integrations.utils.mock_adapter import MockAdapter
 
     if MockAdapter.is_mock_enabled("litellm"):
+        await MockAdapter.await_mock_delay("litellm")
         mock_data = MockAdapter.get_mock_response(
             "litellm",
             model=kwargs.get("model", args[0] if args else "mock-model"),
+            apply_delay=False,
         )
         mock_data.response_time_ms = 0.0
         capture_langchain_response(mock_data)
