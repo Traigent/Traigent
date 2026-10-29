@@ -444,15 +444,49 @@ class SyncManager:
         # Offline sessions persist dataset_size / evaluation_set under
         # session.metadata (written by the orchestrator); optimization_config
         # wins when it carries them.
-        (
-            dataset_size,
-            dataset_name,
-            evaluation_set,
-            display_name,
-            portal_name,
-            agent_key,
-        ) = SyncManager._sync_session_fields(
-            session, opt_config, session_metadata, legacy_shape
+        dataset_size = opt_config.get("dataset_size")
+        if dataset_size is None:
+            dataset_size = session_metadata.get("dataset_size")
+        if (
+            not isinstance(dataset_size, int)
+            or isinstance(dataset_size, bool)
+            or dataset_size <= 0
+        ):
+            dataset_size = 1
+        dataset_name = sanitize_backend_name(f"Local Dataset {session.function_name}")
+        evaluation_set = opt_config.get("evaluation_set")
+        if legacy_shape:
+            # Exactly the pre-upgrade expression: any truthy value (even a
+            # non-string) was kept verbatim.
+            evaluation_set = evaluation_set or "default"
+        else:
+            if not evaluation_set:
+                evaluation_set = session_metadata.get("evaluation_set")
+            if not isinstance(evaluation_set, str) or not evaluation_set:
+                evaluation_set = "default"
+        # Mirror the live path (BackendSessionManager): the portal experiment
+        # name is the display name when present, while metadata.function_name
+        # keeps the stable derived identifier.
+        display_name = session_metadata.get("function_display_name")
+        if not isinstance(display_name, str) or not display_name.strip():
+            display_name = None
+        else:
+            display_name = display_name.strip()
+        # The live path's agent-routing name (objectives/knobs label + slug
+        # hash) is persisted at offline-session creation; the backend uses
+        # function_name as agent identity when no agent_key is sent, so the bare
+        # display name must never be used here. Old files without it keep the
+        # pre-existing behaviour (the derived identifier).
+        stored_portal_name = session_metadata.get("portal_name")
+        if isinstance(stored_portal_name, str) and stored_portal_name.strip():
+            portal_name = stored_portal_name.strip()
+        else:
+            portal_name = session.function_name
+        stored_agent_key = session_metadata.get("agent_key")
+        agent_key = (
+            stored_agent_key.strip()
+            if isinstance(stored_agent_key, str) and stored_agent_key.strip()
+            else None
         )
 
         session_create = {
@@ -512,74 +546,6 @@ class SyncManager:
         return converted
 
     @staticmethod
-    def _sync_session_fields(
-        session: OptimizationSession,
-        opt_config: dict[str, Any],
-        session_metadata: dict[str, Any],
-        legacy_shape: bool,
-    ) -> tuple[Any, Any, Any, Any, Any, Any]:
-        dataset_size = opt_config.get("dataset_size")
-        if dataset_size is None:
-            dataset_size = session_metadata.get("dataset_size")
-        if (
-            not isinstance(dataset_size, int)
-            or isinstance(dataset_size, bool)
-            or dataset_size <= 0
-        ):
-            dataset_size = 1
-        dataset_name = sanitize_backend_name(f"Local Dataset {session.function_name}")
-        evaluation_set = SyncManager._sync_evaluation_set(
-            opt_config, session_metadata, legacy_shape
-        )
-        # Mirror the live path (BackendSessionManager): the portal experiment
-        # name is the display name when present, while metadata.function_name
-        # keeps the stable derived identifier.
-        display_name = session_metadata.get("function_display_name")
-        if not isinstance(display_name, str) or not display_name.strip():
-            display_name = None
-        else:
-            display_name = display_name.strip()
-        # The live path's agent-routing name (objectives/knobs label + slug
-        # hash) is persisted at offline-session creation; the backend uses
-        # function_name as agent identity when no agent_key is sent, so the bare
-        # display name must never be used here. Old files without it keep the
-        # pre-existing behaviour (the derived identifier).
-        stored_portal_name = session_metadata.get("portal_name")
-        if isinstance(stored_portal_name, str) and stored_portal_name.strip():
-            portal_name = stored_portal_name.strip()
-        else:
-            portal_name = session.function_name
-        stored_agent_key = session_metadata.get("agent_key")
-        agent_key = (
-            stored_agent_key.strip()
-            if isinstance(stored_agent_key, str) and stored_agent_key.strip()
-            else None
-        )
-
-        return (
-            dataset_size,
-            dataset_name,
-            evaluation_set,
-            display_name,
-            portal_name,
-            agent_key,
-        )
-
-    @staticmethod
-    def _sync_evaluation_set(
-        opt_config: dict[str, Any], session_metadata: dict[str, Any], legacy_shape: bool
-    ) -> Any:
-        evaluation_set = opt_config.get("evaluation_set")
-        if legacy_shape:
-            evaluation_set = evaluation_set or "default"
-        else:
-            if not evaluation_set:
-                evaluation_set = session_metadata.get("evaluation_set")
-            if not isinstance(evaluation_set, str) or not evaluation_set:
-                evaluation_set = "default"
-        return evaluation_set
-
-    @staticmethod
     def _derive_objectives(
         opt_config: dict[str, Any], configuration_runs: list[dict[str, Any]]
     ) -> list[str]:
@@ -623,24 +589,18 @@ class SyncManager:
         for configuration_run in configuration_runs:
             if str(configuration_run.get("status", "")).upper() != "COMPLETED":
                 continue
-            SyncManager._backfill_one_objective_run(configuration_run, objectives)
-
-    @staticmethod
-    def _backfill_one_objective_run(
-        configuration_run: dict[str, Any], objectives: list[str]
-    ) -> None:
-        measures = configuration_run.setdefault("measures", {})
-        fallback = measures.get("score")
-        if not isinstance(fallback, (int, float)) or isinstance(fallback, bool):
-            fallback = 0.0
-        cost_unmeasured = is_cost_unmeasured(measures)
-        for objective in objectives:
-            value = measures.get(objective)
-            if not isinstance(value, (int, float)) or isinstance(value, bool):
-                if cost_unmeasured and "cost" in objective.lower():
-                    # Unknown cost is omitted, never the score or 0.0.
-                    continue
-                measures[objective] = fallback
+            measures = configuration_run.setdefault("measures", {})
+            fallback = measures.get("score")
+            if not isinstance(fallback, (int, float)) or isinstance(fallback, bool):
+                fallback = 0.0
+            cost_unmeasured = is_cost_unmeasured(measures)
+            for objective in objectives:
+                value = measures.get(objective)
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    if cost_unmeasured and "cost" in objective.lower():
+                        # Unknown cost is omitted, never the score or 0.0.
+                        continue
+                    measures[objective] = fallback
 
     def _convert_trials_to_configuration_runs(
         self, trials: list[Any], *, include_example_measures: bool = True
@@ -752,7 +712,16 @@ class SyncManager:
             metrics = entry.get("metrics")
             if not isinstance(metrics, Mapping):
                 continue
-            clean = cls._clean_example_metrics(metrics)
+            clean: dict[str, Any] = {}
+            for key, value in metrics.items():
+                if (
+                    isinstance(key, str)
+                    and len(key) <= _MAX_EXAMPLE_METRIC_KEY_LENGTH
+                    and _EXAMPLE_METRIC_KEY_RE.match(key)
+                    and cls._is_finite_number(value)
+                    and len(clean) < _MAX_EXAMPLE_METRICS
+                ):
+                    clean[key] = value
             if clean:
                 rows.append(
                     (
@@ -762,12 +731,6 @@ class SyncManager:
                     )
                 )
 
-        return SyncManager._render_example_measures(rows)
-
-    @staticmethod
-    def _render_example_measures(
-        rows: list[tuple[int, int | None, dict[str, Any]]],
-    ) -> list[dict[str, Any]]:
         use_parsed = bool(rows) and all(parsed is not None for _, parsed, _ in rows)
         out: list[dict[str, Any]] = []
         seen: set[int] = set()
@@ -780,20 +743,6 @@ class SyncManager:
             seen.add(index)
             out.append({"example_id": f"example_{index}", "metrics": clean})
         return out
-
-    @classmethod
-    def _clean_example_metrics(cls, metrics: Mapping[Any, Any]) -> dict[str, Any]:
-        clean: dict[str, Any] = {}
-        for key, value in metrics.items():
-            if (
-                isinstance(key, str)
-                and len(key) <= _MAX_EXAMPLE_METRIC_KEY_LENGTH
-                and _EXAMPLE_METRIC_KEY_RE.match(key)
-                and cls._is_finite_number(value)
-                and len(clean) < _MAX_EXAMPLE_METRICS
-            ):
-                clean[key] = value
-        return clean
 
     @staticmethod
     def _dataset_example_index(example_id: Any) -> int | None:
@@ -1138,16 +1087,40 @@ class SyncManager:
             prior_state.get("cloud_experiment_run_id") if reuse else None
         )
         if not session_cloud_id:
-            created = SyncManager._create_sync_session(self, traigent_data, sync_result)
-            if created is None:
+            create_payload = traigent_data["session_create"]
+            if traigent_data.get("snapshot_g1_pending") is True:
+                # Offline G1 intent: register with the closed flag only after the
+                # readiness probe says available; otherwise refuse the sync
+                # closed. Never register plain: B1 could then make a later bind
+                # impossible.
+                if not self._g1_ready():
+                    sync_result["status"] = "error"
+                    sync_result["error_code"] = "READINESS_UNAVAILABLE"
+                    sync_result["errors"].append(
+                        "G1 certificate issuance is not available; sync refused "
+                        "(READINESS_UNAVAILABLE). Retry later."
+                    )
+                    return
+                create_payload = {**create_payload, "snapshot_g1_required": True}
+                days = traigent_data.get("snapshot_g1_deadline_days")
+                if (
+                    isinstance(days, int)
+                    and not isinstance(days, bool)
+                    and 1 <= days <= 30
+                ):
+                    create_payload["snapshot_g1_deadline_days"] = days
+            create_result = self._sync_create_session(create_payload)
+            if not create_result["success"]:
+                sync_result["status"] = "error"
+                sync_result["errors"].append(
+                    f"Session create failed: {create_result['error']}"
+                )
                 return
-            (
-                session_cloud_id,
-                experiment_id,
-                experiment_run_id,
-                project_id,
-                tenant_id,
-            ) = created
+            session_cloud_id = str(create_result["session_id"])
+            experiment_id = create_result["experiment_id"]
+            experiment_run_id = create_result["experiment_run_id"]
+            project_id = create_result.get("project_id")
+            tenant_id = create_result.get("tenant_id")
 
         # Normalize independently; never substitute session_id into the
         # persisted id field. The session-id fallback is applied only at URL
@@ -1167,7 +1140,15 @@ class SyncManager:
         # dedup other creates, so a re-POST silently duplicates rows. We persist
         # each result as synced (keyed by its stable position) immediately after
         # its POST succeeds, and on resume we skip the ones already recorded.
-        already_synced_keys = SyncManager._previously_synced_keys(prior_state, reuse)
+        already_synced_keys: set[str] = set()
+        if reuse:
+            prior_trials = prior_state.get("trials")
+            if isinstance(prior_trials, dict):
+                already_synced_keys = {
+                    key
+                    for key, record in prior_trials.items()
+                    if isinstance(record, dict) and record.get("status") == "synced"
+                }
 
         def _record_config_run_synced(
             key: str, configuration_run_id: str | None
@@ -1209,70 +1190,15 @@ class SyncManager:
         # so a fully-resumed session can still reach total_steps and be finalized.
         successful_steps += configuration_result["synced"]
         successful_steps += configuration_result["skipped"]
-        SyncManager._append_sync_errors(configuration_result, sync_result)
-
-        # Step 3: finalize the session now that all results are submitted. We
-        # finalize only on a clean upload (all results synced); a partial upload
-        # stays open so a retry can resume and finish it.
-        successful_steps, stop = SyncManager._finish_sync_upload(
-            self,
-            configuration_result,
-            session_cloud_id,
-            experiment_run_id,
-            sync_result,
-            successful_steps,
-            total_steps,
-        )
-        if stop:
-            return
-
-        if successful_steps == 0:
-            sync_result["status"] = "error"  # Complete failure
-        elif successful_steps == total_steps and not sync_result.get("errors"):
-            sync_result["status"] = "success"
-            sync_result["cloud_url"] = build_experiment_url(
-                BackendConfig.get_cloud_web_url(),
-                self._experiment_id_for_session(experiment_id, session_cloud_id),
-                run_id=experiment_run_id,
-                project_id=project_id,
-                tenant_id=tenant_id,
-            )
-        else:
-            sync_result["status"] = "partial"  # Some steps succeeded
-
-    @staticmethod
-    def _append_sync_errors(
-        configuration_result: dict[str, Any], sync_result: dict[str, Any]
-    ) -> None:
         if not configuration_result["success"]:
             sync_result["errors"].extend(
                 f"Result sync failed: {error}"
                 for error in configuration_result["errors"]
             )
 
-    @staticmethod
-    def _previously_synced_keys(prior_state: dict[str, Any], reuse: bool) -> set[str]:
-        already_synced_keys: set[str] = set()
-        if reuse:
-            prior_trials = prior_state.get("trials")
-            if isinstance(prior_trials, dict):
-                already_synced_keys = {
-                    key
-                    for key, record in prior_trials.items()
-                    if isinstance(record, dict) and record.get("status") == "synced"
-                }
-
-        return already_synced_keys
-
-    def _finish_sync_upload(
-        self,
-        configuration_result: dict[str, Any],
-        session_cloud_id: str,
-        experiment_run_id: str | None,
-        sync_result: dict[str, Any],
-        successful_steps: int,
-        total_steps: int,
-    ) -> tuple[int, bool]:
+        # Step 3: finalize the session now that all results are submitted. We
+        # finalize only on a clean upload (all results synced); a partial upload
+        # stays open so a retry can resume and finish it.
         if configuration_result["success"]:
             finalize_result = self._sync_finalize_session(
                 session_cloud_id, experiment_run_id
@@ -1297,44 +1223,21 @@ class SyncManager:
                 # Successful result uploads but failed finalization is partial.
                 if successful_steps == total_steps - 1:
                     sync_result["status"] = "partial"
-                    return successful_steps, True
+                    return
 
-        return successful_steps, False
-
-    def _create_sync_session(
-        self, traigent_data: dict[str, Any], sync_result: dict[str, Any]
-    ) -> tuple[str, Any, Any, Any, Any] | None:
-        create_payload = traigent_data["session_create"]
-        if traigent_data.get("snapshot_g1_pending") is True:
-            # Offline G1 intent: register with the closed flag only after the
-            # readiness probe says available; otherwise refuse the sync
-            # closed. Never register plain: B1 could then make a later bind
-            # impossible.
-            if not self._g1_ready():
-                sync_result["status"] = "error"
-                sync_result["error_code"] = "READINESS_UNAVAILABLE"
-                sync_result["errors"].append(
-                    "G1 certificate issuance is not available; sync refused "
-                    "(READINESS_UNAVAILABLE). Retry later."
-                )
-                return None
-            create_payload = {**create_payload, "snapshot_g1_required": True}
-            days = traigent_data.get("snapshot_g1_deadline_days")
-            if isinstance(days, int) and not isinstance(days, bool) and 1 <= days <= 30:
-                create_payload["snapshot_g1_deadline_days"] = days
-        create_result = self._sync_create_session(create_payload)
-        if not create_result["success"]:
-            sync_result["status"] = "error"
-            sync_result["errors"].append(
-                f"Session create failed: {create_result['error']}"
+        if successful_steps == 0:
+            sync_result["status"] = "error"  # Complete failure
+        elif successful_steps == total_steps and not sync_result.get("errors"):
+            sync_result["status"] = "success"
+            sync_result["cloud_url"] = build_experiment_url(
+                BackendConfig.get_cloud_web_url(),
+                self._experiment_id_for_session(experiment_id, session_cloud_id),
+                run_id=experiment_run_id,
+                project_id=project_id,
+                tenant_id=tenant_id,
             )
-            return None
-        session_cloud_id = str(create_result["session_id"])
-        experiment_id = create_result["experiment_id"]
-        experiment_run_id = create_result["experiment_run_id"]
-        project_id = create_result.get("project_id")
-        tenant_id = create_result.get("tenant_id")
-        return session_cloud_id, experiment_id, experiment_run_id, project_id, tenant_id
+        else:
+            sync_result["status"] = "partial"  # Some steps succeeded
 
     def _record_sync_state(
         self, session_id: str, sync_result: dict[str, Any], payload_hash: str
@@ -1680,18 +1583,41 @@ class SyncManager:
             # 1-based ordinal for human-readable error messages.
             ordinal = index + 1
             trial_config = configuration_run.get("experiment_parameters") or {}
-            if not SyncManager._valid_sync_trial_config(trial_config, ordinal, errors):
+            if not trial_config:
+                # The backend binds the submitted config to the allocated trial;
+                # an empty config is rejected. Surface a clear SDK-side error
+                # instead of the raw backend message, and don't burn a slot.
+                errors.append(
+                    f"trial {ordinal}: trial has an empty config, which the "
+                    "content-free session import cannot submit (the backend "
+                    "binds each trial to its config); this trial was skipped"
+                )
                 continue
 
-            trial_id = SyncManager._allocate_sync_trial(
-                self, session_id, ordinal, errors
-            )
-            if trial_id is None:
+            # Allocate the backend-minted trial id this result must bind to.
+            slot = self._sync_next_trial(session_id)
+            if not slot.get("success") or not slot.get("trial_id"):
+                detail = (
+                    "backend reported the optimization budget was reached"
+                    if slot.get("complete")
+                    else (slot.get("error") or "no trial slot returned")
+                )
+                errors.append(
+                    f"trial {ordinal}: could not allocate a backend trial slot "
+                    f"({detail})"
+                )
                 continue
+            trial_id = slot["trial_id"]
 
-            result_payload = SyncManager._sync_result_payload(
-                configuration_run, trial_id, trial_config
-            )
+            result_payload = {
+                "trial_id": trial_id,
+                "config": trial_config,
+                "status": configuration_run.get("status") or "COMPLETED",
+                "metrics": configuration_run.get("measures", {}),
+            }
+            if configuration_run.get("example_measures"):
+                # Same top-level ``measures`` list the live path submits.
+                result_payload["measures"] = configuration_run["example_measures"]
             try:
                 result_payload = oo_egress.project_for_send(
                     oo_egress.PHASE_RESULTS,
@@ -1710,9 +1636,14 @@ class SyncManager:
 
             if response.status_code in (200, 201):
                 synced += 1
-                SyncManager._record_synced_result(
-                    self, response, trial_id, key, configuration_run_ids, on_synced
-                )
+                result_id = self._extract_response_id(response) or trial_id
+                if result_id:
+                    configuration_run_ids.append(result_id)
+                # Persist this result as synced RIGHT NOW (before the next POST)
+                # so a crash/failure on a later row leaves a durable marker the
+                # next resume can skip past.
+                if on_synced is not None:
+                    on_synced(key, result_id)
                 continue
 
             errors.append(
@@ -1726,64 +1657,6 @@ class SyncManager:
             "errors": errors,
             "configuration_run_ids": configuration_run_ids,
         }
-
-    @staticmethod
-    def _sync_result_payload(
-        configuration_run: dict[str, Any], trial_id: Any, trial_config: Any
-    ) -> dict[str, Any]:
-        result_payload = {
-            "trial_id": trial_id,
-            "config": trial_config,
-            "status": configuration_run.get("status") or "COMPLETED",
-            "metrics": configuration_run.get("measures", {}),
-        }
-        if configuration_run.get("example_measures"):
-            # Same top-level ``measures`` list the live path submits.
-            result_payload["measures"] = configuration_run["example_measures"]
-        return result_payload
-
-    @staticmethod
-    def _valid_sync_trial_config(
-        trial_config: Any, ordinal: int, errors: list[str]
-    ) -> bool:
-        if not trial_config:
-            errors.append(
-                f"trial {ordinal}: trial has an empty config, which the "
-                "content-free session import cannot submit (the backend "
-                "binds each trial to its config); this trial was skipped"
-            )
-            return False
-        return True
-
-    def _record_synced_result(
-        self,
-        response: Any,
-        trial_id: Any,
-        key: str,
-        configuration_run_ids: list[str],
-        on_synced: Callable[[str, str | None], None] | None,
-    ) -> None:
-        result_id = self._extract_response_id(response) or trial_id
-        if result_id:
-            configuration_run_ids.append(result_id)
-        if on_synced is not None:
-            on_synced(key, result_id)
-
-    def _allocate_sync_trial(
-        self, session_id: str, ordinal: int, errors: list[str]
-    ) -> tuple[bool, Any]:
-        slot = self._sync_next_trial(session_id)
-        if not slot.get("success") or not slot.get("trial_id"):
-            detail = (
-                "backend reported the optimization budget was reached"
-                if slot.get("complete")
-                else (slot.get("error") or "no trial slot returned")
-            )
-            errors.append(
-                f"trial {ordinal}: could not allocate a backend trial slot ({detail})"
-            )
-            return False, None
-        return True, slot["trial_id"]
 
     def _sync_finalize_session(
         self, session_id: str, experiment_run_id: str | None
