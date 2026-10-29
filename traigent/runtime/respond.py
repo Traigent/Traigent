@@ -317,6 +317,42 @@ def _check_earlier_occurrence(earlier: dict[str, Any] | None) -> None:
         raise OccurrenceUsed(_text(earlier.get("run_id")))
 
 
+async def _run_optimize(
+    fn: Any,
+    ceiling: Any,
+    own: _Ownership,
+    heartbeat: asyncio.Task[Any],
+    record: Callable[[dict[str, Any]], None],
+) -> Any:
+    run: asyncio.Future[Any] | None = None
+    lost = False
+    try:
+        try:
+            run = asyncio.ensure_future(fn.optimize(cost_limit=float(ceiling)))
+            # A heartbeat the ledger refuses ends that task: this controller no longer
+            # owns the occurrence, so the run is cancelled and nothing is finished.
+            await asyncio.wait({run, heartbeat}, return_when=asyncio.FIRST_COMPLETED)
+            lost = _lost_after_wait(run, own)
+        finally:
+            # Both tasks are drained on every exit, so no exception goes unretrieved.
+            await _drain(heartbeat, run)
+        if lost:
+            raise _LeaseLost
+        result = run.result() if run is not None else None
+    except _LeaseLost:
+        raise RuntimeRequirementError(E_HOLD, "lease") from None
+    except BaseException as exc:  # noqa: BLE001 - user code; its text is never surfaced
+        # Spend may have occurred and is never undone.  The occurrence is marked
+        # failed (kept in the ledger with its attempt count) so that an explicit
+        # retry is possible, but only through a NEW human approval.  Cancellation
+        # and interrupts mark it too, then propagate natively.
+        record({"status": manifest.STATUS_FAILED, "run_id": None})
+        if isinstance(exc, Exception):
+            raise RuntimeRequirementError(E_OPTIMIZE_FAILED) from None
+        raise
+    return result
+
+
 async def respond(
     fn: Any,
     requirement: RuntimeRequirement,
@@ -430,32 +466,7 @@ async def respond(
         state, agent_id, key, attempt, clock, occurrence_lease, reserved_at
     )
     heartbeat = asyncio.create_task(_heartbeat(own))
-    run: asyncio.Future[Any] | None = None
-    lost = False
-    try:
-        try:
-            run = asyncio.ensure_future(fn.optimize(cost_limit=float(ceiling)))
-            # A heartbeat the ledger refuses ends that task: this controller no longer
-            # owns the occurrence, so the run is cancelled and nothing is finished.
-            await asyncio.wait({run, heartbeat}, return_when=asyncio.FIRST_COMPLETED)
-            lost = _lost_after_wait(run, own)
-        finally:
-            # Both tasks are drained on every exit, so no exception goes unretrieved.
-            await _drain(heartbeat, run)
-        if lost:
-            raise _LeaseLost
-        result = run.result() if run is not None else None
-    except _LeaseLost:
-        raise RuntimeRequirementError(E_HOLD, "lease") from None
-    except BaseException as exc:  # noqa: BLE001 - user code; its text is never surfaced
-        # Spend may have occurred and is never undone.  The occurrence is marked
-        # failed (kept in the ledger with its attempt count) so that an explicit
-        # retry is possible, but only through a NEW human approval.  Cancellation
-        # and interrupts mark it too, then propagate natively.
-        record({"status": manifest.STATUS_FAILED, "run_id": None})
-        if isinstance(exc, Exception):
-            raise RuntimeRequirementError(E_OPTIMIZE_FAILED) from None
-        raise
+    result = await _run_optimize(fn, ceiling, own, heartbeat, record)
     run_id = _run_id(result)
     record({"run_id": run_id, "finished": True})
     return RespondResult(breach_id, rule_id, OCCURRENCE, run_id, float(ceiling))
