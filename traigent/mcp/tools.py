@@ -358,12 +358,7 @@ async def auth_status_tool(check: bool = False) -> dict[str, Any]:
                     "source": "backend",
                 }
 
-    if api_key:
-        auth_type = "api_key"
-    elif credentials.get("jwt_token"):
-        auth_type = "jwt"
-    else:
-        auth_type = "none"
+    auth_type = _auth_type(api_key, credentials)
 
     return {
         "ok": True,
@@ -376,6 +371,15 @@ async def auth_status_tool(check: bool = False) -> dict[str, Any]:
         "backend_url": _sanitize_backend_url(cast("str | None", backend_url)),
         "validity": validity,
     }
+
+
+def _auth_type(api_key: str | None, credentials: dict[str, Any]) -> str:
+    if api_key:
+        return "api_key"
+    elif credentials.get("jwt_token"):
+        return "jwt"
+    else:
+        return "none"
 
 
 def _serialize_detection_result(result: DetectionResult) -> dict[str, Any]:
@@ -874,18 +878,9 @@ def run_optimization_tool(
     algorithm: str | None = None,
 ) -> dict[str, Any]:
     """Run local optimization; real mode is gated by confirm and cost_limit."""
-    if mode not in {"mock", "real"}:
-        return _failure("mode must be either 'mock' or 'real'.")
-
-    if mode == "real":
-        if not confirm:
-            return {"ok": False, "refused": True, "message": _REAL_SPEND_MESSAGE}
-        if cost_limit is None or cost_limit <= 0:
-            return {
-                "ok": False,
-                "refused": True,
-                "message": "Real optimization requires an explicit positive cost_limit.",
-            }
+    refusal = _optimization_mode_refusal(mode, confirm, cost_limit)
+    if refusal is not None:
+        return refusal
 
     if script_path is None:
         return _failure("script_path is required for run_optimization v1.")
@@ -901,31 +896,9 @@ def run_optimization_tool(
         return _failure(str(exc), code="path_rejected")
 
     if mode == "real":
-        unapproved_evals = _find_unapproved_eval_manifests(resolved_script.parent)
-        if unapproved_evals:
-            return {
-                "ok": False,
-                "refused": True,
-                "code": "draft_eval_unapproved",
-                "message": (
-                    "Real optimization refuses unapproved draft evaluation data. "
-                    "Review or replace the dataset, then set approval_status to "
-                    "user_approved in the eval manifest."
-                ),
-                "unapproved_evals": unapproved_evals,
-            }
-        from traigent.utils.env_config import is_mock_llm
-
-        if is_mock_llm():
-            return {
-                "ok": False,
-                "refused": True,
-                "message": (
-                    "Real optimization cannot run while mock mode is active in this "
-                    "server process. Restart the MCP server without mock mode for a "
-                    "real spend run."
-                ),
-            }
+        refusal = _real_optimization_refusal(resolved_script)
+        if refusal is not None:
+            return refusal
 
     # Mock runs keep their small default (no real spend to protect). A real
     # run without a caller-supplied max_trials uses the function's own
@@ -968,6 +941,26 @@ def run_optimization_tool(
     except Exception as exc:
         return _optimization_failure(exc, mode=mode)
 
+    stdout_payload, stderr_payload = _optimization_output(
+        mode, stdout_text, stderr_text
+    )
+
+    return {
+        "ok": True,
+        "mode": mode,
+        "script_path": str(resolved_script),
+        "max_trials": effective_trials,
+        "algorithm": effective_algorithm,
+        "path_policy": "script_path must resolve under the current working directory.",
+        "results": summaries,
+        "stdout": stdout_payload,
+        "stderr": stderr_payload,
+    }
+
+
+def _optimization_output(
+    mode: str, stdout_text: str, stderr_text: str
+) -> tuple[str, str]:
     if mode == "real":
         # Real runs touch live providers; captured stdout/stderr can contain
         # prompts, completions, or other sensitive provider data. Scrub the tails
@@ -982,17 +975,56 @@ def run_optimization_tool(
         stdout_payload = stdout_text[-4000:]
         stderr_payload = stderr_text[-4000:]
 
-    return {
-        "ok": True,
-        "mode": mode,
-        "script_path": str(resolved_script),
-        "max_trials": effective_trials,
-        "algorithm": effective_algorithm,
-        "path_policy": "script_path must resolve under the current working directory.",
-        "results": summaries,
-        "stdout": stdout_payload,
-        "stderr": stderr_payload,
-    }
+    return stdout_payload, stderr_payload
+
+
+def _optimization_mode_refusal(
+    mode: str, confirm: bool, cost_limit: float | None
+) -> dict[str, Any] | None:
+    if mode not in {"mock", "real"}:
+        return _failure("mode must be either 'mock' or 'real'.")
+
+    if mode == "real":
+        if not confirm:
+            return {"ok": False, "refused": True, "message": _REAL_SPEND_MESSAGE}
+        if cost_limit is None or cost_limit <= 0:
+            return {
+                "ok": False,
+                "refused": True,
+                "message": "Real optimization requires an explicit positive cost_limit.",
+            }
+
+    return None
+
+
+def _real_optimization_refusal(resolved_script: Path) -> dict[str, Any] | None:
+    unapproved_evals = _find_unapproved_eval_manifests(resolved_script.parent)
+    if unapproved_evals:
+        return {
+            "ok": False,
+            "refused": True,
+            "code": "draft_eval_unapproved",
+            "message": (
+                "Real optimization refuses unapproved draft evaluation data. "
+                "Review or replace the dataset, then set approval_status to "
+                "user_approved in the eval manifest."
+            ),
+            "unapproved_evals": unapproved_evals,
+        }
+    from traigent.utils.env_config import is_mock_llm
+
+    if is_mock_llm():
+        return {
+            "ok": False,
+            "refused": True,
+            "message": (
+                "Real optimization cannot run while mock mode is active in this "
+                "server process. Restart the MCP server without mock mode for a "
+                "real spend run."
+            ),
+        }
+
+    return None
 
 
 def _serialize_loaded_result(result: Any) -> dict[str, Any]:
