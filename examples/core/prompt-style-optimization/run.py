@@ -55,7 +55,7 @@ DATA_ROOT = (
 )
 if MOCK:
     # Initialize with local-only mode for mock runs
-    traigent.initialize(offline=True)
+    traigent.initialize()
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")
 PROMPT_PATH = BASE / "prompt.txt"
 

@@ -90,7 +90,7 @@ PROMPT_PATH = BASE / "prompt.txt"
 # Mock mode initialization
 if MOCK:
     try:
-        traigent.initialize(offline=True)
+        traigent.initialize()
     except Exception:
         pass
 

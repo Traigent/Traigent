@@ -67,7 +67,7 @@ os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 DATA_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "tool-use-calculator"
 if MOCK:
     try:
-        traigent.initialize(offline=True)
+        traigent.initialize()
     except Exception:
         pass
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")

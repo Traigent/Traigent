@@ -374,7 +374,7 @@ def configure_runtime(
     else:
         os.environ.pop("TRAIGENT_MOCK_LLM", None)
     traigent.configure(logging_level=os.getenv("TRAIGENT_LOG_LEVEL", "WARNING").upper())
-    traigent.initialize(offline=True, minimal_logging=True)
+    traigent.initialize(minimal_logging=True)
 
 
 def build_observability_client(

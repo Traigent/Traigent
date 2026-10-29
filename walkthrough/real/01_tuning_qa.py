@@ -55,7 +55,6 @@ REQUIRE_CONFIRM = os.getenv("TRAIGENT_REQUIRE_CONFIRM", "1").lower() in (
     "yes",
 )
 traigent.initialize(
-    offline=True,
     minimal_logging=MINIMAL_LOGGING,
 )
 

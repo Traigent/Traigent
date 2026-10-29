@@ -360,7 +360,7 @@ generator_agent = AgentDefinition(
     agent_type="llm",
 )
 
-traigent.initialize(offline=True)
+traigent.initialize()
 
 
 @traigent.optimize(
