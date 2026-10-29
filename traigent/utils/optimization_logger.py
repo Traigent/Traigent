@@ -230,53 +230,68 @@ def sanitize_for_logging(
         _memo = {}
 
     if isinstance(value, dict):
-        obj_id = id(value)
-        if obj_id in _memo:
-            return _memo[obj_id]
-        if obj_id in _visited:
-            return "<recursion>"
-        _visited.add(obj_id)
-        sanitized: dict[str, Any] = {}
-        _memo[obj_id] = sanitized
-        for nested_key, nested_value in value.items():
-            sanitized[nested_key] = sanitize_for_logging(
-                nested_value,
-                key_hint=str(nested_key),
-                _visited=_visited,
-                _memo=_memo,
-            )
-        return sanitized
+        return _sanitize_mapping(value, _visited, _memo)
 
     if isinstance(value, (list, tuple, set)):
-        obj_id = id(value)
-        if obj_id in _memo:
-            return _memo[obj_id]
-        if obj_id in _visited:
-            return "<recursion>"
-        _visited.add(obj_id)
-        sanitized_sequence = [
-            sanitize_for_logging(
-                item, key_hint=key_hint, _visited=_visited, _memo=_memo
-            )
-            for item in value
-        ]
-        _memo[obj_id] = sanitized_sequence
-        return sanitized_sequence
+        return _sanitize_sequence(value, key_hint, _visited, _memo)
 
     if isinstance(value, str):
-        if key_hint and _is_sensitive_key(key_hint):
-            return _mask_string(value)
-        if _looks_like_secret(value, key_hint=key_hint):
-            return _mask_string(value)
-        if key_hint and _is_safe_logging_key(key_hint):
-            return value
-        return value
+        return _sanitize_string(value, key_hint)
 
     if isinstance(value, (int, float, bool)) or value is None:
         return value
 
     # Fallback to string for unsupported types (e.g., dataclasses, enums)
     return str(value)
+
+
+def _sanitize_mapping(
+    value: dict[Any, Any], _visited: set[int], _memo: dict[int, Any]
+) -> Any:
+    obj_id = id(value)
+    if obj_id in _memo:
+        return _memo[obj_id]
+    if obj_id in _visited:
+        return "<recursion>"
+    _visited.add(obj_id)
+    sanitized: dict[str, Any] = {}
+    _memo[obj_id] = sanitized
+    for nested_key, nested_value in value.items():
+        sanitized[nested_key] = sanitize_for_logging(
+            nested_value,
+            key_hint=str(nested_key),
+            _visited=_visited,
+            _memo=_memo,
+        )
+    return sanitized
+
+
+def _sanitize_sequence(
+    value: list[Any] | tuple[Any, ...] | set[Any],
+    key_hint: str | None,
+    _visited: set[int],
+    _memo: dict[int, Any],
+) -> Any:
+    obj_id = id(value)
+    if obj_id in _memo:
+        return _memo[obj_id]
+    if obj_id in _visited:
+        return "<recursion>"
+    _visited.add(obj_id)
+    sanitized_sequence = [
+        sanitize_for_logging(item, key_hint=key_hint, _visited=_visited, _memo=_memo)
+        for item in value
+    ]
+    _memo[obj_id] = sanitized_sequence
+    return sanitized_sequence
+
+
+def _sanitize_string(value: str, key_hint: str | None) -> str:
+    if key_hint and _is_sensitive_key(key_hint):
+        return _mask_string(value)
+    if _looks_like_secret(value, key_hint=key_hint):
+        return _mask_string(value)
+    return value
 
 
 def _extract_output_text(output: Any) -> str | None:
