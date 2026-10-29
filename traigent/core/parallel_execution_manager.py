@@ -388,26 +388,6 @@ class ParallelExecutionManager:
         # Create a denied permit for cancelled/failed trials
         denied_permit = Permit(id=-1, amount=0.0, active=False)
 
-        async def release_after_exception(
-            permit: Permit | None, index: int, e: BaseException
-        ) -> None:
-            # Release the permit on exception - the trial failed after permit
-            # was granted, so we need to release the reservation
-            if (
-                permit is not None
-                and permit.is_granted
-                and self.cost_enforcer is not None
-            ):
-                await self.cost_enforcer.release_permit_async(permit)
-                logger.debug(
-                    "Released permit %d for trial %d after exception: %s",
-                    permit.id,
-                    index,
-                    type(e).__name__,
-                )
-
-        interrupts: list[BaseException] = []
-
         async def execute_with_permit(coro: Any, index: int) -> tuple[int, Any, Permit]:
             """Execute coroutine if permit acquired, return (index, result, permit).
 
@@ -446,18 +426,21 @@ class ParallelExecutionManager:
                     self, coro, index, permit, coroutine_started
                 )
                 raise
-            except (KeyboardInterrupt, SystemExit) as e:
-                # Interpreter-level interrupts must reach the caller, but a raise
-                # here would run inside a gather-scheduled Task, where CPython
-                # re-raises KeyboardInterrupt/SystemExit out of the event loop
-                # itself (see BaseEvaluator._execute_async_with_timeout).  Release
-                # the reservation, record the interrupt, and re-raise it below in
-                # the awaiting caller's frame.
-                await release_after_exception(permit, index, e)
-                interrupts.append(e)
-                return (index, e, denied_permit)
             except BaseException as e:
-                await release_after_exception(permit, index, e)
+                # Release the permit on exception - the trial failed after permit
+                # was granted, so we need to release the reservation
+                if (
+                    permit is not None
+                    and permit.is_granted
+                    and self.cost_enforcer is not None
+                ):
+                    await self.cost_enforcer.release_permit_async(permit)
+                    logger.debug(
+                        "Released permit %d for trial %d after exception: %s",
+                        permit.id,
+                        index,
+                        type(e).__name__,
+                    )
                 # Return exception with denied permit (already released)
                 return (index, e, denied_permit)
 
@@ -466,11 +449,6 @@ class ParallelExecutionManager:
 
         # Run all tasks and collect results
         indexed_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        if interrupts:
-            # Every sibling task has settled and released its permit; deliver
-            # the interrupt in the caller's frame (not a Task boundary).
-            raise interrupts[0]
 
         # Sort by index to preserve original order
         indexed_results = sorted(

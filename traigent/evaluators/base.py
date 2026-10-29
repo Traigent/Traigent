@@ -169,37 +169,6 @@ def aggregate_measured_metric(metric: str, all_metrics: list[dict[str, Any]]) ->
     return sum(measured) / len(measured)
 
 
-class _WorkerInterruptSlot:
-    """Per-call hand-off for an interrupt raised by a worker cleanup callback.
-
-    The callback runs on the executor thread, where re-raising would kill the
-    worker; it records here instead and the awaiting caller re-raises.  Once
-    the caller closes the slot, later records are refused so an interrupt can
-    never be consumed by an unrelated call.
-    """
-
-    __slots__ = ("_closed", "_lock", "_pending")
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._closed = False
-        self._pending: BaseException | None = None
-
-    def record(self, interrupt: BaseException) -> bool:
-        with self._lock:
-            if self._closed:
-                return False
-            if self._pending is None:
-                self._pending = interrupt
-            return True
-
-    def close(self) -> BaseException | None:
-        with self._lock:
-            self._closed = True
-            pending, self._pending = self._pending, None
-            return pending
-
-
 class _TaskBoundaryInterrupt:
     """Carries a KeyboardInterrupt/SystemExit back across an asyncio Task boundary.
 
@@ -2875,7 +2844,6 @@ class BaseEvaluator(ABC):
         self,
         done_future: Any,
         worker_done_callback: Callable[[], None] | None,
-        interrupt_slot: _WorkerInterruptSlot | None = None,
     ) -> None:
         """Observe worker failures and release its evaluator lane."""
         try:
@@ -2891,22 +2859,10 @@ class BaseEvaluator(ABC):
         if worker_done_callback is not None:
             try:
                 worker_done_callback()
-            except Exception:
+            except BaseException:
                 # Cleanup runs from the executor callback thread and
                 # must never turn into an unobserved callback failure.
                 logger.exception("Sync worker cleanup callback failed")
-            except (KeyboardInterrupt, SystemExit) as interrupt:
-                # Raising here would escape ``Future.set_result`` and kill the
-                # executor worker thread.  Record it in THIS call's slot; the
-                # awaiting caller re-raises it.  If that caller already left
-                # (timeout/cancellation) there is nobody to deliver to, and it
-                # must not leak into an unrelated later call.
-                if interrupt_slot is None or not interrupt_slot.record(interrupt):
-                    logger.error(
-                        "Sync worker cleanup callback raised %s after its "
-                        "awaiting caller had left; interrupt cannot be delivered",
-                        type(interrupt).__name__,
-                    )
 
     @staticmethod
     def _consume_late_future_result(done_future: asyncio.Future[Any]) -> None:
@@ -2973,7 +2929,6 @@ class BaseEvaluator(ABC):
             Tuple of (output, error_message)
         """
         caller_context = copy_context()
-        interrupt_slot = _WorkerInterruptSlot()
 
         def call_with_config() -> Any:
             # Match ``asyncio.to_thread`` context propagation for every sync
@@ -3015,9 +2970,7 @@ class BaseEvaluator(ABC):
                 worker_started_callback()
 
             def on_worker_done(done_future: Any) -> None:
-                self._on_sync_worker_done(
-                    done_future, worker_done_callback, interrupt_slot
-                )
+                self._on_sync_worker_done(done_future, worker_done_callback)
 
             future.add_done_callback(on_worker_done)
             slot_acquired = False
@@ -3035,12 +2988,6 @@ class BaseEvaluator(ABC):
             output, timeout_error = await self._await_sync_worker_output(
                 future, async_future, apply_timeout
             )
-            # ``on_worker_done`` is registered before ``wrap_future``'s own
-            # callback, so on the normal path the slot is filled before this
-            # awaiter resumes; closing it makes a later record impossible.
-            pending_interrupt = interrupt_slot.close()
-            if pending_interrupt is not None:
-                raise pending_interrupt
             if timeout_error is not None:
                 return None, timeout_error
 
@@ -3048,7 +2995,6 @@ class BaseEvaluator(ABC):
                 raise output.exc
             return output, None
         finally:
-            interrupt_slot.close()
             if slot_acquired:
                 self._sync_worker_slots.release()
             if temporary_executor is not None:

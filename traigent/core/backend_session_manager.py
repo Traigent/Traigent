@@ -5,11 +5,11 @@
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import inspect
 import os
 import re
 import shlex
+import threading
 import time
 from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass
@@ -2711,18 +2711,25 @@ class BackendSessionManager:
         except RuntimeError:
             return asyncio.run(coroutine)
 
-        # A one-shot executor re-raises the stored exception (BaseException
-        # included) from ``Future.result()`` in the caller, with no broad handler.
-        # Not a ``with`` block: its exit is ``shutdown(wait=True)``, which would
-        # make an external KeyboardInterrupt during ``result()`` wait for a slow
-        # or stuck report.  ``wait=False`` lets the interrupt unwind immediately.
-        executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="traigent-smart-pruning-report"
+        result_box: dict[str, Any] = {}
+
+        def _runner() -> None:
+            try:
+                result_box["result"] = asyncio.run(coroutine)
+            except BaseException as exc:  # pragma: no cover - defensive bridge
+                result_box["error"] = exc
+
+        thread = threading.Thread(
+            target=_runner,
+            name="traigent-smart-pruning-report",
+            daemon=True,
         )
-        try:
-            return executor.submit(asyncio.run, coroutine).result()
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)
+        thread.start()
+        thread.join()
+        error = result_box.get("error")
+        if isinstance(error, BaseException):
+            raise error
+        return result_box.get("result")
 
     def report_intermediate_progress(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Send a smart-pruning intermediate report and return the prune decision."""
