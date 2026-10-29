@@ -232,3 +232,71 @@ def test_banner_names_exact_mocked_classes_and_guarded_transports_2813(
 )
 def test_grpc_target_host_parsing_2811(target: str, host: str) -> None:
     assert guard._grpc_target_host(target) == host
+
+
+# --- red-team round: host table, anchoring, gRPC targets, inertness ---------
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        # botocore dual-stack and non-"amazonaws.com" partition suffixes.
+        "bedrock-runtime.us-east-1.api.aws",
+        "bedrock-runtime-fips.us-gov-west-1.api.aws",
+        "bedrock-runtime.cn-north-1.api.amazonwebservices.com.cn",
+        "bedrock-runtime.eusc-de-east-1.amazonaws.eu",
+        "bedrock-runtime.eusc-de-east-1.api.amazonwebservices.eu",
+        "vpce-0abc-xyz.bedrock-runtime.us-east-1.vpce.amazonaws.com",
+    ],
+)
+def test_bedrock_dualstack_and_partition_hosts_are_known_2811(host: str) -> None:
+    assert is_known_llm_provider_host(host)
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        # Virtual-hosted S3 bucket whose name merely starts with "bedrock".
+        "bedrock-logs.s3.amazonaws.com",
+        "bedrock-artifacts.s3.amazonaws.com.cn",
+        "bedrock-x.sts.amazonaws.com",
+    ],
+)
+def test_bedrock_prefixed_non_llm_hosts_are_not_blocked_2811(host: str) -> None:
+    assert not is_known_llm_provider_host(host)
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["api.openai.com:https", "dns:///api.openai.com:https", "api.openai.com:grpc"],
+)
+def test_grpc_named_port_does_not_bypass_the_guard_2811(target: str) -> None:
+    grpc = pytest.importorskip("grpc")
+    with pytest.raises(MockModeTransportBlockedError):
+        grpc.insecure_channel(target)
+
+
+def test_block_message_names_the_canonical_host_2812() -> None:
+    from types import SimpleNamespace
+
+    with pytest.raises(MockModeTransportBlockedError) as excinfo:
+        guard._raise_if_blocked(SimpleNamespace(host="API.OpenAI.com."))
+    assert "(api.openai.com)" in str(excinfo.value)
+
+
+def test_guard_is_inert_when_mock_off_even_if_host_extraction_fails_2811() -> None:
+    def boom(self: object, request: object) -> object:
+        raise AttributeError("no url on this request type")
+
+    wrapped = guard._wrap_sync(lambda self, request: "sent", boom)
+    traigent_testing.disable_mock_mode()
+    assert wrapped(object(), object()) == "sent"
+
+
+def test_guard_fails_closed_when_host_extraction_fails_under_mock_2811() -> None:
+    def boom(self: object, request: object) -> object:
+        raise AttributeError("no url on this request type")
+
+    wrapped = guard._wrap_sync(lambda self, request: "sent", boom)
+    with pytest.raises(MockModeTransportBlockedError, match="could not determine"):
+        wrapped(object(), object())

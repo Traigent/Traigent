@@ -68,6 +68,16 @@ __all__ = [
     "mock_blocked_calls",
 ]
 
+# An AWS region label (us-east-1, eu-central-2, us-gov-west-1, eusc-de-east-1,
+# cn-north-1): letters-and-dashes ending in a digit, never a bare service name.
+_AWS_REGION = r"[a-z]{2,5}(?:-[a-z]+)+-\d+"
+# Every DNS suffix botocore's endpoint data resolves for the AWS partitions that
+# offer Bedrock, including the dual-stack names.
+_AWS_DNS_SUFFIX = (
+    r"(?:amazonaws\.com(?:\.cn)?|amazonaws\.eu|api\.aws"
+    r"|api\.amazonwebservices\.(?:com\.cn|eu))"
+)
+
 # Hosts per provider the SDK registers (keys are the canonical names in
 # ``traigent.config.provider_support.PROVIDER_SPECS``; a test fails when a
 # registered provider is missing here). Each value is (literal hosts, anchored
@@ -100,11 +110,16 @@ PROVIDER_HOSTS: dict[str, tuple[frozenset[str], tuple[re.Pattern[str], ...]]] = 
     "bedrock": (
         frozenset(),
         (
-            # bedrock, bedrock-runtime, bedrock-agent(-runtime), -fips variants.
-            re.compile(r"^bedrock[a-z-]*\.[a-z0-9-]+\.amazonaws\.com(\.cn)?$"),
+            # bedrock, bedrock-runtime, bedrock-agent(-runtime), -fips variants,
+            # in every endpoint suffix botocore resolves: amazonaws.com(.cn|.eu),
+            # and the dual-stack api.aws / api.amazonwebservices.* names. The
+            # label after the service must look like a region ("us-east-1"),
+            # so an S3 bucket named "bedrock-logs" (bedrock-logs.s3.amazonaws.com)
+            # is not mistaken for the service.
+            re.compile(rf"^bedrock[a-z-]*\.{_AWS_REGION}\.{_AWS_DNS_SUFFIX}$"),
             # Interface VPC endpoints.
             re.compile(
-                r"^([a-z0-9-]+\.)?bedrock[a-z-]*\.[a-z0-9-]+\.vpce\.amazonaws\.com$"
+                rf"^([a-z0-9-]+\.)?bedrock[a-z-]*\.{_AWS_REGION}\.vpce\.amazonaws\.com$"
             ),
         ),
     ),
@@ -218,7 +233,7 @@ def _raise_if_blocked(url: Any) -> None:
     from traigent.utils.env_config import is_mock_llm
 
     if is_mock_llm():
-        name = str(host).lower()
+        name = _canonical_host(str(host))
         message = (
             f"Traigent mock mode blocked a request to a known LLM provider "
             f"host ({name}). Mock mode promises no real LLM calls. "
@@ -237,13 +252,37 @@ def _raise_if_blocked(url: Any) -> None:
         raise MockModeTransportBlockedError(message)
 
 
+def _guard_call(url_of: Any, *args: Any, **kwargs: Any) -> None:
+    """Raise when this call targets a provider host under mock mode.
+
+    The mock flag is read first, so with mock off the guard never evaluates
+    ``url_of``: a request type it cannot read can never break real traffic.
+    Under mock a host that cannot be read fails closed (an unreadable request
+    could be a provider call).
+    """
+    from traigent.utils.env_config import is_mock_llm
+
+    if not is_mock_llm():
+        return
+    try:
+        url = url_of(*args, **kwargs)
+    except Exception as exc:  # noqa: BLE001 - fail closed, whatever the shape
+        raise MockModeTransportBlockedError(
+            "Traigent mock mode blocked a request because the guard could not "
+            "determine its destination host. Mock mode promises no real LLM "
+            "calls. To allow real requests, call "
+            "traigent.testing.disable_mock_mode()."
+        ) from exc
+    _raise_if_blocked(url)
+
+
 _install_lock = threading.RLock()
 
 
 def _wrap_sync(original: Any, url_of: Any) -> Any:
     @functools.wraps(original)
     def guarded(self: Any, *args: Any, **kwargs: Any) -> Any:
-        _raise_if_blocked(url_of(self, *args, **kwargs))
+        _guard_call(url_of, self, *args, **kwargs)
         return original(self, *args, **kwargs)
 
     guarded._traigent_mock_transport_guard = True  # type: ignore[attr-defined]
@@ -254,7 +293,7 @@ def _wrap_sync(original: Any, url_of: Any) -> Any:
 def _wrap_async(original: Any, url_of: Any) -> Any:
     @functools.wraps(original)
     async def guarded(self: Any, *args: Any, **kwargs: Any) -> Any:
-        _raise_if_blocked(url_of(self, *args, **kwargs))
+        _guard_call(url_of, self, *args, **kwargs)
         return await original(self, *args, **kwargs)
 
     guarded._traigent_mock_transport_guard = True  # type: ignore[attr-defined]
@@ -359,7 +398,16 @@ class _GrpcTarget:
     """Adapter exposing the host of a gRPC target string as ``.host``."""
 
     def __init__(self, target: Any) -> None:
-        self.host = _grpc_target_host(target)
+        parsed = _grpc_target_host(target)
+        self.host = parsed
+        if isinstance(target, str) and not is_known_llm_provider_host(parsed):
+            # Fail closed on shapes the parser may misread (a named port such
+            # as ``api.openai.com:https`` looks like a ``scheme:rest`` target):
+            # any token of the target that is a known provider host counts.
+            for token in re.split(r"[\s/:@,\[\]]+", target):
+                if is_known_llm_provider_host(token):
+                    self.host = token
+                    break
 
 
 def _grpc_target_host(target: Any) -> str | None:
@@ -404,7 +452,7 @@ def _install_grpc_guard() -> None:
         @functools.wraps(original)
         def guarded(*args: Any, **kwargs: Any) -> Any:
             target = args[0] if args else kwargs.get("target")
-            _raise_if_blocked(url_of(target))
+            _guard_call(url_of, target)
             return original(*args, **kwargs)
 
         guarded._traigent_mock_transport_guard = True  # type: ignore[attr-defined]
