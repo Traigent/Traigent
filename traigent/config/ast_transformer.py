@@ -247,65 +247,64 @@ class ConfigTransformer(ast.NodeTransformer):
         elif isinstance(value, str):
             return ast.Constant(value=value)
         elif isinstance(value, list):
-            # Limit list size to prevent memory exhaustion
-            if len(value) > 1000:
-                logger.warning(f"List too large ({len(value)} items), rejecting")
-                return None
-
-            # Only allow lists of simple values
-            elements = []
-            for item in value:
-                item_node = self._create_value_node(item, depth + 1)
-                if item_node is None:
-                    # If any item can't be safely converted, reject the whole list
-                    return None
-                elements.append(item_node)
-            return ast.List(elts=elements, ctx=ast.Load())
+            return self._create_sequence_node(value, depth, ast.List, "List")
         elif isinstance(value, tuple):
-            # Limit tuple size to prevent memory exhaustion
-            if len(value) > 1000:
-                logger.warning(f"Tuple too large ({len(value)} items), rejecting")
-                return None
-
-            # Only allow tuples of simple values
-            elements = []
-            for item in value:
-                item_node = self._create_value_node(item, depth + 1)
-                if item_node is None:
-                    # If any item can't be safely converted, reject the whole tuple
-                    return None
-                elements.append(item_node)
-            return ast.Tuple(elts=elements, ctx=ast.Load())
+            return self._create_sequence_node(value, depth, ast.Tuple, "Tuple")
         elif isinstance(value, dict):
-            # Limit dict size to prevent memory exhaustion
-            if len(value) > 1000:
-                logger.warning(f"Dict too large ({len(value)} items), rejecting")
-                return None
-
-            # Only allow dicts with string keys and simple values
-            keys: list[ast.expr | None] = []
-            values: list[ast.expr] = []
-            for k, v in value.items():
-                if not isinstance(k, str):
-                    # Only string keys allowed
-                    return None
-
-                # Validate key doesn't contain dangerous patterns
-                if "__" in k or k in self.DANGEROUS_KEYS:
-                    logger.warning(f"Dangerous dict key rejected: {k}")
-                    return None
-
-                key_node: ast.expr = ast.Constant(value=k)
-                value_node = self._create_value_node(v, depth + 1)
-                if value_node is None:
-                    # If any value can't be safely converted, reject the whole dict
-                    return None
-                keys.append(key_node)
-                values.append(value_node)
-            return ast.Dict(keys=keys, values=values)
+            return self._create_dict_node(value, depth)
         else:
             # Unsupported type - don't convert to prevent injection
             return None
+
+    def _create_sequence_node(
+        self,
+        value: list[Any] | tuple[Any, ...],
+        depth: int,
+        node_type: type[ast.List] | type[ast.Tuple],
+        label: str,
+    ) -> ast.expr | None:
+        # Limit size to prevent memory exhaustion
+        if len(value) > 1000:
+            logger.warning(f"{label} too large ({len(value)} items), rejecting")
+            return None
+
+        # Only allow sequences of simple values
+        elements = []
+        for item in value:
+            item_node = self._create_value_node(item, depth + 1)
+            if item_node is None:
+                # If any item can't be safely converted, reject the whole sequence
+                return None
+            elements.append(item_node)
+        return node_type(elts=elements, ctx=ast.Load())
+
+    def _create_dict_node(self, value: dict[Any, Any], depth: int) -> ast.expr | None:
+        # Limit dict size to prevent memory exhaustion
+        if len(value) > 1000:
+            logger.warning(f"Dict too large ({len(value)} items), rejecting")
+            return None
+
+        # Only allow dicts with string keys and simple values
+        keys: list[ast.expr | None] = []
+        values: list[ast.expr] = []
+        for k, v in value.items():
+            if not isinstance(k, str):
+                # Only string keys allowed
+                return None
+
+            # Validate key doesn't contain dangerous patterns
+            if "__" in k or k in self.DANGEROUS_KEYS:
+                logger.warning(f"Dangerous dict key rejected: {k}")
+                return None
+
+            key_node: ast.expr = ast.Constant(value=k)
+            value_node = self._create_value_node(v, depth + 1)
+            if value_node is None:
+                # If any value can't be safely converted, reject the whole dict
+                return None
+            keys.append(key_node)
+            values.append(value_node)
+        return ast.Dict(keys=keys, values=values)
 
     def get_modified_variables(self) -> set[str]:
         """Return the set of variables that were modified.
@@ -314,6 +313,45 @@ class ConfigTransformer(ast.NodeTransformer):
             Set of variable names that were replaced with config values
         """
         return self.modified_vars.copy()
+
+
+#: Dunder attributes that safe-compiled config code may access.
+_ALLOWED_MAGIC_ATTRIBUTES = frozenset(
+    {
+        "__init__",
+        "__str__",
+        "__repr__",
+        "__len__",
+        "__getitem__",
+        "__setitem__",
+        "__delitem__",
+        "__iter__",
+        "__next__",
+        "__contains__",
+        "__eq__",
+        "__ne__",
+        "__lt__",
+        "__le__",
+        "__gt__",
+        "__ge__",
+        "__add__",
+        "__sub__",
+        "__mul__",
+        "__div__",
+        "__mod__",
+        "__and__",
+        "__or__",
+        "__xor__",
+        "__not__",
+        "__enter__",
+        "__exit__",
+        "__call__",
+        "__hash__",
+        "__bool__",
+        "__bytes__",
+        "__format__",
+    }
+)
 
 
 class SafeASTCompiler:
@@ -400,61 +438,33 @@ class SafeASTCompiler:
             if type(node) in cls.DANGEROUS_NODES:
                 return False
 
-            # Check for dangerous function calls
-            if isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Name):
-                    if node.func.id in cls.DANGEROUS_CALLS:
-                        return False
-                elif isinstance(node.func, ast.Attribute):
-                    if node.func.attr in cls.DANGEROUS_CALLS:
-                        return False
+            if isinstance(node, ast.Call) and cls._is_dangerous_call(node):
+                return False
 
-            # Check for access to dangerous attributes
-            if isinstance(node, ast.Attribute):
-                # Check against dangerous attributes list
-                if node.attr in cls.DANGEROUS_ATTRIBUTES:
-                    return False
-
-                if node.attr.startswith("__") and node.attr.endswith("__"):
-                    # Allow common magic methods
-                    allowed_magic = {
-                        "__init__",
-                        "__str__",
-                        "__repr__",
-                        "__len__",
-                        "__getitem__",
-                        "__setitem__",
-                        "__delitem__",
-                        "__iter__",
-                        "__next__",
-                        "__contains__",
-                        "__eq__",
-                        "__ne__",
-                        "__lt__",
-                        "__le__",
-                        "__gt__",
-                        "__ge__",
-                        "__add__",
-                        "__sub__",
-                        "__mul__",
-                        "__div__",
-                        "__mod__",
-                        "__and__",
-                        "__or__",
-                        "__xor__",
-                        "__not__",
-                        "__enter__",
-                        "__exit__",
-                        "__call__",
-                        "__hash__",
-                        "__bool__",
-                        "__bytes__",
-                        "__format__",
-                    }
-                    if node.attr not in allowed_magic:
-                        return False
+            if isinstance(node, ast.Attribute) and cls._is_dangerous_attribute(node):
+                return False
 
         return True
+
+    @classmethod
+    def _is_dangerous_call(cls, node: ast.Call) -> bool:
+        if isinstance(node.func, ast.Name):
+            return node.func.id in cls.DANGEROUS_CALLS
+        if isinstance(node.func, ast.Attribute):
+            return node.func.attr in cls.DANGEROUS_CALLS
+        return False
+
+    @classmethod
+    def _is_dangerous_attribute(cls, node: ast.Attribute) -> bool:
+        # Check against dangerous attributes list
+        if node.attr in cls.DANGEROUS_ATTRIBUTES:
+            return True
+        # Allow common magic methods only
+        return (
+            node.attr.startswith("__")
+            and node.attr.endswith("__")
+            and node.attr not in _ALLOWED_MAGIC_ATTRIBUTES
+        )
 
     @classmethod
     def compile_safe(cls, source: str, filename: str = "<config>") -> Any | None:
