@@ -145,6 +145,30 @@ def _allowed_values(key: str) -> Mapping[str, StrEnum]:
     return _CONDITIONAL if key == "conditional_update" else _LEVELS
 
 
+def _intersect_guarantees(
+    declared: dict[str, str],
+    permissions: Mapping[str, str],
+    required: Mapping[str, str] | None,
+) -> tuple[dict[str, str], bool]:
+    final: dict[str, str] = {}
+    reduced = False
+    for key, value in declared.items():
+        perm = permissions.get(key, "none")
+        req = (required or {}).get(key, "none")
+        allowed = _allowed_values(key)
+        if perm not in allowed:
+            perm = "none"
+        actual = min(_ordinal(value), _ordinal(perm))
+        final[key] = (
+            ("none", "emulated", "native")[actual]
+            if key == "idempotency" or key not in {"conditional_update"}
+            else ("none", "read_check", "atomic")[actual]
+        )
+        if _ordinal(req) > actual:
+            reduced = True
+    return final, reduced
+
+
 def resolve_guarantee(
     manifest: ConnectorManifest,
     operation: str,
@@ -182,22 +206,7 @@ def resolve_guarantee(
             return GuaranteeResult(
                 GuaranteeState.UNAVAILABLE, GuaranteeReason.NOT_DECLARED, declared
             )
-    final: dict[str, str] = {}
-    reduced = False
-    for key, value in declared.items():
-        perm = permissions.get(key, "none")
-        req = (required or {}).get(key, "none")
-        allowed = _allowed_values(key)
-        if perm not in allowed:
-            perm = "none"
-        actual = min(_ordinal(value), _ordinal(perm))
-        final[key] = (
-            ("none", "emulated", "native")[actual]
-            if key == "idempotency" or key not in {"conditional_update"}
-            else ("none", "read_check", "atomic")[actual]
-        )
-        if _ordinal(req) > actual:
-            reduced = True
+    final, reduced = _intersect_guarantees(declared, permissions, required)
     if all(v == "none" for v in final.values()):
         reason = (
             GuaranteeReason.MANIFEST_NONE
