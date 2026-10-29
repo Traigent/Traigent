@@ -294,8 +294,12 @@ def test_example_runs_end_to_end_in_mock(module_name):
     assert "★" in combined
 
 
-def test_demo_cost_approval_is_scoped_to_run_optimization(monkeypatch, request):
-    """Review #2681: configure_demo_env must not leave process-wide approval."""
+def test_demo_cost_exemption_is_scoped_to_run_optimization(monkeypatch, request):
+    """Review #2681 / #2795: the demo exempts only its own run, and never via approval.
+
+    ``TRAIGENT_COST_APPROVED`` would also cover a later real run, so the demo
+    uses the scoped mock exemption and restores every variable afterwards.
+    """
     import os
 
     from traigent.testing import disable_mock_mode
@@ -311,16 +315,25 @@ def test_demo_cost_approval_is_scoped_to_run_optimization(monkeypatch, request):
 
     from traigent.examples.providers import _demo
 
-    monkeypatch.delenv("TRAIGENT_COST_APPROVED", raising=False)
+    for name in (
+        "TRAIGENT_COST_APPROVED",
+        "TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT",
+        "ENVIRONMENT",
+        "TRAIGENT_ENV",
+        "TRAIGENT_ENVIRONMENT",
+    ):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
     _demo.configure_demo_env({"env_vars": []})
-    assert "TRAIGENT_COST_APPROVED" not in os.environ
+    assert "TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT" not in os.environ
 
     seen = {}
 
     class _Fn:
         async def optimize(self, **kw):
             seen["approved"] = os.environ.get("TRAIGENT_COST_APPROVED")
+            seen["exempt"] = os.environ.get("TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT")
+            seen["environment"] = os.environ.get("ENVIRONMENT")
 
             class _R:
                 successful_trials = 1
@@ -330,5 +343,10 @@ def test_demo_cost_approval_is_scoped_to_run_optimization(monkeypatch, request):
             return _R()
 
     _demo.run_optimization(_Fn())
-    assert seen["approved"] == "true"
-    assert "TRAIGENT_COST_APPROVED" not in os.environ
+    assert seen == {"approved": None, "exempt": "true", "environment": "development"}
+    for name in (
+        "TRAIGENT_COST_APPROVED",
+        "TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT",
+        "ENVIRONMENT",
+    ):
+        assert name not in os.environ
