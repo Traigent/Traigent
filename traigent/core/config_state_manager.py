@@ -1008,89 +1008,103 @@ class ConfigStateManager:
             },
         )
 
+    def _resolve_mode_source(
+        self, source: BestConfigSource
+    ) -> BestConfigSnapshot | None:
+        if source is BestConfigSource.REPO:
+            snapshot = resolve_repo_best_config(
+                config_id=self.config_id,
+                repo_root=Path.cwd(),
+                configuration_space=self.configuration_space,
+                expected_function_ref=function_ref_for(self.func),
+                expected_environment=self.best_config_environment,
+                strict=self.best_config_strict,
+            )
+        elif source is BestConfigSource.CLOUD_CACHE:
+            snapshot = resolve_cloud_cache_best_config(
+                config_id=self.config_id,
+                cache_dir=self.best_config_cache_dir,
+                configuration_space=self.configuration_space,
+                ttl_seconds=self.best_config_cache_ttl_seconds,
+                stale_ok_ttl_seconds=self.best_config_stale_ok_ttl_seconds,
+                strict=self.best_config_strict,
+                expected_function_ref=function_ref_for(self.func),
+                expected_environment=self.best_config_environment,
+            )
+        elif source is BestConfigSource.CLOUD_FETCH:
+            snapshot = self._resolve_cloud_fetch_best_config()
+        elif source is BestConfigSource.AGENT_HEAD:
+            snapshot = self._resolve_agent_head_best_config()
+        else:
+            snapshot = None
+        return snapshot
+
+    def _raise_cloud_fetch_error(
+        self, source: BestConfigSource, exc: Exception, mode_value: str
+    ) -> None:
+        if source is BestConfigSource.CLOUD_FETCH and (
+            mode_value == BestConfigSourceMode.CLOUD.value or self.best_config_strict
+        ):
+            if isinstance(exc, CloudPublishUnavailable):
+                raise
+            if isinstance(exc, CloudBestConfigIntegrityError):
+                raise self._unavailable(
+                    CloudPublishUnavailableReason.INTEGRITY_FAILED,
+                    "Cloud best-config integrity check failed",
+                    diag.Category.FETCH_INTEGRITY_FAILED,
+                    exc,
+                ) from None
+            raise self._unavailable(
+                CloudPublishUnavailableReason.REQUEST_FAILED,
+                "Cloud best-config fetch failed",
+                diag.Category.FETCH_FAILED,
+                exc,
+            ) from None
+
+    def _handle_mode_source_error(
+        self, source: BestConfigSource, exc: Exception
+    ) -> None:
+        if isinstance(exc, SafetySensitiveBestConfigError):
+            raise
+        mode_value = (
+            self.best_config_source.value
+            if isinstance(self.best_config_source, BestConfigSourceMode)
+            else str(self.best_config_source)
+        )
+        ConfigStateManager._raise_cloud_fetch_error(self, source, exc, mode_value)
+        if source is BestConfigSource.AGENT_HEAD:
+            # Pure mode: the pinned version or nothing, never a fallback.
+            raise self._unavailable(
+                CloudPublishUnavailableReason.REQUEST_FAILED,
+                "Agent head config read failed",
+                diag.Category.FETCH_FAILED,
+                exc,
+            ) from None
+        if self.best_config_strict:
+            raise
+        if isinstance(exc, CloudBestConfigIntegrityError):
+            diag.log(
+                logger,
+                logging.ERROR,
+                f"Cloud best-config integrity failure; ignoring {source.value} source",
+                category=diag.Category.FETCH_INTEGRITY_FAILED,
+                exc=exc,
+            )
+        else:
+            diag.log(
+                logger,
+                logging.WARNING,
+                f"Ignoring {source.value} best-config source after failure",
+                category=diag.Category.SOURCE_IGNORED,
+                exc=exc,
+            )
+
     def _resolve_mode_snapshot(self) -> BestConfigSnapshot | None:
         for source in source_order_for_mode(self.best_config_source):
             try:
-                if source is BestConfigSource.REPO:
-                    snapshot = resolve_repo_best_config(
-                        config_id=self.config_id,
-                        repo_root=Path.cwd(),
-                        configuration_space=self.configuration_space,
-                        expected_function_ref=function_ref_for(self.func),
-                        expected_environment=self.best_config_environment,
-                        strict=self.best_config_strict,
-                    )
-                elif source is BestConfigSource.CLOUD_CACHE:
-                    snapshot = resolve_cloud_cache_best_config(
-                        config_id=self.config_id,
-                        cache_dir=self.best_config_cache_dir,
-                        configuration_space=self.configuration_space,
-                        ttl_seconds=self.best_config_cache_ttl_seconds,
-                        stale_ok_ttl_seconds=self.best_config_stale_ok_ttl_seconds,
-                        strict=self.best_config_strict,
-                        expected_function_ref=function_ref_for(self.func),
-                        expected_environment=self.best_config_environment,
-                    )
-                elif source is BestConfigSource.CLOUD_FETCH:
-                    snapshot = self._resolve_cloud_fetch_best_config()
-                elif source is BestConfigSource.AGENT_HEAD:
-                    snapshot = self._resolve_agent_head_best_config()
-                else:
-                    snapshot = None
+                snapshot = ConfigStateManager._resolve_mode_source(self, source)
             except Exception as exc:
-                if isinstance(exc, SafetySensitiveBestConfigError):
-                    raise
-                mode_value = (
-                    self.best_config_source.value
-                    if isinstance(self.best_config_source, BestConfigSourceMode)
-                    else str(self.best_config_source)
-                )
-                if source is BestConfigSource.CLOUD_FETCH and (
-                    mode_value == BestConfigSourceMode.CLOUD.value
-                    or self.best_config_strict
-                ):
-                    if isinstance(exc, CloudPublishUnavailable):
-                        raise
-                    if isinstance(exc, CloudBestConfigIntegrityError):
-                        raise self._unavailable(
-                            CloudPublishUnavailableReason.INTEGRITY_FAILED,
-                            "Cloud best-config integrity check failed",
-                            diag.Category.FETCH_INTEGRITY_FAILED,
-                            exc,
-                        ) from None
-                    raise self._unavailable(
-                        CloudPublishUnavailableReason.REQUEST_FAILED,
-                        "Cloud best-config fetch failed",
-                        diag.Category.FETCH_FAILED,
-                        exc,
-                    ) from None
-                if source is BestConfigSource.AGENT_HEAD:
-                    # Pure mode: the pinned version or nothing, never a fallback.
-                    raise self._unavailable(
-                        CloudPublishUnavailableReason.REQUEST_FAILED,
-                        "Agent head config read failed",
-                        diag.Category.FETCH_FAILED,
-                        exc,
-                    ) from None
-                if self.best_config_strict:
-                    raise
-                if isinstance(exc, CloudBestConfigIntegrityError):
-                    diag.log(
-                        logger,
-                        logging.ERROR,
-                        f"Cloud best-config integrity failure; ignoring "
-                        f"{source.value} source",
-                        category=diag.Category.FETCH_INTEGRITY_FAILED,
-                        exc=exc,
-                    )
-                else:
-                    diag.log(
-                        logger,
-                        logging.WARNING,
-                        f"Ignoring {source.value} best-config source after failure",
-                        category=diag.Category.SOURCE_IGNORED,
-                        exc=exc,
-                    )
+                ConfigStateManager._handle_mode_source_error(self, source, exc)
                 snapshot = None
             if snapshot is not None:
                 merged = {**self.default_config, **thaw_config(snapshot.config)}
