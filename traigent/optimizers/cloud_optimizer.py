@@ -681,89 +681,99 @@ class CloudOptimizer(BaseOptimizer):
                 logger.info(f"Stopping: reached time budget ({elapsed}s)")
                 return True
 
+        return CloudOptimizer._check_patience_stopping(self, history, strategy)
+
+    def _check_patience_stopping(
+        self, history: list[TrialResult], strategy: OptimizationStrategy
+    ) -> bool:
         # Check early stopping patience
-        if (
+        if not (
             strategy.early_stopping_patience
             and self.objectives
             and len(history) >= strategy.early_stopping_patience
         ):
-            # Look for improvement in recent trials. Resolve orientation once so
-            # the "best" aggregation and the "no improvement" test respect a
-            # minimize primary objective instead of the old hard-coded maximize
-            # assumption (#1915, sibling of #1466/#1852). The declared schema
-            # orientation wins; name patterns are only a fallback for objectives
-            # no schema declares.
-            primary_obj = self.objectives[0]
-            orientation = self._primary_objective_orientation(primary_obj)
+            return False
+        # Look for improvement in recent trials. Resolve orientation once so
+        # the "best" aggregation and the "no improvement" test respect a
+        # minimize primary objective instead of the old hard-coded maximize
+        # assumption (#1915, sibling of #1466/#1852). The declared schema
+        # orientation wins; name patterns are only a fallback for objectives
+        # no schema declares.
+        primary_obj = self.objectives[0]
+        orientation = self._primary_objective_orientation(primary_obj)
 
-            # A ``band`` (target-range) primary objective is not directional:
-            # "best" means closeness to a target interval, so neither the
-            # maximize (``best_recent <= baseline_best + delta``) nor the
-            # minimize (``best_recent >= baseline_best - delta``) plateau test
-            # is meaningful. Running the raw maximize arithmetic here would treat a
-            # run correctly parked inside the band as "no improvement" and stop
-            # it (or refuse to stop a drifting run). Bypass ONLY this patience
-            # plateau gate; the budget checks above and the remote/fallback stop
-            # decisions in ``should_stop_async`` still apply.
-            if orientation == "band":
-                return False
+        # A ``band`` (target-range) primary objective is not directional:
+        # "best" means closeness to a target interval, so neither the
+        # maximize (``best_recent <= baseline_best + delta``) nor the
+        # minimize (``best_recent >= baseline_best - delta``) plateau test
+        # is meaningful. Running the raw maximize arithmetic here would treat a
+        # run correctly parked inside the band as "no improvement" and stop
+        # it (or refuse to stop a drifting run). Bypass ONLY this patience
+        # plateau gate; the budget checks above and the remote/fallback stop
+        # decisions in ``should_stop_async`` still apply.
+        if orientation == "band":
+            return False
 
-            minimize = is_minimization_objective(
-                primary_obj,
-                orientation=orientation,
+        minimize = is_minimization_objective(
+            primary_obj,
+            orientation=orientation,
+        )
+        min_delta = strategy.early_stopping_min_delta
+
+        # Coerce every metric through ``coerce_finite_objective_score`` so
+        # NaN / infinities / bool / str / None values are dropped instead of
+        # poisoning or crashing the min/max comparisons below: a single NaN
+        # makes every comparison False (silently disabling stopping), and a
+        # str raises TypeError inside min()/max().
+
+        recent_scores = CloudOptimizer._valid_patience_scores(
+            history[-strategy.early_stopping_patience :], primary_obj
+        )
+
+        if recent_scores:
+            # Baseline = best score BEFORE the patience window. The window
+            # must be compared against the pre-window prefix: comparing it
+            # against the best of ALL history (which contains the window
+            # itself) made a flat plateau read as "still at the best"
+            # (best_recent == best_overall), so the canonical no-improvement
+            # case never stopped and only a material REGRESSION did — and a
+            # larger min_delta made stopping LESS likely instead of more.
+            baseline_scores = CloudOptimizer._valid_patience_scores(
+                history[: -strategy.early_stopping_patience], primary_obj
             )
-            min_delta = strategy.early_stopping_min_delta
 
-            # Coerce every metric through ``coerce_finite_objective_score`` so
-            # NaN / infinities / bool / str / None values are dropped instead of
-            # poisoning or crashing the min/max comparisons below: a single NaN
-            # makes every comparison False (silently disabling stopping), and a
-            # str raises TypeError inside min()/max().
-            def _valid_scores(trials: list[TrialResult]) -> list[float]:
-                scores: list[float] = []
-                for trial in trials:
-                    if trial.is_successful and primary_obj in trial.metrics:
-                        coerced = coerce_finite_objective_score(
-                            trial.metrics[primary_obj]
-                        )
-                        if coerced is not None:
-                            scores.append(coerced)
-                return scores
-
-            recent_scores = _valid_scores(history[-strategy.early_stopping_patience :])
-
-            if recent_scores:
-                # Baseline = best score BEFORE the patience window. The window
-                # must be compared against the pre-window prefix: comparing it
-                # against the best of ALL history (which contains the window
-                # itself) made a flat plateau read as "still at the best"
-                # (best_recent == best_overall), so the canonical no-improvement
-                # case never stopped and only a material REGRESSION did — and a
-                # larger min_delta made stopping LESS likely instead of more.
-                baseline_scores = _valid_scores(
-                    history[: -strategy.early_stopping_patience]
-                )
-
-                if baseline_scores:
-                    if minimize:
-                        best_recent = min(recent_scores)
-                        baseline_best = min(baseline_scores)
-                        # No improvement: the window never got more than
-                        # min_delta below the pre-window best.
-                        no_improvement = best_recent >= baseline_best - min_delta
-                    else:
-                        best_recent = max(recent_scores)
-                        baseline_best = max(baseline_scores)
-                        # No improvement: the window never got more than
-                        # min_delta above the pre-window best.
-                        no_improvement = best_recent <= baseline_best + min_delta
-                    if no_improvement:
-                        logger.info(
-                            f"Stopping: no improvement in {strategy.early_stopping_patience} trials"
-                        )
-                        return True
+            if baseline_scores:
+                if minimize:
+                    best_recent = min(recent_scores)
+                    baseline_best = min(baseline_scores)
+                    # No improvement: the window never got more than
+                    # min_delta below the pre-window best.
+                    no_improvement = best_recent >= baseline_best - min_delta
+                else:
+                    best_recent = max(recent_scores)
+                    baseline_best = max(baseline_scores)
+                    # No improvement: the window never got more than
+                    # min_delta above the pre-window best.
+                    no_improvement = best_recent <= baseline_best + min_delta
+                if no_improvement:
+                    logger.info(
+                        f"Stopping: no improvement in {strategy.early_stopping_patience} trials"
+                    )
+                    return True
 
         return False
+
+    @staticmethod
+    def _valid_patience_scores(
+        trials: list[TrialResult], primary_obj: str
+    ) -> list[float]:
+        scores: list[float] = []
+        for trial in trials:
+            if trial.is_successful and primary_obj in trial.metrics:
+                coerced = coerce_finite_objective_score(trial.metrics[primary_obj])
+                if coerced is not None:
+                    scores.append(coerced)
+        return scores
 
     def get_algorithm_info(self) -> dict[str, Any]:
         """Get information about this remote optimization algorithm."""
