@@ -26,6 +26,7 @@ Security:
 import asyncio
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -75,6 +76,43 @@ class MockResponse:
     total_tokens: int = 30
     finish_reason: str = "stop"
     response_id: str = "mock-response-id"
+
+
+_STREAM_PIECE_RE = re.compile(r"\S+\s*|\s+")
+
+
+class MockLiteLLMStream:
+    """Offline stand-in for LiteLLM's ``CustomStreamWrapper`` in mock mode (#2801).
+
+    Iterable both ways, like the real wrapper: ``for chunk in stream`` and
+    ``async for chunk in stream``. Each chunk is a ``ModelResponseStream`` whose
+    ``choices[0].delta.content`` holds a piece of the reply, so joining the
+    pieces gives the reply text; a final chunk per choice carries
+    ``finish_reason`` and, on the last one, the synthetic usage block.
+    """
+
+    def __init__(self, chunks: list[Any]) -> None:
+        self._chunks = list(chunks)
+        self._position = 0
+
+    def __iter__(self) -> "MockLiteLLMStream":
+        return self
+
+    def __next__(self) -> Any:
+        if self._position >= len(self._chunks):
+            raise StopIteration
+        chunk = self._chunks[self._position]
+        self._position += 1
+        return chunk
+
+    def __aiter__(self) -> "MockLiteLLMStream":
+        return self
+
+    async def __anext__(self) -> Any:
+        try:
+            return self.__next__()
+        except StopIteration:
+            raise StopAsyncIteration from None
 
 
 class MockAdapter:
@@ -184,7 +222,8 @@ class MockAdapter:
         note_mock_response()
 
         mock_data = MockResponse(
-            text=response_text or MockResponse.text,
+            # ``is None`` (not falsy): a caller-supplied empty reply is a reply.
+            text=MockResponse.text if response_text is None else response_text,
             model=model or kwargs.get("model", MockResponse.model),
         )
 
@@ -362,6 +401,60 @@ class MockAdapter:
                 "total_tokens": data.total_tokens,
             },
         )
+
+    @classmethod
+    def expand_litellm_choices(cls, response: Any, n: int) -> Any:
+        """Give a mock LiteLLM response ``n`` identical choices (the ``n=`` arg)."""
+        if n <= 1:
+            return response
+        from litellm.types.utils import Choices, Message
+
+        first = response.choices[0]
+        for index in range(1, n):
+            response.choices.append(
+                Choices(
+                    index=index,
+                    message=Message(role="assistant", content=first.message.content),
+                    finish_reason=first.finish_reason,
+                )
+            )
+        return response
+
+    @classmethod
+    def build_litellm_stream(cls, response: Any) -> MockLiteLLMStream:
+        """Turn a mock LiteLLM response into a stream of ``ModelResponseStream``."""
+        from litellm.types.utils import Delta, ModelResponseStream, StreamingChoices
+
+        def chunk(index: int, delta: Any, finish_reason: str | None) -> Any:
+            return ModelResponseStream(
+                id=response.id,
+                model=response.model,
+                choices=[
+                    StreamingChoices(
+                        index=index, delta=delta, finish_reason=finish_reason
+                    )
+                ],
+            )
+
+        chunks: list[Any] = []
+        for choice in response.choices:
+            text = choice.message.content or ""
+            pieces = _STREAM_PIECE_RE.findall(text)
+            for position, piece in enumerate(pieces):
+                role = "assistant" if position == 0 else None
+                chunks.append(
+                    chunk(choice.index, Delta(content=piece, role=role), None)
+                )
+            chunks.append(
+                chunk(
+                    choice.index,
+                    Delta(content=None, role="assistant" if not pieces else None),
+                    choice.finish_reason or "stop",
+                )
+            )
+        if chunks:
+            chunks[-1].usage = response.usage
+        return MockLiteLLMStream(chunks)
 
     @classmethod
     def _build_generic_mock(cls, data: MockResponse) -> dict[str, Any]:
