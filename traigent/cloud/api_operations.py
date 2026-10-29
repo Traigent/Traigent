@@ -7,6 +7,7 @@ including session creation, status updates, and configuration run management.
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID FUNC-AGENTS REQ-CLOUD-009 REQ-AGNT-013
 
 import time
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 from urllib.parse import urlparse
 
@@ -1360,7 +1361,7 @@ class ApiOperations:
             True if successful, False otherwise
         """
         self._raise_if_backend_egress_disabled("update configuration run measures")
-        if not AIOHTTP_AVAILABLE or not metrics:
+        if ApiOperations._measures_unavailable(metrics):
             return False
 
         try:
@@ -1369,166 +1370,96 @@ class ApiOperations:
             mapped_metrics = {}
 
             # Standard Traigent measure mappings with strict validation
-            if "accuracy" in metrics and metrics["accuracy"] is not None:
-                try:
-                    mapped_metrics["accuracy"] = validate_numeric_metric(
-                        metrics["accuracy"],
-                        field_name="accuracy",
-                        trial_id=config_run_id,
-                    )
-                except MetricExtractionError as e:
-                    logger.exception(
-                        f"Invalid 'accuracy' metric for config run {config_run_id}: {e.message}",
-                        extra={
-                            "hint": "Ensure your evaluation function returns numeric values for 'accuracy'. "
-                            "Check that the value is not None, NaN, or Inf.",
-                            "config_run_id": config_run_id,
-                            "field": "accuracy",
-                            "value": metrics["accuracy"],
-                        },
-                    )
-                    return False
-
-            if "score" in metrics and metrics["score"] is not None:
-                try:
-                    mapped_metrics["score"] = validate_numeric_metric(
-                        metrics["score"],
-                        field_name="score",
-                        trial_id=config_run_id,
-                    )
-                except MetricExtractionError as e:
-                    logger.exception(
-                        f"Invalid 'score' metric for config run {config_run_id}: {e.message}",
-                        extra={
-                            "hint": "Ensure your evaluation function returns numeric values for 'score'. "
-                            "Check that the value is not None, NaN, or Inf.",
-                            "config_run_id": config_run_id,
-                            "field": "score",
-                            "value": metrics["score"],
-                        },
-                    )
-                    return False
-            elif (
-                "accuracy" in metrics and metrics["accuracy"] is not None
-            ):  # Use accuracy as score if no explicit score
-                mapped_metrics["score"] = mapped_metrics["accuracy"]
-
-            # Include other standard measures if present
-            for key in [
-                "faithfulness",
-                "relevance",
-                "latency",
-                "cost",
-                "context_precision",
-                "context_recall",
-            ]:
-                if key in metrics and metrics[key] is not None:
+            match ApiOperations._measure_present(metrics, "accuracy"):
+                case True:
                     try:
-                        mapped_metrics[key] = validate_numeric_metric(
-                            metrics[key],
-                            field_name=key,
+                        mapped_metrics["accuracy"] = validate_numeric_metric(
+                            metrics["accuracy"],
+                            field_name="accuracy",
                             trial_id=config_run_id,
                         )
                     except MetricExtractionError as e:
                         logger.exception(
-                            f"Invalid '{key}' metric for config run {config_run_id}: {e.message}",
+                            f"Invalid 'accuracy' metric for config run {config_run_id}: {e.message}",
                             extra={
-                                "hint": f"Ensure your evaluation function returns numeric values for '{key}'. "
+                                "hint": "Ensure your evaluation function returns numeric values for 'accuracy'. "
                                 "Check that the value is not None, NaN, or Inf.",
                                 "config_run_id": config_run_id,
-                                "field": key,
-                                "value": metrics[key],
+                                "field": "accuracy",
+                                "value": metrics["accuracy"],
                             },
                         )
                         return False
 
-            # Include any other metrics as-is, ensuring they are numeric
-            for key, value in metrics.items():
-                if key not in mapped_metrics and value is not None:
+            match ApiOperations._score_measure_kind(metrics):
+                case "score":
                     try:
-                        mapped_metrics[key] = validate_numeric_metric(
-                            value,
-                            field_name=key,
+                        mapped_metrics["score"] = validate_numeric_metric(
+                            metrics["score"],
+                            field_name="score",
                             trial_id=config_run_id,
                         )
                     except MetricExtractionError as e:
                         logger.exception(
-                            f"Invalid '{key}' metric for config run {config_run_id}: {e.message}",
+                            f"Invalid 'score' metric for config run {config_run_id}: {e.message}",
                             extra={
-                                "hint": f"Ensure your evaluation function returns numeric values for '{key}'. "
-                                "Check that the value is not None, NaN, or Inf. "
-                                "Custom metrics must be numeric types (int, float).",
+                                "hint": "Ensure your evaluation function returns numeric values for 'score'. "
+                                "Check that the value is not None, NaN, or Inf.",
                                 "config_run_id": config_run_id,
-                                "field": key,
-                                "value": value,
+                                "field": "score",
+                                "value": metrics["score"],
                             },
                         )
                         return False
+                case "accuracy":
+                    mapped_metrics["score"] = mapped_metrics["accuracy"]
 
-            # Build measures data in schema-compliant array format
-            # Per configuration_run_schema.json, measures must be array of MeasureResult objects
-            # Type: dict[str, list[dict[str, float]] | None]
-            measures_data: dict[str, list[dict[str, float]] | None]
-            if mapped_metrics:
-                measure_result = dict(mapped_metrics)
-                measures_data = {"measures": [measure_result]}
-            else:
-                # Omit measures if empty (per schema - use null or omit when no results)
-                measures_data = {"measures": None}
+            # Include other standard measures if present
+            for key in ApiOperations._standard_measure_keys(metrics):
+                try:
+                    mapped_metrics[key] = validate_numeric_metric(
+                        metrics[key],
+                        field_name=key,
+                        trial_id=config_run_id,
+                    )
+                except MetricExtractionError as e:
+                    logger.exception(
+                        f"Invalid '{key}' metric for config run {config_run_id}: {e.message}",
+                        extra={
+                            "hint": f"Ensure your evaluation function returns numeric values for '{key}'. "
+                            "Check that the value is not None, NaN, or Inf.",
+                            "config_run_id": config_run_id,
+                            "field": key,
+                            "value": metrics[key],
+                        },
+                    )
+                    return False
 
-            # execution_time is not transmitted via the measures endpoint.
-            # It is already included in the trial result payload submitted by
-            # submit_trial_result_via_session (result_data["execution_time"]).
-            if execution_time is not None:
-                logger.debug(
-                    "execution_time=%s recorded in trial result payload; "
-                    "not duplicated in measures update.",
-                    execution_time,
-                )
+            # Include any other metrics as-is, ensuring they are numeric
+            for key, value in ApiOperations._other_measures(metrics, mapped_metrics):
+                try:
+                    mapped_metrics[key] = validate_numeric_metric(
+                        value,
+                        field_name=key,
+                        trial_id=config_run_id,
+                    )
+                except MetricExtractionError as e:
+                    logger.exception(
+                        f"Invalid '{key}' metric for config run {config_run_id}: {e.message}",
+                        extra={
+                            "hint": f"Ensure your evaluation function returns numeric values for '{key}'. "
+                            "Check that the value is not None, NaN, or Inf. "
+                            "Custom metrics must be numeric types (int, float).",
+                            "config_run_id": config_run_id,
+                            "field": key,
+                            "value": value,
+                        },
+                    )
+                    return False
 
-            connector = self._build_connector()
-
-            # Prepare headers with API key
-            headers = await self.client.auth_manager.augment_headers(
-                {"Content-Type": _JSON_CONTENT_TYPE}
+            return await ApiOperations._send_config_run_measures(
+                self, config_run_id, mapped_metrics, execution_time
             )
-
-            async with gate_session(
-                cast(Any, aiohttp).ClientSession(
-                    connector=connector,
-                    trust_env=True,
-                ),
-                origins=self._gate_origins(),
-                optimization_only=oo_egress.explicit_of(self.client),
-            ) as session:
-                api_base = (
-                    self.client.backend_config.api_base_url
-                    or BackendConfig.get_backend_api_url()
-                )
-                url = f"{api_base}/configuration-runs/{config_run_id}/measures"
-                measures_data = oo_egress.project_for_send(
-                    oo_egress.PHASE_CONFIGURATION_RUN,
-                    measures_data,
-                    explicit=oo_egress.policy_of(self.client, headers, url),
-                )
-
-                async with session.put(
-                    url,
-                    json=measures_data,
-                    headers=headers,
-                    timeout=cast(Any, aiohttp).ClientTimeout(total=10),
-                ) as response:
-                    if response.status == 200:
-                        logger.debug(
-                            f"Updated configuration run {config_run_id} with {len(mapped_metrics)} measures"
-                        )
-                        return True
-                    else:
-                        error_msg = await response.text()
-                        logger.debug(
-                            f"Failed to update config run measures: {safe_http_error_summary(response.status, error_msg)}"
-                        )
-                        return False
 
         except EndpointNotConfiguredError:
             # Strict self-hosted mode: fail closed, never degrade silently.
@@ -1536,6 +1467,114 @@ class ApiOperations:
         except Exception as e:
             logger.debug(f"Error updating config run measures: {e}")
             return False
+
+    @staticmethod
+    def _measures_unavailable(metrics: dict[str, float]) -> bool:
+        return not AIOHTTP_AVAILABLE or not metrics
+
+    @staticmethod
+    def _measure_present(metrics: dict[str, float], key: str) -> bool:
+        return key in metrics and metrics[key] is not None
+
+    @staticmethod
+    def _score_measure_kind(metrics: dict[str, float]) -> str:
+        if "score" in metrics and metrics["score"] is not None:
+            return "score"
+        if "accuracy" in metrics and metrics["accuracy"] is not None:
+            return "accuracy"
+        return "none"
+
+    @staticmethod
+    def _standard_measure_keys(metrics: dict[str, float]) -> Iterator[str]:
+        for key in [
+            "faithfulness",
+            "relevance",
+            "latency",
+            "cost",
+            "context_precision",
+            "context_recall",
+        ]:
+            if key in metrics and metrics[key] is not None:
+                yield key
+
+    @staticmethod
+    def _other_measures(
+        metrics: dict[str, float], mapped_metrics: dict[str, float]
+    ) -> Iterator[tuple[str, float]]:
+        for key, value in metrics.items():
+            if key not in mapped_metrics and value is not None:
+                yield key, value
+
+    async def _send_config_run_measures(
+        self,
+        config_run_id: str,
+        mapped_metrics: dict[str, float],
+        execution_time: float | None,
+    ) -> bool:
+        # Build measures data in schema-compliant array format
+        # Per configuration_run_schema.json, measures must be array of MeasureResult objects
+        # Type: dict[str, list[dict[str, float]] | None]
+        measures_data: dict[str, list[dict[str, float]] | None]
+        if mapped_metrics:
+            measure_result = dict(mapped_metrics)
+            measures_data = {"measures": [measure_result]}
+        else:
+            # Omit measures if empty (per schema - use null or omit when no results)
+            measures_data = {"measures": None}
+
+        # execution_time is not transmitted via the measures endpoint.
+        # It is already included in the trial result payload submitted by
+        # submit_trial_result_via_session (result_data["execution_time"]).
+        if execution_time is not None:
+            logger.debug(
+                "execution_time=%s recorded in trial result payload; "
+                "not duplicated in measures update.",
+                execution_time,
+            )
+
+        connector = self._build_connector()
+
+        # Prepare headers with API key
+        headers = await self.client.auth_manager.augment_headers(
+            {"Content-Type": _JSON_CONTENT_TYPE}
+        )
+
+        async with gate_session(
+            cast(Any, aiohttp).ClientSession(
+                connector=connector,
+                trust_env=True,
+            ),
+            origins=self._gate_origins(),
+            optimization_only=oo_egress.explicit_of(self.client),
+        ) as session:
+            api_base = (
+                self.client.backend_config.api_base_url
+                or BackendConfig.get_backend_api_url()
+            )
+            url = f"{api_base}/configuration-runs/{config_run_id}/measures"
+            measures_data = oo_egress.project_for_send(
+                oo_egress.PHASE_CONFIGURATION_RUN,
+                measures_data,
+                explicit=oo_egress.policy_of(self.client, headers, url),
+            )
+
+            async with session.put(
+                url,
+                json=measures_data,
+                headers=headers,
+                timeout=cast(Any, aiohttp).ClientTimeout(total=10),
+            ) as response:
+                if response.status == 200:
+                    logger.debug(
+                        f"Updated configuration run {config_run_id} with {len(mapped_metrics)} measures"
+                    )
+                    return True
+                else:
+                    error_msg = await response.text()
+                    logger.debug(
+                        f"Failed to update config run measures: {safe_http_error_summary(response.status, error_msg)}"
+                    )
+                    return False
 
     async def update_experiment_run_status_on_completion(
         self, experiment_run_id: str, status: str
