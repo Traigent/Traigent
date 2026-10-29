@@ -9,7 +9,7 @@ import statistics
 import time
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Optional, cast
 
@@ -262,6 +262,28 @@ def compute_truncated_output_rate(example_metrics: Sequence[Any]) -> float:
     return truncated / len(reasons)
 
 
+def _skip_user_metric(
+    key: str,
+    value: Any,
+    target: dict[str, Any],
+    context: str,
+    extra_reserved: frozenset[str],
+) -> bool:
+    if key in target:
+        return True
+    if is_reserved_metric_key(key) or key in extra_reserved:
+        logger.debug(
+            "Skipping reserved metric %r (%s): evaluator-computed key, "
+            "cannot be overwritten",
+            key,
+            context,
+        )
+        return True
+    if isinstance(value, bool) or value is None:
+        return True
+    return False
+
+
 def aggregate_user_custom_metrics(
     target: dict[str, Any],
     example_metric_dicts: Sequence[dict[str, Any]],
@@ -304,17 +326,7 @@ def aggregate_user_custom_metrics(
         if not metric:
             continue
         for key, value in metric.items():
-            if key in target:
-                continue
-            if is_reserved_metric_key(key) or key in extra_reserved:
-                logger.debug(
-                    "Skipping reserved metric %r (%s): evaluator-computed key, "
-                    "cannot be overwritten",
-                    key,
-                    context,
-                )
-                continue
-            if isinstance(value, bool) or value is None:
+            if _skip_user_metric(key, value, target, context, extra_reserved):
                 continue
             try:
                 numeric = float(value)
@@ -945,6 +957,113 @@ class MetricsTracker:
             "duration": missing_default,
         }
 
+    def _backend_accuracy(self) -> float | None:
+        accuracy_value: float | None = None
+        if self.example_metrics:
+            accuracy_scores = self._accuracy_values_for_formatters()
+            if accuracy_scores:
+                accuracy_value = sum(accuracy_scores) / len(accuracy_scores)
+
+        return accuracy_value
+
+    def _backend_cost_values(
+        self, aggregated: dict[str, Any], safe_get: Callable[..., float | None]
+    ) -> tuple[
+        float | None,
+        list[ExampleMetrics],
+        list[ExampleMetrics],
+        float | None,
+        float,
+        float,
+    ]:
+        cost_per_example_mean = safe_get(aggregated, "total_cost", "mean")
+        measured_metrics = [m for m in self.example_metrics if m.measured]
+        cost_measured_metrics = [m for m in measured_metrics if m.cost_measured]
+        cost_total: float | None
+        if cost_measured_metrics:
+            cost_total = sum(float(m.cost.total_cost) for m in cost_measured_metrics)
+        elif self.example_metrics:
+            # Rows exist but none carries a cost measurement (no captured
+            # usage, or nothing was extracted at all): the trial's cost is
+            # UNKNOWN. It is left out of the formatted metrics below
+            # (``cost_unmeasured`` says why), never reported as 0.0 (#2517).
+            cost_total = None
+            cost_per_example_mean = None
+        else:
+            # Nothing measured -- either the tracker is empty, or every
+            # tracked example errored before producing any output. Mirror
+            # the mean's null/zero default so the strict-nulls contract
+            # (None) and the normal contract (0.0) are preserved.
+            cost_total = cost_per_example_mean
+
+        # True when ANY measured example's cost could not be priced
+        # (``ExampleMetrics.cost.unpriced``, #1597) -- the trial's ``cost``
+        # total above is a real sum, but part of it may be an unknown-spend
+        # $0 rather than verified-free $0. Threaded through so per-trial
+        # consumers (trial summary table, ``result.trials[i]``, Pareto/
+        # cost-objective logic) can tell the two apart instead of only
+        # seeing a bare $0 (#1741, follow-up to #1597/#1407).
+        # Wire-format ``MeasuresDict``/backend contract treats every measure
+        # as numeric (bool is rejected for JSON Schema parity, see
+        # ``traigent.cloud.dtos.MeasuresDict._validate_dict``) -- so this is
+        # 1.0/0.0, never a Python ``bool``.
+        cost_unpriced = 1.0 if any(m.cost.unpriced for m in measured_metrics) else 0.0
+        # Explicit unknown-cost state counts even on an unmeasured row (e.g.
+        # a live timed-out worker). A no-response failure with no such evidence
+        # retains the existing measured-only statistics contract (#2160).
+        cost_unmeasured = (
+            1.0
+            if (
+                any(m.cost.unmeasured or m.cost.unpriced for m in self.example_metrics)
+                or (self.example_metrics and not cost_measured_metrics)
+                or self.unattributed_spend
+            )
+            else 0.0
+        )
+        if cost_unmeasured:
+            # A partial sum (one measured-free row + one unknown row) is a
+            # floor, not a total: claiming it as ``cost`` would let the trial
+            # rank as cheaper than a fully measured one (#2517). It is
+            # reported only as ``cost_lower_bound``.
+            cost_total = None
+            cost_per_example_mean = None
+        return (
+            cost_per_example_mean,
+            measured_metrics,
+            cost_measured_metrics,
+            cost_total,
+            cost_unpriced,
+            cost_unmeasured,
+        )
+
+    @staticmethod
+    def _backend_token_totals(
+        measured_metrics: list[ExampleMetrics],
+        aggregated: dict[str, Any],
+        safe_get: Any,
+    ) -> dict[str, float | None]:
+        token_totals: dict[str, float | None]
+        if measured_metrics:
+            token_totals = {
+                "input_tokens": float(
+                    sum(m.tokens.input_tokens for m in measured_metrics)
+                ),
+                "output_tokens": float(
+                    sum(m.tokens.output_tokens for m in measured_metrics)
+                ),
+                "total_tokens": float(
+                    sum(m.tokens.total_tokens for m in measured_metrics)
+                ),
+            }
+        else:
+            # Nothing measured: mirror the mean's null/zero default.
+            token_totals = {
+                key: safe_get(aggregated, key, "mean")
+                for key in ("input_tokens", "output_tokens", "total_tokens")
+            }
+
+        return token_totals
+
     def format_for_backend(
         self,
         extra_reserved: frozenset[str] = frozenset(),
@@ -1000,11 +1119,7 @@ class MetricsTracker:
         # Unmeasured accuracy (no rows, no gold, built-in comparison skipped)
         # is None: never a success-derived 1.0 and never a default 0.0. A
         # measured zero stays 0.0.
-        accuracy_value: float | None = None
-        if self.example_metrics:
-            accuracy_scores = self._accuracy_values_for_formatters()
-            if accuracy_scores:
-                accuracy_value = sum(accuracy_scores) / len(accuracy_scores)
+        accuracy_value = MetricsTracker._backend_accuracy(self)
 
         duration_value = safe_get(aggregated, "duration")
 
@@ -1039,57 +1154,15 @@ class MetricsTracker:
         # consistent with `aggregate_metrics`'s mean/median/std (which DOES
         # depend on the denominator) rather than silently disagreeing about
         # which examples "exist" in the trial.
-        cost_per_example_mean = safe_get(aggregated, "total_cost", "mean")
-        measured_metrics = [m for m in self.example_metrics if m.measured]
-        cost_measured_metrics = [m for m in measured_metrics if m.cost_measured]
-        cost_total: float | None
-        if cost_measured_metrics:
-            cost_total = sum(float(m.cost.total_cost) for m in cost_measured_metrics)
-        elif self.example_metrics:
-            # Rows exist but none carries a cost measurement (no captured
-            # usage, or nothing was extracted at all): the trial's cost is
-            # UNKNOWN. It is left out of the formatted metrics below
-            # (``cost_unmeasured`` says why), never reported as 0.0 (#2517).
-            cost_total = None
-            cost_per_example_mean = None
-        else:
-            # Nothing measured -- either the tracker is empty, or every
-            # tracked example errored before producing any output. Mirror
-            # the mean's null/zero default so the strict-nulls contract
-            # (None) and the normal contract (0.0) are preserved.
-            cost_total = cost_per_example_mean
+        (
+            cost_per_example_mean,
+            measured_metrics,
+            cost_measured_metrics,
+            cost_total,
+            cost_unpriced,
+            cost_unmeasured,
+        ) = MetricsTracker._backend_cost_values(self, aggregated, safe_get)
 
-        # True when ANY measured example's cost could not be priced
-        # (``ExampleMetrics.cost.unpriced``, #1597) -- the trial's ``cost``
-        # total above is a real sum, but part of it may be an unknown-spend
-        # $0 rather than verified-free $0. Threaded through so per-trial
-        # consumers (trial summary table, ``result.trials[i]``, Pareto/
-        # cost-objective logic) can tell the two apart instead of only
-        # seeing a bare $0 (#1741, follow-up to #1597/#1407).
-        # Wire-format ``MeasuresDict``/backend contract treats every measure
-        # as numeric (bool is rejected for JSON Schema parity, see
-        # ``traigent.cloud.dtos.MeasuresDict._validate_dict``) -- so this is
-        # 1.0/0.0, never a Python ``bool``.
-        cost_unpriced = 1.0 if any(m.cost.unpriced for m in measured_metrics) else 0.0
-        # Explicit unknown-cost state counts even on an unmeasured row (e.g.
-        # a live timed-out worker). A no-response failure with no such evidence
-        # retains the existing measured-only statistics contract (#2160).
-        cost_unmeasured = (
-            1.0
-            if (
-                any(m.cost.unmeasured or m.cost.unpriced for m in self.example_metrics)
-                or (self.example_metrics and not cost_measured_metrics)
-                or self.unattributed_spend
-            )
-            else 0.0
-        )
-        if cost_unmeasured:
-            # A partial sum (one measured-free row + one unknown row) is a
-            # floor, not a total: claiming it as ``cost`` would let the trial
-            # rank as cheaper than a fully measured one (#2517). It is
-            # reported only as ``cost_lower_bound``.
-            cost_total = None
-            cost_per_example_mean = None
         # Known spend of a trial whose total is unknown or partial: what was
         # measured plus judge/evaluator spend on unmeasured examples. A floor,
         # never the cost.
@@ -1131,25 +1204,9 @@ class MetricsTracker:
             1.0 if any(m.tokens.estimated for m in measured_metrics) else 0.0
         )
 
-        token_totals: dict[str, float | None]
-        if measured_metrics:
-            token_totals = {
-                "input_tokens": float(
-                    sum(m.tokens.input_tokens for m in measured_metrics)
-                ),
-                "output_tokens": float(
-                    sum(m.tokens.output_tokens for m in measured_metrics)
-                ),
-                "total_tokens": float(
-                    sum(m.tokens.total_tokens for m in measured_metrics)
-                ),
-            }
-        else:
-            # Nothing measured: mirror the mean's null/zero default.
-            token_totals = {
-                key: safe_get(aggregated, key, "mean")
-                for key in ("input_tokens", "output_tokens", "total_tokens")
-            }
+        token_totals = MetricsTracker._backend_token_totals(
+            measured_metrics, aggregated, safe_get
+        )
 
         formatted = {
             # Core metrics (single values)
@@ -1637,6 +1694,58 @@ class MetricsTracker:
 # Response Handler Hierarchy
 
 
+def _valid_provider_usage_cost(usage_cost: Any) -> bool:
+    return (
+        isinstance(usage_cost, (int, float))
+        and not isinstance(usage_cost, bool)
+        and math.isfinite(usage_cost)
+        and usage_cost >= 0
+    )
+
+
+def _populate_generic_cost(response: Any, cost_metrics: CostMetrics) -> None:
+    if isinstance(response.cost, dict):
+        cost_metrics.input_cost = response.cost.get("input", 0.0)
+        cost_metrics.output_cost = response.cost.get("output", 0.0)
+        cost_metrics.total_cost = response.cost.get("total", 0.0)
+    else:
+        cost_metrics.total_cost = float(response.cost)
+
+
+def _populate_hidden_cost(hidden_params: Any, cost_metrics: CostMetrics) -> bool:
+    response_cost = (
+        hidden_params.get("response_cost")
+        if hasattr(hidden_params, "get")
+        else getattr(hidden_params, "response_cost", None)
+    )
+    if isinstance(response_cost, (int, float)) and response_cost > 0:
+        cost_metrics.total_cost = float(response_cost)
+        cost_metrics.cost_estimated = True
+        cost_metrics.cost_source = COST_SOURCE_TABLE
+        logger.debug(
+            "Extracted cost $%.6f from _hidden_params.response_cost "
+            "(LiteLLM fallback estimate, no explicit provider charge found).",
+            cost_metrics.total_cost,
+        )
+        return True
+    return False
+
+
+def _warn_invalid_usage_cost(usage_cost: Any) -> None:
+    if usage_cost is not None:
+        # Say it out loud: the figure the provider sent was
+        # unusable, so what lands on the trial is an ESTIMATE.
+        # Cost accounting fails closed — an invalid charge becomes
+        # unknown spend, never a silent $0 and never the bad value.
+        logger.warning(
+            "Ignoring unusable provider-reported usage.cost %r "
+            "(must be a finite, non-negative, non-boolean "
+            "number). The cost recorded for this call is a "
+            "price-table ESTIMATE, not the provider's charge.",
+            usage_cost,
+        )
+
+
 class ResponseHandler(ABC):
     """Base class for handling different LLM provider response formats."""
 
@@ -1702,12 +1811,7 @@ class ResponseHandler(ABC):
         #    up regardless.
         if hasattr(response, "cost"):
             try:
-                if isinstance(response.cost, dict):
-                    cost_metrics.input_cost = response.cost.get("input", 0.0)
-                    cost_metrics.output_cost = response.cost.get("output", 0.0)
-                    cost_metrics.total_cost = response.cost.get("total", 0.0)
-                else:
-                    cost_metrics.total_cost = float(response.cost)
+                _populate_generic_cost(response, cost_metrics)
             except (TypeError, ValueError) as e:
                 logger.debug(f"Failed to parse cost from response: {e}")
 
@@ -1737,13 +1841,8 @@ class ResponseHandler(ABC):
                 #    estimate anyway — a provenance flag that lied.
                 # A rejected value is NOT a $0 charge: fall through to the
                 # estimate and say so in the log.
-                if (
-                    isinstance(usage_cost, (int, float))
-                    and not isinstance(usage_cost, bool)
-                    and math.isfinite(usage_cost)
-                    and usage_cost >= 0
-                ):
-                    cost_metrics.total_cost = float(usage_cost)
+                if _valid_provider_usage_cost(usage_cost):
+                    cost_metrics.total_cost = float(cast(float, usage_cost))
                     # litellm's own ``Usage`` object does NOT define ``cost``
                     # (verified: ``hasattr(Usage(...), "cost") is False``), so
                     # the attribute exists only because the provider supplied
@@ -1759,18 +1858,7 @@ class ResponseHandler(ABC):
                         cost_metrics.total_cost,
                     )
                     return cost_metrics
-                if usage_cost is not None:
-                    # Say it out loud: the figure the provider sent was
-                    # unusable, so what lands on the trial is an ESTIMATE.
-                    # Cost accounting fails closed — an invalid charge becomes
-                    # unknown spend, never a silent $0 and never the bad value.
-                    logger.warning(
-                        "Ignoring unusable provider-reported usage.cost %r "
-                        "(must be a finite, non-negative, non-boolean "
-                        "number). The cost recorded for this call is a "
-                        "price-table ESTIMATE, not the provider's charge.",
-                        usage_cost,
-                    )
+                _warn_invalid_usage_cost(usage_cost)
             except Exception as e:  # pragma: no cover
                 logger.debug(f"Failed to parse cost from usage.cost: {e}")
 
@@ -1779,20 +1867,7 @@ class ResponseHandler(ABC):
         hidden_params = getattr(response, "_hidden_params", None)
         if hidden_params is not None:
             try:
-                response_cost = (
-                    hidden_params.get("response_cost")
-                    if hasattr(hidden_params, "get")
-                    else getattr(hidden_params, "response_cost", None)
-                )
-                if isinstance(response_cost, (int, float)) and response_cost > 0:
-                    cost_metrics.total_cost = float(response_cost)
-                    cost_metrics.cost_estimated = True
-                    cost_metrics.cost_source = COST_SOURCE_TABLE
-                    logger.debug(
-                        "Extracted cost $%.6f from _hidden_params.response_cost "
-                        "(LiteLLM fallback estimate, no explicit provider charge found).",
-                        cost_metrics.total_cost,
-                    )
+                if _populate_hidden_cost(hidden_params, cost_metrics):
                     return cost_metrics
             except Exception as e:  # pragma: no cover
                 logger.debug(f"Failed to parse cost from _hidden_params: {e}")
@@ -2133,6 +2208,39 @@ class LangChainResponseHandler(ResponseHandler):
             or str(type(response).__module__).startswith("langchain")
         )
 
+    @staticmethod
+    def _extract_response_metadata_tokens(metadata: Any, tokens: TokenMetrics) -> bool:
+        # Check for token_usage field (ChatOpenAI format)
+        if "token_usage" in metadata and isinstance(metadata["token_usage"], dict):
+            usage = metadata["token_usage"]
+            tokens.input_tokens = usage.get("prompt_tokens", 0)
+            tokens.output_tokens = usage.get("completion_tokens", 0)
+            tokens.total_tokens = usage.get(
+                "total_tokens", tokens.input_tokens + tokens.output_tokens
+            )
+            if tokens.total_tokens > 0:
+                return True
+
+        # Check for usage field (alternative format)
+        if "usage" in metadata and isinstance(metadata["usage"], dict):
+            usage = metadata["usage"]
+            input_val = usage.get("input_tokens", usage.get("prompt_tokens", 0))
+            output_val = usage.get("output_tokens", usage.get("completion_tokens", 0))
+            tokens.input_tokens = int(input_val) if input_val is not None else 0
+            tokens.output_tokens = int(output_val) if output_val is not None else 0
+            total_val = usage.get(
+                "total_tokens", tokens.input_tokens + tokens.output_tokens
+            )
+            tokens.total_tokens = (
+                int(total_val)
+                if total_val is not None
+                else tokens.input_tokens + tokens.output_tokens
+            )
+            if tokens.total_tokens > 0:
+                return True
+
+        return False
+
     def extract_tokens(self, response: Any) -> TokenMetrics:
         tokens = TokenMetrics()
 
@@ -2151,36 +2259,10 @@ class LangChainResponseHandler(ResponseHandler):
         if hasattr(response, "response_metadata") and response.response_metadata:
             metadata = response.response_metadata
 
-            # Check for token_usage field (ChatOpenAI format)
-            if "token_usage" in metadata and isinstance(metadata["token_usage"], dict):
-                usage = metadata["token_usage"]
-                tokens.input_tokens = usage.get("prompt_tokens", 0)
-                tokens.output_tokens = usage.get("completion_tokens", 0)
-                tokens.total_tokens = usage.get(
-                    "total_tokens", tokens.input_tokens + tokens.output_tokens
-                )
-                if tokens.total_tokens > 0:
-                    return tokens
-
-            # Check for usage field (alternative format)
-            if "usage" in metadata and isinstance(metadata["usage"], dict):
-                usage = metadata["usage"]
-                input_val = usage.get("input_tokens", usage.get("prompt_tokens", 0))
-                output_val = usage.get(
-                    "output_tokens", usage.get("completion_tokens", 0)
-                )
-                tokens.input_tokens = int(input_val) if input_val is not None else 0
-                tokens.output_tokens = int(output_val) if output_val is not None else 0
-                total_val = usage.get(
-                    "total_tokens", tokens.input_tokens + tokens.output_tokens
-                )
-                tokens.total_tokens = (
-                    int(total_val)
-                    if total_val is not None
-                    else tokens.input_tokens + tokens.output_tokens
-                )
-                if tokens.total_tokens > 0:
-                    return tokens
+            if LangChainResponseHandler._extract_response_metadata_tokens(
+                metadata, tokens
+            ):
+                return tokens
 
         # Check llm_output for token usage (older format)
         if hasattr(response, "llm_output") and isinstance(response.llm_output, dict):
