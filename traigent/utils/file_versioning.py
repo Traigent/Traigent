@@ -385,51 +385,41 @@ class FileVersionManager:
             relative_str = str(relative_path)
             actual_files.add(relative_str)
 
-            if relative_str in manifest_files:
-                file_info = manifest["files"][relative_str]
+            if relative_str not in manifest_files:
+                continue
+            file_info = manifest["files"][relative_str]
 
+            try:
+                stats = absolute_path.stat()
+            except OSError as exc:
+                logger.warning("Skipping %s due to stat error: %s", absolute_path, exc)
+                continue
+
+            FileVersionManager._check_manifest_size(
+                stats.st_size, file_info, relative_str, size_mismatches, report
+            )
+
+            if "sha256" in file_info and absolute_path.suffix == ".json":
                 try:
-                    stats = absolute_path.stat()
+                    validated_path = validate_path(
+                        absolute_path, base_path, must_exist=True
+                    )
+                    with safe_open(validated_path, base_path, mode="rb") as f:
+                        actual_checksum = hashlib.sha256(f.read()).hexdigest()
                 except OSError as exc:
                     logger.warning(
-                        "Skipping %s due to stat error: %s", absolute_path, exc
-                    )
-                    continue
-
-                actual_size = stats.st_size
-                if actual_size != file_info.get("size", actual_size):
-                    size_mismatches.append(
-                        {
-                            "file": relative_str,
-                            "expected": file_info.get("size"),
-                            "actual": actual_size,
-                        }
+                        "Failed to compute checksum for %s: %s", absolute_path, exc
                     )
                     report["valid"] = False
+                    continue
 
-                if "sha256" in file_info and absolute_path.suffix == ".json":
-                    try:
-                        validated_path = validate_path(
-                            absolute_path, base_path, must_exist=True
-                        )
-                        with safe_open(validated_path, base_path, mode="rb") as f:
-                            actual_checksum = hashlib.sha256(f.read()).hexdigest()
-                    except OSError as exc:
-                        logger.warning(
-                            "Failed to compute checksum for %s: %s", absolute_path, exc
-                        )
-                        report["valid"] = False
-                        continue
-
-                    if actual_checksum != file_info["sha256"]:
-                        checksum_mismatches.append(
-                            {
-                                "file": relative_str,
-                                "expected": file_info["sha256"],
-                                "actual": actual_checksum,
-                            }
-                        )
-                        report["valid"] = False
+                FileVersionManager._check_manifest_checksum(
+                    actual_checksum,
+                    file_info,
+                    relative_str,
+                    checksum_mismatches,
+                    report,
+                )
 
         # Check for missing and extra files
         missing_files[:] = sorted(manifest_files - actual_files)
@@ -439,6 +429,42 @@ class FileVersionManager:
             report["valid"] = False
 
         return report
+
+    @staticmethod
+    def _check_manifest_size(
+        actual_size: int,
+        file_info: dict[str, Any],
+        relative_str: str,
+        size_mismatches: list[dict[str, Any]],
+        report: dict[str, Any],
+    ) -> None:
+        if actual_size != file_info.get("size", actual_size):
+            size_mismatches.append(
+                {
+                    "file": relative_str,
+                    "expected": file_info.get("size"),
+                    "actual": actual_size,
+                }
+            )
+            report["valid"] = False
+
+    @staticmethod
+    def _check_manifest_checksum(
+        actual_checksum: str,
+        file_info: dict[str, Any],
+        relative_str: str,
+        checksum_mismatches: list[dict[str, Any]],
+        report: dict[str, Any],
+    ) -> None:
+        if actual_checksum != file_info["sha256"]:
+            checksum_mismatches.append(
+                {
+                    "file": relative_str,
+                    "expected": file_info["sha256"],
+                    "actual": actual_checksum,
+                }
+            )
+            report["valid"] = False
 
     def _iter_run_files(self, base_path: Path):
         """Yield (relative_path, absolute_path) for files under base_path, skipping symlinks."""
