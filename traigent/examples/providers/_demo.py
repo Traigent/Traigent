@@ -9,7 +9,10 @@ Design notes:
 
 * **Mock by default.** ``TRAIGENT_MOCK_LLM`` defaults to on, so the
   examples run with no API keys and no provider spend (LLM calls are
-  intercepted). Set ``TRAIGENT_MOCK_LLM=false`` for a real run.
+  intercepted). Set ``TRAIGENT_MOCK_LLM=false`` for a real run. That variable
+  is these example scripts' own mock/real switch; in your own code call
+  ``traigent.testing.enable_mock_mode_for_quickstart()`` to turn mock mode on
+  and ``traigent.testing.disable_mock_mode()`` to turn it off.
 * **Mock scorer.** In mock mode the interceptor returns a generic
   placeholder string, so an output-based metric would score every trial
   identically and hide the optimization signal. :func:`demo_scorer`

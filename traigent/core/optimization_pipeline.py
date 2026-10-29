@@ -28,8 +28,8 @@ from traigent.config.types import (
 )
 from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
 from traigent.core.execution_policy_runtime import backend_egress_disabled
-from traigent.core.trace_env import is_trace_enabled
 from traigent.core.objective_preflight import warn_unproducible_objectives
+from traigent.core.trace_env import is_trace_enabled
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.evaluators.local import LocalEvaluator
 from traigent.utils.env_config import is_mock_llm
@@ -856,11 +856,22 @@ def create_effective_evaluator(
     # that scores the LLM output (custom_evaluator / metric_functions / scoring_function)
     # will produce identical scores for all trials — the best_config is meaningless.
     if is_mock_llm() and (effective_evaluator or metric_functions or scoring_function):
+        from traigent.testing import is_mock_mode_enabled
+
+        # Name the remedy for how mock mode was turned on, and never point at
+        # the deprecated environment variable (#2796).
+        turn_off = (
+            "Remove the enable_mock_mode_for_quickstart() call (or call "
+            "traigent.testing.disable_mock_mode())"
+            if is_mock_mode_enabled()
+            else "Turn mock mode off (unset the legacy mock environment flag)"
+        )
         logger.warning(
             "Mock mode active — LLM outputs are canned, so output-based metrics are not "
-            "meaningful. Run with TRAIGENT_MOCK_LLM=false and a provider key for real "
-            "scores. See traigent/examples/providers/_demo.py for a synthetic scorer "
-            "pattern that produces a ranked mock board."
+            "meaningful. %s and provide a provider key for real scores. See "
+            "traigent/examples/providers/_demo.py for a synthetic scorer pattern "
+            "that produces a ranked mock board.",
+            turn_off,
         )
 
     # Resolve the optional surrogate (pre-screen) scorer and stash it on the
