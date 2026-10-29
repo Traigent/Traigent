@@ -107,6 +107,41 @@ def test_dotted_name_outside_workspace_is_rejected_2800() -> None:
         discover_optimized_functions("json.tool")
 
 
+def test_dotted_name_prefers_package_over_same_named_module_2800(
+    tmp_path: Path,
+) -> None:
+    # ``import pkg.mod`` picks the package directory over ``mod.py``; the
+    # resolver must agree or the shadow check blames the wrong file.
+    from traigent.utils.module_loading import resolve_dotted_module
+
+    _write(tmp_path, "mypkg/__init__.py", "")
+    _write(tmp_path, "mypkg/run.py", "X = 1\n")
+    pkg_init = _write(tmp_path, "mypkg/run/__init__.py", "X = 2\n")
+    assert resolve_dotted_module("mypkg.run", tmp_path) == pkg_init.resolve()
+
+
+def test_file_with_dot_in_its_name_inside_a_package_still_loads_2800(
+    tmp_path: Path,
+) -> None:
+    from traigent.utils.module_loading import load_user_module
+
+    _write(tmp_path, "mypkg/__init__.py", "")
+    versioned = _write(tmp_path, "mypkg/agent.v2.py", "VALUE = 7\n")
+    assert load_user_module(versioned).VALUE == 7
+
+
+def test_unloadable_file_is_reported_by_type_not_by_message_text(
+    tmp_path: Path,
+) -> None:
+    from traigent.utils.module_loading import ModuleSpecError
+
+    assert issubclass(ModuleSpecError, ImportError)
+    # A user module that merely *mentions* the phrase is a plain import error.
+    _write(tmp_path, "msg.py", 'raise ImportError("Failed to load module spec")\n')
+    result = _invoke("check", "msg.py", "--dry-run")
+    assert "Failed to load Python file" not in result.output
+
+
 def test_relative_import_without_package_explains_the_fix_2800(tmp_path: Path) -> None:
     from traigent.utils.module_loading import load_user_module
 
@@ -390,6 +425,24 @@ def test_negative_threshold_is_rejected_2831(tmp_path: Path) -> None:
     assert result.exit_code == 2
     with pytest.raises(ValueError):
         OptimizationValidator(-1)
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_non_finite_threshold_is_rejected_at_the_option_2831(
+    tmp_path: Path, value: str
+) -> None:
+    _write(tmp_path, "a.py", _agent())
+    result = _invoke("check", "a.py", "--threshold", value, "--dry-run")
+    assert result.exit_code == 2, result.output
+
+
+@pytest.mark.parametrize("value", [",", " , ", ""])
+def test_empty_functions_filter_is_an_error_not_no_filter_2826(
+    tmp_path: Path, value: str
+) -> None:
+    _write(tmp_path, "a.py", _agent())
+    result = _invoke("check", "a.py", "--functions", value, "--dry-run")
+    assert result.exit_code == 2, result.output
 
 
 def test_non_finite_metrics_are_a_distinct_blocking_reason_2831() -> None:

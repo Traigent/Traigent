@@ -26,7 +26,11 @@ from traigent.tuned_variables.detection_types import DetectionResult
 from traigent.tuned_variables.detector import TunedVariableDetector
 from traigent.utils.exceptions import ValidationError as TraigentValidationError
 from traigent.utils.function_identity import sanitize_identifier
-from traigent.utils.module_loading import find_optimized_functions, load_user_module
+from traigent.utils.module_loading import (
+    ModuleSpecError,
+    find_optimized_functions,
+    load_user_module,
+)
 from traigent.utils.persistence import PersistenceManager
 from traigent.utils.secure_path import PathTraversalError, validate_path
 from traigent.utils.validation import ValidationResult, Validators
@@ -680,12 +684,10 @@ def _load_user_module(script_path: Path) -> ModuleType:
     )
     try:
         return load_user_module(script_path, module_name)
-    except ImportError as exc:
-        if "Failed to load module spec" in str(exc):
-            raise ToolInputError(
-                f"Could not load Python module from {script_path}"
-            ) from exc
-        raise
+    except ModuleSpecError as exc:
+        raise ToolInputError(
+            f"Could not load Python module from {script_path}"
+        ) from exc
 
 
 def _find_optimizable_functions(module: ModuleType) -> list[tuple[str, Any]]:

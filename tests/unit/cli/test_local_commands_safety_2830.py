@@ -136,6 +136,18 @@ def test_local_sync_success_still_exits_zero():
     assert result.exit_code == 0
 
 
+@pytest.mark.parametrize("flag", [[], ["--dry-run"]])
+def test_local_sync_already_synced_session_is_a_noop_success(flag):
+    # Re-running the sync of an unchanged session is idempotent, not a failure.
+    result, _ = _sync_run(
+        ["--api-key", "k", "--session-id", "s", *flag],
+        one={"status": "already_synced", "errors": []},
+    )
+    assert result.exit_code == 0, result.output
+    assert "Sync failed" not in result.output
+    assert "already synced" in result.output
+
+
 def test_local_sync_cleanup_with_session_id_is_a_usage_error():
     result, manager = _sync_run(["--api-key", "k", "--cleanup", "--session-id", "s"])
     assert result.exit_code == 2

@@ -33,6 +33,11 @@ from typing import Any
 
 DEFAULT_MODULE_NAME = "user_module"
 
+
+class ModuleSpecError(ImportError):
+    """The file could not be turned into an importable module spec."""
+
+
 _DOTTED_MODULE_RE = re.compile(r"^[A-Za-z_]\w*(\.[A-Za-z_]\w*)+$")
 _RELATIVE_IMPORT_MARKER = "attempted relative import"
 
@@ -77,6 +82,9 @@ def _walk_package(path: Path) -> tuple[Path, list[str], Path | None]:
     parts.reverse()
     if path.name != "__init__.py":
         parts.append(path.stem)
+    if any("." in part for part in parts):
+        # ``agent.v2.py`` has no importable qualified name; load it from its path.
+        return path.parent, [], untrusted
     return directory, parts, untrusted
 
 
@@ -156,7 +164,8 @@ def resolve_dotted_module(name: str, search_dir: Path | None = None) -> Path:
         roots.append(resolved)
     for root in roots:
         leaf = root.joinpath(*parts[:-1])
-        for candidate in (leaf / f"{parts[-1]}.py", leaf / parts[-1] / "__init__.py"):
+        # A package directory wins over a same-named module, as in ``import``.
+        for candidate in (leaf / parts[-1] / "__init__.py", leaf / f"{parts[-1]}.py"):
             if candidate.is_file():
                 return candidate
     raise FileNotFoundError(
@@ -248,7 +257,7 @@ def _import_from_path(
 ) -> ModuleType:
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
-        raise ImportError(f"Failed to load module spec from {path}")
+        raise ModuleSpecError(f"Failed to load module spec from {path}")
     module = importlib.util.module_from_spec(spec)
     previous = sys.modules.get(module_name)
     sys.modules[module_name] = module

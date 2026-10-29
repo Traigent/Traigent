@@ -572,6 +572,10 @@ def _sync_single_session(
     click.echo(f"\n🔄 Syncing session: {session_id}")
     result = sync_manager.sync_session_to_cloud(session_id, dry_run)
 
+    if result["status"] == "already_synced":
+        # Idempotent no-op: an unchanged session that is already in the portal.
+        click.echo("✅ Session already synced; nothing to do.")
+        return True
     if result["status"] != "success":
         click.echo("❌ Sync failed:")
         for error in result["errors"]:
@@ -610,7 +614,7 @@ def _sync_all_sessions(
     if result["sync_errors"] > 0:
         click.echo("\n❌ Sessions with errors:")
         for session_result in result["session_results"]:
-            if session_result["status"] != "success":
+            if session_result["status"] not in ("success", "already_synced"):
                 click.echo(
                     f"   • {session_result['session_id']}: {session_result.get('errors', ['Unknown error'])}"
                 )

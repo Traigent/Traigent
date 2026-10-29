@@ -234,15 +234,13 @@ def _handle_no_optimizable_functions(function_filter: str | None) -> None:
 
 def _load_user_module(file_path_obj: Path) -> Any | None:
     """Load a Python file as a module. Returns the module or None on failure."""
-    from traigent.utils.module_loading import load_user_module
+    from traigent.utils.module_loading import ModuleSpecError, load_user_module
 
     try:
         return load_user_module(file_path_obj)
-    except ImportError as exc:
-        if "Failed to load module spec" in str(exc):
-            console.print("[red]Error: Failed to load Python file[/red]")
-            return None
-        raise
+    except ModuleSpecError:
+        console.print("[red]Error: Failed to load Python file[/red]")
+        return None
 
 
 def _resolve_output_dir(output_dir: str) -> Path:
@@ -257,13 +255,26 @@ def _resolve_output_dir(output_dir: str) -> Path:
     return resolved
 
 
+def _require_finite_threshold(
+    _ctx: click.Context, _param: click.Parameter, value: float
+) -> float:
+    """Reject NaN/inf, which ``FloatRange`` lets through."""
+    if not math.isfinite(value):
+        raise click.BadParameter(f"{value!r} is not a finite number")
+    return value
+
+
 def _parse_comma_separated_list(value: str | None) -> list[str] | None:
     """Parse a comma-separated string into a list of trimmed values."""
-    if not value:
+    if value is None:
         return None
     items = [item.strip() for item in value.split(",")]
     # A trailing or doubled comma is not a name; "f," means just "f".
-    return [item for item in items if item] or None
+    names = [item for item in items if item]
+    if not names:
+        # An explicit but empty filter must not silently widen to "everything".
+        raise click.UsageError(f"expected at least one name in {value!r}")
+    return names
 
 
 def _filter_functions_by_objectives(
@@ -2878,7 +2889,8 @@ async def _run_validations(
     "--threshold",
     default=10.0,
     type=click.FloatRange(min=0, max=None),
-    help="Improvement threshold percentage (>= 0; the gain must exceed it)",
+    callback=_require_finite_threshold,
+    help="Improvement threshold percentage (finite, >= 0; the gain must exceed it)",
 )
 @click.option(
     "--objectives",
@@ -2939,9 +2951,10 @@ def check(
 
     _print_check_header(module_path, threshold, dry_run)
 
+    function_filter = _parse_comma_separated_list(functions)
+    objectives_filter = _parse_comma_separated_list(objectives)
+
     try:
-        function_filter = _parse_comma_separated_list(functions)
-        objectives_filter = _parse_comma_separated_list(objectives)
         _print_filter_info(function_filter, objectives_filter)
 
         console.print("\n[bold yellow]📋 Step 1: Function Discovery[/bold yellow]")
