@@ -108,9 +108,7 @@ def check_state_dir(state_dir: Path, *, create: bool = False) -> None:
         except FileNotFoundError:
             if _has_state(state_dir):
                 continue  # a concurrent first use may have just published it: re-read
-            if not create:
-                return
-            if _write_marker(state_dir, marker):
+            if not create or _write_marker(state_dir, marker):
                 return
         except OSError:
             raise RuntimeRequirementError(E_STATE, STATE_MARKER) from None
@@ -120,6 +118,10 @@ def check_state_dir(state_dir: Path, *, create: bool = False) -> None:
         doc = json.loads(text)
     except ValueError:
         raise RuntimeRequirementError(E_STATE, STATE_MARKER) from None
+    _check_marker_document(doc)
+
+
+def _check_marker_document(doc: Any) -> None:
     if not isinstance(doc, dict):
         raise RuntimeRequirementError(E_STATE, STATE_MARKER)
     if doc.get("sdk") != SDK_NAME:
