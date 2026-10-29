@@ -537,6 +537,7 @@ def stored_result() -> Mock:
         "bogus",
         "nosuchmetric=1",
         "accuracy=0",
+        "accuracy=0,cost=0",
         "accuracy=-1",
         "accuracy=nan",
         "accuracy=inf",
@@ -566,3 +567,73 @@ def test_parse_weights_names_the_offending_token_2829() -> None:
     with pytest.raises(click.ClickException, match="Duplicate weight for 'a'"):
         _parse_weights("a=1,a=3")
     assert _parse_weights("a=1,b=3") == {"a": 0.25, "b": 0.75}
+
+
+def test_rerank_allows_one_zero_weight_when_another_is_positive_2829(
+    stored_result: Mock,
+) -> None:
+    assert _parse_weights("accuracy=1,cost=0") == {"accuracy": 1.0, "cost": 0.0}
+
+
+def test_rerank_with_all_trials_ineligible_is_an_outcome_not_an_error_2829(
+    stored_result: Mock,
+) -> None:
+    with (
+        patch("traigent.cli.main.PersistenceManager") as manager,
+        patch("traigent.cli.main._score_trials_for_rerank", return_value=[]),
+    ):
+        manager.return_value.load_result.return_value = stored_result
+        result = _invoke("results", "rerank", "run", "-w", "accuracy=1")
+    assert result.exit_code == 0, result.output
+    assert "eligible" in result.output
+
+
+def test_zero_baseline_noise_does_not_pass_the_threshold_2803() -> None:
+    v = OptimizationValidator(threshold_pct=10)
+    superior, details = v._compare_results(
+        {"accuracy": 0.0}, {"accuracy": 0.0001}, ["accuracy"]
+    )
+    assert superior is False
+    assert math.isfinite(details["accuracy"])
+
+
+def test_crashing_baseline_is_blocked_not_a_zero_baseline_2803(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "broken.py",
+        _agent(body='return traigent.with_usage(cfg["style"], total_cost=0)'),
+    )
+    result = _invoke("check", "broken.py")
+    assert result.exit_code != 0, result.output
+    assert "PASSED" not in result.output
+    assert "Baseline run failed" in result.output
+
+
+def test_same_package_name_in_two_projects_loads_each_file_2800(
+    tmp_path: Path,
+) -> None:
+    for project in ("a", "b"):
+        _write(tmp_path, f"{project}/agents/__init__.py", "")
+        _write(
+            tmp_path,
+            f"{project}/agents/run.py",
+            _agent().replace("def answer", f"def answer_{project}"),
+        )
+    from traigent.utils.module_loading import find_optimized_functions, load_user_module
+
+    first = load_user_module(tmp_path / "a/agents/run.py")
+    second = load_user_module(tmp_path / "b/agents/run.py")
+    assert [n for n, _ in find_optimized_functions(first)] == ["answer_a"]
+    assert [n for n, _ in find_optimized_functions(second)] == ["answer_b"]
+    for name in [m for m in sys.modules if m == "agents" or m.startswith("agents.")]:
+        sys.modules.pop(name, None)
+
+
+def test_local_cleanup_declined_prompt_is_a_clean_cancel_2830(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path / "store"))
+    result = CliRunner().invoke(cli, ["local", "cleanup", "--days", "30"], input="n\n")
+    assert result.exit_code == 1
+    assert "nothing was deleted" in result.output
+    assert "--yes" in result.output

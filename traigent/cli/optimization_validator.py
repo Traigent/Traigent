@@ -390,6 +390,11 @@ class OptimizationValidator:
             optuna_trial_id=None,
             primary_objective=func_info.objectives[0] if func_info.objectives else None,
         )
+        if trial.status == TrialStatus.FAILED:
+            raise RuntimeError(
+                f"Baseline run failed for {func_info.name}: no example succeeded "
+                f"with configuration {effective_config or '{}'}"
+            )
         return self._filter_metrics_to_objectives(
             dict(trial.metrics or {}), func_info, is_mock_mode
         )
@@ -511,9 +516,13 @@ class OptimizationValidator:
                     delta = optimized_val - baseline_val
                     if not maximize:
                         delta = -delta
-                    improvement_details[metric] = (
-                        math.copysign(math.inf, delta) if delta != 0 else 0.0
-                    )
+                    if abs(delta) > self.threshold:
+                        improvement_details[metric] = math.copysign(math.inf, delta)
+                    else:
+                        # A change smaller than the threshold, read as an
+                        # absolute fraction, is noise: report it in percentage
+                        # points so it cannot pass the gate on its own.
+                        improvement_details[metric] = delta * 100
 
         # Check threshold requirement: must be better in ALL metrics AND >threshold in ≥1 metric
         is_superior = self._check_superior_criteria(

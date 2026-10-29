@@ -104,8 +104,6 @@ def resolve_dotted_module(name: str, search_dir: Path | None = None) -> Path:
 def load_user_module(
     path: Path,
     module_name: str = DEFAULT_MODULE_NAME,
-    *,
-    keep_sys_path: bool = False,
 ) -> ModuleType:
     """Import the Python file at ``path`` and return the module.
 
@@ -114,17 +112,38 @@ def load_user_module(
     """
     path = path.resolve()
     root, parts = package_parts(path)
-    with _sys_path_entry(root, keep=keep_sys_path):
+    with _sys_path_entry(root, keep=False):
         if parts:
-            return _import_packaged(path, ".".join(parts))
+            return _import_packaged(path, ".".join(parts), root)
         return _import_from_path(path, module_name)
 
 
-def _import_packaged(path: Path, qualified_name: str) -> ModuleType:
+_LOADED_PACKAGE_ROOTS: dict[str, Path] = {}
+
+
+def _evict_stale_user_package(top_level: str, root: Path) -> None:
+    """Forget a user package of the same name loaded earlier from another root.
+
+    Only packages this loader registered are evicted; a colliding installed or
+    stdlib module is left alone and reported by the file check below.
+    """
+    previous_root = _LOADED_PACKAGE_ROOTS.get(top_level)
+    if previous_root is None or previous_root == root:
+        return
+    for name in [
+        n for n in sys.modules if n == top_level or n.startswith(top_level + ".")
+    ]:
+        sys.modules.pop(name, None)
+    del _LOADED_PACKAGE_ROOTS[top_level]
+
+
+def _import_packaged(path: Path, qualified_name: str, root: Path) -> ModuleType:
     # Drop a stale copy of the leaf so the file is executed afresh (a package
     # ``__init__`` is left alone: its submodules are registered under it).
     if path.name != "__init__.py":
         sys.modules.pop(qualified_name, None)
+    top_level = qualified_name.split(".")[0]
+    _evict_stale_user_package(top_level, root)
     try:
         module = importlib.import_module(qualified_name)
     except ImportError as exc:
@@ -133,6 +152,17 @@ def _import_packaged(path: Path, qualified_name: str) -> ModuleType:
     except BaseException:
         sys.modules.pop(qualified_name, None)
         raise
+    loaded_from = getattr(module, "__file__", None)
+    if loaded_from is None or Path(loaded_from).resolve() != path:
+        # The qualified name resolved to a different module than the file the
+        # caller asked for (e.g. a package named like an installed one).
+        sys.modules.pop(qualified_name, None)
+        raise ImportError(
+            f"{path} imports as '{qualified_name}', which resolves to "
+            f"{loaded_from} instead. Rename the package so it does not shadow "
+            "another module."
+        )
+    _LOADED_PACKAGE_ROOTS[top_level] = root
     return module
 
 

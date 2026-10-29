@@ -419,15 +419,19 @@ def cleanup_sessions(days: int, dry_run: bool, yes: bool) -> None:
         if dry_run:
             _echo_sessions_older_than(storage, days)
         else:
-            if not yes:
-                click.confirm(
-                    f"Permanently delete finished sessions older than {days} days? "
-                    "(use --dry-run to preview)",
-                    abort=True,
+            if not yes and not click.confirm(
+                f"Permanently delete finished sessions older than {days} days? "
+                "(use --dry-run to preview)"
+            ):
+                raise click.ClickException(
+                    "Cleanup cancelled; nothing was deleted. "
+                    "Pass --yes to skip the prompt (non-interactive use)."
                 )
             deleted_count = storage.cleanup_old_sessions(days)
             click.echo(f"✅ Cleaned up {deleted_count} sessions older than {days} days")
 
+    except click.ClickException:
+        raise
     except Exception as e:
         click.echo(f"Error cleaning up sessions: {e}", err=True)
         sys.exit(1)

@@ -1439,8 +1439,8 @@ def _parse_weights(weights_str: str) -> dict[str, float]:
 
     Returns the weights normalized to sum to 1. Raises ``click.ClickException``
     naming the offending token for a malformed pair, a duplicate metric, or a
-    weight that is not a finite number > 0 (a zero, negative or NaN weight
-    produces meaningless scores).
+    weight that is negative or not finite, or when all weights are zero
+    (such weights produce meaningless scores).
     """
     weight_dict: dict[str, float] = {}
     for raw_pair in weights_str.split(","):
@@ -1458,15 +1458,19 @@ def _parse_weights(weights_str: str) -> dict[str, float]:
             raise click.ClickException(
                 f"Invalid weight '{value}' for '{key}': not a number"
             ) from None
-        if not math.isfinite(weight) or weight <= 0:
+        if not math.isfinite(weight) or weight < 0:
             raise click.ClickException(
-                f"Invalid weight '{value}' for '{key}': must be a finite number > 0"
+                f"Invalid weight '{value}' for '{key}': must be a finite number >= 0"
             )
         if key in weight_dict:
             raise click.ClickException(f"Duplicate weight for '{key}'")
         weight_dict[key] = weight
 
     total = sum(weight_dict.values())
+    if total <= 0:
+        raise click.ClickException(
+            "Invalid weights: at least one weight must be greater than 0"
+        )
     return {k: v / total for k, v in weight_dict.items()}
 
 
@@ -1975,6 +1979,18 @@ def results_rerank(
         scored_trials = _score_trials_for_rerank(result, weight_dict)
 
         if not scored_trials:
+            if any(
+                key in (trial.metrics or {})
+                for trial in result.trials
+                for key in weight_dict
+            ):
+                # The metrics exist; the run's recorded ranking rules excluded
+                # every trial. That is an outcome, not invalid input.
+                console.print(
+                    "[yellow]No trial is eligible for ranking under this run's "
+                    "recorded comparability rules.[/yellow]"
+                )
+                return
             raise click.ClickException(
                 "No trials have the specified metrics. "
                 f"Available metrics: {list(result.trials[0].metrics.keys())}"
@@ -2813,13 +2829,14 @@ def _missing_requested_functions(
 
 
 def _available_function_names(module_path: str) -> list[str]:
-    """Names of every decorated function in the module (ignoring --functions)."""
+    """Names of every decorated function in the module (ignoring --functions).
+
+    Only called on the error path (a requested name matched nothing); a load
+    failure here propagates, as it would have on the first load.
+    """
     from traigent.cli.function_discovery import discover_optimized_functions
 
-    try:
-        return [f.name for f in discover_optimized_functions(module_path)]
-    except Exception:  # noqa: BLE001 - the listing is a hint, not a result
-        return []
+    return [f.name for f in discover_optimized_functions(module_path)]
 
 
 async def _run_validations(
