@@ -160,6 +160,28 @@ def _split_monitors(mons: list[Any]) -> tuple[Any, Any | None]:
     return runtime[0], (promotion[0] if promotion else None)
 
 
+def _parse_monitor_evidence(mon: Mapping[str, Any], path: str) -> str:
+    evidence = _closed_keys(
+        mon["evidence"],
+        {"source", "deployment_environment", "attribution", "resolution", "sampling"},
+        {"source"},
+        f"{path}.evidence",
+    )
+    if evidence["source"] != "backend_trace_metadata":
+        raise _unsupported(f"{path}.evidence.source")
+    for key, fixed in (
+        ("attribution", "agent_key_exact_v1"),
+        ("resolution", "terminal_status_v1"),
+        ("sampling", "unverified"),
+    ):
+        if key in evidence and evidence[key] != fixed:
+            raise _unsupported(f"{path}.evidence.{key}")
+    environment = evidence.get("deployment_environment", DEFAULT_ENVIRONMENT)
+    if not isinstance(environment, str):
+        raise _invalid(f"{path}.evidence.deployment_environment")
+    return environment
+
+
 def _parse_monitor(node: Any, requirement_name: str) -> tuple[str, dict[str, Any]]:
     path = "monitors[0]"
     mon = _closed_keys(
@@ -187,24 +209,7 @@ def _parse_monitor(node: Any, requirement_name: str) -> tuple[str, dict[str, Any
         raise _unsupported(f"{path}.profile")
     if mon.get("applies_to", "agent") != "agent":
         raise _unsupported(f"{path}.applies_to")
-    evidence = _closed_keys(
-        mon["evidence"],
-        {"source", "deployment_environment", "attribution", "resolution", "sampling"},
-        {"source"},
-        f"{path}.evidence",
-    )
-    if evidence["source"] != "backend_trace_metadata":
-        raise _unsupported(f"{path}.evidence.source")
-    for key, fixed in (
-        ("attribution", "agent_key_exact_v1"),
-        ("resolution", "terminal_status_v1"),
-        ("sampling", "unverified"),
-    ):
-        if key in evidence and evidence[key] != fixed:
-            raise _unsupported(f"{path}.evidence.{key}")
-    environment = evidence.get("deployment_environment", DEFAULT_ENVIRONMENT)
-    if not isinstance(environment, str):
-        raise _invalid(f"{path}.evidence.deployment_environment")
+    environment = _parse_monitor_evidence(mon, path)
     decision = _closed_keys(
         mon["decision"],
         {
@@ -281,6 +286,23 @@ def _parse_trigger(
     return None, event, hours
 
 
+def _parse_guard(raw: Any, index: int, monitor_name: str, path: str) -> NotifyGuard:
+    where = f"{path}[{index}]"
+    if not isinstance(raw, Mapping):
+        raise _invalid(where)
+    kind = "monitor" if "monitor" in raw else "rule" if "rule" in raw else None
+    if kind is None:
+        raise _invalid(where)
+    guard = _closed_keys(raw, {kind, "state"}, {kind, "state"}, where)
+    if guard["state"] != GUARD_STATES[kind]:
+        raise _unsupported(f"{where}.state")
+    ref = _name(guard[kind], f"{where}.{kind}")
+    if kind == "monitor" and ref != monitor_name:
+        # One monitor per fragment: a guard on any other monitor cannot resolve.
+        raise _unsupported(f"{where}.monitor")
+    return NotifyGuard(kind, ref)
+
+
 def _parse_guards(node: Any, monitor_name: str, path: str) -> tuple[NotifyGuard, ...]:
     if node is None:
         return ()
@@ -288,20 +310,7 @@ def _parse_guards(node: Any, monitor_name: str, path: str) -> tuple[NotifyGuard,
         raise _invalid(path)  # an empty list is valid and projection-neutral
     guards: list[NotifyGuard] = []
     for index, raw in enumerate(node):
-        where = f"{path}[{index}]"
-        if not isinstance(raw, Mapping):
-            raise _invalid(where)
-        kind = "monitor" if "monitor" in raw else "rule" if "rule" in raw else None
-        if kind is None:
-            raise _invalid(where)
-        guard = _closed_keys(raw, {kind, "state"}, {kind, "state"}, where)
-        if guard["state"] != GUARD_STATES[kind]:
-            raise _unsupported(f"{where}.state")
-        ref = _name(guard[kind], f"{where}.{kind}")
-        if kind == "monitor" and ref != monitor_name:
-            # One monitor per fragment: a guard on any other monitor cannot resolve.
-            raise _unsupported(f"{where}.monitor")
-        guards.append(NotifyGuard(kind, ref))
+        guards.append(_parse_guard(raw, index, monitor_name, path))
     return tuple(guards)
 
 
@@ -404,6 +413,21 @@ def _parse_responses(
     return ladder, tuple(rules)
 
 
+def _on_breach_for_rules(rules: tuple[ResponseRule, ...]) -> str:
+    return (
+        "fix"
+        if any(r.action == "optimize" for r in rules)
+        else (
+            "alert"
+            if any(
+                r.action == "notify" and r.severity != "info" and not r.is_reactive()
+                for r in rules
+            )
+            else "log"
+        )
+    )
+
+
 def parse_fragment(
     doc: Any,
     *,
@@ -445,18 +469,7 @@ def parse_fragment(
         raise RuntimeRequirementError("fix_ceiling_required", "max_fix_cost_usd")
     values: dict[str, Any] = {key: PROFILE_DEFAULTS[key] for key in PROFILE_DEFAULTS}
     values.update(fields)
-    on_breach = (
-        "fix"
-        if any(r.action == "optimize" for r in rules)
-        else (
-            "alert"
-            if any(
-                r.action == "notify" and r.severity != "info" and not r.is_reactive()
-                for r in rules
-            )
-            else "log"
-        )
-    )
+    on_breach = _on_breach_for_rules(rules)
     requirement = RuntimeRequirement(
         name=name,
         latency_threshold_ms=threshold,
