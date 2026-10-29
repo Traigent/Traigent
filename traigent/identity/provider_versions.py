@@ -44,8 +44,7 @@ def _text(value: Any) -> str | None:
     return None
 
 
-def _from_response(response: Any, names: tuple[str, ...]) -> str | None:
-    """First string field named in ``names`` on the response or its metadata."""
+def _response_sources(response: Any) -> list[Any]:
     sources: list[Any] = [response]
     for attr in ("response_metadata", "llm_output"):
         extra = (
@@ -55,6 +54,12 @@ def _from_response(response: Any, names: tuple[str, ...]) -> str | None:
         )
         if isinstance(extra, Mapping):
             sources.append(extra)
+    return sources
+
+
+def _from_response(response: Any, names: tuple[str, ...]) -> str | None:
+    """First string field named in ``names`` on the response or its metadata."""
+    sources = _response_sources(response)
     for source in sources:
         for name in names:
             try:
