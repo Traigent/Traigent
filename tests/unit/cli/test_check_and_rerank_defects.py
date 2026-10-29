@@ -830,3 +830,15 @@ def test_dotted_name_found_through_a_src_layout_sys_path_entry(
     assert resolve_dotted_module("srcpkg.mod", tmp_path) == mod.resolve()
     with pytest.raises(FileNotFoundError):
         resolve_dotted_module("json.tool", tmp_path)
+
+
+def test_dotted_name_skips_site_packages_inside_the_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from traigent.utils.module_loading import resolve_dotted_module
+
+    site = tmp_path / ".venv" / "lib" / "site-packages"
+    _write(tmp_path, ".venv/lib/site-packages/thirdparty/__init__.py", "")
+    monkeypatch.setattr(sys, "path", [b"not-a-str", str(site), *sys.path])
+    with pytest.raises(FileNotFoundError):
+        resolve_dotted_module("thirdparty", tmp_path)

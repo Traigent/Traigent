@@ -145,11 +145,15 @@ def resolve_dotted_module(name: str, search_dir: Path | None = None) -> Path:
     # layout); entries outside the directory are never searched.
     roots = [base]
     for entry in sys.path:
-        if not entry:
-            continue
+        if not isinstance(entry, str) or not entry:
+            continue  # path hooks may leave non-string entries; skip them
         resolved = Path(entry).resolve()
-        if resolved != base and resolved.is_relative_to(base):
-            roots.append(resolved)
+        if resolved == base or not resolved.is_relative_to(base):
+            continue
+        # A virtualenv inside the project is installed code, not the user's.
+        if {"site-packages", "dist-packages"} & set(resolved.parts):
+            continue
+        roots.append(resolved)
     for root in roots:
         leaf = root.joinpath(*parts[:-1])
         for candidate in (leaf / f"{parts[-1]}.py", leaf / parts[-1] / "__init__.py"):
