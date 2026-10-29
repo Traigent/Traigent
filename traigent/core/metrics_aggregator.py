@@ -64,6 +64,26 @@ def aggregate_metrics(
                 continue
             aggregated_values.setdefault(key, []).append(float_value)
 
+    processed_metrics = _process_aggregated_values(aggregated_values, registry)
+
+    totals = collector.totals()
+    if totals.cost_unmeasured_trials:
+        # A per-trial aggregate of the measured trials is not the run's cost.
+        processed_metrics.pop("total_cost", None)
+    processed_metrics.update(totals.as_metrics_dict())
+
+    return AggregatedMetrics(
+        processed_metrics=processed_metrics,
+        total_cost=None if totals.cost_unmeasured_trials else totals.total_cost,
+        total_tokens=totals.total_tokens,
+        cost_floor_usd=totals.cost_floor_usd,
+        cost_unmeasured_trials=totals.cost_unmeasured_trials,
+    )
+
+
+def _process_aggregated_values(
+    aggregated_values: dict[str, list[float]], registry: MetricRegistry
+) -> dict[str, Any]:
     processed_metrics: dict[str, Any] = {}
     for key, values in aggregated_values.items():
         if not values:
@@ -83,19 +103,7 @@ def aggregate_metrics(
             )
             processed_metrics[key] = sum(values) / len(values)
 
-    totals = collector.totals()
-    if totals.cost_unmeasured_trials:
-        # A per-trial aggregate of the measured trials is not the run's cost.
-        processed_metrics.pop("total_cost", None)
-    processed_metrics.update(totals.as_metrics_dict())
-
-    return AggregatedMetrics(
-        processed_metrics=processed_metrics,
-        total_cost=None if totals.cost_unmeasured_trials else totals.total_cost,
-        total_tokens=totals.total_tokens,
-        cost_floor_usd=totals.cost_floor_usd,
-        cost_unmeasured_trials=totals.cost_unmeasured_trials,
-    )
+    return processed_metrics
 
 
 def build_safeguards_telemetry(
