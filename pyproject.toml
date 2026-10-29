@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77.0", "wheel"]  # PEP 639 SPDX license expressions require setuptools >= 77
+requires = ["setuptools>=84.1.0", "wheel"]  # PEP 639 SPDX license expressions require setuptools >= 77; GHSA-xmj3-9gf7-h52w fix
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -12,14 +12,13 @@ description = "Enterprise-grade LLM optimization platform with advanced analytic
 readme = "README.md"
 license = "AGPL-3.0-only OR LicenseRef-Traigent-Commercial"
 license-files = ["LICENSE", "NOTICE", "COMMERCIAL-LICENSE.md", "CONTRIBUTOR-LICENSING.md"]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -47,7 +46,7 @@ dependencies = [
     "PyJWT[crypto]>=2.15.1,<3.0.0",  # >=2.15.1: Dependabot alerts — DoS, SSRF via JWKClient, HS256 forgery, alg bypass, kid DoS
     "backoff>=2.2.0",
     "litellm>=1.100.5,<2",  # Floor: 1.84+ escaped the 1.83.x python-dotenv==1.0.1 and openai==2.24.0 exact sub-pins; 1.87.1 is the first stable release verified against this SDK. Upper bound <2 guards against a future breaking major. Only the public API surface (completion, acompletion, cost_per_token, token_counter, model_cost, ModelResponse) is used — stable across the 1.x line.
-    "filelock>=4.0.9,<5",  # AIKIDO-2026-181731 (symlink handling in the lock path), AIKIDO-2026-444439 (fixed in 4.0.9; the <4 cap blocked it); transitive via litellm -> tokenizers -> huggingface-hub, undeclared upstream
+    "filelock>=4.2.1,<5",  # AIKIDO-2026-181731 (symlink handling in the lock path), AIKIDO-2026-444439 (fixed in 4.0.9; the <4 cap blocked it); CVE-2026-112909 fix (4.2.1); transitive via litellm -> tokenizers -> huggingface-hub, undeclared upstream
     "tenacity>=8.1.0",  # tenacity completes litellm's retry surface: litellm imports it lazily in its public *_with_retries helpers (and the retry path exercised on litellm 1.91.0, #1824) but doesn't declare it — declare it so litellm's retry path works on a clean install
     "rank-bm25",
     "psutil>=5.8.0",
@@ -64,8 +63,7 @@ dependencies = [
 [project.optional-dependencies]
 # Analytics and intelligence features (Sprint 8)
 analytics = [
-    "numpy>=1.21.0; python_version < '3.12'",
-    "numpy>=2.5.3; python_version >= '3.12'",  # AIKIDO-2026-775417; numpy 2.5 needs py>=3.12
+    "numpy>=2.5.3",  # AIKIDO-2026-775417, AIKIDO-2026-125890 fix; requires-python narrowed to >=3.12
     "pandas>=1.3.0",
     "matplotlib>=3.5.0",
 ]
@@ -252,8 +250,7 @@ docs = [
 # This is the recommended bundle for production ML workloads
 ml = [
     "traigent[bayesian,analytics]",
-    "numpy>=1.21.0; python_version < '3.12'",
-    "numpy>=2.5.3; python_version >= '3.12'",  # AIKIDO-2026-775417; numpy 2.5 needs py>=3.12
+    "numpy>=2.5.3",  # AIKIDO-2026-775417, AIKIDO-2026-125890 fix; requires-python narrowed to >=3.12
     "scipy>=1.7.0",
 ]
 
@@ -328,10 +325,11 @@ constraint-dependencies = [
     "flask>=3.1.3",
     "gitpython>=3.1.62",  # security floor; transitive, a relock once dropped it to 3.1.59
     "idna>=3.15",  # CVE-2024-3651 bypass in idna.encode()
-    "langgraph>=1.0.10",
+    "langgraph>=1.2.14",  # CVE-2026-118667 fix
     "langgraph-sdk>=0.4.4",
     "langsmith>=0.7.31",
     "mako>=1.3.11",
+    "nltk>=3.10.4",  # GHSA-j456-xh4h-cpf2 fix; transitive via llama-index-core/deepeval
     "orjson>=3.11.6",
     "pyasn1>=0.6.3",
     "python-dotenv>=1.2.2",
