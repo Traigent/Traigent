@@ -218,6 +218,19 @@ class ObjectiveDefinition:
         )
 
 
+def _normalize_band_value(
+    obj: ObjectiveDefinition, objective_name: str, value: float
+) -> float:
+    if obj.band is None or obj.band.low is None or obj.band.high is None:
+        raise ValueError(
+            f"Banded objective '{objective_name}' requires a complete target band"
+        )
+    if obj.band.low <= value <= obj.band.high:
+        return 1.0
+    distance = min(abs(value - obj.band.low), abs(value - obj.band.high))
+    return 1.0 / (1.0 + distance)
+
+
 @dataclass
 class ObjectiveSchema:
     """Complete schema for multi-objective optimization.
@@ -426,14 +439,7 @@ class ObjectiveSchema:
             raise ValueError(f"Objective '{objective_name}' not found")
 
         if obj.orientation == "band":
-            if obj.band is None or obj.band.low is None or obj.band.high is None:
-                raise ValueError(
-                    f"Banded objective '{objective_name}' requires a complete target band"
-                )
-            if obj.band.low <= value <= obj.band.high:
-                return 1.0
-            distance = min(abs(value - obj.band.low), abs(value - obj.band.high))
-            return 1.0 / (1.0 + distance)
+            return _normalize_band_value(obj, objective_name, value)
 
         # Use provided bounds or objective's bounds
         if min_val is None or max_val is None:
