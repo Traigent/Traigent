@@ -159,8 +159,7 @@ def _hooks_lock(hooks_dir: Path, timeout: float | None = None) -> Iterator[None]
                     _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
                     break
                 except BlockingIOError:
-                    if time.monotonic() >= deadline:
-                        raise RuntimeError(_HOOKS_LOCK_TIMEOUT_MESSAGE) from None
+                    _check_hooks_lock_deadline(deadline)
                     time.sleep(_HOOKS_LOCK_POLL_SECONDS)
             try:
                 yield
@@ -179,8 +178,7 @@ def _hooks_lock(hooks_dir: Path, timeout: float | None = None) -> Iterator[None]
             )
             break
         except FileExistsError:
-            if time.monotonic() >= deadline:
-                raise RuntimeError(_HOOKS_LOCK_TIMEOUT_MESSAGE) from None
+            _check_hooks_lock_deadline(deadline)
             time.sleep(_HOOKS_LOCK_POLL_SECONDS)
     try:
         yield
@@ -188,6 +186,11 @@ def _hooks_lock(hooks_dir: Path, timeout: float | None = None) -> Iterator[None]
         os.close(fd)
         with contextlib.suppress(FileNotFoundError):
             os.unlink(lock_path)
+
+
+def _check_hooks_lock_deadline(deadline: float) -> None:
+    if time.monotonic() >= deadline:
+        raise RuntimeError(_HOOKS_LOCK_TIMEOUT_MESSAGE) from None
 
 
 class HooksInstaller:
