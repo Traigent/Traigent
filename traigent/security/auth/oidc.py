@@ -30,6 +30,15 @@ except ImportError:
     PyJWKClient = None
 
 
+def _prune_token_cache(self: Any) -> None:
+    if len(self._token_cache) > 1000:
+        oldest = sorted(self._token_cache.items(), key=lambda x: x[1]["expires_at"])[
+            :500
+        ]
+        for key, _ in oldest:
+            del self._token_cache[key]
+
+
 class OIDCAuthProvider:
     """OpenID Connect authentication provider with full implementation."""
 
@@ -146,12 +155,7 @@ class OIDCAuthProvider:
                     "expires_at": datetime.now(UTC) + timedelta(seconds=lifetime),
                 }
 
-                if len(self._token_cache) > 1000:
-                    oldest = sorted(
-                        self._token_cache.items(), key=lambda x: x[1]["expires_at"]
-                    )[:500]
-                    for key, _ in oldest:
-                        del self._token_cache[key]
+                _prune_token_cache(self)
 
             if "sub" not in claims:
                 logger.warning("OIDC token missing 'sub' claim")
