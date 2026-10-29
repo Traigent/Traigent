@@ -114,3 +114,14 @@ def test_cost_limit_exceeded_message_keeps_sub_cent_amounts() -> None:
     message = str(CostLimitExceeded(accumulated=0.0051, limit=0.004))
     assert "$0.0051" in message and "$0.004" in message
     assert "$0.00 " not in message
+
+
+@pytest.mark.parametrize(
+    ("estimate", "limit"), [(0.01004, 0.01), (0.1004, 0.1), (0.0100004, 0.01)]
+)
+def test_estimate_above_limit_never_prints_equal_to_it(estimate, limit) -> None:
+    assert format_usd(estimate) != format_usd(limit)
+
+
+def test_negative_amount_keeps_the_sign_in_front() -> None:
+    assert format_usd(-0.004) == "-$0.004"

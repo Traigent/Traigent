@@ -13,8 +13,20 @@ _MODEL_KEY_SUFFIXES = ("_model", "_model_name", "_model_id")
 
 
 def is_model_config_key(key: object) -> bool:
-    """Return True for ``model``-style keys and user knobs such as ``expert_model``."""
+    """True for the fixed model keys (``model``, ``model_name``, ``model_id``, ``engine``)."""
+    return isinstance(key, str) and key.strip().lower() in MODEL_CONFIG_KEYS
+
+
+def is_model_suffix_key(key: object) -> bool:
+    """True for a user knob such as ``expert_model`` (not one of the fixed keys).
+
+    Such a key may hold a non-LLM model (an embedding, reranker or reward
+    model), so only the cost *estimate* reads it unconditionally; the
+    preflights read its values only when they are priced LLM ids.
+    """
     if not isinstance(key, str):
         return False
     normalized = key.strip().lower()
-    return normalized in MODEL_CONFIG_KEYS or normalized.endswith(_MODEL_KEY_SUFFIXES)
+    return normalized not in MODEL_CONFIG_KEYS and normalized.endswith(
+        _MODEL_KEY_SUFFIXES
+    )

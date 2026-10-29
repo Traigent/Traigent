@@ -88,7 +88,7 @@ from traigent.core.execution_policy_runtime import (
     policy_requires_cloud,
     unsupported_backend_smart_algorithm_message,
 )
-from traigent.core.model_config_keys import is_model_config_key
+from traigent.core.model_config_keys import is_model_config_key, is_model_suffix_key
 from traigent.core.objectives import (
     ObjectiveSchema,
     create_default_objectives,
@@ -504,9 +504,20 @@ def _dedupe_model_ids(model_ids: list[str]) -> list[str]:
 
 def _extract_config_space_model_ids(config_space: Mapping[str, Any]) -> list[str]:
     model_ids: list[str] = []
+    suffix_ids: list[str] = []
     for key, value in config_space.items():
         if _is_model_config_key(key):
             model_ids.extend(_iter_config_model_values(value))
+        elif is_model_suffix_key(key):
+            suffix_ids.extend(_iter_config_model_values(value))
+    if suffix_ids:
+        # A user ``*_model`` knob (``expert_model``) may hold a non-LLM model
+        # (an embedding or reranker); only values with a known price are
+        # treated as LLMs here, so such a knob cannot fail the preflight (#2807).
+        unpriced = set(
+            find_models_missing_price_coverage(_dedupe_model_ids(suffix_ids))
+        )
+        model_ids.extend(v for v in suffix_ids if v not in unpriced)
     return _dedupe_model_ids(model_ids)
 
 

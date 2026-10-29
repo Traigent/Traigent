@@ -208,7 +208,16 @@ def _failed_run_reason(result: Any) -> str | None:
         return None
     trials = getattr(result, "trials", None)
     successful = getattr(result, "successful_trials", None)
-    no_success = bool(trials) and successful is not None and len(successful) == 0
+    # Only a run that recorded a trial failure counts: all-pruned or stopped
+    # runs with nothing successful keep their previous handling.
+    any_failure = any(
+        getattr(t, "error_message", None)
+        or str(getattr(t, "status", "")).lower().endswith("failed")
+        for t in trials or ()
+    )
+    no_success = (
+        bool(trials) and any_failure and successful is not None and len(successful) == 0
+    )
     if status.endswith("failed") or no_success:
         first_error = next(
             (

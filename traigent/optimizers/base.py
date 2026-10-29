@@ -16,7 +16,7 @@ from traigent.utils.objectives import (
     coerce_finite_objective_score,
 )
 from traigent.utils.removed_params import reject_removed_mock_parameters
-from traigent.utils.validation import validate_objectives
+from traigent.utils.validation import ensure_finite_config_space, validate_objectives
 
 logger = get_logger(__name__)
 
@@ -47,6 +47,7 @@ class BaseOptimizer(ABC):
             **kwargs: Algorithm-specific configuration
         """
         reject_removed_mock_parameters(kwargs)
+        ensure_finite_config_space(config_space)
         self.config_space = config_space
         if isinstance(objectives, (list, tuple, set)):
             normalized_objectives = list(objectives)

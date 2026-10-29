@@ -103,3 +103,25 @@ def test_non_finite_grid_inputs_yield_an_empty_grid_not_a_hang() -> None:
     assert stepped_float_values(0.0, INF, 0.1) == ()
     assert stepped_float_values(0.0, 1.0, INF) == ()
     assert stepped_float_values(NAN, 1.0, 0.1) == ()
+
+
+@pytest.mark.parametrize(
+    "space",
+    [
+        {"t": (0.0, INF)},
+        {"t": {"low": 0.0, "high": INF}},
+        {"t": {"low": NAN, "high": 1.0}},
+        {"t": {"low": 0.0, "high": 1.0, "step": INF}},
+        {"t": [NAN, 0.2]},
+        {"t": {"values": [0.1, INF]}},
+    ],
+)
+def test_optimizer_rejects_raw_non_finite_space(space) -> None:
+    with pytest.raises(ValueError, match="must be finite"):
+        RandomSearchOptimizer(space, ["accuracy"])
+
+
+def test_optimizer_accepts_finite_raw_spaces() -> None:
+    RandomSearchOptimizer(
+        {"t": (0.0, 1.0), "m": ["a", "b"], "n": {"low": 1, "high": 4}}, ["accuracy"]
+    )

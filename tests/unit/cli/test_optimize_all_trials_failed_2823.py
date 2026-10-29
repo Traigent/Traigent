@@ -132,3 +132,11 @@ def test_trial_error_with_rich_markup_does_not_crash_the_report(
     assert result.exit_code == 1, output
     assert "MarkupError" not in output
     assert "bad [/oops] tag" in output
+
+
+def test_run_with_no_recorded_failure_is_not_reported_as_failed(
+    plain: Callable[[str], str],
+) -> None:
+    result, output = _run("FakeResult('completed', [FakeTrial(False)], None)", plain)
+
+    assert result.exit_code == 0, output

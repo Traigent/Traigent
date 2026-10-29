@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from traigent.core.cost_estimator import OUTPUT_TOKEN_CAP_KEYS, CostEstimator
-from traigent.core.model_config_keys import is_model_config_key
+from traigent.core.model_config_keys import is_model_config_key, is_model_suffix_key
 from traigent.core.optimized_function import (
     _extract_config_space_model_ids,
     _is_model_config_key,
@@ -76,8 +76,10 @@ class TestModelKeys2807:
         assert set(_extract_config_space_model_ids(space)) == set(
             _extract_models(space)
         )
-        for key in ("model", "model_name", "model_id", "engine", "judge_model"):
+        for key in ("model", "model_name", "model_id", "engine"):
             assert is_model_config_key(key)
+        assert is_model_suffix_key("judge_model")
+        assert not is_model_config_key("judge_model")
         assert not is_model_config_key("modelling")
         assert not is_model_config_key(3)
 
@@ -127,3 +129,31 @@ class TestOutputCapKeys2815:
             model_name="gpt-4o",
         )
         assert "config-space key" not in estimator._assumptions_summary()
+
+
+class TestSuffixKeysDoNotBreakPreflights:
+    """A user ``*_model`` knob may hold a non-LLM model (embedding, reranker)."""
+
+    def test_estimate_still_reads_the_suffix_key(self) -> None:
+        space = {"model": ["gpt-4o-mini"], "embedding_model": ["all-MiniLM-L6-v2"]}
+        assert "all-MiniLM-L6-v2" in _extract_models(space)
+
+    def test_preflight_ids_skip_unpriced_suffix_values(self) -> None:
+        space = {"model": ["gpt-4o-mini"], "embedding_model": ["all-MiniLM-L6-v2"]}
+        assert _extract_config_space_model_ids(space) == ["gpt-4o-mini"]
+        assert _extract_models(space, priced_suffix_keys_only=True) == ("gpt-4o-mini",)
+
+    def test_preflight_ids_keep_priced_suffix_values(self) -> None:
+        space = {"model": ["gpt-4o-mini"], "expert_model": ["gpt-4o"]}
+        assert set(_extract_config_space_model_ids(space)) == {
+            "gpt-4o-mini",
+            "gpt-4o",
+        }
+        assert set(_extract_models(space, priced_suffix_keys_only=True)) == {
+            "gpt-4o-mini",
+            "gpt-4o",
+        }
+
+    def test_fixed_keys_are_always_kept_even_when_unpriced(self) -> None:
+        space = {"model": ["my-private-model"]}
+        assert _extract_config_space_model_ids(space) == ["my-private-model"]

@@ -17,6 +17,8 @@ def format_usd(amount: float | None) -> str:
     if amount is None:
         return "unknown"
     value = float(amount)
+    if value < 0:
+        return "-" + format_usd(-value)
     if not math.isfinite(value):
         return f"${value}"
     magnitude = abs(value)
@@ -26,7 +28,20 @@ def format_usd(amount: float | None) -> str:
         or math.isclose(magnitude, round(magnitude, 2), rel_tol=0, abs_tol=1e-12)
     ):
         return f"${value:.2f}"
-    decimals = 2 - math.floor(math.log10(magnitude))
-    text = f"{value:.{decimals}f}".rstrip("0")
+    base = 2 - math.floor(math.log10(magnitude))
+    text = ""
+    # Three significant digits; if that collapses to a different exact-cent
+    # amount (0.01004 -> "0.01"), keep digits until it no longer does, so an
+    # amount above a limit never prints equal to it.
+    for decimals in range(base, base + 7):
+        text = f"{value:.{decimals}f}"
+        shown = float(text)
+        if not math.isclose(abs(shown), round(abs(shown), 2), rel_tol=0, abs_tol=1e-12):
+            break
+        if decimals > base and shown != round(shown, 2):
+            break
+        if shown != value and decimals >= base + 6:
+            break
+    text = text.rstrip("0")
     whole, _, frac = text.partition(".")
     return f"${whole}.{frac.ljust(2, '0')}"

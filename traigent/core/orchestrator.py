@@ -93,7 +93,7 @@ from traigent.core.metrics_aggregator import (
     aggregate_metrics,
     build_safeguards_telemetry,
 )
-from traigent.core.model_config_keys import is_model_config_key
+from traigent.core.model_config_keys import is_model_config_key, is_model_suffix_key
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.orchestrator_helpers import (
     EFFECTIVE_SUBSET_ATTR,
@@ -801,23 +801,37 @@ class OptimizationOrchestrator:
     @staticmethod
     def _extract_model_candidates_from_config_space(
         config_space: dict[str, Any] | None,
+        *,
+        priced_suffix_keys_only: bool = False,
     ) -> tuple[str, ...]:
-        """Extract model candidates from optimizer config space for estimation."""
+        """Extract model candidates from optimizer config space for estimation.
+
+        Every model-bearing key is read, not just ``model``/``model_name``: the
+        estimate is an upper bound, so a cascade's ``expert_model`` arm must be
+        priced too (#2807). Values under a user ``*_model`` knob may be non-LLM
+        models (embeddings, rerankers), so a preflight passes
+        ``priced_suffix_keys_only=True`` and receives only those whose price is
+        known; the estimate keeps unknown ones and prices them conservatively.
+        """
         if not isinstance(config_space, dict):
             return ()
 
-        # Every model-bearing key, not just ``model``/``model_name``: the
-        # estimate is an upper bound, so a cascade's ``expert_model`` arm must
-        # be priced too (#2807). The same predicate drives both preflights.
         candidates: list[str] = []
         for key, definition in config_space.items():
-            if not is_model_config_key(key):
+            fixed = is_model_config_key(key)
+            if not (fixed or is_model_suffix_key(key)):
                 continue
-            candidates.extend(
-                OptimizationOrchestrator._normalize_model_candidates(
-                    OptimizationOrchestrator._extract_raw_model_candidates(definition)
-                )
+            values = OptimizationOrchestrator._normalize_model_candidates(
+                OptimizationOrchestrator._extract_raw_model_candidates(definition)
             )
+            if priced_suffix_keys_only and not fixed and values:
+                from traigent.utils.cost_calculator import (  # noqa: PLC0415
+                    find_models_missing_price_coverage,
+                )
+
+                unpriced = set(find_models_missing_price_coverage(values))
+                values = tuple(v for v in values if v not in unpriced)
+            candidates.extend(values)
         return tuple(dict.fromkeys(candidates))
 
     @staticmethod
@@ -4165,7 +4179,8 @@ class OptimizationOrchestrator:
             return
         models = list(
             self._extract_model_candidates_from_config_space(
-                getattr(self.optimizer, "config_space", None)
+                getattr(self.optimizer, "config_space", None),
+                priced_suffix_keys_only=True,
             )
         )
         fixed_model = getattr(self.traigent_config, "model", None)
