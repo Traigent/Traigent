@@ -38,6 +38,7 @@ except ImportError:
 
 
 from ...api.types import OptimizationResult, TrialResult
+from ...core.objective_directions import resolve_objective_orientation
 from ...utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -570,6 +571,7 @@ def create_wandb_sweep_config(
     configuration_space: dict[str, Any],
     objectives: list[str],
     method: str = "bayes",
+    orientations: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Create W&B sweep configuration from Traigent config space.
 
@@ -578,10 +580,23 @@ def create_wandb_sweep_config(
         configuration_space: Traigent configuration space
         objectives: Optimization objectives
         method: Sweep method ('bayes', 'grid', 'random')
+        orientations: Optional ``{objective: "maximize" | "minimize"}``
+            declarations. The sweep goal follows the primary objective's
+            direction: SDK-owned names such as ``cost`` and ``latency``
+            minimize, ``accuracy`` maximizes, and a custom name must be
+            declared here.
 
     Returns:
         W&B sweep configuration
+
+    Raises:
+        ValueError: If the primary objective has no declared or SDK-owned
+            direction (a wrong goal would steer the sweep to the worst config).
     """
+    primary_objective = objectives[0]
+    goal = resolve_objective_orientation(
+        primary_objective, (orientations or {}).get(primary_objective)
+    )
     # Convert Traigent config space to W&B format
     wandb_parameters: dict[str, dict[str, Any]] = {}
 
@@ -602,8 +617,8 @@ def create_wandb_sweep_config(
         "method": method,
         "parameters": wandb_parameters,
         "metric": {
-            "name": f"best_metrics/{objectives[0]}",  # Primary objective
-            "goal": "maximize",  # Assume maximize by default
+            "name": f"best_metrics/{primary_objective}",  # Primary objective
+            "goal": goal,
         },
         "name": f"{function_name}_sweep",
         "description": f"Traigent optimization sweep for {function_name}",
