@@ -96,6 +96,16 @@ class DeployHold(RuntimeRequirementError):
         self.outcome = outcome
 
 
+def _publish_error_action(exc: ReactiveError) -> tuple[str, float | None]:
+    if exc.code in _REFUSED_CODES and not exc.ambiguous:
+        return "refused", None
+    if exc.code == "publication_cancelled":
+        return "cancelled", None
+    if not _retryable(exc):
+        raise DeployHold(exc.code) from None
+    return "retry", exc.retry_after
+
+
 class DeployController:
     """Run one ``deploy: if_promoted`` occurrence against the agent head."""
 
@@ -204,6 +214,13 @@ class DeployController:
         return outcome
 
     # -- publish / resolve ----------------------------------------------------------------
+    def _retry_wait(self, retry_after: float | None, attempts: int) -> float:
+        return (
+            float(retry_after)
+            if retry_after
+            else self.retry_delay * (2 ** (attempts - 1))
+        )
+
     async def _decide(
         self,
         reservation: ReservationHandle,
@@ -223,14 +240,11 @@ class DeployController:
                     key=key, best_config_id=best_config_id, version=version
                 )
             except ReactiveError as exc:
-                if exc.code in _REFUSED_CODES and not exc.ambiguous:
-                    # Nothing committed for this key (a replay would have answered first).
+                action, retry_after = _publish_error_action(exc)
+                if action == "refused":
                     return DeployOutcome(REFUSED, attempt_ref, None)
-                if exc.code == "publication_cancelled":
+                if action == "cancelled":
                     return await self._finalize(attempt_ref, key)
-                if not _retryable(exc):
-                    raise DeployHold(exc.code) from None
-                retry_after = exc.retry_after
             else:
                 if result.state == "succeeded":
                     return _deployed(attempt_ref, result)
@@ -239,11 +253,7 @@ class DeployController:
                 )
             # Ambiguity: the write may have committed.  The same key replays the stored
             # result, so retry it; only finalize (under the head lock) decides failure.
-            delay = (
-                float(retry_after)
-                if retry_after
-                else self.retry_delay * (2 ** (attempts - 1))
-            )
+            delay = DeployController._retry_wait(self, retry_after, attempts)
             if (
                 attempts >= self.max_attempts
                 or self.clock() + timedelta(seconds=delay) > deadline
