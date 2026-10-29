@@ -340,7 +340,7 @@ async def auth_status_tool(check: bool = False) -> dict[str, Any]:
                 from traigent.cli.auth_commands import TraigentAuthCLI
 
                 auth_cli = TraigentAuthCLI(backend_url_override=cast(str, backend_url))
-                metadata = await auth_cli._validate_api_key(api_key, verbose=False)
+                key_check = await auth_cli._check_api_key_state(api_key, verbose=False)
             except Exception:
                 # Live validation must NEVER propagate an exception into the MCP
                 # payload — its message could embed response bodies or URLs.
@@ -352,9 +352,13 @@ async def auth_status_tool(check: bool = False) -> dict[str, Any]:
                     "message": "Live validation could not be completed.",
                 }
             else:
+                # Tri-state: an unanswered check (429/5xx/timeout) is "unknown",
+                # not "invalid" (#2832).
                 validity = {
                     "checked": True,
-                    "valid": metadata is not None,
+                    "valid": {"valid": True, "rejected": False}.get(
+                        key_check.state.value
+                    ),
                     "source": "backend",
                 }
 

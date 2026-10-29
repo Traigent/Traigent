@@ -16,6 +16,7 @@ import sys
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, cast
 
@@ -266,6 +267,28 @@ _DEVICE_TOKEN = "device token"
 _BACKEND_NOT_CONFIGURED = "(not configured)"
 
 
+class KeyCheckState(Enum):
+    """Outcome of asking the backend whether an API key is valid (#2832).
+
+    Only ``REJECTED`` is evidence that the key is bad. ``INDETERMINATE`` means
+    the question was not answered (rate limit, server error, timeout, no
+    network, unreadable reply) and must never cause stored credentials to be
+    deleted.
+    """
+
+    VALID = "valid"
+    REJECTED = "rejected"
+    INDETERMINATE = "indeterminate"
+
+
+@dataclass(frozen=True)
+class KeyCheckResult:
+    state: KeyCheckState
+    metadata: dict[str, Any] | None = None
+    #: Short, non-sensitive cause for INDETERMINATE ("HTTP 503", "timeout").
+    reason: str = ""
+
+
 @dataclass
 class _DevicePollState:
     """Mutable state shared by the device-token polling helpers."""
@@ -489,6 +512,23 @@ class TraigentAuthCLI:
 
         return None
 
+    @staticmethod
+    def _secure_store_locked() -> bool:
+        """True when an encrypted credential file exists but cannot be opened.
+
+        That is the "present but locked" state (no or wrong
+        ``TRAIGENT_MASTER_PASSWORD``): ``_load_stored_credentials`` returns None
+        for it just as for "nothing stored", and callers must not conflate the
+        two (#2833).
+        """
+        if not _secure_credential_store_path().exists():
+            return False
+        try:
+            get_secure_credential_store()
+        except SecurityError:
+            return True
+        return False
+
     def _load_secure_credentials(self) -> dict[str, Any] | None:
         """Load encrypted CLI credentials from the secure credential store."""
         try:
@@ -636,12 +676,23 @@ class TraigentAuthCLI:
     ) -> dict[str, Any] | None:
         """Validate an API key against the backend.
 
-        Args:
-            api_key: The API key to validate
-            verbose: If True, print debug information
+        Compatibility wrapper over :meth:`_check_api_key_state`.
 
         Returns:
-            Key metadata dict if valid, None if invalid
+            Key metadata dict if valid, None otherwise (rejected OR could not
+            be determined; use ``_check_api_key_state`` to tell them apart).
+        """
+        result = await self._check_api_key_state(api_key, verbose=verbose)
+        return result.metadata if result.state is KeyCheckState.VALID else None
+
+    async def _check_api_key_state(
+        self, api_key: str, verbose: bool = False
+    ) -> KeyCheckResult:
+        """Ask the backend whether ``api_key`` is valid, as a tri-state.
+
+        VALID: 200 with ``valid: true``. REJECTED: 401, an authorization 403,
+        or 200 with ``valid: false``. INDETERMINATE: everything else (429, 5xx,
+        edge-block 403, timeout, network error, unreadable 200).
         """
         import aiohttp
 
@@ -665,23 +716,15 @@ class TraigentAuthCLI:
                     if verbose:
                         console.print(f"[dim]Response status: {response.status}[/dim]")
 
-                    if response.status == 200:
-                        try:
-                            data = json.loads(response_text)
-                            # Response format: {"valid": true, "data": {...key_metadata...}}
-                            if isinstance(data, dict) and data.get("valid"):
-                                return dict(data.get("data", {}))
-                            return None
-                        except ValueError:
-                            # ValueError covers JSONDecodeError (its subclass)
-                            return None
-                    # 401 = invalid key, 400 = missing key, 429 = rate limited
-                    return None
+                    return _key_check_from_response(
+                        response.status, response_text, response.headers
+                    )
         except (TimeoutError, aiohttp.ClientError) as e:
             logger.debug(f"API key validation failed: {e}")
             if verbose:
                 console.print(f"[dim]Connection error: {e}[/dim]")
-            return None
+            reason = "timeout" if isinstance(e, TimeoutError) else "network error"
+            return KeyCheckResult(KeyCheckState.INDETERMINATE, reason=reason)
 
     def _validate_device_authorize_payload(
         self, data: dict[str, Any]
@@ -1340,11 +1383,10 @@ class TraigentAuthCLI:
             return False
 
         console.print("[dim]Checking stored API key...[/dim]")
-        user_info = await self._validate_api_key(
-            existing_creds["api_key"], verbose=True
-        )
+        check = await self._check_api_key_state(existing_creds["api_key"], verbose=True)
+        user_info = check.metadata
 
-        if user_info is not None:
+        if check.state is KeyCheckState.VALID and user_info is not None:
             console.print("[green]✅ Already authenticated with valid API key[/green]")
             email_display = user_info.get("email") or existing_creds.get(
                 "user", {}
@@ -1356,7 +1398,16 @@ class TraigentAuthCLI:
             )
             return True
 
-        # API key is invalid, clear it
+        if check.state is KeyCheckState.INDETERMINATE:
+            # A rate limit, outage or network blip says nothing about the key:
+            # keep the stored credentials (#2832).
+            console.print(
+                f"[yellow]⚠️ Could not validate the stored API key ({check.reason}); "
+                "stored credentials kept, proceeding with login...[/yellow]\n"
+            )
+            return False
+
+        # The backend rejected the key: clear it
         console.print(
             "[yellow]⚠️ Stored API key is no longer valid, proceeding with login...[/yellow]\n"
         )
@@ -1374,9 +1425,10 @@ class TraigentAuthCLI:
             return False
 
         console.print("[dim]Found TRAIGENT_API_KEY in environment, validating...[/dim]")
-        user_info = await self._validate_api_key(env_api_key, verbose=True)
+        check = await self._check_api_key_state(env_api_key, verbose=True)
+        user_info = check.metadata
 
-        if user_info is not None:
+        if check.state is KeyCheckState.VALID and user_info is not None:
             console.print(
                 "[green]✅ Valid API key found in TRAIGENT_API_KEY environment variable[/green]"
             )
@@ -1389,6 +1441,12 @@ class TraigentAuthCLI:
             )
             return True
 
+        if check.state is KeyCheckState.INDETERMINATE:
+            console.print(
+                f"[yellow]⚠️ Could not validate TRAIGENT_API_KEY in environment "
+                f"({check.reason}), proceeding with login...[/yellow]\n"
+            )
+            return False
         console.print(
             "[yellow]⚠️ TRAIGENT_API_KEY in environment is invalid, proceeding with login...[/yellow]\n"
         )
@@ -1596,12 +1654,13 @@ class TraigentAuthCLI:
 
         # Check if we have stored credentials
         creds = self._load_stored_credentials()
-        if not creds:
+        locked = not creds and self._secure_store_locked()
+        if not creds and not locked:
             console.print("[yellow]No stored credentials found[/yellow]")
             return True
 
         # Optional: Revoke API key on backend
-        if creds.get("api_key"):
+        if creds and creds.get("api_key"):
             try:
                 import aiohttp
 
@@ -1620,6 +1679,13 @@ class TraigentAuthCLI:
             return True
         else:
             console.print("[red]❌ Failed to clear some credentials[/red]")
+            if locked:
+                console.print(
+                    f"The encrypted credential file {_secure_credential_store_path()} "
+                    "is still present and locked. Set TRAIGENT_MASTER_PASSWORD to "
+                    "the password it was created with and run "
+                    "[cyan]traigent auth logout[/cyan] again.\n"
+                )
             return False
 
     def _api_key_expiry_row(self, creds: dict[str, Any]) -> str | None:
@@ -1716,6 +1782,17 @@ class TraigentAuthCLI:
         if env_api_key:
             self._print_env_api_key_status(creds)
             return True
+
+        if not creds and self._secure_store_locked():
+            console.print(
+                "[yellow]🔒 Credentials exist but the secure store is locked[/yellow]"
+            )
+            console.print(
+                f"\nThe encrypted file {_secure_credential_store_path()} cannot be "
+                "opened. Set TRAIGENT_MASTER_PASSWORD to the password it was "
+                "created with, then run [cyan]traigent auth status[/cyan] again.\n"
+            )
+            return False
 
         if not creds:
             console.print("[yellow]❌ Not authenticated[/yellow]")
@@ -2364,6 +2441,33 @@ def _looks_edge_blocked(
 ) -> bool:
     """Back-compatible boolean wrapper over :func:`_classify_403`."""
     return _classify_403(body_preview, headers) == "edge_blocked"
+
+
+def _key_check_from_response(
+    status: int, body: str, headers: Mapping[str, str] | None = None
+) -> KeyCheckResult:
+    """Map a ``/keys/validate`` reply onto the tri-state (#2832)."""
+    if status == 200:
+        try:
+            data = json.loads(body)
+        except ValueError:
+            return KeyCheckResult(
+                KeyCheckState.INDETERMINATE, reason="unreadable reply"
+            )
+        if isinstance(data, dict):
+            if data.get("valid"):
+                return KeyCheckResult(
+                    KeyCheckState.VALID, metadata=dict(data.get("data", {}))
+                )
+            if data.get("valid") is False:
+                return KeyCheckResult(KeyCheckState.REJECTED)
+        return KeyCheckResult(KeyCheckState.INDETERMINATE, reason="unexpected reply")
+    if status == 401:
+        return KeyCheckResult(KeyCheckState.REJECTED)
+    if status == 403 and _classify_403(body, headers) == "authorization":
+        return KeyCheckResult(KeyCheckState.REJECTED)
+    # 429, 5xx, edge-blocked/indeterminate 403, 400/404 ...: not a verdict on the key.
+    return KeyCheckResult(KeyCheckState.INDETERMINATE, reason=f"HTTP {status}")
 
 
 def _print_error_status(
