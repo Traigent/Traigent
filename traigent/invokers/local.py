@@ -13,6 +13,7 @@ from collections.abc import Callable
 from typing import Any
 
 from traigent.config.providers import get_provider
+from traigent.core.exception_handler import is_provider_api_key_failure
 from traigent.invokers.base import BaseInvoker, InvocationResult
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.exceptions import InvocationError
@@ -149,11 +150,7 @@ class LocalInvoker(BaseInvoker):
             error_msg = f"Function call failed: {e}"
 
             # Fail fast on API key errors - don't retry 309 times
-            lowered = str(e).lower()
-            if any(
-                token in lowered
-                for token in ("api key", "api_key", "authentication", "openai_api_key")
-            ):
+            if is_provider_api_key_failure(e):
                 raise APIKeyError.from_provider_error(e) from e
 
             logger.warning(error_msg)

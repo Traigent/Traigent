@@ -11,12 +11,14 @@ pipes, scripts).
 
 from __future__ import annotations
 
+import re
+import sqlite3
 import sys
 from enum import Enum
 from typing import Protocol
 
-from traigent.utils.logging import get_logger
 from traigent.utils.console import _safe_print
+from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -104,11 +106,94 @@ _VENDOR_ERROR_PATTERNS: list[tuple[str, VendorErrorCategory]] = [
 ]
 
 
+# Generic single words that also appear in ordinary identifiers and data
+# ("quota_used", "forbidden_words", "authentication" table). They only count
+# as vendor wording when not glued to identifier characters (#2843).
+_BARE_WORD_PATTERNS = frozenset(
+    {
+        "quota",
+        "unauthorized",
+        "unauthorised",
+        "forbidden",
+        "authentication",
+        "overloaded",
+    }
+)
+_BARE_WORD_REGEX = {
+    word: re.compile(rf"(?<![a-z0-9_]){word}(?![a-z0-9_])")
+    for word in _BARE_WORD_PATTERNS
+}
+
+#: Exceptions raised by the user's own code or the standard library. Their
+#: message is domain text, not a provider verdict, so it is never pattern
+#: matched for AUTH/QUOTA wording. Provider SDK errors (openai, anthropic, ...)
+#: and httpx/requests status errors are not in this set.
+_LOCAL_ERROR_TYPE_NAMES = (
+    "OSError|IOError|PermissionError|FileNotFoundError|FileExistsError|"
+    "IsADirectoryError|NotADirectoryError|KeyError|IndexError|LookupError|"
+    "AttributeError|NameError|TypeError|ValueError|AssertionError|ImportError|"
+    "ModuleNotFoundError|ZeroDivisionError|UnicodeError|UnicodeDecodeError|"
+    "UnicodeEncodeError|OperationalError|ProgrammingError|IntegrityError|"
+    "DatabaseError|InterfaceError|JSONDecodeError|StopIteration|RecursionError|"
+    "NotImplementedError"
+)
+_LOCAL_ERROR_TEXT_RE = re.compile(
+    rf"(?:^|[\s:])(?:{_LOCAL_ERROR_TYPE_NAMES}):|\[errno \d+\]", re.IGNORECASE
+)
+
+
+_HTTP_LIBRARY_ROOTS = frozenset({"requests", "urllib3", "httpx", "aiohttp", "httpcore"})
+
+
+def _is_local_exception(exc: BaseException) -> bool:
+    """True for filesystem/lookup/SQL/arithmetic errors (not provider SDK errors).
+
+    ``requests`` exceptions subclass ``OSError`` but are HTTP failures, so HTTP
+    client libraries are excluded.
+    """
+    if type(exc).__module__.split(".")[0] in _HTTP_LIBRARY_ROOTS:
+        return False
+    return isinstance(exc, (OSError, LookupError, ArithmeticError, sqlite3.Error))
+
+
+def http_status_of(exc: BaseException) -> int | None:
+    """Structured HTTP status carried by ``exc`` or its ``response``, if any."""
+    response = getattr(exc, "response", None)
+    for source in (exc, response):
+        if source is None:
+            continue
+        for attr in ("status_code", "status", "http_status", "code"):
+            value = getattr(source, attr, None)
+            if isinstance(value, int) and not isinstance(value, bool):
+                if 100 <= value <= 599:
+                    return value
+    return None
+
+
+_STATUS_CATEGORIES: dict[int, VendorErrorCategory] = {
+    401: VendorErrorCategory.AUTHENTICATION,
+    403: VendorErrorCategory.AUTHENTICATION,
+    402: VendorErrorCategory.INSUFFICIENT_FUNDS,
+    429: VendorErrorCategory.RATE_LIMIT,
+    503: VendorErrorCategory.SERVICE_UNAVAILABLE,
+}
+
+
+def _matches_pattern(pattern: str, msg: str) -> bool:
+    regex = _BARE_WORD_REGEX.get(pattern)
+    if regex is not None:
+        return regex.search(msg) is not None
+    return pattern in msg
+
+
 def classify_vendor_error(exc: Exception) -> VendorErrorCategory | None:
     """Classify an exception as a vendor-pausable error category.
 
-    Checks against known Traigent exception types first, then falls back
-    to pattern-matching the exception message string.
+    Order: known Traigent exception types, then a structured HTTP status, then
+    (for non-local errors only) message pattern matching. Builtin/stdlib/user
+    exceptions and text that carries a local-error marker (``PermissionError:``,
+    ``[Errno 13]``, ``OperationalError:``) are never pattern matched, so a
+    missing file or a SQL column named ``quota_used`` is not a provider outage.
 
     Args:
         exc: The exception to classify.
@@ -132,13 +217,81 @@ def classify_vendor_error(exc: Exception) -> VendorErrorCategory | None:
     if isinstance(exc, ServiceUnavailableError):
         return VendorErrorCategory.SERVICE_UNAVAILABLE
 
+    status = http_status_of(exc)
+    if status is not None and status in _STATUS_CATEGORIES:
+        return _STATUS_CATEGORIES[status]
+
+    if _is_local_exception(exc):
+        return None
+
     # Fallback: pattern-match the error message
     msg = str(exc).lower()
+    if _LOCAL_ERROR_TEXT_RE.search(msg):
+        return None
     for pattern, category in _VENDOR_ERROR_PATTERNS:
-        if pattern in msg:
+        if _matches_pattern(pattern, msg):
             return category
 
     return None
+
+
+#: Top-level packages whose exceptions are provider/vendor verdicts. Message
+#: text is only trusted as an auth signal for exceptions raised by these.
+_PROVIDER_SDK_ROOTS = frozenset(
+    {
+        "openai",
+        "anthropic",
+        "google",
+        "cohere",
+        "mistralai",
+        "litellm",
+        "groq",
+        "ollama",
+        "together",
+        "boto3",
+        "botocore",
+        "azure",
+        "huggingface_hub",
+        "langchain",
+        "langchain_core",
+        "langchain_openai",
+        "langchain_anthropic",
+        "langchain_community",
+        "traigent",
+    }
+)
+_AUTH_EXCEPTION_NAMES = frozenset(
+    {
+        "AuthenticationError",
+        "PermissionDeniedError",
+        "InvalidAPIKeyError",
+        "UnauthorizedError",
+        "APIKeyError",
+        "CredentialError",
+    }
+)
+_API_KEY_TEXT_TOKENS = ("api key", "api_key", "authentication", "openai_api_key")
+
+
+def is_provider_api_key_failure(exc: BaseException) -> bool:
+    """True when ``exc`` is a provider verdict on the API key, not user-code text.
+
+    Decided by structure first: an HTTP 401/403, or an auth exception class
+    (``openai.AuthenticationError`` ...). Message wording counts only for
+    exceptions raised by a known provider SDK. A SQL error mentioning an
+    ``authentication`` table or a ``KeyError('api_key')`` from the user's agent
+    is an ordinary per-example failure and must not abort the run (#2842).
+    """
+    if http_status_of(exc) in (401, 403):
+        return True
+    if any(base.__name__ in _AUTH_EXCEPTION_NAMES for base in type(exc).__mro__):
+        return True
+    if _is_local_exception(exc):
+        return False
+    if type(exc).__module__.split(".")[0] not in _PROVIDER_SDK_ROOTS:
+        return False
+    text = str(exc).lower()
+    return any(token in text for token in _API_KEY_TEXT_TOKENS)
 
 
 def classify_systematic_provider_failure(
