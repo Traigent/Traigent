@@ -157,12 +157,18 @@ def _scoped_mock_cost_exemption() -> Iterator[None]:
         scoped[COST_PREFLIGHT_MOCK_EXEMPT_ENV] = "true"
     if resolve_environment_name(default=None) is None:
         scoped["ENVIRONMENT"] = "development"
+    # Remember what was there (a blank ENVIRONMENT counts as unset to the
+    # resolver but is still a value to put back).
+    previous = {name: os.environ.get(name) for name in scoped}
     os.environ.update(scoped)
     try:
         yield
     finally:
-        for name in scoped:
-            os.environ.pop(name, None)
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def run_optimization(

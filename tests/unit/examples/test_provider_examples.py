@@ -350,3 +350,25 @@ def test_demo_cost_exemption_is_scoped_to_run_optimization(monkeypatch, request)
         "ENVIRONMENT",
     ):
         assert name not in os.environ
+
+
+def test_demo_cost_exemption_restores_a_blank_environment(monkeypatch, request):
+    """A blank ENVIRONMENT is put back, not deleted (#2795 review)."""
+    import os
+
+    from traigent.testing import disable_mock_mode
+
+    request.addfinalizer(disable_mock_mode)
+    from traigent.examples.providers import _demo
+
+    for name in (
+        "TRAIGENT_ENV",
+        "TRAIGENT_ENVIRONMENT",
+        "TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ENVIRONMENT", "")
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    with _demo._scoped_mock_cost_exemption():
+        assert os.environ["ENVIRONMENT"] == "development"
+    assert os.environ["ENVIRONMENT"] == ""
