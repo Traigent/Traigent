@@ -87,11 +87,12 @@ def setup_traigent_import(caller_file: str | Path | None = None) -> None:
         sys.path.insert(0, sdk_root)
 
 
-def initialize_traigent(offline: bool = True) -> None:
-    """Initialize traigent with appropriate settings.
+def initialize_traigent() -> None:
+    """Initialize traigent in mock mode.
 
-    Args:
-        offline: Run examples without Traigent backend egress.
+    ``initialize()`` has no offline switch: local-only execution is chosen with
+    ``offline=True`` on ``@traigent.optimize`` (or ``TraigentConfig``), which
+    the example decorators pass themselves.
     """
     import logging
 
@@ -101,7 +102,7 @@ def initialize_traigent(offline: bool = True) -> None:
 
     if is_mock_mode():
         try:
-            traigent.initialize(offline=offline)
+            traigent.initialize()
         except Exception as e:
             # Log the error but continue - mock mode may work without full initialization
             logger.warning(
@@ -131,12 +132,11 @@ def get_example_dataset(
 
 
 # Quick setup function for examples
-def quick_setup(base_path: Path, offline: bool = True) -> bool:
+def quick_setup(base_path: Path) -> bool:
     """Perform all common setup steps for an example.
 
     Args:
         base_path: The base path of the example (usually Path(__file__).parent)
-        offline: Run examples without Traigent backend egress.
 
     Returns:
         True if running in mock mode, False otherwise
@@ -144,7 +144,7 @@ def quick_setup(base_path: Path, offline: bool = True) -> bool:
     mock = is_mock_mode()
     setup_mock_environment(base_path)
     setup_traigent_import()
-    initialize_traigent(offline)
+    initialize_traigent()
     return mock
 
 

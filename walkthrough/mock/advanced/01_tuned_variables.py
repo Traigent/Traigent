@@ -32,7 +32,7 @@ DATASET_PATH = str(
 )
 
 # Initialize Traigent in mock mode
-traigent.initialize(offline=True, minimal_logging=True)
+traigent.initialize(minimal_logging=True)
 
 # Define parameter ranges using factory methods
 temperature = Range.temperature(creative=True)  # [0.7, 1.5]

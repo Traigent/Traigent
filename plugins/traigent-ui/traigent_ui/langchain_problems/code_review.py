@@ -469,7 +469,8 @@ Provide a thorough code review with specific, actionable feedback.""",
             configuration_space=self.get_configuration_space(),
             auto_override_frameworks=True,
             framework_targets=["langchain_openai.ChatOpenAI"],
-            execution_mode="edge_analytics",
+            offline=True,
+            algorithm="grid",
         )
         def code_reviewer_optimized(code: str, language: str, context: str) -> str:
             """Optimized code reviewer."""

@@ -205,10 +205,15 @@ def initialize(  # noqa: C901
         api_key: API key for Traigent backend authentication (defaults to env var)
         api_url: Traigent backend URL (defaults to centralized config)
         config: TraigentConfig object with execution mode and settings
-        **kwargs: Additional configuration parameters
+        **kwargs: Additional configuration parameters. ``offline`` is not
+            one of them (it raises ``TypeError``): pass ``offline=True`` to
+            ``@traigent.optimize`` or ``TraigentConfig`` instead.
 
     Returns:
         True if initialization successful
+
+    Raises:
+        TypeError: If ``offline`` is passed.
 
     Example::
 
@@ -229,6 +234,8 @@ def initialize(  # noqa: C901
         traigent.initialize()
     """
 
+    _reject_unsupported_overrides(kwargs)
+
     from traigent.config.backend_config import BackendConfig
 
     _configure_api_keys(api_key, BackendConfig)
@@ -248,6 +255,25 @@ def initialize(  # noqa: C901
 
     logger.info("Traigent SDK initialized successfully")
     return True
+
+
+def _reject_unsupported_overrides(overrides: dict[str, Any]) -> None:
+    """Fail fast on keyword arguments that look like settings but do nothing.
+
+    ``initialize`` stores unrecognised keyword arguments verbatim, which is
+    harmless for a free-form custom value but misleading for ``offline``: no
+    code reads it from the global configuration, so ``initialize(offline=True)``
+    left the decorated function on its cloud-brain execution policy (#2837).
+    """
+
+    if "offline" in overrides:
+        raise TypeError(
+            "initialize() does not accept 'offline': the global configuration "
+            "never reads it, so it would not stop any backend traffic. Set "
+            "offline=True on the decorator (@traigent.optimize(offline=True, "
+            "...)) or on TraigentConfig(offline=True), or set "
+            "TRAIGENT_OFFLINE_MODE=true for the whole process."
+        )
 
 
 def _configure_api_keys(api_key: str | None, backend_config: Any) -> None:
@@ -482,14 +508,15 @@ def get_trial_config() -> dict[str, Any]:
     Example::
 
         @traigent.optimize(
-            configuration_space={"model": ["gpt-3.5", "gpt-5.6-sol"], "temperature": [0.5, 0.8]}
+            eval_dataset="evals.jsonl",
+            configuration_space={"model": ["gpt-5.6-terra", "gpt-5.6-sol"], "temperature": [0.5, 0.8]}
         )
         def my_function(query: str) -> str:
             config = traigent.get_trial_config()  # Gets trial-specific config
             return call_llm(model=config["model"], temperature=config["temperature"])
 
         # Run optimization - get_trial_config() works inside the function
-        result = traigent.optimize(my_function, dataset=my_data)
+        result = my_function.optimize_sync(max_trials=10)
         # Access best config via result
         print(result.best_config)
     """

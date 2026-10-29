@@ -117,7 +117,7 @@ DATA_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "chunking-long-co
 
 if MOCK:
     try:
-        traigent.initialize(offline=True)
+        traigent.initialize()
     except Exception:
         pass
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")

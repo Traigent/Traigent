@@ -313,7 +313,8 @@ Be specific about regional variations and traditional preparations.""",
             configuration_space=self.get_configuration_space(),
             auto_override_frameworks=True,
             framework_targets=["langchain_openai.ChatOpenAI"],
-            execution_mode="edge_analytics",
+            offline=True,
+            algorithm="grid",
         )
         def georgian_cuisine_trivia_optimized(question: str) -> str:
             """Optimized Georgian cuisine trivia assistant."""

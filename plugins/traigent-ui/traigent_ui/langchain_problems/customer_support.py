@@ -488,7 +488,8 @@ Respond with only the category name, nothing else.""",
             configuration_space=self.get_configuration_space(),
             auto_override_frameworks=True,
             framework_targets=["langchain_openai.ChatOpenAI"],
-            execution_mode="edge_analytics",
+            offline=True,
+            algorithm="grid",
         )
         def customer_support_classifier_optimized(query: str) -> str:
             """Optimized customer support ticket classifier."""

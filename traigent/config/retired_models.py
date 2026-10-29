@@ -58,10 +58,13 @@ RETIRED_MODEL_IDS: frozenset[str] = frozenset(
         "claude-3-opus-latest",
         # Anthropic models retired at the provider (#2646): Claude Haiku 3
         # (2026-04-20), Claude Sonnet 3.7 (2026-02-19), Claude Sonnet 3.5
-        # (2025-10-28; dotted spelling is the OpenRouter id).
+        # (2025-10-28; dotted spelling is the OpenRouter id, the dated and
+        # -latest spellings are the Anthropic API ids, #2840).
         "claude-3-haiku-20240307",
         "claude-3-7-sonnet-20250219",
         "claude-3.5-sonnet",
+        "claude-3-5-sonnet-20241022",
+        "claude-3-5-sonnet-latest",
         # Gemini 1.x (deprecated) + 2.0 preview, incl. -latest and
         # "models/"-prefixed aliases of the same retired models
         "gemini-1.5-flash",

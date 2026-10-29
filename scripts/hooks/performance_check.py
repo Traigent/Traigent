@@ -99,17 +99,18 @@ try:
     from traigent.api.decorators import optimize
 
     @optimize(
-        max_trials=3,
-        strategy="random"
+        algorithm="random",
+        configuration_space={"factor": [1, 2]},
+        eval_dataset=[{"input": {"x": i}, "output": i * 2} for i in range(5)],
+        objectives=["accuracy"],
+        injection_mode="parameter",
+        offline=True,
     )
-    def test_function(x: int) -> int:
-        return x * 2
+    def test_function(x: int, config: dict) -> int:
+        return x * config["factor"]
 
     # Run optimization
-    result = test_function.optimize(
-        dataset=[{"x": i} for i in range(5)],
-        evaluator=lambda result, expected: 1.0
-    )
+    result = test_function.optimize_sync(max_trials=3)
 
     # Extract metrics with fallback values
     metrics = {

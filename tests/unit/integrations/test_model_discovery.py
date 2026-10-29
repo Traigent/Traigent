@@ -333,7 +333,7 @@ class TestAnthropicDiscovery:
             "claude-sonnet-4-6",
             "claude-sonnet-4-5-20250929",
             "claude-haiku-4-5-20251001",
-            "claude-3-5-sonnet-20241022",
+            "claude-3-5-haiku-20241022",
             "claude-2.1",
             "claude-instant-1.2",
         ]
@@ -342,7 +342,12 @@ class TestAnthropicDiscovery:
             assert discovery.is_valid_model(model), f"Model {model} should be valid"
 
         # Retired claude-3-opus (#1936/#1937): shape-valid but denylisted.
-        for retired in ["claude-3-opus-20240229", "claude-3-opus-latest"]:
+        for retired in [
+            "claude-3-opus-20240229",
+            "claude-3-opus-latest",
+            "claude-3-5-sonnet-20241022",
+            "claude-3-5-sonnet-latest",
+        ]:
             message = f"Retired model {retired} must not validate"
             assert not discovery.is_valid_model(retired), message
 

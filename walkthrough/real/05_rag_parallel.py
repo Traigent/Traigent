@@ -51,7 +51,7 @@ logging.getLogger("tokencost.costs").setLevel(logging.ERROR)
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
-traigent.initialize(offline=True)
+traigent.initialize()
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"

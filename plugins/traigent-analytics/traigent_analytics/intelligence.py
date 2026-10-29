@@ -1776,7 +1776,7 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
             model_mappings = {
                 "openai": ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo", "gpt-4-turbo"],
                 "anthropic": [
-                    "claude-3-5-sonnet-20241022",
+                    "claude-sonnet-4-6",
                     "claude-3-5-haiku-latest",
                     "claude-3-opus-20240229",
                     "claude-3-sonnet-20240229",
@@ -1812,7 +1812,7 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
                     "gpt-3.5-turbo": {"input": 0.0015, "output": 0.002},
                 },
                 "anthropic": {
-                    "claude-3-5-sonnet-20241022": {"input": 0.003, "output": 0.015},
+                    "claude-sonnet-4-6": {"input": 0.003, "output": 0.015},
                     "claude-3-5-haiku-latest": {"input": 0.00025, "output": 0.00125},
                 },
             }

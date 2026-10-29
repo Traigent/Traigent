@@ -33,7 +33,7 @@ os.environ.setdefault(
     "TRAIGENT_DATASET_ROOT", str(Path(__file__).resolve().parent.parent)
 )
 
-traigent.initialize(offline=True, minimal_logging=True)
+traigent.initialize(minimal_logging=True)
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).resolve().parent.parent / "datasets"

@@ -411,7 +411,8 @@ Provide sentiment and confidence level.""",
             configuration_space=self.get_configuration_space(),
             auto_override_frameworks=True,
             framework_targets=["langchain_openai.ChatOpenAI"],
-            execution_mode="edge_analytics",
+            offline=True,
+            algorithm="grid",
         )
         def sentiment_analyzer_optimized(text: str, language: str, context: str) -> str:
             """Optimized sentiment analyzer."""

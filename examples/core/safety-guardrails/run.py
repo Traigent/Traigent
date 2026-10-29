@@ -75,7 +75,7 @@ os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 DATA_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "safety-guardrails"
 if MOCK:
     # Initialize with local-only mode for mock runs
-    traigent.initialize(offline=True)
+    traigent.initialize()
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")
 PROMPT_PATH = BASE / "prompt.txt"
 

@@ -44,7 +44,7 @@ except ImportError:
     exit(1)
 
 # Initialize Traigent
-traigent.initialize(offline=True)
+traigent.initialize()
 
 # Sample documents for the vector store
 SAMPLE_DOCS = [

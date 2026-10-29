@@ -401,14 +401,14 @@ def test_mode_specific_behavior():
             metadata={},
         )
 
-        # Test Edge Analytics mode behavior
+        # Test local (offline) mode behavior
         class LocalModeFunction:
             def __init__(self):
-                self.mode = "edge_analytics"
+                self.mode = "local"
                 self._current_config = {"model": "default"}
 
             def apply_best_config(self, results):
-                # Edge Analytics mode - direct config application
+                # Local mode - direct config application
                 self._current_config = results.best_config.copy()
                 return True
 

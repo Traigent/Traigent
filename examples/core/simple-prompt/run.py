@@ -68,9 +68,10 @@ if not DATASET_PATH.is_file():
 DATASET = str(DATASET_PATH)
 
 if MOCK:
-    # Initialize in offline mode for local execution.
+    # Initialize the SDK; local execution is selected by offline=True on the
+    # @traigent.optimize decorator below, not by initialize().
     try:
-        traigent.initialize(offline=True)
+        traigent.initialize()
     except Exception as exc:  # noqa: BLE001
         print(f"Warning: Traigent mock initialization skipped: {exc}")
 

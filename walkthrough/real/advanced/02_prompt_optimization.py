@@ -40,7 +40,7 @@ except ImportError:
     exit(1)
 
 # Initialize Traigent
-traigent.initialize(offline=True)
+traigent.initialize()
 
 # Define system prompt variants to optimize
 SYSTEM_PROMPTS = [

@@ -59,7 +59,7 @@ DATASET = str(DATASET_PATH)
 
 if MOCK:
     try:
-        traigent.initialize(offline=True)
+        traigent.initialize()
     except Exception as exc:  # noqa: BLE001
         print(f"Warning: Traigent mock initialization skipped: {exc}")
 
