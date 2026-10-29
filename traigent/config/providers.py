@@ -424,17 +424,45 @@ class _UserFunctionError(Exception):
         self.error = error
 
 
-# Provider SDKs raise a ``NotFoundError`` (HTTP 404) for an unknown model id.
-_PROVIDER_SDK_ROOTS = frozenset({"openai", "anthropic"})
+# Provider SDKs signal an unknown model id with a typed 404 error. These are
+# matched by class identity (module root + name), never by message text, so a
+# user function's own ``ValueError("does not exist")`` is not reclassified.
+_PROVIDER_SDK_ROOTS = frozenset(
+    {"openai", "anthropic", "litellm", "cohere", "mistralai"}
+)
+# Bedrock reports an unknown/unavailable model id as a botocore ClientError.
+_BEDROCK_MODEL_ERROR_CODES = frozenset({"ResourceNotFoundException"})
 
 
 def _is_provider_model_not_found(exc: BaseException) -> bool:
-    """True for a provider SDK ``NotFoundError`` (typed, not message-sniffing)."""
-    return any(
-        cls.__name__ == "NotFoundError"
-        and cls.__module__.split(".", 1)[0] in _PROVIDER_SDK_ROOTS
-        for cls in type(exc).__mro__
-    )
+    """True for a provider SDK's typed "unknown model" (HTTP 404) error."""
+    for cls in type(exc).__mro__:
+        root = cls.__module__.split(".", 1)[0]
+        if cls.__name__ == "NotFoundError" and root in _PROVIDER_SDK_ROOTS:
+            return True
+        # Gemini (google-generativeai / google-api-core)
+        if (
+            cls.__module__ == "google.api_core.exceptions"
+            and cls.__name__ == "NotFound"
+        ):
+            return True
+        # Gemini (google-genai): ClientError carrying the HTTP status
+        if (
+            cls.__module__ == "google.genai.errors"
+            and getattr(exc, "code", None) == 404
+        ):
+            return True
+        # Bedrock (botocore): ClientError with an error code
+        if cls.__module__ == "botocore.exceptions" and cls.__name__ == "ClientError":
+            response = getattr(exc, "response", None)
+            code = (
+                (response or {}).get("Error", {}).get("Code")
+                if isinstance(response, dict)
+                else None
+            )
+            if code in _BEDROCK_MODEL_ERROR_CODES:
+                return True
+    return False
 
 
 def _merge_context_config(

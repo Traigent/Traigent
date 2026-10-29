@@ -663,6 +663,77 @@ def test_seamless_typed_provider_model_not_found_is_configuration_error() -> Non
     assert isinstance(exc.value.__cause__, _ProviderNotFoundError)
 
 
+def _bedrock_not_found() -> Exception:
+    error = type("ClientError", (Exception,), {"__module__": "botocore.exceptions"})(
+        "An error occurred (ResourceNotFoundException): Could not resolve the model"
+    )
+    error.response = {"Error": {"Code": "ResourceNotFoundException"}}  # type: ignore[attr-defined]
+    return error
+
+
+def _gemini_not_found() -> Exception:
+    return type("NotFound", (Exception,), {"__module__": "google.api_core.exceptions"})(
+        "404 models/nope is not found"
+    )
+
+
+def _genai_404() -> Exception:
+    error = type("ClientError", (Exception,), {"__module__": "google.genai.errors"})(
+        "404 NOT_FOUND"
+    )
+    error.code = 404  # type: ignore[attr-defined]
+    return error
+
+
+@pytest.mark.parametrize(
+    "make_error",
+    [
+        lambda: type("NotFoundError", (Exception,), {"__module__": "cohere.errors"})(
+            "model not found"
+        ),
+        lambda: type(
+            "NotFoundError", (Exception,), {"__module__": "litellm.exceptions"}
+        )("model not found"),
+        _gemini_not_found,
+        _genai_404,
+        _bedrock_not_found,
+    ],
+    ids=["cohere", "litellm", "gemini", "google-genai", "bedrock"],
+)
+def test_seamless_other_provider_unknown_model_is_configuration_error(
+    make_error,
+) -> None:
+    """Non-OpenAI/Anthropic unknown-model errors keep their old classification."""
+    provider = _reset_provider()
+    error = make_error()
+
+    def agent(q: str, model: str = "x") -> str:
+        raise error
+
+    wrapped = provider.inject_config(agent, {"model": "nope"})
+    with pytest.raises(ConfigurationError, match="Failed to execute") as exc:
+        wrapped("hi")
+    assert exc.value.__cause__ is error
+
+
+def test_seamless_unrelated_not_found_and_client_errors_pass_through() -> None:
+    """Look-alikes outside the provider SDKs, or other codes, are not reclassified."""
+    provider = _reset_provider()
+    foreign = type("NotFoundError", (Exception,), {"__module__": "myapp.errors"})("x")
+    throttled = type(
+        "ClientError", (Exception,), {"__module__": "botocore.exceptions"}
+    )("t")
+    throttled.response = {"Error": {"Code": "ThrottlingException"}}  # type: ignore[attr-defined]
+    for error in (foreign, throttled):
+
+        def agent(q: str, model: str = "x", _e=error) -> str:
+            raise _e
+
+        wrapped = provider.inject_config(agent, {"model": "nope"})
+        with pytest.raises(type(error)):
+            wrapped("hi")
+
+
 def test_seamless_real_transform_failure_still_falls_back(monkeypatch) -> None:
     """A genuine AST transform failure still reaches the runtime-shim fallback."""
     provider = _reset_provider()

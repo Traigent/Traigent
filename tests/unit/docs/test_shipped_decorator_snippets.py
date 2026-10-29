@@ -255,3 +255,101 @@ def test_generated_plugin_problem_actually_decorates(monkeypatch) -> None:
     problem = module.JavascriptCodingPuzzles()
     func = problem.create_optimized_function(problem.create_dataset())
     assert func.configuration_space["model"]
+
+
+def test_generated_problem_module_runs_end_to_end(monkeypatch, tmp_path) -> None:
+    """Generate a problem module, import it, and run its optimized function.
+
+    Covers the generator output (not just the shipped modules): the dataset
+    file is valid JSONL, the decorator accepts the emitted kwargs, a trial runs
+    with the injected configuration, and the temp file is registered for removal.
+    """
+    import atexit
+    import importlib
+    import json
+
+    monkeypatch.syspath_prepend(str(PLUGIN_UI))
+    for name in [m for m in sys.modules if m.split(".")[0] == "traigent_ui"]:
+        monkeypatch.delitem(sys.modules, name)
+    from traigent_ui.problem_management.code_generator import CodeGenerator
+
+    base = importlib.import_module("traigent_ui.langchain_problems.base")
+    monkeypatch.setitem(
+        sys.modules, "langchain_problems", sys.modules["traigent_ui.langchain_problems"]
+    )
+    monkeypatch.setitem(sys.modules, "langchain_problems.base", base)
+
+    seen: list[tuple[str, float]] = []
+
+    class _Msg:
+        content = "b"
+
+    class _FakeChat:
+        def __init__(self, model, temperature, max_tokens):
+            seen.append((model, temperature))
+
+        def invoke(self, _messages):
+            return _Msg()
+
+    fake_openai = type(sys)("langchain_openai")
+    fake_openai.ChatOpenAI = _FakeChat  # type: ignore[attr-defined]
+    fake_schema = type(sys)("langchain.schema")
+    fake_schema.HumanMessage = lambda content: content  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "langchain_openai", fake_openai)
+    monkeypatch.setitem(sys.modules, "langchain.schema", fake_schema)
+
+    examples = [
+        {"input_data": {"text": f"t{i}"}, "expected_output": "b", "metadata": {}}
+        for i in range(3)
+    ]
+    source = asyncio.run(
+        CodeGenerator().generate_problem_module(
+            name="e2e_problem",
+            description="demo",
+            domain="technical",
+            difficulty="easy",
+            examples=examples,
+            output_type="classification",
+            models=["gpt-4o-mini", "gpt-4o"],
+            temperature_range=[0.1, 0.5],
+        )
+    )
+    # The generated module registers itself via ``from . import register_problem``.
+    package = tmp_path / "e2e_pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "def register_problem(name, cls):\n    pass\n", encoding="utf-8"
+    )
+    (package / "e2e_problem.py").write_text(source, encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    # Datasets must live under the working directory: keep the run self-contained.
+    monkeypatch.chdir(tmp_path)
+    registered: list[tuple] = []
+    monkeypatch.setattr(
+        atexit, "register", lambda fn, *a, **k: registered.append((fn, a, k))
+    )
+    module = importlib.import_module("e2e_pkg.e2e_problem")
+    problem_cls = next(
+        v
+        for k, v in vars(module).items()
+        if isinstance(v, type)
+        and v.__module__ == "e2e_pkg.e2e_problem"
+        and hasattr(v, "create_optimized_function")
+    )
+    problem = problem_cls()
+    path = problem._write_dataset_file(problem.create_dataset())
+    try:
+        rows = [json.loads(line) for line in Path(path).read_text().splitlines()]
+        assert [r["output"] for r in rows] == ["b", "b", "b"]
+        assert registered, "temp dataset file must be registered for cleanup"
+        fn, args, kwargs = registered[-1]
+        fn(*args, **kwargs)
+        assert not Path(path).exists()
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+    func = problem.create_optimized_function(problem.create_dataset())
+    assert func.configuration_space["model"] == ["gpt-4o-mini", "gpt-4o"]
+    results = func.optimize_sync(max_trials=2)
+    assert len(results.trials) >= 1
+    assert {model for model, _ in seen} <= {"gpt-4o-mini", "gpt-4o"}
