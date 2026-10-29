@@ -61,7 +61,10 @@ def _agent(
     body: str = "return traigent.with_usage(q, total_cost=0.01)",
     extra_decorator: str = "",
 ) -> str:
-    return "import traigent\n" + SCORER + f"""
+    return (
+        "import traigent\n"
+        + SCORER
+        + f"""
 @traigent.optimize(configuration_space={{"style": ["short", "long"]}},
                    {default_config}
                    eval_dataset="ds.jsonl", objectives={objectives},
@@ -70,6 +73,7 @@ def answer(q: str) -> str:
     cfg = traigent.get_config()
     {body}
 """
+    )
 
 
 def _invoke(*args: str):

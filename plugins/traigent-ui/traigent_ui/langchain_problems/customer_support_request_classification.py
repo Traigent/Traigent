@@ -14,7 +14,7 @@ import json
 import random
 import tempfile
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from examples.langchain_problems.base import (
     ProblemConfig,
@@ -33,7 +33,7 @@ class CustomerSupportRequestClassificationConfig(ProblemConfig):
     temperature: float = 0.3
     max_tokens: int = 50
 
-    def get_config_space(self) -> Dict[str, List[Any]]:
+    def get_config_space(self) -> dict[str, list[Any]]:
         """Define the optimization search space."""
         return {
             "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
@@ -65,14 +65,14 @@ class CustomerSupportRequestClassification(ProblemDefinition):
     """
 
     def __init__(
-        self, config: Optional[CustomerSupportRequestClassificationConfig] = None
+        self, config: CustomerSupportRequestClassificationConfig | None = None
     ):
         """Initialize with optional config."""
         self.config = config or CustomerSupportRequestClassificationConfig()
         super().__init__(self.config)
         self.examples = self._load_examples()
 
-    def _load_examples(self) -> List[Dict[str, Any]]:
+    def _load_examples(self) -> list[dict[str, Any]]:
         """Load the example dataset."""
         return [
             {
@@ -381,7 +381,7 @@ class CustomerSupportRequestClassification(ProblemDefinition):
         """Return the dataset for this problem."""
         return self.examples
 
-    def create_dataset(self, subset_size: Optional[int] = None) -> List[Dict[str, Any]]:
+    def create_dataset(self, subset_size: int | None = None) -> list[dict[str, Any]]:
         """Create dataset for optimization."""
         dataset = self.examples.copy()
 
@@ -391,11 +391,11 @@ class CustomerSupportRequestClassification(ProblemDefinition):
 
         return dataset
 
-    def create_function(self, dataset: List[Dict[str, Any]]) -> callable:
+    def create_function(self, dataset: list[dict[str, Any]]) -> callable:
         """Create the base function to optimize."""
 
         def classify_customer_support_request_classification(
-            input_data: Dict[str, Any],
+            input_data: dict[str, Any],
             config: CustomerSupportRequestClassificationConfig,
         ) -> str:
             """
@@ -434,7 +434,7 @@ Category:"""
 
         return classify_customer_support_request_classification
 
-    def _write_dataset_file(self, dataset: List[Dict[str, Any]]) -> str:
+    def _write_dataset_file(self, dataset: list[dict[str, Any]]) -> str:
         """Write the dataset as the JSONL file ``eval_dataset`` expects."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
             for example in dataset:
@@ -454,10 +454,10 @@ Category:"""
 
         names = self.get_optimization_objectives()
         return create_default_objectives(
-            names, orientations={name: "maximize" for name in names}
+            names, orientations=dict.fromkeys(names, "maximize")
         )
 
-    def create_optimized_function(self, dataset: List[Dict[str, Any]]) -> callable:
+    def create_optimized_function(self, dataset: list[dict[str, Any]]) -> callable:
         """Create optimized version using Traigent."""
         import traigent
 
@@ -470,7 +470,7 @@ Category:"""
             offline=True,
         )
         def optimized_classify_customer_support_request_classification(
-            input_data: Dict[str, Any],
+            input_data: dict[str, Any],
         ) -> str:
             # Traigent injects the trial's configuration; apply it to a copy so the
             # shared problem config is never mutated.
@@ -482,7 +482,7 @@ Category:"""
 
         return optimized_classify_customer_support_request_classification
 
-    def evaluate_custom_metrics(self, results: List[Any]) -> Dict[str, float]:
+    def evaluate_custom_metrics(self, results: list[Any]) -> dict[str, float]:
         """Calculate custom evaluation metrics."""
         if not results:
             return {}

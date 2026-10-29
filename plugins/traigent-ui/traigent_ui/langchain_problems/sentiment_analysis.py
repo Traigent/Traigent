@@ -9,7 +9,8 @@ A challenging sentiment analysis problem that tests the model's ability to:
 """
 
 import sys
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 import traigent
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -91,7 +92,7 @@ class SentimentAnalysisProblem(BaseLangChainProblem):
             expected_model_ranking=["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"],
         )
 
-    def __init__(self, config: Optional[ProblemConfig] = None):
+    def __init__(self, config: ProblemConfig | None = None):
         if config is None:
             config = self.get_default_config()
         super().__init__(config)
@@ -337,7 +338,7 @@ class SentimentAnalysisProblem(BaseLangChainProblem):
                     "difficulty": data["difficulty"],
                     "language": data["language"],
                     "cultural_context": data["cultural_context"],
-                    "example_id": f"sent_{i+1:03d}",
+                    "example_id": f"sent_{i + 1:03d}",
                     "has_sarcasm": "sarcasm" in data["cultural_context"].lower()
                     or "irony" in data["cultural_context"].lower(),
                 },
@@ -465,10 +466,10 @@ Provide sentiment and confidence level.""",
 
     def evaluate_custom_metrics(
         self,
-        outputs: List[Any],
-        expected_outputs: List[Any],
-        errors: List[Optional[str]],
-    ) -> Dict[str, float]:
+        outputs: list[Any],
+        expected_outputs: list[Any],
+        errors: list[str | None],
+    ) -> dict[str, float]:
         """Compute sentiment analysis specific metrics."""
         metrics = {}
 
@@ -522,7 +523,7 @@ Provide sentiment and confidence level.""",
         sarcasm_total = 0
 
         for i, (output, expected, error) in enumerate(
-            zip(outputs, expected_outputs, errors)
+            zip(outputs, expected_outputs, errors, strict=False)
         ):
             if (
                 error is None

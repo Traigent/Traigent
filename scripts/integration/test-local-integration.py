@@ -9,7 +9,7 @@ to data storage and retrieval.
 import os
 import sys
 import time
-from typing import Any, Dict
+from typing import Any
 
 import requests
 
@@ -55,7 +55,7 @@ def check_backend_health() -> bool:
         return False
 
 
-def check_feature_flags() -> Dict[str, Any]:
+def check_feature_flags() -> dict[str, Any]:
     """Check backend feature flag configuration."""
     try:
         print_status("Checking feature flag configuration...")

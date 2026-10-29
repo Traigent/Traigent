@@ -14,7 +14,7 @@ import json
 import random
 import tempfile
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from examples.langchain_problems.base import (
     ProblemConfig,
@@ -80,7 +80,7 @@ class JavascriptCodingPuzzlesConfig(ProblemConfig):
         self.temperature = 0.3
         self.max_tokens = 600
 
-    def get_config_space(self) -> Dict[str, List[Any]]:
+    def get_config_space(self) -> dict[str, list[Any]]:
         """Define the optimization search space."""
         return self.model_configurations
 
@@ -95,13 +95,13 @@ class JavascriptCodingPuzzles(ProblemDefinition):
     Examples: 5
     """
 
-    def __init__(self, config: Optional[JavascriptCodingPuzzlesConfig] = None):
+    def __init__(self, config: JavascriptCodingPuzzlesConfig | None = None):
         """Initialize with optional config."""
         self.config = config or JavascriptCodingPuzzlesConfig()
         super().__init__(self.config)
         self.examples = self._load_examples()
 
-    def _load_examples(self) -> List[Dict[str, Any]]:
+    def _load_examples(self) -> list[dict[str, Any]]:
         """Load the example dataset."""
         return [
             {
@@ -213,7 +213,7 @@ class JavascriptCodingPuzzles(ProblemDefinition):
         """Return the dataset for this problem."""
         return self.examples
 
-    def create_dataset(self, subset_size: Optional[int] = None) -> List[Dict[str, Any]]:
+    def create_dataset(self, subset_size: int | None = None) -> list[dict[str, Any]]:
         """Create dataset for optimization."""
         dataset = self.examples.copy()
 
@@ -223,11 +223,11 @@ class JavascriptCodingPuzzles(ProblemDefinition):
 
         return dataset
 
-    def create_function(self, dataset: List[Dict[str, Any]]) -> callable:
+    def create_function(self, dataset: list[dict[str, Any]]) -> callable:
         """Create the base function to optimize."""
 
         def generate_javascript_coding_puzzles(
-            input_data: Dict[str, Any], config: JavascriptCodingPuzzlesConfig
+            input_data: dict[str, Any], config: JavascriptCodingPuzzlesConfig
         ) -> str:
             """
             Generate generate challenging javascript coding puzzles that test problem-solving skills, algorithmic thinking, and language-specific features
@@ -267,7 +267,7 @@ Generated content:"""
 
         return generate_javascript_coding_puzzles
 
-    def _write_dataset_file(self, dataset: List[Dict[str, Any]]) -> str:
+    def _write_dataset_file(self, dataset: list[dict[str, Any]]) -> str:
         """Write the dataset as the JSONL file ``eval_dataset`` expects."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
             for example in dataset:
@@ -287,10 +287,10 @@ Generated content:"""
 
         names = self.get_optimization_objectives()
         return create_default_objectives(
-            names, orientations={name: "maximize" for name in names}
+            names, orientations=dict.fromkeys(names, "maximize")
         )
 
-    def create_optimized_function(self, dataset: List[Dict[str, Any]]) -> callable:
+    def create_optimized_function(self, dataset: list[dict[str, Any]]) -> callable:
         """Create optimized version using Traigent."""
         import traigent
 
@@ -303,7 +303,7 @@ Generated content:"""
             offline=True,
         )
         def optimized_generate_javascript_coding_puzzles(
-            input_data: Dict[str, Any],
+            input_data: dict[str, Any],
         ) -> str:
             # Traigent injects the trial's configuration; apply it to a copy so the
             # shared problem config is never mutated.
@@ -315,7 +315,7 @@ Generated content:"""
 
         return optimized_generate_javascript_coding_puzzles
 
-    def evaluate_custom_metrics(self, results: List[Any]) -> Dict[str, float]:
+    def evaluate_custom_metrics(self, results: list[Any]) -> dict[str, float]:
         """Calculate custom evaluation metrics."""
         if not results:
             return {}

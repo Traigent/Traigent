@@ -12,17 +12,33 @@ _category = AuthManager._backend_validation_category
 @pytest.mark.parametrize(
     ("status", "body", "expected"),
     [
-        (503, "service unavailable: unable to verify authentication, upstream timeout",
-         "backend temporarily unavailable"),
-        (500, "internal error: invalid state in handler", "backend temporarily unavailable"),
-        (502, "<html>bad gateway permission denied by upstream</html>",
-         "backend temporarily unavailable"),
-        (504, "gateway timeout waiting for scope service", "backend temporarily unavailable"),
+        (
+            503,
+            "service unavailable: unable to verify authentication, upstream timeout",
+            "backend temporarily unavailable",
+        ),
+        (
+            500,
+            "internal error: invalid state in handler",
+            "backend temporarily unavailable",
+        ),
+        (
+            502,
+            "<html>bad gateway permission denied by upstream</html>",
+            "backend temporarily unavailable",
+        ),
+        (
+            504,
+            "gateway timeout waiting for scope service",
+            "backend temporarily unavailable",
+        ),
         (408, "request timeout", "backend temporarily unavailable"),
         (429, "invalid request rate for scope tenant", "rate limited"),
     ],
 )
-def test_transient_status_beats_body_words(status: int, body: str, expected: str) -> None:
+def test_transient_status_beats_body_words(
+    status: int, body: str, expected: str
+) -> None:
     assert _category(status, body.lower(), {}) == expected
 
 
@@ -55,5 +71,7 @@ def test_real_edge_signals_still_read_as_edge_blocked(body: str, headers: dict) 
         (400, "invalid payload", "backend validation failed"),
     ],
 )
-def test_auth_statuses_keep_their_categories(status: int, body: str, expected: str) -> None:
+def test_auth_statuses_keep_their_categories(
+    status: int, body: str, expected: str
+) -> None:
     assert _category(status, body, {}) == expected

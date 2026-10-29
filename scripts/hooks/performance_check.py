@@ -13,7 +13,7 @@ import sys
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from traigent.utils.secure_path import safe_open
 
@@ -56,7 +56,7 @@ def validate_path(path: Path) -> bool:
         return False
 
 
-def load_baseline(baseline_path: Path) -> Optional[Dict[str, Any]]:
+def load_baseline(baseline_path: Path) -> dict[str, Any] | None:
     """Load baseline performance metrics with validation."""
     # Security: Validate path
     if not validate_path(baseline_path):
@@ -84,7 +84,7 @@ def load_baseline(baseline_path: Path) -> Optional[Dict[str, Any]]:
         return None
 
 
-def run_quick_performance_test() -> Dict[str, Any]:
+def run_quick_performance_test() -> dict[str, Any]:
     """Run a quick performance test using mock mode with security hardening."""
     test_script = """
 import json
@@ -215,7 +215,7 @@ except Exception as e:
 
 
 def check_regression(
-    current: Dict[str, Any], baseline: Dict[str, Any], threshold: float = 0.05
+    current: dict[str, Any], baseline: dict[str, Any], threshold: float = 0.05
 ) -> bool:
     """
     Check if there's a performance regression.
@@ -281,7 +281,7 @@ def check_regression(
     return False
 
 
-def update_baseline(metrics: Dict[str, Any], baseline_path: Path):
+def update_baseline(metrics: dict[str, Any], baseline_path: Path):
     """Update the baseline with new metrics and audit logging."""
     # Security: Validate path
     if not validate_path(baseline_path):
@@ -308,13 +308,9 @@ def update_baseline(metrics: Dict[str, Any], baseline_path: Path):
         )
         try:
             repo_root = Path(__file__).parent.parent.parent.resolve()
-            with safe_open(
-                baseline_path, repo_root, mode="r", encoding="utf-8"
-            ) as f:
+            with safe_open(baseline_path, repo_root, mode="r", encoding="utf-8") as f:
                 backup_data = json.load(f)
-            with safe_open(
-                backup_path, repo_root, mode="w", encoding="utf-8"
-            ) as f:
+            with safe_open(backup_path, repo_root, mode="w", encoding="utf-8") as f:
                 json.dump(backup_data, f, indent=2)
             logger.info(f"Created backup at {backup_path}")
         except Exception as e:
@@ -343,7 +339,7 @@ def update_baseline(metrics: Dict[str, Any], baseline_path: Path):
         raise
 
 
-def log_audit_event(event: Dict[str, Any]):
+def log_audit_event(event: dict[str, Any]):
     """Log audit events for compliance and tracking."""
     audit_file = Path("audit_log.jsonl")
     try:
@@ -398,7 +394,7 @@ def main():
             "accuracy"
         ]
         if improvement > 0.1:
-            print(f"🎉 Performance improved by {improvement*100:.1f}%!")
+            print(f"🎉 Performance improved by {improvement * 100:.1f}%!")
             response = input("Update baseline? (y/N): ")
             if response.lower() == "y":
                 update_baseline(current_metrics, baseline_path)

@@ -2684,7 +2684,9 @@ class TestLegacyRetryEligibility:
 
         ops, request, exc, post = self._run(monkeypatch, status, body)
         with (
-            patch("traigent.cloud.api_operations.is_backend_offline", return_value=False),
+            patch(
+                "traigent.cloud.api_operations.is_backend_offline", return_value=False
+            ),
             patch("traigent.cloud.api_operations.AIOHTTP_AVAILABLE", True),
             patch.object(ops, "_post_session_creation", new=post),
             patch.object(ops, "_is_governed_request", return_value=False),
@@ -2700,7 +2702,9 @@ class TestLegacyRetryEligibility:
             monkeypatch, status, '{"error_code": "validation_error"}'
         )
         with (
-            patch("traigent.cloud.api_operations.is_backend_offline", return_value=False),
+            patch(
+                "traigent.cloud.api_operations.is_backend_offline", return_value=False
+            ),
             patch("traigent.cloud.api_operations.AIOHTTP_AVAILABLE", True),
             patch.object(ops, "_post_session_creation", new=post),
             patch.object(ops, "_is_governed_request", return_value=False),

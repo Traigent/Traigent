@@ -2031,9 +2031,13 @@ class TestTransientSubmitStatuses2818:
 
     async def _submit(self, ops):
         with (
-            patch("traigent.cloud.trial_operations.is_backend_offline", return_value=False),
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline", return_value=False
+            ),
             patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
-            patch("traigent.cloud.trial_operations.validate_configuration_run_submission"),
+            patch(
+                "traigent.cloud.trial_operations.validate_configuration_run_submission"
+            ),
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
             patch("traigent.cloud.trial_operations.asyncio.sleep", new=AsyncMock()),
         ):

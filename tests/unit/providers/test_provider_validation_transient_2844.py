@@ -28,7 +28,8 @@ def _google_status(exc: Exception):
     genai = SimpleNamespace(Client=Mock(return_value=client))
     mods = {"google": SimpleNamespace(genai=genai), "google.genai": genai}
     with patch.dict(sys.modules, mods):
-        with patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-google-key"}):  # pragma: allowlist secret
+        fake_env = {"GOOGLE_API_KEY": "fake-google-key"}  # pragma: allowlist secret
+        with patch.dict("os.environ", fake_env):
             return ProviderValidator(timeout=5)._validate_google()
 
 

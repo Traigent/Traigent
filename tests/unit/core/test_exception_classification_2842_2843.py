@@ -62,9 +62,18 @@ def test_local_exception_types_are_never_text_matched() -> None:
         (_HttpError(429), VendorErrorCategory.RATE_LIMIT),
         (_HttpError(401), VendorErrorCategory.AUTHENTICATION),
         (_HttpError(503), VendorErrorCategory.SERVICE_UNAVAILABLE),
-        (RuntimeError("Error code: 429 - rate limit reached"), VendorErrorCategory.RATE_LIMIT),
-        (RuntimeError("You exceeded your current quota"), VendorErrorCategory.QUOTA_EXHAUSTED),
-        (RuntimeError("Error code: 401 invalid_api_key"), VendorErrorCategory.AUTHENTICATION),
+        (
+            RuntimeError("Error code: 429 - rate limit reached"),
+            VendorErrorCategory.RATE_LIMIT,
+        ),
+        (
+            RuntimeError("You exceeded your current quota"),
+            VendorErrorCategory.QUOTA_EXHAUSTED,
+        ),
+        (
+            RuntimeError("Error code: 401 invalid_api_key"),
+            VendorErrorCategory.AUTHENTICATION,
+        ),
         (RuntimeError("rate_limit_exceeded"), VendorErrorCategory.RATE_LIMIT),
     ],
 )
@@ -170,4 +179,6 @@ def test_non_provider_key_tokens_stay_per_example(exc: Exception) -> None:
 
 
 def test_rate_limit_status_from_non_sdk_client_still_classifies() -> None:
-    assert classify_vendor_error(_UserServiceError(429)) is VendorErrorCategory.RATE_LIMIT
+    assert (
+        classify_vendor_error(_UserServiceError(429)) is VendorErrorCategory.RATE_LIMIT
+    )

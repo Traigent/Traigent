@@ -5,8 +5,8 @@ Classify technical support requests by issue type and severity,
 helping prioritize and route support tickets effectively.
 """
 
-import sys
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 import traigent
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -92,7 +92,7 @@ class TechSupportProblem(BaseLangChainProblem):
             expected_model_ranking=["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"],
         )
 
-    def __init__(self, config: Optional[ProblemConfig] = None):
+    def __init__(self, config: ProblemConfig | None = None):
         if config is None:
             config = self.get_default_config()
         super().__init__(config)
@@ -425,10 +425,10 @@ Category:""",
 
     def evaluate_custom_metrics(
         self,
-        outputs: List[Any],
-        expected_outputs: List[Any],
-        errors: List[Optional[str]],
-    ) -> Dict[str, float]:
+        outputs: list[Any],
+        expected_outputs: list[Any],
+        errors: list[str | None],
+    ) -> dict[str, float]:
         """Compute tech support specific metrics."""
         metrics = {}
 
@@ -445,7 +445,7 @@ Category:""",
         routing_effective = 0
 
         for i, (output, expected, error) in enumerate(
-            zip(outputs, expected_outputs, errors)
+            zip(outputs, expected_outputs, errors, strict=False)
         ):
             if error is None and expected is not None:
                 total += 1

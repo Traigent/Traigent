@@ -9,7 +9,8 @@ A challenging code analysis problem that tests the model's ability to:
 """
 
 import sys
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 import traigent
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -101,7 +102,7 @@ class CodeReviewProblem(BaseLangChainProblem):
             expected_model_ranking=["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"],
         )
 
-    def __init__(self, config: Optional[ProblemConfig] = None):
+    def __init__(self, config: ProblemConfig | None = None):
         if config is None:
             config = self.get_default_config()
         super().__init__(config)
@@ -390,7 +391,7 @@ class CodeReviewProblem(BaseLangChainProblem):
                 },
                 metadata={
                     "difficulty": data["difficulty"],
-                    "example_id": f"code_{i+1:03d}",
+                    "example_id": f"code_{i + 1:03d}",
                     "issue_count": len(data["expected_issues"]),
                     "language": data["language"],
                 },
@@ -528,10 +529,10 @@ Provide a thorough code review with specific, actionable feedback.""",
 
     def evaluate_custom_metrics(
         self,
-        outputs: List[Any],
-        expected_outputs: List[Any],
-        errors: List[Optional[str]],
-    ) -> Dict[str, float]:
+        outputs: list[Any],
+        expected_outputs: list[Any],
+        errors: list[str | None],
+    ) -> dict[str, float]:
         """Compute code review specific metrics."""
         metrics = {}
 
@@ -544,7 +545,7 @@ Provide a thorough code review with specific, actionable feedback.""",
         total_outputs = 0
 
         for i, (output, expected, error) in enumerate(
-            zip(outputs, expected_outputs, errors)
+            zip(outputs, expected_outputs, errors, strict=False)
         ):
             if (
                 error is None
@@ -616,7 +617,9 @@ Provide a thorough code review with specific, actionable feedback.""",
         # Severity accuracy (simplified)
         severity_correct = 0
         severity_total = 0
-        for output, expected, error in zip(outputs, expected_outputs, errors):
+        for output, expected, error in zip(
+            outputs, expected_outputs, errors, strict=False
+        ):
             if error is None and expected is not None and output:
                 expected_issues = expected.get("issues", [])
                 output_str = str(output).lower()
@@ -632,7 +635,9 @@ Provide a thorough code review with specific, actionable feedback.""",
 
         # Suggestion quality (based on keyword presence)
         suggestion_scores = []
-        for output, expected, error in zip(outputs, expected_outputs, errors):
+        for output, expected, error in zip(
+            outputs, expected_outputs, errors, strict=False
+        ):
             if error is None and expected is not None and output:
                 output_str = str(output).lower()
                 quality_indicators = [
