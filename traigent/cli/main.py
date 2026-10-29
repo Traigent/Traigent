@@ -23,6 +23,7 @@ from traigent.cli.hooks_commands import hooks
 from traigent.cli.local_commands import register_local_commands
 from traigent.cli.sync_commands import register_sync_command
 from traigent.config.types import accepted_algorithm_values
+from traigent.security.redaction import redact_sensitive_text
 from traigent.storage.local_storage import LocalStorageManager, OptimizationSession
 from traigent.utils.console import configure_stdout_encoding
 from traigent.utils.logging import setup_logging
@@ -188,6 +189,53 @@ def _display_optimization_result(
     console.print(f"   Successful trials: {len(result.successful_trials)}")
 
     # Save result
+    result_name = f"{func_name}_{algorithm}_{max_trials}"
+    persistence.save_result(result, result_name)
+    console.print(f"   Results saved as: {result_name}")
+
+
+def _failed_run_reason(result: Any) -> str | None:
+    """Why a function's run counts as failed, or None when it does not (#2823).
+
+    A run is failed when its status is FAILED, or when it executed trials and
+    none succeeded. A user-cancelled run keeps its partial-results handling.
+    """
+    if getattr(result, "stop_reason", None) == "user_cancelled":
+        return None
+    status = str(getattr(result, "status", "")).lower()
+    if status.endswith("cancelled"):
+        return None
+    trials = getattr(result, "trials", None)
+    successful = getattr(result, "successful_trials", None)
+    no_success = bool(trials) and successful is not None and len(successful) == 0
+    if status.endswith("failed") or no_success:
+        first_error = next(
+            (
+                getattr(t, "error_message", None)
+                for t in trials or ()
+                if getattr(t, "error_message", None)
+            ),
+            None,
+        )
+        detail = (
+            f"; first trial error: {redact_sensitive_text(str(first_error))}"
+            if first_error
+            else ""
+        )
+        return f"all trials failed ({len(trials or ())} run, 0 successful){detail}"
+    return None
+
+
+def _display_failed_optimization_result(
+    func_name: str,
+    result: Any,
+    reason: str,
+    persistence: PersistenceManager,
+    algorithm: str,
+    max_trials: int,
+) -> None:
+    """Report a run whose trials all failed, without the success tick."""
+    console.print(f"❌ [red]Error optimizing {func_name}: {reason}[/red]")
     result_name = f"{func_name}_{algorithm}_{max_trials}"
     persistence.save_result(result, result_name)
     console.print(f"   Results saved as: {result_name}")
@@ -368,6 +416,12 @@ def _run_single_optimization(
         import asyncio
 
         result = asyncio.run(func.optimize(**optimize_kwargs))
+        failure = _failed_run_reason(result)
+        if failure is not None:
+            _display_failed_optimization_result(
+                func_name, result, failure, persistence, algorithm, max_trials
+            )
+            return None
         _display_optimization_result(
             func_name, result, persistence, algorithm, max_trials
         )
@@ -792,6 +846,13 @@ async def _run_optimizations(
         console.print(f"\n[bold blue]Optimizing: {func_name}[/bold blue]")
         try:
             result = await func.optimize(**optimize_kwargs)
+            failure = _failed_run_reason(result)
+            if failure is not None:
+                _display_failed_optimization_result(
+                    func_name, result, failure, persistence, algorithm, max_trials
+                )
+                failed_functions.append(func_name)
+                continue
             _display_optimization_result(
                 func_name, result, persistence, algorithm, max_trials
             )
@@ -914,7 +975,8 @@ def optimize(
                 verbose,
             )
         )
-        _display_optimization_summary(results, output_dir_resolved)
+        if results:
+            _display_optimization_summary(results, output_dir_resolved)
         if failed_functions:
             console.print(
                 f"\n[red]❌ {len(failed_functions)} function(s) failed to "
