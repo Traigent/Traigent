@@ -174,6 +174,11 @@ _AWS_CREDENTIAL_ERROR_CODES = frozenset(
         "SignatureDoesNotMatch",
         "ExpiredToken",
         "ExpiredTokenException",
+        "AccessDeniedException",  # Bedrock model/permission denial (S3 is AccessDenied)
+        "InvalidAccessKeyId",
+        "IncompleteSignature",
+        "MissingAuthenticationToken",
+        "AuthFailure",
     }
 )
 
@@ -228,7 +233,11 @@ _QUOTA_CATEGORIES = frozenset(
 
 
 _STRONG_FUNDS_MARKERS = ("credit balance", "insufficient funds", "insufficient credits")
-_STRONG_QUOTA_MARKERS = ("insufficient_quota", "exceeded your current quota")
+_STRONG_QUOTA_MARKERS = ("insufficient_quota",)
+#: "exceeded your current quota" is terminal for OpenAI but also opens Gemini's
+#: per-minute 429 ("... Please retry in 21s"); a retry hint makes it a window.
+_QUOTA_PHRASE = "exceeded your current quota"
+_RETRY_HINTS = ("retry in", "retry_delay", "retry after", "try again in", "perminute")
 
 
 def _quota_category_from_text(msg: str) -> VendorErrorCategory | None:
@@ -236,6 +245,10 @@ def _quota_category_from_text(msg: str) -> VendorErrorCategory | None:
     if any(m in msg for m in _STRONG_FUNDS_MARKERS):
         return VendorErrorCategory.INSUFFICIENT_FUNDS
     if any(m in msg for m in _STRONG_QUOTA_MARKERS):
+        return VendorErrorCategory.QUOTA_EXHAUSTED
+    if _QUOTA_PHRASE in msg:
+        if any(h in msg for h in _RETRY_HINTS):
+            return None
         return VendorErrorCategory.QUOTA_EXHAUSTED
     # Per-window limits ("Quota exceeded ... per minute", "Rate limit reached")
     # recover on their own; only an exhausted account/plan is fatal.
@@ -372,12 +385,15 @@ _EXPLICIT_KEY_VERDICTS = (
     "incorrect api key provided",
     "invalid x-api-key",
     "api key not valid. please pass a valid api key",
+    "no auth credentials found",
+    "you didn't provide an api key",
 )
 _PROVIDER_HOSTS = (
     "api.openai.com",
     "api.anthropic.com",
     "generativelanguage.googleapis.com",
     "api.cohere.com",
+    "api.cohere.ai",
     "api.mistral.ai",
     "api.groq.com",
     "openrouter.ai",

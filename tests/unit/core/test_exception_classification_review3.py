@@ -145,3 +145,35 @@ def test_aws_access_denied_is_not_a_credential_failure() -> None:
 
     assert http_status_of(ClientError("AccessDenied", 403)) is None
     assert http_status_of(ClientError("UnrecognizedClientException", 403)) == 403
+
+
+def test_gemini_per_minute_429_with_current_quota_wording_is_a_rate_limit() -> None:
+    exc = _SdkError(
+        429,
+        "You exceeded your current quota (free_tier_requests, limit: 15). "
+        "Please retry in 21.5s [retry_delay {seconds: 21}]",
+    )
+    assert classify_vendor_error(exc) is VendorErrorCategory.RATE_LIMIT
+    exc = _SdkError(429, "You exceeded your current quota, check your plan")
+    assert classify_vendor_error(exc) is VendorErrorCategory.QUOTA_EXHAUSTED
+
+
+def test_bedrock_access_denied_exception_is_a_credential_failure() -> None:
+    from traigent.core.exception_handler import http_status_of
+
+    class ClientError(Exception):
+        def __init__(self, code: str) -> None:
+            super().__init__(code)
+            self.response = {
+                "Error": {"Code": code},
+                "ResponseMetadata": {"HTTPStatusCode": 403},
+            }
+
+    assert http_status_of(ClientError("AccessDeniedException")) == 403
+    assert http_status_of(ClientError("AccessDenied")) is None
+
+
+def test_wrapped_provider_missing_key_wording_is_key_failure() -> None:
+    assert (
+        is_provider_api_key_failure(RuntimeError("No auth credentials found")) is True
+    )
