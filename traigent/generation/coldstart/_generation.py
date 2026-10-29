@@ -95,115 +95,125 @@ def generate_and_score(
             break
         pulls += 1
 
-        raw_inputs, raw_output = candidate
-        # Snapshot BOTH halves independently, right now, before anything
-        # else runs -- this is the only point at which the executor still
-        # shares the generator's own (possibly still-mutable) objects.
-        inputs_snapshot, ok = _safe_deepcopy(raw_inputs)
-        if not ok:
-            continue
-        output_snapshot, ok = _safe_deepcopy(raw_output)
-        if not ok:
-            continue
-
-        # FREEZE what will be written, through JSON, before the verifier ever
-        # sees the candidate.
-        #
-        # Copying is not enough here. A verifier that checks a value and then
-        # mutates it --
-        #
-        #     assert output["answer"] == "4"
-        #     output["answer"] = "5"
-        #     return ScoreReceipt(passed=True, ...)
-        #
-        # -- lands its mutation on whatever object we later write, producing a
-        # row whose receipt was earned for different content. Handing it a
-        # deepcopy closes that for plain dicts and lists, but NOT in general:
-        # copy.deepcopy returns whatever __deepcopy__ says it should, so a
-        # JSON-serializable dict subclass whose __deepcopy__ returns self is
-        # handed the very object we are about to write, and the mismatch is
-        # back. Object identity is not something this executor can rely on when
-        # the object comes from the caller.
-        #
-        # A JSON round-trip does not have that weakness. json.loads always
-        # builds fresh plain containers, so the frozen pair is provably
-        # independent of anything the caller controls -- and it is exactly the
-        # bytes the artifact writer will serialize, so "what was verified" and
-        # "what was written" are the same value by construction rather than by
-        # a chain of copies each of which has to be trusted.
-        #
-        # Whether the mutation is malice or a verifier normalising in place
-        # (trimming whitespace, coercing a type) does not matter: the receipt
-        # must describe the row it is attached to.
-        frozen_inputs, frozen_output, ok = _freeze_through_json(
-            inputs_snapshot, output_snapshot
-        )
-        if not ok:
-            # Also subsumes the old separate serializability screen: a
-            # candidate that cannot survive the round-trip could never have
-            # been written, and is rejected before a verifier spends effort.
-            continue
-
-        # EVERY gate below runs on the FROZEN value, never on the snapshot.
-        #
-        # Validating the snapshot and writing the frozen value is the same
-        # bug as certifying one value and writing another: a caller-supplied
-        # object may answer differently on each read, so a shape that binds
-        # to the target on read 1 can be a shape that does not on read 3.
-        # Reproduced on the merged code before this change -- a row was
-        # written whose only key was one the target cannot accept, having
-        # passed the bind check moments earlier.
-        #
-        # Gating the bytes we are about to write makes "what was checked"
-        # and "what was written" the same value by construction.
-        if not _well_formed(frozen_inputs):
-            continue
-        if not _callable_with(target_signature, frozen_inputs):
-            # The row's input keys don't bind against func's real signature
-            # (missing a required parameter, or an unexpected keyword func
-            # can't accept) -- it would raise if ever called against the
-            # target, so it is not a usable eval-set row.
-            continue
-        dedup_key = _canonical_key(frozen_inputs)
-        if dedup_key in seen:
-            continue
-        # The verifier's copy is derived from the ALREADY-FROZEN value, never
-        # from the caller's object a second time. Freezing twice from the
-        # caller would re-serialize it, and an object is free to serialize
-        # differently on each call (a dict subclass whose keys()/items()
-        # returns different data on successive reads does exactly that --
-        # confirmed, not theoretical). The verifier would then certify one
-        # value while a different one was written. frozen_* are plain JSON
-        # containers, so this round-trip is deterministic by construction.
-        verifier_inputs, verifier_output, ok = _freeze_through_json(
-            frozen_inputs, frozen_output
-        )
-        if not ok:
-            continue
-
-        receipt = verifier.verify(inputs=verifier_inputs, output=verifier_output)
-        if receipt is None:
-            # No verifier evidence -> this row is never written. Its
-            # inputs must NOT be added to `seen`: dedup is only against
-            # inputs already ACCEPTED, so a later candidate with the same
-            # inputs still gets a real chance at verification.
-            continue
-        if not _is_valid_receipt(receipt):
-            # Not a real ScoreReceipt, or one with a malformed field -- a
-            # duck-typed lookalike must never be accepted as evidence.
-            continue
-        if receipt.verifier_kind != verifier.kind:
-            # Defense in depth: a verify() implementation must not report a
-            # kind other than the one the class declared.
-            continue
-        if receipt.passed is not True:
-            # Exact identity, not truthiness: a non-empty string like
-            # "false" is truthy but is not a pass.
-            continue
-
-        seen.add(dedup_key)
-        accepted.append((frozen_inputs, frozen_output, receipt))
+        _score_candidate(candidate, verifier, target_signature, seen, accepted)
     return accepted
+
+
+def _score_candidate(
+    candidate: tuple[Mapping[str, Any], Any],
+    verifier: LocalVerifier,
+    target_signature: inspect.Signature,
+    seen: set[str],
+    accepted: list[VerifiedRow],
+) -> None:
+    raw_inputs, raw_output = candidate
+    # Snapshot BOTH halves independently, right now, before anything
+    # else runs -- this is the only point at which the executor still
+    # shares the generator's own (possibly still-mutable) objects.
+    inputs_snapshot, ok = _safe_deepcopy(raw_inputs)
+    if not ok:
+        return
+    output_snapshot, ok = _safe_deepcopy(raw_output)
+    if not ok:
+        return
+
+    # FREEZE what will be written, through JSON, before the verifier ever
+    # sees the candidate.
+    #
+    # Copying is not enough here. A verifier that checks a value and then
+    # mutates it --
+    #
+    #     assert output["answer"] == "4"
+    #     output["answer"] = "5"
+    #     return ScoreReceipt(passed=True, ...)
+    #
+    # -- lands its mutation on whatever object we later write, producing a
+    # row whose receipt was earned for different content. Handing it a
+    # deepcopy closes that for plain dicts and lists, but NOT in general:
+    # copy.deepcopy returns whatever __deepcopy__ says it should, so a
+    # JSON-serializable dict subclass whose __deepcopy__ returns self is
+    # handed the very object we are about to write, and the mismatch is
+    # back. Object identity is not something this executor can rely on when
+    # the object comes from the caller.
+    #
+    # A JSON round-trip does not have that weakness. json.loads always
+    # builds fresh plain containers, so the frozen pair is provably
+    # independent of anything the caller controls -- and it is exactly the
+    # bytes the artifact writer will serialize, so "what was verified" and
+    # "what was written" are the same value by construction rather than by
+    # a chain of copies each of which has to be trusted.
+    #
+    # Whether the mutation is malice or a verifier normalising in place
+    # (trimming whitespace, coercing a type) does not matter: the receipt
+    # must describe the row it is attached to.
+    frozen_inputs, frozen_output, ok = _freeze_through_json(
+        inputs_snapshot, output_snapshot
+    )
+    if not ok:
+        # Also subsumes the old separate serializability screen: a
+        # candidate that cannot survive the round-trip could never have
+        # been written, and is rejected before a verifier spends effort.
+        return
+
+    # EVERY gate below runs on the FROZEN value, never on the snapshot.
+    #
+    # Validating the snapshot and writing the frozen value is the same
+    # bug as certifying one value and writing another: a caller-supplied
+    # object may answer differently on each read, so a shape that binds
+    # to the target on read 1 can be a shape that does not on read 3.
+    # Reproduced on the merged code before this change -- a row was
+    # written whose only key was one the target cannot accept, having
+    # passed the bind check moments earlier.
+    #
+    # Gating the bytes we are about to write makes "what was checked"
+    # and "what was written" the same value by construction.
+    if not _well_formed(frozen_inputs):
+        return
+    if not _callable_with(target_signature, frozen_inputs):
+        # The row's input keys don't bind against func's real signature
+        # (missing a required parameter, or an unexpected keyword func
+        # can't accept) -- it would raise if ever called against the
+        # target, so it is not a usable eval-set row.
+        return
+    dedup_key = _canonical_key(frozen_inputs)
+    if dedup_key in seen:
+        return
+    # The verifier's copy is derived from the ALREADY-FROZEN value, never
+    # from the caller's object a second time. Freezing twice from the
+    # caller would re-serialize it, and an object is free to serialize
+    # differently on each call (a dict subclass whose keys()/items()
+    # returns different data on successive reads does exactly that --
+    # confirmed, not theoretical). The verifier would then certify one
+    # value while a different one was written. frozen_* are plain JSON
+    # containers, so this round-trip is deterministic by construction.
+    verifier_inputs, verifier_output, ok = _freeze_through_json(
+        frozen_inputs, frozen_output
+    )
+    if not ok:
+        return
+
+    receipt = verifier.verify(inputs=verifier_inputs, output=verifier_output)
+    if receipt is None:
+        # No verifier evidence -> this row is never written. Its
+        # inputs must NOT be added to `seen`: dedup is only against
+        # inputs already ACCEPTED, so a later candidate with the same
+        # inputs still gets a real chance at verification.
+        return
+    if not _is_valid_receipt(receipt):
+        # Not a real ScoreReceipt, or one with a malformed field -- a
+        # duck-typed lookalike must never be accepted as evidence.
+        return
+    if receipt.verifier_kind != verifier.kind:
+        # Defense in depth: a verify() implementation must not report a
+        # kind other than the one the class declared.
+        return
+    if receipt.passed is not True:
+        # Exact identity, not truthiness: a non-empty string like
+        # "false" is truthy but is not a pass.
+        return
+
+    seen.add(dedup_key)
+    accepted.append((frozen_inputs, frozen_output, receipt))
 
 
 def _callable_with(signature: inspect.Signature, inputs: Mapping[str, Any]) -> bool:
