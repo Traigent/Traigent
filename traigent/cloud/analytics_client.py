@@ -87,6 +87,10 @@ if TYPE_CHECKING:
         ObservabilityVariantListDTO,
     )
 
+_AGENT_DECISION = "agent decision"
+_LITERAL_00_00 = "+00:00"
+_MALFORMED_AGENT_DECISION_RESPONSE = "Malformed agent decision response."
+
 OBSERVABILITY_TRACE_SEARCH = "observability trace search"
 DECISION_BRIEF = "decision brief"
 
@@ -3498,7 +3502,7 @@ class BackendAnalyticsClient:
         aid = _exact_agent_id_segment(agent_id)
         payload = await self._post_json(
             f"/api/v1beta/agent-decisions/{aid}/ensure",
-            what="agent decision",
+            what=_AGENT_DECISION,
             envelope=False,
             json_body={"kind": kind},
             headers=self._agent_decision_headers(project_id),
@@ -3515,7 +3519,7 @@ class BackendAnalyticsClient:
         aid = _exact_agent_id_segment(agent_id)
         payload = await self._get_json(
             f"/api/v1beta/agent-decisions/{aid}/latest",
-            what="agent decision",
+            what=_AGENT_DECISION,
             envelope=False,
             headers=self._agent_decision_headers(project_id),
         )
@@ -3558,7 +3562,7 @@ class BackendAnalyticsClient:
             raise ValueError("retry_nonce is not a valid retry nonce.")
         payload = await self._post_json(
             f"/api/v1beta/agent-decisions/{decision_id}/answer",
-            what="agent decision",
+            what=_AGENT_DECISION,
             envelope=False,
             json_body={
                 "answer": answer,
@@ -3582,7 +3586,7 @@ def _valid_agent_decision_timestamp(value: Any, *, nullable: bool) -> bool:
     ):
         return False
     try:  # the shape is right; the date and time must also exist (always UTC, "Z")
-        datetime.fromisoformat(value[:-1] + "+00:00")
+        datetime.fromisoformat(value[:-1] + _LITERAL_00_00)
     except ValueError:  # silent-ok: unparseable timestamp fails contract validation; caller returns a fixed error
         return False
     return True
@@ -3639,14 +3643,14 @@ def _validated_agent_decision_response(
     fixed message (the offending value is never echoed).
     """
     if not isinstance(payload, dict) or set(payload) != {"decision"}:
-        raise AnalyticsClientError("Malformed agent decision response.")
+        raise AnalyticsClientError(_MALFORMED_AGENT_DECISION_RESPONSE)
     decision = payload["decision"]
     if decision is None:
         if endpoint == "answer":
-            raise AnalyticsClientError("Malformed agent decision response.")
+            raise AnalyticsClientError(_MALFORMED_AGENT_DECISION_RESPONSE)
         return payload
     if not isinstance(decision, dict) or set(decision) != _AGENT_DECISION_KEYS:
-        raise AnalyticsClientError("Malformed agent decision response.")
+        raise AnalyticsClientError(_MALFORMED_AGENT_DECISION_RESPONSE)
     try:
         ok = (
             isinstance(decision["decision_id"], str)
@@ -3686,7 +3690,7 @@ def _validated_agent_decision_response(
         ok = False
 
     if not ok:
-        raise AnalyticsClientError("Malformed agent decision response.")
+        raise AnalyticsClientError(_MALFORMED_AGENT_DECISION_RESPONSE)
     return payload
 
 
@@ -4013,7 +4017,7 @@ def _require_observability_datetime(value: Any, *, what: str) -> str:
             f"{what} must be an ISO 8601 date-time."
         )
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", _LITERAL_00_00))
     except ValueError as exc:
         raise AnalyticsClientError(
             "Malformed observability analysis insights response: "
@@ -4240,7 +4244,7 @@ def _project_observability_analysis_insights(
 def _parse_observability_time(value: str, *, field: str) -> datetime:
     text = _require_non_empty(value, field=field)
     try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(text.replace("Z", _LITERAL_00_00))
     except ValueError as exc:
         raise ValueError(f"{field} must be an ISO 8601 date-time.") from exc
     if parsed.utcoffset() is None:
