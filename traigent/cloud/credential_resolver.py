@@ -116,31 +116,40 @@ class CredentialResolver:
 
         if provided:
             # Always prefer explicitly provided credentials
-            api_key_token = (
-                self._get_api_key_token_fn() if self._get_api_key_token_fn else None
-            )
+            api_key_token = CredentialResolver._provided_api_key_token(self)
             if provided.api_key and api_key_token is None:
-                expires_meta = (
-                    provided.metadata.get("expires_at") if provided.metadata else None
-                )
+                expires_meta = CredentialResolver._provided_expiry_metadata(provided)
                 expires_at = None
                 if isinstance(expires_meta, str):
                     try:
                         expires_at = datetime.fromisoformat(expires_meta)
                     except ValueError:
                         expires_at = None
-                if self._set_api_key_token_fn:
-                    self._set_api_key_token_fn(
-                        provided.api_key,
-                        source=(
-                            provided.metadata.get("source")
-                            if provided.metadata
-                            else None
-                        ),
-                        expires_at=expires_at,
-                    )
+                CredentialResolver._set_provided_token(self, provided, expires_at)
             return provided
 
+        return await CredentialResolver._load_unprovided_credentials(self, target_mode)
+
+    def _provided_api_key_token(self) -> Any:
+        return self._get_api_key_token_fn() if self._get_api_key_token_fn else None
+
+    @staticmethod
+    def _provided_expiry_metadata(provided: AuthCredentials) -> Any:
+        return provided.metadata.get("expires_at") if provided.metadata else None
+
+    def _set_provided_token(
+        self, provided: AuthCredentials, expires_at: datetime | None
+    ) -> None:
+        if self._set_api_key_token_fn:
+            self._set_api_key_token_fn(
+                provided.api_key,
+                source=(provided.metadata.get("source") if provided.metadata else None),
+                expires_at=expires_at,
+            )
+
+    async def _load_unprovided_credentials(
+        self, target_mode: AuthMode
+    ) -> AuthCredentials | None:
         # Precedence (SDK #2227): an explicitly set environment credential
         # always beats the cached login, matching CredentialManager. The cache
         # is only consulted when the environment does not supply the credential.
@@ -290,81 +299,24 @@ class CredentialResolver:
                         except ValueError:
                             expires_at = None
                 else:
-                    api_key = CredentialManager.get_api_key()
-                    if not api_key:
-                        api_key = os.getenv("TRAIGENT_API_KEY")
-                        if api_key:
-                            metadata["source"] = "environment"
-
-                if api_key:
-                    if self._set_api_key_token_fn:
-                        self._set_api_key_token_fn(
-                            api_key,
-                            source=metadata.get("source"),
-                            expires_at=expires_at,
-                        )
-                    creds = AuthCredentials(
-                        mode=mode,
-                        api_key=api_key,
-                        backend_url=backend_url,
-                        metadata=metadata,
-                        expires_at=(
-                            expires_at.timestamp()
-                            if isinstance(expires_at, datetime)
-                            else None
-                        ),
-                    )
-                    return creds
-
-            elif mode == AuthMode.JWT_TOKEN:
-                jwt_token = None
-                refresh_token = None
-                metadata = {}  # Reset for this branch
-                backend_url = None
-                env_jwt = os.getenv("TRAIGENT_JWT_TOKEN", "").strip()
-                if env_jwt:
-                    # Environment first (SDK #2227): beats stored CLI JWT.
-                    jwt_token = env_jwt
-                    metadata["source"] = "environment"
-                elif manager_creds and manager_creds.get("jwt_token"):
-                    jwt_token = manager_creds.get("jwt_token")
-                    refresh_token = manager_creds.get("refresh_token")
-                    metadata["source"] = manager_creds.get("source", "cli")
-                    backend_url = manager_creds.get("backend_url")
-                else:
-                    jwt_token = os.getenv("TRAIGENT_JWT_TOKEN")
-
-                if jwt_token:
-                    return AuthCredentials(
-                        mode=mode,
-                        jwt_token=jwt_token,
-                        refresh_token=refresh_token,
-                        backend_url=backend_url,
-                        metadata=metadata,
+                    api_key = CredentialResolver._fallback_api_key(
+                        CredentialManager, metadata
                     )
 
-            elif mode == AuthMode.OAUTH2:
-                client_id = os.getenv("TRAIGENT_CLIENT_ID")
-                client_secret = os.getenv("TRAIGENT_CLIENT_SECRET")
-                if client_id and client_secret:
-                    return AuthCredentials(
-                        mode=mode, client_id=client_id, client_secret=client_secret
-                    )
+                return CredentialResolver._build_api_credentials(
+                    self,
+                    mode,
+                    api_key,
+                    backend_url,
+                    metadata,
+                    expires_at,
+                    AuthCredentials,
+                )
 
-            elif mode == AuthMode.SERVICE_TO_SERVICE:
-                service_key = os.getenv("TRAIGENT_SERVICE_KEY")
-                if service_key:
-                    return AuthCredentials(mode=mode, service_key=service_key)
-
-            elif mode == AuthMode.DEVELOPMENT:
-                dev_user = os.getenv("TRAIGENT_DEV_USER", "developer")
-                dev_token = os.getenv("TRAIGENT_DEV_AUTH_TOKEN", "").strip()
-                dev_metadata: dict[str, Any] = {"dev_user": dev_user}
-                # Pass-through the dev token so AuthManager._authenticate_development
-                # can validate the supplied credential against the env value.
-                if dev_token:
-                    dev_metadata["dev_token"] = dev_token
-                return AuthCredentials(mode=mode, metadata=dev_metadata)
+            else:
+                return CredentialResolver._load_non_api_credentials(
+                    mode, manager_creds, AuthCredentials, AuthMode
+                )
 
             return None
 
@@ -373,6 +325,114 @@ class CredentialResolver:
             return None
         except Exception:
             raise
+
+    def _build_api_credentials(
+        self,
+        mode: AuthMode,
+        api_key: Any,
+        backend_url: Any,
+        metadata: dict[str, Any],
+        expires_at: datetime | None,
+        AuthCredentials: type[AuthCredentials],
+    ) -> AuthCredentials | None:
+        if not api_key:
+            return None
+        if self._set_api_key_token_fn:
+            self._set_api_key_token_fn(
+                api_key,
+                source=metadata.get("source"),
+                expires_at=expires_at,
+            )
+        creds = AuthCredentials(
+            mode=mode,
+            api_key=api_key,
+            backend_url=backend_url,
+            metadata=metadata,
+            expires_at=(
+                expires_at.timestamp() if isinstance(expires_at, datetime) else None
+            ),
+        )
+        return creds
+
+    @staticmethod
+    def _fallback_api_key(CredentialManager: Any, metadata: dict[str, Any]) -> Any:
+        api_key = CredentialManager.get_api_key()
+        if not api_key:
+            api_key = os.getenv("TRAIGENT_API_KEY")
+            if api_key:
+                metadata["source"] = "environment"
+        return api_key
+
+    @staticmethod
+    def _load_non_api_credentials(
+        mode: AuthMode,
+        manager_creds: dict[str, Any] | None,
+        AuthCredentials: type[AuthCredentials],
+        AuthMode: type[AuthMode],
+    ) -> AuthCredentials | None:
+        if mode == AuthMode.JWT_TOKEN:
+            return CredentialResolver._load_jwt_credentials(
+                mode, manager_creds, AuthCredentials
+            )
+
+        elif mode == AuthMode.OAUTH2:
+            client_id = os.getenv("TRAIGENT_CLIENT_ID")
+            client_secret = os.getenv("TRAIGENT_CLIENT_SECRET")
+            if client_id and client_secret:
+                return AuthCredentials(
+                    mode=mode, client_id=client_id, client_secret=client_secret
+                )
+
+        elif mode == AuthMode.SERVICE_TO_SERVICE:
+            service_key = os.getenv("TRAIGENT_SERVICE_KEY")
+            if service_key:
+                return AuthCredentials(mode=mode, service_key=service_key)
+
+        elif mode == AuthMode.DEVELOPMENT:
+            dev_user = os.getenv("TRAIGENT_DEV_USER", "developer")
+            dev_token = os.getenv("TRAIGENT_DEV_AUTH_TOKEN", "").strip()
+            dev_metadata: dict[str, Any] = {"dev_user": dev_user}
+            # Pass-through the dev token so AuthManager._authenticate_development
+            # can validate the supplied credential against the env value.
+            if dev_token:
+                dev_metadata["dev_token"] = dev_token
+            return AuthCredentials(mode=mode, metadata=dev_metadata)
+
+        return None
+
+    @staticmethod
+    def _load_jwt_credentials(
+        mode: AuthMode,
+        manager_creds: dict[str, Any] | None,
+        AuthCredentials: type[AuthCredentials],
+    ) -> AuthCredentials | None:
+        jwt_token = None
+        refresh_token = None
+        metadata = {}  # Reset for this branch
+        backend_url = None
+        env_jwt = os.getenv("TRAIGENT_JWT_TOKEN", "").strip()
+        if env_jwt:
+            # Environment first (SDK #2227): beats stored CLI JWT.
+            jwt_token = env_jwt
+            metadata["source"] = "environment"
+        elif manager_creds and manager_creds.get("jwt_token"):
+            jwt_token = manager_creds.get("jwt_token")
+            refresh_token = manager_creds.get("refresh_token")
+            metadata["source"] = manager_creds.get("source", "cli")
+            backend_url = manager_creds.get("backend_url")
+        else:
+            jwt_token = os.getenv("TRAIGENT_JWT_TOKEN")
+
+        if jwt_token:
+            return AuthCredentials(
+                mode=mode,
+                jwt_token=jwt_token,
+                refresh_token=refresh_token,
+                backend_url=backend_url,
+                metadata=metadata,
+            )
+
+        return None
 
     async def cache(self, credentials: AuthCredentials) -> None:
         """Cache credentials to file with secure permissions.
