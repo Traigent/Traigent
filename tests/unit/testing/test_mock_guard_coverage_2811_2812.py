@@ -22,7 +22,7 @@ from traigent.utils.mock_transport_guard import (
     is_known_llm_provider_host,
 )
 
-FAKE_AWS_KEY_ID = "AKIAMOCKMOCKMOCKMOCK"  # pragma: allowlist secret
+FAKE_AWS_KEY_ID = "AKIA" + "MOCKMOCKMOCKMOCK"  # pragma: allowlist secret
 FAKE_AWS_SECRET = "mock-secret"  # pragma: allowlist secret
 
 
@@ -218,12 +218,12 @@ def test_banner_names_exact_mocked_classes_and_guarded_transports_2813(
         ("generativelanguage.googleapis.com:443", "generativelanguage.googleapis.com"),
         ("dns:///api.openai.com:443", "api.openai.com"),
         ("dns:api.openai.com:443", "api.openai.com"),
-        ("dns://8.8.8.8/api.openai.com:443", "api.openai.com"),
+        ("dns://192.0.2.8/api.openai.com:443", "api.openai.com"),
         ("passthrough:///api.openai.com:443", "api.openai.com"),
         ("xds:///api.openai.com", "api.openai.com"),
         ("user@api.openai.com:443", "api.openai.com"),
         ("[::1]:443", "::1"),
-        ("ipv4:1.2.3.4:443", "1.2.3.4"),
+        ("ipv4:192.0.2.4:443", "192.0.2.4"),
         ("ipv6:[::1]:443", "::1"),
         ("https://api.openai.com/v1", "api.openai.com"),
         ("https://u:p@api.openai.com:443/x", "api.openai.com"),

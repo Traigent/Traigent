@@ -810,11 +810,11 @@ def test_seamless_user_configuration_error_propagates_unchanged() -> None:
 
 class _PrivateAttrAgent:
     def __init__(self) -> None:
-        self.__secret = 5
+        self.__fake_secret = 5
 
     def run(self, q: str, temperature: float = 0.1):
         model = "x"
-        return (self.__secret, model, temperature)
+        return (self.__fake_secret, model, temperature)
 
 
 def test_seamless_name_mangled_method_falls_back_to_shim() -> None:

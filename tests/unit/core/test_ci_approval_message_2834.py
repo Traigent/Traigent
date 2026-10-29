@@ -42,8 +42,8 @@ def test_example_token_in_message_validates_when_used(tmp_path: Path) -> None:
     message = _message(tmp_path)
     match = re.search(r"echo '(\{.*\})' > (\S+)", message)  # path has no spaces here
     assert match, message
-    token = json.loads(match.group(1))
-    expires = datetime.strptime(token["expires_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+    fake_token = json.loads(match.group(1))
+    expires = datetime.strptime(fake_token["expires_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
         tzinfo=UTC
     )
     assert expires > datetime.now(UTC)

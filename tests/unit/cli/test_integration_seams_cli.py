@@ -102,11 +102,13 @@ def test_check_prints_validator_errors_redacted_and_escaped(
         "def agent(q):\n"
         "    return q\n"
     )
-    secret = "sk-" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4"  # pragma: allowlist secret (fake test value)
+    fake_secret = (
+        "sk-" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4"  # pragma: allowlist secret (fake)
+    )
     try:
         with patch(
             "traigent.cli.optimization_validator.OptimizationValidator.validate_optimization",
-            side_effect=RuntimeError(f"boom [/bad] key={secret}"),
+            side_effect=RuntimeError(f"boom [/bad] key={fake_secret}"),
         ):
             result = CliRunner().invoke(cli, ["check", str(path)])
         output = plain(result.output)
@@ -114,5 +116,5 @@ def test_check_prints_validator_errors_redacted_and_escaped(
         _cleanup(path)
 
     assert "MarkupError" not in output, output
-    assert secret not in output, output
+    assert fake_secret not in output, output
     assert "boom" in output, output

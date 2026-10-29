@@ -13,7 +13,7 @@ Run:
 
 To publish the run:
 
-    TRAIGENT_API_KEY=<key-with-experiments-write> \
+    TRAIGENT_API_KEY=<placeholder-key-with-experiments-write> \
       python -m traigent.examples.quickstart.publish_and_verify
 
 After a key-backed run completes, open {portal_url} and look for the

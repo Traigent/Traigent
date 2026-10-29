@@ -686,7 +686,9 @@ class TraigentAuthCLI:
         return result.metadata if result.state is KeyCheckState.VALID else None
 
     async def _check_api_key_state(
-        self, api_key: str, verbose: bool = False
+        self,
+        api_key: str,  # pragma: allowlist secret
+        verbose: bool = False,
     ) -> KeyCheckResult:
         """Ask the backend whether ``api_key`` is valid, as a tri-state.
 
