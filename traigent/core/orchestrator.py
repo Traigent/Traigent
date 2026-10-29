@@ -480,6 +480,53 @@ def _resolve_objective_metric(objective: Any, metrics: dict[str, Any]) -> Any:
     return metric_value
 
 
+# Non-recoverable categories get priority so we don't offer "resume" on
+# insufficient funds just because rate_limit happened to come first.
+_VENDOR_CATEGORY_PRIORITY = {
+    VendorErrorCategory.AUTHENTICATION: 0,
+    VendorErrorCategory.INSUFFICIENT_FUNDS: 1,
+    VendorErrorCategory.QUOTA_EXHAUSTED: 2,
+    VendorErrorCategory.SERVICE_UNAVAILABLE: 3,
+    VendorErrorCategory.RATE_LIMIT: 4,
+}
+
+
+def _vendor_category_rank(category: VendorErrorCategory) -> int:
+    return _VENDOR_CATEGORY_PRIORITY.get(category, len(_VENDOR_CATEGORY_PRIORITY))
+
+
+def _classify_vendor_pause(payload: VendorPauseError) -> VendorErrorCategory | None:
+    from traigent.core.exception_handler import classify_vendor_error
+
+    if payload.category is not None:
+        return payload.category
+    # category is declared optional; cascade through original_error
+    # then the message so an opaquely-wrapped original doesn't drop
+    # the trial from the vendor count.
+    if payload.original_error is not None:
+        category = classify_vendor_error(payload.original_error)
+        if category is not None:
+            return category
+    return classify_vendor_error(RuntimeError(str(payload)))
+
+
+def _classify_batch_vendor_error(r: PermittedTrialResult) -> VendorErrorCategory | None:
+    from traigent.core.exception_handler import classify_vendor_error
+
+    payload = getattr(r, "result", r)
+    if isinstance(payload, VendorPauseError):
+        return _classify_vendor_pause(payload)
+    if isinstance(payload, Exception):
+        return classify_vendor_error(payload)
+    if (
+        isinstance(payload, TrialResult)
+        and payload.status == TrialStatus.FAILED
+        and payload.error_message
+    ):
+        return classify_vendor_error(RuntimeError(payload.error_message))
+    return None
+
+
 class OptimizationOrchestrator:
     """Orchestrates the optimization process.
 
@@ -1661,6 +1708,46 @@ class OptimizationOrchestrator:
         bound_result, receipt = binding
         return receipt if bound_result is result else None
 
+    def _incumbent_backend_acknowledged(self, incumbent: Any) -> bool:
+        # The report binds the winner to its BACKEND trial id. If the
+        # incumbent's id was never minted+acknowledged by the backend (the
+        # slot request or result submission failed), the server cannot bind
+        # it — sending a report would be a 400 at best and an attestation of
+        # an unbound winner at worst. Fail closed: send NO report (the
+        # risk-register rule for the unbindable case).
+        manager = getattr(self, "backend_session_manager", None)
+        ack = (
+            getattr(manager, "is_trial_backend_acknowledged", None) if manager else None
+        )
+        session_id = getattr(self, "_active_session_id", None)
+        if callable(ack):
+            if session_id is None or not ack(session_id, incumbent.trial_id):
+                logger.debug(
+                    "certified_selection withheld: incumbent trial %s is not "
+                    "backend-acknowledged (unbindable)",
+                    incumbent.trial_id,
+                )
+                return False
+        return True
+
+    @staticmethod
+    def _collect_governed_certificates(
+        resolver: Any, governed: list[str]
+    ) -> dict[str, Any] | None:
+        calibrated_inputs = getattr(resolver, "_calibrated_inputs", {}) or {}
+        certificates: dict[str, Any] = {}
+        for name in governed:
+            certificate = getattr(calibrated_inputs.get(name), "certificate", None)
+            if certificate is None:
+                logger.debug(
+                    "certified_selection withheld: governed cvar %s has no "
+                    "certificate at finalize",
+                    name,
+                )
+                return None
+            certificates[name] = certificate
+        return certificates
+
     def _build_certified_selection_report(self) -> dict[str, Any] | None:
         """Phase 8: the client-attested certified-selection finalize report.
 
@@ -1685,25 +1772,10 @@ class OptimizationOrchestrator:
         incumbent = self._best_trial_cached
         if incumbent is None or not getattr(incumbent, "trial_id", None):
             return None
-        # The report binds the winner to its BACKEND trial id. If the
-        # incumbent's id was never minted+acknowledged by the backend (the
-        # slot request or result submission failed), the server cannot bind
-        # it — sending a report would be a 400 at best and an attestation of
-        # an unbound winner at worst. Fail closed: send NO report (the
-        # risk-register rule for the unbindable case).
-        manager = getattr(self, "backend_session_manager", None)
-        ack = (
-            getattr(manager, "is_trial_backend_acknowledged", None) if manager else None
-        )
-        session_id = getattr(self, "_active_session_id", None)
-        if callable(ack):
-            if session_id is None or not ack(session_id, incumbent.trial_id):
-                logger.debug(
-                    "certified_selection withheld: incumbent trial %s is not "
-                    "backend-acknowledged (unbindable)",
-                    incumbent.trial_id,
-                )
-                return None
+        if not OptimizationOrchestrator._incumbent_backend_acknowledged(
+            self, incumbent
+        ):
+            return None
         resolver = getattr(self, "knob_resolver", None)
         space = getattr(resolver, "_space", None) if resolver is not None else None
         if space is None:
@@ -1723,18 +1795,11 @@ class OptimizationOrchestrator:
         if not governed:
             return None
 
-        calibrated_inputs = getattr(resolver, "_calibrated_inputs", {}) or {}
-        certificates: dict[str, Any] = {}
-        for name in governed:
-            certificate = getattr(calibrated_inputs.get(name), "certificate", None)
-            if certificate is None:
-                logger.debug(
-                    "certified_selection withheld: governed cvar %s has no "
-                    "certificate at finalize",
-                    name,
-                )
-                return None
-            certificates[name] = certificate
+        certificates = OptimizationOrchestrator._collect_governed_certificates(
+            resolver, governed
+        )
+        if certificates is None:
+            return None
 
         from traigent.cloud.governance import build_certified_selection
 
@@ -1787,6 +1852,47 @@ class OptimizationOrchestrator:
         decisions = self.__dict__.setdefault("_promotion_decisions", {})
         decisions[config_hash] = decision
 
+    def _promotion_without_gate(
+        self, candidate_hash: str, candidate_trial: TrialResult
+    ) -> bool:
+        self._record_promotion(
+            candidate_hash,
+            "withheld_no_gate" if self._is_strict_evidence_mode() else "no_gate",
+        )
+        if self._is_strict_evidence_mode():
+            # RFC 0001 §3.6: a declared-governed CVAR demands
+            # certificate-backed promotion evidence; with no promotion
+            # gate there is no certification machinery, so the raw
+            # comparison MUST NOT promote (it would otherwise be counted
+            # as a certified promotion by _update_best_trial_cache and
+            # launder an uncertified winner — fail open).
+            return self._withhold_promotion("no promotion gate in strict evidence mode")
+        return self._simple_is_better(candidate_trial)
+
+    def _promotion_gate_failed(
+        self,
+        candidate_hash: str,
+        candidate_trial: TrialResult,
+        e: Exception,
+        decision: Any,
+    ) -> bool:
+        if decision is None:  # the gate itself failed (not the handling of its answer)
+            self._record_promotion(candidate_hash, "gate_error")
+        if self._is_strict_evidence_mode():
+            # Gate exception fails CLOSED in strict modes (Rule 1: a
+            # failing policy surface denies; it never silently degrades
+            # to the permissive simple comparison).
+            logger.exception(
+                "PromotionGate evaluation failed in strict evidence "
+                "mode; promotion withheld: %s",
+                e,
+            )
+            return self._withhold_promotion(f"gate exception: {e}")
+        logger.warning(
+            "PromotionGate evaluation failed, using simple comparison: %s", e
+        )
+        return self._simple_is_better(candidate_trial)
+
     def _evaluate_promotion(
         self,
         candidate_hash: str,
@@ -1802,21 +1908,7 @@ class OptimizationOrchestrator:
         """
         # If no promotion gate or no incumbent, use simple logic
         if self._promotion_gate is None:
-            self._record_promotion(
-                candidate_hash,
-                "withheld_no_gate" if self._is_strict_evidence_mode() else "no_gate",
-            )
-            if self._is_strict_evidence_mode():
-                # RFC 0001 §3.6: a declared-governed CVAR demands
-                # certificate-backed promotion evidence; with no promotion
-                # gate there is no certification machinery, so the raw
-                # comparison MUST NOT promote (it would otherwise be counted
-                # as a certified promotion by _update_best_trial_cache and
-                # launder an uncertified winner — fail open).
-                return self._withhold_promotion(
-                    "no promotion gate in strict evidence mode"
-                )
-            return self._simple_is_better(candidate_trial)
+            return self._promotion_without_gate(candidate_hash, candidate_trial)
         if self._incumbent_config_hash is None:
             self._record_promotion(candidate_hash, "no_incumbent")
             return True
@@ -1851,24 +1943,9 @@ class OptimizationOrchestrator:
             self._record_promotion(candidate_hash, str(decision.decision))
             return self._handle_promotion_decision(decision, candidate_trial)
         except Exception as e:
-            if (
-                decision is None
-            ):  # the gate itself failed (not the handling of its answer)
-                self._record_promotion(candidate_hash, "gate_error")
-            if self._is_strict_evidence_mode():
-                # Gate exception fails CLOSED in strict modes (Rule 1: a
-                # failing policy surface denies; it never silently degrades
-                # to the permissive simple comparison).
-                logger.exception(
-                    "PromotionGate evaluation failed in strict evidence "
-                    "mode; promotion withheld: %s",
-                    e,
-                )
-                return self._withhold_promotion(f"gate exception: {e}")
-            logger.warning(
-                "PromotionGate evaluation failed, using simple comparison: %s", e
+            return self._promotion_gate_failed(
+                candidate_hash, candidate_trial, e, decision
             )
-            return self._simple_is_better(candidate_trial)
 
     def _weighted_selection_schema(self) -> ObjectiveSchema | None:
         """Schema governing weighted incumbent ranking, or None for legacy.
@@ -2131,6 +2208,20 @@ class OptimizationOrchestrator:
             "sample_error": trial_result.error_message,
         }
 
+    def _provider_failure_abort_triggered(self) -> bool:
+        failure_rate = (
+            self._provider_call_failures / self._provider_call_attempts
+            if self._provider_call_attempts
+            else 0.0
+        )
+        consecutive_abort = self._provider_consecutive_call_failures >= 3
+        high_fraction_abort = (
+            self._provider_call_attempts >= 5
+            and self._provider_call_failures >= 3
+            and failure_rate >= 0.80
+        )
+        return consecutive_abort or high_fraction_abort
+
     def _record_provider_failure_signal(self, trial_result: TrialResult) -> None:
         """Abort when provider/auth/quota failures dominate attempted calls."""
 
@@ -2158,18 +2249,7 @@ class OptimizationOrchestrator:
         if self._provider_failure_category is None and category:
             self._provider_failure_category = str(category)
 
-        failure_rate = (
-            self._provider_call_failures / self._provider_call_attempts
-            if self._provider_call_attempts
-            else 0.0
-        )
-        consecutive_abort = self._provider_consecutive_call_failures >= 3
-        high_fraction_abort = (
-            self._provider_call_attempts >= 5
-            and self._provider_call_failures >= 3
-            and failure_rate >= 0.80
-        )
-        if not (consecutive_abort or high_fraction_abort):
+        if not self._provider_failure_abort_triggered():
             return
 
         hint = provider_failure_action_hint(self._provider_failure_category)
@@ -2363,6 +2443,43 @@ class OptimizationOrchestrator:
             "traigent_config": traigent_config,
         }
 
+    async def _track_trial_cost(
+        self,
+        trial_result: TrialResult,
+        trial_cost: float | None,
+        effective_permit: Permit,
+        *,
+        flagged: bool,
+        missing_examples: Any,
+        missing_count: int | None,
+        attempted_count: int | None,
+    ) -> None:
+        if self.cost_enforcer is None:
+            return
+        if trial_result.status == TrialStatus.CANCELLED:
+            if trial_cost is not None:
+                await self.cost_enforcer.track_cost_async(
+                    cost=trial_cost,
+                    permit=effective_permit,
+                    trial_failed=True,
+                    trial_id=trial_result.trial_id,
+                    cost_unmeasured=flagged,
+                    unmeasured_examples=missing_examples,
+                    missing_usage_examples=missing_count,
+                    attempted_examples=attempted_count,
+                )
+        else:
+            await self.cost_enforcer.track_cost_async(
+                cost=trial_cost,
+                permit=effective_permit,
+                trial_failed=trial_result.status == TrialStatus.FAILED,
+                trial_id=trial_result.trial_id,
+                cost_unmeasured=flagged,
+                unmeasured_examples=missing_examples,
+                missing_usage_examples=missing_count,
+                attempted_examples=attempted_count,
+            )
+
     async def _account_trial_spend(
         self,
         trial_result: TrialResult,
@@ -2413,30 +2530,16 @@ class OptimizationOrchestrator:
         # trial stays "untracked"). ``finally`` only orders the debit before
         # the error propagates; it does not swallow it.
         try:
-            if self.cost_enforcer is not None:
-                if trial_result.status == TrialStatus.CANCELLED:
-                    if trial_cost is not None:
-                        await self.cost_enforcer.track_cost_async(
-                            cost=trial_cost,
-                            permit=effective_permit,
-                            trial_failed=True,
-                            trial_id=trial_result.trial_id,
-                            cost_unmeasured=flagged,
-                            unmeasured_examples=missing_examples,
-                            missing_usage_examples=missing_count,
-                            attempted_examples=attempted_count,
-                        )
-                else:
-                    await self.cost_enforcer.track_cost_async(
-                        cost=trial_cost,
-                        permit=effective_permit,
-                        trial_failed=trial_result.status == TrialStatus.FAILED,
-                        trial_id=trial_result.trial_id,
-                        cost_unmeasured=flagged,
-                        unmeasured_examples=missing_examples,
-                        missing_usage_examples=missing_count,
-                        attempted_examples=attempted_count,
-                    )
+            await OptimizationOrchestrator._track_trial_cost(
+                self,
+                trial_result,
+                trial_cost,
+                effective_permit,
+                flagged=flagged,
+                missing_examples=missing_examples,
+                missing_count=missing_count,
+                attempted_count=attempted_count,
+            )
         finally:
             if (budget := getattr(self, "execution_budget", None)) is not None:
                 budget.debit_trial(
@@ -2608,6 +2711,39 @@ class OptimizationOrchestrator:
         except (TypeError, ValueError):
             result.metrics["total_cost"] = result.total_cost
 
+    def _count_trial_outcome(self, trial_result: TrialResult) -> None:
+        if trial_result.is_successful:
+            self._successful_trials += 1
+            self.optimizer.update_best(trial_result)
+            self._update_best_trial_cache(trial_result)
+        elif trial_result.status == TrialStatus.FAILED:
+            self._failed_trials += 1
+
+    async def _submit_trial_and_rebind_trace(
+        self, trial_result: TrialResult, session_id: str
+    ) -> Any:
+        pre_submit_trial_id = (
+            str(trial_result.trial_id)
+            if getattr(trial_result, "trial_id", None) is not None
+            else None
+        )
+        submission_outcome = await self.backend_session_manager.submit_trial(
+            trial_result=trial_result,
+            session_id=session_id,
+            dataset_name=getattr(self, "_dataset_name", "dataset"),
+        )
+        post_submit_trial_id = (
+            str(trial_result.trial_id)
+            if getattr(trial_result, "trial_id", None) is not None
+            else None
+        )
+        if post_submit_trial_id != pre_submit_trial_id:
+            self._workflow_trace_manager.rebind_configuration_run_id(
+                pre_submit_trial_id,
+                post_submit_trial_id,
+            )
+        return submission_outcome
+
     async def _handle_trial_result(
         self,
         trial_result: TrialResult,
@@ -2649,12 +2785,7 @@ class OptimizationOrchestrator:
             # the rest of the ordinary trial state update.
             self._register_examples_attempted(trial_result)
 
-            if trial_result.is_successful:
-                self._successful_trials += 1
-                self.optimizer.update_best(trial_result)
-                self._update_best_trial_cache(trial_result)
-            elif trial_result.status == TrialStatus.FAILED:
-                self._failed_trials += 1
+            self._count_trial_outcome(trial_result)
 
             self._notify_optimizer_of_result(trial_result, optuna_trial_id)
 
@@ -2665,26 +2796,9 @@ class OptimizationOrchestrator:
         # trial LOCALLY even when there is no backend client (offline runs),
         # and only performs the remote submission when egress is enabled.
         if submit_to_backend and session_id:
-            pre_submit_trial_id = (
-                str(trial_result.trial_id)
-                if getattr(trial_result, "trial_id", None) is not None
-                else None
+            submission_outcome = await self._submit_trial_and_rebind_trace(
+                trial_result, session_id
             )
-            submission_outcome = await self.backend_session_manager.submit_trial(
-                trial_result=trial_result,
-                session_id=session_id,
-                dataset_name=getattr(self, "_dataset_name", "dataset"),
-            )
-            post_submit_trial_id = (
-                str(trial_result.trial_id)
-                if getattr(trial_result, "trial_id", None) is not None
-                else None
-            )
-            if post_submit_trial_id != pre_submit_trial_id:
-                self._workflow_trace_manager.rebind_configuration_run_id(
-                    pre_submit_trial_id,
-                    post_submit_trial_id,
-                )
 
         if hasattr(self.optimizer, "tell"):
             try:
@@ -2699,13 +2813,9 @@ class OptimizationOrchestrator:
         progress_info = self._get_progress_info(new_count)
         self.callback_manager.on_trial_complete(trial_result, progress_info)
 
-        should_log = False
-        if new_count % PROGRESS_LOG_INTERVAL == 0:
-            should_log = True
-        elif log_on_success and trial_result.is_successful:
-            should_log = True
-
-        if should_log:
+        if new_count % PROGRESS_LOG_INTERVAL == 0 or (
+            log_on_success and trial_result.is_successful
+        ):
             self._log_progress(new_count)
 
         if getattr(submission_outcome, "optimization_complete", False) is True:
@@ -3083,6 +3193,48 @@ class OptimizationOrchestrator:
 
         return scheduled_configs, scheduled_optuna_ids, results
 
+    @staticmethod
+    def _trial_result_from_parallel_item(
+        result: Any, config: dict[str, Any], synthetic_trial_id: str
+    ) -> TrialResult:
+        # Handle cost limit cancellation (None sentinel from permit check)
+        if result is None:
+            logger.info(
+                "Trial cancelled due to cost limit (config=%s)",
+                config,
+            )
+            # For cancelled trials, permit is denied (no permit acquired)
+            return TrialResult(
+                trial_id=synthetic_trial_id,
+                config=config,
+                metrics={},
+                status=TrialStatus.CANCELLED,
+                duration=0.0,
+                timestamp=datetime.now(UTC),
+                error_message="Trial cancelled: cost limit reached",
+            )
+        # Handle exceptions from gather (P4 fix)
+        if isinstance(result, BaseException):
+            logger.warning(
+                "Trial failed with exception during parallel execution: %s",
+                result,
+                exc_info=result,
+            )
+            # Convert exception to failed TrialResult
+            # Keep synthetic IDs contiguous despite the per-item
+            # reassignment of trial_count in the caller.
+            # For exceptions, permit was already released in parallel_execution_manager
+            return TrialResult(
+                trial_id=synthetic_trial_id,
+                config=config,
+                metrics={},
+                status=TrialStatus.FAILED,
+                duration=0.0,
+                timestamp=datetime.now(UTC),
+                error_message=str(result),
+            )
+        return cast(TrialResult, result)
+
     async def _process_parallel_results(
         self,
         scheduled_configs: list[dict[str, Any]],
@@ -3118,44 +3270,9 @@ class OptimizationOrchestrator:
             # Use try/finally to ensure permit is released on any exception
             # during result processing (Gemini Phase 1.5 fix)
             try:
-                # Handle cost limit cancellation (None sentinel from permit check)
-                if result is None:
-                    logger.info(
-                        "Trial cancelled due to cost limit (config=%s)",
-                        config,
-                    )
-                    trial_result = TrialResult(
-                        trial_id=f"trial_{batch_start + batch_offset}",
-                        config=config,
-                        metrics={},
-                        status=TrialStatus.CANCELLED,
-                        duration=0.0,
-                        timestamp=datetime.now(UTC),
-                        error_message="Trial cancelled: cost limit reached",
-                    )
-                    # For cancelled trials, permit is denied (no permit acquired)
-                # Handle exceptions from gather (P4 fix)
-                elif isinstance(result, BaseException):
-                    logger.warning(
-                        "Trial failed with exception during parallel execution: %s",
-                        result,
-                        exc_info=result,
-                    )
-                    # Convert exception to failed TrialResult
-                    # Keep synthetic IDs contiguous despite the per-item
-                    # reassignment of trial_count below.
-                    trial_result = TrialResult(
-                        trial_id=f"trial_{batch_start + batch_offset}",
-                        config=config,
-                        metrics={},
-                        status=TrialStatus.FAILED,
-                        duration=0.0,
-                        timestamp=datetime.now(UTC),
-                        error_message=str(result),
-                    )
-                    # For exceptions, permit was already released in parallel_execution_manager
-                else:
-                    trial_result = result
+                trial_result = self._trial_result_from_parallel_item(
+                    result, config, f"trial_{batch_start + batch_offset}"
+                )
 
                 trial_count = await self._handle_trial_result(
                     trial_result=trial_result,
@@ -4543,51 +4660,16 @@ class OptimizationOrchestrator:
         if not results:
             return False
 
-        from traigent.core.exception_handler import classify_vendor_error
-
-        # Non-recoverable categories get priority so we don't offer "resume" on
-        # insufficient funds just because rate_limit happened to come first.
-        category_priority = {
-            VendorErrorCategory.AUTHENTICATION: 0,
-            VendorErrorCategory.INSUFFICIENT_FUNDS: 1,
-            VendorErrorCategory.QUOTA_EXHAUSTED: 2,
-            VendorErrorCategory.SERVICE_UNAVAILABLE: 3,
-            VendorErrorCategory.RATE_LIMIT: 4,
-        }
-
-        def _classify(r: PermittedTrialResult) -> VendorErrorCategory | None:
-            payload = getattr(r, "result", r)
-            if isinstance(payload, VendorPauseError):
-                if payload.category is not None:
-                    return payload.category
-                # category is declared optional; cascade through original_error
-                # then the message so an opaquely-wrapped original doesn't drop
-                # the trial from the vendor count.
-                if payload.original_error is not None:
-                    category = classify_vendor_error(payload.original_error)
-                    if category is not None:
-                        return category
-                return classify_vendor_error(RuntimeError(str(payload)))
-            if isinstance(payload, Exception):
-                return classify_vendor_error(payload)
-            if (
-                isinstance(payload, TrialResult)
-                and payload.status == TrialStatus.FAILED
-                and payload.error_message
-            ):
-                return classify_vendor_error(RuntimeError(payload.error_message))
-            return None
-
         vendor_failures = 0
         best_category: VendorErrorCategory | None = None
         for r in results:
-            category = _classify(r)
+            category = _classify_batch_vendor_error(r)
             if category is None:
                 continue
             vendor_failures += 1
-            if best_category is None or category_priority.get(
-                category, len(category_priority)
-            ) < category_priority.get(best_category, len(category_priority)):
+            if best_category is None or _vendor_category_rank(
+                category
+            ) < _vendor_category_rank(best_category):
                 best_category = category
 
         if vendor_failures == 0 or vendor_failures < len(results):
@@ -5046,23 +5128,7 @@ class OptimizationOrchestrator:
                 exc_info=True,
             )
 
-    async def _finalize_optimization(
-        self,
-        result: OptimizationResult,
-        session_id: str | None,
-        session_span: Any,
-    ) -> None:
-        """Finalize optimization: record metrics, update backend, notify callbacks."""
-        record_optimization_complete(
-            session_span,
-            trial_count=len(self._trials),
-            best_score=result.best_score,
-            best_config=result.best_config,
-            stop_reason=self._stop_reason,
-        )
-
-        merge_run_metrics_into_session_summary(result)
-
+    def _attach_statistical_significance(self, result: OptimizationResult) -> None:
         # Compute statistical significance badges per objective
         # Guarded: significance is post-processing and must not fail the run
         try:
@@ -5086,6 +5152,197 @@ class OptimizationOrchestrator:
                 "optimization results are unaffected",
                 exc_info=True,
             )
+
+    async def _persist_run_to_backend(
+        self, result: OptimizationResult, session_id: str
+    ) -> str:
+        persistence_status = "skipped"
+        required_cloud_finalize_failed = False
+        try:
+            persistence_status = await self._finalize_backend_session_record(
+                result, session_id
+            )
+        except Exception as exc:
+            persistence_status = "failed"
+            required_cloud_finalize_failed = self._record_backend_persistence_failure(
+                result, session_id, exc
+            )
+        if required_cloud_finalize_failed:
+            # Raised outside the except block with no chaining so the
+            # backend text is unreachable from a formatted traceback.
+            raise CloudBrainUnavailableError(
+                "session finalization",
+                "required cloud tracking could not persist the run",
+            ) from None
+
+        # Populate experiment_id and cloud_url from session metadata
+        self._populate_experiment_cloud_url(result)
+        return persistence_status
+
+    async def _finalize_backend_session_record(
+        self, result: OptimizationResult, session_id: str
+    ) -> str:
+        await self.backend_session_manager.update_weighted_scores(result, session_id)
+        # Traigent#1720/#1724 (g2:agg-summary): fold the session-level
+        # rollup into the existing finalize request body (mirroring
+        # certified_selection) instead of the dead local-only
+        # submit_result shim. Build the payload BEFORE finalize so it
+        # rides the same request.
+        agg_payload = self.backend_session_manager.build_session_aggregation_payload(
+            result,
+            session_id,
+            selection_receipt=self._selection_receipt_for(result),
+        )
+
+        session_summary = None
+        if not getattr(self, "_session_finalized", False):
+            certified_selection = self._build_certified_selection_report()
+            try:
+                session_summary = self.backend_session_manager.finalize_session(
+                    session_id,
+                    self._status,
+                    certified_selection=certified_selection,
+                    session_aggregation=agg_payload,
+                )
+            finally:
+                self._session_finalized = True
+        self.backend_session_manager.attach_session_metadata(
+            result, session_id, session_summary
+        )
+        if agg_payload is not None and not session_aggregation_echoed(session_summary):
+            # A rollup was sent, but the finalize response did not
+            # echo it back — either an older backend without this
+            # field (safe to merge before the backend deploys) or the
+            # backend rejected/dropped it. Trial-level results and
+            # session finalize above did succeed, so this is not a
+            # full failure; but 'succeeded' must not be reported for
+            # a rollup the backend never confirmed.
+            persistence_status = "degraded"
+            result.metadata["persistence_degraded_reason"] = (
+                "session aggregation rollup was sent to the backend "
+                "finalize endpoint but was not acknowledged in the "
+                "response (the backend may not yet support "
+                "session_aggregation); trial-level results and "
+                "session finalize were persisted normally."
+            )
+            logger.warning(
+                "Session aggregation rollup for session_id=%s was not "
+                "acknowledged by the backend finalize response; "
+                "marking persistence_status=degraded (trial results "
+                "and finalize succeeded).",
+                session_id,
+            )
+        else:
+            # agg_payload is None (nothing to persist — not a
+            # degradation) or the backend echoed it back (succeeded).
+            persistence_status = "succeeded"
+        return persistence_status
+
+    def _record_backend_persistence_failure(
+        self, result: OptimizationResult, session_id: str, exc: Exception
+    ) -> bool:
+        """Record a failed backend finalize; True when required cloud forbids it."""
+        if policy_requires_cloud(policy_from_config(self.traigent_config)):
+            # Required cloud forbids finishing without the backend
+            # record (#2510). The backend error can echo customer
+            # content, so metadata and logs carry the class name only.
+            result.metadata["persistence_error"] = type(exc).__name__
+            logger.error(
+                "Backend persistence failed after optimization under "
+                "required cloud tracking (%s); backend session left "
+                "RUNNING.",
+                type(exc).__name__,
+            )
+            return True
+        result.metadata["persistence_error"] = str(exc)
+        logger.exception(
+            "Backend persistence failed after optimization; backend "
+            "session left RUNNING. Check the portal for this session "
+            "id to confirm whether it was finalized; do not run "
+            "whole-store `traigent sync` to repair it (an offline "
+            "sync creates a NEW backend session and can duplicate "
+            "the run). Keeping result source=%s, session_id=%s, and "
+            "marking persistence_status=failed: %s",
+            result.source,
+            session_id,
+            exc,
+        )
+        return False
+
+    def _apply_persistence_rejection(
+        self, result: OptimizationResult, persistence_status: str
+    ) -> str:
+        rejection_reason = self.backend_session_manager.backend_rejection_reason
+        if rejection_reason:
+            if persistence_status in {"skipped", "succeeded"}:
+                persistence_status = "degraded"
+            result.metadata["persistence_reason"] = "rejected"
+            result.metadata["persistence_rejected"] = True
+            result.metadata["persistence_rejection_reason"] = rejection_reason
+            self.traigent_config.persistence_reason = "rejected"
+            self.traigent_config.persistence_rejection_reason = rejection_reason
+        return persistence_status
+
+    def _apply_early_complete_tracking(
+        self, result: OptimizationResult, persistence_status: str
+    ) -> str:
+        if self.backend_session_manager.backend_remote_early_complete:
+            if persistence_status in {"skipped", "succeeded"}:
+                persistence_status = "degraded"
+            result.metadata["backend_tracking"] = "partial"
+            result.metadata["backend_tracking_partial_reason"] = (
+                self.backend_session_manager.backend_remote_early_complete_reason
+                or "backend closed the tracking session before the local "
+                "enumeration finished"
+            )
+        return persistence_status
+
+    def _log_local_only_summary(self) -> None:
+        # Issue #1265: if a backend-tracking run degraded to local-only, say so
+        # prominently at the end (the per-trial warning fired once mid-run; this
+        # is the final, unmissable summary tied to the result's source marker).
+        if self.backend_session_manager.backend_degraded:
+            rejection_reason = self.backend_session_manager.backend_rejection_reason
+            if rejection_reason:
+                logger.warning(
+                    "⚠️  Optimization %s finished in LOCAL-ONLY mode "
+                    "(source='local_fallback'): "
+                    "the backend rejected persistence of this run's config. "
+                    "Results were computed and stored locally and are NOT on the "
+                    "cloud backend; metadata includes persistence_reason='rejected'. "
+                    "The rejection detail is not logged; read "
+                    "result.metadata['persistence_rejection_reason'] on the "
+                    "customer side.",
+                    self._optimization_id,
+                )
+            else:
+                logger.warning(
+                    "⚠️  Optimization %s finished in LOCAL-ONLY mode "
+                    "(source='local_fallback'): "
+                    "the Traigent backend was unreachable during the run, so results "
+                    "were computed and stored locally and are NOT on the cloud "
+                    "backend. They will sync on the next successful run.",
+                    self._optimization_id,
+                )
+
+    async def _finalize_optimization(
+        self,
+        result: OptimizationResult,
+        session_id: str | None,
+        session_span: Any,
+    ) -> None:
+        """Finalize optimization: record metrics, update backend, notify callbacks."""
+        record_optimization_complete(
+            session_span,
+            trial_count=len(self._trials),
+            best_score=result.best_score,
+            best_config=result.best_config,
+            stop_reason=self._stop_reason,
+        )
+
+        merge_run_metrics_into_session_summary(result)
+
+        self._attach_statistical_significance(result)
 
         # #1939: finalize the LOCAL session record first — offline / degraded
         # runs have no backend finalize path, and sync eligibility requires a
@@ -5127,133 +5384,22 @@ class OptimizationOrchestrator:
             result.metadata["local_session_id"] = syncable_id
 
         persistence_status = "skipped"
-        required_cloud_finalize_failed = False
         if (
             self.backend_session_manager.backend_tracking_enabled
             and not backend_egress_disabled(self.traigent_config)
             and session_id is not None
         ):
-            try:
-                await self.backend_session_manager.update_weighted_scores(
-                    result, session_id
-                )
-                # Traigent#1720/#1724 (g2:agg-summary): fold the session-level
-                # rollup into the existing finalize request body (mirroring
-                # certified_selection) instead of the dead local-only
-                # submit_result shim. Build the payload BEFORE finalize so it
-                # rides the same request.
-                agg_payload = (
-                    self.backend_session_manager.build_session_aggregation_payload(
-                        result,
-                        session_id,
-                        selection_receipt=self._selection_receipt_for(result),
-                    )
-                )
-
-                session_summary = None
-                if not getattr(self, "_session_finalized", False):
-                    certified_selection = self._build_certified_selection_report()
-                    try:
-                        session_summary = self.backend_session_manager.finalize_session(
-                            session_id,
-                            self._status,
-                            certified_selection=certified_selection,
-                            session_aggregation=agg_payload,
-                        )
-                    finally:
-                        self._session_finalized = True
-                self.backend_session_manager.attach_session_metadata(
-                    result, session_id, session_summary
-                )
-                if agg_payload is not None and not session_aggregation_echoed(
-                    session_summary
-                ):
-                    # A rollup was sent, but the finalize response did not
-                    # echo it back — either an older backend without this
-                    # field (safe to merge before the backend deploys) or the
-                    # backend rejected/dropped it. Trial-level results and
-                    # session finalize above did succeed, so this is not a
-                    # full failure; but 'succeeded' must not be reported for
-                    # a rollup the backend never confirmed.
-                    persistence_status = "degraded"
-                    result.metadata["persistence_degraded_reason"] = (
-                        "session aggregation rollup was sent to the backend "
-                        "finalize endpoint but was not acknowledged in the "
-                        "response (the backend may not yet support "
-                        "session_aggregation); trial-level results and "
-                        "session finalize were persisted normally."
-                    )
-                    logger.warning(
-                        "Session aggregation rollup for session_id=%s was not "
-                        "acknowledged by the backend finalize response; "
-                        "marking persistence_status=degraded (trial results "
-                        "and finalize succeeded).",
-                        session_id,
-                    )
-                else:
-                    # agg_payload is None (nothing to persist — not a
-                    # degradation) or the backend echoed it back (succeeded).
-                    persistence_status = "succeeded"
-            except Exception as exc:
-                persistence_status = "failed"
-                if policy_requires_cloud(policy_from_config(self.traigent_config)):
-                    # Required cloud forbids finishing without the backend
-                    # record (#2510). The backend error can echo customer
-                    # content, so metadata and logs carry the class name only.
-                    required_cloud_finalize_failed = True
-                    result.metadata["persistence_error"] = type(exc).__name__
-                    logger.error(
-                        "Backend persistence failed after optimization under "
-                        "required cloud tracking (%s); backend session left "
-                        "RUNNING.",
-                        type(exc).__name__,
-                    )
-                else:
-                    result.metadata["persistence_error"] = str(exc)
-                    logger.exception(
-                        "Backend persistence failed after optimization; backend "
-                        "session left RUNNING. Check the portal for this session "
-                        "id to confirm whether it was finalized; do not run "
-                        "whole-store `traigent sync` to repair it (an offline "
-                        "sync creates a NEW backend session and can duplicate "
-                        "the run). Keeping result source=%s, session_id=%s, and "
-                        "marking persistence_status=failed: %s",
-                        result.source,
-                        session_id,
-                        exc,
-                    )
-            if required_cloud_finalize_failed:
-                # Raised outside the except block with no chaining so the
-                # backend text is unreachable from a formatted traceback.
-                raise CloudBrainUnavailableError(
-                    "session finalization",
-                    "required cloud tracking could not persist the run",
-                ) from None
-
-            # Populate experiment_id and cloud_url from session metadata
-            self._populate_experiment_cloud_url(result)
-        rejection_reason = self.backend_session_manager.backend_rejection_reason
-        if rejection_reason:
-            if persistence_status in {"skipped", "succeeded"}:
-                persistence_status = "degraded"
-            result.metadata["persistence_reason"] = "rejected"
-            result.metadata["persistence_rejected"] = True
-            result.metadata["persistence_rejection_reason"] = rejection_reason
-            self.traigent_config.persistence_reason = "rejected"
-            self.traigent_config.persistence_rejection_reason = rejection_reason
+            persistence_status = await self._persist_run_to_backend(result, session_id)
+        persistence_status = self._apply_persistence_rejection(
+            result, persistence_status
+        )
 
         # #1938: the backend closed the tracking session while the LOCAL
         # optimizer kept sequencing — the run completed its full local
         # enumeration, but backend tracking is only PARTIAL. Mark it so.
-        if self.backend_session_manager.backend_remote_early_complete:
-            if persistence_status in {"skipped", "succeeded"}:
-                persistence_status = "degraded"
-            result.metadata["backend_tracking"] = "partial"
-            result.metadata["backend_tracking_partial_reason"] = (
-                self.backend_session_manager.backend_remote_early_complete_reason
-                or "backend closed the tracking session before the local "
-                "enumeration finished"
-            )
+        persistence_status = self._apply_early_complete_tracking(
+            result, persistence_status
+        )
 
         result.metadata["persistence_status"] = persistence_status
         self.traigent_config.persistence_status = persistence_status
@@ -5270,32 +5416,7 @@ class OptimizationOrchestrator:
 
         self.callback_manager.on_optimization_complete(result)
 
-        # Issue #1265: if a backend-tracking run degraded to local-only, say so
-        # prominently at the end (the per-trial warning fired once mid-run; this
-        # is the final, unmissable summary tied to the result's source marker).
-        if self.backend_session_manager.backend_degraded:
-            rejection_reason = self.backend_session_manager.backend_rejection_reason
-            if rejection_reason:
-                logger.warning(
-                    "⚠️  Optimization %s finished in LOCAL-ONLY mode "
-                    "(source='local_fallback'): "
-                    "the backend rejected persistence of this run's config. "
-                    "Results were computed and stored locally and are NOT on the "
-                    "cloud backend; metadata includes persistence_reason='rejected'. "
-                    "The rejection detail is not logged; read "
-                    "result.metadata['persistence_rejection_reason'] on the "
-                    "customer side.",
-                    self._optimization_id,
-                )
-            else:
-                logger.warning(
-                    "⚠️  Optimization %s finished in LOCAL-ONLY mode "
-                    "(source='local_fallback'): "
-                    "the Traigent backend was unreachable during the run, so results "
-                    "were computed and stored locally and are NOT on the cloud "
-                    "backend. They will sync on the next successful run.",
-                    self._optimization_id,
-                )
+        self._log_local_only_summary()
 
         self._log_completion_cost(result)
 
@@ -5582,6 +5703,109 @@ class OptimizationOrchestrator:
             "locally."
         )
 
+    def _cancel_for_zero_timeout(self) -> OptimizationResult:
+        # Attribute to the cumulative budget when its deadline was the
+        # binding clamp (issue #1980); else the per-run timeout.
+        self._stop_reason = (
+            "execution_budget"
+            if getattr(self, "_timeout_source", None) == "execution_budget"
+            else "timeout"
+        )
+        self._deadline_hard_stop = True
+        self._status = OptimizationStatus.CANCELLED
+        return self._create_optimization_result()
+
+    async def _run_loop_under_deadline(
+        self,
+        func: Callable[..., Any],
+        dataset: Dataset,
+        session_id: str | None,
+        function_identifier: str | None,
+    ) -> None:
+        if self.timeout is not None and self.timeout > 0:
+            # Hard wall-clock watchdog (issue #1266). The per-trial
+            # _should_stop() timeout is only evaluated *between* trials, so a
+            # single hung trial — a deadlocked sampler, a stuck LLM call, or a
+            # worker thread aborted by a native (pyo3) panic whose future
+            # never resolves — would otherwise hang the run forever despite
+            # an explicit timeout. wait_for() enforces the deadline even when
+            # control never returns to the loop's own check, turning an
+            # indefinite deadlock into a clean, catchable stop that still
+            # finalizes with the best trial found so far. A bounded grace
+            # margin (25% of the budget, floored at 1s and capped at 5min)
+            # lets the normal between-trial check stop cleanly first, while
+            # still capping wasted LLM spend on a true hang.
+            grace = min(max(self.timeout * 0.25, 1.0), 300.0)
+            watchdog_deadline = self.timeout + grace
+            self.backend_session_manager.ensure_run_id_recorded(session_id)
+            try:
+                await asyncio.wait_for(
+                    self._run_optimization_loop(
+                        func, dataset, session_id, function_identifier
+                    ),
+                    timeout=watchdog_deadline,
+                )
+            except TimeoutError:
+                # Attribute the hung-trial deadline to the cumulative budget
+                # when its deadline was the binding clamp (issue #1980); else
+                # the per-run timeout, unchanged.
+                self._stop_reason = (
+                    "execution_budget"
+                    if getattr(self, "_timeout_source", None) == "execution_budget"
+                    else "timeout"
+                )
+                self._deadline_hard_stop = True
+                logger.warning(
+                    "Optimization %s exceeded its wall-clock deadline "
+                    "(%.1fs incl. grace); a trial appears to have hung. "
+                    "Stopping and finalizing with %d completed trial(s).",
+                    self._optimization_id,
+                    watchdog_deadline,
+                    len(self._trials),
+                )
+        else:
+            self.backend_session_manager.ensure_run_id_recorded(session_id)
+            await self._run_optimization_loop(
+                func, dataset, session_id, function_identifier
+            )
+
+    def _record_unexpected_run_failure(
+        self, session_id: str | None, e: Exception
+    ) -> str | None:
+        self._status = OptimizationStatus.FAILED
+        if not self._stop_reason:
+            self._stop_reason = "error"
+        # #2029: recovery FIRST, diagnostics second. The log line below
+        # renders `e`, which calls user-controlled `__str__`; when that
+        # raises, doing it first meant the local session was never
+        # finalized FAILED, no id was attached, and the caller received the
+        # formatting error instead of the real failure. Both renderings now
+        # go through _safe_exception_text, AND both happen after the
+        # recovery work, so neither ordering nor `__str__` can strand a run.
+        try:
+            self._finalize_failed_backend_session(session_id, e)
+        finally:
+            syncable_id = self._attach_sync_session_id(e, session_id)
+        try:
+            logger.error(
+                "Optimization %s failed: %s",
+                self._optimization_id,
+                _safe_exception_text(e),
+            )
+        except Exception:
+            # #2029: this diagnostic is a call into application code —
+            # a logging handler whose emit() raises (a misconfigured
+            # Sentry/Datadog transport is the usual culprit) would
+            # otherwise propagate from here and REPLACE the caller's
+            # failure with a logging error, costing them both the
+            # ResolutionError's RFC 0001 §3.4 typed identity and the
+            # sync id just attached. Same boundary as
+            # _attach_sync_session_id / _safe_exception_text: only
+            # Exception is absorbed, so a KeyboardInterrupt/SystemExit
+            # raised in a handler still stops the run.
+            pass
+        return syncable_id
+
     async def _run_optimization_with_tracing(
         self,
         func: Callable[..., Any],
@@ -5597,63 +5821,11 @@ class OptimizationOrchestrator:
         try:
             # Check for immediate timeout
             if self.timeout is not None and self.timeout == 0:
-                # Attribute to the cumulative budget when its deadline was the
-                # binding clamp (issue #1980); else the per-run timeout.
-                self._stop_reason = (
-                    "execution_budget"
-                    if getattr(self, "_timeout_source", None) == "execution_budget"
-                    else "timeout"
-                )
-                self._deadline_hard_stop = True
-                self._status = OptimizationStatus.CANCELLED
-                return self._create_optimization_result()
+                return self._cancel_for_zero_timeout()
 
-            if self.timeout is not None and self.timeout > 0:
-                # Hard wall-clock watchdog (issue #1266). The per-trial
-                # _should_stop() timeout is only evaluated *between* trials, so a
-                # single hung trial — a deadlocked sampler, a stuck LLM call, or a
-                # worker thread aborted by a native (pyo3) panic whose future
-                # never resolves — would otherwise hang the run forever despite
-                # an explicit timeout. wait_for() enforces the deadline even when
-                # control never returns to the loop's own check, turning an
-                # indefinite deadlock into a clean, catchable stop that still
-                # finalizes with the best trial found so far. A bounded grace
-                # margin (25% of the budget, floored at 1s and capped at 5min)
-                # lets the normal between-trial check stop cleanly first, while
-                # still capping wasted LLM spend on a true hang.
-                grace = min(max(self.timeout * 0.25, 1.0), 300.0)
-                watchdog_deadline = self.timeout + grace
-                self.backend_session_manager.ensure_run_id_recorded(session_id)
-                try:
-                    await asyncio.wait_for(
-                        self._run_optimization_loop(
-                            func, dataset, session_id, function_identifier
-                        ),
-                        timeout=watchdog_deadline,
-                    )
-                except TimeoutError:
-                    # Attribute the hung-trial deadline to the cumulative budget
-                    # when its deadline was the binding clamp (issue #1980); else
-                    # the per-run timeout, unchanged.
-                    self._stop_reason = (
-                        "execution_budget"
-                        if getattr(self, "_timeout_source", None) == "execution_budget"
-                        else "timeout"
-                    )
-                    self._deadline_hard_stop = True
-                    logger.warning(
-                        "Optimization %s exceeded its wall-clock deadline "
-                        "(%.1fs incl. grace); a trial appears to have hung. "
-                        "Stopping and finalizing with %d completed trial(s).",
-                        self._optimization_id,
-                        watchdog_deadline,
-                        len(self._trials),
-                    )
-            else:
-                self.backend_session_manager.ensure_run_id_recorded(session_id)
-                await self._run_optimization_loop(
-                    func, dataset, session_id, function_identifier
-                )
+            await self._run_loop_under_deadline(
+                func, dataset, session_id, function_identifier
+            )
 
             # A cloud-required (smart) run that executed zero trials must not be
             # reported as a silent COMPLETED with best_config=None: fail closed
@@ -5703,38 +5875,7 @@ class OptimizationOrchestrator:
         except Exception as e:
             from traigent.knobs import ResolutionError
 
-            self._status = OptimizationStatus.FAILED
-            if not self._stop_reason:
-                self._stop_reason = "error"
-            # #2029: recovery FIRST, diagnostics second. The log line below
-            # renders `e`, which calls user-controlled `__str__`; when that
-            # raises, doing it first meant the local session was never
-            # finalized FAILED, no id was attached, and the caller received the
-            # formatting error instead of the real failure. Both renderings now
-            # go through _safe_exception_text, AND both happen after the
-            # recovery work, so neither ordering nor `__str__` can strand a run.
-            try:
-                self._finalize_failed_backend_session(session_id, e)
-            finally:
-                syncable_id = self._attach_sync_session_id(e, session_id)
-            try:
-                logger.error(
-                    "Optimization %s failed: %s",
-                    self._optimization_id,
-                    _safe_exception_text(e),
-                )
-            except Exception:
-                # #2029: this diagnostic is a call into application code —
-                # a logging handler whose emit() raises (a misconfigured
-                # Sentry/Datadog transport is the usual culprit) would
-                # otherwise propagate from here and REPLACE the caller's
-                # failure with a logging error, costing them both the
-                # ResolutionError's RFC 0001 §3.4 typed identity and the
-                # sync id just attached. Same boundary as
-                # _attach_sync_session_id / _safe_exception_text: only
-                # Exception is absorbed, so a KeyboardInterrupt/SystemExit
-                # raised in a handler still stops the run.
-                pass
+            syncable_id = self._record_unexpected_run_failure(session_id, e)
             if isinstance(e, ResolutionError):
                 # RFC 0001 §3.4: the typed fail-closed governance rejection
                 # IS the public contract — callers distinguish a stale
@@ -5975,6 +6116,33 @@ class OptimizationOrchestrator:
         """Record that ``max_trials`` is the SDK default, not the user's choice."""
         self._max_trials_is_sdk_default = True
 
+    @staticmethod
+    def _describe_unmeasured_cost_stop(enforcer: Any, trials: int) -> str | None:
+        if enforcer is not None and not enforcer.unknown_cost_cap_waived:
+            status = enforcer.get_status()
+            if status.unknown_cost_mode and _spend_reached_limit(
+                status.accumulated_cost_usd, status.limit_usd
+            ):
+                return (
+                    f"Stopped at {trials} trials: the cost limit "
+                    f"(${status.limit_usd:.2f}) was reached by known spend "
+                    f"of at least ${status.accumulated_cost_usd:.2f} (a "
+                    f"minimum: cost is unmeasured for "
+                    f"{status.unmeasured_trial_count} of "
+                    f"{status.trial_count} trials)."
+                )
+            if status.unknown_cost_mode:
+                return (
+                    f"Stopped at {trials} trials: cost is unmeasured for "
+                    f"{status.unmeasured_trial_count} of {status.trial_count} "
+                    "trials, so the cost limit cannot bound spend and the "
+                    f"default safety limit of "
+                    f"{enforcer.config.fallback_trial_limit} trials applied "
+                    "(TRAIGENT_FALLBACK_TRIAL_LIMIT). Pass max_trials=... to "
+                    "run more."
+                )
+        return None
+
     def _describe_stop(self) -> str | None:
         """One sentence saying why this run was cut short, or None.
 
@@ -5995,29 +6163,11 @@ class OptimizationOrchestrator:
             return f"Stopped at {trials} trials: max_trials={self.max_trials} reached."
         if reason == "cost_limit":
             enforcer = getattr(self, "cost_enforcer", None)
-            if enforcer is not None and not enforcer.unknown_cost_cap_waived:
-                status = enforcer.get_status()
-                if status.unknown_cost_mode and _spend_reached_limit(
-                    status.accumulated_cost_usd, status.limit_usd
-                ):
-                    return (
-                        f"Stopped at {trials} trials: the cost limit "
-                        f"(${status.limit_usd:.2f}) was reached by known spend "
-                        f"of at least ${status.accumulated_cost_usd:.2f} (a "
-                        f"minimum: cost is unmeasured for "
-                        f"{status.unmeasured_trial_count} of "
-                        f"{status.trial_count} trials)."
-                    )
-                if status.unknown_cost_mode:
-                    return (
-                        f"Stopped at {trials} trials: cost is unmeasured for "
-                        f"{status.unmeasured_trial_count} of {status.trial_count} "
-                        "trials, so the cost limit cannot bound spend and the "
-                        f"default safety limit of "
-                        f"{enforcer.config.fallback_trial_limit} trials applied "
-                        "(TRAIGENT_FALLBACK_TRIAL_LIMIT). Pass max_trials=... to "
-                        "run more."
-                    )
+            unmeasured_detail = OptimizationOrchestrator._describe_unmeasured_cost_stop(
+                enforcer, trials
+            )
+            if unmeasured_detail is not None:
+                return unmeasured_detail
             zero_trial = getattr(enforcer, "zero_trial_stop_detail", None)
             if callable(zero_trial) and (detail := zero_trial(trials)):
                 return str(detail)
