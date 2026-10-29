@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import logging
+from pathlib import Path
 
 import pytest
 
@@ -190,3 +189,41 @@ def test_fallback_still_rejects_symlinked_manifest(
     result = tools.scaffold_eval_tool()
     assert result["ok"] is False
     assert not (tmp_path / "gone").exists()
+
+
+def _cost_refusal() -> Exception:
+    from traigent.utils.exceptions import CostLimitExceeded
+
+    return CostLimitExceeded(
+        accumulated=0.0, limit=2.0, estimated=4.37, message=_CANARY
+    )
+
+
+def test_mock_cost_preflight_refusal_names_dry_run_route_2795(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mock run refused by the cost preflight is told the exemption (#2795).
+
+    The hint is fixed text: the exception message (which can carry the dataset
+    size and model names) still never reaches the response (#2625).
+    """
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "agent.py").write_text("x = 1\n", encoding="utf-8")
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise _cost_refusal()
+
+    monkeypatch.setattr(tools, "_run_loaded_optimizations", refuse)
+    result = tools.run_optimization_tool(
+        script_path="agent.py", mode="mock", confirm=True, cost_limit=5.0
+    )
+
+    assert result["code"] == "optimization_failed"
+    assert "CostLimitExceeded" in result["message"]
+    assert "TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT" in result["message"]
+    assert "SYNTHETIC_CANARY" not in result["message"]
+
+
+def test_real_cost_preflight_refusal_gets_no_mock_hint_2795() -> None:
+    result = tools._optimization_failure(_cost_refusal(), mode="real")
+    assert "TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT" not in result["message"]

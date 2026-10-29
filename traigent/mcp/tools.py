@@ -24,6 +24,9 @@ from traigent.evaluators.base import DATASET_ROOT_ENV, _resolve_dataset_source
 from traigent.hooks.validator import DEFAULT_TOKENS_PER_QUERY, MODEL_COST_PER_1K
 from traigent.tuned_variables.detection_types import DetectionResult
 from traigent.tuned_variables.detector import TunedVariableDetector
+from traigent.utils.cost_calculator import UnknownModelError
+from traigent.utils.env_config import mock_cost_preflight_guidance
+from traigent.utils.exceptions import CostLimitExceeded
 from traigent.utils.exceptions import ValidationError as TraigentValidationError
 from traigent.utils.function_identity import sanitize_identifier
 from traigent.utils.module_loading import (
@@ -54,6 +57,9 @@ _REAL_SPEND_MESSAGE = (
     "and an explicit positive cost_limit to start a real run."
 )
 logger = logging.getLogger(__name__)
+
+# Pre-run cost preflight refusals; for a mock run they get the dry-run guidance.
+_COST_PREFLIGHT_REFUSALS = (CostLimitExceeded, UnknownModelError)
 
 _EVAL_MANIFEST_SUFFIX = ".traigent-eval.json"
 _APPROVED_EVAL_STATUSES = {"approved", "user_approved"}
@@ -92,6 +98,11 @@ def _optimization_failure(exc: Exception, *, mode: str) -> dict[str, Any]:
         f"Optimization failed with {error_type}. Exception details are withheld "
         "from the tool response; re-run the script directly to see them."
     )
+    if mode == "mock" and isinstance(exc, _COST_PREFLIGHT_REFUSALS):
+        # Fixed text, no exception content: a simulated run refused by the
+        # pre-run cost preflight needs the dry-run route, not spend approval
+        # (#2795).
+        message += " " + mock_cost_preflight_guidance()
     return _failure(message, code="optimization_failed")
 
 

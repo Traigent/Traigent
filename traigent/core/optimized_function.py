@@ -137,6 +137,7 @@ from traigent.utils.env_config import (
     cost_preflight_mock_exempt,
     is_mock_llm,
     is_strict_cost_accounting,
+    mock_cost_preflight_guidance,
     offline_run_scope,
     strict_cost_accounting_origin,
     strict_cost_accounting_run_default,
@@ -4342,17 +4343,39 @@ class OptimizedFunction[**P, R]:
             return
 
         if not sys.stdin.isatty():
+            if is_mock_llm():
+                # Simulated run: name the dry-run route, not spend approval (#2795).
+                how_to_proceed = (
+                    "Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON or "
+                    "TRAIGENT_CUSTOM_MODEL_PRICING_FILE with explicit per-token "
+                    f"pricing. {mock_cost_preflight_guidance()}"
+                )
+            else:
+                how_to_proceed = (
+                    "Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON "
+                    "or TRAIGENT_CUSTOM_MODEL_PRICING_FILE with explicit per-token "
+                    "pricing, set TRAIGENT_COST_APPROVED=true to acknowledge this "
+                    "cost concern, or run interactively."
+                )
             raise UnknownModelError(
                 "Cost coverage preflight failed before any optimization trial "
                 "started: pricing is unavailable for "
                 f"{formatted}. Cannot prompt for confirmation in a "
-                "non-interactive shell. Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON "
-                "or TRAIGENT_CUSTOM_MODEL_PRICING_FILE with explicit per-token "
-                "pricing, set TRAIGENT_COST_APPROVED=true to acknowledge this "
-                "cost concern, or run interactively."
+                f"non-interactive shell. {how_to_proceed}"
             )
 
         plural = "model has" if len(missing) == 1 else "models have"
+        approve_line = (
+            "Set TRAIGENT_COST_APPROVED=true to skip this prompt after acknowledging\n"
+            "    this cost concern"
+        )
+        if is_mock_llm():
+            # Simulated run: approval would also cover the later real run (#2795).
+            approve_line = (
+                "Mock mode is on: use a smaller dataset slice, or set\n"
+                "    TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT=true with ENVIRONMENT=development\n"
+                "    (not TRAIGENT_COST_APPROVED, which also approves the later real run)"
+            )
         print(
             f"""
 ================================================================================
@@ -4368,8 +4391,7 @@ provider may still bill you.
 Remediation:
   - Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON with explicit per-token pricing
   - Contact Traigent to add model pricing coverage
-  - Set TRAIGENT_COST_APPROVED=true to skip this prompt after acknowledging
-    this cost concern
+  - {approve_line}
 
 ================================================================================
 """,

@@ -27,9 +27,11 @@ your provider may still bill you, use one explicit approval:
 - or create the XDG cost approval token (`approved` or `approved:<limit>`).
 
 Approved runs still emit the unpriced-model warning. Mock LLM quickstart mode
-does not skip this model-pricing preflight (raw provider calls can still be real
-under the mock flag); pass `cost_approved=True` or set `TRAIGENT_COST_APPROVED=true`
-for a keyless demo that uses unpriced model names.
+does not skip this model-pricing preflight (a raw provider call over an
+unguarded transport or to an unlisted host can still be real under the mock
+flag). For a keyless demo that uses unpriced model names, use the mock exemption
+described under "Mock Mode and the Cost Preflight" below rather than approval:
+approval also covers the later real run.
 
 To fail before any trial starts, enable strict cost accounting:
 

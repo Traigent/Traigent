@@ -811,6 +811,29 @@ def _mock_chat_message(
     )
 
 
+class MockModeStructuredOutputError(NotImplementedError):
+    """Structured output was requested from a mocked LangChain chat model (#2814)."""
+
+
+def _refuse_structured_output_in_mock(kwargs: dict[str, Any]) -> None:
+    """Raise if this call came from ``with_structured_output`` under mock mode.
+
+    The canned reply is plain text with no ``tool_calls`` and no ``parsed``
+    field, so the structured-output layer on top either crashes (OpenAI) or
+    returns ``None`` (Anthropic), and a dry run of a structured agent looks like
+    it worked while exercising nothing. ``with_structured_output`` marks its
+    calls with ``ls_structured_output_format`` (or ``response_format``); plain
+    ``bind_tools`` calls are left alone.
+    """
+    if "ls_structured_output_format" in kwargs or kwargs.get("response_format"):
+        raise MockModeStructuredOutputError(
+            "Traigent mock mode does not support LangChain structured output "
+            "(with_structured_output / response_format): the canned reply is "
+            "plain text, so it cannot be parsed into your schema. Dry-run "
+            "without structured output, or stub the model for this agent."
+        )
+
+
 _MOCKABLE_PROVIDERS = frozenset({"openai", "anthropic", "bedrock"})
 
 
@@ -843,6 +866,7 @@ def _create_stream_wrapper(original_meth: Any, provider: str = "unknown") -> Any
     def stream_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
         if _mock_enabled(provider):
             # Mock mode: never reach the provider (#2424).
+            _refuse_structured_output_in_mock(kwargs)
             response = _mock_chat_message(self, provider, chunk=True)
             capture_langchain_response(response)
             yield response
@@ -882,6 +906,7 @@ def _create_stream_wrapper(original_meth: Any, provider: str = "unknown") -> Any
 def _create_astream_wrapper(original_meth: Any, provider: str = "unknown") -> Any:
     async def astream_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
         if _mock_enabled(provider):
+            _refuse_structured_output_in_mock(kwargs)
             response = await _amock_chat_message(self, provider, chunk=True)
             capture_langchain_response(response)
             yield response
@@ -924,6 +949,7 @@ def _create_ainvoke_wrapper(original_meth: Any, provider: str = "unknown") -> An
 
     async def ainvoke_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
         if _mock_enabled(provider):
+            _refuse_structured_output_in_mock(kwargs)
             response = await _amock_chat_message(self, provider)
             capture_langchain_response(response)
             return response
@@ -967,6 +993,7 @@ def _patch_langchain_bedrock_model(model_cls: Any, class_name: str) -> bool:
             from traigent.integrations.utils.mock_adapter import MockAdapter
 
             if MockAdapter.is_mock_enabled("bedrock"):
+                _refuse_structured_output_in_mock(kwargs)
                 from langchain_core.messages import AIMessage
 
                 model_name = (
@@ -1173,6 +1200,7 @@ def _install_anthropic_capture(ChatAnthropic: Any, state: list[bool]) -> None:
             from traigent.integrations.utils.mock_adapter import MockAdapter
 
             if MockAdapter.is_mock_enabled("anthropic"):
+                _refuse_structured_output_in_mock(kwargs)
                 from langchain_core.messages import AIMessage
 
                 model_name = getattr(self, "model", "mock-model")
@@ -1239,6 +1267,7 @@ def _install_openai_capture(ChatOpenAI: Any, state: list[bool]) -> None:
             from traigent.integrations.utils.mock_adapter import MockAdapter
 
             if MockAdapter.is_mock_enabled("openai"):
+                _refuse_structured_output_in_mock(kwargs)
                 from langchain_core.messages import AIMessage
 
                 model_name = getattr(self, "model_name", None) or getattr(

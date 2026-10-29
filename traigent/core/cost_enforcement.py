@@ -51,8 +51,10 @@ from pathlib import Path
 from threading import RLock
 
 from traigent.utils.env_config import (
+    is_mock_llm,
     is_strict_cost_accounting,
     is_truthy,
+    mock_cost_preflight_guidance,
     strict_cost_accounting_origin,
 )
 from traigent.utils.exceptions import ConfigurationError, CostLimitExceeded
@@ -959,6 +961,18 @@ class CostEnforcer:
         """
         return _check_approval_token_path(self._approval_token_path, config=self.config)
 
+    @staticmethod
+    def _non_interactive_proceed_guidance() -> str:
+        """Say how to proceed; a mock-mode run is told the dry-run route (#2795)."""
+        if is_mock_llm():
+            return mock_cost_preflight_guidance()
+        return (
+            "To proceed, raise TRAIGENT_RUN_COST_LIMIT, approve after review "
+            "with TRAIGENT_COST_APPROVED=true, or calibrate private/unpriced "
+            "model rates with TRAIGENT_CUSTOM_MODEL_PRICING_FILE or "
+            "TRAIGENT_CUSTOM_MODEL_PRICING_JSON."
+        )
+
     def _request_user_approval(
         self, estimated: float, estimated_calls_per_example: int = 1
     ) -> bool:
@@ -985,10 +999,7 @@ class CostEnforcer:
                 "(set estimated_calls_per_example on @traigent.optimize for "
                 "multi-call agents such as self-consistency voting, repair "
                 "passes, or model cascades).\n"
-                "To proceed, raise TRAIGENT_RUN_COST_LIMIT, approve after review "
-                "with TRAIGENT_COST_APPROVED=true, or calibrate private/unpriced "
-                "model rates with TRAIGENT_CUSTOM_MODEL_PRICING_FILE or "
-                "TRAIGENT_CUSTOM_MODEL_PRICING_JSON.\n",
+                f"{self._non_interactive_proceed_guidance()}\n",
                 file=sys.stderr,
             )
             logger.warning(

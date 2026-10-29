@@ -11,7 +11,11 @@ from traigent.api.types import TrialResult
 from traigent.core.cost_enforcement import CostEnforcer
 from traigent.evaluators.base import Dataset
 from traigent.utils.cost_calculator import UnknownModelError, get_model_token_pricing
-from traigent.utils.env_config import cost_preflight_mock_exempt
+from traigent.utils.env_config import (
+    cost_preflight_mock_exempt,
+    is_mock_llm,
+    mock_cost_preflight_guidance,
+)
 from traigent.utils.exceptions import CostLimitExceeded
 from traigent.utils.logging import get_logger
 from traigent.utils.money import format_usd
@@ -384,6 +388,19 @@ class CostEstimator:
             estimated_calls_per_example=self._estimated_calls_per_example,
         ):
             limit = self._cost_enforcer.config.limit
+            if is_mock_llm():
+                # Simulated run: lead with the dry-run route, never with spend
+                # approval (#2795).
+                proceed = mock_cost_preflight_guidance()
+            else:
+                proceed = (
+                    "To proceed, "
+                    "raise TRAIGENT_RUN_COST_LIMIT, approve after review with "
+                    "TRAIGENT_COST_APPROVED=true or cost_approved=True, or "
+                    "calibrate private/unpriced model rates with "
+                    "TRAIGENT_CUSTOM_MODEL_PRICING_FILE or "
+                    "TRAIGENT_CUSTOM_MODEL_PRICING_JSON."
+                )
             raise CostLimitExceeded(
                 accumulated=0.0,
                 limit=limit,
@@ -400,12 +417,7 @@ class CostEstimator:
                     f"{self._estimated_calls_per_example} LLM call(s) per example "
                     "(set estimated_calls_per_example on @traigent.optimize for "
                     "multi-call agents such as self-consistency voting, repair "
-                    "passes, or model cascades). To proceed, "
-                    "raise TRAIGENT_RUN_COST_LIMIT, approve after review with "
-                    "TRAIGENT_COST_APPROVED=true or cost_approved=True, or calibrate "
-                    "private/unpriced model rates with "
-                    "TRAIGENT_CUSTOM_MODEL_PRICING_FILE or "
-                    "TRAIGENT_CUSTOM_MODEL_PRICING_JSON."
+                    f"passes, or model cascades). {proceed}"
                 ),
             )
 

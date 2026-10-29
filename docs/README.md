@@ -112,8 +112,11 @@ and [Quick Reference](examples/QUICK_REFERENCE.md) for runnable examples.
 
 ## 🧪 Mock Mode (No API Keys)
 
-- Enable: `TRAIGENT_MOCK_LLM=true` (no API keys needed)
-- Benefits: realistic scores, zero cost, quick iteration
+- Enable: call `traigent.testing.enable_mock_mode_for_quickstart()` in your code
+  (no API keys needed). The bundled example scripts below read the deprecated
+  `TRAIGENT_MOCK_LLM=true` variable themselves as their own switch.
+- Benefits: realistic scores, free simulated calls, quick iteration (the pre-run
+  cost estimate still applies)
 - Example:
   - `TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py`
   - Or copy a command from the Examples Navigator "Run" icon

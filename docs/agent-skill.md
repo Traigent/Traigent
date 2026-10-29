@@ -26,7 +26,7 @@ npx skills add Traigent/traigent-skills --skill traigent-boost-agent --skill tra
 
 1. Sets up the `@traigent.optimize()` decorator
 2. Validates your dataset and config space
-3. Runs a mock optimization (zero cost) to verify the full pipeline
+3. Runs a mock optimization (simulated calls are free; the pre-run cost estimate still applies) to verify the full pipeline
 4. Reports results and estimates real costs
 5. Waits for your go-ahead before spending real tokens
 

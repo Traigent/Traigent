@@ -117,15 +117,15 @@ class APIKeyError(TraigentError):
         )
         if is_mock_llm():
             fix = (
-                "Mock mode (TRAIGENT_MOCK_LLM) is already on, but this client checks "
+                "Mock mode is already on, but this client checks "
                 "for a key when it is constructed, before mock interception can "
                 "run. Set a placeholder key (for example OPENAI_API_KEY=mock-key), "
                 "route the call through LiteLLM, or stub the client."
             )
         else:
             fix = (
-                "Set the required API key environment variable, or use "
-                "TRAIGENT_MOCK_LLM=true for testing."
+                "Set the required API key environment variable, or call "
+                "traigent.testing.enable_mock_mode_for_quickstart() for testing."
             )
         return cls(message=message, fix=fix)
 
@@ -322,7 +322,7 @@ class ErrorHandler:
         """Handle zero accuracy issues."""
         raise TraigentError(
             message="Optimization showing 0.0% accuracy",
-            fix="1. Enable mock mode: TRAIGENT_MOCK_LLM=true\n"
+            fix="1. Enable mock mode: traigent.testing.enable_mock_mode_for_quickstart()\n"
             "   2. Check evaluation dataset format\n"
             "   3. Verify API keys for embedding evaluation\n"
             "   4. Use custom evaluator for specific metrics",
@@ -336,7 +336,7 @@ class ErrorHandler:
             message=f"Unexpected error: {str(error)}",
             fix="1. Check the stack trace above\n"
             "   2. Check your setup: traigent doctor\n"
-            "   3. Try mock mode: TRAIGENT_MOCK_LLM=true\n"
+            "   3. Try mock mode: traigent.testing.enable_mock_mode_for_quickstart()\n"
             "   4. Report issue: https://github.com/Traigent/Traigent/issues",
             docs_link=_HTTPS_GITHUB_COM_TRAIGENT_TRAIGENT_TROUB,
         ) from error
