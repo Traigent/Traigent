@@ -351,7 +351,8 @@ Your answers should be educational and appropriate for students.""",
             configuration_space=self.get_configuration_space(),
             auto_override_frameworks=True,
             framework_targets=["langchain_openai.ChatOpenAI"],
-            execution_mode="edge_analytics",
+            offline=True,
+            algorithm="grid",
         )
         def american_history_tutor_optimized(question: str) -> str:
             """Optimized American history Q&A assistant."""

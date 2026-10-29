@@ -3766,8 +3766,17 @@ def optimize(  # NOSONAR(S107)
         )
 
         user_parallel_config = coerce_parallel_config(parallel_config)
+        # A TVL spec can inject ``parallel_config`` into the runtime overrides
+        # (``parallel_trials`` -> ``ParallelConfig``). It is merged here, below
+        # the decorator's own value, because it is also passed explicitly to
+        # ``OptimizedFunction`` and would otherwise raise "got multiple values
+        # for keyword argument 'parallel_config'".
+        tvl_parallel_config = combined_runtime_overrides.pop("parallel_config", None)
         combined_parallel_config, parallel_sources = merge_parallel_configs(
-            [(user_parallel_config, "decorator")]
+            [
+                (coerce_parallel_config(tvl_parallel_config), "tvl"),
+                (user_parallel_config, "decorator"),
+            ]
         )
         if parallel_sources:
             logger.debug(

@@ -10,9 +10,12 @@ Usage:
         trace_id_resolver=lambda trial: trial.metadata.get("langfuse_trace_id")
     )
 
-    @optimize(..., callbacks=[tracker.get_callback()])
+    @optimize(...)
     def my_workflow(...):
         ...
+
+    # Callbacks are a call-time argument of .optimize(), not a decorator option
+    results = await my_workflow.optimize(callbacks=[tracker.get_callback()])
 """
 
 # Traceability: CONC-Layer-Integration FUNC-INTEGRATIONS REQ-INT-008

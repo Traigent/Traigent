@@ -2514,13 +2514,12 @@ print(f"Best config: {results.best_config}")""",
             eval_dataset="evals.jsonl",
             objectives=["accuracy", "latency"],
             configuration_space={"temperature": (0.0, 1.0)},
-            callbacks=callbacks
         )
         def my_function(input_text: str, **config) -> str:
             return process(input_text, **config)
 
         # Run with persistence
-        result = asyncio.run(my_function.optimize())
+        result = asyncio.run(my_function.optimize(callbacks=callbacks))
         persistence.save_result(result, "my_optimization_v1")""",
         },
     ]

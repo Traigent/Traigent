@@ -13,9 +13,12 @@ Usage:
     )
 
     # Use callback in optimization
-    @optimize(..., callbacks=[tracker.get_callback()])
+    @optimize(...)
     def my_workflow(...):
         ...
+
+    # Callbacks are a call-time argument of .optimize(), not a decorator option
+    results = await my_workflow.optimize(callbacks=[tracker.get_callback()])
 
     # Or access client directly
     metrics = tracker.client.get_trace_metrics("trace_123")

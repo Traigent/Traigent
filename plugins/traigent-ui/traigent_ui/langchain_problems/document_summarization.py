@@ -238,7 +238,8 @@ Provide a clear, accurate summary that captures the key points and main ideas.""
             configuration_space=self.get_configuration_space(),
             auto_override_frameworks=True,
             framework_targets=["langchain_openai.ChatOpenAI"],
-            execution_mode="edge_analytics",
+            offline=True,
+            algorithm="grid",
         )
         def document_summarizer_optimized(
             title: str, content: str, target_length: str

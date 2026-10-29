@@ -135,7 +135,7 @@ dataset = generate_evaluation_dataset(total_samples=500)
 
 # Configure Traigent optimization
 @traigent.optimize(
-    config_space=EXTRACTION_SEARCH_SPACE,
+    configuration_space=EXTRACTION_SEARCH_SPACE,
     objectives=create_default_objectives(
         ["parsing_success_rate", "field_micro_f1", "latency_p95_ms"],
         orientations={

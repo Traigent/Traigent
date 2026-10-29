@@ -42,7 +42,8 @@ except ImportError:  # pragma: no cover - support IDE execution paths
                 continue
     traigent = importlib.import_module("traigent")
 
-# Debug mode to see exactly what Traigent is doing
+# Debug logging to see exactly what Traigent is doing
+traigent.configure(logging_level="DEBUG")
 
 
 @traigent.optimize(
@@ -50,7 +51,6 @@ except ImportError:  # pragma: no cover - support IDE execution paths
         "model": ["gpt-4.1-mini", "gpt-4.1"],
         "temperature": [0.1, 0.5, 0.9],
     },
-    debug=True,  # Enable debug mode
 )
 def debug_example(prompt: str) -> str:
     print("Original parameters in code:")

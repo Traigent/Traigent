@@ -384,7 +384,8 @@ Category:""",
             configuration_space=self.get_configuration_space(),
             auto_override_frameworks=True,
             framework_targets=["langchain_openai.ChatOpenAI"],
-            execution_mode="edge_analytics",
+            offline=True,
+            algorithm="grid",
         )
         def tech_support_classifier_optimized(issue_description: str) -> str:
             """Optimized technical support ticket classifier."""

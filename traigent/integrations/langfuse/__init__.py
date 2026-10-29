@@ -13,11 +13,14 @@ Quick Start:
     )
 
     # Use callback in optimization
-    @optimize(..., callbacks=[tracker.get_callback()])
+    @optimize(...)
     def my_workflow(input_data, **config):
         # Your LangGraph workflow here
         # Langfuse traces are automatically fetched and metrics merged
         ...
+
+    # Callbacks are a call-time argument of .optimize(), not a decorator option
+    results = await my_workflow.optimize(callbacks=[tracker.get_callback()])
 
 Direct Client Usage:
     from traigent.integrations.langfuse import LangfuseClient
