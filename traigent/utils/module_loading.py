@@ -23,6 +23,7 @@ import contextlib
 import importlib
 import importlib.util
 import inspect
+import os
 import re
 import sys
 from collections.abc import Collection, Iterator
@@ -41,16 +42,39 @@ def looks_like_dotted_module(spec: str) -> bool:
     return bool(_DOTTED_MODULE_RE.match(spec)) and not spec.endswith(".py")
 
 
+def _is_trusted_package_dir(directory: Path) -> bool:
+    """False for a directory another local user could have planted code in."""
+    try:
+        info = directory.stat()
+    except OSError:
+        return False
+    if info.st_mode & 0o002:  # world-writable (sticky /tmp included)
+        return False
+    getuid = getattr(os, "getuid", None)
+    if getuid is None:  # Windows: no ownership model to check
+        return True
+    return info.st_uid in (getuid(), 0)
+
+
 def package_parts(path: Path) -> tuple[Path, list[str]]:
     """Return ``(package_root_dir, [package, ..., submodule])`` for ``path``.
 
-    Walks up while the directory holds an ``__init__.py``. When ``path`` is not
-    inside a package the list is empty and the root is the file's directory.
+    Walks up while the directory holds an ``__init__.py`` *and* is a directory
+    the current user controls. Importing a package executes every ``__init__.py``
+    on its way down, so the walk never includes a world-writable directory
+    (``/tmp``) or one owned by another non-root user: a planted
+    ``/tmp/__init__.py`` must not run just because a file under ``/tmp/pkg`` was
+    checked. When ``path`` is not inside a package the list is empty and the root
+    is the file's directory.
     """
     path = path.resolve()
     parts: list[str] = []
     directory = path.parent
-    while (directory / "__init__.py").is_file() and directory.parent != directory:
+    while (
+        (directory / "__init__.py").is_file()
+        and directory.parent != directory
+        and _is_trusted_package_dir(directory)
+    ):
         parts.append(directory.name)
         directory = directory.parent
     if not parts:

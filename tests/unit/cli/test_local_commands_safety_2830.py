@@ -141,3 +141,28 @@ def test_local_sync_cleanup_with_session_id_is_a_usage_error():
     assert result.exit_code == 2
     assert "--cleanup" in result.output and "--session-id" in result.output
     manager.sync_session_to_cloud.assert_not_called()
+
+
+@pytest.mark.parametrize("status", ["unknown", "paused", "stopping", ""])
+def test_cleanup_keeps_sessions_in_unrecognised_status(store, status):
+    """Only completed/failed/cancelled are deletable; anything else is kept."""
+    sid = _make(store, "f", status, 400)
+    CliRunner().invoke(cleanup_sessions, ["--days", "30", "--yes"])
+    assert store.load_session(sid) is not None
+    dry = CliRunner().invoke(cleanup_sessions, ["--days", "30", "--dry-run"])
+    assert sid not in dry.output
+
+
+def test_cleanup_and_dry_run_agree_on_naive_timestamps(store):
+    """A zone-less created_at is read as UTC by both the preview and the delete."""
+    naive = _make(store, "naive", "completed", 400)
+    s = store.load_session(naive)
+    s.created_at = (
+        (datetime.now(UTC) - timedelta(days=400)).replace(tzinfo=None).isoformat()
+    )
+    store._save_session(s)
+
+    dry = CliRunner().invoke(cleanup_sessions, ["--days", "30", "--dry-run"])
+    assert naive in dry.output
+    CliRunner().invoke(cleanup_sessions, ["--days", "30", "--yes"])
+    assert store.load_session(naive) is None

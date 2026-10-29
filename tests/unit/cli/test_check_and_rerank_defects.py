@@ -607,6 +607,7 @@ def test_crashing_baseline_is_blocked_not_a_zero_baseline_2803(tmp_path: Path) -
     assert result.exit_code != 0, result.output
     assert "PASSED" not in result.output
     assert "Baseline run failed" in result.output
+    assert "first error:" in result.output
 
 
 def test_same_package_name_in_two_projects_loads_each_file_2800(
@@ -673,3 +674,30 @@ def test_failed_package_load_does_not_poison_the_next_project_2800(
     assert [n for n, _ in find_optimized_functions(module)] == ["answer"]
     for name in [m for m in sys.modules if m == "agents" or m.startswith("agents.")]:
         sys.modules.pop(name, None)
+
+
+def test_package_walk_stops_at_world_writable_directory(tmp_path: Path) -> None:
+    """A planted ``__init__.py`` in a world-writable ancestor must not be imported."""
+    import os
+
+    from traigent.utils.module_loading import package_parts
+
+    shared = tmp_path / "shared"
+    pkg = shared / "pkg"
+    pkg.mkdir(parents=True)
+    (shared / "__init__.py").write_text("raise RuntimeError('planted')\n")
+    (pkg / "__init__.py").write_text("")
+    mod = pkg / "mod.py"
+    mod.write_text("X = 1\n")
+
+    os.chmod(shared, 0o777)
+    try:
+        root, parts = package_parts(mod)
+    finally:
+        os.chmod(shared, 0o755)
+    assert parts == ["pkg", "mod"]
+    assert root == shared
+
+    # control: the same layout with a private ancestor still walks up.
+    _, parts = package_parts(mod)
+    assert parts == ["shared", "pkg", "mod"]

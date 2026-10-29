@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from dataclasses import fields as dataclass_fields
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -30,8 +30,10 @@ from ..utils.secure_path import PathTraversalError, safe_open, validate_path
 
 logger = get_logger(__name__)
 
-# Statuses of sessions that may still be written to; retention cleanup skips them.
-ACTIVE_SESSION_STATUSES = frozenset({"not_started", "pending", "running"})
+# Only sessions in one of these states are eligible for retention cleanup. An
+# allow-list (not "everything except running"): a status this SDK does not know
+# (e.g. "unknown", or one written by a newer version) must never be deleted.
+TERMINAL_SESSION_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
 TRIAL_COST_FIELDS = ("cost", "total_cost", "input_cost", "output_cost")
 
@@ -1165,7 +1167,8 @@ class LocalStorageManager:
         """
         Clean up finished sessions older than specified days.
 
-        Sessions that are not_started, pending or running are never deleted.
+        Only completed, failed and cancelled sessions are deleted; sessions in
+        any other state (pending, running, unknown) are kept.
 
         Args:
             days: Age threshold in days
@@ -1173,13 +1176,16 @@ class LocalStorageManager:
         Returns:
             Number of sessions deleted
         """
-        cutoff_date = datetime.now(UTC).timestamp() - (days * 24 * 60 * 60)
+        cutoff_date = datetime.now(UTC) - timedelta(days=days)
         deleted_count = 0
 
         for session in self.list_sessions():
-            if session.status in ACTIVE_SESSION_STATUSES:
-                continue  # never delete in-flight sessions
-            session_date = datetime.fromisoformat(session.created_at).timestamp()
+            if session.status not in TERMINAL_SESSION_STATUSES:
+                continue  # never delete in-flight or unrecognised sessions
+            session_date = datetime.fromisoformat(session.created_at)
+            # Same reading as the cleanup --dry-run preview: naive means UTC.
+            if session_date.tzinfo is None:
+                session_date = session_date.replace(tzinfo=UTC)
             if session_date < cutoff_date:
                 if self.delete_session(session.session_id):
                     deleted_count += 1

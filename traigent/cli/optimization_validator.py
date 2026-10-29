@@ -391,9 +391,13 @@ class OptimizationValidator:
             primary_objective=func_info.objectives[0] if func_info.objectives else None,
         )
         if trial.status == TrialStatus.FAILED:
+            first_error = next(
+                (str(e) for e in (evaluation_result.errors or []) if e), None
+            )
             raise RuntimeError(
                 f"Baseline run failed for {func_info.name}: no example succeeded "
                 f"with configuration {effective_config or '{}'}"
+                + (f" (first error: {first_error})" if first_error else "")
             )
         return self._filter_metrics_to_objectives(
             dict(trial.metrics or {}), func_info, is_mock_mode

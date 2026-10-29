@@ -47,6 +47,7 @@ class _Session:
         self._session_id = session_id
         self._created_at = created_at
         self._function_name = function_name
+        self.status = "completed"  # only finished sessions are deletable
         self.reads = []
 
     @property
@@ -293,6 +294,8 @@ def test_config_error_reported_and_exits():
 
 
 def test_plain_namespace_rows_are_supported():
-    ns = SimpleNamespace(session_id="x", function_name="g", created_at=_iso(days=99))
+    ns = SimpleNamespace(
+        session_id="x", function_name="g", created_at=_iso(days=99), status="completed"
+    )
     result, *_ = _run(["--days", "1", "--dry-run"], [ns])
     assert _lines(result)[-1] == "  - x (g)"

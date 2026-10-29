@@ -13,7 +13,7 @@ import click
 
 from ..cloud.sync_manager import SyncManager
 from ..config.types import TraigentConfig
-from ..storage.local_storage import ACTIVE_SESSION_STATUSES, LocalStorageManager
+from ..storage.local_storage import TERMINAL_SESSION_STATUSES, LocalStorageManager
 from ..utils.incentives import show_upgrade_hint
 from ..utils.local_analytics import collect_and_submit_analytics
 from ..utils.logging import get_logger
@@ -380,8 +380,8 @@ def _echo_sessions_older_than(storage: LocalStorageManager, days: int) -> None:
         # Normalize to timezone-aware for safe comparison
         if session_date.tzinfo is None:
             session_date = session_date.replace(tzinfo=UTC)
-        # Same rule as the real cleanup: in-flight sessions are never deleted.
-        if getattr(session, "status", None) in ACTIVE_SESSION_STATUSES:
+        # Same rule as the real cleanup: only finished sessions are deletable.
+        if getattr(session, "status", None) not in TERMINAL_SESSION_STATUSES:
             continue
         if session_date < cutoff_date:
             old_sessions.append(session)
