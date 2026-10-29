@@ -189,6 +189,39 @@ class TraigentOTLPExporter(SpanExporter):
         current = deadline() if callable(deadline) else deadline
         return None if current is None else current - self._clock()
 
+    def _handle_response(
+        self,
+        resp: TransportResponse,
+        spans: list[ReadableSpan],
+        deadline: Deadline,
+        outcome: ExportOutcome,
+        *,
+        may_split: bool,
+    ) -> bool:
+        """Settle a terminal response; False means the send should be retried."""
+        count = len(spans)
+        if resp.status == 200:
+            self._record_success(resp, count, outcome)
+            return True
+        if resp.status == 413:
+            if may_split and count > 1:
+                mid = count // 2
+                for part in (spans[:mid], spans[mid:]):
+                    self._send_with_retry(
+                        part,
+                        encode_spans(part).SerializeToString(),
+                        deadline,
+                        outcome,
+                        may_split=False,
+                    )
+            else:
+                outcome.dropped_non_retryable += count
+            return True
+        if resp.status not in RETRYABLE_STATUS:
+            outcome.dropped_non_retryable += count
+            return True
+        return False
+
     def _send_with_retry(
         self,
         spans: list[ReadableSpan],
@@ -201,20 +234,8 @@ class TraigentOTLPExporter(SpanExporter):
         started = self._clock()
         count = len(spans)
         for attempt in range(self._max_attempts):
-            if self._stop.is_set():  # shut down: no further POST, ever
-                outcome.dropped_deadline += count
-                return
-            # optimization_only needs no 403 latch here: the mode disables the exporter
-            # (init, processor and these two checks) before anything is sent, so the OTLP
-            # receiver's non-JSON 403 body is never reached.
-            if is_backend_offline() or oo_egress.is_active(
-                scope=getattr(self, "oo_scope", None)
-            ):  # recheck every POST
-                outcome.dropped_offline += count
-                return
-            remaining = self._remaining(deadline)
-            if remaining is not None and remaining <= 0:
-                outcome.dropped_deadline += count
+            dropped, remaining = self._preflight(count, deadline, outcome)
+            if dropped:
                 return
             timeout = (
                 self._timeout if remaining is None else min(self._timeout, remaining)
@@ -223,43 +244,63 @@ class TraigentOTLPExporter(SpanExporter):
                 resp = self._transport.post(body, timeout=timeout)
             except TransportError:
                 resp = None
-            if resp is not None:
-                if resp.status == 200:
-                    self._record_success(resp, count, outcome)
-                    return
-                if resp.status == 413:
-                    if may_split and count > 1:
-                        mid = count // 2
-                        for part in (spans[:mid], spans[mid:]):
-                            self._send_with_retry(
-                                part,
-                                encode_spans(part).SerializeToString(),
-                                deadline,
-                                outcome,
-                                may_split=False,
-                            )
-                    else:
-                        outcome.dropped_non_retryable += count
-                    return
-                if resp.status not in RETRYABLE_STATUS:
-                    outcome.dropped_non_retryable += count
-                    return
+            if resp is not None and self._handle_response(
+                resp, spans, deadline, outcome, may_split=may_split
+            ):
+                return
             if attempt + 1 >= self._max_attempts:
                 break
-            delay = self._delay(attempt, resp)
-            remaining = self._remaining(deadline)
-            if remaining is not None and delay >= remaining:
-                outcome.dropped_deadline += count
+            if self._wait_before_retry(
+                attempt, resp, started, deadline, outcome, count
+            ):
                 return
-            if self._clock() + delay - started > self._max_batch_age:
-                outcome.dropped_retry_exhausted += count
-                return
-            outcome.retries += 1
-            if self._injected_sleep is not None:
-                self._injected_sleep(delay)
-            else:
-                self._backoff_wait(delay, deadline)
         outcome.dropped_retry_exhausted += count
+
+    def _preflight(
+        self, count: int, deadline: Deadline, outcome: ExportOutcome
+    ) -> tuple[bool, float | None]:
+        """Checks run before every POST: ``(dropped, remaining_seconds)``."""
+        if self._stop.is_set():  # shut down: no further POST, ever
+            outcome.dropped_deadline += count
+            return True, None
+        # optimization_only needs no 403 latch here: the mode disables the exporter
+        # (init, processor and these two checks) before anything is sent, so the OTLP
+        # receiver's non-JSON 403 body is never reached.
+        if is_backend_offline() or oo_egress.is_active(
+            scope=getattr(self, "oo_scope", None)
+        ):  # recheck every POST
+            outcome.dropped_offline += count
+            return True, None
+        remaining = self._remaining(deadline)
+        if remaining is not None and remaining <= 0:
+            outcome.dropped_deadline += count
+            return True, None
+        return False, remaining
+
+    def _wait_before_retry(
+        self,
+        attempt: int,
+        resp: TransportResponse | None,
+        started: float,
+        deadline: Deadline,
+        outcome: ExportOutcome,
+        count: int,
+    ) -> bool:
+        """Back off before the next attempt; True means the batch was dropped."""
+        delay = self._delay(attempt, resp)
+        remaining = self._remaining(deadline)
+        if remaining is not None and delay >= remaining:
+            outcome.dropped_deadline += count
+            return True
+        if self._clock() + delay - started > self._max_batch_age:
+            outcome.dropped_retry_exhausted += count
+            return True
+        outcome.retries += 1
+        if self._injected_sleep is not None:
+            self._injected_sleep(delay)
+        else:
+            self._backoff_wait(delay, deadline)
+        return False
 
     def _delay(self, attempt: int, resp: TransportResponse | None) -> float:
         if resp is not None and resp.retry_after is not None:
