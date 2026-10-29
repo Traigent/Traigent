@@ -94,6 +94,10 @@ def _positive_finite_float(value: Any) -> float | None:
 
 #: Results-route statuses that mean "retry later" rather than "rejected" (#2818).
 _TRANSIENT_SUBMIT_STATUSES = frozenset({408, 425, 429})
+#: Of those, only 425 (too early) and 429 (rate limited) are re-sent: both mean
+#: the server did not process the request. A 408 may have been processed, so a
+#: blind re-send of the results could duplicate it; it is reported unacknowledged.
+_RETRYABLE_SUBMIT_STATUSES = frozenset({425, 429})
 _TRIAL_SUBMIT_MAX_ATTEMPTS = 3
 _TRIAL_SUBMIT_MAX_WAIT_SECONDS = 5.0
 
@@ -1249,7 +1253,7 @@ class TrialOperations:
                         timeout=aiohttp.ClientTimeout(total=30),
                     ) as response:
                         last_attempt = attempt + 1 >= _TRIAL_SUBMIT_MAX_ATTEMPTS
-                        if response.status not in _TRANSIENT_SUBMIT_STATUSES or (
+                        if response.status not in _RETRYABLE_SUBMIT_STATUSES or (
                             last_attempt
                         ):
                             return await self._dispatch_results_response(

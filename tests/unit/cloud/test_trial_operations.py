@@ -2071,3 +2071,10 @@ class TestTransientSubmitStatuses2818:
         ops = TrialOperations(Mock())
         result = ops._handle_trial_error_response(status, "t", "s", "u", "")
         assert getattr(result, "permanent_rejection", False) is True
+
+    @pytest.mark.asyncio
+    async def test_408_is_not_resent_and_not_permanent(self):
+        ops, session = self._ops_and_session([self._response(408)])
+        result = await self._submit(ops)
+        assert result is False
+        assert session.post.call_count == 1
