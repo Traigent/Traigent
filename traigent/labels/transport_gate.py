@@ -510,18 +510,7 @@ class GatedOpenerDirector(urllib.request.OpenerDirector):
                 body=_bytes_body(data if data is not None else fullurl.data),
             )
             if replacement is not None:
-                fullurl.data = replacement
-                for key in [
-                    k for k in fullurl.headers if k.lower() == "content-length"
-                ]:
-                    del fullurl.headers[key]
-                for key in [
-                    k
-                    for k in fullurl.unredirected_hdrs
-                    if k.lower() == "content-length"
-                ]:
-                    del fullurl.unredirected_hdrs[key]
-                fullurl.add_unredirected_header("Content-length", str(len(replacement)))
+                _replace_urllib_body(fullurl, replacement)
                 data = None
         else:
             replacement = enforce_optimization_only(
@@ -532,6 +521,15 @@ class GatedOpenerDirector(urllib.request.OpenerDirector):
             if replacement is not None:
                 data = replacement
         return super().open(fullurl, data, *args, **kwargs)
+
+
+def _replace_urllib_body(fullurl: urllib.request.Request, replacement: bytes) -> None:
+    fullurl.data = replacement
+    for key in [k for k in fullurl.headers if k.lower() == "content-length"]:
+        del fullurl.headers[key]
+    for key in [k for k in fullurl.unredirected_hdrs if k.lower() == "content-length"]:
+        del fullurl.unredirected_hdrs[key]
+    fullurl.add_unredirected_header("Content-length", str(len(replacement)))
 
 
 def gate_opener(opener: urllib.request.OpenerDirector) -> urllib.request.OpenerDirector:
@@ -581,6 +579,68 @@ def _serialize_once(
     return kwargs
 
 
+def _replace_aiohttp_body(
+    kwargs: dict[str, Any], replacement: Any, payload: Any
+) -> None:
+    if replacement is not None and kwargs.get("json") is None:
+        sent = kwargs.get("data")
+        content_type = getattr(sent, "content_type", None)
+        if isinstance(content_type, str) and isinstance(
+            getattr(sent, "_value", None), (bytes, bytearray)
+        ):
+            # keep the Content-Type the serializer chose for these exact bytes
+            kwargs["data"] = payload.BytesPayload(
+                replacement, content_type=content_type
+            )
+        else:
+            kwargs["data"] = replacement  # send exactly what was judged
+        if kwargs.get("headers"):
+            kwargs["headers"] = _drop_content_length(kwargs["headers"])
+
+
+def _aiohttp_serialized_data(
+    self: Any, kwargs: dict[str, Any], payload: Any
+) -> tuple[dict[str, Any], Any]:
+    data = kwargs.get("data")
+    if kwargs.get("json") is not None and data is None:
+        # Serialize once and hand the same payload to aiohttp.
+        sb = getattr(self, "_json_serialize_bytes", None)
+        if sb is not None:
+            pl = payload.JsonBytesPayload(kwargs["json"], dumps=sb)
+        else:
+            pl = payload.JsonPayload(kwargs["json"], dumps=self._json_serialize)
+        kwargs = {k: v for k, v in kwargs.items() if k != "json"}
+        kwargs["data"] = pl
+        data = pl
+    return kwargs, data
+
+
+def _aiohttp_body_bytes(data: Any) -> tuple[bytes | None, bool]:
+    body: bytes | None = None
+    unreadable = False
+    if isinstance(data, (bytes, bytearray)):
+        body = bytes(data)
+    elif isinstance(data, str):
+        body = data.encode("utf-8")
+    elif data is not None:
+        value = getattr(data, "_value", None)
+        if isinstance(value, (bytes, bytearray)):
+            body = bytes(value)
+        else:
+            unreadable = True
+    return body, unreadable
+
+
+def _serialize_aiohttp_if_active(
+    self: Any, kwargs: dict[str, Any], payload: Any
+) -> dict[str, Any]:
+    if not getattr(self, "_traigent_oo_external", False) and (
+        oo_egress.outgoing_may_be_active(getattr(self, "_traigent_oo_explicit", None))
+    ):
+        kwargs = _serialize_once(self, kwargs, payload)
+    return kwargs
+
+
 def _build_aiohttp(base: type) -> type:
     from aiohttp import payload
 
@@ -594,12 +654,7 @@ def _build_aiohttp(base: type) -> type:
                 url = str(base_url).rstrip("/") + "/" + url.lstrip("/")
             url = _with_params(url, kwargs.get("params"))
             _check_strict(self, url)
-            if not getattr(self, "_traigent_oo_external", False) and (
-                oo_egress.outgoing_may_be_active(
-                    getattr(self, "_traigent_oo_explicit", None)
-                )
-            ):
-                kwargs = _serialize_once(self, kwargs, payload)
+            kwargs = _serialize_aiohttp_if_active(self, kwargs, payload)
             replacement = _enforce_for_session(
                 self,
                 str(method),
@@ -607,49 +662,14 @@ def _build_aiohttp(base: type) -> type:
                 lambda: _effective_headers(self, kwargs),
                 lambda: _aiohttp_body(kwargs),
             )
-            if replacement is not None and kwargs.get("json") is None:
-                sent = kwargs.get("data")
-                content_type = getattr(sent, "content_type", None)
-                if isinstance(content_type, str) and isinstance(
-                    getattr(sent, "_value", None), (bytes, bytearray)
-                ):
-                    # keep the Content-Type the serializer chose for these exact bytes
-                    kwargs["data"] = payload.BytesPayload(
-                        replacement, content_type=content_type
-                    )
-                else:
-                    kwargs["data"] = replacement  # send exactly what was judged
-                if kwargs.get("headers"):
-                    kwargs["headers"] = _drop_content_length(kwargs["headers"])
+            _replace_aiohttp_body(kwargs, replacement, payload)
             extra = _instance_origins(self)
             body: bytes | None = None
             unreadable = False
             if applies_to(str(method), url, extra):
                 try:
-                    data = kwargs.get("data")
-                    if kwargs.get("json") is not None and data is None:
-                        # Serialize ONCE, exactly as aiohttp would, and hand the same
-                        # payload on: no second serialization.
-                        sb = getattr(self, "_json_serialize_bytes", None)
-                        if sb is not None:
-                            pl = payload.JsonBytesPayload(kwargs["json"], dumps=sb)
-                        else:
-                            pl = payload.JsonPayload(
-                                kwargs["json"], dumps=self._json_serialize
-                            )
-                        kwargs = {k: v for k, v in kwargs.items() if k != "json"}
-                        kwargs["data"] = pl
-                        data = pl
-                    if isinstance(data, (bytes, bytearray)):
-                        body = bytes(data)
-                    elif isinstance(data, str):
-                        body = data.encode("utf-8")
-                    elif data is not None:
-                        value = getattr(data, "_value", None)
-                        if isinstance(value, (bytes, bytearray)):
-                            body = bytes(value)
-                        else:
-                            unreadable = True
+                    kwargs, data = _aiohttp_serialized_data(self, kwargs, payload)
+                    body, unreadable = _aiohttp_body_bytes(data)
                 except Exception as exc:  # noqa: BLE001
                     with _lock:
                         _errors[type(exc).__name__] += 1
@@ -872,31 +892,41 @@ def gate_session(
         elif _is_instance(client, "httpx", "Client"):
             client.__class__ = _derived(type(client), "httpx", _build_httpx_sync)
     if getattr(type(client), "_traigent_gated", False):
-        parsed = frozenset(o for u in (origins or ()) if (o := _origin(str(u))))
-        if parsed:
-            object.__setattr__(
-                client, "_traigent_gate_origins", _instance_origins(client) | parsed
-            )
-        if strict:
-            object.__setattr__(client, "_traigent_gate_strict", True)
-        if optimization_only is not None:
-            object.__setattr__(client, "_traigent_oo_explicit", optimization_only)
-        if external:
-            object.__setattr__(client, "_traigent_oo_external", True)
-        else:
-            _traigent_origin_registry.update(
-                n for u in (origins or ()) if (n := oo_egress.normalised_origin(u))
-            )
-        prefixes = frozenset(
-            urlsplit(str(u)).path.rstrip("/") for u in (origins or ()) if str(u)
-        )
-        if prefixes:
-            object.__setattr__(
-                client,
-                "_traigent_oo_prefixes",
-                getattr(client, "_traigent_oo_prefixes", frozenset()) | prefixes,
-            )
+        _configure_gated_session(client, origins, strict, optimization_only, external)
     return client
+
+
+def _configure_gated_session(
+    client: Any,
+    origins: Iterable[str] | None,
+    strict: bool,
+    optimization_only: bool | None,
+    external: bool,
+) -> None:
+    parsed = frozenset(o for u in (origins or ()) if (o := _origin(str(u))))
+    if parsed:
+        object.__setattr__(
+            client, "_traigent_gate_origins", _instance_origins(client) | parsed
+        )
+    if strict:
+        object.__setattr__(client, "_traigent_gate_strict", True)
+    if optimization_only is not None:
+        object.__setattr__(client, "_traigent_oo_explicit", optimization_only)
+    if external:
+        object.__setattr__(client, "_traigent_oo_external", True)
+    else:
+        _traigent_origin_registry.update(
+            n for u in (origins or ()) if (n := oo_egress.normalised_origin(u))
+        )
+    prefixes = frozenset(
+        urlsplit(str(u)).path.rstrip("/") for u in (origins or ()) if str(u)
+    )
+    if prefixes:
+        object.__setattr__(
+            client,
+            "_traigent_oo_prefixes",
+            getattr(client, "_traigent_oo_prefixes", frozenset()) | prefixes,
+        )
 
 
 def mark_explicit(session: Any, explicit: bool | None) -> Any:
@@ -934,44 +964,18 @@ def preflight_requests(
     bytes. While every gate is off nothing is serialized.
     """
     active = oo_egress.outgoing_may_be_active(None)
-    if not external and not active and current_mode() == "off":
+    if not _preflight_enabled(url, kwargs, external, active):
         return
-    if external:
-        if active:
-            _refuse_external_to_traigent(_with_params(str(url), kwargs.get("params")))
-        if current_mode() == "off":
-            return
     prepared: Any = None
     prep_error: Exception | None = None
     try:
-        import requests
-
-        if (not external and active) or applies_to(method, str(url)):
-            prepared = requests.Request(
-                method.upper(),
-                url,
-                params=kwargs.get("params"),
-                data=kwargs.get("data"),
-                json=kwargs.get("json"),
-            ).prepare()
+        prepared = _prepare_preflight_request(method, url, kwargs, external, active)
     except Exception as exc:  # noqa: BLE001
         if active and not external:
             raise oo_egress.OptimizationOnlyRefusal("body_unreadable") from None
         prepared, prep_error = None, exc
     if not external and active:
-        pbody = prepared.body if prepared is not None else None
-        if isinstance(pbody, str):
-            pbody = pbody.encode("utf-8")
-        elif isinstance(pbody, bytearray):
-            pbody = bytes(pbody)
-        elif pbody is not None and not isinstance(pbody, bytes):
-            pbody = oo_egress.UNREADABLE_BODY
-        enforce_optimization_only(
-            method,
-            _with_params(str(url), kwargs.get("params")),
-            headers=kwargs.get("headers"),
-            body=pbody,
-        )
+        _preflight_optimization(method, url, kwargs, prepared)
     if current_mode() == "off":
         return
     try:
@@ -979,21 +983,7 @@ def preflight_requests(
             raise prep_error
         if prepared is None:
             return
-        body = prepared.body
-        readable = body is None or isinstance(body, (bytes, str, bytearray))
-        outgoing_body: bytes | None
-        if isinstance(body, str):
-            outgoing_body = body.encode()
-        elif body:
-            outgoing_body = bytes(body)
-        else:
-            outgoing_body = None
-        inspect_outgoing(
-            method,
-            str(prepared.url),
-            outgoing_body,
-            body_present=None if readable else True,
-        )
+        _inspect_prepared_request(method, prepared)
     except TransportGateRefusal:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -1004,3 +994,68 @@ def preflight_requests(
             ) from None
         with _lock:
             _errors[type(exc).__name__] += 1
+
+
+def _prepare_preflight_request(
+    method: str, url: str, kwargs: dict[str, Any], external: bool, active: bool
+) -> Any:
+    import requests
+
+    if (not external and active) or applies_to(method, str(url)):
+        return requests.Request(
+            method.upper(),
+            url,
+            params=kwargs.get("params"),
+            data=kwargs.get("data"),
+            json=kwargs.get("json"),
+        ).prepare()
+    return None
+
+
+def _preflight_enabled(
+    url: str, kwargs: dict[str, Any], external: bool, active: bool
+) -> bool:
+    if not external and not active and current_mode() == "off":
+        return False
+    if external:
+        if active:
+            _refuse_external_to_traigent(_with_params(str(url), kwargs.get("params")))
+        if current_mode() == "off":
+            return False
+    return True
+
+
+def _inspect_prepared_request(method: str, prepared: Any) -> None:
+    body = prepared.body
+    readable = body is None or isinstance(body, (bytes, str, bytearray))
+    outgoing_body: bytes | None
+    if isinstance(body, str):
+        outgoing_body = body.encode()
+    elif body:
+        outgoing_body = bytes(body)
+    else:
+        outgoing_body = None
+    inspect_outgoing(
+        method,
+        str(prepared.url),
+        outgoing_body,
+        body_present=None if readable else True,
+    )
+
+
+def _preflight_optimization(
+    method: str, url: str, kwargs: dict[str, Any], prepared: Any
+) -> None:
+    pbody = prepared.body if prepared is not None else None
+    if isinstance(pbody, str):
+        pbody = pbody.encode("utf-8")
+    elif isinstance(pbody, bytearray):
+        pbody = bytes(pbody)
+    elif pbody is not None and not isinstance(pbody, bytes):
+        pbody = oo_egress.UNREADABLE_BODY
+    enforce_optimization_only(
+        method,
+        _with_params(str(url), kwargs.get("params")),
+        headers=kwargs.get("headers"),
+        body=pbody,
+    )
