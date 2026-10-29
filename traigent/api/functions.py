@@ -908,14 +908,24 @@ def get_available_strategies() -> dict[str, dict[str, Any]]:
     return strategies
 
 
-def _check_integration(module_path: str) -> bool:
-    """Check if an integration module is available."""
+def _check_integration(module_path: str, vendor_package: str | None = None) -> bool:
+    """Check if an integration is usable.
+
+    The SDK's own ``traigent.integrations...`` module imports fine without the
+    vendor package, so availability also requires ``vendor_package`` (when
+    given) to be installed (#2835).
+    """
     try:
         import importlib
+        import importlib.util
 
         importlib.import_module(module_path)
+        if vendor_package is not None and (
+            importlib.util.find_spec(vendor_package) is None
+        ):
+            return False
         return True
-    except ImportError:
+    except (ImportError, ValueError):
         return False
 
 
@@ -990,10 +1000,16 @@ def get_version_info() -> dict[str, Any]:
             "visualization": True,  # Basic visualization in base
         },
         "integrations": {
-            "langchain": _check_integration("traigent.integrations.llms.langchain"),
-            "openai": _check_integration("traigent.integrations.llms.openai"),
-            "mlflow": _check_integration("traigent.integrations.observability.mlflow"),
-            "wandb": _check_integration("traigent.integrations.observability.wandb"),
+            "langchain": _check_integration(
+                "traigent.integrations.llms.langchain", "langchain_core"
+            ),
+            "openai": _check_integration("traigent.integrations.llms.openai", "openai"),
+            "mlflow": _check_integration(
+                "traigent.integrations.observability.mlflow", "mlflow"
+            ),
+            "wandb": _check_integration(
+                "traigent.integrations.observability.wandb", "wandb"
+            ),
         },
         "plugins": registry.list_plugins(),  # List installed plugins
         "global_config": _GLOBAL_CONFIG.copy(),
