@@ -102,8 +102,9 @@ class TestMetricsTracker:
             tracker = MetricsTracker()
             empty_format = tracker._empty_backend_format()
 
-            assert empty_format["score"] == 0.0
-            assert empty_format["accuracy"] == 0.0
+            # Accuracy was never measured: None even without strict nulls.
+            assert empty_format["score"] is None
+            assert empty_format["accuracy"] is None
             assert empty_format["response_time_ms"] == 0.0
             assert empty_format["cost"] == 0.0
             assert empty_format["input_tokens"] == 0.0
@@ -152,7 +153,8 @@ class TestMetricsTracker:
             # Test in format_for_backend context
             formatted = tracker.format_for_backend()
             # These should use safe_get internally
-            assert formatted["score"] == 0.0  # When no data
+            assert formatted["score"] is None  # Unmeasured accuracy, no data
+            assert formatted["accuracy"] is None
             assert formatted["response_time_ms"] == 0.0
 
     def test_safe_get_function_strict_mode(self):
@@ -212,8 +214,10 @@ class TestEndToEndIntegration:
             assert all(
                 v == 0.0 or v == 0
                 for k, v in empty.items()
-                if k not in ["total_examples", "successful_examples"]
+                if k
+                not in ["total_examples", "successful_examples", "score", "accuracy"]
             )
+            assert empty["score"] is None and empty["accuracy"] is None
 
     def test_flag_toggle_runtime(self):
         """Test that flag can be toggled at runtime."""

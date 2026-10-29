@@ -22,6 +22,7 @@ __all__ = [
     "row_has_measured_cost",
     "row_reports_zero_provider_attempts",
     "trial_cost_unknown",
+    "unmeasured_example_coverage",
     "unmeasured_example_ids",
 ]
 
@@ -201,7 +202,7 @@ def _example_cost_unmeasured(metrics: Mapping[str, Any], ok: Any) -> bool:
 
 
 def unmeasured_example_ids(example_results: Any, limit: int = 5) -> list[str]:
-    """Ids (or ``#index``) of the examples whose usage was not captured.
+    """Ids (or ``#index``) of the examples whose cost could not be measured.
 
     Uses the same per-row rule as :func:`trial_cost_unknown`: a row flagged
     ``cost_unmeasured``, or a row with no measured cost (a failed row that
@@ -223,6 +224,37 @@ def unmeasured_example_ids(example_results: Any, limit: int = 5) -> list[str]:
             if len(found) >= limit:
                 break
     return found
+
+
+def unmeasured_example_coverage(
+    example_results: Any, attempted: Any
+) -> tuple[int, int] | None:
+    """Complete ``(missing, attempted)`` example counts for one trial, or None.
+
+    Counts example *attempts* (not distinct ids) with the same per-row rule as
+    :func:`unmeasured_example_ids`, over every row, never a truncated id list.
+    ``attempted`` is the trial's own attempted-example count; the counts are
+    returned only when the readable rows account for exactly that many
+    attempts. Otherwise (rows absent, redacted, partial, or unreadable) the
+    coverage is unknown and ``None`` is returned: a count is never guessed.
+    """
+    if (
+        isinstance(attempted, bool)
+        or not isinstance(attempted, int)
+        or attempted <= 0
+        or not isinstance(example_results, Sequence)
+        or isinstance(example_results, (str, bytes, bytearray))
+        or len(example_results) != attempted
+    ):
+        return None
+    missing = 0
+    for row in example_results:
+        metrics, _example_id, ok = _example_row_fields(row)
+        if not isinstance(metrics, Mapping):
+            return None
+        if _example_cost_unmeasured(metrics, ok):
+            missing += 1
+    return missing, attempted
 
 
 def extract_trial_cost_metric(*sources: Any) -> float | None:
