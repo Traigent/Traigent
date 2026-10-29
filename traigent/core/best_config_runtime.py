@@ -610,38 +610,7 @@ def snapshot_from_spec(
             details={"expected": expected_config_id, "actual": config_id},
         )
 
-    function_ref = spec.get("function_ref")
-    if expected_function_ref:
-        # A caller that names its function is only served a config bound to that
-        # function: a missing / null ``function_ref`` cannot establish it. Only an
-        # explicitly unbound read (no expected function) accepts a legacy unbound config.
-        if function_ref is None:
-            raise diag._safe_error(
-                "Best config function_ref mismatch: the config is not bound to a "
-                "function",
-                details={"expected": expected_function_ref},
-            )
-        if function_ref != expected_function_ref:
-            raise diag._safe_error(
-                "Best config function_ref mismatch: the config is bound to "
-                "another function",
-                details={"expected": expected_function_ref, "actual": function_ref},
-            )
-
-    if expected_environment is not None:
-        spec_environment = spec.get("environment")
-        effective: str | None
-        if isinstance(spec_environment, str):
-            effective = spec_environment.strip().lower()
-        elif spec_environment is None:
-            effective = "default"
-        else:
-            effective = None
-        if effective != expected_environment.strip().lower():
-            raise diag._safe_error(
-                "Best config environment mismatch: the spec is not for the "
-                "requested environment"
-            )
+    _validate_spec_binding(spec, expected_function_ref, expected_environment)
 
     raw_config = spec["config"]
     if not isinstance(raw_config, dict):
@@ -676,6 +645,45 @@ def snapshot_from_spec(
         provenance=provenance,
     )
     return snapshot
+
+
+def _validate_spec_binding(
+    spec: dict[str, Any],
+    expected_function_ref: str | None,
+    expected_environment: str | None,
+) -> None:
+    function_ref = spec.get("function_ref")
+    if expected_function_ref:
+        # A caller that names its function is only served a config bound to that
+        # function: a missing / null ``function_ref`` cannot establish it. Only an
+        # explicitly unbound read (no expected function) accepts a legacy unbound config.
+        if function_ref is None:
+            raise diag._safe_error(
+                "Best config function_ref mismatch: the config is not bound to a "
+                "function",
+                details={"expected": expected_function_ref},
+            )
+        if function_ref != expected_function_ref:
+            raise diag._safe_error(
+                "Best config function_ref mismatch: the config is bound to "
+                "another function",
+                details={"expected": expected_function_ref, "actual": function_ref},
+            )
+
+    if expected_environment is not None:
+        spec_environment = spec.get("environment")
+        effective: str | None
+        if isinstance(spec_environment, str):
+            effective = spec_environment.strip().lower()
+        elif spec_environment is None:
+            effective = "default"
+        else:
+            effective = None
+        if effective != expected_environment.strip().lower():
+            raise diag._safe_error(
+                "Best config environment mismatch: the spec is not for the "
+                "requested environment"
+            )
 
 
 @diag.boundary(
@@ -1066,25 +1074,14 @@ def resolve_cloud_cache_best_config(
 
     current_time = now or datetime.now(UTC)
     try:
-        if not directory.exists():
-            return None
-        entry = _load_cache_entry(directory, safe_config_id)
+        entry = _existing_cache_entry(directory, safe_config_id)
         if entry is None:
             return None
         if not (entry.get("etag") or entry.get("version")):
             raise diag._safe_error("Cloud cache metadata requires etag or version")
 
         loaded_at = _parse_datetime(entry.get("loaded_at"))
-        max_age = (
-            stale_ok_ttl_seconds if stale_ok_ttl_seconds is not None else ttl_seconds
-        )
-        if current_time - loaded_at > timedelta(seconds=max_age):
-            diag.log(
-                logger,
-                logging.WARNING,
-                "Ignoring stale best-config cache",
-                category=diag.Category.CACHE_STALE,
-            )
+        if _cache_is_stale(loaded_at, current_time, ttl_seconds, stale_ok_ttl_seconds):
             return None
 
         snapshot = load_best_config_spec(
@@ -1121,6 +1118,30 @@ def resolve_cloud_cache_best_config(
             exc=exc,
         )
         return None
+
+
+def _existing_cache_entry(directory: Path, config_id: str) -> dict[str, Any] | None:
+    if not directory.exists():
+        return None
+    return _load_cache_entry(directory, config_id)
+
+
+def _cache_is_stale(
+    loaded_at: datetime,
+    current_time: datetime,
+    ttl_seconds: int,
+    stale_ok_ttl_seconds: int | None,
+) -> bool:
+    max_age = stale_ok_ttl_seconds if stale_ok_ttl_seconds is not None else ttl_seconds
+    if current_time - loaded_at > timedelta(seconds=max_age):
+        diag.log(
+            logger,
+            logging.WARNING,
+            "Ignoring stale best-config cache",
+            category=diag.Category.CACHE_STALE,
+        )
+        return True
+    return False
 
 
 def _validate_config_id(config_id: Any) -> str:
@@ -1238,34 +1259,16 @@ def _normalize_json_value(value: Any, seen: set[int] | None = None) -> Any:
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     if isinstance(value, float):
-        if not math.isfinite(value):
-            raise diag._safe_error("Best config JSON values cannot be NaN/Infinity")
-        return value
+        return _normalize_json_float(value)
     if isinstance(value, str):
         return unicodedata.normalize("NFC", value)
 
     container_id = id(value)
     if isinstance(value, dict):
-        if container_id in seen:
-            raise diag._safe_error("Best config contains a circular reference")
-        seen.add(container_id)
-        normalized: dict[str, Any] = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise diag._safe_error("Best config JSON object keys must be strings")
-            normalized[unicodedata.normalize("NFC", key)] = _normalize_json_value(
-                item, seen
-            )
-        seen.remove(container_id)
-        return normalized
+        return _normalize_json_dict(value, seen, container_id)
 
     if isinstance(value, list):
-        if container_id in seen:
-            raise diag._safe_error("Best config contains a circular reference")
-        seen.add(container_id)
-        normalized_list = [_normalize_json_value(item, seen) for item in value]
-        seen.remove(container_id)
-        return normalized_list
+        return _normalize_json_list(value, seen, container_id)
 
     # numpy scalar types (e.g. np.int64 from Optuna integer dimensions) are not
     # JSON-native and do not subclass Python int/bool. Coerce a genuine 0-d numpy
@@ -1276,7 +1279,7 @@ def _normalize_json_value(value: Any, seen: set[int] | None = None) -> Any:
     # yields a plain JSON-native primitive; anything else (np.longdouble.item() ->
     # np.longdouble, datetime64/complex.item(), a 0-d object array's dict) is
     # rejected here rather than recursing without progress or passing silently.
-    if getattr(value, "ndim", None) == 0 and hasattr(value, "item"):
+    if _has_scalar_item(value):
         try:
             coerced = value.item()
         except (ValueError, TypeError):
@@ -1287,6 +1290,44 @@ def _normalize_json_value(value: Any, seen: set[int] | None = None) -> Any:
     raise diag._safe_error(
         f"Best config contains non-JSON-native value {type(value).__name__}"
     )
+
+
+def _has_scalar_item(value: Any) -> bool:
+    return getattr(value, "ndim", None) == 0 and hasattr(value, "item")
+
+
+def _normalize_json_float(value: float) -> float:
+    if not math.isfinite(value):
+        raise diag._safe_error("Best config JSON values cannot be NaN/Infinity")
+    return value
+
+
+def _normalize_json_list(
+    value: list[Any], seen: set[int], container_id: int
+) -> list[Any]:
+    if container_id in seen:
+        raise diag._safe_error("Best config contains a circular reference")
+    seen.add(container_id)
+    normalized_list = [_normalize_json_value(item, seen) for item in value]
+    seen.remove(container_id)
+    return normalized_list
+
+
+def _normalize_json_dict(
+    value: dict[Any, Any], seen: set[int], container_id: int
+) -> dict[str, Any]:
+    if container_id in seen:
+        raise diag._safe_error("Best config contains a circular reference")
+    seen.add(container_id)
+    normalized: dict[str, Any] = {}
+    for key, item in value.items():
+        if not isinstance(key, str):
+            raise diag._safe_error("Best config JSON object keys must be strings")
+        normalized[unicodedata.normalize("NFC", key)] = _normalize_json_value(
+            item, seen
+        )
+    seen.remove(container_id)
+    return normalized
 
 
 def _deep_freeze(value: Any) -> Any:
