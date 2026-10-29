@@ -388,6 +388,24 @@ class ParallelExecutionManager:
         # Create a denied permit for cancelled/failed trials
         denied_permit = Permit(id=-1, amount=0.0, active=False)
 
+        async def release_after_exception(
+            permit: Permit | None, index: int, e: BaseException
+        ) -> None:
+            # Release the permit on exception - the trial failed after permit
+            # was granted, so we need to release the reservation
+            if (
+                permit is not None
+                and permit.is_granted
+                and self.cost_enforcer is not None
+            ):
+                await self.cost_enforcer.release_permit_async(permit)
+                logger.debug(
+                    "Released permit %d for trial %d after exception: %s",
+                    permit.id,
+                    index,
+                    type(e).__name__,
+                )
+
         async def execute_with_permit(coro: Any, index: int) -> tuple[int, Any, Permit]:
             """Execute coroutine if permit acquired, return (index, result, permit).
 
@@ -426,21 +444,13 @@ class ParallelExecutionManager:
                     self, coro, index, permit, coroutine_started
                 )
                 raise
+            except (KeyboardInterrupt, SystemExit) as e:
+                # Interpreter-level interrupts must reach the caller: release
+                # the reservation exactly as for any failure, then re-raise.
+                await release_after_exception(permit, index, e)
+                raise
             except BaseException as e:
-                # Release the permit on exception - the trial failed after permit
-                # was granted, so we need to release the reservation
-                if (
-                    permit is not None
-                    and permit.is_granted
-                    and self.cost_enforcer is not None
-                ):
-                    await self.cost_enforcer.release_permit_async(permit)
-                    logger.debug(
-                        "Released permit %d for trial %d after exception: %s",
-                        permit.id,
-                        index,
-                        type(e).__name__,
-                    )
+                await release_after_exception(permit, index, e)
                 # Return exception with denied permit (already released)
                 return (index, e, denied_permit)
 
