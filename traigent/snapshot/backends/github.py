@@ -152,7 +152,8 @@ class GitHubStore:
         return self.locator()
 
     def locator(self) -> str:
-        base = f"github://{self._repo}@{self._branch}"
+        # "/" inside a branch is %2F so the locator parses unambiguously.
+        base = f"github://{self._repo}@{self._branch.replace('/', '%2F')}"
         return f"{base}/{self._prefix}" if self._prefix else base
 
     def _path(self, key: str) -> str:

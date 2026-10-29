@@ -1333,6 +1333,12 @@ def enroll_command(key_path: Path, pins_path: Path | None) -> None:
     ),
 )
 @click.option(
+    "--allow-insecure-local",
+    is_flag=True,
+    default=False,
+    help="Allow plain HTTP to loopback store endpoints; for local emulators only.",
+)
+@click.option(
     "--pins", "pins_path", type=click.Path(dir_okay=False, path_type=Path), default=None
 )
 @click.option(
@@ -1354,6 +1360,7 @@ def bind_command(
     run_id: str,
     store_dir: Path | None,
     store_locator: str | None,
+    allow_insecure_local: bool,
     pins_path: Path | None,
     evidence_dir: Path | None,
     sdk_ref: str | None,
@@ -1377,22 +1384,23 @@ def bind_command(
     if (store_dir is None) == (store_locator is None):
         _g1_fail("BIND_REFUSED STORE_OPTION_EXACTLY_ONE_OF_STORE_OR_STORE_DIR")
         return
+    # Local reconstruction first: a failure here makes no network call.
     try:
         store = (
             LocalDirStore(store_dir)
             if store_dir is not None
-            else open_store_from_locator(str(store_locator))
+            else open_store_from_locator(
+                str(store_locator), allow_insecure_local=allow_insecure_local
+            )
         )
-    except SnapshotLocatorError as err:
-        _g1_fail(f"BIND_REFUSED {err}")
-        return
-    # Local reconstruction first: a failure here makes no network call.
-    try:
         evidence = reconstruct_and_compare(
             root,
             custody=LocalFileCustody(evidence_dir),
             store=store,
         )
+    except SnapshotLocatorError as err:
+        _g1_fail(f"BIND_REFUSED {err}")
+        return
     except ClientEvidenceError as err:
         _g1_fail(f"BIND_REFUSED {err.code}")
         return
