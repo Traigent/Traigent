@@ -150,6 +150,12 @@ def verify_chain(
         and member_binding["epoch"] != project_binding["epoch"]
     ):
         raise LabelCryptoError("epoch mismatch")
+    _verify_chain_activity(chain, revoked, now)
+
+
+def _verify_chain_activity(
+    chain: list[dict[str, Any]], revoked: set[str], now: str
+) -> None:
     current = _parse_ts(now)
     for binding in chain:
         if binding["key_id"] in revoked or binding["signer_key_id"] in revoked:
