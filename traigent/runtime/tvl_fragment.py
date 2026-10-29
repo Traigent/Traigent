@@ -43,6 +43,8 @@ from traigent.runtime.model import (
     positive_finite,
 )
 
+MONITORS_1 = "monitors[1]"
+
 _MAX_FRAGMENT_BYTES = 64 * 1024
 _NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 _PLACEHOLDER = "<key>"
@@ -115,7 +117,7 @@ def _parse_requirement(node: Any) -> tuple[str, int, float]:
 
 
 def _parse_promotion(node: Any, requirement_name: str) -> PromotionMonitor:
-    path = "monitors[1]"
+    path = MONITORS_1
     mon = _closed_keys(
         node,
         {"name", "requirement", "phase", "evidence", "decision"},
@@ -152,9 +154,9 @@ def _split_monitors(mons: list[Any]) -> tuple[Any, Any | None]:
     ]
     runtime = [m for m in mons if m not in promotion]
     if len(promotion) > 1:
-        raise _unsupported("monitors[1]")
+        raise _unsupported(MONITORS_1)
     if len(runtime) != 1:
-        raise _unsupported("monitors[1]") if len(runtime) > 1 else _invalid("monitors")
+        raise _unsupported(MONITORS_1) if len(runtime) > 1 else _invalid("monitors")
     return runtime[0], (promotion[0] if promotion else None)
 
 
