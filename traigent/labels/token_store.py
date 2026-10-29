@@ -743,7 +743,9 @@ def _valid_item(item: Any) -> bool:
     return parent is None
 
 
-def _validate_state(state: Any, namespace: TokenNamespace) -> None:
+def _validate_state_shape(
+    state: Any, namespace: TokenNamespace
+) -> tuple[dict[Any, Any], dict[Any, Any], dict[Any, Any]]:
     if not isinstance(state, dict) or set(state) != {
         "namespace",
         "operations",
@@ -768,113 +770,17 @@ def _validate_state(state: Any, namespace: TokenNamespace) -> None:
     # must refuse as an unreadable store, not surface as a TypeError)
     if not all(isinstance(r, str) and _is_int(v, 1) for r, v in revisions.items()):
         raise _bad()
+    return operations, tokens, revisions
 
-    seen_refs: set[str] = set()
-    for op_key, op in operations.items():
-        if not isinstance(op_key, str) or not _OP_KEY.fullmatch(op_key):
-            raise _bad()
-        if not isinstance(op, dict) or set(op) != {"items", "digest", "refs"}:
-            raise _bad()
-        items, refs = op["items"], op["refs"]
-        if (
-            not isinstance(items, list)
-            or not 1 <= len(items) <= MAX_ITEMS_PER_OPERATION
-        ):
-            raise _bad()
-        if not all(_valid_item(i) for i in items):
-            raise _bad()
-        if not isinstance(op["digest"], str) or not _HEX64.fullmatch(op["digest"]):
-            raise _bad()
-        if (
-            request_digest(namespace.agent_ref, [(i[0], i[1]) for i in items]).hex()
-            != op["digest"]
-        ):
-            raise _bad()
-        if refs is not None:
-            if not isinstance(refs, list) or len(refs) != len(items):
-                raise _bad()
-            for item, ref in zip(items, refs, strict=True):
-                if not isinstance(ref, str) or not _REF[item[0]].fullmatch(ref):
-                    raise _bad()
-                if ref in seen_refs:
-                    raise _bad()
-                seen_refs.add(ref)
+
+def _validate_state(state: Any, namespace: TokenNamespace) -> None:
+    operations, tokens, revisions = _validate_state_shape(state, namespace)
+    _validate_operations(operations, namespace)
 
     claimed: set[tuple[str, int]] = set()
     token_refs: set[str] = set()
     for key, entry in tokens.items():
-        if not isinstance(key, str) or not isinstance(entry, dict):
-            raise _bad()
-        if set(entry) != {
-            "kind",
-            "parent",
-            "name",
-            "ref",
-            "state",
-            "op",
-            "ordinal",
-            "spec",
-            "spec_history",
-        }:
-            raise _bad()
-        if not _valid_item([entry["kind"], entry["parent"], entry["name"]]):
-            raise _bad()
-        if key != _key(entry["kind"], entry["parent"], entry["name"]):
-            raise _bad()
-        op_key, ordinal = entry["op"], entry["ordinal"]
-        if (
-            not isinstance(op_key, str)
-            or op_key not in operations
-            or not _is_int(ordinal)
-        ):
-            raise _bad()
-        op = operations[op_key]
-        if ordinal >= len(op["items"]) or op["items"][ordinal] != [
-            entry["kind"],
-            entry["parent"],
-            entry["name"],
-        ]:
-            raise _bad()
-        if (op_key, ordinal) in claimed:
-            raise _bad()
-        claimed.add((op_key, ordinal))
-        status = entry["state"]
-        if status not in STATES:
-            raise _bad()
-        if status == S0_INTENT:
-            if (
-                entry["ref"] is not None
-                or op["refs"] is not None
-                or entry["spec"] is not None
-                or entry["spec_history"] != []
-            ):
-                raise _bad()
-        else:
-            if op["refs"] is None or entry["ref"] != op["refs"][ordinal]:
-                raise _bad()
-            token_refs.add(entry["ref"])
-            if (status == S3_SPEC_COMMITTED) != (entry["spec"] is not None):
-                raise _bad()
-            if entry["spec"] is not None and not (
-                isinstance(entry["spec"], str) and _SPEC_REF.fullmatch(entry["spec"])
-            ):
-                raise _bad()
-            history = entry["spec_history"]
-            if (
-                not isinstance(history, list)
-                or len(history) > MAX_SPEC_HISTORY
-                or len(set(map(str, history))) != len(history)
-                or not all(
-                    isinstance(h, str) and _SPEC_REF.fullmatch(h) for h in history
-                )
-                or (history[-1:] or [None])[0] != entry["spec"]
-            ):
-                raise _bad()
-            if (
-                status in (S2_LABEL_ACKED, S3_SPEC_COMMITTED)
-                and revisions.get(entry["ref"], 0) < 1
-            ):
-                raise _bad()
+        _validate_token_entry(key, entry, operations, revisions, claimed, token_refs)
     # every journalled item has its token entry (no half-written batch)
     for op_key, op in operations.items():
         for ordinal in range(len(op["items"])):
@@ -883,6 +789,137 @@ def _validate_state(state: Any, namespace: TokenNamespace) -> None:
     for ref, revision in revisions.items():
         if ref not in token_refs or not _is_int(revision, 1):
             raise _bad()
+
+
+def _validate_operations(operations: dict[Any, Any], namespace: TokenNamespace) -> None:
+    seen_refs: set[str] = set()
+    for op_key, op in operations.items():
+        _validate_operation(op_key, op, namespace, seen_refs)
+
+
+def _validate_operation(
+    op_key: Any, op: Any, namespace: TokenNamespace, seen_refs: set[str]
+) -> None:
+    if not isinstance(op_key, str) or not _OP_KEY.fullmatch(op_key):
+        raise _bad()
+    if not isinstance(op, dict) or set(op) != {"items", "digest", "refs"}:
+        raise _bad()
+    items, refs = op["items"], op["refs"]
+    if not isinstance(items, list) or not 1 <= len(items) <= MAX_ITEMS_PER_OPERATION:
+        raise _bad()
+    if not all(_valid_item(i) for i in items):
+        raise _bad()
+    if not isinstance(op["digest"], str) or not _HEX64.fullmatch(op["digest"]):
+        raise _bad()
+    if (
+        request_digest(namespace.agent_ref, [(i[0], i[1]) for i in items]).hex()
+        != op["digest"]
+    ):
+        raise _bad()
+    if refs is not None:
+        _validate_operation_refs(items, refs, seen_refs)
+
+
+def _validate_operation_refs(items: list[Any], refs: Any, seen_refs: set[str]) -> None:
+    if not isinstance(refs, list) or len(refs) != len(items):
+        raise _bad()
+    for item, ref in zip(items, refs, strict=True):
+        if not isinstance(ref, str) or not _REF[item[0]].fullmatch(ref):
+            raise _bad()
+        if ref in seen_refs:
+            raise _bad()
+        seen_refs.add(ref)
+
+
+_TOKEN_ENTRY_KEYS = {
+    "kind",
+    "parent",
+    "name",
+    "ref",
+    "state",
+    "op",
+    "ordinal",
+    "spec",
+    "spec_history",
+}
+
+
+def _validate_token_entry(
+    key: Any,
+    entry: Any,
+    operations: dict[str, Any],
+    revisions: dict[str, Any],
+    claimed: set[tuple[str, int]],
+    token_refs: set[str],
+) -> None:
+    if not isinstance(key, str) or not isinstance(entry, dict):
+        raise _bad()
+    if set(entry) != _TOKEN_ENTRY_KEYS:
+        raise _bad()
+    if not _valid_item([entry["kind"], entry["parent"], entry["name"]]):
+        raise _bad()
+    if key != _key(entry["kind"], entry["parent"], entry["name"]):
+        raise _bad()
+    op_key, ordinal = entry["op"], entry["ordinal"]
+    if not isinstance(op_key, str) or op_key not in operations or not _is_int(ordinal):
+        raise _bad()
+    op = operations[op_key]
+    if ordinal >= len(op["items"]) or op["items"][ordinal] != [
+        entry["kind"],
+        entry["parent"],
+        entry["name"],
+    ]:
+        raise _bad()
+    if (op_key, ordinal) in claimed:
+        raise _bad()
+    claimed.add((op_key, ordinal))
+    _validate_entry_status(entry, op, revisions, token_refs)
+
+
+def _validate_entry_status(
+    entry: dict[str, Any],
+    op: dict[str, Any],
+    revisions: dict[str, Any],
+    token_refs: set[str],
+) -> None:
+    status = entry["state"]
+    if status not in STATES:
+        raise _bad()
+    if status == S0_INTENT:
+        if (
+            entry["ref"] is not None
+            or op["refs"] is not None
+            or entry["spec"] is not None
+            or entry["spec_history"] != []
+        ):
+            raise _bad()
+        return
+    if op["refs"] is None or entry["ref"] != op["refs"][entry["ordinal"]]:
+        raise _bad()
+    token_refs.add(entry["ref"])
+    if (status == S3_SPEC_COMMITTED) != (entry["spec"] is not None):
+        raise _bad()
+    if entry["spec"] is not None and not (
+        isinstance(entry["spec"], str) and _SPEC_REF.fullmatch(entry["spec"])
+    ):
+        raise _bad()
+    _validate_spec_history(entry["spec_history"], entry["spec"])
+    if (
+        status in (S2_LABEL_ACKED, S3_SPEC_COMMITTED)
+        and revisions.get(entry["ref"], 0) < 1
+    ):
+        raise _bad()
+
+
+def _validate_spec_history(history: Any, spec: Any) -> None:
+    if (
+        not isinstance(history, list)
+        or len(history) > MAX_SPEC_HISTORY
+        or len(set(map(str, history))) != len(history)
+        or not all(isinstance(h, str) and _SPEC_REF.fullmatch(h) for h in history)
+        or (history[-1:] or [None])[0] != spec
+    ):
+        raise _bad()
 
 
 # --- the store ----------------------------------------------------------------------------

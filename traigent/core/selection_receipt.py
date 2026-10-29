@@ -70,6 +70,45 @@ def _strict_int(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def _paired_margin_fields(
+    raw: dict[str, Any], n_shared: int
+) -> tuple[Any, list[float | int], Any] | None:
+    """``(delta, ci95, p_value)`` of a paired verdict, or None when invalid."""
+    raw_ci = raw.get("ci95")
+    delta = _finite_number(raw.get("delta"))
+    p_value = _finite_number(raw.get("p_value"))
+    if delta is None or p_value is None or not 0 <= p_value <= 1:
+        return None
+    if not isinstance(raw_ci, (list, tuple)) or len(raw_ci) != 2:
+        return None
+    bounds: list[float | int] = []
+    for bound in raw_ci:
+        finite = _finite_number(bound)
+        if finite is None:
+            return None
+        bounds.append(finite)
+    if bounds[0] > bounds[1]:
+        return None
+    if n_shared < 1:
+        return None
+    return delta, bounds, p_value
+
+
+def _na_margin_fields(
+    raw: dict[str, Any], n_shared: int
+) -> tuple[Any, None, None] | None:
+    """``(delta, None, None)`` of an ``na`` verdict, or None when invalid."""
+    raw_delta = raw.get("delta")
+    if raw.get("ci95") is not None or raw.get("p_value") is not None or n_shared != 0:
+        return None
+    delta = None
+    if raw_delta is not None:
+        delta = _finite_number(raw_delta)
+        if delta is None:
+            return None
+    return delta, None, None
+
+
 def _project_margin(raw: Any) -> dict[str, Any] | None:
     """Allowlist-project an SDK margin payload onto the schema SelectionMargin.
 
@@ -93,39 +132,16 @@ def _project_margin(raw: Any) -> dict[str, Any] | None:
     if n_configs is None or n_configs < 2 or n_shared is None:
         return None
 
-    raw_delta = raw.get("delta")
-    raw_ci = raw.get("ci95")
-    raw_p = raw.get("p_value")
+    fields: tuple[Any, Any, Any] | None
     if verdict in _PAIRED_VERDICTS:
-        delta = _finite_number(raw_delta)
-        p_value = _finite_number(raw_p)
-        if delta is None or p_value is None or not 0 <= p_value <= 1:
-            return None
-        if not isinstance(raw_ci, (list, tuple)) or len(raw_ci) != 2:
-            return None
-        bounds: list[float | int] = []
-        for bound in raw_ci:
-            finite = _finite_number(bound)
-            if finite is None:
-                return None
-            bounds.append(finite)
-        if bounds[0] > bounds[1]:
-            return None
-        ci95: list[float | int] | None = bounds
-        if n_shared < 1:
-            return None
+        fields = _paired_margin_fields(raw, n_shared)
     elif verdict == "na":
-        if raw_ci is not None or raw_p is not None or n_shared != 0:
-            return None
-        delta = None
-        if raw_delta is not None:
-            delta = _finite_number(raw_delta)
-            if delta is None:
-                return None
-        ci95 = None
-        p_value = None
+        fields = _na_margin_fields(raw, n_shared)
     else:
         return None
+    if fields is None:
+        return None
+    delta, ci95, p_value = fields
 
     return {
         "winner_trial_id": winner,

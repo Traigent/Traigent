@@ -43,6 +43,8 @@ from traigent.runtime.model import (
     positive_finite,
 )
 
+MONITORS_1 = "monitors[1]"
+
 _MAX_FRAGMENT_BYTES = 64 * 1024
 _NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 _PLACEHOLDER = "<key>"
@@ -115,7 +117,7 @@ def _parse_requirement(node: Any) -> tuple[str, int, float]:
 
 
 def _parse_promotion(node: Any, requirement_name: str) -> PromotionMonitor:
-    path = "monitors[1]"
+    path = MONITORS_1
     mon = _closed_keys(
         node,
         {"name", "requirement", "phase", "evidence", "decision"},
@@ -152,9 +154,9 @@ def _split_monitors(mons: list[Any]) -> tuple[Any, Any | None]:
     ]
     runtime = [m for m in mons if m not in promotion]
     if len(promotion) > 1:
-        raise _unsupported("monitors[1]")
+        raise _unsupported(MONITORS_1)
     if len(runtime) != 1:
-        raise _unsupported("monitors[1]") if len(runtime) > 1 else _invalid("monitors")
+        raise _unsupported(MONITORS_1) if len(runtime) > 1 else _invalid("monitors")
     return runtime[0], (promotion[0] if promotion else None)
 
 
@@ -303,6 +305,80 @@ def _parse_guards(node: Any, monitor_name: str, path: str) -> tuple[NotifyGuard,
     return tuple(guards)
 
 
+def _resolve_severity_approval(
+    action: Any, severity: Any, approval: Any, path: str
+) -> tuple[Any, Any]:
+    """Apply the per-action severity/approval rules of one response rule."""
+    if action == "notify":
+        if severity is None:
+            severity = "critical"  # RFC 0003 section 7.2: the default severity
+        if severity not in SEVERITIES:
+            raise _invalid(f"{path}.severity")
+        if approval is not None:
+            raise _invalid(f"{path}.approval")
+    elif action == "optimize":
+        if severity is not None:
+            raise _invalid(f"{path}.severity")
+        # Owner ruling: ``approval: standing`` is refused locally with a closed code.
+        if approval not in (None, "human"):
+            raise RuntimeRequirementError(E_ACTION_UNSUPPORTED, f"{path}.approval")
+        approval = "human"
+    elif severity is not None or approval is not None:
+        raise _invalid(f"{path}.do")
+    return severity, approval
+
+
+def _parse_response_rule(raw: Any, index: int, monitor_name: str) -> ResponseRule:
+    path = f"responses[0].rules[{index}]"
+    rule = _closed_keys(
+        raw,
+        {
+            "id",
+            "trigger",
+            "do",
+            "severity",
+            "approval",
+            "deploy",
+            "only_while",
+            "unless",
+        },
+        {"id", "trigger", "do"},
+        path,
+    )
+    rule_id = _name(rule["id"], f"{path}.id")
+    trigger_rule, event, hours = _parse_trigger(
+        rule["trigger"], monitor_name, f"{path}.trigger"
+    )
+    only_while = _parse_guards(
+        rule.get("only_while"), monitor_name, f"{path}.only_while"
+    )
+    unless = _parse_guards(rule.get("unless"), monitor_name, f"{path}.unless")
+    action = rule["do"]
+    if action not in ACTIONS:
+        raise RuntimeRequirementError(E_ACTION_UNSUPPORTED, f"{path}.do")
+    severity = rule.get("severity")
+    approval = rule.get("approval")
+    deploy = rule.get("deploy")
+    reactive = bool(trigger_rule or event == UNKNOWN_FOR or only_while or unless)
+    if reactive and action != "notify":
+        raise RuntimeRequirementError(E_NOTIFY_ONLY, f"{path}.do")
+    if deploy is not None and (action != "optimize" or deploy not in DEPLOY_MODES):
+        raise _invalid(f"{path}.deploy")
+    severity, approval = _resolve_severity_approval(action, severity, approval, path)
+    return ResponseRule(
+        rule_id,
+        event,
+        action,
+        severity,
+        approval,
+        trigger_rule=trigger_rule,
+        hours=hours,
+        only_while=only_while,
+        unless=unless,
+        deploy=deploy,
+    )
+
+
 def _parse_responses(
     node: Any, monitor_name: str
 ) -> tuple[str | None, tuple[ResponseRule, ...]]:
@@ -321,73 +397,10 @@ def _parse_responses(
     raw_rules = response["rules"]
     if not isinstance(raw_rules, list):
         raise _invalid("responses[0].rules")
-    rules: list[ResponseRule] = []
-    for index, raw in enumerate(raw_rules):
-        path = f"responses[0].rules[{index}]"
-        rule = _closed_keys(
-            raw,
-            {
-                "id",
-                "trigger",
-                "do",
-                "severity",
-                "approval",
-                "deploy",
-                "only_while",
-                "unless",
-            },
-            {"id", "trigger", "do"},
-            path,
-        )
-        rule_id = _name(rule["id"], f"{path}.id")
-        trigger_rule, event, hours = _parse_trigger(
-            rule["trigger"], monitor_name, f"{path}.trigger"
-        )
-        only_while = _parse_guards(
-            rule.get("only_while"), monitor_name, f"{path}.only_while"
-        )
-        unless = _parse_guards(rule.get("unless"), monitor_name, f"{path}.unless")
-        action = rule["do"]
-        if action not in ACTIONS:
-            raise RuntimeRequirementError(E_ACTION_UNSUPPORTED, f"{path}.do")
-        severity = rule.get("severity")
-        approval = rule.get("approval")
-        deploy = rule.get("deploy")
-        reactive = bool(trigger_rule or event == UNKNOWN_FOR or only_while or unless)
-        if reactive and action != "notify":
-            raise RuntimeRequirementError(E_NOTIFY_ONLY, f"{path}.do")
-        if deploy is not None and (action != "optimize" or deploy not in DEPLOY_MODES):
-            raise _invalid(f"{path}.deploy")
-        if action == "notify":
-            if severity is None:
-                severity = "critical"  # RFC 0003 section 7.2: the default severity
-            if severity not in SEVERITIES:
-                raise _invalid(f"{path}.severity")
-            if approval is not None:
-                raise _invalid(f"{path}.approval")
-        elif action == "optimize":
-            if severity is not None:
-                raise _invalid(f"{path}.severity")
-            # Owner ruling: ``approval: standing`` is refused locally with a closed code.
-            if approval not in (None, "human"):
-                raise RuntimeRequirementError(E_ACTION_UNSUPPORTED, f"{path}.approval")
-            approval = "human"
-        elif severity is not None or approval is not None:
-            raise _invalid(f"{path}.do")
-        rules.append(
-            ResponseRule(
-                rule_id,
-                event,
-                action,
-                severity,
-                approval,
-                trigger_rule=trigger_rule,
-                hours=hours,
-                only_while=only_while,
-                unless=unless,
-                deploy=deploy,
-            )
-        )
+    rules: list[ResponseRule] = [
+        _parse_response_rule(raw, index, monitor_name)
+        for index, raw in enumerate(raw_rules)
+    ]
     return ladder, tuple(rules)
 
 

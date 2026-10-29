@@ -512,6 +512,36 @@ class RuntimeRequirement:
         def bad(path: str) -> None:
             issues.append(Issue(E_INVALID, path, "error"))
 
+        self._validate_scalar_fields(issues, bad)
+        seen: set[str] = set()
+        for index, rule in enumerate(self.rules):
+            where = f"rules[{index}]"
+            if rule.id in seen or not _NAME_RE.fullmatch(rule.id):
+                bad(f"{where}.id")
+            seen.add(rule.id)
+            _validate_trigger(self, rule, where, issues)
+            self._validate_rule(rule, where, issues, bad)
+            _validate_guards(self, rule, where, issues)
+        optimize_rules = [
+            index
+            for index, rule in enumerate(self.rules)
+            if rule.action == "optimize" and rule.event == "episode_opened"
+        ]
+        for index in optimize_rules[
+            1:
+        ]:  # respond runs exactly one fix rule: refuse more
+            issues.append(Issue(E_MULTIPLE_OPTIMIZE, f"rules[{index}]", "error"))
+        if self.promotion is not None and not self._promotion_is_valid(self.promotion):
+            bad("promotion")
+        if self.max_fix_cost_usd is not None and not positive_finite(
+            self.max_fix_cost_usd
+        ):
+            bad("max_fix_cost_usd")
+        return issues
+
+    def _validate_scalar_fields(
+        self, issues: list[Issue], bad: Callable[[str], None]
+    ) -> None:
         if not _NAME_RE.fullmatch(self.name):
             bad("name")
         for fname, (lo, hi) in _INT_RANGES.items():
@@ -538,59 +568,44 @@ class RuntimeRequirement:
             or not 1 <= len(normalise_environment(env)) <= ENVIRONMENT_MAX_LENGTH
         ):
             bad("environment")
-        seen: set[str] = set()
-        for index, rule in enumerate(self.rules):
-            where = f"rules[{index}]"
-            if rule.id in seen or not _NAME_RE.fullmatch(rule.id):
-                bad(f"{where}.id")
-            seen.add(rule.id)
-            _validate_trigger(self, rule, where, issues)
-            if rule.action not in ACTIONS:
-                issues.append(Issue(E_ACTION_UNSUPPORTED, f"{where}.do", "error"))
-            if (
-                rule.action in ("optimize", "open_next_step")
-                and rule.event != "episode_opened"
-            ):
-                issues.append(
-                    Issue(E_ACTION_UNSUPPORTED, f"{where}.trigger.event", "error")
-                )
-            if rule.action == "notify" and rule.severity not in SEVERITIES:
-                bad(f"{where}.severity")
-            if rule.action == "optimize" and (rule.approval or "human") != "human":
-                issues.append(Issue(E_ACTION_UNSUPPORTED, f"{where}.approval", "error"))
-            if rule.deploy is not None and (
-                rule.action != "optimize" or rule.deploy not in DEPLOY_MODES
-            ):
-                bad(f"{where}.deploy")
-            if rule.deploy == "if_promoted" and self.promotion is None:
-                bad(f"{where}.deploy")  # needs a promotion monitor (RFC 0003 7.6)
-            if rule.is_reactive() and rule.action != "notify":
-                issues.append(Issue(E_NOTIFY_ONLY, f"{where}.do", "error"))
-            _validate_guards(self, rule, where, issues)
-        optimize_rules = [
-            index
-            for index, rule in enumerate(self.rules)
-            if rule.action == "optimize" and rule.event == "episode_opened"
-        ]
-        for index in optimize_rules[
-            1:
-        ]:  # respond runs exactly one fix rule: refuse more
-            issues.append(Issue(E_MULTIPLE_OPTIMIZE, f"rules[{index}]", "error"))
-        if self.promotion is not None:
-            promo = self.promotion
-            if (
-                not _NAME_RE.fullmatch(promo.name)
-                or promo.name == self.monitor_name
-                or promo.confidence not in CONFIDENCE_VALUES
-                or not _is_number(promo.false_alarm_budget)
-                or not 0 < promo.false_alarm_budget <= 0.5
-            ):
-                bad("promotion")
-        if self.max_fix_cost_usd is not None and not positive_finite(
-            self.max_fix_cost_usd
+
+    def _validate_rule(
+        self,
+        rule: Any,
+        where: str,
+        issues: list[Issue],
+        bad: Callable[[str], None],
+    ) -> None:
+        if rule.action not in ACTIONS:
+            issues.append(Issue(E_ACTION_UNSUPPORTED, f"{where}.do", "error"))
+        if (
+            rule.action in ("optimize", "open_next_step")
+            and rule.event != "episode_opened"
         ):
-            bad("max_fix_cost_usd")
-        return issues
+            issues.append(
+                Issue(E_ACTION_UNSUPPORTED, f"{where}.trigger.event", "error")
+            )
+        if rule.action == "notify" and rule.severity not in SEVERITIES:
+            bad(f"{where}.severity")
+        if rule.action == "optimize" and (rule.approval or "human") != "human":
+            issues.append(Issue(E_ACTION_UNSUPPORTED, f"{where}.approval", "error"))
+        if rule.deploy is not None and (
+            rule.action != "optimize" or rule.deploy not in DEPLOY_MODES
+        ):
+            bad(f"{where}.deploy")
+        if rule.deploy == "if_promoted" and self.promotion is None:
+            bad(f"{where}.deploy")  # needs a promotion monitor (RFC 0003 7.6)
+        if rule.is_reactive() and rule.action != "notify":
+            issues.append(Issue(E_NOTIFY_ONLY, f"{where}.do", "error"))
+
+    def _promotion_is_valid(self, promo: Any) -> bool:
+        return not (
+            not _NAME_RE.fullmatch(promo.name)
+            or promo.name == self.monitor_name
+            or promo.confidence not in CONFIDENCE_VALUES
+            or not _is_number(promo.false_alarm_budget)
+            or not 0 < promo.false_alarm_budget <= 0.5
+        )
 
 
 def _validate_outcome_trigger(

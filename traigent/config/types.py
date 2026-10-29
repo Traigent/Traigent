@@ -675,6 +675,49 @@ def is_traigent_disabled() -> bool:
     return val in ("1", "true", "yes")
 
 
+_SAMPLING_VALIDATED_KEYS = frozenset(
+    {"temperature", "max_tokens", "top_p", "frequency_penalty", "presence_penalty"}
+)
+_FLAG_ASSIGNMENT_KEYS = frozenset(
+    {
+        "minimal_logging",
+        "auto_sync",
+        "privacy_enabled",
+        "strict_metrics_nulls",
+        "no_egress",
+    }
+)
+
+
+def _validate_sampling_assignment(key: str, value: Any) -> None:
+    """Validate a sampling field; ``None`` means unset and is accepted."""
+    if value is None:
+        return
+    if key == "temperature":
+        validate_or_raise(Validators.validate_number(value, "temperature", 0.0, 2.0))
+    elif key == "max_tokens":
+        validate_or_raise(Validators.validate_positive_int(value, "max_tokens"))
+    elif key == "top_p":
+        validate_or_raise(Validators.validate_probability(value, "top_p"))
+    else:  # frequency_penalty / presence_penalty
+        validate_or_raise(Validators.validate_number(value, key, -2.0, 2.0))
+
+
+def _check_container_assignment(key: str, value: Any) -> None:
+    if key == "offline":
+        if not isinstance(value, bool):
+            raise TypeError(f"offline must be a bool, got {type(value).__name__}")
+    elif value is not None and not isinstance(value, list):  # stop_sequences
+        raise TypeError("stop_sequences must be a list of strings")
+
+
+def _coerce_comparability_mode(value: Any) -> str:
+    mode = str(value or "warn").strip().lower()
+    if mode not in {"legacy", "warn", "strict"}:
+        raise ValueError("comparability_mode must be one of: legacy, warn, strict")
+    return mode
+
+
 @dataclass
 class TraigentConfig:
     """Type-safe configuration container for Traigent optimization.
@@ -1094,6 +1137,40 @@ class TraigentConfig:
     def _validated_assignment(self, key: str, value: Any) -> Any:
         """Apply per-field validation when assigning configuration values."""
         warn_legacy_assignment = getattr(self, "_warn_legacy_config_assignments", False)
+        self._track_supplied_assignment(key, value, warn_legacy_assignment)
+
+        if key in _SAMPLING_VALIDATED_KEYS:
+            _validate_sampling_assignment(key, value)
+        elif key == "algorithm":
+            value = validate_algorithm_name(value)
+        elif key == "content_identity":
+            # Covers construction (dataclass __init__ assigns through here),
+            # attribute/item assignment and merge(), so a string opt-out can
+            # never be stored raw and silently lose to the env var.
+            value = _coerce_content_identity(value)
+        elif key in ("offline", "stop_sequences"):
+            _check_container_assignment(key, value)
+        elif (
+            key == "execution_mode"
+            and value is not None
+            and value is not _CONFIG_VALUE_UNSET
+        ):
+            resolved_mode = validate_execution_mode(value)
+            value = resolved_mode.value
+        elif key == "local_storage_path" and value:
+            value = str(Path(value).expanduser().resolve())
+        elif key in _FLAG_ASSIGNMENT_KEYS:
+            value = self._coerce_flag_assignment(key, value, warn_legacy_assignment)
+        elif key == "comparability_mode":
+            value = _coerce_comparability_mode(value)
+        elif key == "enable_usage_analytics":
+            value = bool(value)
+
+        return value
+
+    def _track_supplied_assignment(
+        self, key: str, value: Any, warn_legacy_assignment: bool
+    ) -> None:
         if key == "execution_mode":
             if not warn_legacy_assignment and value is not _CONFIG_VALUE_UNSET:
                 object.__setattr__(self, "_supplied_execution_mode_value", value)
@@ -1106,67 +1183,19 @@ class TraigentConfig:
         ):
             object.__setattr__(self, "_supplied_privacy_enabled", True)
 
-        if key == "temperature" and value is not None:
-            validate_or_raise(
-                Validators.validate_number(value, "temperature", 0.0, 2.0)
-            )
-        elif key == "max_tokens" and value is not None:
-            validate_or_raise(Validators.validate_positive_int(value, "max_tokens"))
-        elif key == "top_p" and value is not None:
-            validate_or_raise(Validators.validate_probability(value, "top_p"))
-        elif key in {"frequency_penalty", "presence_penalty"} and value is not None:
-            validate_or_raise(Validators.validate_number(value, key, -2.0, 2.0))
-        elif key == "algorithm":
-            value = validate_algorithm_name(value)
-        elif key == "content_identity":
-            # Covers construction (dataclass __init__ assigns through here),
-            # attribute/item assignment and merge(), so a string opt-out can
-            # never be stored raw and silently lose to the env var.
-            value = _coerce_content_identity(value)
-        elif key == "offline":
-            if not isinstance(value, bool):
-                raise TypeError(f"offline must be a bool, got {type(value).__name__}")
-        elif key == "stop_sequences" and value is not None:
-            if not isinstance(value, list):
-                raise TypeError("stop_sequences must be a list of strings")
-        elif (
-            key == "execution_mode"
-            and value is not None
-            and value is not _CONFIG_VALUE_UNSET
+    def _coerce_flag_assignment(
+        self, key: str, value: Any, warn_legacy_assignment: bool
+    ) -> Any:
+        if key == "privacy_enabled" and getattr(
+            self, "_privacy_enforced_by_execution_mode", False
         ):
-            resolved_mode = validate_execution_mode(value)
-            value = resolved_mode.value
-        elif key == "local_storage_path" and value:
-            value = str(Path(value).expanduser().resolve())
-        elif key in {
-            "minimal_logging",
-            "auto_sync",
-            "privacy_enabled",
-            "strict_metrics_nulls",
-            "no_egress",
-        }:
-            if key == "privacy_enabled" and getattr(
-                self, "_privacy_enforced_by_execution_mode", False
-            ):
-                value = True
-                object.__setattr__(self, "_privacy_enforced_by_execution_mode", False)
-            elif value is _CONFIG_VALUE_UNSET:
-                return value
-            else:
-                if key == "privacy_enabled" and warn_legacy_assignment:
-                    _warn_deprecated_config_privacy_enabled()
-                value = bool(value)
-        elif key == "comparability_mode":
-            mode = str(value or "warn").strip().lower()
-            if mode not in {"legacy", "warn", "strict"}:
-                raise ValueError(
-                    "comparability_mode must be one of: legacy, warn, strict"
-                )
-            value = mode
-        elif key == "enable_usage_analytics":
-            value = bool(value)
-
-        return value
+            object.__setattr__(self, "_privacy_enforced_by_execution_mode", False)
+            return True
+        if value is _CONFIG_VALUE_UNSET:
+            return value
+        if key == "privacy_enabled" and warn_legacy_assignment:
+            _warn_deprecated_config_privacy_enabled()
+        return bool(value)
 
     @classmethod
     def local_mode(

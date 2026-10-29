@@ -19,6 +19,8 @@ if TYPE_CHECKING:
         TrustAnchorKeyV1,
     )
 
+CERTIFICATION_ELIGIBLE_FALSE = "certification_eligible=false"
+
 #: Stable refusal code for `--kind evaluator-quality` without
 #: `--development-integration` (see `_evaluator_quality_eligibility_policy`
 #: below for the disposition this pins).
@@ -942,7 +944,7 @@ def _verify_evaluator_quality(
                 "code": EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY,
                 "certification_eligible": False,
             },
-            [EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY, "certification_eligible=false"],
+            [EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY, CERTIFICATION_ELIGIBLE_FALSE],
         )
         raise click.exceptions.Exit(1)
 
@@ -957,7 +959,7 @@ def _verify_evaluator_quality(
         _emit_evaluator_quality(
             as_json,
             {"code": exc.code, "certification_eligible": False},
-            [exc.code, "certification_eligible=false"],
+            [exc.code, CERTIFICATION_ELIGIBLE_FALSE],
         )
         raise click.exceptions.Exit(1) from None
 
@@ -975,7 +977,7 @@ def _verify_evaluator_quality(
         f"instrument_adequacy={result.instrument_adequacy}",
         f"overall_verdict={result.overall_verdict}",
         f"trust_status_evidence={result.trust_status_evidence}",
-        "certification_eligible=false",
+        CERTIFICATION_ELIGIBLE_FALSE,
     ]
     _emit_evaluator_quality(as_json, payload, lines)
     raise click.exceptions.Exit(3)
@@ -1042,14 +1044,14 @@ def _verify_agent_quality(
         _emit_agent_quality(
             as_json,
             {"code": exc.code, "certification_eligible": False},
-            [exc.code, "certification_eligible=false"],
+            [exc.code, CERTIFICATION_ELIGIBLE_FALSE],
         )
         raise click.exceptions.Exit(1) from None
     except schema.AgentQualityVerificationError as exc:
         _emit_agent_quality(
             as_json,
             {"code": exc.code, "certification_eligible": False},
-            [exc.code, "certification_eligible=false"],
+            [exc.code, CERTIFICATION_ELIGIBLE_FALSE],
         )
         raise click.exceptions.Exit(1) from None
 

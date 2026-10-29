@@ -87,6 +87,9 @@ if TYPE_CHECKING:
         ObservabilityVariantListDTO,
     )
 
+OBSERVABILITY_TRACE_SEARCH = "observability trace search"
+DECISION_BRIEF = "decision brief"
+
 logger = get_logger(__name__)
 
 try:
@@ -785,144 +788,158 @@ _OBSERVABILITY_COST_STATUSES = frozenset(
 )
 
 
+_TRACE_SEARCH_SAFE_ITEM_KEYS = frozenset(
+    {
+        "id",
+        "status",
+        "environment",
+        "release",
+        "started_at",
+        "ended_at",
+        "observation_count",
+        "total_input_tokens",
+        "total_output_tokens",
+        "total_tokens",
+        "total_cost_usd",
+        "total_latency_ms",
+        "cost_status",
+        "priced_cost_usd",
+        "unpriced_observation_count",
+    }
+)
+_TRACE_SEARCH_KNOWN_CONTENT_KEYS = frozenset(
+    {
+        "tenant_id",
+        "project_id",
+        "session_id",
+        "name",
+        "user_id",
+        "custom_trace_id",
+        "tags",
+        "metadata",
+        "execution_context",
+        "input_data",
+        "output_data",
+        "is_bookmarked",
+        "bookmarked_at",
+        "bookmarked_by",
+        "is_published",
+        "published_at",
+        "published_by",
+        "otel_trace_id",
+        "otel_parent_span_id",
+        "root_observation_count",
+        "created_at",
+        "updated_at",
+        "sum_observation_latency_ms",
+        "wall_clock_latency_ms",
+        "user_display_name",
+        "bookmarked_by_display_name",
+        "published_by_display_name",
+    }
+)
+
+
+def _normalize_trace_search_status(item: dict[str, Any], index: int) -> dict[str, Any]:
+    if "status" not in item:
+        return item
+    raw_status = item["status"]
+    item_status = (
+        _OBSERVABILITY_TRACE_STATUS_ALIASES.get(raw_status, raw_status)
+        if isinstance(raw_status, str)
+        else raw_status
+    )
+    _require_observability_enum(
+        item_status,
+        _OBSERVABILITY_TRACE_READ_STATUSES,
+        what=f"items[{index}].status",
+    )
+    item = {**item, "status": item_status}
+    return item
+
+
+def _validate_trace_search_item_fields(item: dict[str, Any], index: int) -> None:
+    if "environment" in item:
+        _require_safe_observability_identifier(
+            item["environment"],
+            what=f"items[{index}].environment",
+            nullable=True,
+            maximum=64,
+        )
+    if "release" in item:
+        _require_safe_observability_identifier(
+            item["release"], what=f"items[{index}].release", nullable=True
+        )
+    for field in ("started_at", "ended_at"):
+        if field in item and item[field] is not None:
+            _require_observability_datetime(item[field], what=f"items[{index}].{field}")
+    for field in (
+        "observation_count",
+        "total_input_tokens",
+        "total_output_tokens",
+        "total_tokens",
+        "total_latency_ms",
+    ):
+        if field in item:
+            _require_observability_integer(item[field], what=f"items[{index}].{field}")
+    # Null total_cost_usd means unknown cost (unpriced/partial); reject only
+    # negatives and non-numbers.
+    for field in ("total_cost_usd", "priced_cost_usd"):
+        if field in item and item[field] is not None:
+            _require_non_negative_observability_number(
+                item[field], what=f"items[{index}].{field}"
+            )
+    if "cost_status" in item:
+        _require_observability_enum(
+            item["cost_status"],
+            _OBSERVABILITY_COST_STATUSES,
+            what=f"items[{index}].cost_status",
+        )
+    if item.get("unpriced_observation_count") is not None:
+        _require_observability_integer(
+            item["unpriced_observation_count"],
+            what=f"items[{index}].unpriced_observation_count",
+        )
+
+
+def _project_trace_search_item(value: Any, index: int) -> dict[str, Any]:
+    item = _require_object(value, what=f"observability trace search items[{index}]")
+    unsupported = sorted(
+        set(item).difference(
+            _TRACE_SEARCH_SAFE_ITEM_KEYS | _TRACE_SEARCH_KNOWN_CONTENT_KEYS
+        )
+    )
+    if unsupported:
+        raise AnalyticsClientError(
+            "Malformed observability trace search response: an unsupported key "
+            f"is present in items[{index}]."
+        )
+    if "id" not in item:
+        raise AnalyticsClientError(
+            f"Malformed observability trace search items[{index}] response: "
+            "missing required key(s): id."
+        )
+    _require_safe_observability_identifier(item["id"], what=f"items[{index}].id")
+    item = _normalize_trace_search_status(item, index)
+    _validate_trace_search_item_fields(item, index)
+    return {key: item[key] for key in _TRACE_SEARCH_SAFE_ITEM_KEYS if key in item}
+
+
 def _project_observability_trace_search(payload: Any) -> dict[str, Any]:
     """Rebuild the safe subset of the ordinary trace-summary response."""
-    source = _require_object(payload, what="observability trace search")
+    source = _require_object(payload, what=OBSERVABILITY_TRACE_SEARCH)
     allowed_top = frozenset(
         {"items", "pagination", "page", "per_page", "total", "has_more"}
     )
     _require_exact_keys(
-        source, allowed_top, what="observability trace search", require_all=False
+        source, allowed_top, what=OBSERVABILITY_TRACE_SEARCH, require_all=False
     )
     items = _require_bounded_list(
         source.get("items"), what="observability trace search items", maximum=100
     )
-    safe_item_keys = frozenset(
-        {
-            "id",
-            "status",
-            "environment",
-            "release",
-            "started_at",
-            "ended_at",
-            "observation_count",
-            "total_input_tokens",
-            "total_output_tokens",
-            "total_tokens",
-            "total_cost_usd",
-            "total_latency_ms",
-            "cost_status",
-            "priced_cost_usd",
-            "unpriced_observation_count",
-        }
-    )
-    known_content_keys = frozenset(
-        {
-            "tenant_id",
-            "project_id",
-            "session_id",
-            "name",
-            "user_id",
-            "custom_trace_id",
-            "tags",
-            "metadata",
-            "execution_context",
-            "input_data",
-            "output_data",
-            "is_bookmarked",
-            "bookmarked_at",
-            "bookmarked_by",
-            "is_published",
-            "published_at",
-            "published_by",
-            "otel_trace_id",
-            "otel_parent_span_id",
-            "root_observation_count",
-            "created_at",
-            "updated_at",
-            "sum_observation_latency_ms",
-            "wall_clock_latency_ms",
-            "user_display_name",
-            "bookmarked_by_display_name",
-            "published_by_display_name",
-        }
-    )
-    projected_items: list[dict[str, Any]] = []
-    for index, value in enumerate(items):
-        item = _require_object(value, what=f"observability trace search items[{index}]")
-        unsupported = sorted(set(item).difference(safe_item_keys | known_content_keys))
-        if unsupported:
-            raise AnalyticsClientError(
-                "Malformed observability trace search response: an unsupported key "
-                f"is present in items[{index}]."
-            )
-        if "id" not in item:
-            raise AnalyticsClientError(
-                f"Malformed observability trace search items[{index}] response: "
-                "missing required key(s): id."
-            )
-        _require_safe_observability_identifier(item["id"], what=f"items[{index}].id")
-        if "status" in item:
-            raw_status = item["status"]
-            item_status = (
-                _OBSERVABILITY_TRACE_STATUS_ALIASES.get(raw_status, raw_status)
-                if isinstance(raw_status, str)
-                else raw_status
-            )
-            _require_observability_enum(
-                item_status,
-                _OBSERVABILITY_TRACE_READ_STATUSES,
-                what=f"items[{index}].status",
-            )
-            item = {**item, "status": item_status}
-        if "environment" in item:
-            _require_safe_observability_identifier(
-                item["environment"],
-                what=f"items[{index}].environment",
-                nullable=True,
-                maximum=64,
-            )
-        if "release" in item:
-            _require_safe_observability_identifier(
-                item["release"], what=f"items[{index}].release", nullable=True
-            )
-        for field in ("started_at", "ended_at"):
-            if field in item and item[field] is not None:
-                _require_observability_datetime(
-                    item[field], what=f"items[{index}].{field}"
-                )
-        for field in (
-            "observation_count",
-            "total_input_tokens",
-            "total_output_tokens",
-            "total_tokens",
-            "total_latency_ms",
-        ):
-            if field in item:
-                _require_observability_integer(
-                    item[field], what=f"items[{index}].{field}"
-                )
-        # Null total_cost_usd means unknown cost (unpriced/partial); reject only
-        # negatives and non-numbers.
-        for field in ("total_cost_usd", "priced_cost_usd"):
-            if field in item and item[field] is not None:
-                _require_non_negative_observability_number(
-                    item[field], what=f"items[{index}].{field}"
-                )
-        if "cost_status" in item:
-            _require_observability_enum(
-                item["cost_status"],
-                _OBSERVABILITY_COST_STATUSES,
-                what=f"items[{index}].cost_status",
-            )
-        if item.get("unpriced_observation_count") is not None:
-            _require_observability_integer(
-                item["unpriced_observation_count"],
-                what=f"items[{index}].unpriced_observation_count",
-            )
-        projected_items.append(
-            {key: item[key] for key in safe_item_keys if key in item}
-        )
+    projected_items: list[dict[str, Any]] = [
+        _project_trace_search_item(value, index) for index, value in enumerate(items)
+    ]
 
     pagination = source.get("pagination")
     if pagination is not None:
@@ -2622,13 +2639,13 @@ class BackendAnalyticsClient:
         )
         payload = await self._get_json(
             path,
-            what="decision brief",
+            what=DECISION_BRIEF,
             headers=self._project_headers(project_id),
             params={"intent": normalized_intent},
         )
-        _require_keys(payload, _DECISION_PAYLOAD_REQUIRED_KEYS, what="decision brief")
+        _require_keys(payload, _DECISION_PAYLOAD_REQUIRED_KEYS, what=DECISION_BRIEF)
         if "attribution" in payload:
-            _validate_attribution(payload["attribution"], what="decision brief")
+            _validate_attribution(payload["attribution"], what=DECISION_BRIEF)
         return payload
 
     async def get_single_run_pareto(
@@ -2899,7 +2916,7 @@ class BackendAnalyticsClient:
             params["tags"] = clean_tags
         payload = await self._get_json(
             f"{_observability_path(project_id)}/traces",
-            what="observability trace search",
+            what=OBSERVABILITY_TRACE_SEARCH,
             params=params,
         )
         return cast(
@@ -4220,53 +4237,9 @@ def _validate_observability_trace_filters(
     string: blank text and empty tag lists become absent, and ``has_outcome``
     is encoded as ``"true"``/``"false"`` (``False`` is kept, ``None`` omitted).
     """
-    clean_model: str | None = None
-    if model is not None:
-        if not isinstance(model, str):
-            raise ValueError("model must be a string.")
-        clean_model = model.strip() or None
-        if (
-            clean_model is not None
-            and len(clean_model) > OBSERVABILITY_MAX_MODEL_LENGTH
-        ):
-            raise ValueError(
-                f"model must be at most {OBSERVABILITY_MAX_MODEL_LENGTH} characters."
-            )
-
-    clean_tags: list[str] = []
-    if tags is not None:
-        if not isinstance(tags, Sequence) or isinstance(tags, (str, bytes)):
-            raise ValueError("tags must be a list of strings.")
-        if len(tags) > OBSERVABILITY_MAX_TAGS:
-            raise ValueError(
-                f"tags must contain at most {OBSERVABILITY_MAX_TAGS} values."
-            )
-        for tag in tags:
-            if not isinstance(tag, str):
-                raise ValueError("tags values must be strings.")
-            text = tag.strip()
-            if not text:
-                raise ValueError("tags values must be non-empty strings.")
-            if len(text) > OBSERVABILITY_MAX_TAG_LENGTH:
-                raise ValueError(
-                    f"tags values must be at most {OBSERVABILITY_MAX_TAG_LENGTH} "
-                    "characters."
-                )
-            clean_tags.append(text)
-        if len(set(clean_tags)) != len(clean_tags):
-            raise ValueError("tags values must be unique.")
-
-    clean_outcome_kind: str | None = None
-    if outcome_kind is not None:
-        if not isinstance(outcome_kind, str):
-            raise ValueError("outcome_kind must be a string.")
-        clean_outcome_kind = outcome_kind.strip() or None
-        if (
-            clean_outcome_kind is not None
-            and clean_outcome_kind not in OBSERVABILITY_OUTCOME_KINDS
-        ):
-            allowed = ", ".join(OBSERVABILITY_OUTCOME_KINDS)
-            raise ValueError(f"outcome_kind must be one of: {allowed}.")
+    clean_model = _clean_observability_model_filter(model)
+    clean_tags = _clean_observability_tags_filter(tags)
+    clean_outcome_kind = _clean_observability_outcome_kind_filter(outcome_kind)
 
     has_outcome_param: str | None = None
     if has_outcome is not None:
@@ -4282,6 +4255,59 @@ def _validate_observability_trace_filters(
     return clean_model, clean_tags, clean_outcome_kind, has_outcome_param
 
 
+def _clean_observability_model_filter(model: object) -> str | None:
+    if model is None:
+        return None
+    if not isinstance(model, str):
+        raise ValueError("model must be a string.")
+    clean_model = model.strip() or None
+    if clean_model is not None and len(clean_model) > OBSERVABILITY_MAX_MODEL_LENGTH:
+        raise ValueError(
+            f"model must be at most {OBSERVABILITY_MAX_MODEL_LENGTH} characters."
+        )
+    return clean_model
+
+
+def _clean_observability_tags_filter(tags: object) -> list[str]:
+    clean_tags: list[str] = []
+    if tags is None:
+        return clean_tags
+    if not isinstance(tags, Sequence) or isinstance(tags, (str, bytes)):
+        raise ValueError("tags must be a list of strings.")
+    if len(tags) > OBSERVABILITY_MAX_TAGS:
+        raise ValueError(f"tags must contain at most {OBSERVABILITY_MAX_TAGS} values.")
+    for tag in tags:
+        if not isinstance(tag, str):
+            raise ValueError("tags values must be strings.")
+        text = tag.strip()
+        if not text:
+            raise ValueError("tags values must be non-empty strings.")
+        if len(text) > OBSERVABILITY_MAX_TAG_LENGTH:
+            raise ValueError(
+                f"tags values must be at most {OBSERVABILITY_MAX_TAG_LENGTH} "
+                "characters."
+            )
+        clean_tags.append(text)
+    if len(set(clean_tags)) != len(clean_tags):
+        raise ValueError("tags values must be unique.")
+    return clean_tags
+
+
+def _clean_observability_outcome_kind_filter(outcome_kind: object) -> str | None:
+    if outcome_kind is None:
+        return None
+    if not isinstance(outcome_kind, str):
+        raise ValueError("outcome_kind must be a string.")
+    clean_outcome_kind = outcome_kind.strip() or None
+    if (
+        clean_outcome_kind is not None
+        and clean_outcome_kind not in OBSERVABILITY_OUTCOME_KINDS
+    ):
+        allowed = ", ".join(OBSERVABILITY_OUTCOME_KINDS)
+        raise ValueError(f"outcome_kind must be one of: {allowed}.")
+    return clean_outcome_kind
+
+
 def _validate_identifier_list(value: object, *, field: str) -> list[str]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         raise ValueError(f"{field} must be a list.")
@@ -4291,6 +4317,58 @@ def _validate_identifier_list(value: object, *, field: str) -> list[str]:
     if any(not item or len(item) > 128 for item in result):
         raise ValueError(f"{field} contains an invalid identifier.")
     return result
+
+
+def _validate_observability_execution_context(
+    execution_context: object, *, field: str
+) -> dict[str, object]:
+    if not isinstance(execution_context, Mapping):
+        raise ValueError(f"{field}.execution_context must be an object.")
+    allowed_context = {
+        "schema_version",
+        "agent_id",
+        "agent_version",
+        "release_id",
+        "deployment_id",
+        "code_revision",
+        "configuration_id",
+        "configuration_version",
+        "prompt_id",
+        "prompt_version",
+        "toolset_id",
+        "toolset_version",
+        "evaluator_id",
+        "evaluator_version",
+        "dataset_id",
+        "dataset_version",
+        "experiment_run_id",
+        "configuration_run_id",
+        "optimization_run_id",
+        "intervention_id",
+    }
+    context_extra = sorted(set(execution_context).difference(allowed_context))
+    if context_extra:
+        raise ValueError(
+            f"{field}.execution_context contains unsupported field(s): "
+            + ", ".join(context_extra)
+            + "."
+        )
+    clean_context: dict[str, object] = {"schema_version": "1.0"}
+    for key, value in execution_context.items():
+        if key == "schema_version":
+            if value != "1.0":
+                raise ValueError(
+                    f"{field}.execution_context.schema_version must be '1.0'."
+                )
+            continue
+        if value is not None and (
+            not isinstance(value, str) or not value.strip() or len(value.strip()) > 128
+        ):
+            raise ValueError(
+                f"{field}.execution_context.{key} must be null or a bounded identifier."
+            )
+        clean_context[key] = value.strip() if isinstance(value, str) else None
+    return clean_context
 
 
 def _validate_observability_cohort(
@@ -4350,53 +4428,7 @@ def _validate_observability_cohort(
     }
     execution_context = cohort.get("execution_context")
     if execution_context is not None:
-        if not isinstance(execution_context, Mapping):
-            raise ValueError(f"{field}.execution_context must be an object.")
-        allowed_context = {
-            "schema_version",
-            "agent_id",
-            "agent_version",
-            "release_id",
-            "deployment_id",
-            "code_revision",
-            "configuration_id",
-            "configuration_version",
-            "prompt_id",
-            "prompt_version",
-            "toolset_id",
-            "toolset_version",
-            "evaluator_id",
-            "evaluator_version",
-            "dataset_id",
-            "dataset_version",
-            "experiment_run_id",
-            "configuration_run_id",
-            "optimization_run_id",
-            "intervention_id",
-        }
-        context_extra = sorted(set(execution_context).difference(allowed_context))
-        if context_extra:
-            raise ValueError(
-                f"{field}.execution_context contains unsupported field(s): "
-                + ", ".join(context_extra)
-                + "."
-            )
-        clean_context: dict[str, object] = {"schema_version": "1.0"}
-        for key, value in execution_context.items():
-            if key == "schema_version":
-                if value != "1.0":
-                    raise ValueError(
-                        f"{field}.execution_context.schema_version must be '1.0'."
-                    )
-                continue
-            if value is not None and (
-                not isinstance(value, str)
-                or not value.strip()
-                or len(value.strip()) > 128
-            ):
-                raise ValueError(
-                    f"{field}.execution_context.{key} must be null or a bounded identifier."
-                )
-            clean_context[key] = value.strip() if isinstance(value, str) else None
-        result["execution_context"] = clean_context
+        result["execution_context"] = _validate_observability_execution_context(
+            execution_context, field=field
+        )
     return result
