@@ -2713,11 +2713,16 @@ class BackendSessionManager:
 
         # A one-shot executor re-raises the stored exception (BaseException
         # included) from ``Future.result()`` in the caller, with no broad handler.
-        with concurrent.futures.ThreadPoolExecutor(
+        # Not a ``with`` block: its exit is ``shutdown(wait=True)``, which would
+        # make an external KeyboardInterrupt during ``result()`` wait for a slow
+        # or stuck report.  ``wait=False`` lets the interrupt unwind immediately.
+        executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="traigent-smart-pruning-report"
-        ) as executor:
-            future = executor.submit(asyncio.run, coroutine)
-            return future.result()
+        )
+        try:
+            return executor.submit(asyncio.run, coroutine).result()
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     def report_intermediate_progress(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Send a smart-pruning intermediate report and return the prune decision."""

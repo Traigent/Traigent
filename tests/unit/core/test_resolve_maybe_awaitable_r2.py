@@ -78,3 +78,36 @@ def test_running_loop_blocks_until_complete() -> None:
 
     assert _in_loop(slow) == "ok"
     assert done == [True]
+
+
+def test_external_interrupt_while_waiting_does_not_wait_for_stuck_report(
+    monkeypatch,
+) -> None:
+    """An interrupt during ``result()`` must unwind without joining the worker."""
+    import concurrent.futures
+    import time
+
+    release = threading.Event()
+
+    async def stuck():
+        # Blocks the report thread's loop until released.
+        await asyncio.get_running_loop().run_in_executor(None, release.wait, 10)
+        return "late"
+
+    def interrupted_result(self, timeout=None):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(concurrent.futures.Future, "result", interrupted_result)
+    threading.Timer(3.0, release.set).start()
+
+    async def go():
+        start = time.monotonic()
+        with pytest.raises(KeyboardInterrupt):
+            resolve(stuck())
+        return time.monotonic() - start
+
+    try:
+        elapsed = asyncio.run(go())
+    finally:
+        release.set()
+    assert elapsed < 1.5
