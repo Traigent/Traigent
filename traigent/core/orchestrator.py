@@ -818,8 +818,14 @@ class OptimizationOrchestrator:
 
         candidates: list[str] = []
         for key, definition in config_space.items():
-            fixed = is_model_config_key(key)
-            if not (fixed or is_model_suffix_key(key)):
+            # Only ``model``/``model_name`` are always LLM ids; ``engine`` and
+            # ``model_id`` may name non-LLM things (vector index, embedder), so
+            # preflights read them only when priced, like ``*_model`` knobs.
+            fixed = isinstance(key, str) and key.strip().lower() in (
+                "model",
+                "model_name",
+            )
+            if not (is_model_config_key(key) or is_model_suffix_key(key)):
                 continue
             values = OptimizationOrchestrator._normalize_model_candidates(
                 OptimizationOrchestrator._extract_raw_model_candidates(definition)

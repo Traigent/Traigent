@@ -154,6 +154,15 @@ class TestSuffixKeysDoNotBreakPreflights:
             "gpt-4o",
         }
 
+    def test_engine_and_model_id_are_priced_only_in_preflights(self) -> None:
+        space = {
+            "model": ["gpt-4o-mini"],
+            "engine": ["faiss", "annoy"],
+            "model_id": ["my-embed-v1"],
+        }
+        assert _extract_models(space, priced_suffix_keys_only=True) == ("gpt-4o-mini",)
+        assert {"faiss", "annoy", "my-embed-v1"} <= set(_extract_models(space))
+
     def test_fixed_keys_are_always_kept_even_when_unpriced(self) -> None:
         space = {"model": ["my-private-model"]}
         assert _extract_config_space_model_ids(space) == ["my-private-model"]

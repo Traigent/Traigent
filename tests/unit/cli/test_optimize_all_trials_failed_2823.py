@@ -140,3 +140,49 @@ def test_run_with_no_recorded_failure_is_not_reported_as_failed(
     result, output = _run("FakeResult('completed', [FakeTrial(False)], None)", plain)
 
     assert result.exit_code == 0, output
+
+
+def test_trial_error_is_control_stripped_and_length_capped(
+    plain: Callable[[str], str],
+) -> None:
+    result, output = _run(
+        "FakeResult('failed', [FakeTrial(False, 'bad\\x1b[2Jtext' + 'x' * 5000)])",
+        plain,
+    )
+
+    assert result.exit_code == 1, output
+    assert "\x1b" not in output
+    assert "(truncated)" in output
+    assert len(output) < 2000
+
+
+def test_zero_trial_failed_run_uses_generic_wording(
+    plain: Callable[[str], str],
+) -> None:
+    result, output = _run("FakeResult('failed', [])", plain)
+
+    assert result.exit_code == 1, output
+    assert "the run failed (no trials ran)" in output
+    assert "0 run" not in output
+
+
+def test_raised_error_with_rich_markup_is_reported_not_a_markup_crash(
+    plain: Callable[[str], str],
+) -> None:
+    path = _module("None")
+    path.write_text(
+        path.read_text().replace(
+            "    return None\n", "    raise RuntimeError('boom [/oops] tag')\n"
+        )
+    )
+    try:
+        with patch("traigent.cli.main.PersistenceManager") as persistence:
+            persistence.return_value = Mock()
+            result = CliRunner().invoke(cli, ["optimize", str(path)])
+        output = plain(result.output)
+    finally:
+        _cleanup(path)
+
+    assert result.exit_code == 1, output
+    assert "boom [/oops] tag" in output
+    assert "Error loading file" not in output

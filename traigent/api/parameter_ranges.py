@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import math
+import numbers
 import os
 import warnings
 from abc import ABC, abstractmethod
@@ -100,7 +101,7 @@ type ParameterRangeConfigValue = (
 def _require_finite(owner: str, field_name: str, value: Any) -> None:
     """Reject NaN/inf numeric values with an error that names the field (#2822)."""
     if (
-        isinstance(value, (int, float))
+        isinstance(value, numbers.Real)
         and not isinstance(value, bool)
         and not math.isfinite(value)
     ):

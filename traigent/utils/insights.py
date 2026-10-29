@@ -85,6 +85,17 @@ def get_optimization_insights(results: OptimizationResult) -> dict[str, Any]:
         - parameter_insights: Analysis of parameter importance
         - recommendations: Actionable recommendations
 
+        Each ``multi_objective_analysis`` entry carries the objective's
+        ``orientation``; ``best`` and ``improvement`` are ``None`` for a
+        secondary objective whose direction is unknown. Trials that did not
+        report the primary metric are excluded, and ``improvement`` is the
+        best versus the worst trial in the objective's direction.
+
+    Raises:
+        ValueError: The primary objective has no declared orientation and no
+            SDK-owned default (a custom metric such as ``f1``). Declare it in
+            the objective schema or ``results.metadata["objective_orientations"]``.
+
     Example::
 
         results = my_function.optimize()

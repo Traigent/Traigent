@@ -125,3 +125,13 @@ def test_optimizer_accepts_finite_raw_spaces() -> None:
     RandomSearchOptimizer(
         {"t": (0.0, 1.0), "m": ["a", "b"], "n": {"low": 1, "high": 4}}, ["accuracy"]
     )
+
+
+def test_numpy_float_nan_is_rejected() -> None:
+    import numpy as np
+    import pytest
+
+    from traigent.api.parameter_ranges import Range
+
+    with pytest.raises(ValueError, match="finite"):
+        Range(np.float32("nan"), 1.0)

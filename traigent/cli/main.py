@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -232,8 +233,24 @@ def _failed_run_reason(result: Any) -> str | None:
             if first_error
             else ""
         )
-        return f"all trials failed ({len(trials or ())} run, 0 successful){detail}"
+        count = len(trials or ())
+        summary = (
+            f"all {count} trials failed" if count else "the run failed (no trials ran)"
+        )
+        return f"{summary}{detail}"
     return None
+
+
+_MAX_ERROR_CHARS = 500
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+
+def _safe_error_text(error: object) -> str:
+    """Redacted, control-stripped, length-capped, markup-escaped error text."""
+    text = _CONTROL_CHARS.sub("", redact_sensitive_text(str(error)))
+    if len(text) > _MAX_ERROR_CHARS:
+        text = text[:_MAX_ERROR_CHARS] + "... (truncated)"
+    return str(escape(text))
 
 
 def _display_failed_optimization_result(
@@ -246,7 +263,7 @@ def _display_failed_optimization_result(
 ) -> None:
     """Report a run whose trials all failed, without the success tick."""
     console.print(
-        f"❌ [red]Error optimizing {escape(func_name)}: {escape(reason)}[/red]"
+        f"❌ [red]Error optimizing {escape(func_name)}: {_safe_error_text(reason)}[/red]"
     )
     result_name = f"{func_name}_{algorithm}_{max_trials}"
     persistence.save_result(result, result_name)
@@ -439,7 +456,9 @@ def _run_single_optimization(
         )
         return (func_name, result)
     except Exception as e:
-        console.print(f"❌ [red]Error optimizing {func_name}: {e}[/red]")
+        console.print(
+            f"❌ [red]Error optimizing {escape(func_name)}: {_safe_error_text(e)}[/red]"
+        )
         if verbose:
             console.print(traceback.format_exc())
         return None
@@ -870,7 +889,10 @@ async def _run_optimizations(
             )
             results.append((func_name, result))
         except Exception as e:
-            console.print(f"❌ [red]Error optimizing {func_name}: {e}[/red]")
+            console.print(
+                f"❌ [red]Error optimizing {escape(func_name)}: "
+                f"{_safe_error_text(e)}[/red]"
+            )
             if verbose:
                 console.print(traceback.format_exc())
             failed_functions.append(func_name)
