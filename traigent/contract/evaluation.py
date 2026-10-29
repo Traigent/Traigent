@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import inspect
 import os
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from traigent.contract.codes import EVALUATION_CONTRACT_VERSION, ContractCode
@@ -73,6 +73,26 @@ _REDACTED = "<redacted>"
 _REDACT_MIN_LEN = 2
 
 
+def _leaf_children(value: Any) -> Iterable[Any] | None:
+    """Sub-values to recurse into, or ``None`` when ``value`` is a scalar leaf."""
+    if isinstance(value, Mapping):
+        return value.values()
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return value
+    if hasattr(value, "examples") and not hasattr(value, "input_data"):
+        # Dataset-shaped: walk its examples (each an EvaluationExample-shaped
+        # object handled by the branch below). Guarded against an Evaluation
+        # example that also exposes ``examples`` so we do not double-dispatch.
+        examples: Iterable[Any] = value.examples
+        return examples
+    if hasattr(value, "input_data") or hasattr(value, "expected_output"):
+        return (
+            getattr(value, attr, None)
+            for attr in ("input_data", "expected_output", "metadata")
+        )
+    return None
+
+
 def _iter_leaf_values(value: Any) -> Iterator[str]:
     """Yield the scalar leaf VALUES (as strings) of a config/dataset structure.
 
@@ -84,27 +104,16 @@ def _iter_leaf_values(value: Any) -> Iterator[str]:
     shaped object via its ``input_data`` / ``expected_output`` / ``metadata``
     payloads. ``None`` and booleans are skipped (never secrets).
     """
-    if isinstance(value, Mapping):
-        for item in value.values():
+    children = _leaf_children(value)
+    if children is not None:
+        for item in children:
             yield from _iter_leaf_values(item)
-    elif isinstance(value, (list, tuple, set, frozenset)):
-        for item in value:
-            yield from _iter_leaf_values(item)
-    elif hasattr(value, "examples") and not hasattr(value, "input_data"):
-        # Dataset-shaped: walk its examples (each an EvaluationExample-shaped
-        # object handled by the branch below). Guarded against an Evaluation
-        # example that also exposes ``examples`` so we do not double-dispatch.
-        for item in value.examples:
-            yield from _iter_leaf_values(item)
-    elif hasattr(value, "input_data") or hasattr(value, "expected_output"):
-        for attr in ("input_data", "expected_output", "metadata"):
-            yield from _iter_leaf_values(getattr(value, attr, None))
-    elif value is None or isinstance(value, bool):
         return
-    else:
-        text = str(value)
-        if text:
-            yield text
+    if value is None or isinstance(value, bool):
+        return
+    text = str(value)
+    if text:
+        yield text
 
 
 def _redact(message: str, source: Any) -> str:
@@ -321,6 +330,67 @@ def validate_evaluation_contract(
 # --------------------------------------------------------------------------- #
 # Stage: dataset normalization (reuses the production Dataset loaders)
 # --------------------------------------------------------------------------- #
+def _normalization_failure_finding(
+    dataset: Any, exc: Exception, dataset_cls: Any
+) -> ContractFinding:
+    # (VALUE-FREE by construction -- see the comment in ``_normalize_dataset``.)
+    if isinstance(dataset, dataset_cls):
+        source_label = "<Dataset>"
+    elif isinstance(dataset, (str, os.PathLike)):
+        source_label = "<dataset file>"
+    else:
+        source_label = "<inline sequence>"
+    message = (
+        f"Dataset normalization failed ({type(exc).__name__}) for "
+        f"{source_label}; inspect the dataset source."
+    )
+    return ContractFinding(
+        code=ContractCode.DATASET_NORMALIZATION_FAILED,
+        severity="error",
+        message=message,
+        action=(
+            "Provide a JSONL/JSON path, a Dataset, or a sequence of "
+            "{'input': ...} mappings / EvaluationExample objects."
+        ),
+        location="dataset",
+    )
+
+
+def _summarize_example(
+    example: Any,
+    index: int,
+    correlation_key: Callable[[Any, int], Any],
+    findings: list[ContractFinding],
+) -> NormalizedExampleSummary:
+    input_data = example.input_data
+    is_mapping = isinstance(input_data, Mapping)
+    input_keys = (
+        tuple(sorted(str(key) for key in input_data.keys())) if is_mapping else None
+    )
+    metadata = example.metadata or {}
+    summary = NormalizedExampleSummary(
+        index=index,
+        correlation_key=str(correlation_key(example, index)),
+        input_is_mapping=is_mapping,
+        input_type=type(input_data).__name__,
+        input_keys=input_keys,
+        has_expected_output=example.expected_output is not None,
+        metadata_keys=tuple(sorted(str(key) for key in metadata.keys())),
+    )
+    if input_data is None or (is_mapping and len(input_data) == 0):
+        findings.append(
+            ContractFinding(
+                code=ContractCode.DATASET_MISSING_INPUT,
+                severity="warning",
+                message=f"Example {index} has an empty input payload.",
+                action="Ensure every example carries a non-empty input.",
+                location="dataset",
+                example_index=index,
+            )
+        )
+    return summary
+
+
 def _normalize_dataset(
     dataset: Any,
     max_examples: int | None,
@@ -363,28 +433,7 @@ def _normalize_dataset(
         # exception TYPE and the (value-free) source KIND and directs the caller
         # at the dataset source. The actual path stays reported separately as
         # ``dataset_source`` (a filename is not a secret).
-        if isinstance(dataset, Dataset):
-            source_label = "<Dataset>"
-        elif isinstance(dataset, (str, os.PathLike)):
-            source_label = "<dataset file>"
-        else:
-            source_label = "<inline sequence>"
-        message = (
-            f"Dataset normalization failed ({type(exc).__name__}) for "
-            f"{source_label}; inspect the dataset source."
-        )
-        findings.append(
-            ContractFinding(
-                code=ContractCode.DATASET_NORMALIZATION_FAILED,
-                severity="error",
-                message=message,
-                action=(
-                    "Provide a JSONL/JSON path, a Dataset, or a sequence of "
-                    "{'input': ...} mappings / EvaluationExample objects."
-                ),
-                location="dataset",
-            )
-        )
+        findings.append(_normalization_failure_finding(dataset, exc, Dataset))
         return None, "dataset", dataset_source, (), findings
 
     dataset_name = str(getattr(normalized, "name", "dataset"))
@@ -404,35 +453,11 @@ def _normalize_dataset(
     limit = len(examples) if max_examples is None else min(len(examples), max_examples)
     summaries: list[NormalizedExampleSummary] = []
     for index in range(limit):
-        example = examples[index]
-        input_data = example.input_data
-        is_mapping = isinstance(input_data, Mapping)
-        input_keys = (
-            tuple(sorted(str(key) for key in input_data.keys())) if is_mapping else None
-        )
-        metadata = example.metadata or {}
         summaries.append(
-            NormalizedExampleSummary(
-                index=index,
-                correlation_key=str(_example_correlation_key(example, index)),
-                input_is_mapping=is_mapping,
-                input_type=type(input_data).__name__,
-                input_keys=input_keys,
-                has_expected_output=example.expected_output is not None,
-                metadata_keys=tuple(sorted(str(key) for key in metadata.keys())),
+            _summarize_example(
+                examples[index], index, _example_correlation_key, findings
             )
         )
-        if input_data is None or (is_mapping and len(input_data) == 0):
-            findings.append(
-                ContractFinding(
-                    code=ContractCode.DATASET_MISSING_INPUT,
-                    severity="warning",
-                    message=f"Example {index} has an empty input payload.",
-                    action="Ensure every example carries a non-empty input.",
-                    location="dataset",
-                    example_index=index,
-                )
-            )
 
     return normalized, dataset_name, dataset_source, tuple(summaries), findings
 
@@ -440,26 +465,16 @@ def _normalize_dataset(
 # --------------------------------------------------------------------------- #
 # Stage: injection resolution (reuses the production provider machinery)
 # --------------------------------------------------------------------------- #
-def _resolve_injection(
+def _resolve_injection_mode_source(
     func: Any,
     is_optimized: bool,
-    underlying_func: Callable[..., Any],
     injection_options: Any,
     injection_mode: Any,
     config_param: str | None,
-    config_dict: dict[str, Any],
-) -> tuple[InjectionSummary, str, str | None, bool, list[ContractFinding]]:
-    from traigent.config.providers import SeamlessParameterProvider, get_provider
+    findings: list[ContractFinding],
+) -> tuple[Any, str | None, str]:
+    """Resolve ``(raw_mode, effective_config_param, source)`` for the contract."""
     from traigent.config.types import InjectionMode
-    from traigent.utils.exceptions import ConfigurationError, FeatureNotAvailableError
-
-    findings: list[ContractFinding] = []
-    config_keys = tuple(sorted(str(key) for key in config_dict.keys()))
-    # Value-free, actionable descriptor of the config KEYS in play (never their
-    # values). Reused verbatim in the injection findings so a config-driven
-    # failure still names the keys the caller can inspect, without echoing a
-    # single value.
-    config_keys_desc = ", ".join(config_keys) if config_keys else "none"
 
     effective_config_param = config_param
     if is_optimized:
@@ -516,14 +531,19 @@ def _resolve_injection(
             source = "flat_kwargs"
         else:
             source = "default"
+    return raw_mode, effective_config_param, source
 
-    effective_mode = str(getattr(raw_mode, "value", raw_mode))
+
+def _acquire_injection_provider(
+    effective_mode: str,
+    effective_config_param: str | None,
+    findings: list[ContractFinding],
+) -> tuple[Any, str | None]:
+    from traigent.config.providers import get_provider
+    from traigent.utils.exceptions import ConfigurationError, FeatureNotAvailableError
 
     provider: Any = None
     provider_class: str | None = None
-    setup_ok = False
-    seamless_names: tuple[str, ...] = ()
-
     try:
         provider = get_provider(effective_mode, config_param=effective_config_param)
         provider_class = type(provider).__name__
@@ -553,45 +573,44 @@ def _resolve_injection(
                 location="injection",
             )
         )
+    return provider, provider_class
 
-    if provider is not None:
-        try:
-            # Construction only -- builds the wrapper exactly as the real
-            # _setup_function_wrapper does; the wrapper is NEVER called.
-            provider.inject_config(underlying_func, config_dict, effective_config_param)
-            setup_ok = True
-        except ConfigurationError as exc:
-            if effective_mode == "parameter":
-                findings.append(
-                    ContractFinding(
-                        code=ContractCode.INJECTION_CONFIG_PARAM_MISSING,
-                        severity="error",
-                        message=(
-                            "Parameter-mode injection requires config parameter "
-                            f"'{effective_config_param or 'config'}', which the target "
-                            f"function does not accept ({type(exc).__name__})."
-                        ),
-                        action=(
-                            f"Add a '{effective_config_param or 'config'}' parameter "
-                            "to the function, or use injection_mode='context'."
-                        ),
-                        location="injection",
-                    )
+
+def _setup_injection_provider(
+    provider: Any,
+    underlying_func: Callable[..., Any],
+    config_dict: dict[str, Any],
+    effective_config_param: str | None,
+    effective_mode: str,
+    config_keys_desc: str,
+    findings: list[ContractFinding],
+) -> bool:
+    from traigent.utils.exceptions import ConfigurationError
+
+    try:
+        # Construction only -- builds the wrapper exactly as the real
+        # _setup_function_wrapper does; the wrapper is NEVER called.
+        provider.inject_config(underlying_func, config_dict, effective_config_param)
+        return True
+    except ConfigurationError as exc:
+        if effective_mode == "parameter":
+            findings.append(
+                ContractFinding(
+                    code=ContractCode.INJECTION_CONFIG_PARAM_MISSING,
+                    severity="error",
+                    message=(
+                        "Parameter-mode injection requires config parameter "
+                        f"'{effective_config_param or 'config'}', which the target "
+                        f"function does not accept ({type(exc).__name__})."
+                    ),
+                    action=(
+                        f"Add a '{effective_config_param or 'config'}' parameter "
+                        "to the function, or use injection_mode='context'."
+                    ),
+                    location="injection",
                 )
-            else:
-                findings.append(
-                    ContractFinding(
-                        code=ContractCode.INJECTION_PROVIDER_SETUP_FAILED,
-                        severity="error",
-                        message=(
-                            f"Injection provider setup failed ({type(exc).__name__}) "
-                            f"for injection mode '{effective_mode}' "
-                            f"(config keys: {config_keys_desc})."
-                        ),
-                        location="injection",
-                    )
-                )
-        except (TypeError, ValueError) as exc:
+            )
+        else:
             findings.append(
                 ContractFinding(
                     code=ContractCode.INJECTION_PROVIDER_SETUP_FAILED,
@@ -604,73 +623,158 @@ def _resolve_injection(
                     location="injection",
                 )
             )
+    except (TypeError, ValueError) as exc:
+        findings.append(
+            ContractFinding(
+                code=ContractCode.INJECTION_PROVIDER_SETUP_FAILED,
+                severity="error",
+                message=(
+                    f"Injection provider setup failed ({type(exc).__name__}) "
+                    f"for injection mode '{effective_mode}' "
+                    f"(config keys: {config_keys_desc})."
+                ),
+                location="injection",
+            )
+        )
+    return False
+
+
+def _probe_seamless_injection(
+    provider: Any,
+    underlying_func: Callable[..., Any],
+    config_dict: dict[str, Any],
+    effective_mode: str,
+    config_keys_desc: str,
+    findings: list[ContractFinding],
+) -> tuple[str, ...]:
+    from traigent.utils.exceptions import ConfigurationError
+
+    seamless_names: tuple[str, ...] = ()
+    try:
+        # Structural probe only: compiles + builds a FunctionType but
+        # NEVER runs the function body (that happens at call time).
+        _new_func, modified_vars = provider._transform_function(
+            underlying_func, config_dict
+        )
+        seamless_names = tuple(sorted(str(name) for name in modified_vars))
+    except ConfigurationError as exc:
+        findings.append(
+            ContractFinding(
+                code=ContractCode.SEAMLESS_INJECTION_UNAVAILABLE,
+                severity="warning",
+                message=(
+                    "Seamless AST injection could not transform the target "
+                    f"function ({type(exc).__name__}) for injection mode "
+                    f"'{effective_mode}'."
+                ),
+                action=(
+                    "Seamless AST injection needs importable source; use "
+                    "injection_mode='context' for functions without source."
+                ),
+                location="injection",
+            )
+        )
+
+    if config_dict:
+        # I1: mirror the runtime fail-closed check (issue #2298) in
+        # the no-execution contract -- `seamless_injected_names`
+        # alone under-reports because a parameter-name match (the
+        # runtime-shim path) injects without an AST rewrite.
+        try:
+            seamless_signature: inspect.Signature | None = inspect.signature(
+                underlying_func
+            )
+        except (TypeError, ValueError):
+            seamless_signature = None
+        satisfied_params = _seamless_satisfied_param_names(
+            seamless_signature, config_dict
+        )
+        if not seamless_names and not satisfied_params:
+            findings.append(
+                ContractFinding(
+                    code=ContractCode.SEAMLESS_NO_INJECTABLE_TARGET,
+                    severity="warning",
+                    message=(
+                        "Seamless injection has no injectable target for "
+                        f"configuration keys {config_keys_desc}: no local "
+                        "assignment or parameter named after a config key "
+                        "matched (a `**kwargs` catch-all does not count). "
+                        "At runtime this fails closed with "
+                        "SeamlessNoInjectableTargetsError before the first "
+                        "trial."
+                    ),
+                    action=(
+                        "Rename a local variable or a parameter to match a "
+                        "config key, or use injection_mode='parameter' or "
+                        "'context' instead."
+                    ),
+                    location="injection",
+                )
+            )
+    return seamless_names
+
+
+def _resolve_injection(
+    func: Any,
+    is_optimized: bool,
+    underlying_func: Callable[..., Any],
+    injection_options: Any,
+    injection_mode: Any,
+    config_param: str | None,
+    config_dict: dict[str, Any],
+) -> tuple[InjectionSummary, str, str | None, bool, list[ContractFinding]]:
+    from traigent.config.providers import SeamlessParameterProvider
+
+    findings: list[ContractFinding] = []
+    config_keys = tuple(sorted(str(key) for key in config_dict.keys()))
+    # Value-free, actionable descriptor of the config KEYS in play (never their
+    # values). Reused verbatim in the injection findings so a config-driven
+    # failure still names the keys the caller can inspect, without echoing a
+    # single value.
+    config_keys_desc = ", ".join(config_keys) if config_keys else "none"
+
+    raw_mode, effective_config_param, source = _resolve_injection_mode_source(
+        func,
+        is_optimized,
+        injection_options,
+        injection_mode,
+        config_param,
+        findings,
+    )
+
+    effective_mode = str(getattr(raw_mode, "value", raw_mode))
+
+    setup_ok = False
+    seamless_names: tuple[str, ...] = ()
+
+    provider, provider_class = _acquire_injection_provider(
+        effective_mode, effective_config_param, findings
+    )
+
+    if provider is not None:
+        setup_ok = _setup_injection_provider(
+            provider,
+            underlying_func,
+            config_dict,
+            effective_config_param,
+            effective_mode,
+            config_keys_desc,
+            findings,
+        )
 
         if (
             effective_mode == "seamless"
             and setup_ok
             and isinstance(provider, SeamlessParameterProvider)
         ):
-            try:
-                # Structural probe only: compiles + builds a FunctionType but
-                # NEVER runs the function body (that happens at call time).
-                _new_func, modified_vars = provider._transform_function(
-                    underlying_func, config_dict
-                )
-                seamless_names = tuple(sorted(str(name) for name in modified_vars))
-            except ConfigurationError as exc:
-                findings.append(
-                    ContractFinding(
-                        code=ContractCode.SEAMLESS_INJECTION_UNAVAILABLE,
-                        severity="warning",
-                        message=(
-                            "Seamless AST injection could not transform the target "
-                            f"function ({type(exc).__name__}) for injection mode "
-                            f"'{effective_mode}'."
-                        ),
-                        action=(
-                            "Seamless AST injection needs importable source; use "
-                            "injection_mode='context' for functions without source."
-                        ),
-                        location="injection",
-                    )
-                )
-
-            if config_dict:
-                # I1: mirror the runtime fail-closed check (issue #2298) in
-                # the no-execution contract -- `seamless_injected_names`
-                # alone under-reports because a parameter-name match (the
-                # runtime-shim path) injects without an AST rewrite.
-                try:
-                    seamless_signature: inspect.Signature | None = inspect.signature(
-                        underlying_func
-                    )
-                except (TypeError, ValueError):
-                    seamless_signature = None
-                satisfied_params = _seamless_satisfied_param_names(
-                    seamless_signature, config_dict
-                )
-                if not seamless_names and not satisfied_params:
-                    findings.append(
-                        ContractFinding(
-                            code=ContractCode.SEAMLESS_NO_INJECTABLE_TARGET,
-                            severity="warning",
-                            message=(
-                                "Seamless injection has no injectable target for "
-                                f"configuration keys {config_keys_desc}: no local "
-                                "assignment or parameter named after a config key "
-                                "matched (a `**kwargs` catch-all does not count). "
-                                "At runtime this fails closed with "
-                                "SeamlessNoInjectableTargetsError before the first "
-                                "trial."
-                            ),
-                            action=(
-                                "Rename a local variable or a parameter to match a "
-                                "config key, or use injection_mode='parameter' or "
-                                "'context' instead."
-                            ),
-                            location="injection",
-                        )
-                    )
+            seamless_names = _probe_seamless_injection(
+                provider,
+                underlying_func,
+                config_dict,
+                effective_mode,
+                config_keys_desc,
+                findings,
+            )
 
     summary = InjectionSummary(
         effective_mode=effective_mode,
@@ -717,6 +821,145 @@ def _seamless_satisfied_param_names(
     )
 
 
+def _bind_call_shape(
+    raw_signature: inspect.Signature | None,
+    effective_args: Any,
+    effective_kwargs: dict[str, Any],
+    seamless: bool,
+    index: int,
+    findings: list[ContractFinding],
+) -> tuple[bool, str | None]:
+    """Try to bind the resolved call shape; returns ``(bind_ok, bind_error)``."""
+    if raw_signature is None:
+        findings.append(
+            ContractFinding(
+                code=ContractCode.AGENT_SIGNATURE_UNAVAILABLE,
+                severity="warning",
+                message=(
+                    "Cannot introspect the target function's signature for "
+                    f"example {index}."
+                ),
+                action="Wrap builtins/partials in a plain Python function.",
+                location="agent",
+                example_index=index,
+            )
+        )
+        return False, None
+    try:
+        raw_signature.bind(*effective_args, **effective_kwargs)
+    except TypeError as exc:
+        # ``ExampleCallShape.bind_error`` keeps the ``Signature.bind`` text:
+        # that text is value-free by CPython construction (it names
+        # parameter names / counts only and NEVER reprs an argument VALUE),
+        # so it is safe and diagnostically useful. The finding MESSAGE below
+        # is nonetheless composed value-free (no ``{exc}``) to keep the
+        # "every finding message is value-free" invariant uniform.
+        bind_error = str(exc)
+        if seamless:
+            # Best-effort surface: even after modeling the shim's
+            # config-named injection, a residual gap is advisory and must
+            # never flip report.ok (production seamless resolves the rest
+            # at call time / falls back rather than hard-failing here).
+            findings.append(
+                ContractFinding(
+                    code=ContractCode.AGENT_BIND_FAILED,
+                    severity="warning",
+                    message=(
+                        f"Example {index}: seamless best-effort binding gap "
+                        "-- after modeling the runtime shim's config-named "
+                        "injection, the call shape still does not bind to the "
+                        "function signature. Seamless resolves parameters at "
+                        "call time, so this is advisory."
+                    ),
+                    action=(
+                        "Make each required parameter a dataset input key, "
+                        "a configuration key, or give it a default."
+                    ),
+                    location="agent",
+                    example_index=index,
+                )
+            )
+        else:
+            findings.append(
+                ContractFinding(
+                    code=ContractCode.AGENT_BIND_FAILED,
+                    severity="error",
+                    message=(
+                        f"Example {index}: the resolved call shape does not "
+                        "bind to the target function signature."
+                    ),
+                    action=(
+                        "Align the function parameters with the dataset "
+                        "input keys, or accept **kwargs."
+                    ),
+                    location="agent",
+                    example_index=index,
+                )
+            )
+        return False, bind_error
+    return True, None
+
+
+def _build_example_call_shape(
+    example: Any,
+    index: int,
+    underlying_func: Callable[..., Any],
+    config_dict: dict[str, Any],
+    effective_param_name: str,
+    inject_config_param: bool,
+    raw_signature: inspect.Signature | None,
+    seamless: bool,
+    seamless_config_params: tuple[str, ...],
+    findings: list[ContractFinding],
+) -> ExampleCallShape:
+    from traigent.evaluators.base import (
+        _example_correlation_key,
+        prepare_call_arguments,
+    )
+
+    input_data = example.input_data
+    example_id = str(_example_correlation_key(example, index))
+
+    # Runtime shape: production passes the provider-wrapped func (whose
+    # @wraps signature mirrors the raw func) to _prepare_call_arguments,
+    # which resolves the injection mode to "context" because
+    # _traigent_injection_mode is never set in production.
+    runtime_args, runtime_kwargs = prepare_call_arguments(
+        underlying_func, config_dict, input_data, injection_mode="context"
+    )
+    expanded = isinstance(input_data, Mapping) and len(runtime_args) == 0
+    runtime_keyword_names = tuple(sorted(str(key) for key in runtime_kwargs))
+
+    effective_args = runtime_args
+    effective_kwargs = dict(runtime_kwargs)
+    if inject_config_param and effective_param_name not in effective_kwargs:
+        # Parameter mode: the wrapper injects the config parameter before
+        # calling the raw function. Only the NAME is modeled; the sentinel
+        # value is never serialized.
+        effective_kwargs[effective_param_name] = _CONFIG_BIND_SENTINEL
+    for param_name in seamless_config_params:
+        # Seamless mode: the runtime shim fills each config-named parameter
+        # before the raw function runs. Model those as satisfiable by name;
+        # the sentinel value is never serialized.
+        effective_kwargs.setdefault(param_name, _CONFIG_BIND_SENTINEL)
+    effective_keyword_names = tuple(sorted(str(key) for key in effective_kwargs))
+
+    bind_ok, bind_error = _bind_call_shape(
+        raw_signature, effective_args, effective_kwargs, seamless, index, findings
+    )
+
+    return ExampleCallShape(
+        example_id=example_id,
+        expanded=expanded,
+        runtime_args_count=len(runtime_args),
+        runtime_keyword_names=runtime_keyword_names,
+        effective_positional_count=len(effective_args),
+        effective_keyword_names=effective_keyword_names,
+        bind_ok=bind_ok,
+        bind_error=bind_error,
+    )
+
+
 def _build_call_shapes(
     underlying_func: Callable[..., Any],
     config_dict: dict[str, Any],
@@ -726,11 +969,6 @@ def _build_call_shapes(
     examples: list[Any],
     max_examples: int | None,
 ) -> tuple[tuple[ExampleCallShape, ...], list[ContractFinding]]:
-    from traigent.evaluators.base import (
-        _example_correlation_key,
-        prepare_call_arguments,
-    )
-
     findings: list[ContractFinding] = []
     shapes: list[ExampleCallShape] = []
 
@@ -749,116 +987,18 @@ def _build_call_shapes(
 
     limit = len(examples) if max_examples is None else min(len(examples), max_examples)
     for index in range(limit):
-        example = examples[index]
-        input_data = example.input_data
-        example_id = str(_example_correlation_key(example, index))
-
-        # Runtime shape: production passes the provider-wrapped func (whose
-        # @wraps signature mirrors the raw func) to _prepare_call_arguments,
-        # which resolves the injection mode to "context" because
-        # _traigent_injection_mode is never set in production.
-        runtime_args, runtime_kwargs = prepare_call_arguments(
-            underlying_func, config_dict, input_data, injection_mode="context"
-        )
-        expanded = isinstance(input_data, Mapping) and len(runtime_args) == 0
-        runtime_keyword_names = tuple(sorted(str(key) for key in runtime_kwargs))
-
-        effective_args = runtime_args
-        effective_kwargs = dict(runtime_kwargs)
-        if inject_config_param and effective_param_name not in effective_kwargs:
-            # Parameter mode: the wrapper injects the config parameter before
-            # calling the raw function. Only the NAME is modeled; the sentinel
-            # value is never serialized.
-            effective_kwargs[effective_param_name] = _CONFIG_BIND_SENTINEL
-        for param_name in seamless_config_params:
-            # Seamless mode: the runtime shim fills each config-named parameter
-            # before the raw function runs. Model those as satisfiable by name;
-            # the sentinel value is never serialized.
-            effective_kwargs.setdefault(param_name, _CONFIG_BIND_SENTINEL)
-        effective_keyword_names = tuple(sorted(str(key) for key in effective_kwargs))
-
-        if raw_signature is None:
-            bind_ok = False
-            bind_error: str | None = None
-            findings.append(
-                ContractFinding(
-                    code=ContractCode.AGENT_SIGNATURE_UNAVAILABLE,
-                    severity="warning",
-                    message=(
-                        "Cannot introspect the target function's signature for "
-                        f"example {index}."
-                    ),
-                    action="Wrap builtins/partials in a plain Python function.",
-                    location="agent",
-                    example_index=index,
-                )
-            )
-        else:
-            try:
-                raw_signature.bind(*effective_args, **effective_kwargs)
-                bind_ok = True
-                bind_error = None
-            except TypeError as exc:
-                bind_ok = False
-                # ``ExampleCallShape.bind_error`` keeps the ``Signature.bind`` text:
-                # that text is value-free by CPython construction (it names
-                # parameter names / counts only and NEVER reprs an argument VALUE),
-                # so it is safe and diagnostically useful. The finding MESSAGE below
-                # is nonetheless composed value-free (no ``{exc}``) to keep the
-                # "every finding message is value-free" invariant uniform.
-                bind_error = str(exc)
-                if seamless:
-                    # Best-effort surface: even after modeling the shim's
-                    # config-named injection, a residual gap is advisory and must
-                    # never flip report.ok (production seamless resolves the rest
-                    # at call time / falls back rather than hard-failing here).
-                    findings.append(
-                        ContractFinding(
-                            code=ContractCode.AGENT_BIND_FAILED,
-                            severity="warning",
-                            message=(
-                                f"Example {index}: seamless best-effort binding gap "
-                                "-- after modeling the runtime shim's config-named "
-                                "injection, the call shape still does not bind to the "
-                                "function signature. Seamless resolves parameters at "
-                                "call time, so this is advisory."
-                            ),
-                            action=(
-                                "Make each required parameter a dataset input key, "
-                                "a configuration key, or give it a default."
-                            ),
-                            location="agent",
-                            example_index=index,
-                        )
-                    )
-                else:
-                    findings.append(
-                        ContractFinding(
-                            code=ContractCode.AGENT_BIND_FAILED,
-                            severity="error",
-                            message=(
-                                f"Example {index}: the resolved call shape does not "
-                                "bind to the target function signature."
-                            ),
-                            action=(
-                                "Align the function parameters with the dataset "
-                                "input keys, or accept **kwargs."
-                            ),
-                            location="agent",
-                            example_index=index,
-                        )
-                    )
-
         shapes.append(
-            ExampleCallShape(
-                example_id=example_id,
-                expanded=expanded,
-                runtime_args_count=len(runtime_args),
-                runtime_keyword_names=runtime_keyword_names,
-                effective_positional_count=len(effective_args),
-                effective_keyword_names=effective_keyword_names,
-                bind_ok=bind_ok,
-                bind_error=bind_error,
+            _build_example_call_shape(
+                examples[index],
+                index,
+                underlying_func,
+                config_dict,
+                effective_param_name,
+                inject_config_param,
+                raw_signature,
+                seamless,
+                seamless_config_params,
+                findings,
             )
         )
 
@@ -869,6 +1009,130 @@ def _build_call_shapes(
 # Stage: evaluator/metric binding (reuses build_metric_functions + the shared
 # resolve_metric_call_binding extracted from LocalEvaluator)
 # --------------------------------------------------------------------------- #
+def _bind_metric(
+    metric_name: str,
+    metric_func: Callable[..., Any],
+    objective_names: set[str],
+    example_obj: Any,
+    config_dict: dict[str, Any],
+    bindings: list[EvaluatorBinding],
+    findings: list[ContractFinding],
+) -> None:
+    from traigent.evaluators.local import resolve_metric_call_binding
+
+    # A metric that is an optimization OBJECTIVE is hard-failed by
+    # production's LocalEvaluator when it cannot be bound/introspected (it
+    # defines the search signal); an auxiliary/informational metric only
+    # degrades. Mirror that: objective failures are errors, others warnings.
+    is_objective = metric_name in objective_names
+    failure_severity = "error" if is_objective else "warning"
+    try:
+        binding = resolve_metric_call_binding(
+            metric_func,
+            _METRIC_OUTPUT_SENTINEL,
+            example_obj,
+            config_dict,
+            {},
+            0,
+        )
+    except (TypeError, ValueError) as exc:
+        # VALUE-FREE: ``inspect.signature`` can raise with a VALUE in its text
+        # -- a crafted ``__signature__`` (``unexpected object <repr> in
+        # __signature__ attribute``) or the callable's own repr -- so the
+        # message names ONLY the metric_name (a safe identifier) and the
+        # exception TYPE, never ``str(exc)``. The signature could not be
+        # introspected, so no parameter names are available to add.
+        findings.append(
+            ContractFinding(
+                code=ContractCode.EVALUATOR_SIGNATURE_UNAVAILABLE,
+                severity=failure_severity,
+                message=(
+                    f"Metric '{metric_name}': signature could not be introspected "
+                    f"({type(exc).__name__})."
+                ),
+                location="evaluator",
+                metric_name=metric_name,
+            )
+        )
+        bindings.append(
+            EvaluatorBinding(
+                metric_name=metric_name,
+                binding_mode="signature_unavailable",
+                matched_parameters=(),
+                unmatched_parameters=(),
+                bind_ok=False,
+                bind_error=(f"signature introspection failed ({type(exc).__name__})"),
+            )
+        )
+        return
+
+    # VALUE-FREE ``bind_error``: the underlying ``resolve_metric_call_binding``
+    # bind_error is a ``Signature.bind`` message (names/counts only, never a
+    # value), but to keep the guarantee uniform and independent of that fact we
+    # store a composed value-free string rather than the raw bind text.
+    bindings.append(
+        EvaluatorBinding(
+            metric_name=metric_name,
+            binding_mode=binding.binding_mode,
+            matched_parameters=binding.matched_parameters,
+            unmatched_parameters=binding.unmatched_parameters,
+            bind_ok=binding.bind_ok,
+            bind_error=(
+                None
+                if binding.bind_ok
+                else "no argument candidate binds to the metric signature"
+            ),
+        )
+    )
+
+    if not binding.bind_ok:
+        # VALUE-FREE: compose from the metric_name and the metric's own bindable
+        # parameter NAMES (safe identifiers already surfaced on the binding) --
+        # never ``binding.bind_error``'s raw text.
+        unmatched_desc = (
+            ", ".join(binding.unmatched_parameters)
+            if binding.unmatched_parameters
+            else "none"
+        )
+        findings.append(
+            ContractFinding(
+                code=ContractCode.EVALUATOR_BIND_FAILED,
+                severity=failure_severity,
+                message=(
+                    f"Metric '{metric_name}': no argument candidate binds to its "
+                    f"signature (binding mode '{binding.binding_mode}', unmatched "
+                    f"parameters: {unmatched_desc})."
+                ),
+                action=(
+                    "Accept (output, expected) positionally or use recognized "
+                    "parameter names (output/expected/llm_metrics/...)."
+                ),
+                location="evaluator",
+                metric_name=metric_name,
+            )
+        )
+    elif binding.binding_mode.startswith("positional") and not (
+        binding.matched_parameters
+    ):
+        findings.append(
+            ContractFinding(
+                code=ContractCode.EVALUATOR_NO_RECOGNIZED_PARAMS,
+                severity="warning",
+                message=(
+                    f"Metric '{metric_name}' binds only by bare positional "
+                    f"fallback ({binding.binding_mode}); no parameter name was "
+                    "recognized, so arguments are matched by position only."
+                ),
+                action=(
+                    "Rename parameters to recognized names (output, expected, "
+                    "llm_metrics) to avoid silent mis-scoring."
+                ),
+                location="evaluator",
+                metric_name=metric_name,
+            )
+        )
+
+
 def _build_evaluator_bindings(
     is_optimized: bool,
     func: Any,
@@ -879,7 +1143,6 @@ def _build_evaluator_bindings(
     example_obj: Any,
 ) -> tuple[tuple[EvaluatorBinding, ...], tuple[str, ...], list[ContractFinding]]:
     from traigent.core.optimization_pipeline import build_metric_functions
-    from traigent.evaluators.local import resolve_metric_call_binding
 
     findings: list[ContractFinding] = []
     bindings: list[EvaluatorBinding] = []
@@ -927,119 +1190,14 @@ def _build_evaluator_bindings(
     objective_names = set(effective_objectives)
 
     for metric_name in sorted(effective_metric_functions):
-        metric_func = effective_metric_functions[metric_name]
-        # A metric that is an optimization OBJECTIVE is hard-failed by
-        # production's LocalEvaluator when it cannot be bound/introspected (it
-        # defines the search signal); an auxiliary/informational metric only
-        # degrades. Mirror that: objective failures are errors, others warnings.
-        is_objective = metric_name in objective_names
-        failure_severity = "error" if is_objective else "warning"
-        try:
-            binding = resolve_metric_call_binding(
-                metric_func,
-                _METRIC_OUTPUT_SENTINEL,
-                example_obj,
-                config_dict,
-                {},
-                0,
-            )
-        except (TypeError, ValueError) as exc:
-            # VALUE-FREE: ``inspect.signature`` can raise with a VALUE in its text
-            # -- a crafted ``__signature__`` (``unexpected object <repr> in
-            # __signature__ attribute``) or the callable's own repr -- so the
-            # message names ONLY the metric_name (a safe identifier) and the
-            # exception TYPE, never ``str(exc)``. The signature could not be
-            # introspected, so no parameter names are available to add.
-            findings.append(
-                ContractFinding(
-                    code=ContractCode.EVALUATOR_SIGNATURE_UNAVAILABLE,
-                    severity=failure_severity,
-                    message=(
-                        f"Metric '{metric_name}': signature could not be introspected "
-                        f"({type(exc).__name__})."
-                    ),
-                    location="evaluator",
-                    metric_name=metric_name,
-                )
-            )
-            bindings.append(
-                EvaluatorBinding(
-                    metric_name=metric_name,
-                    binding_mode="signature_unavailable",
-                    matched_parameters=(),
-                    unmatched_parameters=(),
-                    bind_ok=False,
-                    bind_error=(
-                        f"signature introspection failed ({type(exc).__name__})"
-                    ),
-                )
-            )
-            continue
-
-        # VALUE-FREE ``bind_error``: the underlying ``resolve_metric_call_binding``
-        # bind_error is a ``Signature.bind`` message (names/counts only, never a
-        # value), but to keep the guarantee uniform and independent of that fact we
-        # store a composed value-free string rather than the raw bind text.
-        bindings.append(
-            EvaluatorBinding(
-                metric_name=metric_name,
-                binding_mode=binding.binding_mode,
-                matched_parameters=binding.matched_parameters,
-                unmatched_parameters=binding.unmatched_parameters,
-                bind_ok=binding.bind_ok,
-                bind_error=(
-                    None
-                    if binding.bind_ok
-                    else "no argument candidate binds to the metric signature"
-                ),
-            )
+        _bind_metric(
+            metric_name,
+            effective_metric_functions[metric_name],
+            objective_names,
+            example_obj,
+            config_dict,
+            bindings,
+            findings,
         )
-
-        if not binding.bind_ok:
-            # VALUE-FREE: compose from the metric_name and the metric's own bindable
-            # parameter NAMES (safe identifiers already surfaced on the binding) --
-            # never ``binding.bind_error``'s raw text.
-            unmatched_desc = (
-                ", ".join(binding.unmatched_parameters)
-                if binding.unmatched_parameters
-                else "none"
-            )
-            findings.append(
-                ContractFinding(
-                    code=ContractCode.EVALUATOR_BIND_FAILED,
-                    severity=failure_severity,
-                    message=(
-                        f"Metric '{metric_name}': no argument candidate binds to its "
-                        f"signature (binding mode '{binding.binding_mode}', unmatched "
-                        f"parameters: {unmatched_desc})."
-                    ),
-                    action=(
-                        "Accept (output, expected) positionally or use recognized "
-                        "parameter names (output/expected/llm_metrics/...)."
-                    ),
-                    location="evaluator",
-                    metric_name=metric_name,
-                )
-            )
-        elif binding.binding_mode.startswith("positional") and not (
-            binding.matched_parameters
-        ):
-            findings.append(
-                ContractFinding(
-                    code=ContractCode.EVALUATOR_NO_RECOGNIZED_PARAMS,
-                    severity="warning",
-                    message=(
-                        f"Metric '{metric_name}' binds only by bare positional "
-                        f"fallback ({binding.binding_mode}); no parameter name was "
-                        "recognized, so arguments are matched by position only."
-                    ),
-                    action=(
-                        "Rename parameters to recognized names (output, expected, "
-                        "llm_metrics) to avoid silent mis-scoring."
-                    ),
-                    location="evaluator",
-                    metric_name=metric_name,
-                )
-            )
 
     return tuple(bindings), tuple(unsupported), findings
