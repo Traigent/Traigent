@@ -127,30 +127,16 @@ class TraigentClient:
         execution_mode, has_execution_mode = self._pop_legacy_execution_mode(
             legacy_kwargs
         )
-        positional_execution_mode = None
-        has_positional_execution_mode = False
-        if positional_args:
-            if len(positional_args) > 2:
-                raise TypeError(
-                    "TraigentClient accepts at most two positional arguments "
-                    "after backend_url: execution_mode/algorithm and agent_builder"
-                )
-            mode_or_algorithm = positional_args[0]
-            if self._looks_like_legacy_execution_mode(mode_or_algorithm):
-                positional_execution_mode = mode_or_algorithm
-                has_positional_execution_mode = True
-            else:
-                algorithm = cast(str, mode_or_algorithm)
-            if len(positional_args) == 2:
-                if agent_builder is not None:
-                    raise TypeError("got multiple values for agent_builder")
-                agent_builder = positional_args[1]
-
-        if has_positional_execution_mode:
-            if has_execution_mode:
-                raise TypeError("got multiple values for execution_mode")
-            execution_mode = cast(ExecutionMode | str | None, positional_execution_mode)
-            has_execution_mode = True
+        execution_mode, has_execution_mode, algorithm, agent_builder = (
+            TraigentClient._resolve_legacy_positional_args(
+                self,
+                positional_args,
+                execution_mode,
+                has_execution_mode,
+                algorithm,
+                agent_builder,
+            )
+        )
 
         # Track whether caller explicitly supplied an API key
         self._explicit_api_key = api_key is not None
@@ -219,6 +205,41 @@ class TraigentClient:
         self.execution_adapter = None
         self.optimizer_client = None
         self.agent_builder = agent_builder
+
+    def _resolve_legacy_positional_args(
+        self,
+        positional_args: tuple[Any, ...],
+        execution_mode: ExecutionMode | str | None,
+        has_execution_mode: bool,
+        algorithm: str,
+        agent_builder: Any,
+    ) -> tuple[ExecutionMode | str | None, bool, str, Any]:
+        positional_execution_mode = None
+        has_positional_execution_mode = False
+        if positional_args:
+            if len(positional_args) > 2:
+                raise TypeError(
+                    "TraigentClient accepts at most two positional arguments "
+                    "after backend_url: execution_mode/algorithm and agent_builder"
+                )
+            mode_or_algorithm = positional_args[0]
+            if self._looks_like_legacy_execution_mode(mode_or_algorithm):
+                positional_execution_mode = mode_or_algorithm
+                has_positional_execution_mode = True
+            else:
+                algorithm = cast(str, mode_or_algorithm)
+            if len(positional_args) == 2:
+                if agent_builder is not None:
+                    raise TypeError("got multiple values for agent_builder")
+                agent_builder = positional_args[1]
+
+        if has_positional_execution_mode:
+            if has_execution_mode:
+                raise TypeError("got multiple values for execution_mode")
+            execution_mode = cast(ExecutionMode | str | None, positional_execution_mode)
+            has_execution_mode = True
+
+        return execution_mode, has_execution_mode, algorithm, agent_builder
 
     async def optimize(
         self,
@@ -615,7 +636,7 @@ class TraigentClient:
             results.append(record)
 
             score = self._resolve_trial_score(trial, primary_objective)
-            if score is not None and (best_score is None or score > best_score):
+            if TraigentClient._is_better_local_score(score, best_score):
                 best_score = score
                 best_record = record
 
@@ -626,6 +647,10 @@ class TraigentClient:
             "completed_trials": len(results),
             "status": "completed",
         }
+
+    @staticmethod
+    def _is_better_local_score(score: float | None, best_score: float | None) -> bool:
+        return score is not None and (best_score is None or score > best_score)
 
     def _create_local_optimizer(
         self,

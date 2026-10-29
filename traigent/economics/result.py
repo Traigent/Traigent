@@ -250,57 +250,66 @@ def _parse_rejections(
     parsed: list[Rejection] = []
     seen_indices: set[int] = set()
     for item in raw:
-        if not isinstance(item, dict):
-            raise EconomicsResponseError("ingest response rejection is not an object")
-        index = item.get("event_index")
-        if (
-            not isinstance(index, int)
-            or isinstance(index, bool)
-            or not (0 <= index < submitted)
-        ):
-            raise EconomicsResponseError(
-                "ingest response rejection event_index is out of range"
-            )
-        # A stage may reject an event once; two rejections for one index is a
-        # malformed disposition, not two failures of the same event.
-        if index in seen_indices:
-            raise EconomicsResponseError(
-                "ingest response has duplicate rejection event_index"
-            )
-        seen_indices.add(index)
-        reason = item.get("reason")
-        if reason not in REJECTION_REASONS:
-            raise EconomicsResponseError(
-                "ingest response rejection names an unknown reason"
-            )
-        event_id = item.get("event_id")
-        if event_id is not None and not isinstance(event_id, str):
-            raise EconomicsResponseError(
-                "ingest response rejection event_id is not a string"
-            )
-        # When the backend echoes the rejected event_id, it must be the event WE
-        # submitted at that index — otherwise the rejection addresses something
-        # other than our batch.
-        if (
-            event_id is not None
-            and index < len(expected_event_ids)
-            and event_id != expected_event_ids[index]
-        ):
-            raise EconomicsResponseError(
-                "ingest response rejection event_id does not match the request "
-                "event at that index"
-            )
-        # Validate `detail`'s shape exactly as before (a non-string still fails
-        # closed), then DISCARD it — see the Rejection docstring. It is never
-        # copied into the public result, so no user_content value can leak through
-        # a field, repr, or log line downstream.
-        detail = item.get("detail")
-        if detail is not None and not isinstance(detail, str):
-            raise EconomicsResponseError(
-                "ingest response rejection detail is not a string"
-            )
-        parsed.append(Rejection(event_index=index, reason=reason, event_id=event_id))
+        parsed.append(
+            _parse_rejection(item, submitted, expected_event_ids, seen_indices)
+        )
     return tuple(parsed)
+
+
+def _parse_rejection(
+    item: Any,
+    submitted: int,
+    expected_event_ids: tuple[str, ...],
+    seen_indices: set[int],
+) -> Rejection:
+    if not isinstance(item, dict):
+        raise EconomicsResponseError("ingest response rejection is not an object")
+    index = item.get("event_index")
+    if (
+        not isinstance(index, int)
+        or isinstance(index, bool)
+        or not (0 <= index < submitted)
+    ):
+        raise EconomicsResponseError(
+            "ingest response rejection event_index is out of range"
+        )
+    # A stage may reject an event once; two rejections for one index is a
+    # malformed disposition, not two failures of the same event.
+    if index in seen_indices:
+        raise EconomicsResponseError(
+            "ingest response has duplicate rejection event_index"
+        )
+    seen_indices.add(index)
+    reason = item.get("reason")
+    if reason not in REJECTION_REASONS:
+        raise EconomicsResponseError(
+            "ingest response rejection names an unknown reason"
+        )
+    event_id = item.get("event_id")
+    if event_id is not None and not isinstance(event_id, str):
+        raise EconomicsResponseError(
+            "ingest response rejection event_id is not a string"
+        )
+    # When the backend echoes the rejected event_id, it must be the event WE
+    # submitted at that index — otherwise the rejection addresses something
+    # other than our batch.
+    if (
+        event_id is not None
+        and index < len(expected_event_ids)
+        and event_id != expected_event_ids[index]
+    ):
+        raise EconomicsResponseError(
+            "ingest response rejection event_id does not match the request "
+            "event at that index"
+        )
+    # Validate `detail`'s shape exactly as before (a non-string still fails
+    # closed), then DISCARD it — see the Rejection docstring. It is never
+    # copied into the public result, so no user_content value can leak through
+    # a field, repr, or log line downstream.
+    detail = item.get("detail")
+    if detail is not None and not isinstance(detail, str):
+        raise EconomicsResponseError("ingest response rejection detail is not a string")
+    return Rejection(event_index=index, reason=reason, event_id=event_id)
 
 
 __all__ = ["Rejection", "TelemetryIngestResult"]

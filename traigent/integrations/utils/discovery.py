@@ -446,6 +446,18 @@ class ParameterDiscovery:
         return completion_methods
 
     @staticmethod
+    def _parameter_category(type_name: str) -> str:
+        if type_name in ["str", "string"]:
+            return "string"
+        if type_name in ["int", "float", "number"]:
+            return "number"
+        if type_name in ["bool", "boolean"]:
+            return "boolean"
+        if type_name in ["list", "dict", "tuple"]:
+            return "collection"
+        return "other"
+
+    @staticmethod
     def analyze_parameter_types(cls: type) -> dict[str, Any]:
         """Analyze parameter types across framework.
 
@@ -468,17 +480,7 @@ class ParameterDiscovery:
                         by_type[type_name] = []
                     by_type[type_name].append(name)
 
-                    # Categorize types
-                    if type_name in ["str", "string"]:
-                        category = "string"
-                    elif type_name in ["int", "float", "number"]:
-                        category = "number"
-                    elif type_name in ["bool", "boolean"]:
-                        category = "boolean"
-                    elif type_name in ["list", "dict", "tuple"]:
-                        category = "collection"
-                    else:
-                        category = "other"
+                    category = ParameterDiscovery._parameter_category(type_name)
 
                     if category not in by_category:
                         by_category[category] = []
@@ -662,6 +664,15 @@ class ParameterDiscovery:
             return {}
 
     @staticmethod
+    def _find_version_attr(obj: Any, version_attrs: list[str]) -> str | None:
+        for attr in version_attrs:
+            if hasattr(obj, attr):
+                version = getattr(obj, attr)
+                if isinstance(version, str):
+                    return version
+        return None
+
+    @staticmethod
     def detect_framework_version(cls: type) -> str | None:
         """Detect framework version.
 
@@ -675,20 +686,14 @@ class ParameterDiscovery:
             # Try different version attributes
             version_attrs = ["__version__", "_version", "VERSION", "version"]
 
-            for attr in version_attrs:
-                if hasattr(cls, attr):
-                    version = getattr(cls, attr)
-                    if isinstance(version, str):
-                        return version
+            version = ParameterDiscovery._find_version_attr(cls, version_attrs)
+            if version is not None:
+                return version
 
             # Try module version
             module = inspect.getmodule(cls)
             if module:
-                for attr in version_attrs:
-                    if hasattr(module, attr):
-                        version = getattr(module, attr)
-                        if isinstance(version, str):
-                            return version
+                return ParameterDiscovery._find_version_attr(module, version_attrs)
 
             return None
         except Exception as e:

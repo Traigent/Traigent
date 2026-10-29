@@ -286,28 +286,33 @@ class TraigentSpanProcessor(SpanProcessor):
             and now - self._first_queued_at >= self._delay
         )
 
+    def _take_batch(self) -> list[ReadableSpan]:
+        batch: list[ReadableSpan] = []
+        size = 0
+        while self._queue and len(batch) < self._max_batch:
+            item = self._queue.popleft()
+            batch.append(item)
+            size += _estimate_bytes(item)
+            if size >= self._max_bytes:
+                break
+        self._queued_bytes = sum(_estimate_bytes(s) for s in self._queue)
+        self._first_queued_at = self._clock() if self._queue else None
+        return batch
+
+    def _wait_for_batch(self) -> None:
+        while not self._shutdown and not self._should_export(self._clock()):
+            wait = self._delay
+            if self._first_queued_at is not None:
+                wait = max(0.01, self._delay - (self._clock() - self._first_queued_at))
+            self._cond.wait(min(wait, self._delay))
+
     def _run(self) -> None:
         while True:
             with self._cond:
-                while not self._shutdown and not self._should_export(self._clock()):
-                    wait = self._delay
-                    if self._first_queued_at is not None:
-                        wait = max(
-                            0.01, self._delay - (self._clock() - self._first_queued_at)
-                        )
-                    self._cond.wait(min(wait, self._delay))
+                TraigentSpanProcessor._wait_for_batch(self)
                 if self._shutdown and not self._queue:
                     return
-                batch: list[ReadableSpan] = []
-                size = 0
-                while self._queue and len(batch) < self._max_batch:
-                    item = self._queue.popleft()
-                    batch.append(item)
-                    size += _estimate_bytes(item)
-                    if size >= self._max_bytes:
-                        break
-                self._queued_bytes = sum(_estimate_bytes(s) for s in self._queue)
-                self._first_queued_at = self._clock() if self._queue else None
+                batch = TraigentSpanProcessor._take_batch(self)
                 self._in_flight = True
             outcome = ExportOutcome()
             try:

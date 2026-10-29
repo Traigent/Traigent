@@ -332,6 +332,26 @@ class ParallelExecutionManager:
         # Use parallel if we have more than 1 trial to run and capacity
         return self.parallel_trials > 1 and remaining_cap > 0 and configs_count > 0
 
+    async def _initialize_semaphore(self) -> None:
+        # Initialize semaphore with double-check locking pattern
+        if self._semaphore is None:
+            async with self._semaphore_init_lock:
+                if self._semaphore is None:
+                    self._semaphore = asyncio.Semaphore(self.max_concurrent)
+
+    async def _release_cancelled_permit(
+        self, coro: Any, index: int, permit: Permit | None, coroutine_started: bool
+    ) -> None:
+        if not coroutine_started:
+            _close_unstarted_coroutine(coro)
+        if permit is not None and permit.is_granted and self.cost_enforcer is not None:
+            await self.cost_enforcer.release_permit_async(permit)
+            logger.debug(
+                "Released permit %d for trial %d after cancellation",
+                permit.id,
+                index,
+            )
+
     async def run_with_cost_permits(
         self,
         coroutines: list[Any],
@@ -363,13 +383,7 @@ class ParallelExecutionManager:
             return [], 0
 
         cancelled_count = 0
-        results: list[PermittedTrialResult] = []
-
-        # Initialize semaphore with double-check locking pattern
-        if self._semaphore is None:
-            async with self._semaphore_init_lock:
-                if self._semaphore is None:
-                    self._semaphore = asyncio.Semaphore(self.max_concurrent)
+        await ParallelExecutionManager._initialize_semaphore(self)
 
         # Create a denied permit for cancelled/failed trials
         denied_permit = Permit(id=-1, amount=0.0, active=False)
@@ -408,19 +422,9 @@ class ParallelExecutionManager:
                     # Success: return with the permit for track_cost_async
                     return (index, result, permit)
             except asyncio.CancelledError:
-                if not coroutine_started:
-                    _close_unstarted_coroutine(coro)
-                if (
-                    permit is not None
-                    and permit.is_granted
-                    and self.cost_enforcer is not None
-                ):
-                    await self.cost_enforcer.release_permit_async(permit)
-                    logger.debug(
-                        "Released permit %d for trial %d after cancellation",
-                        permit.id,
-                        index,
-                    )
+                await ParallelExecutionManager._release_cancelled_permit(
+                    self, coro, index, permit, coroutine_started
+                )
                 raise
             except BaseException as e:
                 # Release the permit on exception - the trial failed after permit
@@ -452,20 +456,7 @@ class ParallelExecutionManager:
             key=lambda x: x[0] if isinstance(x, tuple) and len(x) >= 1 else -1,
         )
 
-        # Extract results and wrap in PermittedTrialResult
-        for item in indexed_results:
-            if isinstance(item, tuple) and len(item) == 3:
-                _index, result, permit = item
-                results.append(PermittedTrialResult(result=result, permit=permit))
-            elif isinstance(item, tuple) and len(item) == 2:
-                # Legacy format (should not happen, but handle gracefully)
-                _index, result = item
-                results.append(
-                    PermittedTrialResult(result=result, permit=denied_permit)
-                )
-            else:
-                # Exception from gather itself - wrap with denied permit
-                results.append(PermittedTrialResult(result=item, permit=denied_permit))
+        results = _wrap_permitted_results(indexed_results, denied_permit)
 
         if cancelled_count > 0:
             logger.info(
@@ -474,3 +465,23 @@ class ParallelExecutionManager:
             )
 
         return results, cancelled_count
+
+
+def _wrap_permitted_results(
+    indexed_results: list[Any], denied_permit: Permit
+) -> list[PermittedTrialResult]:
+    results: list[PermittedTrialResult] = []
+    # Extract results and wrap in PermittedTrialResult
+    for item in indexed_results:
+        if isinstance(item, tuple) and len(item) == 3:
+            _index, result, permit = item
+            results.append(PermittedTrialResult(result=result, permit=permit))
+        elif isinstance(item, tuple) and len(item) == 2:
+            # Legacy format (should not happen, but handle gracefully)
+            _index, result = item
+            results.append(PermittedTrialResult(result=result, permit=denied_permit))
+        else:
+            # Exception from gather itself - wrap with denied permit
+            results.append(PermittedTrialResult(result=item, permit=denied_permit))
+
+    return results

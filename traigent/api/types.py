@@ -1518,6 +1518,17 @@ class OptimizationResult:
             getattr(trial, "metrics", None)
         )
 
+    def _objective_values_for_range(self, obj: str) -> list[Any]:
+        values = []
+        for trial in self._ranking_source_trials:
+            if self._cost_flagged_for_objective(trial, obj):
+                continue
+            if trial.metrics and obj in trial.metrics:
+                value = trial.metrics[obj]
+                if value is not None:
+                    values.append(value)
+        return values
+
     def _calculate_objective_ranges(self) -> dict[str, tuple[float, float]]:
         """Calculate min/max ranges for each objective across ranking-eligible
         (falling back to all successful) trials — see ``_ranking_source_trials``
@@ -1529,14 +1540,7 @@ class OptimizationResult:
         ranges = {}
 
         for obj in self.objectives:
-            values = []
-            for trial in self._ranking_source_trials:
-                if self._cost_flagged_for_objective(trial, obj):
-                    continue
-                if trial.metrics and obj in trial.metrics:
-                    value = trial.metrics[obj]
-                    if value is not None:
-                        values.append(value)
+            values = OptimizationResult._objective_values_for_range(self, obj)
 
             if values:
                 ranges[obj] = (min(values), max(values))
@@ -1985,9 +1989,11 @@ class OptimizationResult:
 
         return computed_total_cost
 
-    def _objective_orientation(self, name: str) -> Literal["maximize", "minimize"]:
-        """Resolve one objective from persisted declarations or exact defaults."""
-        metadata = self.metadata or {}
+    @staticmethod
+    def _declared_schema_orientation(
+        name: str, metadata: dict[str, Any]
+    ) -> Literal["maximize", "minimize"] | None:
+        """Orientation declared for ``name`` in the persisted objective schema."""
         schema = metadata.get("objective_schema")
         definitions: Any = []
         if isinstance(schema, dict):
@@ -2007,6 +2013,16 @@ class OptimizationResult:
                         "maximize/minimize direction."
                     )
                 return validate_objective_orientation(name, str(orientation))
+        return None
+
+    def _objective_orientation(self, name: str) -> Literal["maximize", "minimize"]:
+        """Resolve one objective from persisted declarations or exact defaults."""
+        metadata = self.metadata or {}
+        declared_orientation = OptimizationResult._declared_schema_orientation(
+            name, metadata
+        )
+        if declared_orientation is not None:
+            return declared_orientation
 
         persisted = metadata.get("objective_orientations")
         if isinstance(persisted, dict) and name in persisted:

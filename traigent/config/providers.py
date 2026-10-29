@@ -34,6 +34,53 @@ from traigent.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _parse_transform_source(func: Callable[..., Any]) -> ast.Module:
+    # Get function source
+    try:
+        source = inspect.getsource(func)
+    except (OSError, TypeError) as e:
+        raise ConfigurationError(
+            f"Cannot get source for function {func.__name__}: {e}"
+        ) from e
+
+    # Check source length to prevent excessive memory usage
+    if len(source) > 100000:  # 100KB limit
+        raise ConfigurationError(
+            f"Function {func.__name__} source too large for transformation"
+        )
+
+    # Remove any indentation (for methods and nested functions)
+    source = textwrap.dedent(source)
+
+    # Parse source to AST
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as e:
+        raise ConfigurationError(
+            f"Cannot parse function {func.__name__}: {e}"
+        ) from None
+
+    return tree
+
+
+def _check_config_value(value: Any, depth: int = 0) -> None:
+    if depth > 10:
+        raise ConfigurationError("Config nesting too deep")
+
+    if isinstance(value, (list, tuple)):
+        if len(value) > 1000:
+            raise ConfigurationError(f"Config collection too large: {len(value)} items")
+        for item in value:
+            _check_config_value(item, depth + 1)
+    elif isinstance(value, dict):
+        if len(value) > 1000:
+            raise ConfigurationError(f"Config dict too large: {len(value)} items")
+        for v in value.values():
+            _check_config_value(v, depth + 1)
+    elif not isinstance(value, (str, int, float, bool, type(None))):
+        raise ConfigurationError(f"Unsafe config value type: {type(value)}")
+
+
 class ConfigurationProvider:
     """Abstract base class for configuration injection strategies."""
 
@@ -809,30 +856,7 @@ class SeamlessParameterProvider(ConfigurationProvider):
                 f"Function {func.__name__} contains unsafe patterns"
             )
 
-        # Get function source
-        try:
-            source = inspect.getsource(func)
-        except (OSError, TypeError) as e:
-            raise ConfigurationError(
-                f"Cannot get source for function {func.__name__}: {e}"
-            ) from e
-
-        # Check source length to prevent excessive memory usage
-        if len(source) > 100000:  # 100KB limit
-            raise ConfigurationError(
-                f"Function {func.__name__} source too large for transformation"
-            )
-
-        # Remove any indentation (for methods and nested functions)
-        source = textwrap.dedent(source)
-
-        # Parse source to AST
-        try:
-            tree = ast.parse(source)
-        except SyntaxError as e:
-            raise ConfigurationError(
-                f"Cannot parse function {func.__name__}: {e}"
-            ) from None
+        tree = _parse_transform_source(func)
 
         # Validate config before transformation
         self._validate_config(config)
@@ -1153,29 +1177,8 @@ class SeamlessParameterProvider(ConfigurationProvider):
                 raise ConfigurationError(f"Dangerous config key: {key}")
 
         # Recursively check values
-        def check_value(value, depth=0) -> None:
-            if depth > 10:
-                raise ConfigurationError("Config nesting too deep")
-
-            if isinstance(value, (list, tuple)):
-                if len(value) > 1000:
-                    raise ConfigurationError(
-                        f"Config collection too large: {len(value)} items"
-                    )
-                for item in value:
-                    check_value(item, depth + 1)
-            elif isinstance(value, dict):
-                if len(value) > 1000:
-                    raise ConfigurationError(
-                        f"Config dict too large: {len(value)} items"
-                    )
-                for v in value.values():
-                    check_value(v, depth + 1)
-            elif not isinstance(value, (str, int, float, bool, type(None))):
-                raise ConfigurationError(f"Unsafe config value type: {type(value)}")
-
         for value in config.values():
-            check_value(value)
+            _check_config_value(value)
 
     def extract_config(self, func: Callable[..., Any]) -> dict[str, Any] | None:
         """Extract current configuration from context.

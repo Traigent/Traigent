@@ -172,6 +172,12 @@ def _check_provenance_and_evidence(field: str, report: Mapping[str, Any]) -> Non
             f"field '{field}' carries an evidence pointer without provided evidence"
         )
 
+    _check_withheld_evidence(field, sharing, has_pointer, has_status, evidence_status)
+
+
+def _check_withheld_evidence(
+    field: str, sharing: Any, has_pointer: bool, has_status: bool, evidence_status: Any
+) -> None:
     # Withheld means withheld: a withheld field cannot egress its evidence.
     if sharing == "withheld_by_policy":
         if has_pointer:

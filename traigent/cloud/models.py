@@ -753,6 +753,22 @@ class SessionCreationRequest:
 
     def __post_init__(self) -> None:
         """Handle default values and alternative parameter names."""
+        SessionCreationRequest._normalize_evaluator_fields(self)
+        self.dataset_id = normalize_declared_dataset_id(self.dataset_id)
+        if self.function_name is None:
+            self.function_name = "test_function"
+        if self.configuration_space is None:
+            self.configuration_space: dict[str, Any] = {}
+        if self.objectives is None:
+            self.objectives: list[Any] = []
+        if self.dataset_metadata is None:
+            self.dataset_metadata: dict[str, Any] = {"size": 100, "type": "test"}
+        self.smart_pruning = normalize_smart_pruning_options(self.smart_pruning)
+        # Ensure max_trials is never None
+        if self.max_trials is None:
+            self.max_trials = 10
+
+    def _normalize_evaluator_ids(self) -> None:
         normalized_evaluator_ids: dict[str, str | None] = {}
         for field_name, value in {
             "evaluator_id": self.evaluator_id,
@@ -777,6 +793,9 @@ class SessionCreationRequest:
         self.evaluator_definition_id = normalized_evaluator_ids[
             "evaluator_definition_id"
         ]
+
+    def _normalize_evaluator_fields(self) -> None:
+        SessionCreationRequest._normalize_evaluator_ids(self)
         if self.evaluator_id_source is not None and self.evaluator_id_source not in {
             "registered",
             "declared",
@@ -803,19 +822,6 @@ class SessionCreationRequest:
             and EVALUATOR_CODE_DIGEST_RE.fullmatch(self.evaluator_code_digest)
         ):
             raise ValueError("evaluator_code_digest must be sha256:<64 lowercase hex>")
-        self.dataset_id = normalize_declared_dataset_id(self.dataset_id)
-        if self.function_name is None:
-            self.function_name = "test_function"
-        if self.configuration_space is None:
-            self.configuration_space: dict[str, Any] = {}
-        if self.objectives is None:
-            self.objectives: list[Any] = []
-        if self.dataset_metadata is None:
-            self.dataset_metadata: dict[str, Any] = {"size": 100, "type": "test"}
-        self.smart_pruning = normalize_smart_pruning_options(self.smart_pruning)
-        # Ensure max_trials is never None
-        if self.max_trials is None:
-            self.max_trials = 10
 
 
 @dataclass

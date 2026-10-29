@@ -830,6 +830,52 @@ class HybridAPIEvaluator(BaseEvaluator):
             },
         }
 
+    @staticmethod
+    def _limit_examples(
+        examples: list[Any], sample_lease: SampleBudgetLease | None
+    ) -> list[Any]:
+        total_examples = len(examples)
+
+        # Apply sample budget limits
+        if sample_lease is not None:
+            available = int(sample_lease.remaining())
+            if available < total_examples:
+                examples = examples[:available]
+                logger.debug(
+                    f"Sample budget limited examples to {len(examples)}/{total_examples}"
+                )
+
+        return examples
+
+    def _progress_info(
+        self,
+        batch: list[Any],
+        example_results: list[HybridExampleResult],
+        total_cost: float,
+    ) -> dict[str, Any]:
+        progress_info: dict[str, Any] = {
+            "batch_size": len(batch),
+            "successful": sum(1 for r in example_results if r.success),
+        }
+        if self._results_cost_unknown(example_results):
+            # Unknown spend: no $0 running total (#2517).
+            progress_info["cost_unmeasured"] = 1.0
+        else:
+            progress_info["total_cost"] = total_cost
+        return progress_info
+
+    @staticmethod
+    def _record_batch_completion(
+        sample_lease: SampleBudgetLease | None, batch_results: list[HybridExampleResult]
+    ) -> float:
+        if sample_lease:
+            sample_lease.mark_completed(len(batch_results))
+
+        # Track cost: only rows the wire priced add to the running total;
+        # an unmeasured row's 0.0 is a placeholder, not spend (#2517).
+        batch_cost = sum(r.cost_usd for r in batch_results if not r.cost_unmeasured)
+        return batch_cost
+
     async def evaluate(
         self,
         func: Callable[..., Any],
@@ -886,16 +932,7 @@ class HybridAPIEvaluator(BaseEvaluator):
             self._ensure_lifecycle_manager(), sample_lease, execution_budget_lease
         )
 
-        total_examples = len(examples)
-
-        # Apply sample budget limits
-        if sample_lease is not None:
-            available = int(sample_lease.remaining())
-            if available < total_examples:
-                examples = examples[:available]
-                logger.debug(
-                    f"Sample budget limited examples to {len(examples)}/{total_examples}"
-                )
+        examples = HybridAPIEvaluator._limit_examples(examples, sample_lease)
 
         if not examples:
             result = EvaluationResult(
@@ -922,10 +959,9 @@ class HybridAPIEvaluator(BaseEvaluator):
             batch_ids = example_ids[batch_start:batch_end]
 
             # Consume from sample lease
-            if sample_lease is not None:
-                if not sample_lease.try_take(len(batch)):
-                    logger.warning("Sample budget exhausted during batch processing")
-                    break
+            if sample_lease is not None and not sample_lease.try_take(len(batch)):
+                logger.warning("Sample budget exhausted during batch processing")
+                break
 
             # Execute batch
             batch_results = await self._await_with_sample_lease_cleanup(
@@ -934,37 +970,29 @@ class HybridAPIEvaluator(BaseEvaluator):
                 execution_budget_lease,
             )
             example_results.extend(batch_results)
-            if sample_lease:
-                sample_lease.mark_completed(len(batch_results))
-
-            # Track cost: only rows the wire priced add to the running total;
-            # an unmeasured row's 0.0 is a placeholder, not spend (#2517).
-            batch_cost = sum(r.cost_usd for r in batch_results if not r.cost_unmeasured)
+            batch_cost = HybridAPIEvaluator._record_batch_completion(
+                sample_lease, batch_results
+            )
             total_cost += batch_cost
 
             # Progress callback
-            if progress_callback is not None:
-                try:
-                    progress_info: dict[str, Any] = {
-                        "batch_size": len(batch),
-                        "successful": sum(1 for r in example_results if r.success),
-                    }
-                    if self._results_cost_unknown(example_results):
-                        # Unknown spend: no $0 running total (#2517).
-                        progress_info["cost_unmeasured"] = 1.0
-                    else:
-                        progress_info["total_cost"] = total_cost
-                    progress_callback(len(example_results), progress_info)
-                except asyncio.CancelledError:
-                    # The callback runs after batch admissions are marked, but
-                    # keep the evaluator's cancellation boundary explicit for
-                    # any uncompleted admission from a partial batch.
-                    self._cleanup_sample_lease_on_cancel(
-                        sample_lease, execution_budget_lease
-                    )
-                    raise
-                except Exception as e:
-                    logger.warning(f"Progress callback error: {e}")
+            if progress_callback is None:
+                continue
+            try:
+                progress_info = HybridAPIEvaluator._progress_info(
+                    self, batch, example_results, total_cost
+                )
+                progress_callback(len(example_results), progress_info)
+            except asyncio.CancelledError:
+                # The callback runs after batch admissions are marked, but
+                # keep the evaluator's cancellation boundary explicit for
+                # any uncompleted admission from a partial batch.
+                self._cleanup_sample_lease_on_cancel(
+                    sample_lease, execution_budget_lease
+                )
+                raise
+            except Exception as e:
+                logger.warning(f"Progress callback error: {e}")
 
         # Compute aggregated metrics
         duration = time.time() - start_time

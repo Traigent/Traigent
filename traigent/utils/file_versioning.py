@@ -13,6 +13,7 @@ import json
 import os
 import re
 import stat
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -385,51 +386,41 @@ class FileVersionManager:
             relative_str = str(relative_path)
             actual_files.add(relative_str)
 
-            if relative_str in manifest_files:
-                file_info = manifest["files"][relative_str]
+            if relative_str not in manifest_files:
+                continue
+            file_info = manifest["files"][relative_str]
 
+            try:
+                stats = absolute_path.stat()
+            except OSError as exc:
+                logger.warning("Skipping %s due to stat error: %s", absolute_path, exc)
+                continue
+
+            FileVersionManager._check_manifest_size(
+                stats.st_size, file_info, relative_str, size_mismatches, report
+            )
+
+            if "sha256" in file_info and absolute_path.suffix == ".json":
                 try:
-                    stats = absolute_path.stat()
+                    validated_path = validate_path(
+                        absolute_path, base_path, must_exist=True
+                    )
+                    with safe_open(validated_path, base_path, mode="rb") as f:
+                        actual_checksum = hashlib.sha256(f.read()).hexdigest()
                 except OSError as exc:
                     logger.warning(
-                        "Skipping %s due to stat error: %s", absolute_path, exc
-                    )
-                    continue
-
-                actual_size = stats.st_size
-                if actual_size != file_info.get("size", actual_size):
-                    size_mismatches.append(
-                        {
-                            "file": relative_str,
-                            "expected": file_info.get("size"),
-                            "actual": actual_size,
-                        }
+                        "Failed to compute checksum for %s: %s", absolute_path, exc
                     )
                     report["valid"] = False
+                    continue
 
-                if "sha256" in file_info and absolute_path.suffix == ".json":
-                    try:
-                        validated_path = validate_path(
-                            absolute_path, base_path, must_exist=True
-                        )
-                        with safe_open(validated_path, base_path, mode="rb") as f:
-                            actual_checksum = hashlib.sha256(f.read()).hexdigest()
-                    except OSError as exc:
-                        logger.warning(
-                            "Failed to compute checksum for %s: %s", absolute_path, exc
-                        )
-                        report["valid"] = False
-                        continue
-
-                    if actual_checksum != file_info["sha256"]:
-                        checksum_mismatches.append(
-                            {
-                                "file": relative_str,
-                                "expected": file_info["sha256"],
-                                "actual": actual_checksum,
-                            }
-                        )
-                        report["valid"] = False
+                FileVersionManager._check_manifest_checksum(
+                    actual_checksum,
+                    file_info,
+                    relative_str,
+                    checksum_mismatches,
+                    report,
+                )
 
         # Check for missing and extra files
         missing_files[:] = sorted(manifest_files - actual_files)
@@ -440,23 +431,53 @@ class FileVersionManager:
 
         return report
 
+    @staticmethod
+    def _check_manifest_size(
+        actual_size: int,
+        file_info: dict[str, Any],
+        relative_str: str,
+        size_mismatches: list[dict[str, Any]],
+        report: dict[str, Any],
+    ) -> None:
+        if actual_size != file_info.get("size", actual_size):
+            size_mismatches.append(
+                {
+                    "file": relative_str,
+                    "expected": file_info.get("size"),
+                    "actual": actual_size,
+                }
+            )
+            report["valid"] = False
+
+    @staticmethod
+    def _check_manifest_checksum(
+        actual_checksum: str,
+        file_info: dict[str, Any],
+        relative_str: str,
+        checksum_mismatches: list[dict[str, Any]],
+        report: dict[str, Any],
+    ) -> None:
+        if actual_checksum != file_info["sha256"]:
+            checksum_mismatches.append(
+                {
+                    "file": relative_str,
+                    "expected": file_info["sha256"],
+                    "actual": actual_checksum,
+                }
+            )
+            report["valid"] = False
+
     def _iter_run_files(self, base_path: Path):
         """Yield (relative_path, absolute_path) for files under base_path, skipping symlinks."""
         if not base_path.exists():
             return
 
-        for root, dirs, files in os.walk(base_path, topdown=True, followlinks=False):
-            root_path = Path(root)
-
-            for dirname in list(dirs):
+        for root_path, name, dirs in _iter_walk_entries(base_path):
+            if dirs is not None:
+                dirname = name
                 dir_path = root_path / dirname
                 try:
-                    if dir_path.is_symlink():
-                        logger.warning(
-                            "Skipping symlinked directory during manifest scan: %s",
-                            dir_path,
-                        )
-                        dirs.remove(dirname)
+                    _skip_symlink_directory(dir_path, dirs, dirname)
                 except OSError as exc:
                     logger.warning(
                         "Skipping directory %s due to access error: %s",
@@ -464,33 +485,51 @@ class FileVersionManager:
                         exc,
                     )
                     dirs.remove(dirname)
+                continue
 
-            for name in files:
-                file_path = root_path / name
-                try:
-                    if file_path.is_symlink():
-                        logger.warning(
-                            "Skipping symlinked file during manifest scan: %s",
-                            file_path,
-                        )
-                        continue
-
-                    resolved_path = file_path.resolve()
-                    try:
-                        relative_path = resolved_path.relative_to(base_path)
-                    except ValueError:
-                        logger.warning(
-                            "Skipping file outside of base path during manifest scan: %s",
-                            file_path,
-                        )
-                        continue
-                except OSError as exc:
+            file_path = root_path / name
+            try:
+                if file_path.is_symlink():
                     logger.warning(
-                        "Skipping file %s due to access error: %s", file_path, exc
+                        "Skipping symlinked file during manifest scan: %s",
+                        file_path,
                     )
                     continue
 
-                yield relative_path, resolved_path
+                resolved_path = file_path.resolve()
+                try:
+                    relative_path = resolved_path.relative_to(base_path)
+                except ValueError:
+                    logger.warning(
+                        "Skipping file outside of base path during manifest scan: %s",
+                        file_path,
+                    )
+                    continue
+            except OSError as exc:
+                logger.warning(
+                    "Skipping file %s due to access error: %s", file_path, exc
+                )
+                continue
+
+            yield relative_path, resolved_path
+
+
+def _skip_symlink_directory(dir_path: Path, dirs: list[str], dirname: str) -> None:
+    if dir_path.is_symlink():
+        logger.warning(
+            "Skipping symlinked directory during manifest scan: %s",
+            dir_path,
+        )
+        dirs.remove(dirname)
+
+
+def _iter_walk_entries(base_path: Path) -> Iterator[tuple[Path, str, list[str] | None]]:
+    for root, dirs, files in os.walk(base_path, topdown=True, followlinks=False):
+        root_path = Path(root)
+        for dirname in list(dirs):
+            yield root_path, dirname, dirs
+        for name in files:
+            yield root_path, name, None
 
 
 class RunVersionInfo:
@@ -611,6 +650,15 @@ class RunVersionInfo:
         }
 
 
+def _legacy_migration_paths(
+    run_path: Path, migration_map: dict[str, str]
+) -> Iterator[tuple[str, str, Path]]:
+    for old_name, new_name in migration_map.items():
+        old_paths = list(run_path.rglob(old_name))
+        for old_path in old_paths:
+            yield old_name, new_name, old_path
+
+
 def migrate_legacy_files(run_path: Path, dry_run: bool = True) -> dict[str, Any]:
     """Migrate legacy file names to new versioned format.
 
@@ -646,34 +694,34 @@ def migrate_legacy_files(run_path: Path, dry_run: bool = True) -> dict[str, Any]
     }
 
     # Find and migrate files
-    for old_name, new_name in migration_map.items():
-        old_paths = list(run_path.rglob(old_name))
-        for old_path in old_paths:
-            new_path = old_path.parent / new_name
+    for old_name, new_name, old_path in _legacy_migration_paths(
+        run_path, migration_map
+    ):
+        new_path = old_path.parent / new_name
 
-            migration_info = {
-                "old_path": str(old_path),
-                "new_path": str(new_path),
-                "old_name": old_name,
-                "new_name": new_name,
-            }
+        migration_info = {
+            "old_path": str(old_path),
+            "new_path": str(new_path),
+            "old_name": old_name,
+            "new_name": new_name,
+        }
 
-            report["files_to_migrate"].append(migration_info)
+        report["files_to_migrate"].append(migration_info)
 
-            if not dry_run:
-                try:
-                    # Create a copy with new name (preserve original)
-                    import shutil
+        if dry_run:
+            continue
+        try:
+            # Create a copy with new name (preserve original)
+            import shutil
 
-                    shutil.copy2(old_path, new_path)
-                    report["files_migrated"].append(migration_info)
-                    logger.info(f"Migrated {old_name} to {new_name}")
-                except Exception as e:
-                    error_info = migration_info.copy()
-                    error_info["error"] = str(e)
-                    report["errors"].append(error_info)
-                    logger.exception(f"Failed to migrate {old_name}: {e}")
-
+            shutil.copy2(old_path, new_path)
+            report["files_migrated"].append(migration_info)
+            logger.info(f"Migrated {old_name} to {new_name}")
+        except Exception as e:
+            error_info = migration_info.copy()
+            error_info["error"] = str(e)
+            report["errors"].append(error_info)
+            logger.exception(f"Failed to migrate {old_name}: {e}")
     # Handle special cases (trial files with IDs)
     trial_pattern = re.compile(r"trial_([^_]+)\.json")
     for trial_file in run_path.rglob("trial_*.json"):
@@ -692,17 +740,17 @@ def migrate_legacy_files(run_path: Path, dry_run: bool = True) -> dict[str, Any]
 
             report["files_to_migrate"].append(migration_info)
 
-            if not dry_run:
-                try:
-                    import shutil
+            if dry_run:
+                continue
+            try:
+                import shutil
 
-                    shutil.copy2(trial_file, new_path)
-                    report["files_migrated"].append(migration_info)
-                    logger.info(f"Migrated {trial_file.name} to {new_name}")
-                except Exception as e:
-                    error_info = migration_info.copy()
-                    error_info["error"] = str(e)
-                    report["errors"].append(error_info)
-                    logger.exception(f"Failed to migrate {trial_file.name}: {e}")
-
+                shutil.copy2(trial_file, new_path)
+                report["files_migrated"].append(migration_info)
+                logger.info(f"Migrated {trial_file.name} to {new_name}")
+            except Exception as e:
+                error_info = migration_info.copy()
+                error_info["error"] = str(e)
+                report["errors"].append(error_info)
+                logger.exception(f"Failed to migrate {trial_file.name}: {e}")
     return report

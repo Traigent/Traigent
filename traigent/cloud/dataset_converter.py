@@ -755,6 +755,31 @@ class DatasetConverter:
 
     # Privacy-Preserving Operations
 
+    @staticmethod
+    def _privacy_length_statistics(dataset: Dataset) -> dict[str, Any]:
+        # Length statistics
+        input_lengths = []
+        output_lengths = []
+        for example in dataset.examples:
+            input_lengths.append(len(str(example.input_data)))
+            if hasattr(example, "expected_output") and example.expected_output:
+                output_lengths.append(len(str(example.expected_output)))
+
+        return {
+            "avg_input_length": (
+                sum(input_lengths) / len(input_lengths) if input_lengths else 0
+            ),
+            "avg_output_length": (
+                sum(output_lengths) / len(output_lengths) if output_lengths else 0
+            ),
+            "input_length_range": (
+                [min(input_lengths), max(input_lengths)] if input_lengths else [0, 0]
+            ),
+            "output_length_range": (
+                [min(output_lengths), max(output_lengths)] if output_lengths else [0, 0]
+            ),
+        }
+
     def create_privacy_metadata(
         self, dataset: Dataset, include_sample: bool = True, sample_size: int = 3
     ) -> dict[str, Any]:
@@ -790,32 +815,9 @@ class DatasetConverter:
                 else "unknown"
             )
 
-            # Length statistics
-            input_lengths = []
-            output_lengths = []
-            for example in dataset.examples:
-                input_lengths.append(len(str(example.input_data)))
-                if hasattr(example, "expected_output") and example.expected_output:
-                    output_lengths.append(len(str(example.expected_output)))
-
-            metadata["statistics"] = {
-                "avg_input_length": (
-                    sum(input_lengths) / len(input_lengths) if input_lengths else 0
-                ),
-                "avg_output_length": (
-                    sum(output_lengths) / len(output_lengths) if output_lengths else 0
-                ),
-                "input_length_range": (
-                    [min(input_lengths), max(input_lengths)]
-                    if input_lengths
-                    else [0, 0]
-                ),
-                "output_length_range": (
-                    [min(output_lengths), max(output_lengths)]
-                    if output_lengths
-                    else [0, 0]
-                ),
-            }
+            metadata["statistics"] = DatasetConverter._privacy_length_statistics(
+                dataset
+            )
 
             # Include anonymized samples
             if include_sample:

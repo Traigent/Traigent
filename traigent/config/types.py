@@ -486,6 +486,74 @@ def validate_execution_mode(mode: ExecutionMode | str | None) -> ExecutionMode:
     return resolved
 
 
+def _resolve_legacy_mode(
+    execution_mode: ExecutionMode | str | None,
+    offline_requested: bool,
+    hint_parts: list[str],
+) -> bool:
+    from traigent.utils.exceptions import ConfigurationError
+
+    if execution_mode is not None:
+        raw_mode = (
+            execution_mode.value
+            if isinstance(execution_mode, ExecutionMode)
+            else str(execution_mode)
+        )
+        normalized_mode = raw_mode.strip().lower()
+        hint_parts.append(f"legacy_execution_mode={normalized_mode}")
+
+        if normalized_mode in _REMOVED_LEGACY_EXECUTION_MODES:
+            # Removed selectors hard-fail on the policy-resolution path too
+            # (decorator/client entry points). Without this, the raw value is
+            # laundered to "local" before TraigentConfig construction and the
+            # config-level raise never fires (issue #1684 item 1).
+            raise ConfigurationError(
+                removed_legacy_execution_mode_message(f"execution_mode={raw_mode!r}")
+            )
+        if normalized_mode in _FAIL_CLOSED_LEGACY_EXECUTION_MODES:
+            raise ConfigurationError(
+                fail_closed_legacy_execution_mode_message(raw_mode)
+            )
+        if normalized_mode == "local":
+            offline_requested = True
+        elif normalized_mode == "":
+            _warn_deprecated_once(
+                "resolve_execution_policy.execution_mode:<empty>",
+                f"execution_mode={raw_mode!r} is deprecated. Mapping to "
+                "offline=True / LOCAL_ONLY to preserve the legacy no-egress "
+                "guarantee. Use offline=True with algorithm='grid' or "
+                "algorithm='random' directly. This compatibility selector "
+                "will be removed in a future major release.",
+                stacklevel=4,
+            )
+            offline_requested = True
+        elif normalized_mode in {"hybrid", "standard"}:
+            _warn_deprecated_once(
+                f"resolve_execution_policy.execution_mode:{normalized_mode}",
+                f"execution_mode={raw_mode!r} is deprecated. Omit "
+                "execution_mode and use algorithm='auto' for cloud-first "
+                "automatic optimization. This compatibility selector will be "
+                "removed in a future major release.",
+                stacklevel=4,
+            )
+        elif normalized_mode == "hybrid_api":
+            _warn_deprecated_once(
+                "resolve_execution_policy.execution_mode:hybrid_api",
+                "execution_mode='hybrid_api' is deprecated as a public execution "
+                "selector. Configure an external-service evaluator bundle. This "
+                "compatibility selector will be removed in a future major release.",
+                stacklevel=4,
+            )
+        else:
+            raise ConfigurationError(
+                f"Unsupported execution selector {raw_mode!r}; use "
+                "algorithm='auto', 'grid', or 'random'; set offline=True when "
+                "no egress is required."
+            )
+
+    return offline_requested
+
+
 def resolve_execution_policy(
     *,
     algorithm: str | None = "auto",
@@ -520,63 +588,9 @@ def resolve_execution_policy(
     )
     hint_parts = [source_hint]
 
-    if execution_mode is not None:
-        raw_mode = (
-            execution_mode.value
-            if isinstance(execution_mode, ExecutionMode)
-            else str(execution_mode)
-        )
-        normalized_mode = raw_mode.strip().lower()
-        hint_parts.append(f"legacy_execution_mode={normalized_mode}")
-
-        if normalized_mode in _REMOVED_LEGACY_EXECUTION_MODES:
-            # Removed selectors hard-fail on the policy-resolution path too
-            # (decorator/client entry points). Without this, the raw value is
-            # laundered to "local" before TraigentConfig construction and the
-            # config-level raise never fires (issue #1684 item 1).
-            raise ConfigurationError(
-                removed_legacy_execution_mode_message(f"execution_mode={raw_mode!r}")
-            )
-        if normalized_mode in _FAIL_CLOSED_LEGACY_EXECUTION_MODES:
-            raise ConfigurationError(
-                fail_closed_legacy_execution_mode_message(raw_mode)
-            )
-        if normalized_mode == "local":
-            offline_requested = True
-        elif normalized_mode == "":
-            _warn_deprecated_once(
-                "resolve_execution_policy.execution_mode:<empty>",
-                f"execution_mode={raw_mode!r} is deprecated. Mapping to "
-                "offline=True / LOCAL_ONLY to preserve the legacy no-egress "
-                "guarantee. Use offline=True with algorithm='grid' or "
-                "algorithm='random' directly. This compatibility selector "
-                "will be removed in a future major release.",
-                stacklevel=3,
-            )
-            offline_requested = True
-        elif normalized_mode in {"hybrid", "standard"}:
-            _warn_deprecated_once(
-                f"resolve_execution_policy.execution_mode:{normalized_mode}",
-                f"execution_mode={raw_mode!r} is deprecated. Omit "
-                "execution_mode and use algorithm='auto' for cloud-first "
-                "automatic optimization. This compatibility selector will be "
-                "removed in a future major release.",
-                stacklevel=3,
-            )
-        elif normalized_mode == "hybrid_api":
-            _warn_deprecated_once(
-                "resolve_execution_policy.execution_mode:hybrid_api",
-                "execution_mode='hybrid_api' is deprecated as a public execution "
-                "selector. Configure an external-service evaluator bundle. This "
-                "compatibility selector will be removed in a future major release.",
-                stacklevel=3,
-            )
-        else:
-            raise ConfigurationError(
-                f"Unsupported execution selector {raw_mode!r}; use "
-                "algorithm='auto', 'grid', or 'random'; set offline=True when "
-                "no egress is required."
-            )
+    offline_requested = _resolve_legacy_mode(
+        execution_mode, offline_requested, hint_parts
+    )
 
     if privacy_enabled is not None:
         _warn_deprecated_once(

@@ -373,6 +373,31 @@ def _sanitized_numeric_dict(value: Any) -> dict[str, Any]:
     }
 
 
+def _real_number_or_none(value: Any) -> Any:
+    """Return ``value`` when it is an int/float (not bool), else ``None``."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    return value
+
+
+def _sanitize_significance_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """Allowlist one objective's significance badge fields."""
+    clean: dict[str, Any] = {}
+    for list_key in ("winners", "top_group", "rest_group"):
+        v = entry.get(list_key)
+        if isinstance(v, list) and all(
+            isinstance(i, int) and not isinstance(i, bool) for i in v
+        ):
+            clean[list_key] = [int(i) for i in v]
+    n = entry.get("n_shared_examples")
+    if isinstance(n, int) and not isinstance(n, bool):
+        clean["n_shared_examples"] = int(n)
+    badge = entry.get("badge_name")
+    if isinstance(badge, str) and _SIG_BADGE_LABEL.fullmatch(badge):
+        clean["badge_name"] = badge
+    return clean
+
+
 def _sanitize_significance(raw: Any) -> dict[str, Any] | None:
     """Fail-closed allowlist for statistical_significance (content-free).
 
@@ -390,19 +415,7 @@ def _sanitize_significance(raw: Any) -> dict[str, Any] | None:
             or not isinstance(entry, dict)
         ):
             continue
-        clean: dict[str, Any] = {}
-        for list_key in ("winners", "top_group", "rest_group"):
-            v = entry.get(list_key)
-            if isinstance(v, list) and all(
-                isinstance(i, int) and not isinstance(i, bool) for i in v
-            ):
-                clean[list_key] = [int(i) for i in v]
-        n = entry.get("n_shared_examples")
-        if isinstance(n, int) and not isinstance(n, bool):
-            clean["n_shared_examples"] = int(n)
-        badge = entry.get("badge_name")
-        if isinstance(badge, str) and _SIG_BADGE_LABEL.fullmatch(badge):
-            clean["badge_name"] = badge
+        clean = _sanitize_significance_entry(entry)
         if clean:
             out[obj_name] = clean
     return out or None
@@ -434,6 +447,82 @@ def _contains_any(value: str, needles: tuple[str, ...]) -> bool:
     return any(needle in value for needle in needles)
 
 
+_KEY_VALIDATION_NETWORK_SIGNALS = (
+    "timed out",
+    "timeout",
+    "transport error",
+    "network",
+    "connection",
+    "rate limited",
+    "temporarily unavailable",
+    "service unavailable",
+)
+
+_SCOPE_SIGNALS = (
+    "insufficient",
+    "missing required scope",
+    "missing scope",
+    "permission denied",
+    "forbidden",
+    "scope",
+)
+
+_INVALID_KEY_SIGNALS = (
+    "invalid",
+    "revoked",
+    "rejected",
+    "unauthorized",
+    "authentication",
+)
+
+
+def _classify_by_failure_reason(
+    reason: SessionCreationFailureReason,
+    detail: SessionCreationFailureDetail | None,
+) -> SessionCreationFailureClassification | None:
+    if reason == SessionCreationFailureReason.SESSION_FAILED:
+        if detail and detail.is_quota_refusal:
+            return SessionCreationFailureClassification.QUOTA_EXCEEDED
+        if detail and detail.is_closed_refusal:
+            return SessionCreationFailureClassification.BACKEND_REFUSED
+        if detail and detail.status_code and 400 <= detail.status_code < 500:
+            return SessionCreationFailureClassification.UNKNOWN
+        return SessionCreationFailureClassification.BACKEND_UNREACHABLE
+
+    if reason == SessionCreationFailureReason.NO_API_KEY:
+        return SessionCreationFailureClassification.KEY_NOT_FOUND
+    return None
+
+
+def _classify_by_failure_text(
+    text: str,
+    detail: SessionCreationFailureDetail | None,
+) -> SessionCreationFailureClassification:
+    for needles, classification in (
+        (
+            ("key_not_found", "api_key_not_found", "key not found"),
+            SessionCreationFailureClassification.KEY_NOT_FOUND,
+        ),
+        (
+            ("expired", "expiration", "key_expired"),
+            SessionCreationFailureClassification.EXPIRED_KEY,
+        ),
+        (_SCOPE_SIGNALS, SessionCreationFailureClassification.INSUFFICIENT_SCOPE),
+        (
+            _INVALID_KEY_SIGNALS,
+            SessionCreationFailureClassification.INVALID_OR_REVOKED_KEY,
+        ),
+    ):
+        if _contains_any(text, needles):
+            return classification
+    if detail and detail.status_code == 401:
+        return SessionCreationFailureClassification.INVALID_OR_REVOKED_KEY
+    if detail and detail.status_code == 403:
+        return SessionCreationFailureClassification.INSUFFICIENT_SCOPE
+
+    return SessionCreationFailureClassification.UNKNOWN
+
+
 def _classify_session_creation_failure(
     reason: SessionCreationFailureReason,
     detail: SessionCreationFailureDetail | None,
@@ -463,69 +552,17 @@ def _classify_session_creation_failure(
             "keys/validate",
         ),
     )
-    if key_validation_text and _contains_any(
-        text,
-        (
-            "timed out",
-            "timeout",
-            "transport error",
-            "network",
-            "connection",
-            "rate limited",
-            "temporarily unavailable",
-            "service unavailable",
-        ),
-    ):
+    if key_validation_text and _contains_any(text, _KEY_VALIDATION_NETWORK_SIGNALS):
         return SessionCreationFailureClassification.NETWORK
 
-    if reason == SessionCreationFailureReason.SESSION_FAILED:
-        if detail and detail.is_quota_refusal:
-            return SessionCreationFailureClassification.QUOTA_EXCEEDED
-        if detail and detail.is_closed_refusal:
-            return SessionCreationFailureClassification.BACKEND_REFUSED
-        if detail and detail.status_code and 400 <= detail.status_code < 500:
-            return SessionCreationFailureClassification.UNKNOWN
-        return SessionCreationFailureClassification.BACKEND_UNREACHABLE
-
-    if reason == SessionCreationFailureReason.NO_API_KEY:
-        return SessionCreationFailureClassification.KEY_NOT_FOUND
+    by_reason = _classify_by_failure_reason(reason, detail)
+    if by_reason is not None:
+        return by_reason
 
     if detail and detail.missing_permissions:
         return SessionCreationFailureClassification.MISSING_PERMISSION
 
-    if _contains_any(text, ("key_not_found", "api_key_not_found", "key not found")):
-        return SessionCreationFailureClassification.KEY_NOT_FOUND
-    if _contains_any(text, ("expired", "expiration", "key_expired")):
-        return SessionCreationFailureClassification.EXPIRED_KEY
-    if _contains_any(
-        text,
-        (
-            "insufficient",
-            "missing required scope",
-            "missing scope",
-            "permission denied",
-            "forbidden",
-            "scope",
-        ),
-    ):
-        return SessionCreationFailureClassification.INSUFFICIENT_SCOPE
-    if _contains_any(
-        text,
-        (
-            "invalid",
-            "revoked",
-            "rejected",
-            "unauthorized",
-            "authentication",
-        ),
-    ):
-        return SessionCreationFailureClassification.INVALID_OR_REVOKED_KEY
-    if detail and detail.status_code == 401:
-        return SessionCreationFailureClassification.INVALID_OR_REVOKED_KEY
-    if detail and detail.status_code == 403:
-        return SessionCreationFailureClassification.INSUFFICIENT_SCOPE
-
-    return SessionCreationFailureClassification.UNKNOWN
+    return _classify_by_failure_text(text, detail)
 
 
 def _format_raw_reason(result: SessionCreationResult) -> str | None:
@@ -570,20 +607,10 @@ class BackendTrialSubmissionOutcome:
         return cls(optimization_complete=True, reason=reason)
 
 
-def _format_untracked_warning_block(
-    result: SessionCreationResult,
-    classification: SessionCreationFailureClassification,
-    *,
-    aborting: bool,
-) -> str:
-    detail = result.failure_response
-    lines = [
-        _WARNING_RULE,
-        "TRAIGENT BACKEND TRACKING UNAVAILABLE",
-        "This run will NOT be tracked in the portal.",
-        f"Classification: {classification.value}",
-    ]
-
+def _untracked_detail_lines(
+    detail: SessionCreationFailureDetail | None,
+) -> list[str]:
+    lines: list[str] = []
     if detail and detail.status_code is not None:
         lines.append(f"HTTP status: {detail.status_code}")
     if detail and detail.backend_url:
@@ -603,76 +630,96 @@ def _format_untracked_warning_block(
             f"Missing permissions: {len(detail.missing_permissions)} "
             "(see the Traigent portal for your role)"
         )
+    return lines
 
-    raw_reason = None if quota_refusal else _format_raw_reason(result)
-    if raw_reason:
-        lines.append(f"Raw reason: {raw_reason}")
 
-    if classification == SessionCreationFailureClassification.MISSING_PERMISSION:
-        lines.append(
-            "Remedy: grant the missing permission(s) to the API key, or if the "
-            "key should already have them, verify the backend deployment and "
-            "permission middleware that returned this structured response."
-        )
-    elif classification == SessionCreationFailureClassification.INSUFFICIENT_SCOPE:
-        lines.append(
-            "Remedy: grant the required API key scope or permission in the "
-            "Traigent portal, then retry with that updated key."
-        )
-    elif classification == SessionCreationFailureClassification.EXPIRED_KEY:
-        lines.append(
-            "Remedy: create a new Traigent API key and set TRAIGENT_API_KEY to "
-            "that active key."
-        )
-    elif classification == SessionCreationFailureClassification.EDGE_BLOCKED:
-        lines.append(
-            "Remedy: the validation request appears blocked by an edge/WAF "
-            "layer. Allowlist the Traigent SDK User-Agent or retry from an "
-            "unblocked network."
-        )
-    elif classification == SessionCreationFailureClassification.NETWORK:
-        lines.append(
-            "Remedy: check TRAIGENT_BACKEND_URL and network connectivity; retry "
-            "with TRAIGENT_LOG_LEVEL=DEBUG for request diagnostics."
-        )
-    elif classification == SessionCreationFailureClassification.INVALID_OR_REVOKED_KEY:
+_UNTRACKED_REMEDIES: dict[SessionCreationFailureClassification, str] = {
+    SessionCreationFailureClassification.MISSING_PERMISSION: (
+        "Remedy: grant the missing permission(s) to the API key, or if the "
+        "key should already have them, verify the backend deployment and "
+        "permission middleware that returned this structured response."
+    ),
+    SessionCreationFailureClassification.INSUFFICIENT_SCOPE: (
+        "Remedy: grant the required API key scope or permission in the "
+        "Traigent portal, then retry with that updated key."
+    ),
+    SessionCreationFailureClassification.EXPIRED_KEY: (
+        "Remedy: create a new Traigent API key and set TRAIGENT_API_KEY to "
+        "that active key."
+    ),
+    SessionCreationFailureClassification.EDGE_BLOCKED: (
+        "Remedy: the validation request appears blocked by an edge/WAF "
+        "layer. Allowlist the Traigent SDK User-Agent or retry from an "
+        "unblocked network."
+    ),
+    SessionCreationFailureClassification.NETWORK: (
+        "Remedy: check TRAIGENT_BACKEND_URL and network connectivity; retry "
+        "with TRAIGENT_LOG_LEVEL=DEBUG for request diagnostics."
+    ),
+    SessionCreationFailureClassification.KEY_NOT_FOUND: (
+        "Remedy: configure a valid Traigent API key or run `traigent auth login`."
+    ),
+    SessionCreationFailureClassification.QUOTA_EXCEEDED: (
+        "Remedy: a plan quota/limit was reached (the backend is reachable). "
+        "Review usage and upgrade in the Traigent portal (Billing), or reduce "
+        "the requested trials/samples."
+    ),
+    SessionCreationFailureClassification.BACKEND_REFUSED: (
+        "Remedy: the backend is reachable and refused this session (closed "
+        "error code shown above). Check the Traigent portal or contact support."
+    ),
+    SessionCreationFailureClassification.BACKEND_UNREACHABLE: (
+        "Remedy: check TRAIGENT_BACKEND_URL/network connectivity or retry later."
+    ),
+}
+
+_UNTRACKED_REMEDY_DEFAULT = (
+    "Remedy: inspect the raw backend response above; retry with "
+    "TRAIGENT_LOG_LEVEL=DEBUG for more diagnostics."
+)
+
+
+def _untracked_remedy_line(
+    result: SessionCreationResult,
+    classification: SessionCreationFailureClassification,
+) -> str:
+    if classification == SessionCreationFailureClassification.INVALID_OR_REVOKED_KEY:
         raw = (result.failure_detail or "").lower()
         if "invalid api key format" in raw or "invalid_api_key_format" in raw:
-            lines.append(
+            return (
                 "Remedy: your API key does not match the expected format. "
                 "Portal keys start with 'uk_' (46 chars) or 'tg_' (64 chars). "
                 "Copy the full key from Settings → API Keys and set "
                 "TRAIGENT_API_KEY to that exact value."
             )
-        else:
-            lines.append(
-                "Remedy: re-authenticate with `traigent auth login` or provide a "
-                "valid, non-revoked API key."
-            )
-    elif classification == SessionCreationFailureClassification.KEY_NOT_FOUND:
-        lines.append(
-            "Remedy: configure a valid Traigent API key or run `traigent auth login`."
+        return (
+            "Remedy: re-authenticate with `traigent auth login` or provide a "
+            "valid, non-revoked API key."
         )
-    elif classification == SessionCreationFailureClassification.QUOTA_EXCEEDED:
-        lines.append(
-            "Remedy: a plan quota/limit was reached (the backend is reachable). "
-            "Review usage and upgrade in the Traigent portal (Billing), or reduce "
-            "the requested trials/samples."
-        )
-    elif classification == SessionCreationFailureClassification.BACKEND_REFUSED:
-        lines.append(
-            "Remedy: the backend is reachable and refused this session (closed "
-            "error code shown above). Check the Traigent portal or contact support."
-        )
-    elif classification == SessionCreationFailureClassification.BACKEND_UNREACHABLE:
-        lines.append(
-            "Remedy: check TRAIGENT_BACKEND_URL/network connectivity or retry later."
-        )
-    else:
-        lines.append(
-            "Remedy: inspect the raw backend response above; retry with "
-            "TRAIGENT_LOG_LEVEL=DEBUG for more diagnostics."
-        )
+    return _UNTRACKED_REMEDIES.get(classification, _UNTRACKED_REMEDY_DEFAULT)
+
+
+def _format_untracked_warning_block(
+    result: SessionCreationResult,
+    classification: SessionCreationFailureClassification,
+    *,
+    aborting: bool,
+) -> str:
+    detail = result.failure_response
+    lines = [
+        _WARNING_RULE,
+        "TRAIGENT BACKEND TRACKING UNAVAILABLE",
+        "This run will NOT be tracked in the portal.",
+        f"Classification: {classification.value}",
+    ]
+    lines.extend(_untracked_detail_lines(detail))
+
+    quota_refusal = bool(detail and detail.is_quota_refusal)
+    raw_reason = None if quota_refusal else _format_raw_reason(result)
+    if raw_reason:
+        lines.append(f"Raw reason: {raw_reason}")
+
+    lines.append(_untracked_remedy_line(result, classification))
 
     if aborting:
         lines.append(
@@ -723,6 +770,17 @@ def compute_portal_name(
     if slug_hash:
         portal_name = f"{portal_name} ({slug_hash})"
     return portal_name
+
+
+@dataclass
+class _SessionHeadBinding:
+    """Agent identity and head-generation capture bound at session creation."""
+
+    agent_id: str | None = None
+    head_generation: int | None = None
+    agent_ref: str | None = None
+    content_less: bool = False
+    head_capture_refusal: str | None = None
 
 
 class BackendSessionManager:
@@ -1322,111 +1380,134 @@ class BackendSessionManager:
         Single place that interprets the structured result — ensures warning text
         and breaker state cannot diverge across call sites.
         """
-        if not result.backend_connected:
-            was_enabled = self._backend_tracking_enabled
-            if result.failure_reason is None:
-                raise ValueError(
-                    "SessionCreationResult.failure_reason must be set "
-                    "when backend_connected=False"
-                )
-            reason = result.failure_reason
-            self.disable_backend_tracking(reason)
+        if result.backend_connected:
+            logger.info("Created backend session: %s", result.session_id)
+            return str(result.session_id)
+        return self._handle_session_creation_failure(
+            result, governed_session=governed_session
+        )
 
-            if not was_enabled:
-                # Even when tracking was already disabled, an AUTH-reason failure
-                # must surface at WARNING so the user sees the remedy text
-                # (missing_permissions, re-auth hint, etc.) — issue #1373 Case 2.
-                # For non-auth reasons (NO_API_KEY, SESSION_FAILED) the normal
-                # message was already emitted on the first disable; stay silent.
-                if reason == SessionCreationFailureReason.AUTH:
-                    classification = _classify_session_creation_failure(
-                        reason,
-                        result.failure_response,
-                        failure_detail=result.failure_detail,
-                    )
-                    logger.warning(
-                        "%s",
-                        _format_untracked_warning_block(
-                            result, classification, aborting=False
-                        ),
-                    )
-                return str(result.session_id)
-
-            policy = policy_from_config(self._traigent_config)
-            fallback_reason = fallback_reason_from_session_result(result)
-            if policy_requires_cloud(policy):
-                raise ConfigurationError(
-                    "Cloud execution is required, but backend session creation "
-                    f"failed: {fallback_reason}"
-                )
-            if governed_session:
-                raise ConfigurationError(
-                    "Governed backend session creation failed; local fallback is "
-                    f"not allowed: {fallback_reason}"
-                )
-            if policy_is_cloud_brain(policy):
-                cloud_fallback_allowed = policy_allows_cloud_fallback(policy)
-                if cloud_fallback_allowed and (
-                    session_failure_is_connectivity(result)
-                    or session_failure_is_session_create_400(result)
-                ):
-                    self._fallback_reason = fallback_reason
-                    self._fallback_reason_code = reason.value
-                    # ``reason`` is the typed SessionCreationFailureReason from
-                    # the structured result. Pass it through instead of letting
-                    # the formatter re-derive intent from ``fallback_reason``,
-                    # which embeds backend-controlled text (issue #2024).
-                    mark_local_fallback(
-                        self._traigent_config,
-                        fallback_reason,
-                        failure_reason=reason,
-                    )
-                    logger.warning(
-                        "⚠️  %s traigent.cloud_brain_fallback source=%s "
-                        "fallback_reason=%s stage=session-create",
-                        local_fallback_notice(fallback_reason, reason),
-                        SOURCE_LOCAL_FALLBACK,
-                        fallback_reason,
-                    )
-                    return str(result.session_id)
-                raise ConfigurationError(
-                    "Cloud brain session creation failed without an allowed "
-                    f"connectivity fallback: {fallback_reason}"
-                )
-
-            classification = _classify_session_creation_failure(
-                reason,
-                result.failure_response,
-                failure_detail=result.failure_detail,
+    def _handle_session_creation_failure(
+        self, result: SessionCreationResult, *, governed_session: bool
+    ) -> str:
+        was_enabled = self._backend_tracking_enabled
+        if result.failure_reason is None:
+            raise ValueError(
+                "SessionCreationResult.failure_reason must be set "
+                "when backend_connected=False"
             )
+        reason = result.failure_reason
+        self.disable_backend_tracking(reason)
+
+        if not was_enabled:
+            # Even when tracking was already disabled, an AUTH-reason failure
+            # must surface at WARNING so the user sees the remedy text
+            # (missing_permissions, re-auth hint, etc.) — issue #1373 Case 2.
+            # For non-auth reasons (NO_API_KEY, SESSION_FAILED) the normal
+            # message was already emitted on the first disable; stay silent.
             if reason == SessionCreationFailureReason.AUTH:
-                allow_untracked = is_untracked_fallback_allowed()
-                warning = _format_untracked_warning_block(
-                    result,
-                    classification,
-                    aborting=not allow_untracked,
+                classification = _classify_session_creation_failure(
+                    reason,
+                    result.failure_response,
+                    failure_detail=result.failure_detail,
                 )
-                if not allow_untracked:
-                    raise ConfigurationError(warning)
-                logger.warning("%s", warning)
-            elif reason == SessionCreationFailureReason.NO_API_KEY:
-                logger.info(
-                    "No API key found — results saved locally only. %s",
-                    get_no_credentials_hint(),
-                )
-            else:
                 logger.warning(
                     "%s",
                     _format_untracked_warning_block(
-                        result,
-                        classification,
-                        aborting=False,
+                        result, classification, aborting=False
                     ),
                 )
-        else:
-            logger.info("Created backend session: %s", result.session_id)
+            return str(result.session_id)
 
+        policy = policy_from_config(self._traigent_config)
+        fallback_reason = fallback_reason_from_session_result(result)
+        if policy_requires_cloud(policy):
+            raise ConfigurationError(
+                "Cloud execution is required, but backend session creation "
+                f"failed: {fallback_reason}"
+            )
+        if governed_session:
+            raise ConfigurationError(
+                "Governed backend session creation failed; local fallback is "
+                f"not allowed: {fallback_reason}"
+            )
+        if policy_is_cloud_brain(policy):
+            return self._handle_cloud_brain_session_failure(
+                result, policy, reason, fallback_reason
+            )
+
+        self._log_untracked_session_failure(result, reason)
         return str(result.session_id)
+
+    def _handle_cloud_brain_session_failure(
+        self,
+        result: SessionCreationResult,
+        policy: Any,
+        reason: SessionCreationFailureReason,
+        fallback_reason: str,
+    ) -> str:
+        cloud_fallback_allowed = policy_allows_cloud_fallback(policy)
+        if cloud_fallback_allowed and (
+            session_failure_is_connectivity(result)
+            or session_failure_is_session_create_400(result)
+        ):
+            self._fallback_reason = fallback_reason
+            self._fallback_reason_code = reason.value
+            # ``reason`` is the typed SessionCreationFailureReason from
+            # the structured result. Pass it through instead of letting
+            # the formatter re-derive intent from ``fallback_reason``,
+            # which embeds backend-controlled text (issue #2024).
+            mark_local_fallback(
+                self._traigent_config,
+                fallback_reason,
+                failure_reason=reason,
+            )
+            logger.warning(
+                "⚠️  %s traigent.cloud_brain_fallback source=%s "
+                "fallback_reason=%s stage=session-create",
+                local_fallback_notice(fallback_reason, reason),
+                SOURCE_LOCAL_FALLBACK,
+                fallback_reason,
+            )
+            return str(result.session_id)
+        raise ConfigurationError(
+            "Cloud brain session creation failed without an allowed "
+            f"connectivity fallback: {fallback_reason}"
+        )
+
+    @staticmethod
+    def _log_untracked_session_failure(
+        result: SessionCreationResult, reason: SessionCreationFailureReason
+    ) -> None:
+        classification = _classify_session_creation_failure(
+            reason,
+            result.failure_response,
+            failure_detail=result.failure_detail,
+        )
+        if reason == SessionCreationFailureReason.AUTH:
+            allow_untracked = is_untracked_fallback_allowed()
+            warning = _format_untracked_warning_block(
+                result,
+                classification,
+                aborting=not allow_untracked,
+            )
+            if not allow_untracked:
+                raise ConfigurationError(warning)
+            logger.warning("%s", warning)
+        elif reason == SessionCreationFailureReason.NO_API_KEY:
+            logger.info(
+                "No API key found — results saved locally only. %s",
+                get_no_credentials_hint(),
+            )
+        else:
+            logger.warning(
+                "%s",
+                _format_untracked_warning_block(
+                    result,
+                    classification,
+                    aborting=False,
+                ),
+            )
 
     @staticmethod
     def normalize_session_creation_result(
@@ -1677,61 +1758,24 @@ class BackendSessionManager:
         function_slug = function_descriptor.slug
 
         if self._egress_disabled():
-            self._refuse_unregistered_g1()
-            # A no-egress/offline run never contacts the backend, so it can
-            # never mint an authoritative run id. Fail closed before any
-            # local session is created — never contact the network to check
-            # (G1 §1, addendum F3).
-            if self._effective_require_run_id():
-                from traigent.cloud.client import RunIdMissingError
-
-                raise RunIdMissingError(reason=SOURCE_OFFLINE)
-
-            # #1939: offline/no-egress runs still persist a LOCAL session so
-            # `traigent local list` sees them and `traigent sync` can upload
-            # them later. Best-effort — a storage failure yields session_id
-            # None exactly like the legacy behavior.
-            self._warn_if_dataset_unlinked(dataset, dataset_id)
-            from traigent.cloud import content_less as content_less_session
-
-            offline_content_less_kwargs: dict[str, Any] = (
-                {"content_less_active": True}
-                if content_less_session.is_enabled(content_less)
-                else {}
-            )
-            local_session_id = self._create_offline_local_session(
+            return self._create_offline_session_context(
+                dataset=dataset,
+                dataset_id=dataset_id,
+                max_trials=max_trials,
+                start_time=start_time,
                 function_identifier=function_identifier,
                 function_display_name=function_display_name,
-                dataset=dataset,
-                max_trials=max_trials,
-                dataset_id=dataset_id,
-                experiment_display_name=experiment_display_name,
                 function_slug=function_slug,
+                experiment_display_name=experiment_display_name,
                 agent_key=agent_key,
-                **offline_content_less_kwargs,
-            )
-            return SessionContext(
-                session_id=local_session_id,
-                dataset_name=(getattr(dataset, "name", None) or "default_evaluation"),
-                function_name=function_identifier,
-                optimization_id=self._optimization_id,
-                start_time=start_time,
+                content_less=content_less,
             )
 
-        bound_agent_id: str | None = None
-        head_generation: int | None = None
-        bound_agent_ref: str | None = None
-        session_content_less = False
-        head_capture_refusal: str | None = None
+        head = _SessionHeadBinding()
         if self._backend_client:
             evaluation_set_name = getattr(dataset, "name", None) or "default_evaluation"
             self._warn_if_dataset_unlinked(dataset, dataset_id)
-            if smart_pruning is not None:
-                effective_smart_pruning = dict(smart_pruning)
-            elif self._smart_pruning is not None:
-                effective_smart_pruning = dict(self._smart_pruning)
-            else:
-                effective_smart_pruning = None
+            effective_smart_pruning = self._effective_smart_pruning(smart_pruning)
 
             # #2049: do NOT substitute a plausible number here. An unset max_trials
             # used to be stamped as a literal 10, which is indistinguishable on disk
@@ -1746,103 +1790,39 @@ class BackendSessionManager:
             # does. Nothing internal needed the fabricated cap: this value only ever
             # fed the log line and the persisted metadata.
             max_trials_value = max_trials
-            max_samples_value = (
-                max_total_examples if max_total_examples is not None else None
-            )
-            logger.info(
-                "Creating backend session with max_trials=%s for %s (remote_name=%s)",
-                (
-                    max_trials_value
-                    if max_trials_value is not None
-                    else "unset (no budget)"
-                ),
-                function_identifier,
-                function_slug,
+            max_samples_value = max_total_examples
+            self._log_session_create_start(
+                max_trials_value, function_identifier, function_slug
             )
 
             # Build metadata including agent configuration if present
-            session_metadata: dict[str, Any] = {
-                "optimization_id": self._optimization_id,
-                "max_trials": max_trials_value,
-                "max_total_examples": max_samples_value,
-                "dataset_size": len(dataset),
-                "function_name": function_identifier,
-                "function_display_name": function_display_name,
-                "function_module": function_descriptor.module,
-                "function_relative_path": function_descriptor.relative_path,
-                "function_slug": function_slug,
-                "evaluation_set": evaluation_set_name,
-            }
-            # #1938: declare client-owned sequencing so the backend knows this
-            # session is a tracking sink for a locally-enumerated run
-            # (connected grid/random), not a backend-guided optimization.
-            if self._local_sequencing_active():
-                _local_policy = policy_from_config(self._traigent_config)
-                session_metadata["trial_sequencing"] = "client"
-                if _local_policy is not None:
-                    session_metadata["client_algorithm"] = _local_policy.algorithm
-            if agent_configuration is not None:
-                session_metadata["agent_configuration"] = filter_agent_configuration(
-                    agent_configuration.to_dict()
-                )
-            if warm_start_from:
-                session_metadata["warm_start_from"] = warm_start_from
+            session_metadata = self._build_session_create_metadata(
+                dataset=dataset,
+                function_descriptor=function_descriptor,
+                function_display_name=function_display_name,
+                function_slug=function_slug,
+                evaluation_set_name=evaluation_set_name,
+                max_trials_value=max_trials_value,
+                max_samples_value=max_samples_value,
+                agent_configuration=agent_configuration,
+                warm_start_from=warm_start_from,
+            )
 
             # Build the portal display name (see compute_portal_name).
             from traigent.cloud import content_less as content_less_session
 
             content_less_active = content_less_session.is_enabled(content_less)
             if content_less_active:
-                # One environment for the whole run: the session is created with the
-                # run's best-config environment (canonicalized once, here, before
-                # anything is sent; out-of-set refuses locally), and the head capture
-                # and the publish use that same session-bound value.
-                options = (
-                    content_less
-                    if isinstance(content_less, content_less_session.ContentLessOptions)
-                    else content_less_session.ContentLessOptions()
+                content_less, head_environment = self._resolve_content_less_run(
+                    content_less, head_environment, head_environment_explicit
                 )
-                requested_environment = options.environment
-                # Order: explicit content-less option > explicitly set best-config
-                # environment > TRAIGENT_ENVIRONMENT and the other sources > "default".
-                best_config_explicit = (
-                    head_environment not in (None, "default")
-                    if head_environment_explicit is None
-                    else head_environment_explicit
-                )
-                if (
-                    requested_environment is None
-                    and head_environment is not None
-                    and best_config_explicit
-                ):
-                    requested_environment = head_environment
-                head_environment = content_less_session.resolve_environment(
-                    requested_environment
-                )
-                content_less = content_less_session.ContentLessOptions(
-                    enabled=options.enabled,
-                    agent_ref=options.agent_ref,
-                    environment=head_environment,
-                )
-            portal_name = compute_portal_name(
-                # Content-less: the agent is named by its code identifier, never by the
-                # customer-chosen display name, objectives or knobs (group 1).
-                experiment_display_name=(
-                    function_descriptor.display_name or function_identifier
-                    if content_less_active
-                    else experiment_display_name
-                ),
-                objectives=self._objectives,
-                knob_names=list(
-                    (getattr(self._optimizer, "config_space", {}) or {}).keys()
-                ),
-                function_display_name=(
-                    function_descriptor.display_name
-                    if content_less_active
-                    else function_display_name
-                ),
+            portal_name = self._compute_session_portal_name(
+                function_descriptor=function_descriptor,
                 function_identifier=function_identifier,
+                function_display_name=function_display_name,
                 function_slug=function_slug,
+                experiment_display_name=experiment_display_name,
+                content_less_active=content_less_active,
             )
 
             # Tell create_session whether this run actually INTENDS cloud egress
@@ -1860,36 +1840,11 @@ class BackendSessionManager:
             # identity. The generated portal label remains the legacy display/routing
             # key, but is not promoted to identity when it is derived from objectives,
             # knobs, or the function descriptor.
-            declared_agent_key = (
-                agent_key.strip()
-                if isinstance(agent_key, str) and agent_key.strip()
-                else None
+            declared_agent_key = self._declared_agent_key(agent_key)
+            identity_kwargs = self._build_create_identity_kwargs(
+                content_identity, content_less, evaluator_code_digest
             )
-            # Content identity v1 (built by the orchestrator per run; absent
-            # without a purpose-key grant). Withheld in privacy mode: member
-            # lists, dataset sizes and project file names are disclosures a
-            # privacy-mode run has not agreed to. Only passed when present, so
-            # clients (and fakes) predating the field keep their exact call shape.
-            identity_kwargs = self._content_identity_kwargs(content_identity)
-            if content_less is not None:
-                identity_kwargs["content_less"] = content_less
-            from traigent.cloud import content_less as _content_less
-
-            if evaluator_code_digest and not _content_less.is_enabled(
-                content_less
-                if isinstance(content_less, _content_less.ContentLessOptions)
-                else None
-            ):
-                if not getattr(self._traigent_config, "privacy_enabled", False):
-                    identity_kwargs["evaluator_code_digest"] = evaluator_code_digest
-            g1_kwargs: dict[str, Any] = (
-                {"snapshot_g1_required": True} if self._snapshot_g1_required else {}
-            )
-            if (
-                self._snapshot_g1_required
-                and self._snapshot_g1_deadline_days is not None
-            ):
-                g1_kwargs["snapshot_g1_deadline_days"] = self._snapshot_g1_deadline_days
+            g1_kwargs = self._build_g1_create_kwargs()
             raw_result = self._backend_client.create_session(
                 function_name=portal_name,
                 agent_key=declared_agent_key,
@@ -1916,87 +1871,19 @@ class BackendSessionManager:
                 **g1_kwargs,
             )
             result = self.normalize_session_creation_result(raw_result)
-            if not result.backend_connected:
-                self._refuse_unregistered_g1()
-            if self._effective_require_run_id() and not result.backend_connected:
-                # Any local-fallback create (no key, unreachable, offline,
-                # session-create failure) yields no authoritative run id.
-                # Raise before handle_session_creation_result emits its own
-                # local-fallback warning — never contact the network to
-                # check (G1 §1, addendum F2/F3).
-                from traigent.cloud.client import RunIdMissingError
-
-                reason = result.failure_reason.value if result.failure_reason else None
-                raise RunIdMissingError(reason=reason)
+            self._refuse_disconnected_create(result)
             session_id = self.handle_session_creation_result(
                 result,
                 governed_session=bool(promotion_policy or tvl_governance),
             )
             if session_id is not None:
-                if self._cost_budget_is_armed(cost_limit):
-                    self._session_cost_budget_armed.add(session_id)
-                else:
-                    self._session_cost_budget_armed.discard(session_id)
+                self._sync_session_cost_budget_arming(session_id, cost_limit)
             if result.backend_connected:
-                owning_context = {
-                    key: normalized
-                    for key, value in (
-                        ("project_id", result.project_id),
-                        ("tenant_id", result.tenant_id),
-                    )
-                    if value is not None and (normalized := str(value).strip())
-                }
-                if owning_context:
-                    self._session_owning_context[session_id] = owning_context
-                if getattr(result, "content_less", False) is True:
-                    # content_less_v1: the session is addressed by the opaque
-                    # agent_ref of the create 201; metadata.agent_id is never read.
-                    session_content_less = True
-                    bound_agent_ref = getattr(result, "agent_ref", None)
-                    head_generation, head_capture_refusal = (
-                        self._capture_agent_head_generation_by_ref(
-                            bound_agent_ref, head_environment
-                        )
-                    )
-                else:
-                    bound_agent_id = result.agent_id
-                    head_generation = self._capture_agent_head_generation(
-                        bound_agent_id, head_environment
-                    )
-
-            # On success, upload dataset features via the session mapping
-            if result.backend_connected:
-                session_mapping = None
-                get_mapping = getattr(self._backend_client, "get_session_mapping", None)
-                if callable(get_mapping):
-                    try:
-                        session_mapping = get_mapping(session_id)
-                    except Exception as exc:
-                        logger.debug(
-                            "Unable to resolve session mapping for %s: %s",
-                            session_id,
-                            exc,
-                        )
-
-                if self._effective_require_run_id() and (
-                    session_mapping is None
-                    or getattr(session_mapping, "experiment_run_id", None) is None
-                ):
-                    # Connected, but the backend minted no authoritative run
-                    # id: fail before the feature upload and before return
-                    # (G1 §1, addendum F2).
-                    from traigent.cloud.client import RunIdMissingError
-
-                    raise RunIdMissingError()
-
-                if session_mapping is not None:
-                    self._upload_dataset_features(
-                        session_id=session_id,
-                        dataset=dataset,
-                        experiment_run_id=getattr(
-                            session_mapping, "experiment_run_id", None
-                        ),
-                    )
+                head = self._bind_connected_session(
+                    result, session_id, head_environment
+                )
+                # On success, upload dataset features via the session mapping
+                self._upload_session_dataset_features(session_id, dataset)
 
         dataset_name = getattr(dataset, "name", None) or "default_evaluation"
 
@@ -2009,13 +1896,335 @@ class BackendSessionManager:
             function_name=function_identifier,
             optimization_id=self._optimization_id,
             start_time=start_time,
-            agent_id=bound_agent_id,
-            head_generation=head_generation,
-            head_environment=head_environment if head_generation is not None else None,
-            agent_ref=bound_agent_ref,
-            content_less=session_content_less,
-            head_capture_refusal=head_capture_refusal,
+            agent_id=head.agent_id,
+            head_generation=head.head_generation,
+            head_environment=(
+                head_environment if head.head_generation is not None else None
+            ),
+            agent_ref=head.agent_ref,
+            content_less=head.content_less,
+            head_capture_refusal=head.head_capture_refusal,
         )
+
+    @staticmethod
+    def _log_session_create_start(
+        max_trials_value: int | None,
+        function_identifier: str,
+        function_slug: str | None,
+    ) -> None:
+        logger.info(
+            "Creating backend session with max_trials=%s for %s (remote_name=%s)",
+            (max_trials_value if max_trials_value is not None else "unset (no budget)"),
+            function_identifier,
+            function_slug,
+        )
+
+    @staticmethod
+    def _declared_agent_key(agent_key: str | None) -> str | None:
+        return (
+            agent_key.strip()
+            if isinstance(agent_key, str) and agent_key.strip()
+            else None
+        )
+
+    def _effective_smart_pruning(
+        self, smart_pruning: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        if smart_pruning is not None:
+            return dict(smart_pruning)
+        if self._smart_pruning is not None:
+            return dict(self._smart_pruning)
+        return None
+
+    def _compute_session_portal_name(
+        self,
+        *,
+        function_descriptor: FunctionDescriptor,
+        function_identifier: str,
+        function_display_name: str | None,
+        function_slug: str | None,
+        experiment_display_name: str | None,
+        content_less_active: bool,
+    ) -> str:
+        return compute_portal_name(
+            # Content-less: the agent is named by its code identifier, never by the
+            # customer-chosen display name, objectives or knobs (group 1).
+            experiment_display_name=(
+                function_descriptor.display_name or function_identifier
+                if content_less_active
+                else experiment_display_name
+            ),
+            objectives=self._objectives,
+            knob_names=list(
+                (getattr(self._optimizer, "config_space", {}) or {}).keys()
+            ),
+            function_display_name=(
+                function_descriptor.display_name
+                if content_less_active
+                else function_display_name
+            ),
+            function_identifier=function_identifier,
+            function_slug=function_slug,
+        )
+
+    def _refuse_disconnected_create(self, result: SessionCreationResult) -> None:
+        if not result.backend_connected:
+            self._refuse_unregistered_g1()
+        if self._effective_require_run_id() and not result.backend_connected:
+            # Any local-fallback create (no key, unreachable, offline,
+            # session-create failure) yields no authoritative run id.
+            # Raise before handle_session_creation_result emits its own
+            # local-fallback warning — never contact the network to
+            # check (G1 §1, addendum F2/F3).
+            from traigent.cloud.client import RunIdMissingError
+
+            reason = result.failure_reason.value if result.failure_reason else None
+            raise RunIdMissingError(reason=reason)
+
+    def _sync_session_cost_budget_arming(
+        self, session_id: str, cost_limit: float | None
+    ) -> None:
+        if self._cost_budget_is_armed(cost_limit):
+            self._session_cost_budget_armed.add(session_id)
+        else:
+            self._session_cost_budget_armed.discard(session_id)
+
+    def _create_offline_session_context(
+        self,
+        *,
+        dataset: Dataset,
+        dataset_id: str | None,
+        max_trials: int | None,
+        start_time: float,
+        function_identifier: str,
+        function_display_name: str | None,
+        function_slug: str | None,
+        experiment_display_name: str | None,
+        agent_key: str | None,
+        content_less: Any,
+    ) -> SessionContext:
+        self._refuse_unregistered_g1()
+        # A no-egress/offline run never contacts the backend, so it can
+        # never mint an authoritative run id. Fail closed before any
+        # local session is created — never contact the network to check
+        # (G1 §1, addendum F3).
+        if self._effective_require_run_id():
+            from traigent.cloud.client import RunIdMissingError
+
+            raise RunIdMissingError(reason=SOURCE_OFFLINE)
+
+        # #1939: offline/no-egress runs still persist a LOCAL session so
+        # `traigent local list` sees them and `traigent sync` can upload
+        # them later. Best-effort — a storage failure yields session_id
+        # None exactly like the legacy behavior.
+        self._warn_if_dataset_unlinked(dataset, dataset_id)
+        from traigent.cloud import content_less as content_less_session
+
+        offline_content_less_kwargs: dict[str, Any] = (
+            {"content_less_active": True}
+            if content_less_session.is_enabled(content_less)
+            else {}
+        )
+        local_session_id = self._create_offline_local_session(
+            function_identifier=function_identifier,
+            function_display_name=function_display_name,
+            dataset=dataset,
+            max_trials=max_trials,
+            dataset_id=dataset_id,
+            experiment_display_name=experiment_display_name,
+            function_slug=function_slug,
+            agent_key=agent_key,
+            **offline_content_less_kwargs,
+        )
+        return SessionContext(
+            session_id=local_session_id,
+            dataset_name=(getattr(dataset, "name", None) or "default_evaluation"),
+            function_name=function_identifier,
+            optimization_id=self._optimization_id,
+            start_time=start_time,
+        )
+
+    def _build_session_create_metadata(
+        self,
+        *,
+        dataset: Dataset,
+        function_descriptor: FunctionDescriptor,
+        function_display_name: str | None,
+        function_slug: str | None,
+        evaluation_set_name: str,
+        max_trials_value: int | None,
+        max_samples_value: int | None,
+        agent_configuration: AgentConfiguration | None,
+        warm_start_from: str | None,
+    ) -> dict[str, Any]:
+        session_metadata: dict[str, Any] = {
+            "optimization_id": self._optimization_id,
+            "max_trials": max_trials_value,
+            "max_total_examples": max_samples_value,
+            "dataset_size": len(dataset),
+            "function_name": function_descriptor.identifier,
+            "function_display_name": function_display_name,
+            "function_module": function_descriptor.module,
+            "function_relative_path": function_descriptor.relative_path,
+            "function_slug": function_slug,
+            "evaluation_set": evaluation_set_name,
+        }
+        # #1938: declare client-owned sequencing so the backend knows this
+        # session is a tracking sink for a locally-enumerated run
+        # (connected grid/random), not a backend-guided optimization.
+        if self._local_sequencing_active():
+            _local_policy = policy_from_config(self._traigent_config)
+            session_metadata["trial_sequencing"] = "client"
+            if _local_policy is not None:
+                session_metadata["client_algorithm"] = _local_policy.algorithm
+        if agent_configuration is not None:
+            session_metadata["agent_configuration"] = filter_agent_configuration(
+                agent_configuration.to_dict()
+            )
+        if warm_start_from:
+            session_metadata["warm_start_from"] = warm_start_from
+        return session_metadata
+
+    @staticmethod
+    def _resolve_content_less_run(
+        content_less: Any,
+        head_environment: str | None,
+        head_environment_explicit: bool | None,
+    ) -> tuple[Any, str | None]:
+        from traigent.cloud import content_less as content_less_session
+
+        # One environment for the whole run: the session is created with the
+        # run's best-config environment (canonicalized once, here, before
+        # anything is sent; out-of-set refuses locally), and the head capture
+        # and the publish use that same session-bound value.
+        options = (
+            content_less
+            if isinstance(content_less, content_less_session.ContentLessOptions)
+            else content_less_session.ContentLessOptions()
+        )
+        requested_environment = options.environment
+        # Order: explicit content-less option > explicitly set best-config
+        # environment > TRAIGENT_ENVIRONMENT and the other sources > "default".
+        best_config_explicit = (
+            head_environment not in (None, "default")
+            if head_environment_explicit is None
+            else head_environment_explicit
+        )
+        if (
+            requested_environment is None
+            and head_environment is not None
+            and best_config_explicit
+        ):
+            requested_environment = head_environment
+        head_environment = content_less_session.resolve_environment(
+            requested_environment
+        )
+        content_less = content_less_session.ContentLessOptions(
+            enabled=options.enabled,
+            agent_ref=options.agent_ref,
+            environment=head_environment,
+        )
+        return content_less, head_environment
+
+    def _build_create_identity_kwargs(
+        self,
+        content_identity: dict[str, Any] | None,
+        content_less: Any,
+        evaluator_code_digest: str | None,
+    ) -> dict[str, Any]:
+        # Content identity v1 (built by the orchestrator per run; absent
+        # without a purpose-key grant). Withheld in privacy mode: member
+        # lists, dataset sizes and project file names are disclosures a
+        # privacy-mode run has not agreed to. Only passed when present, so
+        # clients (and fakes) predating the field keep their exact call shape.
+        identity_kwargs = self._content_identity_kwargs(content_identity)
+        if content_less is not None:
+            identity_kwargs["content_less"] = content_less
+        from traigent.cloud import content_less as _content_less
+
+        if evaluator_code_digest and not _content_less.is_enabled(
+            content_less
+            if isinstance(content_less, _content_less.ContentLessOptions)
+            else None
+        ):
+            if not getattr(self._traigent_config, "privacy_enabled", False):
+                identity_kwargs["evaluator_code_digest"] = evaluator_code_digest
+        return identity_kwargs
+
+    def _build_g1_create_kwargs(self) -> dict[str, Any]:
+        g1_kwargs: dict[str, Any] = (
+            {"snapshot_g1_required": True} if self._snapshot_g1_required else {}
+        )
+        if self._snapshot_g1_required and self._snapshot_g1_deadline_days is not None:
+            g1_kwargs["snapshot_g1_deadline_days"] = self._snapshot_g1_deadline_days
+        return g1_kwargs
+
+    def _bind_connected_session(
+        self,
+        result: SessionCreationResult,
+        session_id: str,
+        head_environment: str | None,
+    ) -> _SessionHeadBinding:
+        head = _SessionHeadBinding()
+        owning_context = {
+            key: normalized
+            for key, value in (
+                ("project_id", result.project_id),
+                ("tenant_id", result.tenant_id),
+            )
+            if value is not None and (normalized := str(value).strip())
+        }
+        if owning_context:
+            self._session_owning_context[session_id] = owning_context
+        if getattr(result, "content_less", False) is True:
+            # content_less_v1: the session is addressed by the opaque
+            # agent_ref of the create 201; metadata.agent_id is never read.
+            head.content_less = True
+            head.agent_ref = getattr(result, "agent_ref", None)
+            head.head_generation, head.head_capture_refusal = (
+                self._capture_agent_head_generation_by_ref(
+                    head.agent_ref, head_environment
+                )
+            )
+        else:
+            head.agent_id = result.agent_id
+            head.head_generation = self._capture_agent_head_generation(
+                head.agent_id, head_environment
+            )
+        return head
+
+    def _upload_session_dataset_features(
+        self, session_id: str, dataset: Dataset
+    ) -> None:
+        session_mapping = None
+        get_mapping = getattr(self._backend_client, "get_session_mapping", None)
+        if callable(get_mapping):
+            try:
+                session_mapping = get_mapping(session_id)
+            except Exception as exc:
+                logger.debug(
+                    "Unable to resolve session mapping for %s: %s",
+                    session_id,
+                    exc,
+                )
+
+        if self._effective_require_run_id() and (
+            session_mapping is None
+            or getattr(session_mapping, "experiment_run_id", None) is None
+        ):
+            # Connected, but the backend minted no authoritative run
+            # id: fail before the feature upload and before return
+            # (G1 §1, addendum F2).
+            from traigent.cloud.client import RunIdMissingError
+
+            raise RunIdMissingError()
+
+        if session_mapping is not None:
+            self._upload_dataset_features(
+                session_id=session_id,
+                dataset=dataset,
+                experiment_run_id=getattr(session_mapping, "experiment_run_id", None),
+            )
 
     def _capture_agent_head_generation_by_ref(
         self, agent_ref: str | None, environment: str | None
@@ -2642,6 +2851,55 @@ class BackendSessionManager:
 
         return True
 
+    def _build_local_trial_marker(self, trial_result: TrialResult) -> dict[str, Any]:
+        local_marker: dict[str, Any] = {}
+        if bool(getattr(self._traigent_config, "privacy_enabled", False)):
+            local_marker["privacy_mode"] = True
+        run_local = (trial_result.metadata or {}).get(LOCAL_MARKER_KEY)
+        subset = (
+            run_local.get("subset_indices") if isinstance(run_local, dict) else None
+        )
+        # Row provenance comes from the evaluator itself (the true dataset row it
+        # stamped on each result), composed with the subset; a trial whose
+        # evaluator produced none (custom evaluators, length mismatch) is
+        # "unordered". Id spelling and trial status prove nothing about rows.
+        results = (trial_result.metadata or {}).get("example_results")
+        if isinstance(results, list) and results:
+            row_indices = getattr(trial_result, TRIAL_ROW_INDICES_ATTR, None)
+            local_marker["rows"] = rows_from_indices(
+                row_indices, len(results), subset if isinstance(subset, list) else None
+            )
+        else:
+            local_marker["rows"] = list(subset) if isinstance(subset, list) else "full"
+        return local_marker
+
+    def _persist_trial_via_backend_client(
+        self,
+        session_id: str,
+        trial_result: TrialResult,
+        sanitized_score: float | None,
+        metadata_payload: dict[str, Any],
+    ) -> None:
+        try:
+            self._backend_client.submit_result(  # type: ignore[union-attr]
+                session_id=session_id,
+                config=trial_result.config,
+                score=sanitized_score,
+                metadata=metadata_payload,
+            )
+        except Exception as exc:
+            # #1279: a failed local write means the trial's only record is
+            # the breaker-gated remote submit — if that also fails the
+            # completed (paid-for) trial is lost. Never silent.
+            logger.warning(
+                "Local trial logging failed for session %s trial %s — trial "
+                "has no durable local record if the remote submit also "
+                "fails: %s",
+                session_id,
+                trial_result.trial_id,
+                exc,
+            )
+
     def _persist_trial_locally(
         self,
         *,
@@ -2677,49 +2935,15 @@ class BackendSessionManager:
         # * privacy_mode: privacy-enabled runs never post per-example measures
         #   (see _log_trial_to_backend), so a "connected" map would key ids the
         #   portal does not have.
-        local_marker: dict[str, Any] = {}
-        if bool(getattr(self._traigent_config, "privacy_enabled", False)):
-            local_marker["privacy_mode"] = True
-        run_local = (trial_result.metadata or {}).get(LOCAL_MARKER_KEY)
-        subset = (
-            run_local.get("subset_indices") if isinstance(run_local, dict) else None
-        )
-        # Row provenance comes from the evaluator itself (the true dataset row it
-        # stamped on each result), composed with the subset; a trial whose
-        # evaluator produced none (custom evaluators, length mismatch) is
-        # "unordered". Id spelling and trial status prove nothing about rows.
-        results = (trial_result.metadata or {}).get("example_results")
-        if isinstance(results, list) and results:
-            row_indices = getattr(trial_result, TRIAL_ROW_INDICES_ATTR, None)
-            local_marker["rows"] = rows_from_indices(
-                row_indices, len(results), subset if isinstance(subset, list) else None
-            )
-        else:
-            local_marker["rows"] = list(subset) if isinstance(subset, list) else "full"
+        local_marker = self._build_local_trial_marker(trial_result)
         # A custom metric literally named like the reserved key keeps its value.
         if LOCAL_MARKER_KEY not in metadata_payload:
             metadata_payload[LOCAL_MARKER_KEY] = local_marker
 
         if self._backend_client is not None and not self._egress_disabled():
-            try:
-                self._backend_client.submit_result(
-                    session_id=session_id,
-                    config=trial_result.config,
-                    score=sanitized_score,
-                    metadata=metadata_payload,
-                )
-            except Exception as exc:
-                # #1279: a failed local write means the trial's only record is
-                # the breaker-gated remote submit — if that also fails the
-                # completed (paid-for) trial is lost. Never silent.
-                logger.warning(
-                    "Local trial logging failed for session %s trial %s — trial "
-                    "has no durable local record if the remote submit also "
-                    "fails: %s",
-                    session_id,
-                    trial_result.trial_id,
-                    exc,
-                )
+            self._persist_trial_via_backend_client(
+                session_id, trial_result, sanitized_score, metadata_payload
+            )
             return
 
         storage = self._local_storage()
@@ -2813,6 +3037,202 @@ class BackendSessionManager:
             self._started_trials.add((session_id, acquisition.trial_id))
         return acquisition
 
+    def _handle_missing_trial_slot(
+        self, session_id: str, trial_result: TrialResult
+    ) -> None:
+        # Fail closed: no acknowledged backend slot ⇒ NO submission and
+        # NO acknowledgment. The certified-selection report will then
+        # withhold for this incumbent (never attest an unbound winner).
+        # A missing slot in a tracking-enabled run is the first symptom
+        # of a backend outage — degrade to local-only (issue #1265).
+        self._flag_backend_degraded(_TRIAL_SUBMISSION)
+        logger.warning(
+            "No backend trial slot acquired for session %s "
+            "(client trial %s); skipping submission (fail closed)",
+            session_id,
+            trial_result.trial_id,
+        )
+
+    def _tuned_wire_config(self, trial_result: TrialResult) -> dict[str, Any]:
+        tuned_keys = set(getattr(self._optimizer, "config_space", {}) or {})
+        return {
+            k: v
+            for k, v in (trial_result.config or {}).items()
+            if not tuned_keys or k in tuned_keys
+        }
+
+    def _submission_preconditions_met(
+        self, session_id: str, trial_result: TrialResult
+    ) -> bool:
+        # Skip remote submission when no API key is configured (offline/local only).
+        if not self._backend_client_has_api_key():
+            if policy_requires_cloud(policy_from_config(self._traigent_config)):
+                self._flag_backend_degraded("trial submission without credentials")
+            logger.debug(
+                "Skipping backend trial submission for session %s trial %s (no API key)",
+                session_id,
+                trial_result.trial_id,
+            )
+            return False
+
+        logger.debug(
+            "Submitting trial %s for session %s",
+            trial_result.trial_id,
+            session_id,
+        )
+
+        # If the backend session was never registered (e.g., API fallback), avoid
+        # posting to the SaaS endpoint to prevent 400 errors for unknown sessions.
+        session_mapping = self._lookup_session_mapping_for_submission(session_id)
+
+        if session_mapping is None:
+            if policy_requires_cloud(policy_from_config(self._traigent_config)):
+                self._flag_backend_degraded("trial submission without session mapping")
+            logger.info(
+                "No backend session mapping for %s; assuming offline fallback. "
+                "Skipping remote submission for trial %s.",
+                session_id,
+                trial_result.trial_id,
+            )
+            return False
+        return True
+
+    def _outcome_for_early_completion(
+        self,
+        session_id: str,
+        trial_result: TrialResult,
+        acquisition: BackendTrialSlotAcquisition,
+    ) -> BackendTrialSubmissionOutcome | None:
+        if self._local_sequencing_active():
+            # #1938: connected grid/random — the LOCAL optimizer owns
+            # sequencing and stop. The backend's completion closes the
+            # remote tracking session only; it must not truncate the
+            # local enumeration. Non-terminal: warn once, stop remote
+            # attempts for this session, keep persisting locally.
+            self._note_remote_early_completion(session_id, acquisition.reason)
+            return None
+        logger.info(
+            "Backend reported optimization complete for session %s while "
+            "submitting client trial %s (reason=%s)",
+            session_id,
+            trial_result.trial_id,
+            acquisition.reason,
+        )
+        return BackendTrialSubmissionOutcome.complete(acquisition.reason)
+
+    def _backend_client_has_api_key(self) -> bool:
+        auth_manager = getattr(self._backend_client, "auth_manager", None)
+        return bool(
+            auth_manager
+            and hasattr(auth_manager, "has_api_key")
+            and auth_manager.has_api_key()
+        )
+
+    def _lookup_session_mapping_for_submission(self, session_id: str) -> Any:
+        session_mapping = None
+        get_mapping = getattr(self._backend_client, "get_session_mapping", None)
+        if callable(get_mapping):
+            try:
+                session_mapping = get_mapping(session_id)
+            except Exception as exc:  # pragma: no cover - defensive logging only
+                logger.debug(
+                    "Failed to retrieve backend session mapping for %s: %s",
+                    session_id,
+                    exc,
+                )
+        return session_mapping
+
+    @staticmethod
+    def _build_trial_metrics_payload(
+        trial_result: TrialResult,
+        metadata: dict[str, Any],
+        score: float | None,
+        sanitized_score: float | None,
+    ) -> dict[str, Any]:
+        metrics_payload: dict[str, Any] = dict(trial_result.metrics or {})
+
+        # Surface summary stats / measures captured in metadata so the backend can persist them.
+        if "summary_stats" in metadata and "summary_stats" not in metrics_payload:
+            metrics_payload["summary_stats"] = metadata["summary_stats"]
+            logger.debug(
+                "Added summary_stats to metrics payload for trial %s",
+                trial_result.trial_id,
+            )
+        if "measures" in metadata and "measures" not in metrics_payload:
+            metrics_payload["measures"] = metadata["measures"]
+            logger.info(
+                "📊 Added %d measures to metrics payload for trial %s (status=%s)",
+                len(metadata["measures"]),
+                trial_result.trial_id,
+                trial_result.status.value,
+            )
+        elif trial_result.status == TrialStatus.PRUNED:
+            logger.warning(
+                "⚠️ No measures found for PRUNED trial %s - metadata keys: %s",
+                trial_result.trial_id,
+                list(metadata.keys()),
+            )
+
+        if "score" not in metrics_payload and score is not None:
+            metrics_payload["score"] = sanitized_score
+        return metrics_payload
+
+    def _record_trial_submission_outcome(
+        self,
+        submitted: Any,
+        *,
+        session_id: str,
+        backend_trial_id: str,
+        status: Any,
+        metrics_payload: dict[str, Any],
+    ) -> None:
+        if submitted is None:
+            # None signals a transient, non-fatal skip (e.g. 400 session-not-found
+            # from per-worker session storage — BE #1194).  The trial-operations
+            # layer already logged an INFO message; don't flag backend degraded
+            # and don't re-log here so the user isn't flooded with warnings for
+            # a known transient condition.  Recover via `traigent sync`.
+            # Required cloud tracking cannot tolerate an unacknowledged
+            # write, so it raises instead (#2510).
+            if policy_requires_cloud(policy_from_config(self._traigent_config)):
+                self._flag_backend_degraded(_TRIAL_SUBMISSION)
+        elif not submitted:
+            # False covers a real backend rejection (non-2xx that is not a
+            # transient not-found) or a network failure; degrade to local-only
+            # (#1265) so subsequent trials don't keep hitting a broken endpoint.
+            if bool(getattr(submitted, "permanent_rejection", False)):
+                rejection_reason = (
+                    getattr(submitted, "reason", None)
+                    or "backend returned a permanent 4xx rejection"
+                )
+                self._flag_backend_degraded(
+                    _TRIAL_SUBMISSION, rejection_reason=rejection_reason
+                )
+                logger.warning(
+                    "Backend session endpoint rejected trial %s for session %s "
+                    "(permanent rejection)",
+                    backend_trial_id,
+                    session_id,
+                )
+            else:
+                self._flag_backend_degraded(_TRIAL_SUBMISSION)
+                logger.warning(
+                    "Backend session endpoint did not accept trial %s for session %s",
+                    backend_trial_id,
+                    session_id,
+                )
+        else:
+            # Record the acknowledged backend slot so the certified-selection
+            # report can verify this incumbent is bindable.
+            self._acknowledged_trials.add((session_id, backend_trial_id))
+            logger.info(
+                "Submitted trial %s for session %s (status=%s, metrics_keys=%s)",
+                backend_trial_id,
+                session_id,
+                status,
+                sorted(metrics_payload.keys()),
+            )
+
     async def _log_trial_to_backend(
         self,
         session_id: str,
@@ -2847,80 +3267,13 @@ class BackendSessionManager:
             metadata_payload["primary_objective_missing"] = True
 
         # Skip remote submission when no API key is configured (offline/local only).
-        auth_manager = getattr(self._backend_client, "auth_manager", None)
-        has_api_key = bool(
-            auth_manager
-            and hasattr(auth_manager, "has_api_key")
-            and auth_manager.has_api_key()
-        )
-        if not has_api_key:
-            if policy_requires_cloud(policy_from_config(self._traigent_config)):
-                self._flag_backend_degraded("trial submission without credentials")
-            logger.debug(
-                "Skipping backend trial submission for session %s trial %s (no API key)",
-                session_id,
-                trial_result.trial_id,
-            )
-            return None
-
-        logger.debug(
-            "Submitting trial %s for session %s",
-            trial_result.trial_id,
-            session_id,
-        )
-
-        # If the backend session was never registered (e.g., API fallback), avoid
-        # posting to the SaaS endpoint to prevent 400 errors for unknown sessions.
-        session_mapping = None
-        get_mapping = getattr(self._backend_client, "get_session_mapping", None)
-        if callable(get_mapping):
-            try:
-                session_mapping = get_mapping(session_id)
-            except Exception as exc:  # pragma: no cover - defensive logging only
-                logger.debug(
-                    "Failed to retrieve backend session mapping for %s: %s",
-                    session_id,
-                    exc,
-                )
-
-        if session_mapping is None:
-            if policy_requires_cloud(policy_from_config(self._traigent_config)):
-                self._flag_backend_degraded("trial submission without session mapping")
-            logger.info(
-                "No backend session mapping for %s; assuming offline fallback. "
-                "Skipping remote submission for trial %s.",
-                session_id,
-                trial_result.trial_id,
-            )
+        if not self._submission_preconditions_met(session_id, trial_result):
             return None
 
         # Build payload for backend session endpoint.
-        metrics_payload: dict[str, Any] = dict(trial_result.metrics or {})
-
-        # Surface summary stats / measures captured in metadata so the backend can persist them.
-        if "summary_stats" in metadata and "summary_stats" not in metrics_payload:
-            metrics_payload["summary_stats"] = metadata["summary_stats"]
-            logger.debug(
-                "Added summary_stats to metrics payload for trial %s",
-                trial_result.trial_id,
-            )
-        if "measures" in metadata and "measures" not in metrics_payload:
-            metrics_payload["measures"] = metadata["measures"]
-            logger.info(
-                "📊 Added %d measures to metrics payload for trial %s (status=%s)",
-                len(metadata["measures"]),
-                trial_result.trial_id,
-                trial_result.status.value,
-            )
-        elif trial_result.status == TrialStatus.PRUNED:
-            logger.warning(
-                "⚠️ No measures found for PRUNED trial %s - metadata keys: %s",
-                trial_result.trial_id,
-                list(metadata.keys()),
-            )
-
-        if "score" not in metrics_payload and score is not None:
-            metrics_payload["score"] = sanitized_score
+        metrics_payload = self._build_trial_metrics_payload(
+            trial_result, metadata, score, sanitized_score
+        )
         self._ensure_budget_cost_metric(
             session_id=session_id,
             trial_result=trial_result,
@@ -2953,36 +3306,12 @@ class BackendSessionManager:
             # owns the config; the slot is purely the backend's trial handle.
             acquisition = await self._acquire_backend_trial_id(session_id, trial_result)
             if acquisition.optimization_complete:
-                if self._local_sequencing_active():
-                    # #1938: connected grid/random — the LOCAL optimizer owns
-                    # sequencing and stop. The backend's completion closes the
-                    # remote tracking session only; it must not truncate the
-                    # local enumeration. Non-terminal: warn once, stop remote
-                    # attempts for this session, keep persisting locally.
-                    self._note_remote_early_completion(session_id, acquisition.reason)
-                    return None
-                logger.info(
-                    "Backend reported optimization complete for session %s while "
-                    "submitting client trial %s (reason=%s)",
-                    session_id,
-                    trial_result.trial_id,
-                    acquisition.reason,
+                return self._outcome_for_early_completion(
+                    session_id, trial_result, acquisition
                 )
-                return BackendTrialSubmissionOutcome.complete(acquisition.reason)
             backend_trial_id = acquisition.trial_id
             if backend_trial_id is None:
-                # Fail closed: no acknowledged backend slot ⇒ NO submission and
-                # NO acknowledgment. The certified-selection report will then
-                # withhold for this incumbent (never attest an unbound winner).
-                # A missing slot in a tracking-enabled run is the first symptom
-                # of a backend outage — degrade to local-only (issue #1265).
-                self._flag_backend_degraded(_TRIAL_SUBMISSION)
-                logger.warning(
-                    "No backend trial slot acquired for session %s "
-                    "(client trial %s); skipping submission (fail closed)",
-                    session_id,
-                    trial_result.trial_id,
-                )
+                self._handle_missing_trial_slot(session_id, trial_result)
                 return None
             # Rebind in place: _best_trial_cached holds this same object, so the
             # incumbent's trial_id becomes the backend id the report needs.
@@ -3002,12 +3331,7 @@ class BackendSessionManager:
             # calibrated value never rides to the backend (and the backend's
             # create-time key-subset validation would reject it anyway,
             # silently voiding the trial record).
-            tuned_keys = set(getattr(self._optimizer, "config_space", {}) or {})
-            wire_config = {
-                k: v
-                for k, v in (trial_result.config or {}).items()
-                if not tuned_keys or k in tuned_keys
-            }
+            wire_config = self._tuned_wire_config(trial_result)
             submitted_result = self._backend_client._submit_trial_result_via_session(
                 session_id=session_id,
                 trial_id=backend_trial_id,
@@ -3022,52 +3346,13 @@ class BackendSessionManager:
                 if inspect.isawaitable(submitted_result)
                 else submitted_result
             )
-            if submitted is None:
-                # None signals a transient, non-fatal skip (e.g. 400 session-not-found
-                # from per-worker session storage — BE #1194).  The trial-operations
-                # layer already logged an INFO message; don't flag backend degraded
-                # and don't re-log here so the user isn't flooded with warnings for
-                # a known transient condition.  Recover via `traigent sync`.
-                # Required cloud tracking cannot tolerate an unacknowledged
-                # write, so it raises instead (#2510).
-                if policy_requires_cloud(policy_from_config(self._traigent_config)):
-                    self._flag_backend_degraded(_TRIAL_SUBMISSION)
-            elif not submitted:
-                # False covers a real backend rejection (non-2xx that is not a
-                # transient not-found) or a network failure; degrade to local-only
-                # (#1265) so subsequent trials don't keep hitting a broken endpoint.
-                if bool(getattr(submitted, "permanent_rejection", False)):
-                    rejection_reason = (
-                        getattr(submitted, "reason", None)
-                        or "backend returned a permanent 4xx rejection"
-                    )
-                    self._flag_backend_degraded(
-                        _TRIAL_SUBMISSION, rejection_reason=rejection_reason
-                    )
-                    logger.warning(
-                        "Backend session endpoint rejected trial %s for session %s "
-                        "(permanent rejection)",
-                        backend_trial_id,
-                        session_id,
-                    )
-                else:
-                    self._flag_backend_degraded(_TRIAL_SUBMISSION)
-                    logger.warning(
-                        "Backend session endpoint did not accept trial %s for session %s",
-                        backend_trial_id,
-                        session_id,
-                    )
-            else:
-                # Record the acknowledged backend slot so the certified-selection
-                # report can verify this incumbent is bindable.
-                self._acknowledged_trials.add((session_id, backend_trial_id))
-                logger.info(
-                    "Submitted trial %s for session %s (status=%s, metrics_keys=%s)",
-                    backend_trial_id,
-                    session_id,
-                    status,
-                    sorted(metrics_payload.keys()),
-                )
+            self._record_trial_submission_outcome(
+                submitted,
+                session_id=session_id,
+                backend_trial_id=backend_trial_id,
+                status=status,
+                metrics_payload=metrics_payload,
+            )
         except CloudBrainUnavailableError:
             # Required cloud: fail closed; never swallow into local fallback.
             raise
@@ -3082,6 +3367,141 @@ class BackendSessionManager:
                 session_id,
                 exc,
             )
+
+    @staticmethod
+    def _parse_weighted_entry(weighted_entry: Any) -> tuple[Any, Any]:
+        weighted_trial = None
+        weighted_score = None
+
+        if isinstance(weighted_entry, tuple):
+            candidate_trial = weighted_entry[0]
+            if hasattr(candidate_trial, "trial_id"):
+                weighted_trial = candidate_trial
+                if len(weighted_entry) > 1:
+                    weighted_score = weighted_entry[1]
+            if weighted_score is None and len(weighted_entry) > 0:
+                weighted_score = weighted_entry[-1]
+        else:
+            weighted_score = weighted_entry
+        return weighted_trial, weighted_score
+
+    def _collect_weighted_updates(
+        self,
+        weighted_scores_data: list[Any],
+        successful_trials_iter: Any,
+    ) -> list[tuple[TrialResult, float]]:
+        weighted_updates: list[tuple[TrialResult, float]] = []
+
+        for weighted_entry in weighted_scores_data:
+            weighted_trial, weighted_score = self._parse_weighted_entry(weighted_entry)
+
+            if weighted_trial is None:
+                try:
+                    weighted_trial = next(successful_trials_iter)
+                except StopIteration:
+                    logger.warning(
+                        "No matching successful trial available for weighted score entry %s; skipping submission",
+                        weighted_entry,
+                    )
+                    continue
+
+            if weighted_score is None:
+                logger.debug(
+                    "Weighted score entry %s lacked explicit score; defaulting to 0.0",
+                    weighted_entry,
+                )
+                weighted_score = 0.0
+
+            try:
+                weighted_score_value = float(weighted_score)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Unable to coerce weighted score %s for trial %s; skipping submission",
+                    weighted_score,
+                    getattr(weighted_trial, "trial_id", "unknown"),
+                )
+                continue
+
+            weighted_updates.append((weighted_trial, weighted_score_value))
+        return weighted_updates
+
+    @staticmethod
+    def _store_weighted_results(
+        result: OptimizationResult,
+        weighted_results: dict[str, Any],
+        objective_weights: dict[str, float],
+        *,
+        attempted: int,
+        updated: int,
+        failed_trial_ids: list[Any],
+    ) -> None:
+        if hasattr(result, "metadata"):
+            if not result.metadata:
+                result.metadata = {}
+            result.metadata["weighted_results"] = {
+                "best_weighted_config": weighted_results.get("best_weighted_config"),
+                "best_weighted_score": weighted_results.get("best_weighted_score"),
+                "objective_weights": objective_weights,
+                "trials_attempted": attempted,
+                "trials_updated": updated,
+                "trials_failed": len(failed_trial_ids),
+                "failed_trial_ids": failed_trial_ids,
+            }
+
+    async def _submit_weighted_score(
+        self,
+        backend_client: Any,
+        semaphore: asyncio.Semaphore,
+        trial: TrialResult,
+        score_value: float,
+        normalization_info: Any,
+        objective_weights: dict[str, float],
+    ) -> bool:
+        async with semaphore:
+            trial_identifier = getattr(trial, "trial_id", "unknown")
+            try:
+                success = await backend_client.update_trial_weighted_scores(
+                    trial_id=trial_identifier,
+                    weighted_score=score_value,
+                    normalization_info=normalization_info,
+                    objective_weights=objective_weights,
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                if self._should_suppress_backend_warnings():
+                    logger.debug(
+                        "Exception while updating weighted score for trial %s: %s (backend unavailable)",
+                        trial_identifier,
+                        exc,
+                    )
+                else:
+                    logger.warning(
+                        "Exception while updating weighted score for trial %s: %s",
+                        trial_identifier,
+                        exc,
+                    )
+                return False
+
+            if success:
+                logger.debug(
+                    "Updated trial %s with weighted score %.4f",
+                    trial_identifier,
+                    score_value,
+                )
+                return True
+
+            # Suppress warnings in mock mode or when no API key configured
+            # This prevents noisy output for users evaluating SDK without backend
+            if self._should_suppress_backend_warnings():
+                logger.debug(
+                    "Failed to update weighted score for trial %s (backend unavailable or mock mode)",
+                    trial_identifier,
+                )
+            else:
+                logger.warning(
+                    "Failed to update weighted score for trial %s",
+                    trial_identifier,
+                )
+            return False
 
     async def update_weighted_scores(
         self,
@@ -3145,72 +3565,22 @@ class BackendSessionManager:
                 getattr(result, "successful_trials", result.trials)
             )
 
-            weighted_updates: list[tuple[TrialResult, float]] = []
-
-            for weighted_entry in weighted_scores_data:
-                weighted_trial = None
-                weighted_score = None
-
-                if isinstance(weighted_entry, tuple):
-                    candidate_trial = weighted_entry[0]
-                    if hasattr(candidate_trial, "trial_id"):
-                        weighted_trial = candidate_trial
-                        if len(weighted_entry) > 1:
-                            weighted_score = weighted_entry[1]
-                    if weighted_score is None and len(weighted_entry) > 0:
-                        weighted_score = weighted_entry[-1]
-                else:
-                    weighted_score = weighted_entry
-
-                if weighted_trial is None:
-                    try:
-                        weighted_trial = next(successful_trials_iter)
-                    except StopIteration:
-                        logger.warning(
-                            "No matching successful trial available for weighted score entry %s; skipping submission",
-                            weighted_entry,
-                        )
-                        continue
-
-                if weighted_score is None:
-                    logger.debug(
-                        "Weighted score entry %s lacked explicit score; defaulting to 0.0",
-                        weighted_entry,
-                    )
-                    weighted_score = 0.0
-
-                try:
-                    weighted_score_value = float(weighted_score)
-                except (TypeError, ValueError):
-                    logger.warning(
-                        "Unable to coerce weighted score %s for trial %s; skipping submission",
-                        weighted_score,
-                        getattr(weighted_trial, "trial_id", "unknown"),
-                    )
-                    continue
-
-                weighted_updates.append((weighted_trial, weighted_score_value))
+            weighted_updates = self._collect_weighted_updates(
+                weighted_scores_data, successful_trials_iter
+            )
 
             attempted_updates = len(weighted_updates)
 
             if attempted_updates == 0:
                 logger.info("No weighted score updates to submit")
-                if hasattr(result, "metadata"):
-                    if not result.metadata:
-                        result.metadata = {}
-                    result.metadata["weighted_results"] = {
-                        "best_weighted_config": weighted_results.get(
-                            "best_weighted_config"
-                        ),
-                        "best_weighted_score": weighted_results.get(
-                            "best_weighted_score"
-                        ),
-                        "objective_weights": objective_weights,
-                        "trials_attempted": 0,
-                        "trials_updated": 0,
-                        "trials_failed": 0,
-                        "failed_trial_ids": [],
-                    }
+                self._store_weighted_results(
+                    result,
+                    weighted_results,
+                    objective_weights,
+                    attempted=0,
+                    updated=0,
+                    failed_trial_ids=[],
+                )
                 return 0
 
             concurrency_limit = getattr(
@@ -3226,58 +3596,16 @@ class BackendSessionManager:
             semaphore = asyncio.Semaphore(concurrency_limit_int)
             normalization_info = weighted_results.get("normalization_ranges")
 
-            async def submit_weighted_score(
-                trial: TrialResult, score_value: float
-            ) -> bool:
-                async with semaphore:
-                    trial_identifier = getattr(trial, "trial_id", "unknown")
-                    try:
-                        success = await backend_client.update_trial_weighted_scores(
-                            trial_id=trial_identifier,
-                            weighted_score=score_value,
-                            normalization_info=normalization_info,
-                            objective_weights=objective_weights,
-                        )
-                    except Exception as exc:  # pragma: no cover - defensive
-                        if self._should_suppress_backend_warnings():
-                            logger.debug(
-                                "Exception while updating weighted score for trial %s: %s (backend unavailable)",
-                                trial_identifier,
-                                exc,
-                            )
-                        else:
-                            logger.warning(
-                                "Exception while updating weighted score for trial %s: %s",
-                                trial_identifier,
-                                exc,
-                            )
-                        return False
-
-                    if success:
-                        logger.debug(
-                            "Updated trial %s with weighted score %.4f",
-                            trial_identifier,
-                            score_value,
-                        )
-                        return True
-
-                    # Suppress warnings in mock mode or when no API key configured
-                    # This prevents noisy output for users evaluating SDK without backend
-                    if self._should_suppress_backend_warnings():
-                        logger.debug(
-                            "Failed to update weighted score for trial %s (backend unavailable or mock mode)",
-                            trial_identifier,
-                        )
-                    else:
-                        logger.warning(
-                            "Failed to update weighted score for trial %s",
-                            trial_identifier,
-                        )
-                    return False
-
             update_results = await asyncio.gather(
                 *(
-                    submit_weighted_score(trial, score)
+                    self._submit_weighted_score(
+                        backend_client,
+                        semaphore,
+                        trial,
+                        score,
+                        normalization_info,
+                        objective_weights,
+                    )
                     for trial, score in weighted_updates
                 )
             )
@@ -3301,26 +3629,30 @@ class BackendSessionManager:
                 concurrency_limit_int,
             )
 
-            if hasattr(result, "metadata"):
-                if not result.metadata:
-                    result.metadata = {}
-                result.metadata["weighted_results"] = {
-                    "best_weighted_config": weighted_results.get(
-                        "best_weighted_config"
-                    ),
-                    "best_weighted_score": weighted_results.get("best_weighted_score"),
-                    "objective_weights": objective_weights,
-                    "trials_attempted": attempted_updates,
-                    "trials_updated": update_count,
-                    "trials_failed": len(failed_trial_ids),
-                    "failed_trial_ids": failed_trial_ids,
-                }
+            self._store_weighted_results(
+                result,
+                weighted_results,
+                objective_weights,
+                attempted=attempted_updates,
+                updated=update_count,
+                failed_trial_ids=failed_trial_ids,
+            )
 
             return update_count
-
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.exception("Error updating weighted scores: %s", exc)
             return 0
+
+    @staticmethod
+    def _aggregation_trial_counts(result: OptimizationResult) -> tuple[int, int]:
+        try:
+            trials = list(result.trials or [])
+            trials_completed = len(trials)
+            successful_trials = len([t for t in trials if t.is_successful])
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.debug("Failed computing trial counts for aggregation: %s", exc)
+            return 0, 0
+        return trials_completed, successful_trials
 
     def build_session_aggregation_payload(
         self,
@@ -3383,14 +3715,7 @@ class BackendSessionManager:
             session_summary.get("samples_per_config")
         )
 
-        try:
-            trials = list(result.trials or [])
-            trials_completed = len(trials)
-            successful_trials = len([t for t in trials if t.is_successful])
-        except (KeyError, TypeError, ValueError) as exc:
-            logger.debug("Failed computing trial counts for aggregation: %s", exc)
-            trials_completed = 0
-            successful_trials = 0
+        trials_completed, successful_trials = self._aggregation_trial_counts(result)
 
         weighted_results = (
             result.metadata.get("weighted_results")
@@ -3410,11 +3735,9 @@ class BackendSessionManager:
         if bool(getattr(self._traigent_config, "privacy_enabled", False)):
             best_weighted_config = None
 
-        best_weighted_score = weighted_results.get("best_weighted_score")
-        if not isinstance(best_weighted_score, (int, float)) or isinstance(
-            best_weighted_score, bool
-        ):
-            best_weighted_score = None
+        best_weighted_score = _real_number_or_none(
+            weighted_results.get("best_weighted_score")
+        )
 
         statistical_significance = _sanitize_significance(
             result.metadata.get("statistical_significance")
@@ -3422,15 +3745,8 @@ class BackendSessionManager:
             else None
         )
 
-        execution_time = getattr(result, "duration", None)
-        if not isinstance(execution_time, (int, float)) or isinstance(
-            execution_time, bool
-        ):
-            execution_time = None
-
-        success_rate = getattr(result, "success_rate", None)
-        if not isinstance(success_rate, (int, float)) or isinstance(success_rate, bool):
-            success_rate = None
+        execution_time = _real_number_or_none(getattr(result, "duration", None))
+        success_rate = _real_number_or_none(getattr(result, "success_rate", None))
 
         payload: dict[str, Any] = {
             "selection_mode": _bounded_label(session_summary.get("selection_mode")),
@@ -3455,6 +3771,49 @@ class BackendSessionManager:
         if selection is not None:
             payload["selection"] = selection
         return payload
+
+    @staticmethod
+    def _call_backend_finalize(
+        backend_client: Any,
+        session_id: str,
+        completed: bool,
+        report: dict[str, Any] | None,
+        session_aggregation: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if hasattr(backend_client, "finalize_session_sync"):
+            result: dict[str, Any] | None = backend_client.finalize_session_sync(
+                session_id,
+                completed,
+                certified_selection=report,
+                session_aggregation=session_aggregation,
+            )
+        else:
+            result = backend_client.finalize_session(
+                session_id,
+                completed,
+                certified_selection=report,
+                session_aggregation=session_aggregation,
+            )
+        return result
+
+    @staticmethod
+    def _log_finalize_retry(session_id: str, attempt: int, exc: BaseException) -> float:
+        delay = _FINALIZE_BACKOFF_SECONDS[
+            min(attempt - 1, len(_FINALIZE_BACKOFF_SECONDS) - 1)
+        ]
+        http_status = _log_safe_http_status(exc)
+        status_part = "" if http_status is None else f" (HTTP {http_status})"
+        logger.warning(
+            "Backend session finalize failed transiently for session %s "
+            "(attempt %s/%s); retrying in %.1fs: %s%s",
+            session_id,
+            attempt,
+            _FINALIZE_MAX_ATTEMPTS,
+            delay,
+            type(exc).__name__,  # class + status only: never message text
+            status_part,
+        )
+        return float(delay)
 
     def finalize_session(
         self,
@@ -3497,35 +3856,22 @@ class BackendSessionManager:
             )
             return None
 
-        final_status = (
-            "completed"
-            if optimization_status == OptimizationStatus.COMPLETED
-            else "failed"
-        )
+        completed = optimization_status == OptimizationStatus.COMPLETED
 
         # The certified report only accompanies a COMPLETED finalize — a
         # failed run must never carry a certified winner.
-        report = certified_selection if final_status == "completed" else None
+        report = certified_selection if completed else None
 
         last_error: BaseException | None = None
         for attempt in range(1, _FINALIZE_MAX_ATTEMPTS + 1):
             try:
-                if hasattr(self._backend_client, "finalize_session_sync"):
-                    result: dict[str, Any] | None = (
-                        self._backend_client.finalize_session_sync(  # type: ignore[assignment]
-                            session_id,
-                            final_status == "completed",
-                            certified_selection=report,
-                            session_aggregation=session_aggregation,
-                        )
-                    )
-                else:
-                    result = self._backend_client.finalize_session(  # type: ignore[assignment]
-                        session_id,
-                        final_status == "completed",
-                        certified_selection=report,
-                        session_aggregation=session_aggregation,
-                    )
+                result = self._call_backend_finalize(
+                    self._backend_client,
+                    session_id,
+                    completed,
+                    report,
+                    session_aggregation,
+                )
 
                 if _finalize_acknowledged(result):
                     return result
@@ -3540,21 +3886,7 @@ class BackendSessionManager:
                 ):
                     raise
 
-                delay = _FINALIZE_BACKOFF_SECONDS[
-                    min(attempt - 1, len(_FINALIZE_BACKOFF_SECONDS) - 1)
-                ]
-                http_status = _log_safe_http_status(exc)
-                status_part = "" if http_status is None else f" (HTTP {http_status})"
-                logger.warning(
-                    "Backend session finalize failed transiently for session %s "
-                    "(attempt %s/%s); retrying in %.1fs: %s%s",
-                    session_id,
-                    attempt,
-                    _FINALIZE_MAX_ATTEMPTS,
-                    delay,
-                    type(exc).__name__,  # class + status only: never message text
-                    status_part,
-                )
+                delay = self._log_finalize_retry(session_id, attempt, exc)
                 time.sleep(delay)
 
         if last_error is not None:

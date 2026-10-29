@@ -298,17 +298,7 @@ def _value_in_domain(value: Any, domain: Any, legacy: bool = False) -> bool | No
     choice set. A list is never read as an interval, whatever its length.
     """
     if isinstance(domain, dict):
-        if "low" in domain and "high" in domain:
-            lo, hi = domain["low"], domain["high"]
-            if not (_is_number(lo) and _is_number(hi)):
-                return None
-            if not _is_number(value):
-                return False  # type mismatch against numeric bounds
-            return bool(lo <= value <= hi)
-        for key in ("choices", "values"):
-            if isinstance(domain.get(key), list):
-                return value in domain[key]
-        return None
+        return _value_in_dict_domain(value, domain)
     if isinstance(domain, list):
         if value in domain:
             return True
@@ -319,6 +309,20 @@ def _value_in_domain(value: Any, domain: Any, legacy: bool = False) -> bool | No
         if legacy and len(domain) == 2 and all(_is_number(x) for x in (*domain, value)):
             return bool(min(domain) <= value <= max(domain))
         return False
+    return None
+
+
+def _value_in_dict_domain(value: Any, domain: dict[str, Any]) -> bool | None:
+    if "low" in domain and "high" in domain:
+        lo, hi = domain["low"], domain["high"]
+        if not (_is_number(lo) and _is_number(hi)):
+            return None
+        if not _is_number(value):
+            return False  # type mismatch against numeric bounds
+        return bool(lo <= value <= hi)
+    for key in ("choices", "values"):
+        if isinstance(domain.get(key), list):
+            return value in domain[key]
     return None
 
 
@@ -407,6 +411,55 @@ def _check_returned_best_config(
     _check_best_config_in_space(
         name, returned, metadata.get("configuration_space"), legacy
     )
+
+
+def _serialize_trial_for_persistence(
+    trial: Any, omit_example_content: bool
+) -> dict[str, Any]:
+    # Serialize metadata, converting objects with to_dict() methods
+    raw_metadata = trial.metadata if hasattr(trial, "metadata") else {}
+    serialized_metadata = _serialize_metadata(raw_metadata)
+    if omit_example_content:
+        serialized_metadata = _metadata_without_example_content(serialized_metadata)
+
+    trial_dict = {
+        # Persist the real id so the winning_trial_ids stamp (#1854)
+        # still matches after a round-trip (load already reads it).
+        # getattr: save tolerates duck-typed trials (CLI tests use
+        # bare stand-ins), matching the hasattr guards below.
+        "trial_id": getattr(trial, "trial_id", None),
+        "config": _safe_json_value(trial.config),
+        "metrics": _safe_json_value(trial.metrics if hasattr(trial, "metrics") else {}),
+        "duration": trial.duration if hasattr(trial, "duration") else 0.0,
+        "status": trial.status if hasattr(trial, "status") else "unknown",
+        "timestamp": (
+            trial.timestamp.isoformat()
+            if hasattr(trial, "timestamp") and trial.timestamp
+            else None
+        ),
+        # load_result has always read this key; nothing ever wrote it,
+        # so a failed trial's diagnosis was dropped by the round trip
+        # while its FAILED status survived. getattr for the same reason
+        # as trial_id above.
+        "error_message": getattr(trial, "error_message", None),
+        "metadata": serialized_metadata,
+        # #2047: this format's JSON sub-path wrote neither key, so a
+        # reloaded run could not tell a crashed trial from a
+        # badly-scoring one. (The pickle sub-path below always kept
+        # both, which is why the two disagreed.)
+        #
+        # Both go through _safe_json_value for the same reason the
+        # sibling `config` key above does: _atomic_write_gzip_json
+        # calls json.dump with no `default=`, so an un-hardened value
+        # raises mid-write and leaves the run with only metadata.json
+        # -- destroying a completed optimization instead of merely
+        # losing a field. _safe_json_value also routes TrialError
+        # through its own to_dict(), which applies the redaction that
+        # object already defines for itself.
+        "error": _safe_json_value(getattr(trial, "error", None)),
+        "score": _safe_json_value(getattr(trial, "score", None)),
+    }
+    return trial_dict
 
 
 class PersistenceManager:
@@ -625,53 +678,7 @@ class PersistenceManager:
         # Save trials as compressed JSON (secure and portable)
         trials_data = []
         for trial in result.trials:
-            # Serialize metadata, converting objects with to_dict() methods
-            raw_metadata = trial.metadata if hasattr(trial, "metadata") else {}
-            serialized_metadata = _serialize_metadata(raw_metadata)
-            if omit_example_content:
-                serialized_metadata = _metadata_without_example_content(
-                    serialized_metadata
-                )
-
-            trial_dict = {
-                # Persist the real id so the winning_trial_ids stamp (#1854)
-                # still matches after a round-trip (load already reads it).
-                # getattr: save tolerates duck-typed trials (CLI tests use
-                # bare stand-ins), matching the hasattr guards below.
-                "trial_id": getattr(trial, "trial_id", None),
-                "config": _safe_json_value(trial.config),
-                "metrics": _safe_json_value(
-                    trial.metrics if hasattr(trial, "metrics") else {}
-                ),
-                "duration": trial.duration if hasattr(trial, "duration") else 0.0,
-                "status": trial.status if hasattr(trial, "status") else "unknown",
-                "timestamp": (
-                    trial.timestamp.isoformat()
-                    if hasattr(trial, "timestamp") and trial.timestamp
-                    else None
-                ),
-                # load_result has always read this key; nothing ever wrote it,
-                # so a failed trial's diagnosis was dropped by the round trip
-                # while its FAILED status survived. getattr for the same reason
-                # as trial_id above.
-                "error_message": getattr(trial, "error_message", None),
-                "metadata": serialized_metadata,
-                # #2047: this format's JSON sub-path wrote neither key, so a
-                # reloaded run could not tell a crashed trial from a
-                # badly-scoring one. (The pickle sub-path below always kept
-                # both, which is why the two disagreed.)
-                #
-                # Both go through _safe_json_value for the same reason the
-                # sibling `config` key above does: _atomic_write_gzip_json
-                # calls json.dump with no `default=`, so an un-hardened value
-                # raises mid-write and leaves the run with only metadata.json
-                # -- destroying a completed optimization instead of merely
-                # losing a field. _safe_json_value also routes TrialError
-                # through its own to_dict(), which applies the redaction that
-                # object already defines for itself.
-                "error": _safe_json_value(getattr(trial, "error", None)),
-                "score": _safe_json_value(getattr(trial, "score", None)),
-            }
+            trial_dict = _serialize_trial_for_persistence(trial, omit_example_content)
             trials_data.append(trial_dict)
 
         self._atomic_write_gzip_json(result_dir / TRIALS_JSON_FILE, trials_data)
@@ -705,52 +712,8 @@ class PersistenceManager:
 
         return str(result_dir)
 
-    def load_result(self, name: str) -> OptimizationResult:
-        """Load optimization result from disk.
-
-        Args:
-            name: Name of the saved result
-
-        Returns:
-            Loaded optimization result
-
-        Raises:
-            FileNotFoundError: If result doesn't exist
-            ValueError: If result data is corrupted, fails its sha256
-                integrity check, or its best_config lies outside the saved
-                configuration space
-
-        Integrity (#1961): ``save_result`` writes ``integrity.sha256.json``
-        with digests of ``metadata.json`` and ``trials.json.gz``; they are
-        verified here. Results saved before that change have no manifest and
-        load with one warning. This detects corruption and casual edits only;
-        it is not tamper-proof, because someone who can rewrite the files can
-        rewrite the manifest as well.
-        """
-        result_dir = self._resolve_path(self.base_dir / name)
-
-        if not result_dir.exists():
-            raise FileNotFoundError(
-                f"Optimization result '{name}' not found in {self.base_dir}"
-            )
-
-        has_manifest = verify_integrity_manifest(result_dir, list(_INTEGRITY_FILES))
-        if not has_manifest:
-            logger.warning(
-                "Result '%s' has no integrity manifest (saved by an older "
-                "version); loading without integrity verification. Re-save it "
-                "to add one.",
-                name,
-            )
-
-        # Load metadata
-        metadata_file = self._resolve_path(result_dir / METADATA_FILE)
-        if not metadata_file.exists():
-            raise ValueError(f"Metadata file missing for result '{name}'")
-
-        with safe_open(metadata_file, self.base_dir, mode="r") as f:
-            metadata = json.load(f)
-
+    def _load_trials(self, name: str, result_dir: Path) -> list[TrialResult]:
+        """Read the saved trials: JSON first, legacy pickle with a warning."""
         # Load trials using JSON instead of pickle for security
         trials_file = self._resolve_path(result_dir / TRIALS_JSON_FILE)
         pkl_file = self._resolve_path(result_dir / TRIALS_PKL_FILE)
@@ -806,6 +769,55 @@ class PersistenceManager:
                 trials = cast(list[TrialResult], RestrictedUnpickler(fp).load())
         else:
             raise ValueError(f"Trials file missing for result '{name}'")
+        return trials
+
+    def load_result(self, name: str) -> OptimizationResult:
+        """Load optimization result from disk.
+
+        Args:
+            name: Name of the saved result
+
+        Returns:
+            Loaded optimization result
+
+        Raises:
+            FileNotFoundError: If result doesn't exist
+            ValueError: If result data is corrupted, fails its sha256
+                integrity check, or its best_config lies outside the saved
+                configuration space
+
+        Integrity (#1961): ``save_result`` writes ``integrity.sha256.json``
+        with digests of ``metadata.json`` and ``trials.json.gz``; they are
+        verified here. Results saved before that change have no manifest and
+        load with one warning. This detects corruption and casual edits only;
+        it is not tamper-proof, because someone who can rewrite the files can
+        rewrite the manifest as well.
+        """
+        result_dir = self._resolve_path(self.base_dir / name)
+
+        if not result_dir.exists():
+            raise FileNotFoundError(
+                f"Optimization result '{name}' not found in {self.base_dir}"
+            )
+
+        has_manifest = verify_integrity_manifest(result_dir, list(_INTEGRITY_FILES))
+        if not has_manifest:
+            logger.warning(
+                "Result '%s' has no integrity manifest (saved by an older "
+                "version); loading without integrity verification. Re-save it "
+                "to add one.",
+                name,
+            )
+
+        # Load metadata
+        metadata_file = self._resolve_path(result_dir / METADATA_FILE)
+        if not metadata_file.exists():
+            raise ValueError(f"Metadata file missing for result '{name}'")
+
+        with safe_open(metadata_file, self.base_dir, mode="r") as f:
+            metadata = json.load(f)
+
+        trials = self._load_trials(name, result_dir)
 
         # Validate required metadata fields before reconstruction so a
         # truncated / hand-edited / legacy metadata.json surfaces as the

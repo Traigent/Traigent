@@ -392,30 +392,7 @@ def _serialize_example_result(ex: Any, *, log_content: bool = True) -> dict[str,
     no prompt/response/expected text is written to disk.
     """
     if isinstance(ex, dict):
-        metrics = ex.get("metrics", {})
-        actual = ex.get("actual_output")
-        # ExampleResult uses error_message; HybridExampleResult uses error. Accept either.
-        error = (
-            ex.get("error_message")
-            if ex.get("error_message") is not None
-            else ex.get("error")
-        )
-        return {
-            "example_id": ex.get("example_id"),
-            "query": (
-                actual.get("query")
-                if log_content and isinstance(actual, dict)
-                else None
-            ),
-            "response": _extract_output_text(actual) if log_content else None,
-            "expected": ex.get("expected_output") if log_content else None,
-            "accuracy": metrics.get("accuracy") if isinstance(metrics, dict) else None,
-            **_example_cost_fields(
-                ex.get("cost_usd"), ex.get("cost_unmeasured"), metrics
-            ),
-            "latency_ms": ex.get("latency_ms", 0.0),
-            "error": error,
-        }
+        return _serialize_example_result_dict(ex, log_content=log_content)
     # Dataclass: ExampleResult exposes error_message, HybridExampleResult exposes error.
     metrics = getattr(ex, "metrics", {}) or {}
     actual = getattr(ex, "actual_output", None)
@@ -436,6 +413,31 @@ def _serialize_example_result(ex: Any, *, log_content: bool = True) -> dict[str,
             metrics,
         ),
         "latency_ms": getattr(ex, "latency_ms", 0.0),
+        "error": error,
+    }
+
+
+def _serialize_example_result_dict(
+    ex: dict[str, Any], *, log_content: bool
+) -> dict[str, Any]:
+    metrics = ex.get("metrics", {})
+    actual = ex.get("actual_output")
+    # ExampleResult uses error_message; HybridExampleResult uses error. Accept either.
+    error = (
+        ex.get("error_message")
+        if ex.get("error_message") is not None
+        else ex.get("error")
+    )
+    return {
+        "example_id": ex.get("example_id"),
+        "query": (
+            actual.get("query") if log_content and isinstance(actual, dict) else None
+        ),
+        "response": _extract_output_text(actual) if log_content else None,
+        "expected": ex.get("expected_output") if log_content else None,
+        "accuracy": metrics.get("accuracy") if isinstance(metrics, dict) else None,
+        **_example_cost_fields(ex.get("cost_usd"), ex.get("cost_unmeasured"), metrics),
+        "latency_ms": ex.get("latency_ms", 0.0),
         "error": error,
     }
 
@@ -632,22 +634,7 @@ class OptimizationLogger:
             )
             return
 
-        candidates: list[Path] = []
-        for entry in entries:
-            if entry.is_symlink():
-                continue  # never follow symlinks
-            if not entry.is_dir():
-                continue
-            if entry.name == self.run_path.name:
-                continue  # never touch the active run
-            if not _RUN_DIR_NAME_PATTERN.match(entry.name):
-                continue  # unparseable name -> on any doubt, skip
-            if not _run_dir_shows_completion_evidence(entry):
-                # No terminal status on disk: this may be another process's
-                # concurrently ACTIVE run (or a crashed one). No completion
-                # evidence -> skip.
-                continue
-            candidates.append(entry)
+        candidates = OptimizationLogger._retention_candidates(self, entries)
 
         keep_count = max(max_runs - 1, 0)  # -1 reserves a slot for the active run
         if len(candidates) <= keep_count:
@@ -683,6 +670,26 @@ class OptimizationLogger:
                     ENV_OPTIMIZATION_LOG_MAX_RUNS,
                     max_runs,
                 )
+
+    def _retention_candidates(self, entries: list[Path]) -> list[Path]:
+        candidates: list[Path] = []
+        for entry in entries:
+            if entry.is_symlink():
+                continue  # never follow symlinks
+            if not entry.is_dir():
+                continue
+            if entry.name == self.run_path.name:
+                continue  # never touch the active run
+            if not _RUN_DIR_NAME_PATTERN.match(entry.name):
+                continue  # unparseable name -> on any doubt, skip
+            if not _run_dir_shows_completion_evidence(entry):
+                # No terminal status on disk: this may be another process's
+                # concurrently ACTIVE run (or a crashed one). No completion
+                # evidence -> skip.
+                continue
+            candidates.append(entry)
+
+        return candidates
 
     def _write_log_dir_gitignore(self) -> None:
         """Drop a ``.gitignore`` into the log root so per-example content (which

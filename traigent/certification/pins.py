@@ -81,34 +81,42 @@ def default_pin_path() -> Path:
     return Path.home() / ".traigent" / "certification" / "pins.json"
 
 
+def _validate_pin_values(
+    values: dict[str, Any],
+) -> tuple[str, tuple[tuple[str, str], ...], ed25519.Ed25519PublicKey]:
+    """Validate pin field values; raises ValueError/TypeError/KeyError/IndexError."""
+    project_ref = values["project_ref"]
+    if type(project_ref) is not str or not _PROJECT_REF_RE.fullmatch(project_ref):
+        raise ValueError
+    if values["issuer_algorithm"] != _SUPPORTED_ISSUER_ALGORITHM:
+        raise ValueError
+    for name in ("issuer_key_ref", "trust_ring_ref"):
+        if type(values[name]) is not str or not _REF_RE.fullmatch(values[name]):
+            raise ValueError
+    for name in ("g1_verifier_id", "g1_verifier_version", "disclosure_profile_id"):
+        if type(values[name]) is not str or not values[name]:
+            raise ValueError
+    registers = tuple(
+        (str(row[0]), str(row[1])) for row in values["compiler_register_versions"]
+    )
+    if not registers or any(
+        len(row) != 2 for row in values["compiler_register_versions"]
+    ):
+        raise ValueError
+    public = serialization.load_der_public_key(
+        base64.b64decode(values["issuer_public_key_der_b64"], validate=True)
+    )
+    if not isinstance(public, ed25519.Ed25519PublicKey):
+        raise ValueError
+    return project_ref, registers, public
+
+
 def _parse(document: Any) -> Pins:
     try:
         if not isinstance(document, dict) or set(document) != set(PIN_FIELDS):
             raise ValueError
         values = {name: document[name] for name in PIN_FIELDS}
-        project_ref = values["project_ref"]
-        if type(project_ref) is not str or not _PROJECT_REF_RE.fullmatch(project_ref):
-            raise ValueError
-        if values["issuer_algorithm"] != _SUPPORTED_ISSUER_ALGORITHM:
-            raise ValueError
-        for name in ("issuer_key_ref", "trust_ring_ref"):
-            if type(values[name]) is not str or not _REF_RE.fullmatch(values[name]):
-                raise ValueError
-        for name in ("g1_verifier_id", "g1_verifier_version", "disclosure_profile_id"):
-            if type(values[name]) is not str or not values[name]:
-                raise ValueError
-        registers = tuple(
-            (str(row[0]), str(row[1])) for row in values["compiler_register_versions"]
-        )
-        if not registers or any(
-            len(row) != 2 for row in values["compiler_register_versions"]
-        ):
-            raise ValueError
-        public = serialization.load_der_public_key(
-            base64.b64decode(values["issuer_public_key_der_b64"], validate=True)
-        )
-        if not isinstance(public, ed25519.Ed25519PublicKey):
-            raise ValueError
+        project_ref, registers, public = _validate_pin_values(values)
     except (ValueError, TypeError, KeyError, IndexError):
         raise PinError("PIN_INVALID") from None
     return Pins(

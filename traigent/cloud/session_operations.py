@@ -1328,50 +1328,7 @@ class SessionOperations:
         # race). Finalization is a one-shot remote call — losing it silently on
         # a recoverable-metadata path would leave the session flagged as never
         # finalized.
-        mapping = self.client.session_bridge.get_session_mapping(session_id)
-        if mapping is None:
-            with self.client._active_sessions_lock:
-                active_session = self.client._active_sessions.get(session_id)
-            if active_session is not None:
-                metadata = dict(getattr(active_session, "metadata", {}) or {})
-                experiment_id = metadata.get("experiment_id")
-                experiment_run_id = metadata.get("experiment_run_id")
-                # Rebuild with nullable ids as soon as EITHER is present --
-                # requiring both was the bug (G1 §1, addendum F6). A connected
-                # session created via the backend session-create API can
-                # legitimately have BOTH ids None (mode "session_api" or
-                # "hybrid" is the backend-created marker) -- requiring a
-                # truthy id in that case was a second instance of the same
-                # bug (G1 §1, addendum F10): it dropped a session the backend
-                # actually created, making zero finalize calls for it. A
-                # session with neither an id NOR a connected-session mode is
-                # unchanged: indistinguishable from stale/bogus active-session
-                # metadata (e.g. local-fallback), so recovery still declines.
-                if (
-                    experiment_id
-                    or experiment_run_id
-                    or metadata.get("mode") in ("session_api", "hybrid")
-                ):
-                    mapping = self.client.session_bridge.create_session_mapping(
-                        session_id=session_id,
-                        experiment_id=str(experiment_id) if experiment_id else None,
-                        experiment_run_id=(
-                            str(experiment_run_id) if experiment_run_id else None
-                        ),
-                        function_name=str(
-                            getattr(active_session, "function_name", "unknown_function")
-                        ),
-                        configuration_space=dict(
-                            getattr(active_session, "configuration_space", {}) or {}
-                        ),
-                        objectives=list(
-                            getattr(active_session, "objectives", []) or []
-                        ),
-                    )
-                    logger.info(
-                        "Recovered session mapping for %s from active session metadata",
-                        session_id,
-                    )
+        mapping = SessionOperations._recover_finalization_mapping(self, session_id)
 
         # Try to finalize via backend API endpoint (POST /sessions/{id}/finalize).
         # backend_payload is dict on 2xx (possibly empty if the backend gave us
@@ -1439,6 +1396,26 @@ class SessionOperations:
         # payload, preserve its fields verbatim. Otherwise mark the summary
         # as unavailable so callers don't treat empty best_config/best_metrics
         # as an authoritative "empty optimization" result (per the tracked fix).
+        return SessionOperations._build_finalization_response(
+            session_id,
+            backend_payload,
+            session,
+            completed_trials,
+            include_full_history,
+            mapping,
+            finalized_via_api,
+        )
+
+    @staticmethod
+    def _build_finalization_response(
+        session_id: str,
+        backend_payload: dict[str, Any] | None,
+        session: Any,
+        completed_trials: int,
+        include_full_history: bool,
+        mapping: SessionExperimentMapping | None,
+        finalized_via_api: bool,
+    ) -> OptimizationFinalizationResponse:
         backend_summary = backend_payload or {}
 
         backend_best_config = backend_summary.get("best_config")
@@ -1459,31 +1436,11 @@ class SessionOperations:
         # actually persisted" signal, so a malformed/missing echo must not
         # be synthesized.
         backend_session_aggregation = backend_summary.get("session_aggregation")
-        backend_warm_start_transfer = (
-            backend_metadata.get("warm_start_transfer")
-            if isinstance(backend_metadata, dict)
-            else None
+        effective_warm_start_transfer = SessionOperations._finalization_warm_start(
+            backend_metadata, session
         )
-        # #1683 Bug B: the backend communicates the warm-start decision block
-        # in the session-CREATE response and does not resend it at finalize.
-        # create_session retained that block in the active session's metadata;
-        # use it to fill the gap when the finalize payload carries none. A
-        # finalize-time block always wins verbatim (no per-key merging — the
-        # surfaced block must be exactly one backend-sent payload).
-        create_warm_start_transfer = (
-            session.metadata.get("warm_start_transfer") if session else None
-        )
-        if isinstance(backend_warm_start_transfer, dict):
-            effective_warm_start_transfer = backend_warm_start_transfer
-        elif isinstance(create_warm_start_transfer, dict):
-            effective_warm_start_transfer = create_warm_start_transfer
-        else:
-            effective_warm_start_transfer = None
 
         summary_fields: list[str] = []
-
-        def _is_real_number(value: Any) -> bool:
-            return isinstance(value, (int, float)) and not isinstance(value, bool)
 
         response_best_config = (
             backend_best_config if isinstance(backend_best_config, dict) else {}
@@ -1497,37 +1454,19 @@ class SessionOperations:
         if isinstance(backend_best_metrics, dict):
             summary_fields.append("best_metrics")
 
-        response_total_trials = (
-            int(cast(int | float, backend_total_trials))
-            if _is_real_number(backend_total_trials)
-            else completed_trials
+        (
+            response_total_trials,
+            response_successful_trials,
+            response_total_duration,
+            response_cost_savings,
+        ) = SessionOperations._finalization_numbers(
+            backend_total_trials,
+            backend_successful_trials,
+            backend_total_duration,
+            backend_cost_savings,
+            completed_trials,
+            summary_fields,
         )
-        if _is_real_number(backend_total_trials):
-            summary_fields.append("total_trials")
-
-        response_successful_trials = (
-            int(cast(int | float, backend_successful_trials))
-            if _is_real_number(backend_successful_trials)
-            else completed_trials
-        )
-        if _is_real_number(backend_successful_trials):
-            summary_fields.append("successful_trials")
-
-        response_total_duration = (
-            float(cast(int | float, backend_total_duration))
-            if _is_real_number(backend_total_duration)
-            else 0.0
-        )
-        if _is_real_number(backend_total_duration):
-            summary_fields.append("total_duration")
-
-        response_cost_savings = (
-            float(cast(int | float, backend_cost_savings))
-            if _is_real_number(backend_cost_savings)
-            else 0.0
-        )
-        if _is_real_number(backend_cost_savings):
-            summary_fields.append("cost_savings")
 
         response_stop_reason = (
             str(backend_stop_reason) if isinstance(backend_stop_reason, str) else None
@@ -1543,14 +1482,9 @@ class SessionOperations:
         if isinstance(backend_convergence_history, list):
             summary_fields.append("convergence_history")
 
-        if include_full_history and isinstance(backend_full_history, list):
-            response_full_history = backend_full_history
-        elif include_full_history:
-            response_full_history = []
-        else:
-            response_full_history = None
-        if include_full_history and isinstance(backend_full_history, list):
-            summary_fields.append("full_history")
+        response_full_history = SessionOperations._finalization_history(
+            include_full_history, backend_full_history, summary_fields
+        )
 
         # summary_available=True only when at least one documented backend
         # summary field was type-valid and preserved in the SDK response. A
@@ -1604,6 +1538,149 @@ class SessionOperations:
 
         return response
 
+    @staticmethod
+    def _finalization_warm_start(
+        backend_metadata: Any, session: Any
+    ) -> dict[str, Any] | None:
+        backend_warm_start_transfer = (
+            backend_metadata.get("warm_start_transfer")
+            if isinstance(backend_metadata, dict)
+            else None
+        )
+        # #1683 Bug B: the backend communicates the warm-start decision block
+        # in the session-CREATE response and does not resend it at finalize.
+        # create_session retained that block in the active session's metadata;
+        # use it to fill the gap when the finalize payload carries none. A
+        # finalize-time block always wins verbatim (no per-key merging — the
+        # surfaced block must be exactly one backend-sent payload).
+        create_warm_start_transfer = (
+            session.metadata.get("warm_start_transfer") if session else None
+        )
+        if isinstance(backend_warm_start_transfer, dict):
+            effective_warm_start_transfer = backend_warm_start_transfer
+        elif isinstance(create_warm_start_transfer, dict):
+            effective_warm_start_transfer = create_warm_start_transfer
+        else:
+            effective_warm_start_transfer = None
+
+        return effective_warm_start_transfer
+
+    @staticmethod
+    def _finalization_history(
+        include_full_history: bool, backend_full_history: Any, summary_fields: list[str]
+    ) -> list[Any] | None:
+        if include_full_history and isinstance(backend_full_history, list):
+            response_full_history = backend_full_history
+        elif include_full_history:
+            response_full_history = []
+        else:
+            response_full_history = None
+        if include_full_history and isinstance(backend_full_history, list):
+            summary_fields.append("full_history")
+
+        return response_full_history
+
+    @staticmethod
+    def _finalization_numbers(
+        backend_total_trials: Any,
+        backend_successful_trials: Any,
+        backend_total_duration: Any,
+        backend_cost_savings: Any,
+        completed_trials: int,
+        summary_fields: list[str],
+    ) -> tuple[int, int, float, float]:
+        def _is_real_number(value: Any) -> bool:
+            return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+        response_total_trials = (
+            int(cast(int | float, backend_total_trials))
+            if _is_real_number(backend_total_trials)
+            else completed_trials
+        )
+        if _is_real_number(backend_total_trials):
+            summary_fields.append("total_trials")
+
+        response_successful_trials = (
+            int(cast(int | float, backend_successful_trials))
+            if _is_real_number(backend_successful_trials)
+            else completed_trials
+        )
+        if _is_real_number(backend_successful_trials):
+            summary_fields.append("successful_trials")
+
+        response_total_duration = (
+            float(cast(int | float, backend_total_duration))
+            if _is_real_number(backend_total_duration)
+            else 0.0
+        )
+        if _is_real_number(backend_total_duration):
+            summary_fields.append("total_duration")
+
+        response_cost_savings = (
+            float(cast(int | float, backend_cost_savings))
+            if _is_real_number(backend_cost_savings)
+            else 0.0
+        )
+        if _is_real_number(backend_cost_savings):
+            summary_fields.append("cost_savings")
+
+        return (
+            response_total_trials,
+            response_successful_trials,
+            response_total_duration,
+            response_cost_savings,
+        )
+
+    def _recover_finalization_mapping(
+        self, session_id: str
+    ) -> SessionExperimentMapping | None:
+        mapping = self.client.session_bridge.get_session_mapping(session_id)
+        if mapping is not None:
+            return mapping
+        with self.client._active_sessions_lock:
+            active_session = self.client._active_sessions.get(session_id)
+        if active_session is None:
+            return mapping
+        metadata = dict(getattr(active_session, "metadata", {}) or {})
+        experiment_id = metadata.get("experiment_id")
+        experiment_run_id = metadata.get("experiment_run_id")
+        # Rebuild with nullable ids as soon as EITHER is present --
+        # requiring both was the bug (G1 §1, addendum F6). A connected
+        # session created via the backend session-create API can
+        # legitimately have BOTH ids None (mode "session_api" or
+        # "hybrid" is the backend-created marker) -- requiring a
+        # truthy id in that case was a second instance of the same
+        # bug (G1 §1, addendum F10): it dropped a session the backend
+        # actually created, making zero finalize calls for it. A
+        # session with neither an id NOR a connected-session mode is
+        # unchanged: indistinguishable from stale/bogus active-session
+        # metadata (e.g. local-fallback), so recovery still declines.
+        if (
+            experiment_id
+            or experiment_run_id
+            or metadata.get("mode") in ("session_api", "hybrid")
+        ):
+            mapping = self.client.session_bridge.create_session_mapping(
+                session_id=session_id,
+                experiment_id=str(experiment_id) if experiment_id else None,
+                experiment_run_id=(
+                    str(experiment_run_id) if experiment_run_id else None
+                ),
+                function_name=str(
+                    getattr(active_session, "function_name", "unknown_function")
+                ),
+                configuration_space=dict(
+                    getattr(active_session, "configuration_space", {}) or {}
+                ),
+                objectives=list(getattr(active_session, "objectives", []) or []),
+            )
+            logger.info(
+                "Recovered session mapping for %s from active session metadata",
+                session_id,
+            )
+
+        return mapping
+
     async def _finalize_session_via_api(
         self,
         session_id: str,
@@ -1656,37 +1733,9 @@ class SessionOperations:
                 )
                 url = f"{api_base}/sessions/{session_id}/finalize"
 
-                finalize_body: dict[str, Any] = {
-                    "reason": "sdk_explicit_finalization",
-                }
-                if experiment_run_id is not None:
-                    finalize_body["experiment_run_id"] = experiment_run_id
-                if certified_selection is not None:
-                    # Phase 8: the client-attested, content-free certified-
-                    # selection report — TOP-LEVEL key only (the backend
-                    # rejects metadata-tunneled reports).
-                    finalize_body["certified_selection"] = certified_selection
-                if session_aggregation is not None:
-                    # Traigent#1720/#1724 (g2:agg-summary): the content-free
-                    # session-level rollup — TOP-LEVEL key only, mirroring
-                    # certified_selection immediately above (the backend
-                    # rejects metadata-tunneled payloads).
-                    #
-                    # EGRESS GUARD (Codex round 6): re-sanitize here, at the
-                    # true wire boundary, so a caller-supplied dict passed to
-                    # finalize_session(..., session_aggregation=...) that
-                    # bypassed the builder cannot leak unbounded content. The
-                    # builder's output is already bounded, so this is a no-op
-                    # on the normal path. Lazy import avoids an import cycle.
-                    from traigent.core.backend_session_manager import (
-                        sanitize_session_aggregation_payload,
-                    )
-
-                    sanitized_aggregation = sanitize_session_aggregation_payload(
-                        session_aggregation
-                    )
-                    if sanitized_aggregation is not None:
-                        finalize_body["session_aggregation"] = sanitized_aggregation
+                finalize_body = SessionOperations._finalization_body(
+                    experiment_run_id, certified_selection, session_aggregation
+                )
                 finalize_body = oo_egress.project_for_send(
                     oo_egress.PHASE_FINALIZE,
                     finalize_body,
@@ -1750,6 +1799,45 @@ class SessionOperations:
             # Class name only: the exception text can echo server/client content.
             logger.debug("Error calling backend finalization API: %s", type(e).__name__)
             return None
+
+    @staticmethod
+    def _finalization_body(
+        experiment_run_id: str | None,
+        certified_selection: dict[str, Any] | None,
+        session_aggregation: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        finalize_body: dict[str, Any] = {
+            "reason": "sdk_explicit_finalization",
+        }
+        if experiment_run_id is not None:
+            finalize_body["experiment_run_id"] = experiment_run_id
+        if certified_selection is not None:
+            # Phase 8: the client-attested, content-free certified-
+            # selection report — TOP-LEVEL key only (the backend
+            # rejects metadata-tunneled reports).
+            finalize_body["certified_selection"] = certified_selection
+        if session_aggregation is not None:
+            # Traigent#1720/#1724 (g2:agg-summary): the content-free
+            # session-level rollup — TOP-LEVEL key only, mirroring
+            # certified_selection immediately above (the backend
+            # rejects metadata-tunneled payloads).
+            #
+            # EGRESS GUARD (Codex round 6): re-sanitize here, at the
+            # true wire boundary, so a caller-supplied dict passed to
+            # finalize_session(..., session_aggregation=...) that
+            # bypassed the builder cannot leak unbounded content. The
+            # builder's output is already bounded, so this is a no-op
+            # on the normal path. Lazy import avoids an import cycle.
+            from traigent.core.backend_session_manager import (
+                sanitize_session_aggregation_payload,
+            )
+
+            sanitized_aggregation = sanitize_session_aggregation_payload(
+                session_aggregation
+            )
+            if sanitized_aggregation is not None:
+                finalize_body["session_aggregation"] = sanitized_aggregation
+        return finalize_body
 
     async def delete_session(self, session_id: str, cascade: bool = True) -> bool:
         """Delete optimization session state and optionally backend data.

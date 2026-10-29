@@ -171,6 +171,15 @@ def poll_once(
         return PollResult(coverage=COVERAGE_UNAVAILABLE, error=code)
 
 
+def _breach_status(closed: bool, outcome: Any) -> tuple[str, str]:
+    if not closed:
+        return "open", "episode_opened"
+    elif outcome == "withdrawn":
+        return "withdrawn", "episode_withdrawn"
+    else:
+        return "resolved", "episode_resolved"
+
+
 def _poll_locked(
     requirements: Sequence[RuntimeRequirement],
     api: RuntimeClient,
@@ -195,12 +204,7 @@ def _poll_locked(
         outcome = row.get("outcome")
         closed = row.get("closed_at") is not None or outcome is not None
         previous = seen.get(breach_id, {}).get("status")
-        if not closed:
-            status, event_name = "open", "episode_opened"
-        elif outcome == "withdrawn":
-            status, event_name = "withdrawn", "episode_withdrawn"
-        else:
-            status, event_name = "resolved", "episode_resolved"
+        status, event_name = _breach_status(closed, outcome)
         # An unseen, already-closed breach is recorded without an event.
         emit = (previous is None and status == "open") or (
             previous == "open" and status != "open"

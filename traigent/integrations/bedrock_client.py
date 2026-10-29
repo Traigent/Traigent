@@ -122,6 +122,27 @@ class BedrockChatResponse:
     model: str | None = None
 
 
+def _stream_payload(
+    messages: list[Mapping[str, Any]] | str | Iterable[str],
+    max_tokens: int,
+    temperature: float,
+    top_p: float | None,
+    extra_params: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "anthropic_version": _default_anthropic_version(),
+        "max_tokens": int(max_tokens),
+        "messages": _coerce_user_messages(messages),
+        "temperature": float(temperature),
+    }
+    if top_p is not None:
+        payload["top_p"] = float(top_p)
+    if extra_params:
+        payload.update(dict(extra_params))
+
+    return payload
+
+
 class BedrockChatClient:
     """Thin wrapper around `boto3` Bedrock Runtime for Claude chat models."""
 
@@ -329,16 +350,9 @@ class BedrockChatClient:
         start_time = time.perf_counter()
         client = self._ensure_client()
 
-        payload: dict[str, Any] = {
-            "anthropic_version": _default_anthropic_version(),
-            "max_tokens": int(max_tokens),
-            "messages": _coerce_user_messages(messages),
-            "temperature": float(temperature),
-        }
-        if top_p is not None:
-            payload["top_p"] = float(top_p)
-        if extra_params:
-            payload.update(dict(extra_params))
+        payload = _stream_payload(
+            messages, max_tokens, temperature, top_p, extra_params
+        )
 
         final_text_parts: list[str] = []
         resp = client.invoke_model_with_response_stream(
@@ -349,20 +363,19 @@ class BedrockChatClient:
         )
 
         stream = resp.get("body")
-        if stream is not None:
-            for event in stream:
-                chunk = event.get("chunk") if isinstance(event, Mapping) else None
-                if not chunk:
-                    continue
-                try:
-                    data = json.loads(chunk.get("bytes").decode("utf-8"))
-                except Exception:  # noqa: BLE001 - defensive
-                    continue
-                # Extract incremental text if present
-                text_piece = _extract_text_from_messages_response(data)
-                if text_piece:
-                    final_text_parts.append(text_piece)
-                    yield text_piece
+        for event in stream if stream is not None else ():
+            chunk = event.get("chunk") if isinstance(event, Mapping) else None
+            if not chunk:
+                continue
+            try:
+                data = json.loads(chunk.get("bytes").decode("utf-8"))
+            except Exception:  # noqa: BLE001 - defensive
+                continue
+            # Extract incremental text if present
+            text_piece = _extract_text_from_messages_response(data)
+            if text_piece:
+                final_text_parts.append(text_piece)
+                yield text_piece
 
         final = "".join(final_text_parts)
         return self._capture_response(
@@ -543,16 +556,9 @@ class BedrockChatClient:
         """Internal async streaming implementation using aioboto3."""
         import aioboto3
 
-        payload: dict[str, Any] = {
-            "anthropic_version": _default_anthropic_version(),
-            "max_tokens": int(max_tokens),
-            "messages": _coerce_user_messages(messages),
-            "temperature": float(temperature),
-        }
-        if top_p is not None:
-            payload["top_p"] = float(top_p)
-        if extra_params:
-            payload.update(dict(extra_params))
+        payload = _stream_payload(
+            messages, max_tokens, temperature, top_p, extra_params
+        )
 
         session = (
             aioboto3.Session(profile_name=self._profile_name)
@@ -569,15 +575,16 @@ class BedrockChatClient:
                 body=json.dumps(payload),
             )
             stream = resp.get("body")
-            if stream is not None:
-                async for event in stream:
-                    chunk = event.get("chunk") if isinstance(event, Mapping) else None
-                    if not chunk:
-                        continue
-                    try:
-                        data = json.loads(chunk.get("bytes").decode("utf-8"))
-                    except Exception:  # noqa: BLE001 - defensive
-                        continue
-                    text_piece = _extract_text_from_messages_response(data)
-                    if text_piece:
-                        yield text_piece
+            if stream is None:
+                return
+            async for event in stream:
+                chunk = event.get("chunk") if isinstance(event, Mapping) else None
+                if not chunk:
+                    continue
+                try:
+                    data = json.loads(chunk.get("bytes").decode("utf-8"))
+                except Exception:  # noqa: BLE001 - defensive
+                    continue
+                text_piece = _extract_text_from_messages_response(data)
+                if text_piece:
+                    yield text_piece

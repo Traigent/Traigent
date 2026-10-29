@@ -87,6 +87,10 @@ if TYPE_CHECKING:
         ObservabilityVariantListDTO,
     )
 
+_AGENT_DECISION = "agent decision"
+_LITERAL_00_00 = "+00:00"
+_MALFORMED_AGENT_DECISION_RESPONSE = "Malformed agent decision response."
+
 OBSERVABILITY_TRACE_SEARCH = "observability trace search"
 DECISION_BRIEF = "decision brief"
 
@@ -1683,44 +1687,9 @@ def _project_observability_trace_analysis(payload: Any) -> dict[str, Any]:
     }
 
 
-def _project_observability_trace_slice(payload: Any) -> dict[str, Any]:
-    source = _exact_observability_object(
-        payload,
-        keys=_OBSERVABILITY_TRACE_PROJECTION_REQUIRED_KEYS,
-        what="observability trace slice",
-    )
-    for field in ("project_id", "trace_id"):
-        _require_safe_observability_identifier(
-            source[field], what=f"trace_slice.{field}"
-        )
-    if (
-        source["projection_mode"] != "content_free"
-        or source["content_included"] is not False
-    ):
-        raise AnalyticsClientError(
-            "Malformed observability trace slice response: content-free markers are required."
-        )
-    items = _require_bounded_list(
-        source["items"], what="observability trace slice items", maximum=500
-    )
-    item_keys = frozenset(
-        {
-            "observation_id",
-            "parent_observation_id",
-            "semantic_kind",
-            "status",
-            "sequence_index",
-            "depth",
-            "duration_ms",
-            "normalized_tool_id",
-            "normalized_model_id",
-            "input_tokens",
-            "output_tokens",
-            "cost_usd",
-            "is_critical_path",
-            "repeat_group_id",
-        }
-    )
+def _project_observability_trace_slice_items(
+    items: list[Any], item_keys: frozenset[str]
+) -> list[dict[str, Any]]:
     projected_items: list[dict[str, Any]] = []
     for index, value in enumerate(items):
         what = f"trace_slice.items[{index}]"
@@ -1765,6 +1734,48 @@ def _project_observability_trace_slice(payload: Any) -> dict[str, Any]:
                 f"Malformed {what} response: is_critical_path must be a boolean."
             )
         projected_items.append({key: item[key] for key in item_keys})
+    return projected_items
+
+
+def _project_observability_trace_slice(payload: Any) -> dict[str, Any]:
+    source = _exact_observability_object(
+        payload,
+        keys=_OBSERVABILITY_TRACE_PROJECTION_REQUIRED_KEYS,
+        what="observability trace slice",
+    )
+    for field in ("project_id", "trace_id"):
+        _require_safe_observability_identifier(
+            source[field], what=f"trace_slice.{field}"
+        )
+    if (
+        source["projection_mode"] != "content_free"
+        or source["content_included"] is not False
+    ):
+        raise AnalyticsClientError(
+            "Malformed observability trace slice response: content-free markers are required."
+        )
+    items = _require_bounded_list(
+        source["items"], what="observability trace slice items", maximum=500
+    )
+    item_keys = frozenset(
+        {
+            "observation_id",
+            "parent_observation_id",
+            "semantic_kind",
+            "status",
+            "sequence_index",
+            "depth",
+            "duration_ms",
+            "normalized_tool_id",
+            "normalized_model_id",
+            "input_tokens",
+            "output_tokens",
+            "cost_usd",
+            "is_critical_path",
+            "repeat_group_id",
+        }
+    )
+    projected_items = _project_observability_trace_slice_items(items, item_keys)
     next_cursor = source["next_cursor"]
     if next_cursor is not None:
         if (
@@ -1792,6 +1803,74 @@ def _project_observability_trace_slice(payload: Any) -> dict[str, Any]:
         "has_more": source["has_more"],
         "generated_at": source["generated_at"],
     }
+
+
+def _validate_observability_tool_analysis_cost(
+    item: dict[str, Any], *, what: str
+) -> None:
+    # Unknown cost is null, never 0 (documented API behaviour).
+    for field in ("total_cost_usd", "priced_cost_usd"):
+        if item.get(field) is not None:
+            _require_non_negative_observability_number(
+                item[field], what=f"{what}.{field}"
+            )
+    if "cost_status" in item:
+        _require_observability_enum(
+            item["cost_status"],
+            _OBSERVABILITY_COST_STATUSES,
+            what=f"{what}.cost_status",
+        )
+    if "unpriced_attempt_count" in item:
+        _require_observability_integer(
+            item["unpriced_attempt_count"],
+            what=f"{what}.unpriced_attempt_count",
+        )
+
+
+def _project_observability_tool_analysis_items(
+    items: list[Any], item_keys: frozenset[str], optional_item_keys: frozenset[str]
+) -> list[dict[str, Any]]:
+    projected_items: list[dict[str, Any]] = []
+    for index, value in enumerate(items):
+        what = f"tool_analysis.items[{index}]"
+        item = _exact_observability_object(
+            value, keys=item_keys | optional_item_keys, what=what, required=item_keys
+        )
+        _require_safe_observability_identifier(
+            item["normalized_tool_id"], what=f"{what}.normalized_tool_id"
+        )
+        for field in ("trace_count", "attempt_count"):
+            _require_observability_integer(
+                item[field], what=f"{what}.{field}", minimum=1
+            )
+        for field in (
+            "success_count",
+            "failure_count",
+            "retry_count",
+            "fallback_count",
+        ):
+            _require_observability_integer(item[field], what=f"{what}.{field}")
+        for field in ("failure_rate", "retry_rate", "fallback_rate"):
+            _require_observability_number(
+                item[field], what=f"{what}.{field}", minimum=0, maximum=1
+            )
+        for field in ("p50_latency_ms", "p95_latency_ms"):
+            _require_non_negative_observability_number(
+                item[field], what=f"{what}.{field}"
+            )
+        _validate_observability_tool_analysis_cost(item, what=what)
+        issue_ids = _require_bounded_list(
+            item["issue_ids"], what=f"{what}.issue_ids", maximum=100
+        )
+        _require_unique_observability_identifiers(issue_ids, what=f"{what}.issue_ids")
+        projected_items.append(
+            {
+                **{key: item[key] for key in item_keys if key != "issue_ids"},
+                **{key: item[key] for key in optional_item_keys if key in item},
+                "issue_ids": list(issue_ids),
+            }
+        )
+    return projected_items
 
 
 def _project_observability_tool_analysis(payload: Any) -> dict[str, Any]:
@@ -1829,62 +1908,9 @@ def _project_observability_tool_analysis(payload: Any) -> dict[str, Any]:
     optional_item_keys = frozenset(
         {"cost_status", "priced_cost_usd", "unpriced_attempt_count"}
     )
-    projected_items: list[dict[str, Any]] = []
-    for index, value in enumerate(items):
-        what = f"tool_analysis.items[{index}]"
-        item = _exact_observability_object(
-            value, keys=item_keys | optional_item_keys, what=what, required=item_keys
-        )
-        _require_safe_observability_identifier(
-            item["normalized_tool_id"], what=f"{what}.normalized_tool_id"
-        )
-        for field in ("trace_count", "attempt_count"):
-            _require_observability_integer(
-                item[field], what=f"{what}.{field}", minimum=1
-            )
-        for field in (
-            "success_count",
-            "failure_count",
-            "retry_count",
-            "fallback_count",
-        ):
-            _require_observability_integer(item[field], what=f"{what}.{field}")
-        for field in ("failure_rate", "retry_rate", "fallback_rate"):
-            _require_observability_number(
-                item[field], what=f"{what}.{field}", minimum=0, maximum=1
-            )
-        for field in ("p50_latency_ms", "p95_latency_ms"):
-            _require_non_negative_observability_number(
-                item[field], what=f"{what}.{field}"
-            )
-        # Unknown cost is null, never 0 (documented API behaviour).
-        for field in ("total_cost_usd", "priced_cost_usd"):
-            if item.get(field) is not None:
-                _require_non_negative_observability_number(
-                    item[field], what=f"{what}.{field}"
-                )
-        if "cost_status" in item:
-            _require_observability_enum(
-                item["cost_status"],
-                _OBSERVABILITY_COST_STATUSES,
-                what=f"{what}.cost_status",
-            )
-        if "unpriced_attempt_count" in item:
-            _require_observability_integer(
-                item["unpriced_attempt_count"],
-                what=f"{what}.unpriced_attempt_count",
-            )
-        issue_ids = _require_bounded_list(
-            item["issue_ids"], what=f"{what}.issue_ids", maximum=100
-        )
-        _require_unique_observability_identifiers(issue_ids, what=f"{what}.issue_ids")
-        projected_items.append(
-            {
-                **{key: item[key] for key in item_keys if key != "issue_ids"},
-                **{key: item[key] for key in optional_item_keys if key in item},
-                "issue_ids": list(issue_ids),
-            }
-        )
+    projected_items = _project_observability_tool_analysis_items(
+        items, item_keys, optional_item_keys
+    )
     return {
         "project_id": source["project_id"],
         "start_time": source["start_time"],
@@ -3476,7 +3502,7 @@ class BackendAnalyticsClient:
         aid = _exact_agent_id_segment(agent_id)
         payload = await self._post_json(
             f"/api/v1beta/agent-decisions/{aid}/ensure",
-            what="agent decision",
+            what=_AGENT_DECISION,
             envelope=False,
             json_body={"kind": kind},
             headers=self._agent_decision_headers(project_id),
@@ -3493,7 +3519,7 @@ class BackendAnalyticsClient:
         aid = _exact_agent_id_segment(agent_id)
         payload = await self._get_json(
             f"/api/v1beta/agent-decisions/{aid}/latest",
-            what="agent decision",
+            what=_AGENT_DECISION,
             envelope=False,
             headers=self._agent_decision_headers(project_id),
         )
@@ -3536,7 +3562,7 @@ class BackendAnalyticsClient:
             raise ValueError("retry_nonce is not a valid retry nonce.")
         payload = await self._post_json(
             f"/api/v1beta/agent-decisions/{decision_id}/answer",
-            what="agent decision",
+            what=_AGENT_DECISION,
             envelope=False,
             json_body={
                 "answer": answer,
@@ -3560,7 +3586,7 @@ def _valid_agent_decision_timestamp(value: Any, *, nullable: bool) -> bool:
     ):
         return False
     try:  # the shape is right; the date and time must also exist (always UTC, "Z")
-        datetime.fromisoformat(value[:-1] + "+00:00")
+        datetime.fromisoformat(value[:-1] + _LITERAL_00_00)
     except ValueError:  # silent-ok: unparseable timestamp fails contract validation; caller returns a fixed error
         return False
     return True
@@ -3617,14 +3643,14 @@ def _validated_agent_decision_response(
     fixed message (the offending value is never echoed).
     """
     if not isinstance(payload, dict) or set(payload) != {"decision"}:
-        raise AnalyticsClientError("Malformed agent decision response.")
+        raise AnalyticsClientError(_MALFORMED_AGENT_DECISION_RESPONSE)
     decision = payload["decision"]
     if decision is None:
         if endpoint == "answer":
-            raise AnalyticsClientError("Malformed agent decision response.")
+            raise AnalyticsClientError(_MALFORMED_AGENT_DECISION_RESPONSE)
         return payload
     if not isinstance(decision, dict) or set(decision) != _AGENT_DECISION_KEYS:
-        raise AnalyticsClientError("Malformed agent decision response.")
+        raise AnalyticsClientError(_MALFORMED_AGENT_DECISION_RESPONSE)
     try:
         ok = (
             isinstance(decision["decision_id"], str)
@@ -3664,7 +3690,7 @@ def _validated_agent_decision_response(
         ok = False
 
     if not ok:
-        raise AnalyticsClientError("Malformed agent decision response.")
+        raise AnalyticsClientError(_MALFORMED_AGENT_DECISION_RESPONSE)
     return payload
 
 
@@ -3701,32 +3727,9 @@ def _require_bounded_list(value: Any, *, what: str, maximum: int) -> list[Any]:
     return value
 
 
-def _validate_observability_analysis_insights_payload(
-    payload: dict[str, Any],
-    *,
-    for_mcp: bool = False,
+def _validate_observability_insights_conformance(
+    payload: dict[str, Any], *, what: str, for_mcp: bool
 ) -> None:
-    what = _OBSERVABILITY_ANALYSIS_INSIGHTS
-    required_payload_keys = _OBSERVABILITY_ANALYSIS_INSIGHTS_REQUIRED_KEYS - (
-        frozenset({"limitations"}) if for_mcp else frozenset()
-    )
-    _require_keys(payload, required_payload_keys, what=what)
-    _require_exact_keys(
-        payload,
-        _OBSERVABILITY_ANALYSIS_INSIGHTS_REQUIRED_KEYS,
-        what=what,
-        require_all=False,
-    )
-    _require_safe_observability_identifier(payload.get("project_id"), what="project_id")
-    _require_observability_datetime(payload.get("start_time"), what="start_time")
-    _require_observability_datetime(payload.get("end_time"), what="end_time")
-    _require_observability_datetime(payload.get("generated_at"), what="generated_at")
-    if payload.get("content_included") is not False:
-        raise AnalyticsClientError(
-            "Malformed observability analysis insights response: "
-            "content_included must be false."
-        )
-
     conformance = _require_object(
         payload.get("conformance"), what=f"{what} conformance"
     )
@@ -3823,6 +3826,10 @@ def _validate_observability_analysis_insights_payload(
             maximum=1,
         )
 
+
+def _validate_observability_insights_recommendations(
+    payload: dict[str, Any], *, what: str, for_mcp: bool
+) -> None:
     recommendations = _require_bounded_list(
         payload.get("recommendations"), what=f"{what} recommendations", maximum=100
     )
@@ -3918,6 +3925,39 @@ def _validate_observability_analysis_insights_payload(
                 "recommendation metrics must contain unique values."
             )
 
+
+def _validate_observability_analysis_insights_payload(
+    payload: dict[str, Any],
+    *,
+    for_mcp: bool = False,
+) -> None:
+    what = _OBSERVABILITY_ANALYSIS_INSIGHTS
+    required_payload_keys = _OBSERVABILITY_ANALYSIS_INSIGHTS_REQUIRED_KEYS - (
+        frozenset({"limitations"}) if for_mcp else frozenset()
+    )
+    _require_keys(payload, required_payload_keys, what=what)
+    _require_exact_keys(
+        payload,
+        _OBSERVABILITY_ANALYSIS_INSIGHTS_REQUIRED_KEYS,
+        what=what,
+        require_all=False,
+    )
+    _require_safe_observability_identifier(payload.get("project_id"), what="project_id")
+    _require_observability_datetime(payload.get("start_time"), what="start_time")
+    _require_observability_datetime(payload.get("end_time"), what="end_time")
+    _require_observability_datetime(payload.get("generated_at"), what="generated_at")
+    if payload.get("content_included") is not False:
+        raise AnalyticsClientError(
+            "Malformed observability analysis insights response: "
+            "content_included must be false."
+        )
+
+    _validate_observability_insights_conformance(payload, what=what, for_mcp=for_mcp)
+
+    _validate_observability_insights_recommendations(
+        payload, what=what, for_mcp=for_mcp
+    )
+
     if "limitations" in payload:
         limitations = _require_bounded_list(
             payload["limitations"], what=f"{what} limitations", maximum=8
@@ -3977,7 +4017,7 @@ def _require_observability_datetime(value: Any, *, what: str) -> str:
             f"{what} must be an ISO 8601 date-time."
         )
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", _LITERAL_00_00))
     except ValueError as exc:
         raise AnalyticsClientError(
             "Malformed observability analysis insights response: "
@@ -4204,7 +4244,7 @@ def _project_observability_analysis_insights(
 def _parse_observability_time(value: str, *, field: str) -> datetime:
     text = _require_non_empty(value, field=field)
     try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(text.replace("Z", _LITERAL_00_00))
     except ValueError as exc:
         raise ValueError(f"{field} must be an ISO 8601 date-time.") from exc
     if parsed.utcoffset() is None:

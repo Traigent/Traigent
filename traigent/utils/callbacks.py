@@ -1104,9 +1104,11 @@ class CallbackManager:
         method_func: Callable[..., Any],
         *args: Any,
     ) -> None:
-        """Run a callback method and contain all callback-originated failures."""
+        """Run a callback method and contain failures other than shutdown interrupts."""
         try:
             method_func(*args)
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except BaseException as exc:  # noqa: B036 - pyo3 panics bypass Exception.
             self._record_callback_exception(callback_name, method_name, exc)
 
@@ -1232,9 +1234,7 @@ class CallbackManager:
             # Cancel if possible (may not stop already-running threads)
             future.cancel()
         except (KeyboardInterrupt, SystemExit):
-            # The caller's thread is blocked here: Ctrl-C / sys.exit must stop
-            # the run. Callback-originated failures never reach this branch
-            # because ``_run_callback_safe`` already contains them in the worker.
+            # Propagate shutdown interrupts from either the caller or the callback.
             raise
         except BaseException as exc:  # noqa: B036 - future may hold a pyo3 panic.
             self._record_callback_exception(callback_name, method_name, exc)

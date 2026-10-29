@@ -222,20 +222,21 @@ def _token_refs_body_is_closed(body: Any) -> bool:
         or not 1 <= len(items) <= _TOKEN_REFS_MAX_ITEMS
     ):
         return False
-    for item in items:
-        if not isinstance(item, dict) or not set(item) <= {"kind", "parent_ref"}:
+    return all(_token_ref_item_is_closed(item) for item in items)
+
+
+def _token_ref_item_is_closed(item: Any) -> bool:
+    if not isinstance(item, dict) or not set(item) <= {"kind", "parent_ref"}:
+        return False
+    kind = item.get("kind")
+    if not isinstance(kind, str) or kind not in _TOKEN_REFS_KINDS:
+        return False
+    parent = item.get("parent_ref")
+    if kind == "choice":
+        if not isinstance(parent, str) or not _TOKEN_REFS_PARENT_REF.fullmatch(parent):
             return False
-        kind = item.get("kind")
-        if not isinstance(kind, str) or kind not in _TOKEN_REFS_KINDS:
-            return False
-        parent = item.get("parent_ref")
-        if kind == "choice":
-            if not isinstance(parent, str) or not _TOKEN_REFS_PARENT_REF.fullmatch(
-                parent
-            ):
-                return False
-        elif "parent_ref" in item:
-            return False
+    elif "parent_ref" in item:
+        return False
     return True
 
 
@@ -962,6 +963,45 @@ class ExperimentGroupsNamespace:
 bridge = _bridge
 
 
+def _resolve_backend_urls(
+    base_url: str | None, backend_config: BackendClientConfig
+) -> tuple[str | None, str | None, str]:
+    explicit_base_origin = None
+    explicit_api_base = None
+    if base_url:
+        parsed_origin, parsed_path = BackendConfig.split_api_url(base_url)
+        explicit_base_origin = parsed_origin or BackendConfig.normalize_backend_origin(
+            base_url
+        )
+        if explicit_base_origin:
+            explicit_api_base = (
+                f"{explicit_base_origin}"
+                f"{parsed_path or BackendConfig.get_default_api_path()}"
+            )
+
+    effective_base_url = (
+        explicit_base_origin or base_url or backend_config.backend_base_url
+    )
+    if effective_base_url is None:
+        effective_base_url = BackendConfig.get_backend_url()
+
+    return explicit_base_origin, explicit_api_base, effective_base_url
+
+
+def _validate_backend_api_path(api_path: str | None) -> None:
+    _decoded_api_path = api_path or ""
+    for _ in range(8):
+        _next = unquote(_decoded_api_path)
+        if _next == _decoded_api_path:
+            break
+        _decoded_api_path = _next
+    else:
+        # Still changing after 8 decodes — pathologically encoded; reject.
+        raise ValueError("backend client API base URL must not contain path traversal")
+    if any(seg in {".", ".."} for seg in _decoded_api_path.split("/") if seg):
+        raise ValueError("backend client API base URL must not contain path traversal")
+
+
 class BackendIntegratedClient:
     """Enhanced backend client with Traigent Backend integration (Refactored).
 
@@ -1023,110 +1063,7 @@ class BackendIntegratedClient:
 
         self.backend_config = backend_config or BackendClientConfig()
 
-        explicit_base_origin = None
-        explicit_api_base = None
-        if base_url:
-            parsed_origin, parsed_path = BackendConfig.split_api_url(base_url)
-            explicit_base_origin = (
-                parsed_origin or BackendConfig.normalize_backend_origin(base_url)
-            )
-            if explicit_base_origin:
-                explicit_api_base = (
-                    f"{explicit_base_origin}"
-                    f"{parsed_path or BackendConfig.get_default_api_path()}"
-                )
-
-        effective_base_url = (
-            explicit_base_origin or base_url or self.backend_config.backend_base_url
-        )
-        if effective_base_url is None:
-            effective_base_url = BackendConfig.get_backend_url()
-
-        # Validate and sanitize URLs.  If the supplied URL is simply
-        # *unreachable* (host cannot be resolved), mark _url_invalid so
-        # get_interaction_policy() can fall back to the static policy without
-        # raising.  UNSAFE-origin rejections (private/loopback/metadata IPs,
-        # bad scheme, embedded credentials, path traversal) are NOT caught here
-        # — they keep failing loud to preserve SSRF protection.  The live
-        # validation path is otherwise entirely unchanged.
-        self._url_invalid = False
-        try:
-            effective_base_url = validate_cloud_base_url(
-                effective_base_url, purpose="backend client"
-            )
-            self.base_url = self._api_ops.validate_and_sanitize_url(effective_base_url)
-
-            backend_base_url = self.base_url
-            if not explicit_base_origin:
-                backend_base_url = self.backend_config.backend_base_url or self.base_url
-            backend_base_url = validate_cloud_base_url(
-                backend_base_url, purpose="backend client"
-            )
-            self.backend_config.backend_base_url = (
-                self._api_ops.validate_and_sanitize_url(backend_base_url)
-            )
-
-            if explicit_api_base and not getattr(
-                self.backend_config, "api_explicitly_set", False
-            ):
-                api_base_candidate = explicit_api_base
-            else:
-                api_base_candidate = (
-                    self.backend_config.api_base_url
-                    or BackendConfig.build_api_base(
-                        self.backend_config.backend_base_url
-                    )
-                )
-            api_origin, api_path = BackendConfig.split_api_url(api_base_candidate)
-            if api_origin is None:
-                raise ValueError("backend client API base URL must include an origin")
-            api_origin = validate_cloud_base_url(api_origin, purpose="backend client")
-            # validate_cloud_base_url only saw the origin; the API path is
-            # reattached below, so re-check the (decoded) path for traversal
-            # here — otherwise an explicit api_base_url like ".../../admin" would
-            # bypass the traversal guard that validate_cloud_base_url applies to
-            # full URLs.
-            # Decode to a fixed point (bounded) so multiply-encoded traversal
-            # (e.g. %25252e) cannot survive a fixed two-pass decode.
-            _decoded_api_path = api_path or ""
-            for _ in range(8):
-                _next = unquote(_decoded_api_path)
-                if _next == _decoded_api_path:
-                    break
-                _decoded_api_path = _next
-            else:
-                # Still changing after 8 decodes — pathologically encoded; reject.
-                raise ValueError(
-                    "backend client API base URL must not contain path traversal"
-                )
-            if any(seg in {".", ".."} for seg in _decoded_api_path.split("/") if seg):
-                raise ValueError(
-                    "backend client API base URL must not contain path traversal"
-                )
-            api_base_candidate = (
-                f"{api_origin}{api_path or BackendConfig.get_default_api_path()}"
-            )
-            self.api_base_url = self._api_ops.validate_and_sanitize_url(
-                api_base_candidate
-            )
-            self.backend_config.api_base_url = self.api_base_url
-        except CloudUrlUnreachableError:
-            # The backend host could not be resolved (genuinely unreachable).
-            # Store a safe inert placeholder so the rest of __init__ completes;
-            # get_interaction_policy() will short-circuit to _static_interaction_policy,
-            # while every cloud op fails closed via _raise_if_backend_egress_disabled.
-            # NOTE: unsafe-origin ValueErrors are intentionally NOT caught here —
-            # they propagate so SSRF/credentialed-URL rejections still fail loud.
-            self._url_invalid = True
-            _placeholder = "https://backend.invalid"
-            self.base_url = _placeholder
-            self.backend_config.backend_base_url = _placeholder
-            self.api_base_url = _placeholder
-            self.backend_config.api_base_url = _placeholder
-            logger.debug(
-                "BackendIntegratedClient: URL validation failed; "
-                "falling back to static interaction policy"
-            )
+        BackendIntegratedClient._initialize_urls(self, base_url)
 
         self.enable_fallback = enable_fallback
         self.no_egress = bool(no_egress)
@@ -1218,6 +1155,83 @@ class BackendIntegratedClient:
             tuple[str | None, str | None], dict[str, Any]
         ] = {}
         self._interaction_policy_fallback_logged = False
+
+    def _initialize_urls(self, base_url: str | None) -> None:
+        explicit_base_origin, explicit_api_base, effective_base_url = (
+            _resolve_backend_urls(base_url, self.backend_config)
+        )
+
+        # Validate and sanitize URLs.  If the supplied URL is simply
+        # *unreachable* (host cannot be resolved), mark _url_invalid so
+        # get_interaction_policy() can fall back to the static policy without
+        # raising.  UNSAFE-origin rejections (private/loopback/metadata IPs,
+        # bad scheme, embedded credentials, path traversal) are NOT caught here
+        # — they keep failing loud to preserve SSRF protection.  The live
+        # validation path is otherwise entirely unchanged.
+        self._url_invalid = False
+        try:
+            effective_base_url = validate_cloud_base_url(
+                effective_base_url, purpose="backend client"
+            )
+            self.base_url = self._api_ops.validate_and_sanitize_url(effective_base_url)
+
+            backend_base_url = self.base_url
+            if not explicit_base_origin:
+                backend_base_url = self.backend_config.backend_base_url or self.base_url
+            backend_base_url = validate_cloud_base_url(
+                backend_base_url, purpose="backend client"
+            )
+            self.backend_config.backend_base_url = (
+                self._api_ops.validate_and_sanitize_url(backend_base_url)
+            )
+
+            if explicit_api_base and not getattr(
+                self.backend_config, "api_explicitly_set", False
+            ):
+                api_base_candidate = explicit_api_base
+            else:
+                api_base_candidate = (
+                    self.backend_config.api_base_url
+                    or BackendConfig.build_api_base(
+                        self.backend_config.backend_base_url
+                    )
+                )
+            api_origin, api_path = BackendConfig.split_api_url(api_base_candidate)
+            if api_origin is None:
+                raise ValueError("backend client API base URL must include an origin")
+            api_origin = validate_cloud_base_url(api_origin, purpose="backend client")
+            # validate_cloud_base_url only saw the origin; the API path is
+            # reattached below, so re-check the (decoded) path for traversal
+            # here — otherwise an explicit api_base_url like ".../../admin" would
+            # bypass the traversal guard that validate_cloud_base_url applies to
+            # full URLs.
+            # Decode to a fixed point (bounded) so multiply-encoded traversal
+            # (e.g. %25252e) cannot survive a fixed two-pass decode.
+            _validate_backend_api_path(api_path)
+            api_base_candidate = (
+                f"{api_origin}{api_path or BackendConfig.get_default_api_path()}"
+            )
+            self.api_base_url = self._api_ops.validate_and_sanitize_url(
+                api_base_candidate
+            )
+            self.backend_config.api_base_url = self.api_base_url
+        except CloudUrlUnreachableError:
+            # The backend host could not be resolved (genuinely unreachable).
+            # Store a safe inert placeholder so the rest of __init__ completes;
+            # get_interaction_policy() will short-circuit to _static_interaction_policy,
+            # while every cloud op fails closed via _raise_if_backend_egress_disabled.
+            # NOTE: unsafe-origin ValueErrors are intentionally NOT caught here —
+            # they propagate so SSRF/credentialed-URL rejections still fail loud.
+            self._url_invalid = True
+            _placeholder = "https://backend.invalid"
+            self.base_url = _placeholder
+            self.backend_config.backend_base_url = _placeholder
+            self.api_base_url = _placeholder
+            self.backend_config.api_base_url = _placeholder
+            logger.debug(
+                "BackendIntegratedClient: URL validation failed; "
+                "falling back to static interaction policy"
+            )
 
     @property
     def analytics(self) -> "AnalyticsNamespace":
@@ -2829,31 +2843,15 @@ class BackendIntegratedClient:
         # fail before any request (ConfigurationError, no key echoed).
         check_publishable_spec(spec)
         if agent_ref is not None:
-            from traigent.cloud import content_less as content_less_session
-
-            if agent_id is not None or expected_head_generation is None:
-                raise CloudServiceError(
-                    "agent_ref requires expected_head_generation and excludes agent_id"
-                )
-            if not content_less_session.is_well_formed_ref("agent", agent_ref):
-                raise CloudServiceError("agent_ref is not a valid agent reference")
-            if (
-                isinstance(expected_head_generation, bool)
-                or not isinstance(expected_head_generation, int)
-                or not 0 <= expected_head_generation <= _MAX_HEAD_GENERATION
-            ):
-                raise CloudServiceError("expected_head_generation is out of range")
-            protected = self._publish_best_config_protected_sync(
+            return BackendIntegratedClient._publish_best_config_with_ref(
+                self,
                 spec,
-                environment=environment,
-                if_match=if_match,
-                agent_ref=agent_ref,
-                expected_head_generation=expected_head_generation,
+                environment,
+                if_match,
+                agent_id,
+                expected_head_generation,
+                agent_ref,
             )
-            self._verify_published_best_config_identity(
-                protected, spec, environment=environment
-            )
-            return protected
         if (agent_id is None) != (expected_head_generation is None):
             raise CloudServiceError(
                 "agent_id and expected_head_generation must be provided together"
@@ -2934,6 +2932,41 @@ class BackendIntegratedClient:
             published, spec, environment=environment
         )
         return published
+
+    def _publish_best_config_with_ref(
+        self,
+        spec: dict[str, Any],
+        environment: str | None,
+        if_match: str | None,
+        agent_id: str | None,
+        expected_head_generation: int | None,
+        agent_ref: str,
+    ) -> dict[str, Any]:
+        from traigent.cloud import content_less as content_less_session
+
+        if agent_id is not None or expected_head_generation is None:
+            raise CloudServiceError(
+                "agent_ref requires expected_head_generation and excludes agent_id"
+            )
+        if not content_less_session.is_well_formed_ref("agent", agent_ref):
+            raise CloudServiceError("agent_ref is not a valid agent reference")
+        if (
+            isinstance(expected_head_generation, bool)
+            or not isinstance(expected_head_generation, int)
+            or not 0 <= expected_head_generation <= _MAX_HEAD_GENERATION
+        ):
+            raise CloudServiceError("expected_head_generation is out of range")
+        protected = self._publish_best_config_protected_sync(
+            spec,
+            environment=environment,
+            if_match=if_match,
+            agent_ref=agent_ref,
+            expected_head_generation=expected_head_generation,
+        )
+        self._verify_published_best_config_identity(
+            protected, spec, environment=environment
+        )
+        return protected
 
     @staticmethod
     def _verify_published_best_config_identity(

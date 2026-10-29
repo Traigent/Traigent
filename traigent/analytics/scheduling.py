@@ -280,11 +280,45 @@ class SmartScheduler:
 
         return scheduled
 
+    def _fit_jobs_in_window(
+        self,
+        window: Any,
+        remaining_jobs: list[ScheduledJob],
+        scheduled: dict[str, ScheduledJob],
+    ) -> list[ScheduledJob]:
+        """Place as many remaining jobs as fit in ``window``; return those placed."""
+        # Duration is computed on-demand where needed
+        current_time = window.start_time
+
+        # Try to fit jobs in this window
+        jobs_to_remove: list[ScheduledJob] = []
+        for job in remaining_jobs:
+            # Check if job fits in remaining window time
+            job_duration_hours = job.estimated_duration.total_seconds() / 3600
+            remaining_window = window.end_time - current_time
+
+            if job.estimated_duration > remaining_window:
+                continue
+            # Check cost constraint
+            job_cost = job.estimated_cost * window.cost_multiplier
+            if job_cost <= self.policy.max_cost_per_hour * job_duration_hours:
+                # Schedule the job
+                job.scheduled_time = current_time
+                scheduled[job.job_id] = job
+                jobs_to_remove.append(job)
+                current_time += job.estimated_duration
+
+                logger.info(
+                    f"Scheduled job {job.job_id} at {job.scheduled_time} "
+                    f"with cost multiplier {window.cost_multiplier}"
+                )
+        return jobs_to_remove
+
     def _schedule_for_cost(
         self, jobs: list[ScheduledJob] | None = None
     ) -> dict[str, ScheduledJob]:
         """Schedule jobs to minimize cost."""
-        scheduled = {}
+        scheduled: dict[str, ScheduledJob] = {}
         source_jobs = jobs if jobs is not None else self.job_queue
         remaining_jobs = list(source_jobs)
 
@@ -292,30 +326,7 @@ class SmartScheduler:
         sorted_windows = sorted(self.schedule_windows, key=lambda w: w.cost_multiplier)
 
         for window in sorted_windows:
-            # Duration is computed on-demand where needed
-            current_time = window.start_time
-
-            # Try to fit jobs in this window
-            jobs_to_remove = []
-            for job in remaining_jobs:
-                # Check if job fits in remaining window time
-                job_duration_hours = job.estimated_duration.total_seconds() / 3600
-                remaining_window = window.end_time - current_time
-
-                if job.estimated_duration <= remaining_window:
-                    # Check cost constraint
-                    job_cost = job.estimated_cost * window.cost_multiplier
-                    if job_cost <= self.policy.max_cost_per_hour * job_duration_hours:
-                        # Schedule the job
-                        job.scheduled_time = current_time
-                        scheduled[job.job_id] = job
-                        jobs_to_remove.append(job)
-                        current_time += job.estimated_duration
-
-                        logger.info(
-                            f"Scheduled job {job.job_id} at {job.scheduled_time} "
-                            f"with cost multiplier {window.cost_multiplier}"
-                        )
+            jobs_to_remove = self._fit_jobs_in_window(window, remaining_jobs, scheduled)
 
             # Remove scheduled jobs
             for job in jobs_to_remove:

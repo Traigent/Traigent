@@ -52,6 +52,8 @@ from traigent.cloud.analytics_client import (
 )
 from traigent.utils.logging import get_logger
 
+_AGENT_DECISION = "agent decision"
+
 try:
     import httpx
 except ImportError:  # pragma: no cover - BackendAnalyticsClient reports this first
@@ -297,6 +299,50 @@ def _validate_director_report(
 _DIRECTOR_VALIDITY_CHECKS_MAX_ITEMS = 20
 
 
+def _validate_director_validity_check(index: int, item: object) -> dict[str, Any]:
+    """Validate one ``client_report.validity_checks`` element."""
+    from traigent.cloud.analytics_client import (
+        DIRECTOR_CONFIDENCE_LABELS,
+        DIRECTOR_VALIDITY_CHECKS,
+        DIRECTOR_VALIDITY_STATUSES,
+    )
+
+    allowed_item_fields = {"check", "status", "confidence_label"}
+    if not isinstance(item, dict):
+        raise _ToolInputError(
+            f"client_report.validity_checks[{index}] must be an object."
+        )
+    item_extra = sorted(set(item).difference(allowed_item_fields))
+    if item_extra:
+        raise _ToolInputError(
+            f"client_report.validity_checks[{index}] contains unsupported "
+            f"field(s): {', '.join(item_extra)}."
+        )
+    check = item.get("check")
+    if check not in DIRECTOR_VALIDITY_CHECKS:
+        allowed = ", ".join(DIRECTOR_VALIDITY_CHECKS)
+        raise _ToolInputError(
+            f"client_report.validity_checks[{index}].check must be one of: {allowed}."
+        )
+    status = item.get("status")
+    if status not in DIRECTOR_VALIDITY_STATUSES:
+        allowed = ", ".join(DIRECTOR_VALIDITY_STATUSES)
+        raise _ToolInputError(
+            f"client_report.validity_checks[{index}].status must be one of: {allowed}."
+        )
+    clean_item: dict[str, Any] = {"check": check, "status": status}
+    confidence_label = item.get("confidence_label")
+    if confidence_label is not None:
+        if confidence_label not in DIRECTOR_CONFIDENCE_LABELS:
+            allowed = ", ".join(DIRECTOR_CONFIDENCE_LABELS)
+            raise _ToolInputError(
+                f"client_report.validity_checks[{index}].confidence_label "
+                f"must be one of: {allowed}."
+            )
+        clean_item["confidence_label"] = confidence_label
+    return clean_item
+
+
 def _validate_director_client_report(
     value: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
@@ -308,12 +354,6 @@ def _validate_director_client_report(
     unknown key on either the outer object or an individual check is rejected
     outright.
     """
-    from traigent.cloud.analytics_client import (
-        DIRECTOR_CONFIDENCE_LABELS,
-        DIRECTOR_VALIDITY_CHECKS,
-        DIRECTOR_VALIDITY_STATUSES,
-    )
-
     if value is None:
         return None
     if not isinstance(value, dict):
@@ -336,44 +376,9 @@ def _validate_director_client_report(
             f"{_DIRECTOR_VALIDITY_CHECKS_MAX_ITEMS} items."
         )
 
-    allowed_item_fields = {"check", "status", "confidence_label"}
     clean_checks: list[dict[str, Any]] = []
     for index, item in enumerate(checks):
-        if not isinstance(item, dict):
-            raise _ToolInputError(
-                f"client_report.validity_checks[{index}] must be an object."
-            )
-        item_extra = sorted(set(item).difference(allowed_item_fields))
-        if item_extra:
-            raise _ToolInputError(
-                f"client_report.validity_checks[{index}] contains unsupported "
-                f"field(s): {', '.join(item_extra)}."
-            )
-        check = item.get("check")
-        if check not in DIRECTOR_VALIDITY_CHECKS:
-            allowed = ", ".join(DIRECTOR_VALIDITY_CHECKS)
-            raise _ToolInputError(
-                f"client_report.validity_checks[{index}].check must be one "
-                f"of: {allowed}."
-            )
-        status = item.get("status")
-        if status not in DIRECTOR_VALIDITY_STATUSES:
-            allowed = ", ".join(DIRECTOR_VALIDITY_STATUSES)
-            raise _ToolInputError(
-                f"client_report.validity_checks[{index}].status must be one "
-                f"of: {allowed}."
-            )
-        clean_item: dict[str, Any] = {"check": check, "status": status}
-        confidence_label = item.get("confidence_label")
-        if confidence_label is not None:
-            if confidence_label not in DIRECTOR_CONFIDENCE_LABELS:
-                allowed = ", ".join(DIRECTOR_CONFIDENCE_LABELS)
-                raise _ToolInputError(
-                    f"client_report.validity_checks[{index}].confidence_label "
-                    f"must be one of: {allowed}."
-                )
-            clean_item["confidence_label"] = confidence_label
-        clean_checks.append(clean_item)
+        clean_checks.append(_validate_director_validity_check(index, item))
     return {"validity_checks": clean_checks}
 
 
@@ -390,6 +395,72 @@ def _bounded_identifier_list(value: object, *, field: str, maximum: int) -> list
     if len(set(cleaned)) != len(cleaned):
         raise _ToolInputError(f"{field} values must be unique.")
     return cleaned
+
+
+_EXECUTION_CONTEXT_FIELDS = {
+    "schema_version",
+    "agent_id",
+    "agent_version",
+    "release_id",
+    "deployment_id",
+    "code_revision",
+    "configuration_id",
+    "configuration_version",
+    "prompt_id",
+    "prompt_version",
+    "toolset_id",
+    "toolset_version",
+    "evaluator_id",
+    "evaluator_version",
+    "dataset_id",
+    "dataset_version",
+    "experiment_run_id",
+    "configuration_run_id",
+    "optimization_run_id",
+    "intervention_id",
+}
+
+
+def _check_cohort_sample_limit(sample_limit: object, *, field: str) -> None:
+    if (
+        not isinstance(sample_limit, int)
+        or isinstance(sample_limit, bool)
+        or not 1 <= sample_limit <= 5000
+    ):
+        raise _ToolInputError(
+            f"{field}.sample_limit must be an integer between 1 and 5000."
+        )
+
+
+def _bounded_execution_context(context: object, *, field: str) -> dict[str, object]:
+    if not isinstance(context, dict):
+        raise _ToolInputError(f"{field}.execution_context must be an object.")
+    context_extra = sorted(set(context).difference(_EXECUTION_CONTEXT_FIELDS))
+    if context_extra:
+        raise _ToolInputError(
+            f"{field}.execution_context contains unsupported field(s): "
+            + ", ".join(context_extra)
+            + "."
+        )
+    clean_context: dict[str, object] = {"schema_version": "1.0"}
+    for key, context_value in context.items():
+        if key == "schema_version":
+            if context_value != "1.0":
+                raise _ToolInputError(
+                    f"{field}.execution_context.schema_version must be '1.0'."
+                )
+            continue
+        if context_value is None:
+            clean_context[key] = None
+            continue
+        if not isinstance(context_value, str):
+            raise _ToolInputError(
+                f"{field}.execution_context.{key} must be an identifier or null."
+            )
+        clean_context[key] = _bounded_identifier(
+            context_value, field=f"{field}.execution_context.{key}"
+        )
+    return clean_context
 
 
 def _bounded_cohort(value: object, *, field: str) -> dict[str, object]:
@@ -419,14 +490,7 @@ def _bounded_cohort(value: object, *, field: str) -> dict[str, object]:
     if set(statuses).difference(_TRACE_STATUS_FILTER_VALUES):
         raise _ToolInputError(f"{field}.trace_statuses contains an unsupported status.")
     sample_limit = value.get("sample_limit", 5000)
-    if (
-        not isinstance(sample_limit, int)
-        or isinstance(sample_limit, bool)
-        or not 1 <= sample_limit <= 5000
-    ):
-        raise _ToolInputError(
-            f"{field}.sample_limit must be an integer between 1 and 5000."
-        )
+    _check_cohort_sample_limit(sample_limit, field=field)
     clean: dict[str, object] = {
         "start_time": start_time,
         "end_time": end_time,
@@ -450,56 +514,7 @@ def _bounded_cohort(value: object, *, field: str) -> dict[str, object]:
     }
     context = value.get("execution_context")
     if context is not None:
-        if not isinstance(context, dict):
-            raise _ToolInputError(f"{field}.execution_context must be an object.")
-        allowed_context = {
-            "schema_version",
-            "agent_id",
-            "agent_version",
-            "release_id",
-            "deployment_id",
-            "code_revision",
-            "configuration_id",
-            "configuration_version",
-            "prompt_id",
-            "prompt_version",
-            "toolset_id",
-            "toolset_version",
-            "evaluator_id",
-            "evaluator_version",
-            "dataset_id",
-            "dataset_version",
-            "experiment_run_id",
-            "configuration_run_id",
-            "optimization_run_id",
-            "intervention_id",
-        }
-        context_extra = sorted(set(context).difference(allowed_context))
-        if context_extra:
-            raise _ToolInputError(
-                f"{field}.execution_context contains unsupported field(s): "
-                + ", ".join(context_extra)
-                + "."
-            )
-        clean_context: dict[str, object] = {"schema_version": "1.0"}
-        for key, context_value in context.items():
-            if key == "schema_version":
-                if context_value != "1.0":
-                    raise _ToolInputError(
-                        f"{field}.execution_context.schema_version must be '1.0'."
-                    )
-                continue
-            if context_value is None:
-                clean_context[key] = None
-                continue
-            if not isinstance(context_value, str):
-                raise _ToolInputError(
-                    f"{field}.execution_context.{key} must be an identifier or null."
-                )
-            clean_context[key] = _bounded_identifier(
-                context_value, field=f"{field}.execution_context.{key}"
-            )
-        clean["execution_context"] = clean_context
+        clean["execution_context"] = _bounded_execution_context(context, field=field)
     return clean
 
 
@@ -833,6 +848,31 @@ def _mask_api_key(api_key: str | None) -> dict[str, Any]:
     return {"present": True, "prefix": prefix, "last4": last4}
 
 
+def _usable_stored_jwt(jwt_token: Any) -> Any:
+    if jwt_token is not None and not isinstance(jwt_token, str):
+        return None
+    if isinstance(jwt_token, str) and not jwt_token.strip():
+        return None
+    return jwt_token
+
+
+async def _jwt_credential_authenticated() -> bool:
+    from traigent.cloud.analytics_auth import (
+        resolve_analytics_read_client_credentials,
+    )
+    from traigent.cloud.auth import InvalidCredentialsError
+
+    try:
+        credential_kwargs = await resolve_analytics_read_client_credentials()
+    except InvalidCredentialsError as exc:
+        logger.debug(
+            "Analytics JWT credential validation failed (%s)",
+            type(exc).__name__,
+        )
+        return False
+    return bool(credential_kwargs.get("jwt_token"))
+
+
 async def auth_status_tool() -> dict[str, Any]:
     """Report local auth posture for the analytics MCP (masked; no network).
 
@@ -846,11 +886,7 @@ async def auth_status_tool() -> dict[str, Any]:
     api_key = credentials.get("api_key")
     if api_key is not None and not isinstance(api_key, str):
         api_key = None
-    jwt_token = credentials.get("jwt_token")
-    if jwt_token is not None and not isinstance(jwt_token, str):
-        jwt_token = None
-    if isinstance(jwt_token, str) and not jwt_token.strip():
-        jwt_token = None
+    jwt_token = _usable_stored_jwt(credentials.get("jwt_token"))
 
     credential_source = credentials.get("source") or "none"
     if not api_key:
@@ -863,21 +899,7 @@ async def auth_status_tool() -> dict[str, Any]:
     credential_present = bool(api_key or jwt_token)
     authenticated = bool(api_key)
     if jwt_token and not api_key:
-        from traigent.cloud.analytics_auth import (
-            resolve_analytics_read_client_credentials,
-        )
-        from traigent.cloud.auth import InvalidCredentialsError
-
-        try:
-            credential_kwargs = await resolve_analytics_read_client_credentials()
-        except InvalidCredentialsError as exc:
-            logger.debug(
-                "Analytics JWT credential validation failed (%s)",
-                type(exc).__name__,
-            )
-            authenticated = False
-        else:
-            authenticated = bool(credential_kwargs.get("jwt_token"))
+        authenticated = await _jwt_credential_authenticated()
 
     if api_key:
         auth_type = "api_key"
@@ -1734,6 +1756,66 @@ def _change_brief_guidance(
     return hypotheses[:25], recommendations[:25]
 
 
+def _validate_change_brief_inputs(
+    project_id: str,
+    trace_id: str,
+    start_time: str,
+    end_time: str,
+    reference: dict[str, object] | None,
+    comparison: dict[str, object] | None,
+    metrics: list[str] | None,
+    trace_limit: int,
+    tool_limit: int,
+    insights_limit: int,
+) -> tuple[Any, ...]:
+    pid = _bounded_identifier(project_id, field="project_id")
+    tid = _bounded_identifier(trace_id, field="trace_id")
+    start, end = _bounded_time_window(start_time, end_time)
+    trace_limit = _bounded_limit(trace_limit, maximum=500)
+    tool_limit = _bounded_limit(tool_limit, maximum=100)
+    insights_limit = _bounded_limit(insights_limit, maximum=100)
+    if (reference is None) != (comparison is None):
+        raise _ToolInputError(
+            "reference and comparison must either both be provided or both be omitted."
+        )
+    clean_reference = (
+        _bounded_cohort(reference, field="reference") if reference is not None else None
+    )
+    clean_comparison = (
+        _bounded_cohort(comparison, field="comparison")
+        if comparison is not None
+        else None
+    )
+    clean_metrics = _bounded_identifier_list(metrics or [], field="metrics", maximum=8)
+    if clean_reference is not None and not clean_metrics:
+        clean_metrics = [
+            "error_rate",
+            "retry_rate",
+            "fallback_rate",
+            "latency_ms",
+            "cost_usd",
+        ]
+    unsupported = sorted(set(clean_metrics).difference(_OBSERVABILITY_METRICS))
+    if unsupported:
+        raise _ToolInputError(
+            "metrics contains unsupported value(s): " + ", ".join(unsupported)
+        )
+    if clean_reference is None and clean_metrics:
+        raise _ToolInputError("metrics require both reference and comparison cohorts.")
+    return (
+        pid,
+        tid,
+        start,
+        end,
+        trace_limit,
+        tool_limit,
+        insights_limit,
+        clean_reference,
+        clean_comparison,
+        clean_metrics,
+    )
+
+
 async def observability_build_change_brief_tool(
     project_id: str,
     trace_id: str,
@@ -1748,46 +1830,29 @@ async def observability_build_change_brief_tool(
 ) -> dict[str, Any]:
     """Compose a privacy-bounded, explicitly non-causal change brief."""
     try:
-        pid = _bounded_identifier(project_id, field="project_id")
-        tid = _bounded_identifier(trace_id, field="trace_id")
-        start, end = _bounded_time_window(start_time, end_time)
-        trace_limit = _bounded_limit(trace_limit, maximum=500)
-        tool_limit = _bounded_limit(tool_limit, maximum=100)
-        insights_limit = _bounded_limit(insights_limit, maximum=100)
-        if (reference is None) != (comparison is None):
-            raise _ToolInputError(
-                "reference and comparison must either both be provided or both be omitted."
-            )
-        clean_reference = (
-            _bounded_cohort(reference, field="reference")
-            if reference is not None
-            else None
+        (
+            pid,
+            tid,
+            start,
+            end,
+            trace_limit,
+            tool_limit,
+            insights_limit,
+            clean_reference,
+            clean_comparison,
+            clean_metrics,
+        ) = _validate_change_brief_inputs(
+            project_id,
+            trace_id,
+            start_time,
+            end_time,
+            reference,
+            comparison,
+            metrics,
+            trace_limit,
+            tool_limit,
+            insights_limit,
         )
-        clean_comparison = (
-            _bounded_cohort(comparison, field="comparison")
-            if comparison is not None
-            else None
-        )
-        clean_metrics = _bounded_identifier_list(
-            metrics or [], field="metrics", maximum=8
-        )
-        if clean_reference is not None and not clean_metrics:
-            clean_metrics = [
-                "error_rate",
-                "retry_rate",
-                "fallback_rate",
-                "latency_ms",
-                "cost_usd",
-            ]
-        unsupported = sorted(set(clean_metrics).difference(_OBSERVABILITY_METRICS))
-        if unsupported:
-            raise _ToolInputError(
-                "metrics contains unsupported value(s): " + ", ".join(unsupported)
-            )
-        if clean_reference is None and clean_metrics:
-            raise _ToolInputError(
-                "metrics require both reference and comparison cohorts."
-            )
     except _ToolInputError as exc:
         return _failure(str(exc))
 
@@ -2006,7 +2071,7 @@ def _agent_decision_error_mapper(exc: BaseException, backend_url: str | None) ->
         if status in (401, 403):
             # Both outcomes carry fixed text only (no backend text on either path).
             return _http_status_failure(
-                exc, what="agent decision", backend_url=backend_url
+                exc, what=_AGENT_DECISION, backend_url=backend_url
             )
         if status is None or status >= 500:
             return _failure(
@@ -2056,7 +2121,7 @@ async def _agent_decision_read(
 ) -> dict[str, Any]:
     result = await _call_backend(
         coro_factory,
-        what="agent decision",
+        what=_AGENT_DECISION,
         http_error_mapper=_agent_decision_error_mapper,
     )
     if result.get("ok") is True:
@@ -2160,7 +2225,7 @@ async def agent_decision_answer_tool(
             retry_nonce=final_nonce,
             project_id=pid,
         ),
-        what="agent decision",
+        what=_AGENT_DECISION,
         http_error_mapper=_agent_decision_error_mapper,
     )
     result["retry_nonce"] = final_nonce

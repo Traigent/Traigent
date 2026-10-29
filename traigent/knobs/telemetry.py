@@ -127,26 +127,21 @@ def composite_measures(
     gate_entries: list[tuple[int, str, float | int]] = []
 
     for name, value in measures.items():
-        if isinstance(value, Mapping):
-            # The §3.10 per-gate map (gate_margin_pass_rate): index -> rate.
-            # The map's own name already carries the `gate_` prefix; strip it so
-            # the flattened key reads `..._gate_{index}_margin_pass_rate`, not a
-            # doubled `..._gate_{index}_gate_margin_pass_rate`.
-            suffix = name.removeprefix("gate_")
-            for raw_index, rate in value.items():
-                try:
-                    index = int(raw_index)
-                except (TypeError, ValueError):
-                    # An index that is not integer-coercible is not a §3.10
-                    # gate key; drop it rather than emit a bogus name.
-                    continue
-                if index < 0 or not _is_finite_number(rate):
-                    continue
-                key = f"{prefix}_gate_{index}_{suffix}"
-                gate_entries.append((index, key, rate))  # type: ignore[arg-type]
+        if not isinstance(value, Mapping):
+            _append_scalar_measure(ordered, prefix, name, value)
             continue
-        if _is_finite_number(value):
-            ordered.append((f"{prefix}_{name}", value))  # type: ignore[arg-type]
+        # The map's name already carries the gate_ prefix.
+        suffix = name.removeprefix("gate_")
+        for raw_index, rate in value.items():
+            try:
+                index = int(raw_index)
+            except (TypeError, ValueError):
+                # An index that is not integer-coercible is not a §3.10 gate key.
+                continue
+            if index < 0 or not _is_finite_number(rate):
+                continue
+            key = f"{prefix}_gate_{index}_{suffix}"
+            gate_entries.append((index, key, rate))  # type: ignore[arg-type]
 
     gate_entries.sort(key=lambda item: item[0])
     ordered.extend((key, rate) for _index, key, rate in gate_entries)
@@ -154,15 +149,23 @@ def composite_measures(
     # Injectivity guard (codex round): a scalar literally named
     # 'gate_0_margin_pass_rate' and the standard per-gate map both flatten to
     # the same key — duplicates RAISE rather than silently last-write-win.
-    seen: set[str] = set()
-    for key, _value in ordered:
-        if key in seen:
-            raise ValueError(
-                f"composite_measures: flattened key {key!r} collides with "
-                "another measure — §3.10 names must flatten injectively"
-            )
-        seen.add(key)
+    _check_measure_collisions(ordered)
 
+    ordered = _cap_composite_measures(ordered)
+
+    return dict(ordered)
+
+
+def _append_scalar_measure(
+    ordered: list[tuple[str, float | int]], prefix: str, name: str, value: object
+) -> None:
+    if _is_finite_number(value):
+        ordered.append((f"{prefix}_{name}", value))  # type: ignore[arg-type]
+
+
+def _cap_composite_measures(
+    ordered: list[tuple[str, float | int]],
+) -> list[tuple[str, float | int]]:
     if len(ordered) > MAX_COMPOSITE_MEASURES:
         dropped = [key for key, _ in ordered[MAX_COMPOSITE_MEASURES:]]
         logger.warning(
@@ -174,7 +177,18 @@ def composite_measures(
         )
         ordered = ordered[:MAX_COMPOSITE_MEASURES]
 
-    return dict(ordered)
+    return ordered
+
+
+def _check_measure_collisions(ordered: list[tuple[str, float | int]]) -> None:
+    seen: set[str] = set()
+    for key, _value in ordered:
+        if key in seen:
+            raise ValueError(
+                f"composite_measures: flattened key {key!r} collides with "
+                "another measure — §3.10 names must flatten injectively"
+            )
+        seen.add(key)
 
 
 def merge_composite_measures(

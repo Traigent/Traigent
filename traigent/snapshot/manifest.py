@@ -222,22 +222,7 @@ def _validate_structure(manifest: Mapping[str, Any]) -> None:
         raise ValueError("bad shape")
     _validate_metadata(manifest)
     for path, entry in parts.items():
-        validate_part_path(path)
-        if not isinstance(entry, dict):
-            raise ValueError("bad part")
-        if entry.get("status") == "unavailable":
-            if entry.get("reason") not in {r.value for r in UnavailableReason}:
-                raise ValueError("bad reason")
-            continue
-        size = entry.get("size")
-        if (
-            not is_valid_digest(entry.get("sha256"))
-            or not isinstance(size, int)
-            or isinstance(size, bool)
-            or size < 0
-            or not isinstance(entry.get("media_type"), str)
-        ):
-            raise ValueError("bad part")
+        _validate_part_entry(path, entry)
     if any(not isinstance(path, str) for path in required) or len(set(required)) != len(
         required
     ):
@@ -251,6 +236,25 @@ def _validate_structure(manifest: Mapping[str, Any]) -> None:
         raise ValueError("mandatory part missing")
     if not any(path.startswith(_EVALUATOR_PREFIX) for path in required):
         raise ValueError("evaluator group missing")
+
+
+def _validate_part_entry(path: str, entry: Any) -> None:
+    validate_part_path(path)
+    if not isinstance(entry, dict):
+        raise ValueError("bad part")
+    if entry.get("status") == "unavailable":
+        if entry.get("reason") not in {r.value for r in UnavailableReason}:
+            raise ValueError("bad reason")
+        return
+    size = entry.get("size")
+    if (
+        not is_valid_digest(entry.get("sha256"))
+        or not isinstance(size, int)
+        or isinstance(size, bool)
+        or size < 0
+        or not isinstance(entry.get("media_type"), str)
+    ):
+        raise ValueError("bad part")
 
 
 class ExecutionSnapshot:

@@ -240,7 +240,7 @@ class OptimizationAnalyzer:
         legacy_manager: FileVersionManager,
     ) -> pd.DataFrame:
         """Build experiment index from directory structure."""
-        runs = []
+        runs: list[dict[str, Any]] = []
         experiments_dir = base_path / "experiments"
 
         if not experiments_dir.exists():
@@ -252,11 +252,8 @@ class OptimizationAnalyzer:
             return pd.DataFrame()
 
         for exp_dir in experiments_dir.iterdir():
-            if not exp_dir.is_dir():
-                continue
-
-            runs_dir = exp_dir / "runs"
-            if not runs_dir.exists():
+            runs_dir = OptimizationAnalyzer._experiment_runs_dir(exp_dir)
+            if runs_dir is None:
                 continue
 
             for run_dir in runs_dir.iterdir():
@@ -273,27 +270,13 @@ class OptimizationAnalyzer:
                     )
                     continue
 
-                session_data = OptimizationAnalyzer._load_json_file(
+                OptimizationAnalyzer._append_index_session(
+                    runs,
+                    exp_dir,
+                    run_dir,
                     validated_run_dir,
-                    "meta",
-                    "session",
                     file_manager,
                     legacy_manager,
-                )
-
-                if session_data is None:
-                    continue
-
-                runs.append(
-                    {
-                        "experiment": exp_dir.name,
-                        "run_id": run_dir.name,
-                        "session_id": session_data.get("session_id", "unknown"),
-                        "timestamp": session_data.get("start_time", ""),
-                        "execution_mode": session_data.get("execution_mode", "unknown"),
-                        "path": str(validated_run_dir),
-                        "status": session_data.get("status", "unknown"),
-                    }
                 )
 
         if not runs:
@@ -303,6 +286,47 @@ class OptimizationAnalyzer:
         if "timestamp" in df.columns:
             df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
         return df
+
+    @staticmethod
+    def _experiment_runs_dir(exp_dir: Path) -> Path | None:
+        if not exp_dir.is_dir():
+            return None
+        runs_dir = exp_dir / "runs"
+        if not runs_dir.exists():
+            return None
+        return runs_dir
+
+    @staticmethod
+    def _append_index_session(
+        runs: list[dict[str, Any]],
+        exp_dir: Path,
+        run_dir: Path,
+        validated_run_dir: Path,
+        file_manager: FileVersionManager,
+        legacy_manager: FileVersionManager,
+    ) -> None:
+        session_data = OptimizationAnalyzer._load_json_file(
+            validated_run_dir,
+            "meta",
+            "session",
+            file_manager,
+            legacy_manager,
+        )
+
+        if session_data is None:
+            return
+
+        runs.append(
+            {
+                "experiment": exp_dir.name,
+                "run_id": run_dir.name,
+                "session_id": session_data.get("session_id", "unknown"),
+                "timestamp": session_data.get("start_time", ""),
+                "execution_mode": session_data.get("execution_mode", "unknown"),
+                "path": str(validated_run_dir),
+                "status": session_data.get("status", "unknown"),
+            }
+        )
 
     def load_run(self, experiment_name: str, run_id: str) -> dict[str, Any]:
         """Load all data for a specific run."""

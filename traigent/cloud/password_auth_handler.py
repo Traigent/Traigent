@@ -19,10 +19,10 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any, cast
 
-from traigent.labels.transport_gate import gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.core.constants import MAX_RETRIES
+from traigent.labels.transport_gate import gate_session
 
 if TYPE_CHECKING:
     from traigent.cloud.auth import AuthResult
@@ -292,16 +292,9 @@ class PasswordAuthHandler:
                     headers={"Content-Type": "application/json"},
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as response:
-                    if response.status == 401:
-                        raise InvalidCredentialsError("Invalid credentials")
-                    if response.status == 429:
-                        await response.text()
-                        raise RuntimeError("Backend authentication rate limited")
-                    if response.status != 200:
-                        await response.text()
-                        raise RuntimeError(
-                            f"Backend authentication failed with HTTP {response.status}"
-                        )
+                    await PasswordAuthHandler._check_login_response(
+                        response, InvalidCredentialsError
+                    )
 
                     data = await response.json()
                     if not data.get("success"):
@@ -313,13 +306,9 @@ class PasswordAuthHandler:
 
                     if access_token and "." in access_token:
                         try:
-                            parts = access_token.split(".")
-                            if len(parts) >= 2:
-                                payload = parts[1] + "=" * (4 - len(parts[1]) % 4)
-                                decoded = base64.urlsafe_b64decode(payload)
-                                jwt_data = json.loads(decoded)
-                                if "exp" in jwt_data:
-                                    expires_in = max(0, jwt_data["exp"] - time.time())
+                            expires_in = PasswordAuthHandler._jwt_expiry(
+                                access_token, expires_in
+                            )
                         except Exception as exc:
                             logger.debug(f"Failed to parse JWT expiry: {exc}")
 
@@ -343,6 +332,32 @@ class PasswordAuthHandler:
 
             logger.error("Authentication error: %s", type(exc).__name__)
             return None
+
+    @staticmethod
+    def _jwt_expiry(access_token: str, expires_in: Any) -> Any:
+        parts = access_token.split(".")
+        if len(parts) >= 2:
+            payload = parts[1] + "=" * (4 - len(parts[1]) % 4)
+            decoded = base64.urlsafe_b64decode(payload)
+            jwt_data = json.loads(decoded)
+            if "exp" in jwt_data:
+                expires_in = max(0, jwt_data["exp"] - time.time())
+        return expires_in
+
+    @staticmethod
+    async def _check_login_response(
+        response: Any, invalid_credentials_error: type[Exception]
+    ) -> None:
+        if response.status == 401:
+            raise invalid_credentials_error("Invalid credentials")
+        if response.status == 429:
+            await response.text()
+            raise RuntimeError("Backend authentication rate limited")
+        if response.status != 200:
+            await response.text()
+            raise RuntimeError(
+                f"Backend authentication failed with HTTP {response.status}"
+            )
 
     def _build_dev_token_payload(
         self, credentials: dict[str, str] | None = None

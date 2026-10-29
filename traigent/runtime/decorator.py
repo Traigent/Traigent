@@ -35,6 +35,19 @@ F = TypeVar("F")
 E_DUPLICATE = "duplicate_requirement"
 
 
+def _append_compiler_lints(issues: list[Issue], lints: list[dict[str, Any]]) -> None:
+    for lint in lints:
+        code = lint.get("code")
+        if isinstance(code, str):
+            issues.append(
+                Issue(
+                    code,
+                    "policy",
+                    "warning" if lint.get("severity") != "error" else "error",
+                )
+            )
+
+
 class RequirementList(list[RuntimeRequirement]):
     """The requirements declared on one function (exactly one in PY-1)."""
 
@@ -67,16 +80,7 @@ class RequirementList(list[RuntimeRequirement]):
             except RuntimeRequirementError as exc:
                 issues.append(Issue(exc.code, exc.path or "policy", "error"))
                 continue
-            for lint in lints:
-                code = lint.get("code")
-                if isinstance(code, str):
-                    issues.append(
-                        Issue(
-                            code,
-                            "policy",
-                            "warning" if lint.get("severity") != "error" else "error",
-                        )
-                    )
+            _append_compiler_lints(issues, lints)
         return issues
 
     def apply(

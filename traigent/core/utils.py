@@ -105,26 +105,7 @@ def validate_bounds(
         ValueError: If bounds are invalid for the parameter type
     """
     if param_type in ("float", "integer"):
-        if not isinstance(bounds, (tuple, list)) or len(bounds) != 2:
-            raise ValueError(
-                f"{param_type.capitalize()} parameter '{param_name}' must have tuple bounds (min, max)"
-            )
-
-        if param_type == "float":
-            if not all(isinstance(x, (int, float)) for x in bounds):
-                raise ValueError(
-                    f"Float parameter '{param_name}' bounds must be numeric"
-                )
-        elif param_type == "integer":
-            if not all(isinstance(x, int) for x in bounds):
-                raise ValueError(
-                    f"Integer parameter '{param_name}' bounds must be integers"
-                )
-
-        if bounds[0] >= bounds[1]:
-            raise ValueError(
-                f"Invalid bounds for '{param_name}': min ({bounds[0]}) must be less than max ({bounds[1]})"
-            )
+        _validate_numeric_bounds(bounds, param_type, param_name)
 
     elif param_type == "categorical":
         if not isinstance(bounds, (list, tuple)) or len(bounds) == 0:
@@ -133,6 +114,27 @@ def validate_bounds(
             )
 
     return True
+
+
+def _validate_numeric_bounds(
+    bounds: tuple[Any, ...] | list[Any], param_type: str, param_name: str
+) -> None:
+    if not isinstance(bounds, (tuple, list)) or len(bounds) != 2:
+        raise ValueError(
+            f"{param_type.capitalize()} parameter '{param_name}' must have tuple bounds (min, max)"
+        )
+    if param_type == "float":
+        if not all(isinstance(x, (int, float)) for x in bounds):
+            raise ValueError(f"Float parameter '{param_name}' bounds must be numeric")
+    elif param_type == "integer":
+        if not all(isinstance(x, int) for x in bounds):
+            raise ValueError(
+                f"Integer parameter '{param_name}' bounds must be integers"
+            )
+    if bounds[0] >= bounds[1]:
+        raise ValueError(
+            f"Invalid bounds for '{param_name}': min ({bounds[0]}) must be less than max ({bounds[1]})"
+        )
 
 
 def validate_positive_number(value: int | float, name: str) -> None:
@@ -228,16 +230,17 @@ def aggregate_metrics(
         elif aggregation_type == "min":
             aggregated[key] = min(values)
         elif aggregation_type == "median":
-            sorted_values = sorted(values)
-            n = len(sorted_values)
-            if n % 2 == 0:
-                aggregated[key] = (
-                    sorted_values[n // 2 - 1] + sorted_values[n // 2]
-                ) / 2
-            else:
-                aggregated[key] = sorted_values[n // 2]
+            aggregated[key] = _median_metric(values)
 
     return aggregated
+
+
+def _median_metric(values: list[float]) -> float:
+    sorted_values = sorted(values)
+    n = len(sorted_values)
+    if n % 2 == 0:
+        return (sorted_values[n // 2 - 1] + sorted_values[n // 2]) / 2
+    return sorted_values[n // 2]
 
 
 def aggregate_tokens(metrics_list: list[dict[str, Any]]) -> dict[str, int]:

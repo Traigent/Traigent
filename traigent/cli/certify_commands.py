@@ -510,6 +510,123 @@ def certify() -> None:
     """Verify public certificate artifacts offline."""
 
 
+def _require_posix_for_open_commitments() -> None:
+    from traigent.cloud import process_record_linkage as _prl
+
+    try:
+        _prl.require_posix_platform()
+    except _prl.CommitmentLinkageClientError as err:
+        click.echo(err.code)
+        raise click.exceptions.Exit(1) from None
+
+
+def _verify_quality_kind(
+    resolved_kind: str,
+    schema: Any,
+    bundle_payload: dict[str, Any],
+    context_payload: dict[str, Any],
+    anchor_value: Any,
+    trust_status_payload: Any,
+    *,
+    process_record: Path | None,
+    development_integration: bool,
+    as_json: bool,
+) -> bool:
+    """Run the evaluator-/agent-quality verifiers; False for other kinds."""
+    if resolved_kind == "evaluator-quality":
+        if process_record is not None:
+            raise click.UsageError(
+                "--kind evaluator-quality does not accept --process-record "
+                "(this CLI performs no relying-party composition step; see "
+                "EVALUATOR_QUALITY_POLICY_DISPOSITION's comment)"
+            )
+        _verify_evaluator_quality(
+            schema,
+            bundle_payload,
+            context_payload,
+            anchor_value,
+            trust_status_payload,
+            development_integration=development_integration,
+            as_json=as_json,
+        )
+        return True
+
+    if resolved_kind == "agent-quality":
+        if process_record is None:
+            raise click.UsageError("--kind agent-quality requires --process-record")
+        if development_integration:
+            raise click.UsageError(
+                "--kind agent-quality does not use --development-integration"
+            )
+        _verify_agent_quality(
+            schema,
+            bundle_payload,
+            context_payload,
+            _read_json(process_record, "process record"),
+            anchor_value,
+            trust_status_payload,
+            as_json=as_json,
+        )
+        return True
+    return False
+
+
+def _check_record_kind_context(
+    resolved_kind: str, context_payload: dict[str, Any]
+) -> None:
+    if resolved_kind == "dataset-record" and "process_context" not in context_payload:
+        raise click.UsageError("--kind dataset-record requires context.process_context")
+    if resolved_kind == "process-record" and "process_context" in context_payload:
+        raise click.UsageError(
+            "--kind process-record does not accept context.process_context "
+            "(that shape is dataset-record)"
+        )
+
+
+def _verify_record_certificate(
+    schema: Any,
+    resolved_kind: str,
+    bundle_payload: dict[str, Any],
+    context_payload: dict[str, Any],
+    anchor_value: Any,
+    trust_status_payload: Any,
+    *,
+    process_record: Path | None,
+) -> Any:
+    try:
+        if resolved_kind == "dataset-record":
+            if process_record is None:
+                raise click.UsageError(
+                    "dataset-record verification requires --process-record"
+                )
+            return schema.verify_dataset_record_certificate(
+                bundle_payload,
+                context=_dataset_context(context_payload, anchor_value, schema),
+                process_record_bundle=_read_json(process_record, "process record"),
+                leaf_lists=context_payload.get("leaf_lists"),
+            )
+        if (
+            context_payload.get("allow_unchecked_base_status") is True
+            and trust_status_payload is not None
+        ):
+            raise click.UsageError(
+                "--trust-status cannot be used with allow_unchecked_base_status=true"
+            )
+        return schema.verify_process_record_certificate(
+            bundle_payload,
+            context=_process_context(context_payload, anchor_value, schema),
+            trust_status=trust_status_payload,
+        )
+    except click.UsageError:
+        raise
+    except (
+        schema.ProcessRecordVerificationError,
+        schema.DatasetRecordVerificationError,
+    ) as exc:
+        click.echo(exc.code)
+        raise click.exceptions.Exit(1) from None
+
+
 @certify.command()
 @click.argument(
     "bundle",
@@ -595,13 +712,7 @@ def verify(
 ) -> None:
     """Verify BUNDLE using independently supplied context and public anchor."""
     if open_commitments is not None:
-        from traigent.cloud import process_record_linkage as _prl
-
-        try:
-            _prl.require_posix_platform()
-        except _prl.CommitmentLinkageClientError as err:
-            click.echo(err.code)
-            raise click.exceptions.Exit(1) from None
+        _require_posix_for_open_commitments()
     schema = _load_certification_schema()
     bundle_payload = _read_json(bundle, "bundle")
     context_payload = _read_json(context_path, "context")
@@ -616,84 +727,30 @@ def verify(
     if open_commitments is not None and resolved_kind != "process-record":
         raise click.UsageError("--open-commitments requires --kind process-record")
 
-    if resolved_kind == "evaluator-quality":
-        if process_record is not None:
-            raise click.UsageError(
-                "--kind evaluator-quality does not accept --process-record "
-                "(this CLI performs no relying-party composition step; see "
-                "EVALUATOR_QUALITY_POLICY_DISPOSITION's comment)"
-            )
-        _verify_evaluator_quality(
-            schema,
-            bundle_payload,
-            context_payload,
-            anchor_value,
-            trust_status_payload,
-            development_integration=development_integration,
-            as_json=as_json,
-        )
+    if _verify_quality_kind(
+        resolved_kind,
+        schema,
+        bundle_payload,
+        context_payload,
+        anchor_value,
+        trust_status_payload,
+        process_record=process_record,
+        development_integration=development_integration,
+        as_json=as_json,
+    ):
         return
 
-    if resolved_kind == "agent-quality":
-        if process_record is None:
-            raise click.UsageError("--kind agent-quality requires --process-record")
-        if development_integration:
-            raise click.UsageError(
-                "--kind agent-quality does not use --development-integration"
-            )
-        _verify_agent_quality(
-            schema,
-            bundle_payload,
-            context_payload,
-            _read_json(process_record, "process record"),
-            anchor_value,
-            trust_status_payload,
-            as_json=as_json,
-        )
-        return
+    _check_record_kind_context(resolved_kind, context_payload)
 
-    if resolved_kind == "dataset-record" and "process_context" not in context_payload:
-        raise click.UsageError("--kind dataset-record requires context.process_context")
-    if resolved_kind == "process-record" and "process_context" in context_payload:
-        raise click.UsageError(
-            "--kind process-record does not accept context.process_context "
-            "(that shape is dataset-record)"
-        )
-
-    try:
-        if resolved_kind == "dataset-record":
-            if process_record is None:
-                raise click.UsageError(
-                    "dataset-record verification requires --process-record"
-                )
-            result = schema.verify_dataset_record_certificate(
-                bundle_payload,
-                context=_dataset_context(context_payload, anchor_value, schema),
-                process_record_bundle=_read_json(process_record, "process record"),
-                leaf_lists=context_payload.get("leaf_lists"),
-            )
-        else:
-            if (
-                context_payload.get("allow_unchecked_base_status") is True
-                and trust_status_payload is not None
-            ):
-                raise click.UsageError(
-                    "--trust-status cannot be used with "
-                    "allow_unchecked_base_status=true"
-                )
-            result = schema.verify_process_record_certificate(
-                bundle_payload,
-                context=_process_context(context_payload, anchor_value, schema),
-                trust_status=trust_status_payload,
-            )
-    except click.UsageError:
-        raise
-    except (
-        schema.ProcessRecordVerificationError,
-        schema.DatasetRecordVerificationError,
-    ) as exc:
-        click.echo(exc.code)
-        raise click.exceptions.Exit(1) from None
+    result = _verify_record_certificate(
+        schema,
+        resolved_kind,
+        bundle_payload,
+        context_payload,
+        anchor_value,
+        trust_status_payload,
+        process_record=process_record,
+    )
 
     if not result.valid:
         click.echo(result.code)
@@ -740,16 +797,57 @@ def _open_commitments(record_bundle: dict[str, Any], commitments_path: Path) -> 
         read_private_json,
     )
 
+    payload, linkage, raw_openings, fp_digests = _load_commitments_payload(
+        commitments_path,
+        read_private_json=read_private_json,
+        error_cls=CommitmentLinkageClientError,
+        bundle_schema=BUNDLE_SCHEMA,
+    )
+    context = _build_linkage_context(cl, record_bundle)
+
+    # Authenticate the sidecar against the verified record FIRST, so a forged
+    # or foreign sidecar is rejected even when no local fp/opening is present.
+    invalid: str | None = None
+    try:
+        cl.verify_commitment_linkage(linkage, context=context)
+    except cl.CommitmentLinkageError as err:
+        invalid = err.code
+    if invalid is not None:
+        click.echo(f"COMMITMENT_LINKAGE_INVALID {invalid}")
+        raise click.exceptions.Exit(1)
+
+    results: list[tuple[str, str]] = []
+    mismatch = False
+    for role in OPENING_ROLES:
+        outcome = _open_commitment_role(
+            cl, linkage, context, role, fp_digests.get(role), raw_openings.get(role)
+        )
+        mismatch = mismatch or outcome == cl.COMMITMENT_OPENED_MISMATCH
+        results.append((role, outcome))
+    for role, outcome in results:
+        click.echo(f"{role}: {outcome}")
+    click.echo(DISCLOSURE_LINE)
+    if mismatch:
+        raise click.exceptions.Exit(1)
+
+
+def _load_commitments_payload(
+    commitments_path: Path,
+    *,
+    read_private_json: Any,
+    error_cls: Any,
+    bundle_schema: Any,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
     refused: str | None = None
     payload: dict[str, Any] = {}
     try:
         payload = read_private_json(commitments_path)
-    except CommitmentLinkageClientError as err:
+    except error_cls as err:
         refused = err.code
     if refused is not None:
         click.echo(f"COMMITMENT_BUNDLE_REFUSED {refused}")
         raise click.exceptions.Exit(1)
-    if payload.get("schema") != BUNDLE_SCHEMA:
+    if payload.get("schema") != bundle_schema:
         raise click.UsageError("commitments bundle has an unsupported schema")
     linkage = payload.get("commitment_linkage")
     if not isinstance(linkage, dict):
@@ -758,11 +856,14 @@ def _open_commitments(record_bundle: dict[str, Any], commitments_path: Path) -> 
     raw_openings = raw_openings if isinstance(raw_openings, dict) else {}
     fp_digests = payload.get("fp_digests")
     fp_digests = fp_digests if isinstance(fp_digests, dict) else {}
+    return payload, linkage, raw_openings, fp_digests
 
+
+def _build_linkage_context(cl: Any, record_bundle: dict[str, Any]) -> Any:
     try:
         manifest = record_bundle["unsigned_manifest"]
         issuer = record_bundle["verification_materials_v0"]["issuer"]
-        context = cl.CommitmentLinkageVerificationContext(
+        return cl.CommitmentLinkageVerificationContext(
             expected_process_record_digest=record_bundle["signature"][
                 "unsigned_manifest_digest"
             ],
@@ -781,48 +882,34 @@ def _open_commitments(record_bundle: dict[str, Any], commitments_path: Path) -> 
             "record bundle lacks the fields needed to open commitments"
         ) from None
 
+
+def _open_commitment_role(
+    cl: Any,
+    linkage: dict[str, Any],
+    context: Any,
+    role: str,
+    fp: Any,
+    opening_b64: Any,
+) -> Any:
     import base64
 
-    # Authenticate the sidecar against the verified record FIRST, so a forged
-    # or foreign sidecar is rejected even when no local fp/opening is present.
+    if not isinstance(fp, str) or not isinstance(opening_b64, str):
+        return cl.COMMITMENT_UNAVAILABLE
+    outcome = ""
     invalid: str | None = None
     try:
-        cl.verify_commitment_linkage(linkage, context=context)
+        opening = base64.b64decode(opening_b64, validate=True)
+        outcome = cl.verify_and_open_commitment(
+            linkage, context=context, role=role, fp_digest=fp, opening=opening
+        )
     except cl.CommitmentLinkageError as err:
         invalid = err.code
+    except ValueError:
+        invalid = "OPENING_SHAPE"
     if invalid is not None:
         click.echo(f"COMMITMENT_LINKAGE_INVALID {invalid}")
         raise click.exceptions.Exit(1)
-
-    results: list[tuple[str, str]] = []
-    mismatch = False
-    for role in OPENING_ROLES:
-        fp = fp_digests.get(role)
-        opening_b64 = raw_openings.get(role)
-        if not isinstance(fp, str) or not isinstance(opening_b64, str):
-            results.append((role, cl.COMMITMENT_UNAVAILABLE))
-            continue
-        outcome = ""
-        invalid = None
-        try:
-            opening = base64.b64decode(opening_b64, validate=True)
-            outcome = cl.verify_and_open_commitment(
-                linkage, context=context, role=role, fp_digest=fp, opening=opening
-            )
-        except cl.CommitmentLinkageError as err:
-            invalid = err.code
-        except ValueError:
-            invalid = "OPENING_SHAPE"
-        if invalid is not None:
-            click.echo(f"COMMITMENT_LINKAGE_INVALID {invalid}")
-            raise click.exceptions.Exit(1)
-        mismatch = mismatch or outcome == cl.COMMITMENT_OPENED_MISMATCH
-        results.append((role, outcome))
-    for role, outcome in results:
-        click.echo(f"{role}: {outcome}")
-    click.echo(DISCLOSURE_LINE)
-    if mismatch:
-        raise click.exceptions.Exit(1)
+    return outcome
 
 
 def _make_backend_client() -> Any:

@@ -185,6 +185,59 @@ def _by_name(items: Any, path: str) -> dict[str, Mapping[str, Any]]:
     return out
 
 
+def _rule_from_local(
+    guard: Any,
+    index: int,
+    monitors: dict[str, Mapping[str, Any]],
+    requirements: dict[str, Mapping[str, Any]],
+) -> GuardRule:
+    path = f"guards[{index}]"
+    if not isinstance(guard, Mapping):
+        raise _bad(path)
+    action, on_error = guard.get("action"), guard.get("on_check_error")
+    if action not in GUARD_ACTIONS or on_error not in ON_CHECK_ERROR:
+        raise _bad(path)
+    monitor = monitors.get(guard.get("monitor"))  # type: ignore[arg-type]
+    if monitor is None:
+        raise _bad(f"{path}.monitor")
+    requirement = requirements.get(monitor.get("requirement"))  # type: ignore[arg-type]
+    if requirement is None:
+        raise _bad(f"{path}.monitor.requirement")
+    violation = requirement.get("violation")
+    evidence = monitor.get("evidence")
+    if (
+        not isinstance(violation, Mapping)
+        or violation.get("pattern") not in PREFIX_FIXED
+        or not isinstance(evidence, Mapping)
+        or evidence.get("source") != "customer_side"
+    ):
+        # RFC 0003 section 5.8: response_guard_not_enforceable.
+        raise RuntimeRequirementError(E_NOT_ENFORCEABLE, path)
+    among = requirement.get("among")
+    if among is not None and not isinstance(among, Mapping):
+        raise _bad(f"{path}.among")
+    limits = monitor.get("limits") or {}
+    if not isinstance(limits, Mapping):
+        raise _bad(f"{path}.limits")
+    return GuardRule(
+        rule_id=str(guard.get("rule_id")),
+        response=str(guard.get("response")),
+        monitor=str(guard.get("monitor")),
+        action=action,
+        on_check_error=on_error,
+        requirement=str(requirement["name"]),
+        predicate=violation,
+        among=among,
+        limits={
+            k: v
+            for k, v in limits.items()
+            if k in ("max_active_obligations", "max_tracked_correlations")
+            and type(v) is int
+        },
+        single_producer=bool(monitor.get("single_producer", False)),
+    )
+
+
 def rules_from_local(local: Mapping[str, Any]) -> tuple[GuardRule, ...]:
     """Resolve the ``guards`` of a compiled ``tvl-runtime-local`` artifact (/1 or /2)."""
     if not isinstance(local, Mapping) or local.get("format") not in LOCAL_FORMATS:
@@ -201,53 +254,7 @@ def rules_from_local(local: Mapping[str, Any]) -> tuple[GuardRule, ...]:
         raise _bad("guards")
     rules: list[GuardRule] = []
     for index, guard in enumerate(guards):
-        path = f"guards[{index}]"
-        if not isinstance(guard, Mapping):
-            raise _bad(path)
-        action, on_error = guard.get("action"), guard.get("on_check_error")
-        if action not in GUARD_ACTIONS or on_error not in ON_CHECK_ERROR:
-            raise _bad(path)
-        monitor = monitors.get(guard.get("monitor"))  # type: ignore[arg-type]
-        if monitor is None:
-            raise _bad(f"{path}.monitor")
-        requirement = requirements.get(monitor.get("requirement"))  # type: ignore[arg-type]
-        if requirement is None:
-            raise _bad(f"{path}.monitor.requirement")
-        violation = requirement.get("violation")
-        evidence = monitor.get("evidence")
-        if (
-            not isinstance(violation, Mapping)
-            or violation.get("pattern") not in PREFIX_FIXED
-            or not isinstance(evidence, Mapping)
-            or evidence.get("source") != "customer_side"
-        ):
-            # RFC 0003 section 5.8: response_guard_not_enforceable.
-            raise RuntimeRequirementError(E_NOT_ENFORCEABLE, path)
-        among = requirement.get("among")
-        if among is not None and not isinstance(among, Mapping):
-            raise _bad(f"{path}.among")
-        limits = monitor.get("limits") or {}
-        if not isinstance(limits, Mapping):
-            raise _bad(f"{path}.limits")
-        rules.append(
-            GuardRule(
-                rule_id=str(guard.get("rule_id")),
-                response=str(guard.get("response")),
-                monitor=str(guard.get("monitor")),
-                action=action,
-                on_check_error=on_error,
-                requirement=str(requirement["name"]),
-                predicate=violation,
-                among=among,
-                limits={
-                    k: v
-                    for k, v in limits.items()
-                    if k in ("max_active_obligations", "max_tracked_correlations")
-                    and type(v) is int
-                },
-                single_producer=bool(monitor.get("single_producer", False)),
-            )
-        )
+        rules.append(_rule_from_local(guard, index, monitors, requirements))
     return tuple(rules)
 
 
@@ -681,6 +688,42 @@ def current_unit() -> UnitGuard | None:
 # -- decorator hook ----------------------------------------------------------------------------
 
 
+def _guard_begin(name: str) -> tuple[UnitGuard, str]:
+    unit = _CURRENT.get()
+    if unit is None:
+        raise RuntimeRequirementError(E_UNIT_MISSING, "unit")
+    call_id = uuid.uuid4().hex
+    decision = unit.check(
+        {
+            "type": "tool_call",
+            "tool": name,
+            "producer": "sdk",
+            "sequence": unit.next_sequence(),
+            "tool_call_id": call_id,
+            **({"correlation_id": unit.correlation_id} if unit.correlation_id else {}),
+        }
+    )
+    if decision.verdict == BLOCK:
+        raise LocalGuardError(E_BLOCKED, decision)
+    if decision.verdict == HALT:
+        raise LocalGuardError(E_HALTED, decision)
+    return unit, call_id
+
+
+def _guard_finish(name: str, unit: UnitGuard, call_id: str, status: str) -> None:
+    unit.observe(
+        {
+            "type": "tool_result",
+            "tool": name,
+            "status": status,
+            "producer": "sdk",
+            "sequence": unit.next_sequence(),
+            "tool_call_id": call_id,
+            **({"correlation_id": unit.correlation_id} if unit.correlation_id else {}),
+        }
+    )
+
+
 def guarded(tool: str | None = None) -> Callable[[F], F]:
     """Guard a function as a ``tool_call`` of the current unit (sync or async).
 
@@ -697,72 +740,30 @@ def guarded(tool: str | None = None) -> Callable[[F], F]:
         if len(name) > 128 or not _CODE_IDENT.fullmatch(name):
             raise RuntimeRequirementError(E_TOOL_NAME, "tool")
 
-        def begin() -> tuple[UnitGuard, str]:
-            unit = _CURRENT.get()
-            if unit is None:
-                raise RuntimeRequirementError(E_UNIT_MISSING, "unit")
-            call_id = uuid.uuid4().hex
-            decision = unit.check(
-                {
-                    "type": "tool_call",
-                    "tool": name,
-                    "producer": "sdk",
-                    "sequence": unit.next_sequence(),
-                    "tool_call_id": call_id,
-                    **(
-                        {"correlation_id": unit.correlation_id}
-                        if unit.correlation_id
-                        else {}
-                    ),
-                }
-            )
-            if decision.verdict == BLOCK:
-                raise LocalGuardError(E_BLOCKED, decision)
-            if decision.verdict == HALT:
-                raise LocalGuardError(E_HALTED, decision)
-            return unit, call_id
-
-        def finish(unit: UnitGuard, call_id: str, status: str) -> None:
-            unit.observe(
-                {
-                    "type": "tool_result",
-                    "tool": name,
-                    "status": status,
-                    "producer": "sdk",
-                    "sequence": unit.next_sequence(),
-                    "tool_call_id": call_id,
-                    **(
-                        {"correlation_id": unit.correlation_id}
-                        if unit.correlation_id
-                        else {}
-                    ),
-                }
-            )
-
         if inspect.iscoroutinefunction(fn):
 
             @functools.wraps(fn)
             async def awrapper(*args: Any, **kwargs: Any) -> Any:
-                unit, call_id = begin()
+                unit, call_id = _guard_begin(name)
                 try:
                     result = await fn(*args, **kwargs)
                 except BaseException:
-                    finish(unit, call_id, "failed")
+                    _guard_finish(name, unit, call_id, "failed")
                     raise
-                finish(unit, call_id, "completed")
+                _guard_finish(name, unit, call_id, "completed")
                 return result
 
             return awrapper  # type: ignore[return-value]
 
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            unit, call_id = begin()
+            unit, call_id = _guard_begin(name)
             try:
                 result = fn(*args, **kwargs)
             except BaseException:
-                finish(unit, call_id, "failed")
+                _guard_finish(name, unit, call_id, "failed")
                 raise
-            finish(unit, call_id, "completed")
+            _guard_finish(name, unit, call_id, "completed")
             return result
 
         return wrapper  # type: ignore[return-value]

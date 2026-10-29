@@ -29,7 +29,7 @@ import json
 import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from traigent.runtime.hosted import (
     NS_MONITOR,
@@ -39,9 +39,13 @@ from traigent.runtime.hosted import (
 )
 from traigent.runtime.model import (
     E_COMPILER,
+    PromotionMonitor,
     RuntimeRequirement,
     RuntimeRequirementError,
 )
+
+if TYPE_CHECKING:
+    from traigent.api.types import OptimizationResult
 
 GATE_FORMAT = "traigent-gate-result/1"
 _LEGACY = {
@@ -157,16 +161,27 @@ def evidence_from_result(
         if generate_config_hash(dict(t.config or {})) == key and t.is_successful
     ]
     entries = (trials[-1].metadata or {}).get("example_results") if trials else None
+    _add_latency_evidence(requirement, promotion, entries, counts, OptimizationResult)
+
+    return [
+        CandidateEvidence(dict(config), legacy_decision_from_gate(decision), counts)
+    ]
+
+
+def _add_latency_evidence(
+    requirement: RuntimeRequirement,
+    promotion: PromotionMonitor | None,
+    entries: Any,
+    counts: dict[str, Mapping[str, Any]],
+    result_type: type[OptimizationResult],
+) -> None:
     if promotion is not None and isinstance(entries, (list, tuple)) and entries:
-        times = [OptimizationResult._extract_response_time(e) for e in entries]
+        times = [result_type._extract_response_time(e) for e in entries]
         if any(t is not None and t > 0 for t in times):
             counts[promotion.name] = latency_counts(
                 [t * 1000.0 if t is not None and t > 0 else None for t in times],
                 requirement.latency_threshold_ms,
             )
-    return [
-        CandidateEvidence(dict(config), legacy_decision_from_gate(decision), counts)
-    ]
 
 
 def _tvl() -> tuple[Any, Any, Any]:

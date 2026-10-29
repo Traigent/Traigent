@@ -42,6 +42,8 @@ from traigent.labels.transport_gate import (
 from traigent.security.redaction import redact_sensitive_data
 from traigent.utils.exceptions import AuthenticationError as TraigentAuthenticationError
 
+_VALIDATE_TRANSPORT_ERROR_EVENT = "auth.api_key.validate_transport_error"
+
 APPLICATION_JSON = "application/json"
 
 logger = logging.getLogger(__name__)
@@ -1770,9 +1772,7 @@ class AuthManager:
         from traigent.utils.env_config import is_backend_offline
 
         if cloud_backend_egress_disabled(self.no_egress):
-            if is_backend_offline():
-                return "backend offline mode enabled"
-            return "backend egress disabled"
+            return AuthManager._backend_egress_reason(is_backend_offline())
 
         try:
             backend_api_url = BackendConfig.build_api_base(
@@ -1813,7 +1813,7 @@ class AuthManager:
                 return "requests library not available for backend validation"
             except Exception as exc:  # pragma: no cover - defensive thread boundary
                 logger.debug(
-                    "auth.api_key.validate_transport_error",
+                    _VALIDATE_TRANSPORT_ERROR_EVENT,
                     extra={"error": str(exc)},
                 )
                 return f"transport error: {exc.__class__.__name__}"
@@ -1841,12 +1841,8 @@ class AuthManager:
                             data = await response.json(content_type=None)
                         except Exception:
                             return "backend returned non-JSON success body"
-                        if _latch_key_validation(url, headers, data):
-                            self._server_optimization_only = True
-                        return self._interpret_backend_key_validation_response(
-                            response.status,
-                            data,
-                            url=url,
+                        return AuthManager._key_validation_success(
+                            self, url, headers, data, response
                         )
                     try:
                         raw_body = await response.text()
@@ -1864,10 +1860,27 @@ class AuthManager:
         except Exception as exc:  # pragma: no cover - exercised via unit tests
             # Note: log the exception type/message but never the key.
             logger.debug(
-                "auth.api_key.validate_transport_error",
+                _VALIDATE_TRANSPORT_ERROR_EVENT,
                 extra={"error": str(exc)},
             )
             return f"transport error: {exc.__class__.__name__}"
+
+    @staticmethod
+    def _backend_egress_reason(offline: bool) -> str:
+        if offline:
+            return "backend offline mode enabled"
+        return "backend egress disabled"
+
+    def _key_validation_success(
+        self, url: str, headers: dict[str, str], data: Any, response: Any
+    ) -> str | None:
+        if _latch_key_validation(url, headers, data):
+            self._server_optimization_only = True
+        return self._interpret_backend_key_validation_response(
+            response.status,
+            data,
+            url=url,
+        )
 
     @staticmethod
     def _interpret_backend_key_validation_response(
@@ -1908,6 +1921,26 @@ class AuthManager:
             backend_url=url,
         )
 
+        category = AuthManager._backend_validation_category(
+            status, body_text, lower_headers
+        )
+
+        body_excerpt = _validation_body_excerpt(raw_body)
+        status_context = f"HTTP {status}"
+        if url:
+            status_context = f"{status_context} from POST {url}"
+        if body_excerpt:
+            status_context = f"{status_context}: {body_excerpt}"
+        reason = f"{category} ({status_context})"
+        return _BackendKeyValidationFailure(
+            reason,
+            session_creation_failure=detail,
+        )
+
+    @staticmethod
+    def _backend_validation_category(
+        status: int, body_text: str, lower_headers: dict[str, str]
+    ) -> str:
         edge_blocked = status == 403 and (
             "cf-ray" in lower_headers
             or "cf-mitigated" in lower_headers
@@ -1926,9 +1959,9 @@ class AuthManager:
         )
 
         if edge_blocked:
-            category = "edge blocked"
+            return "edge blocked"
         elif "expired" in body_text or "expiration" in body_text:
-            category = "expired API key"
+            return "expired API key"
         elif status == 403 or any(
             marker in body_text
             for marker in (
@@ -1938,7 +1971,7 @@ class AuthManager:
                 "scope",
             )
         ):
-            category = "insufficient scope"
+            return "insufficient scope"
         elif status == 401 or any(
             marker in body_text
             for marker in (
@@ -1949,23 +1982,11 @@ class AuthManager:
                 "authentication",
             )
         ):
-            category = "invalid API key"
+            return "invalid API key"
         elif status == 429:
-            category = "rate limited"
+            return "rate limited"
         else:
-            category = "backend validation failed"
-
-        body_excerpt = _validation_body_excerpt(raw_body)
-        status_context = f"HTTP {status}"
-        if url:
-            status_context = f"{status_context} from POST {url}"
-        if body_excerpt:
-            status_context = f"{status_context}: {body_excerpt}"
-        reason = f"{category} ({status_context})"
-        return _BackendKeyValidationFailure(
-            reason,
-            session_creation_failure=detail,
-        )
+            return "backend validation failed"
 
     def _validate_api_key_with_backend_sync(
         self,
@@ -1999,7 +2020,7 @@ class AuthManager:
             return "backend validation timed out"
         except requests.RequestException as exc:
             logger.debug(
-                "auth.api_key.validate_transport_error",
+                _VALIDATE_TRANSPORT_ERROR_EVENT,
                 extra={"error": str(exc)},
             )
             return f"transport error: {exc.__class__.__name__}"

@@ -35,11 +35,14 @@ import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from traigent.api.types import OptimizationResult, TrialResult, TrialStatus
 from traigent.utils.logging import get_logger
 from traigent.utils.trial_costs import coerce_finite_cost, is_cost_unmeasured
+
+if TYPE_CHECKING:
+    from traigent.utils.persistence import PersistenceManager
 
 logger = get_logger(__name__)
 
@@ -89,49 +92,53 @@ def load_resume_source(
     """
     if isinstance(resume_from, OptimizationResult):
         return resume_from
-    if isinstance(resume_from, (str, os.PathLike)):
-        from traigent.utils.persistence import PersistenceManager
+    if not isinstance(resume_from, (str, os.PathLike)):
+        raise TypeError(
+            "resume_from must be an OptimizationResult or the name/path of a result "
+            "saved with PersistenceManager.save_result"
+        )
+    from traigent.utils.persistence import PersistenceManager
 
-        raw = Path(os.fspath(resume_from))
-        if raw.name in ("", ".", "..") or "\x00" in str(raw):
-            raise ValueError("resume_from does not name a saved result")
-        if raw.is_absolute() or len(raw.parts) > 1:
-            manager = PersistenceManager(base_dir=raw.parent)
-        else:
-            manager = PersistenceManager()
-        try:
-            if not allow_unverified_resume:
-                from traigent.utils.file_versioning import verify_integrity_manifest
-                from traigent.utils.persistence import _INTEGRITY_FILES
+    raw = Path(os.fspath(resume_from))
+    if raw.name in ("", ".", "..") or "\x00" in str(raw):
+        raise ValueError("resume_from does not name a saved result")
+    if raw.is_absolute() or len(raw.parts) > 1:
+        manager = PersistenceManager(base_dir=raw.parent)
+    else:
+        manager = PersistenceManager()
+    try:
+        if not allow_unverified_resume:
+            _verify_resume_integrity(manager, raw)
+        return manager.load_result(raw.name)
+    except _UnverifiedResult:
+        raise ValueError(
+            "resume_from: saved result has no integrity manifest, so it "
+            "cannot be verified; nothing was reused. Re-save it with "
+            "PersistenceManager.save_result, or pass "
+            "allow_unverified_resume=True (unsafe)."
+        ) from None
+    except FileNotFoundError:
+        raise ValueError("resume_from: saved result not found") from None
+    except ValueError:
+        raise ValueError(
+            "resume_from: saved result is corrupted or failed integrity "
+            "verification; nothing was reused"
+        ) from None
+    except Exception:
+        raise ValueError(
+            "resume_from: saved result could not be loaded; nothing was reused"
+        ) from None
 
-                result_dir = manager._resolve_path(manager.base_dir / raw.name)
-                if not result_dir.exists():
-                    raise FileNotFoundError
-                if not verify_integrity_manifest(result_dir, list(_INTEGRITY_FILES)):
-                    raise _UnverifiedResult
-            return manager.load_result(raw.name)
-        except _UnverifiedResult:
-            raise ValueError(
-                "resume_from: saved result has no integrity manifest, so it "
-                "cannot be verified; nothing was reused. Re-save it with "
-                "PersistenceManager.save_result, or pass "
-                "allow_unverified_resume=True (unsafe)."
-            ) from None
-        except FileNotFoundError:
-            raise ValueError("resume_from: saved result not found") from None
-        except ValueError:
-            raise ValueError(
-                "resume_from: saved result is corrupted or failed integrity "
-                "verification; nothing was reused"
-            ) from None
-        except Exception:
-            raise ValueError(
-                "resume_from: saved result could not be loaded; nothing was reused"
-            ) from None
-    raise TypeError(
-        "resume_from must be an OptimizationResult or the name/path of a result "
-        "saved with PersistenceManager.save_result"
-    )
+
+def _verify_resume_integrity(manager: PersistenceManager, raw: Path) -> None:
+    from traigent.utils.file_versioning import verify_integrity_manifest
+    from traigent.utils.persistence import _INTEGRITY_FILES
+
+    result_dir = manager._resolve_path(manager.base_dir / raw.name)
+    if not result_dir.exists():
+        raise FileNotFoundError
+    if not verify_integrity_manifest(result_dir, list(_INTEGRITY_FILES)):
+        raise _UnverifiedResult
 
 
 RESUMED_EXAMPLE_KEY = "resumed_example_from_prior_run"
@@ -319,14 +326,7 @@ def reused_rows_stats(trial: TrialResult) -> tuple[int, float]:
     into the trial totals and therefore must be excluded from new spend too.
     """
     metadata = trial.metadata or {}
-    raw = metadata.get("example_results")
-    if not isinstance(raw, list) or not raw:
-        evaluation = metadata.get("evaluation_result")
-        raw = (
-            evaluation.get("example_results")
-            if isinstance(evaluation, Mapping)
-            else getattr(evaluation, "example_results", None)
-        )
+    raw = _reused_rows_source(metadata)
     count = 0
     cost = 0.0
     for item in raw if isinstance(raw, list) else []:
@@ -344,6 +344,18 @@ def reused_rows_stats(trial: TrialResult) -> tuple[int, float]:
         if known is not None:
             cost += known
     return count, cost
+
+
+def _reused_rows_source(metadata: dict[str, Any]) -> Any:
+    raw = metadata.get("example_results")
+    if not isinstance(raw, list) or not raw:
+        evaluation = metadata.get("evaluation_result")
+        raw = (
+            evaluation.get("example_results")
+            if isinstance(evaluation, Mapping)
+            else getattr(evaluation, "example_results", None)
+        )
+    return raw
 
 
 def _known_cost(trial: TrialResult) -> float | None:

@@ -493,20 +493,13 @@ def _open_anchor() -> _Anchor:
     try:
         while pending:
             part, is_store = pending.pop()
-            if part in (".", ""):
+            if _skip_anchor_part(part):
                 continue
-            if part == "..":
-                raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS)
             created = False
             try:
                 child = _open_dir_nofollow(part, fd)
             except _LinkComponent:
-                if is_store:
-                    raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS) from None
-                hops += 1
-                target = _read_trusted_link(part, fd)
-                if hops > _MAX_LINK_HOPS:
-                    raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS) from None
+                hops, target = _anchor_link_target(part, fd, is_store, hops)
                 if target.startswith(os.sep):
                     os.close(fd)
                     fd = -1  # never close a stale descriptor if the reopen is refused
@@ -520,26 +513,7 @@ def _open_anchor() -> _Anchor:
                 except FileExistsError:
                     pass
                 child = _open_dir_nofollow(part, fd)
-            try:
-                info = os.fstat(child)
-                if created:
-                    os.fchmod(
-                        child, 0o700
-                    )  # our own new directory: defeat a restrictive umask
-                    os.fsync(child)
-                    os.fsync(fd)  # link the new entry into its parent durably
-                    info = os.fstat(child)
-                if is_store:
-                    if (
-                        info.st_uid != os.geteuid()
-                        or stat.S_IMODE(info.st_mode) & 0o077
-                    ):
-                        raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS)
-                elif not _trusted_dir(info):
-                    raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS)
-            except BaseException:
-                os.close(child)
-                raise
+            _validate_anchor_child(child, fd, created, is_store)
             os.close(fd)
             fd = child
         anchor = _Anchor(fd, os.path.join(configured, _STORE_DIRNAME))
@@ -550,8 +524,54 @@ def _open_anchor() -> _Anchor:
     except OSError:
         raise TokenStoreError(TOKEN_MAP_NOT_PERSISTED) from None
     finally:
-        if fd != -1:
-            os.close(fd)
+        _close_anchor_fd(fd)
+
+
+def _close_anchor_fd(fd: int) -> None:
+    if fd != -1:
+        os.close(fd)
+
+
+def _skip_anchor_part(part: str) -> bool:
+    if part in (".", ""):
+        return True
+    if part == "..":
+        raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS)
+    return False
+
+
+def _validate_anchor_child(child: int, fd: int, created: bool, is_store: bool) -> None:
+    try:
+        _validate_opened_child(child, fd, created, is_store)
+    except BaseException:
+        os.close(child)
+        raise
+
+
+def _validate_opened_child(child: int, fd: int, created: bool, is_store: bool) -> None:
+    info = os.fstat(child)
+    if created:
+        os.fchmod(child, 0o700)  # our own new directory: defeat a restrictive umask
+        os.fsync(child)
+        os.fsync(fd)  # link the new entry into its parent durably
+        info = os.fstat(child)
+    if is_store:
+        if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077:
+            raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS)
+    elif not _trusted_dir(info):
+        raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS)
+
+
+def _anchor_link_target(
+    part: str, fd: int, is_store: bool, hops: int
+) -> tuple[int, str]:
+    if is_store:
+        raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS) from None
+    hops += 1
+    target = _read_trusted_link(part, fd)
+    if hops > _MAX_LINK_HOPS:
+        raise TokenStoreError(TOKEN_STORE_INSECURE_PERMISSIONS) from None
+    return hops, target
 
 
 def _write_atomic(place: _Place, payload: bytes) -> None:
@@ -1279,23 +1299,44 @@ def _issue(
         # DID commit (response lost, then access lost or revoked): dropping the key would let
         # a later call mint a new one and double-issue. The intent keeps failing with its
         # closed code until it succeeds or the caller deliberately abandons it.
-        code = _refusal_code(status, payload)
-        if code != TOKEN_REFS_SERVICE_UNAVAILABLE:
-            raise TokenStoreError(code)
-        # 503 service_unavailable: the SAME operation_key is re-sent (idempotent), paced by
-        # Retry-After when the server gave one, within the operation deadline; once the next
-        # wait would not fit (or the attempts are used up) the closed retryable code stands.
-        delay = (
-            retry_after
-            if retry_after is not None
-            else RETRY_BACKOFF_SECONDS[min(attempt, len(RETRY_BACKOFF_SECONDS) - 1)]
+        delay, attempt = _issue_retry(
+            status, payload, retry_after, attempt, tx.deadline
         )
-        attempt += 1
-        if attempt >= MAX_SERVICE_UNAVAILABLE_ATTEMPTS or delay >= (
-            tx.deadline - time.monotonic()
-        ):
-            raise TokenStoreError(code)
         _sleep(delay)
+    refs = _validated_issue_refs(payload, op, tx.state)
+    op["refs"] = list(refs)
+    for entry in tx.state["tokens"].values():
+        if entry["op"] == op_key:
+            entry["ref"] = refs[entry["ordinal"]]
+            entry["state"] = S1_PENDING_LABEL
+    tx.write()
+
+
+def _issue_retry(
+    status: Any, payload: Any, retry_after: float | None, attempt: int, deadline: float
+) -> tuple[float, int]:
+    code = _refusal_code(status, payload)
+    if code != TOKEN_REFS_SERVICE_UNAVAILABLE:
+        raise TokenStoreError(code)
+    # 503 service_unavailable: the SAME operation_key is re-sent (idempotent), paced by
+    # Retry-After when the server gave one, within the operation deadline; once the next
+    # wait would not fit (or the attempts are used up) the closed retryable code stands.
+    delay = (
+        retry_after
+        if retry_after is not None
+        else RETRY_BACKOFF_SECONDS[min(attempt, len(RETRY_BACKOFF_SECONDS) - 1)]
+    )
+    attempt += 1
+    if attempt >= MAX_SERVICE_UNAVAILABLE_ATTEMPTS or delay >= (
+        deadline - time.monotonic()
+    ):
+        raise TokenStoreError(code)
+    return delay, attempt
+
+
+def _validated_issue_refs(
+    payload: Any, op: dict[str, Any], state: dict[str, Any]
+) -> list[str]:
     refs = (
         payload.get("refs")
         if isinstance(payload, dict) and set(payload) == {"refs"}
@@ -1311,15 +1352,10 @@ def _issue(
             for item, ref in zip(op["items"], refs, strict=True)
         )
         or len(set(refs)) != len(refs)
-        or any(ref in _all_refs(tx.state) for ref in refs)
+        or any(ref in _all_refs(state) for ref in refs)
     ):
         raise TokenStoreError(TOKEN_REFS_RESPONSE_INVALID)
-    op["refs"] = list(refs)
-    for entry in tx.state["tokens"].values():
-        if entry["op"] == op_key:
-            entry["ref"] = refs[entry["ordinal"]]
-            entry["state"] = S1_PENDING_LABEL
-    tx.write()
+    return refs
 
 
 def _all_refs(state: dict[str, Any]) -> set[str]:
@@ -1406,21 +1442,26 @@ def _validate_requests(requests: Sequence[TokenRequest]) -> list[TokenRequest]:
     out: list[TokenRequest] = []
     seen: set[TokenRequest] = set()
     for request in requests:
-        if not isinstance(request, (tuple, list)) or len(request) != 3:
-            raise TokenStoreError(TOKEN_REQUEST_INVALID)
-        kind, parent_name, name = request
-        if kind not in KINDS or not _valid_name(name):
-            raise TokenStoreError(TOKEN_REQUEST_INVALID)
-        if kind == "choice":
-            if not _valid_name(parent_name):
-                raise TokenStoreError(TOKEN_REQUEST_INVALID)
-        elif parent_name is not None:
-            raise TokenStoreError(TOKEN_REQUEST_INVALID)
-        triple = (kind, parent_name, name)
+        triple = _validate_token_request(request)
         if triple not in seen:
             seen.add(triple)
             out.append(triple)
     return out
+
+
+def _validate_token_request(request: TokenRequest) -> TokenRequest:
+    if not isinstance(request, (tuple, list)) or len(request) != 3:
+        raise TokenStoreError(TOKEN_REQUEST_INVALID)
+    kind, parent_name, name = request
+    if kind not in KINDS or not _valid_name(name):
+        raise TokenStoreError(TOKEN_REQUEST_INVALID)
+    if kind == "choice":
+        if not _valid_name(parent_name):
+            raise TokenStoreError(TOKEN_REQUEST_INVALID)
+    elif parent_name is not None:
+        raise TokenStoreError(TOKEN_REQUEST_INVALID)
+    triple = (kind, parent_name, name)
+    return triple
 
 
 @_closed_boundary

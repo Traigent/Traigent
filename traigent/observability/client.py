@@ -403,6 +403,43 @@ def _safe_allowlisted_observation_snapshot(
     return safe
 
 
+def _keep_if_none(value: Any, fallback: Any) -> Any:
+    """``value`` unless it is None, in which case ``fallback``."""
+    return value if value is not None else fallback
+
+
+def _updated_content_value(
+    state: _TraceState,
+    observation_id: str,
+    field_name: str,
+    existing_value: Any,
+    *,
+    supplied: bool,
+    gated: Any,
+    effective_content_mode: Any,
+) -> Any:
+    # M4 fix: fall back to `existing` only when this call never supplied the
+    # field (NOT_SUPPLIED) -- a supplied value, gated, always overwrites, even
+    # when gating withheld it to `None` (tightening wins; see the
+    # `apply_content_mode` docstring). `wire_value_for_tightened_update`
+    # additionally forces the explicit placeholder (not `None`) when this is a
+    # tightening update over PRIOR content -- the ingest contract's
+    # `apply_updates` keeps stored content on an omitted/`None` field, so
+    # merely omitting would not clear it server-side.
+    if not supplied:
+        return existing_value
+    return wire_value_for_tightened_update(
+        gated,
+        effective_content_mode=effective_content_mode,
+        existing_value=(
+            existing_value
+            if existing_value is not None
+            or not state.had_prior_content(observation_id, field_name)
+            else redacted_content_marker()
+        ),
+    )
+
+
 def _safe_allowlisted_snapshot(
     payload: dict[str, Any], *, state: _TraceFallbackDescriptor | None = None
 ) -> dict[str, Any]:
@@ -488,15 +525,21 @@ def _safe_allowlisted_snapshot(
         if value is not None:
             safe[field_name] = value
     if state is not None:
-        if state.had_prior_input_data:
-            safe["input_data"] = redacted_content_marker()
-        if state.had_prior_output_data:
-            safe["output_data"] = redacted_content_marker()
-        safe["observations"] = [
-            _safe_allowlisted_observation_snapshot(observation_descriptor)
-            for observation_descriptor in state.observations
-        ]
+        _apply_fallback_descriptor(safe, state)
     return safe
+
+
+def _apply_fallback_descriptor(
+    safe: dict[str, Any], state: _TraceFallbackDescriptor
+) -> None:
+    if state.had_prior_input_data:
+        safe["input_data"] = redacted_content_marker()
+    if state.had_prior_output_data:
+        safe["output_data"] = redacted_content_marker()
+    safe["observations"] = [
+        _safe_allowlisted_observation_snapshot(observation_descriptor)
+        for observation_descriptor in state.observations
+    ]
 
 
 def _safe_allowlisted_snapshot_or_static_fallback(
@@ -605,6 +648,49 @@ def _parse_retry_after(headers: Any) -> float | None:
     if retry_at.tzinfo is None:
         retry_at = retry_at.replace(tzinfo=UTC)
     return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
+
+
+@dataclass
+class _ObservationCall:
+    """The arguments of one ``record_observation`` call after content gating."""
+
+    observation_id: str
+    effective_type: ObservationType
+    name: str
+    parent_observation_id: str | None
+    status: str
+    started_at: datetime | None
+    ended_at: datetime | None
+    latency_ms: int | None
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+    cost_usd: float | None
+    model_name: str | None
+    tool_name: str | None
+    input_supplied: bool
+    output_supplied: bool
+    gated_input_data: Any
+    gated_output_data: Any
+    effective_content_mode: Any
+    error_supplied: bool
+    gated_error_message: str | None
+    metadata: dict[str, Any]
+    correlation_ids: Any
+    prompt_reference: Any
+
+
+@dataclass
+class _CloseClaim:
+    """What one ``ObservabilityClient.close`` call decided to do (under the lock)."""
+
+    close_in_progress: bool = False
+    already_closed: bool = False
+    offline_close: bool = False
+    trace_payloads: list[tuple[str, dict[str, Any], _TraceFallbackDescriptor]] = field(
+        default_factory=list
+    )
+    inflight_snapshot_submissions: int = 0
 
 
 @dataclass
@@ -1364,128 +1450,152 @@ class _SyncBatchTransport:
     ) -> bool:
         events: list[tuple[str, dict[str, Any]]] = []
         caller_released = threading.Event()
-        if deadline is None:
-            acquired = self._send_lock.acquire()
-        else:
-            acquired = self._send_lock.acquire(
-                timeout=max(0.0, deadline - time.monotonic())
-            )
-        if not acquired:
-            if warn_on_deadline_expiry:
-                event = self._record_deadline_expiry(deadline)
-                if event is not None:
-                    events.append(event)
+        if not self._acquire_send_lock(deadline):
+            self._expire_send(events, deadline, warn_on_deadline_expiry)
             self._emit_health_events(events, deadline=deadline)
             return False
 
         try:
             while True:
-                if not self._wait_for_active_send(deadline):
-                    if warn_on_deadline_expiry:
-                        event = self._record_deadline_expiry(deadline)
-                        if event is not None:
-                            events.append(event)
-                    return False
-                if deadline is not None and time.monotonic() >= deadline:
-                    if warn_on_deadline_expiry:
-                        event = self._record_deadline_expiry(deadline)
-                        if event is not None:
-                            events.append(event)
-                    return False
+                if self._send_blocked(deadline):
+                    return self._expire_send(events, deadline, warn_on_deadline_expiry)
                 if not self._acquire_lock_until(deadline):
                     return False
                 try:
-                    if timer_epoch is not None and (
-                        timer_epoch != self._delivery_failure_epoch
-                    ):
-                        # A failure retained the outbox while this timer drain
-                        # waited for send serialization; do not resend it.
-                        return True
-                    if not self._buffer:
-                        self._stats["pending_items"] = self._inflight_items
-                        return True
-
-                    batch_items: list[tuple[str, dict[str, Any]]] = []
-                    batch_body_bytes = 0
-                    batch_observations = 0
-                    # Every request fits the backend's per-request caps
-                    # (#2600), whatever batch_size the caller configured.
-                    max_batch_items = min(self.batch_size, len(self._buffer))
-                    if self.max_traces_per_request is not None:
-                        max_batch_items = min(
-                            max_batch_items, self.max_traces_per_request
-                        )
-                    for _ in range(max_batch_items):
-                        item_id, buffered = next(iter(self._buffer.items()))
-                        projected_body_bytes = batch_body_bytes + buffered.payload_bytes
-                        if batch_items:
-                            projected_body_bytes += _TRACE_BATCH_ITEM_SEPARATOR_BYTES
-                        projected_bytes = self._batch_payload_size_from_body(
-                            projected_body_bytes
-                        )
-                        projected_observations = (
-                            batch_observations + buffered.observation_count
-                        )
-                        if batch_items and (
-                            projected_bytes > self.max_batch_bytes
-                            or (
-                                self.max_observations_per_request is not None
-                                and projected_observations
-                                > self.max_observations_per_request
-                            )
-                        ):
-                            break
-                        self._buffer.popitem(last=False)
-                        self._inflight_digests[item_id] = buffered.digest
-                        self._inflight_generations[item_id] = buffered.generation
-                        # Once a send starts, the backend may end up holding
-                        # this snapshot whatever the outcome (a timeout after
-                        # commit, an exception escaping the send), so the
-                        # older delivered one is forgotten until this send
-                        # succeeds. The cost is at most one redundant resend.
-                        self._delivered_digests.pop(item_id, None)
-                        batch_items.append((item_id, buffered.payload))
-                        batch_body_bytes = projected_body_bytes
-                        batch_observations = projected_observations
-                    self._inflight_items += len(batch_items)
-                    if self._oldest_inflight_started_at is None:
-                        self._oldest_inflight_started_at = time.monotonic()
-                    self._stats["pending_items"] = (
-                        len(self._buffer) + self._inflight_items
-                    )
+                    done, batch_items = self._collect_batch_locked(timer_epoch)
                 finally:
                     self._lock.release()
+                if done:
+                    return True
 
                 if not batch_items:
                     continue
-                if deadline is None:
-                    try:
-                        delivered, batch_events = self._send_batch(batch_items)
-                        events.extend(batch_events)
-                    finally:
-                        self._complete_inflight_batch(len(batch_items))
-                    if not delivered:
-                        # Keep failed snapshots for a later caller-driven retry,
-                        # rather than retrying this outbox forever in this drain.
-                        return True
-                else:
-                    timed_result = self._send_batch_until(
-                        batch_items, deadline, caller_released
-                    )
-                    if timed_result is None:
-                        if warn_on_deadline_expiry:
-                            event = self._record_deadline_expiry(deadline)
-                            if event is not None:
-                                events.append(event)
-                        return False
-                    delivered, queued_events = timed_result
-                    events.extend(queued_events)
-                    if not delivered:
-                        return True
+                outcome = self._deliver_collected_batch(
+                    batch_items,
+                    deadline,
+                    warn_on_deadline_expiry,
+                    caller_released,
+                    events,
+                )
+                if outcome is not None:
+                    return outcome
         finally:
             self._send_lock.release()
             caller_released.set()
             self._emit_health_events(events, deadline=deadline)
+
+    def _acquire_send_lock(self, deadline: float | None) -> bool:
+        if deadline is None:
+            return self._send_lock.acquire()
+        return self._send_lock.acquire(timeout=max(0.0, deadline - time.monotonic()))
+
+    def _send_blocked(self, deadline: float | None) -> bool:
+        if not self._wait_for_active_send(deadline):
+            return True
+        return deadline is not None and time.monotonic() >= deadline
+
+    def _expire_send(
+        self,
+        events: list[tuple[str, dict[str, Any]]],
+        deadline: float | None,
+        warn_on_deadline_expiry: bool,
+    ) -> bool:
+        if warn_on_deadline_expiry:
+            self._note_deadline_expiry(events, deadline)
+        return False
+
+    def _deliver_collected_batch(
+        self,
+        batch_items: list[tuple[str, dict[str, Any]]],
+        deadline: float | None,
+        warn_on_deadline_expiry: bool,
+        caller_released: threading.Event,
+        events: list[tuple[str, dict[str, Any]]],
+    ) -> bool | None:
+        """Send one collected batch; ``None`` means keep draining."""
+        if deadline is None:
+            try:
+                delivered, batch_events = self._send_batch(batch_items)
+                events.extend(batch_events)
+            finally:
+                self._complete_inflight_batch(len(batch_items))
+            if not delivered:
+                # Keep failed snapshots for a later caller-driven retry,
+                # rather than retrying this outbox forever in this drain.
+                return True
+            return None
+        timed_result = self._send_batch_until(batch_items, deadline, caller_released)
+        if timed_result is None:
+            return self._expire_send(events, deadline, warn_on_deadline_expiry)
+        delivered, queued_events = timed_result
+        events.extend(queued_events)
+        if not delivered:
+            return True
+        return None
+
+    def _note_deadline_expiry(
+        self, events: list[tuple[str, dict[str, Any]]], deadline: float | None
+    ) -> None:
+        event = self._record_deadline_expiry(deadline)
+        if event is not None:
+            events.append(event)
+
+    def _collect_batch_locked(
+        self, timer_epoch: int | None
+    ) -> tuple[bool, list[tuple[str, dict[str, Any]]]]:
+        """Pop the next batch off the outbox; the caller holds ``self._lock``.
+
+        Returns ``(done, batch_items)``: ``done`` means the drain is finished
+        and ``_send_available`` returns True without sending anything.
+        """
+        if timer_epoch is not None and (timer_epoch != self._delivery_failure_epoch):
+            # A failure retained the outbox while this timer drain
+            # waited for send serialization; do not resend it.
+            return True, []
+        if not self._buffer:
+            self._stats["pending_items"] = self._inflight_items
+            return True, []
+
+        batch_items: list[tuple[str, dict[str, Any]]] = []
+        batch_body_bytes = 0
+        batch_observations = 0
+        # Every request fits the backend's per-request caps
+        # (#2600), whatever batch_size the caller configured.
+        max_batch_items = min(self.batch_size, len(self._buffer))
+        if self.max_traces_per_request is not None:
+            max_batch_items = min(max_batch_items, self.max_traces_per_request)
+        for _ in range(max_batch_items):
+            item_id, buffered = next(iter(self._buffer.items()))
+            projected_body_bytes = batch_body_bytes + buffered.payload_bytes
+            if batch_items:
+                projected_body_bytes += _TRACE_BATCH_ITEM_SEPARATOR_BYTES
+            projected_bytes = self._batch_payload_size_from_body(projected_body_bytes)
+            projected_observations = batch_observations + buffered.observation_count
+            if batch_items and (
+                projected_bytes > self.max_batch_bytes
+                or (
+                    self.max_observations_per_request is not None
+                    and projected_observations > self.max_observations_per_request
+                )
+            ):
+                break
+            self._buffer.popitem(last=False)
+            self._inflight_digests[item_id] = buffered.digest
+            self._inflight_generations[item_id] = buffered.generation
+            # Once a send starts, the backend may end up holding
+            # this snapshot whatever the outcome (a timeout after
+            # commit, an exception escaping the send), so the
+            # older delivered one is forgotten until this send
+            # succeeds. The cost is at most one redundant resend.
+            self._delivered_digests.pop(item_id, None)
+            batch_items.append((item_id, buffered.payload))
+            batch_body_bytes = projected_body_bytes
+            batch_observations = projected_observations
+        self._inflight_items += len(batch_items)
+        if self._oldest_inflight_started_at is None:
+            self._oldest_inflight_started_at = time.monotonic()
+        self._stats["pending_items"] = len(self._buffer) + self._inflight_items
+        return False, batch_items
 
     def _send_batch_until(
         self,
@@ -1629,43 +1739,48 @@ class _SyncBatchTransport:
     def _batch_payload_size_from_body(body_bytes: int) -> int:
         return _TRACE_BATCH_PREFIX_BYTES + body_bytes + _TRACE_BATCH_SUFFIX_BYTES
 
-    def _send_batch(
-        self, batch_items: list[tuple[str, dict[str, Any]]]
-    ) -> tuple[bool, list[tuple[str, dict[str, Any]]]]:
-        events: list[tuple[str, dict[str, Any]]] = []
-        payloads = [payload for _, payload in batch_items]
-        result = self._retry_handler.execute_with_result(self._sender, payloads)
+    def _record_batch_success(
+        self,
+        batch_items: list[tuple[str, dict[str, Any]]],
+        payloads: list[dict[str, Any]],
+        result: Any,
+        events: list[tuple[str, dict[str, Any]]],
+    ) -> list[tuple[str, dict[str, Any]]]:
+        raw_warnings = (
+            result.result.get("warnings") if isinstance(result.result, dict) else None
+        )
+        # Same tolerance as `_log_ingest_warnings_from_data`: a malformed
+        # warnings value must not raise out of a flush.
+        response_warnings = raw_warnings if isinstance(raw_warnings, list) else []
+        for warning in response_warnings:
+            events.append(self._append_warning(str(warning)))
+        with self._lock:
+            self._stats["successful_batches"] += 1
+            self._stats["sent_items"] += len(payloads)
+            for item_id, _ in batch_items:
+                digest = self._inflight_digests.pop(item_id, None)
+                if item_id not in self._buffer:
+                    self._settled_items.add(item_id)
+                if digest is None or response_warnings:
+                    # A response with warnings (e.g. an unresolved prompt
+                    # link) may be resolved by a later re-send, so it does
+                    # not count as delivered for dedup.
+                    self._delivered_digests.pop(item_id, None)
+                    continue
+                self._delivered_digests[item_id] = digest
+                self._delivered_digests.move_to_end(item_id)
+            while len(self._delivered_digests) > self.max_queue_size:
+                self._delivered_digests.popitem(last=False)
 
-        if result.success:
-            raw_warnings = (
-                result.result.get("warnings")
-                if isinstance(result.result, dict)
-                else None
-            )
-            # Same tolerance as `_log_ingest_warnings_from_data`: a malformed
-            # warnings value must not raise out of a flush.
-            response_warnings = raw_warnings if isinstance(raw_warnings, list) else []
-            for warning in response_warnings:
-                events.append(self._append_warning(str(warning)))
-            with self._lock:
-                self._stats["successful_batches"] += 1
-                self._stats["sent_items"] += len(payloads)
-                for item_id, _ in batch_items:
-                    digest = self._inflight_digests.pop(item_id, None)
-                    if item_id not in self._buffer:
-                        self._settled_items.add(item_id)
-                    if digest is None or response_warnings:
-                        # A response with warnings (e.g. an unresolved prompt
-                        # link) may be resolved by a later re-send, so it does
-                        # not count as delivered for dedup.
-                        self._delivered_digests.pop(item_id, None)
-                        continue
-                    self._delivered_digests[item_id] = digest
-                    self._delivered_digests.move_to_end(item_id)
-                while len(self._delivered_digests) > self.max_queue_size:
-                    self._delivered_digests.popitem(last=False)
-            return True, events
+        return events
 
+    def _record_batch_failure(
+        self,
+        batch_items: list[tuple[str, dict[str, Any]]],
+        payloads: list[dict[str, Any]],
+        result: Any,
+        events: list[tuple[str, dict[str, Any]]],
+    ) -> list[tuple[str, dict[str, Any]]]:
         with self._lock:
             self._stats["failed_batches"] += 1
             # The sender receives already prepared snapshots. Retain those exact
@@ -1719,7 +1834,21 @@ class _SyncBatchTransport:
             len(payloads),
             result.error,
         )
-        return False, events
+
+        return events
+
+    def _send_batch(
+        self, batch_items: list[tuple[str, dict[str, Any]]]
+    ) -> tuple[bool, list[tuple[str, dict[str, Any]]]]:
+        events: list[tuple[str, dict[str, Any]]] = []
+        payloads = [payload for _, payload in batch_items]
+        result = self._retry_handler.execute_with_result(self._sender, payloads)
+
+        if result.success:
+            return True, self._record_batch_success(
+                batch_items, payloads, result, events
+            )
+        return False, self._record_batch_failure(batch_items, payloads, result, events)
 
     def _build_result(
         self,
@@ -2260,6 +2389,248 @@ class ObservabilityClient:
         self._queue_trace_snapshot(trace_id)
         return trace_id
 
+    @staticmethod
+    def _gate_observation_error(
+        error: BaseException | None,
+        metadata: dict[str, Any],
+        effective_content_mode: Any,
+    ) -> str | None:
+        gated_error_message: str | None = None
+        error_supplied = error is not None
+        if error_supplied:
+            # error_message is free-form content: exception strings routinely
+            # interpolate the very inputs the content gate withholds (prompts,
+            # records, PII), so it must honor `content_mode` exactly like
+            # input_data/output_data. error_type is only a class name, so it
+            # is safe to keep in every mode. B2: `str(error)` is a property/
+            # getter access on caller-supplied state -- a hostile exception
+            # subclass can override `__str__` to raise -- so it must go
+            # through `_safe_str` rather than raising straight out of this
+            # call.
+            metadata["error_type"] = type(error).__name__
+            gated_error_message = apply_content_mode_to_text(
+                _safe_str(error), effective_content_mode
+            )
+            if gated_error_message is not None:
+                metadata["error_message"] = gated_error_message
+            # A2/finding 2: if this mode withholds the error text
+            # (`gated_error_message is None`), do NOT set "error_message" in
+            # `metadata` here -- whether an existing "error_message" must be
+            # force-cleared to "[REDACTED]" (tightening over prior content)
+            # or left absent (first write, nothing stored yet) depends on
+            # `existing`, only known once the trace lock below is held; see
+            # the merge branch.
+        return gated_error_message
+
+    @staticmethod
+    def _note_prior_observation_content(
+        state: _TraceState, observation_id: str, existing: ObservationDTO
+    ) -> None:
+        # B3: record, BEFORE this call's own (possibly gated-to-None
+        # or freshly-hostile) write lands, whether this observation
+        # already carried content -- see `_TraceState.
+        # content_history`. Read directly off `existing`, never off
+        # the value this call is about to write.
+        if existing.input_data is not None:
+            state.mark_content_history(observation_id, "input_data")
+        if existing.output_data is not None:
+            state.mark_content_history(observation_id, "output_data")
+        # Finding 1 (astra out-astra-privacy-r4.md, CONFIRMED P1):
+        # same tracking for `error_message` -- it is free-form
+        # content (an exception string) subject to the exact same
+        # "never omit the clearing field on a later failure" rule as
+        # `input_data`/`output_data`, but it lives inside `metadata`
+        # rather than as its own top-level field, so it needs its
+        # own history entry (consulted by
+        # `_safe_allowlisted_observation_snapshot` via
+        # `_build_fallback_descriptor`).
+        if existing.metadata.get("error_message") is not None:
+            state.mark_content_history(observation_id, "error_message")
+
+    def _build_new_observation(
+        self, state: _TraceState, call: _ObservationCall
+    ) -> ObservationDTO:
+        observation_id = call.observation_id
+        effective_type = call.effective_type
+        name = call.name
+        parent_observation_id = call.parent_observation_id
+        status = call.status
+        started_at = call.started_at
+        ended_at = call.ended_at
+        latency_ms = call.latency_ms
+        input_tokens = call.input_tokens
+        output_tokens = call.output_tokens
+        total_tokens = call.total_tokens
+        cost_usd = call.cost_usd
+        model_name = call.model_name
+        tool_name = call.tool_name
+        input_supplied = call.input_supplied
+        output_supplied = call.output_supplied
+        gated_input_data = call.gated_input_data
+        gated_output_data = call.gated_output_data
+        effective_content_mode = call.effective_content_mode
+        error_supplied = call.error_supplied
+        gated_error_message = call.gated_error_message
+        metadata = call.metadata
+        correlation_ids = call.correlation_ids
+        prompt_reference = call.prompt_reference
+        # A revived trace (#2604) holds no observations, but its
+        # tombstone remembers which fields were delivered: send the
+        # clearing marker for those exactly as a live update would.
+        if input_supplied and state.had_prior_content(observation_id, "input_data"):
+            gated_input_data = wire_value_for_tightened_update(
+                gated_input_data,
+                effective_content_mode=effective_content_mode,
+                existing_value=redacted_content_marker(),
+            )
+        if output_supplied and state.had_prior_content(observation_id, "output_data"):
+            gated_output_data = wire_value_for_tightened_update(
+                gated_output_data,
+                effective_content_mode=effective_content_mode,
+                existing_value=redacted_content_marker(),
+            )
+        if (
+            error_supplied
+            and gated_error_message is None
+            and state.had_prior_content(observation_id, "error_message")
+        ):
+            metadata["error_message"] = _REDACTED
+        observation = ObservationDTO(
+            id=observation_id,
+            type=effective_type,
+            name=name,
+            parent_observation_id=parent_observation_id,
+            status=status,
+            started_at=started_at or utc_now(),
+            ended_at=ended_at,
+            latency_ms=latency_ms,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            cost_usd=cost_usd,
+            model_name=model_name,
+            tool_name=tool_name,
+            input_data=gated_input_data,
+            output_data=gated_output_data,
+            metadata=dict(metadata or {}),
+            correlation_ids=self._coerce_correlation_ids(correlation_ids),
+            prompt_reference=self._coerce_prompt_reference(prompt_reference),
+        )
+        return observation
+
+    def _build_updated_observation(
+        self,
+        state: _TraceState,
+        existing: ObservationDTO,
+        call: _ObservationCall,
+    ) -> ObservationDTO:
+        observation_id = call.observation_id
+        effective_type = call.effective_type
+        name = call.name
+        parent_observation_id = call.parent_observation_id
+        status = call.status
+        started_at = call.started_at
+        ended_at = call.ended_at
+        latency_ms = call.latency_ms
+        input_tokens = call.input_tokens
+        output_tokens = call.output_tokens
+        total_tokens = call.total_tokens
+        cost_usd = call.cost_usd
+        model_name = call.model_name
+        tool_name = call.tool_name
+        input_supplied = call.input_supplied
+        output_supplied = call.output_supplied
+        gated_input_data = call.gated_input_data
+        gated_output_data = call.gated_output_data
+        effective_content_mode = call.effective_content_mode
+        error_supplied = call.error_supplied
+        gated_error_message = call.gated_error_message
+        metadata = call.metadata
+        correlation_ids = call.correlation_ids
+        prompt_reference = call.prompt_reference
+        merged_metadata = dict(existing.metadata)
+        if metadata:
+            merged_metadata.update(metadata)
+        # A2/finding 2: a tightening update over an error this SAME
+        # observation already recorded must never let the stale
+        # `error_message` survive the merge. `metadata` only carries
+        # an "error_message" key when this call's gating actually
+        # produced text (see above) -- when it didn't (this mode
+        # withholds it) but `existing.metadata` still has one from
+        # an earlier, less restrictive call, `merged_metadata.
+        # update(metadata)` alone would silently keep it (the
+        # original bug: nothing in `metadata` ever overwrote it).
+        # Force the explicit placeholder instead, never merge old
+        # error text back. A genuine first write (no prior
+        # "error_message" at all) still omits cleanly -- there is
+        # nothing stored to leak.
+        if (
+            error_supplied
+            and gated_error_message is None
+            and (
+                "error_message" in existing.metadata
+                or state.had_prior_content(observation_id, "error_message")
+            )
+        ):
+            merged_metadata["error_message"] = _REDACTED
+        observation = ObservationDTO(
+            id=observation_id,
+            type=effective_type,
+            name=name,
+            parent_observation_id=_keep_if_none(
+                parent_observation_id, existing.parent_observation_id
+            ),
+            status=status,
+            started_at=started_at or existing.started_at,
+            ended_at=ended_at or existing.ended_at,
+            latency_ms=_keep_if_none(latency_ms, existing.latency_ms),
+            input_tokens=_keep_if_none(input_tokens, existing.input_tokens),
+            output_tokens=_keep_if_none(output_tokens, existing.output_tokens),
+            total_tokens=_keep_if_none(total_tokens, existing.total_tokens),
+            cost_usd=_keep_if_none(cost_usd, existing.cost_usd),
+            model_name=model_name or existing.model_name,
+            tool_name=tool_name or existing.tool_name,
+            # M4 fix: fall back to `existing` only when this call
+            # never supplied the field (NOT_SUPPLIED) -- a supplied
+            # value, gated, always overwrites, even when gating
+            # withheld it to `None` (tightening wins; see the
+            # `apply_content_mode` docstring). `wire_value_for_
+            # tightened_update` additionally forces the explicit
+            # placeholder (not `None`) when this is a tightening
+            # update over PRIOR content -- the ingest contract's
+            # `apply_updates` keeps stored content on an
+            # omitted/`None` field, so merely omitting would not
+            # clear it server-side.
+            input_data=_updated_content_value(
+                state,
+                observation_id,
+                "input_data",
+                existing.input_data,
+                supplied=input_supplied,
+                gated=gated_input_data,
+                effective_content_mode=effective_content_mode,
+            ),
+            output_data=_updated_content_value(
+                state,
+                observation_id,
+                "output_data",
+                existing.output_data,
+                supplied=output_supplied,
+                gated=gated_output_data,
+                effective_content_mode=effective_content_mode,
+            ),
+            metadata=merged_metadata,
+            correlation_ids=(
+                self._coerce_correlation_ids(correlation_ids)
+                or existing.correlation_ids
+            ),
+            prompt_reference=(
+                self._coerce_prompt_reference(prompt_reference)
+                or existing.prompt_reference
+            ),
+        )
+        return observation
+
     def record_observation(
         self,
         trace_id: str,
@@ -2330,30 +2701,9 @@ class ObservabilityClient:
         # (deep copy) rather than a shallow `dict(metadata or {})`.
         metadata = _detach_metadata(metadata)
         error_supplied = error is not None
-        gated_error_message: str | None = None
-        if error_supplied:
-            # error_message is free-form content: exception strings routinely
-            # interpolate the very inputs the content gate withholds (prompts,
-            # records, PII), so it must honor `content_mode` exactly like
-            # input_data/output_data. error_type is only a class name, so it
-            # is safe to keep in every mode. B2: `str(error)` is a property/
-            # getter access on caller-supplied state -- a hostile exception
-            # subclass can override `__str__` to raise -- so it must go
-            # through `_safe_str` rather than raising straight out of this
-            # call.
-            metadata["error_type"] = type(error).__name__
-            gated_error_message = apply_content_mode_to_text(
-                _safe_str(error), effective_content_mode
-            )
-            if gated_error_message is not None:
-                metadata["error_message"] = gated_error_message
-            # A2/finding 2: if this mode withholds the error text
-            # (`gated_error_message is None`), do NOT set "error_message" in
-            # `metadata` here -- whether an existing "error_message" must be
-            # force-cleared to "[REDACTED]" (tightening over prior content)
-            # or left absent (first write, nothing stored yet) depends on
-            # `existing`, only known once the trace lock below is held; see
-            # the merge branch.
+        gated_error_message = self._gate_observation_error(
+            error, metadata, effective_content_mode
+        )
 
         observation_id = observation_id or _new_observation_id()
         with self._lock:
@@ -2362,26 +2712,7 @@ class ObservabilityClient:
                 raise ValueError(f"Unknown trace_id '{trace_id}'")
             existing = state.observations.get(observation_id)
             if existing is not None:
-                # B3: record, BEFORE this call's own (possibly gated-to-None
-                # or freshly-hostile) write lands, whether this observation
-                # already carried content -- see `_TraceState.
-                # content_history`. Read directly off `existing`, never off
-                # the value this call is about to write.
-                if existing.input_data is not None:
-                    state.mark_content_history(observation_id, "input_data")
-                if existing.output_data is not None:
-                    state.mark_content_history(observation_id, "output_data")
-                # Finding 1 (astra out-astra-privacy-r4.md, CONFIRMED P1):
-                # same tracking for `error_message` -- it is free-form
-                # content (an exception string) subject to the exact same
-                # "never omit the clearing field on a later failure" rule as
-                # `input_data`/`output_data`, but it lives inside `metadata`
-                # rather than as its own top-level field, so it needs its
-                # own history entry (consulted by
-                # `_safe_allowlisted_observation_snapshot` via
-                # `_build_fallback_descriptor`).
-                if existing.metadata.get("error_message") is not None:
-                    state.mark_content_history(observation_id, "error_message")
+                self._note_prior_observation_content(state, observation_id, existing)
             effective_type = requested_type or (
                 existing.type if existing is not None else ObservationType.SPAN
             )
@@ -2397,166 +2728,37 @@ class ObservabilityClient:
                 parent_observation_id=parent_observation_id,
             )
 
+            call = _ObservationCall(
+                observation_id=observation_id,
+                effective_type=effective_type,
+                name=name,
+                parent_observation_id=parent_observation_id,
+                status=status,
+                started_at=started_at,
+                ended_at=ended_at,
+                latency_ms=latency_ms,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                cost_usd=cost_usd,
+                model_name=model_name,
+                tool_name=tool_name,
+                input_supplied=input_supplied,
+                output_supplied=output_supplied,
+                gated_input_data=gated_input_data,
+                gated_output_data=gated_output_data,
+                effective_content_mode=effective_content_mode,
+                error_supplied=error_supplied,
+                gated_error_message=gated_error_message,
+                metadata=metadata,
+                correlation_ids=correlation_ids,
+                prompt_reference=prompt_reference,
+            )
             if existing is None:
-                # A revived trace (#2604) holds no observations, but its
-                # tombstone remembers which fields were delivered: send the
-                # clearing marker for those exactly as a live update would.
-                if input_supplied and state.had_prior_content(
-                    observation_id, "input_data"
-                ):
-                    gated_input_data = wire_value_for_tightened_update(
-                        gated_input_data,
-                        effective_content_mode=effective_content_mode,
-                        existing_value=redacted_content_marker(),
-                    )
-                if output_supplied and state.had_prior_content(
-                    observation_id, "output_data"
-                ):
-                    gated_output_data = wire_value_for_tightened_update(
-                        gated_output_data,
-                        effective_content_mode=effective_content_mode,
-                        existing_value=redacted_content_marker(),
-                    )
-                if (
-                    error_supplied
-                    and gated_error_message is None
-                    and state.had_prior_content(observation_id, "error_message")
-                ):
-                    metadata["error_message"] = _REDACTED
-                observation = ObservationDTO(
-                    id=observation_id,
-                    type=effective_type,
-                    name=name,
-                    parent_observation_id=parent_observation_id,
-                    status=status,
-                    started_at=started_at or utc_now(),
-                    ended_at=ended_at,
-                    latency_ms=latency_ms,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    total_tokens=total_tokens,
-                    cost_usd=cost_usd,
-                    model_name=model_name,
-                    tool_name=tool_name,
-                    input_data=gated_input_data,
-                    output_data=gated_output_data,
-                    metadata=dict(metadata or {}),
-                    correlation_ids=self._coerce_correlation_ids(correlation_ids),
-                    prompt_reference=self._coerce_prompt_reference(prompt_reference),
-                )
+                observation = self._build_new_observation(state, call)
                 state.observation_order.append(observation_id)
             else:
-                merged_metadata = dict(existing.metadata)
-                if metadata:
-                    merged_metadata.update(metadata)
-                # A2/finding 2: a tightening update over an error this SAME
-                # observation already recorded must never let the stale
-                # `error_message` survive the merge. `metadata` only carries
-                # an "error_message" key when this call's gating actually
-                # produced text (see above) -- when it didn't (this mode
-                # withholds it) but `existing.metadata` still has one from
-                # an earlier, less restrictive call, `merged_metadata.
-                # update(metadata)` alone would silently keep it (the
-                # original bug: nothing in `metadata` ever overwrote it).
-                # Force the explicit placeholder instead, never merge old
-                # error text back. A genuine first write (no prior
-                # "error_message" at all) still omits cleanly -- there is
-                # nothing stored to leak.
-                if (
-                    error_supplied
-                    and gated_error_message is None
-                    and (
-                        "error_message" in existing.metadata
-                        or state.had_prior_content(observation_id, "error_message")
-                    )
-                ):
-                    merged_metadata["error_message"] = _REDACTED
-                observation = ObservationDTO(
-                    id=observation_id,
-                    type=effective_type,
-                    name=name,
-                    parent_observation_id=(
-                        parent_observation_id
-                        if parent_observation_id is not None
-                        else existing.parent_observation_id
-                    ),
-                    status=status,
-                    started_at=started_at or existing.started_at,
-                    ended_at=ended_at or existing.ended_at,
-                    latency_ms=(
-                        latency_ms if latency_ms is not None else existing.latency_ms
-                    ),
-                    input_tokens=(
-                        input_tokens
-                        if input_tokens is not None
-                        else existing.input_tokens
-                    ),
-                    output_tokens=(
-                        output_tokens
-                        if output_tokens is not None
-                        else existing.output_tokens
-                    ),
-                    total_tokens=(
-                        total_tokens
-                        if total_tokens is not None
-                        else existing.total_tokens
-                    ),
-                    cost_usd=cost_usd if cost_usd is not None else existing.cost_usd,
-                    model_name=model_name or existing.model_name,
-                    tool_name=tool_name or existing.tool_name,
-                    # M4 fix: fall back to `existing` only when this call
-                    # never supplied the field (NOT_SUPPLIED) -- a supplied
-                    # value, gated, always overwrites, even when gating
-                    # withheld it to `None` (tightening wins; see the
-                    # `apply_content_mode` docstring). `wire_value_for_
-                    # tightened_update` additionally forces the explicit
-                    # placeholder (not `None`) when this is a tightening
-                    # update over PRIOR content -- the ingest contract's
-                    # `apply_updates` keeps stored content on an
-                    # omitted/`None` field, so merely omitting would not
-                    # clear it server-side.
-                    input_data=(
-                        wire_value_for_tightened_update(
-                            gated_input_data,
-                            effective_content_mode=effective_content_mode,
-                            existing_value=(
-                                existing.input_data
-                                if existing.input_data is not None
-                                or not state.had_prior_content(
-                                    observation_id, "input_data"
-                                )
-                                else redacted_content_marker()
-                            ),
-                        )
-                        if input_supplied
-                        else existing.input_data
-                    ),
-                    output_data=(
-                        wire_value_for_tightened_update(
-                            gated_output_data,
-                            effective_content_mode=effective_content_mode,
-                            existing_value=(
-                                existing.output_data
-                                if existing.output_data is not None
-                                or not state.had_prior_content(
-                                    observation_id, "output_data"
-                                )
-                                else redacted_content_marker()
-                            ),
-                        )
-                        if output_supplied
-                        else existing.output_data
-                    ),
-                    metadata=merged_metadata,
-                    correlation_ids=(
-                        self._coerce_correlation_ids(correlation_ids)
-                        or existing.correlation_ids
-                    ),
-                    prompt_reference=(
-                        self._coerce_prompt_reference(prompt_reference)
-                        or existing.prompt_reference
-                    ),
-                )
+                observation = self._build_updated_observation(state, existing, call)
 
             state.observations[observation_id] = observation
 
@@ -2836,6 +3038,83 @@ class ObservabilityClient:
             stats["active_trace_count"] = len(self._trace_states)
         return stats
 
+    def _claim_close_locked(self) -> _CloseClaim:
+        """Decide this close call's role; the caller holds ``self._lock``."""
+        claim = _CloseClaim()
+        if self._closing:
+            claim.close_in_progress = True
+        elif self._closed:
+            claim.already_closed = True
+        elif self._close_pending:
+            self._closing = True
+            self._close_complete.clear()
+            claim.offline_close = self._ingest_suppressed
+        else:
+            self._closing = True
+            self._close_pending = True
+            self._close_complete.clear()
+            claim.offline_close = self._ingest_suppressed
+            if not claim.offline_close:
+                # Finding 2 (A8/M4 snapshot immutability): thread the
+                # frozen descriptor (built from `state` under THIS lock),
+                # never `state` itself -- see the matching comment in
+                # `flush`.
+                claim.trace_payloads = [
+                    (trace_id, *_safe_trace_snapshot(state))
+                    for trace_id, state in self._trace_states.items()
+                ]
+                claim.inflight_snapshot_submissions = (
+                    self._inflight_snapshot_submissions
+                )
+        return claim
+
+    def _deliver_close(
+        self, claim: _CloseClaim, deadline: float | None, timeout: float | None
+    ) -> tuple[FlushResult, bool]:
+        if claim.offline_close:
+            self._log_offline_mode_once()
+            transport_result = self._transport.close(
+                timeout=self._remaining_flush_time(deadline),
+                warn_on_deadline_expiry=timeout != 0,
+            )
+            result = self._with_suppressed_delivery_warning(
+                self._flush_result_from_transport(transport_result)
+            )
+        else:
+            if claim.inflight_snapshot_submissions:
+                self._wait_for_inflight_snapshots(
+                    claim.inflight_snapshot_submissions, deadline
+                )
+
+            for trace_id, payload, descriptor in claim.trace_payloads:
+                self._submit_trace_snapshot(
+                    trace_id, payload, deadline=deadline, state=descriptor
+                )
+            transport_result = self._transport.close(
+                timeout=self._remaining_flush_time(deadline)
+            )
+            result = self._flush_result_from_transport(transport_result)
+        transport_close_completed = self._transport_close_completed(transport_result)
+        if not transport_close_completed:
+            result = self._transport_close_pending_result(result)
+        return result, transport_close_completed
+
+    def _wait_for_inflight_snapshots(
+        self, inflight_snapshot_submissions: int, deadline: float | None
+    ) -> None:
+        remaining = self._remaining_flush_time(deadline)
+        completed = (
+            self._snapshot_submission_complete.wait()
+            if remaining is None
+            else self._snapshot_submission_complete.wait(timeout=remaining)
+        )
+        if not completed:
+            logger.warning(
+                "Observability close deadline expired while waiting for "
+                "%d snapshot submissions",
+                inflight_snapshot_submissions,
+            )
+
     def close(self, timeout: float | None = None) -> FlushResult:
         """Stop submissions and flush queued traces.
 
@@ -2852,53 +3131,12 @@ class ObservabilityClient:
         if not self._acquire_client_lock_until(deadline):
             return self._close_lock_timeout_result(deadline)
         try:
-            if self._closing:
-                close_in_progress = True
-                already_closed = False
-                trace_payloads: list[
-                    tuple[str, dict[str, Any], _TraceFallbackDescriptor]
-                ] = []
-                inflight_snapshot_submissions = 0
-                offline_close = False
-            elif self._closed:
-                close_in_progress = False
-                already_closed = True
-                trace_payloads = []
-                inflight_snapshot_submissions = 0
-                offline_close = False
-            elif self._close_pending:
-                close_in_progress = False
-                already_closed = False
-                self._closing = True
-                self._close_complete.clear()
-                offline_close = self._ingest_suppressed
-                trace_payloads = []
-                inflight_snapshot_submissions = 0
-            else:
-                close_in_progress = False
-                already_closed = False
-                self._closing = True
-                self._close_pending = True
-                self._close_complete.clear()
-                offline_close = self._ingest_suppressed
-                if offline_close:
-                    trace_payloads = []
-                    inflight_snapshot_submissions = 0
-                else:
-                    # Finding 2 (A8/M4 snapshot immutability): thread the
-                    # frozen descriptor (built from `state` under THIS lock),
-                    # never `state` itself -- see the matching comment in
-                    # `flush`.
-                    trace_payloads = [
-                        (trace_id, *_safe_trace_snapshot(state))
-                        for trace_id, state in self._trace_states.items()
-                    ]
-                    inflight_snapshot_submissions = self._inflight_snapshot_submissions
+            claim = self._claim_close_locked()
         finally:
             self._lock.release()
-        if close_in_progress:
+        if claim.close_in_progress:
             return self._wait_for_concurrent_close(deadline)
-        if already_closed:
+        if claim.already_closed:
             closed_result = self._flush_transport_until(deadline)
             if self._ingest_suppressed:
                 return self._with_suppressed_delivery_warning(closed_result)
@@ -2908,43 +3146,9 @@ class ObservabilityClient:
         transport_close_completed = False
         finalizer_completed = False
         try:
-            if offline_close:
-                self._log_offline_mode_once()
-                transport_result = self._transport.close(
-                    timeout=self._remaining_flush_time(deadline),
-                    warn_on_deadline_expiry=timeout != 0,
-                )
-                result = self._with_suppressed_delivery_warning(
-                    self._flush_result_from_transport(transport_result)
-                )
-            else:
-                if inflight_snapshot_submissions:
-                    remaining = self._remaining_flush_time(deadline)
-                    completed = (
-                        self._snapshot_submission_complete.wait()
-                        if remaining is None
-                        else self._snapshot_submission_complete.wait(timeout=remaining)
-                    )
-                    if not completed:
-                        logger.warning(
-                            "Observability close deadline expired while waiting for "
-                            "%d snapshot submissions",
-                            inflight_snapshot_submissions,
-                        )
-
-                for trace_id, payload, descriptor in trace_payloads:
-                    self._submit_trace_snapshot(
-                        trace_id, payload, deadline=deadline, state=descriptor
-                    )
-                transport_result = self._transport.close(
-                    timeout=self._remaining_flush_time(deadline)
-                )
-                result = self._flush_result_from_transport(transport_result)
-            transport_close_completed = self._transport_close_completed(
-                transport_result
+            result, transport_close_completed = self._deliver_close(
+                claim, deadline, timeout
             )
-            if not transport_close_completed:
-                result = self._transport_close_pending_result(result)
         finally:
             if self._acquire_client_lock_until(deadline):
                 try:
@@ -3169,6 +3373,43 @@ class ObservabilityClient:
         )
         return TraceCommentRecord.from_dict(self._unwrap_data(payload, "trace comment"))
 
+    def _gate_correction_output(
+        self, correction_output: Any, effective_content_mode: str
+    ) -> Any:
+        # B2 (addendum R3, A5 completion): a hostile `correction_output`
+        # (uncopyable, cyclic, not JSON serializable) must never raise
+        # out of this public call -- `_ensure_json_serializable` used to
+        # raise `ClientError` straight into the caller's application
+        # (astra's confirmed finding at client.py:2121). Withhold the
+        # field instead, same as a `record`-mode scrub failure below.
+        try:
+            correction_output = self._ensure_json_serializable(
+                correction_output,
+                field_name="correction_output",
+            )
+            gated_correction_output = apply_content_mode(
+                correction_output, effective_content_mode
+            )
+        except Exception:
+            logger.exception(
+                "Feedback correction_output failed JSON-serializability "
+                "validation; withholding it rather than raising into "
+                "the caller's application.",
+            )
+            gated_correction_output = None
+        if effective_content_mode == "record" and gated_correction_output is not None:
+            try:
+                gated_correction_output = redact_sensitive_data(
+                    gated_correction_output, redact_credential_keys=True
+                )
+            except Exception:
+                logger.exception(
+                    "Feedback correction_output secret scrubbing failed; "
+                    "withholding it rather than sending it unscrubbed.",
+                )
+                gated_correction_output = None
+        return gated_correction_output
+
     def submit_feedback(
         self,
         trace_id: str,
@@ -3212,41 +3453,9 @@ class ObservabilityClient:
 
         gated_correction_output: Any = None
         if correction_output is not NOT_SUPPLIED:
-            # B2 (addendum R3, A5 completion): a hostile `correction_output`
-            # (uncopyable, cyclic, not JSON serializable) must never raise
-            # out of this public call -- `_ensure_json_serializable` used to
-            # raise `ClientError` straight into the caller's application
-            # (astra's confirmed finding at client.py:2121). Withhold the
-            # field instead, same as a `record`-mode scrub failure below.
-            try:
-                correction_output = self._ensure_json_serializable(
-                    correction_output,
-                    field_name="correction_output",
-                )
-                gated_correction_output = apply_content_mode(
-                    correction_output, effective_content_mode
-                )
-            except Exception:
-                logger.exception(
-                    "Feedback correction_output failed JSON-serializability "
-                    "validation; withholding it rather than raising into "
-                    "the caller's application.",
-                )
-                gated_correction_output = None
-            if (
-                effective_content_mode == "record"
-                and gated_correction_output is not None
-            ):
-                try:
-                    gated_correction_output = redact_sensitive_data(
-                        gated_correction_output, redact_credential_keys=True
-                    )
-                except Exception:
-                    logger.exception(
-                        "Feedback correction_output secret scrubbing failed; "
-                        "withholding it rather than sending it unscrubbed.",
-                    )
-                    gated_correction_output = None
+            gated_correction_output = self._gate_correction_output(
+                correction_output, effective_content_mode
+            )
 
         feedback_payload: dict[str, Any] = {"rating": rating.value}
         if gated_comment is not None:

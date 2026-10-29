@@ -19,7 +19,7 @@ import os
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from opentelemetry import context as otel_context
 from opentelemetry import trace
@@ -178,6 +178,72 @@ def _resolve_rate(sample_rate: float | None) -> float:
         ) from None
 
 
+def _init_is_offline(api_key: str | None, endpoint: str | None) -> bool:
+    return cast(
+        bool,
+        (
+            is_backend_offline()
+            or is_truthy(os.getenv("TRAIGENT_DISABLE_TELEMETRY"))
+            or oo_egress.is_active(
+                oo_egress.policy_from_headers(
+                    endpoint or BackendConfig.get_backend_url(),
+                    {"X-API-Key": api_key}
+                    if api_key
+                    else {"X-API-Key": BackendConfig.get_api_key()},
+                )
+            )
+        ),
+    )
+
+
+def _init_provider(
+    rate: float, service_name: str | None, environment: str | None, release: str | None
+) -> TracerProvider:
+    attrs: dict[str, Any] = {}
+    if service_name:
+        attrs["service.name"] = service_name
+    if environment:
+        attrs["deployment.environment.name"] = environment
+    if release:
+        attrs["service.version"] = release
+    return TracerProvider(
+        sampler=parent_based_ratio_sampler(rate),
+        resource=Resource.create(attrs),
+        # Traigent flushes on exit itself (exit_flush); the provider's own
+        # atexit hook would make exit_flush=False ineffective.
+        shutdown_on_exit=False,
+    )
+
+
+def _init_instrument(
+    handle: ObservabilityHandle, instrument: Sequence[Any] | str | None
+) -> None:
+    if instrument:
+        names = (
+            ("openai", "anthropic", "langchain", "bedrock")
+            if instrument == "auto"
+            else instrument
+        )
+        specs = (names,) if isinstance(names, str) else tuple(names)
+        if instrument == "auto":
+            specs = tuple(_installed_auto_names())
+        try:
+            handle.instrument(*specs)
+        except Exception:
+            handle.shutdown()
+            raise
+
+
+def _init_api_key(api_key: str | None) -> str:
+    key = api_key if api_key is not None else BackendConfig.get_api_key()
+    if not key or not key.strip():
+        raise ValueError(
+            "api_key is required (argument or TRAIGENT_API_KEY); set "
+            "TRAIGENT_OFFLINE_MODE=true to run without exporting"
+        )
+    return key
+
+
 def init(
     *,
     api_key: str | None = None,
@@ -223,18 +289,7 @@ def init(
         ContentPolicy(mode, allowed_span_names)
         rate = _resolve_rate(sample_rate)
         # optimization_only workspaces refuse trace ingest: never build an exporter.
-        offline = (
-            is_backend_offline()
-            or is_truthy(os.getenv("TRAIGENT_DISABLE_TELEMETRY"))
-            or oo_egress.is_active(
-                oo_egress.policy_from_headers(
-                    endpoint or BackendConfig.get_backend_url(),
-                    {"X-API-Key": api_key}
-                    if api_key
-                    else {"X-API-Key": BackendConfig.get_api_key()},
-                )
-            )
-        )
+        offline = _init_is_offline(api_key, endpoint)
         if tracer_provider is not None and not hasattr(
             tracer_provider, "add_span_processor"
         ):
@@ -245,31 +300,13 @@ def init(
 
         created = tracer_provider is None
         if created:
-            attrs: dict[str, Any] = {}
-            if service_name:
-                attrs["service.name"] = service_name
-            if environment:
-                attrs["deployment.environment.name"] = environment
-            if release:
-                attrs["service.version"] = release
-            provider = TracerProvider(
-                sampler=parent_based_ratio_sampler(rate),
-                resource=Resource.create(attrs),
-                # Traigent flushes on exit itself (exit_flush); the provider's own
-                # atexit hook would make exit_flush=False ineffective.
-                shutdown_on_exit=False,
-            )
+            provider = _init_provider(rate, service_name, environment, release)
         else:
             provider = tracer_provider
 
         processor = exporter = None
         if not offline:
-            key = api_key if api_key is not None else BackendConfig.get_api_key()
-            if not key or not key.strip():
-                raise ValueError(
-                    "api_key is required (argument or TRAIGENT_API_KEY); set "
-                    "TRAIGENT_OFFLINE_MODE=true to run without exporting"
-                )
+            key = _init_api_key(api_key)
             base = (endpoint or f"{BackendConfig.get_backend_url()}{OTLP_PATH}").rstrip(
                 "/"
             )
@@ -312,20 +349,7 @@ def init(
         )
         _handle = handle
         _last_handle = None
-    if instrument:
-        names = (
-            ("openai", "anthropic", "langchain", "bedrock")
-            if instrument == "auto"
-            else instrument
-        )
-        specs = (names,) if isinstance(names, str) else tuple(names)
-        if instrument == "auto":
-            specs = tuple(_installed_auto_names())
-        try:
-            handle.instrument(*specs)
-        except Exception:
-            handle.shutdown()
-            raise
+    _init_instrument(handle, instrument)
     return handle
 
 
@@ -520,6 +544,17 @@ class _Observe:
         return state, mode
 
     # -- span lifecycle ---------------------------------------------------
+    def _stamp_input(self, span: Span, mode: str, args: tuple, kwargs: dict) -> None:
+        if mode == "record":
+            if self._redact_input:
+                span.set_attribute(C.ATTR_INPUT, C.REDACTED_PLACEHOLDER)
+            elif args or kwargs:
+                span.set_attribute(
+                    C.ATTR_INPUT, _serialise({"args": args, "kwargs": kwargs})
+                )
+        elif mode == "redacted":
+            span.set_attribute(C.ATTR_INPUT, C.REDACTED_PLACEHOLDER)
+
     def _start(
         self,
         name: str,
@@ -538,15 +573,7 @@ class _Observe:
             span.set_attribute("gen_ai.tool.name", self._tool_name)
         if handle is not None and mode != handle.content_mode:
             span.set_attribute(C.CONTENT_MODE_ATTRIBUTE, mode)
-        if mode == "record":
-            if self._redact_input:
-                span.set_attribute(C.ATTR_INPUT, C.REDACTED_PLACEHOLDER)
-            elif args or kwargs:
-                span.set_attribute(
-                    C.ATTR_INPUT, _serialise({"args": args, "kwargs": kwargs})
-                )
-        elif mode == "redacted":
-            span.set_attribute(C.ATTR_INPUT, C.REDACTED_PLACEHOLDER)
+        _Observe._stamp_input(self, span, mode, args, kwargs)
         if self._metadata and mode != "metadata":
             for key, value in self._metadata.items():
                 if isinstance(value, (str, bool, int, float)):

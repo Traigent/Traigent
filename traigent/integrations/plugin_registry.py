@@ -13,7 +13,7 @@ import keyword
 import logging
 from pathlib import Path
 from threading import RLock
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 from traigent.utils.exceptions import TraigentError
 
@@ -432,6 +432,28 @@ class PluginRegistry:
             return None
         return resolved
 
+    def _register_discovered_plugins(
+        self,
+        module: Any,
+        plugin_type: type["IntegrationPlugin"],
+        trusted_directory: Path,
+        loaded: list[str],
+    ) -> None:
+        # Find IntegrationPlugin subclasses
+        for name, obj in inspect.getmembers(module):
+            if (
+                inspect.isclass(obj)
+                and issubclass(obj, plugin_type)
+                and obj != plugin_type
+            ):
+                # Check for config file
+                config_path = self._safe_config_path(trusted_directory, name)
+
+                plugin = obj(config_path=config_path)
+                self.register(plugin)
+                loaded.append(plugin.metadata.name)
+                logger.info(f"Discovered plugin: {plugin.metadata.name}")
+
     def discover_plugins_in_directory(self, directory: Path) -> list[str]:
         """Discover and load plugins from a directory.
 
@@ -469,22 +491,13 @@ class PluginRegistry:
                     # Import IntegrationPlugin at runtime to avoid circular import
                     from traigent.integrations.base_plugin import IntegrationPlugin
 
-                    # Find IntegrationPlugin subclasses
-                    for name, obj in inspect.getmembers(module):
-                        if (
-                            inspect.isclass(obj)
-                            and issubclass(obj, IntegrationPlugin)
-                            and obj != IntegrationPlugin
-                        ):
-                            # Check for config file
-                            config_path = self._safe_config_path(
-                                trusted_directory, name
-                            )
-
-                            plugin = obj(config_path=config_path)
-                            self.register(plugin)
-                            loaded.append(plugin.metadata.name)
-                            logger.info(f"Discovered plugin: {plugin.metadata.name}")
+                    PluginRegistry._register_discovered_plugins(
+                        self,
+                        module,
+                        cast(Any, IntegrationPlugin),
+                        trusted_directory,
+                        loaded,
+                    )
 
                 except Exception as e:
                     logger.error(f"Failed to load plugin from {py_file}: {e}")

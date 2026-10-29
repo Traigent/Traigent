@@ -276,36 +276,50 @@ def _find_best_per_objective(
         if orientation == "band":
             best_indices[metric_name] = set()
             continue
-        best_set: set[int] = set()
-        best_val: float | None = None
-        is_minimize = orientation == "minimize"
-        for i, trial in enumerate(trials):
-            if not _trial_is_best_candidate(trial):
-                continue
-            if _cost_flagged(trial, metric_name):
-                continue
-            val = _coerce_float(
-                _get_metric_value(trial, metric_name, i, metric_overrides)
-            )
-            if val is None:
-                continue
-            if best_val is None:
-                best_val = val
-                best_set = {i}
-                continue
-            if math.isclose(
-                val,
-                best_val,
-                rel_tol=BEST_METRIC_REL_TOL,
-                abs_tol=BEST_METRIC_ABS_TOL,
-            ):
-                best_set.add(i)
-                continue
-            if (val < best_val) if is_minimize else (val > best_val):
-                best_val = val
-                best_set = {i}
+        best_set = _best_indices_for_metric(
+            trials, metric_name, orientation, metric_overrides
+        )
         best_indices[metric_name] = best_set
     return best_indices
+
+
+def _best_indices_for_metric(
+    trials: list,
+    metric_name: str,
+    orientation: str,
+    metric_overrides: dict[str, list[float]] | None,
+) -> set[int]:
+    best_set: set[int] = set()
+    best_val: float | None = None
+    is_minimize = orientation == "minimize"
+    for i, trial in enumerate(trials):
+        if not _trial_is_best_candidate(trial):
+            continue
+        if _cost_flagged(trial, metric_name):
+            continue
+        val = _coerce_float(_get_metric_value(trial, metric_name, i, metric_overrides))
+        if val is None:
+            continue
+        if best_val is None:
+            best_val = val
+            best_set = {i}
+            continue
+        if math.isclose(
+            val,
+            best_val,
+            rel_tol=BEST_METRIC_REL_TOL,
+            abs_tol=BEST_METRIC_ABS_TOL,
+        ):
+            best_set.add(i)
+            continue
+        if _metric_is_better(val, best_val, is_minimize):
+            best_val = val
+            best_set = {i}
+    return best_set
+
+
+def _metric_is_better(value: float, best: float, is_minimize: bool) -> bool:
+    return (value < best) if is_minimize else (value > best)
 
 
 def _get_metric_value(
@@ -467,6 +481,12 @@ def _find_best_trial_index(
     if best_index is not None:
         return best_index
 
+    return _find_best_config_index(results, trials, metric_names)
+
+
+def _find_best_config_index(
+    results: OptimizationResult, trials: list, metric_names: list[str]
+) -> int | None:
     best_config = getattr(results, "best_config", None)
     best_score = _coerce_float(getattr(results, "best_score", None))
     primary_metric = metric_names[0] if metric_names else None
@@ -577,23 +597,29 @@ def _trials_all_failed(trials: list) -> bool:
 
         metadata = getattr(trial, "metadata", {}) or {}
         successful = metadata.get("successful_examples")
-        if isinstance(successful, bool):
-            return False
-        if isinstance(successful, (int, float)):
-            if successful > 0:
+        numeric_failure = _numeric_successes_indicate_failure(successful)
+        if numeric_failure is not None:
+            if not numeric_failure:
                 return False
             continue
-        if successful is not None:
-            try:
-                if float(successful) > 0:
-                    return False
-                continue
-            except (TypeError, ValueError):
+        if successful is None:
+            return False
+        try:
+            if float(successful) > 0:
                 return False
-
-        return False
+            continue
+        except (TypeError, ValueError):
+            return False
 
     return True
+
+
+def _numeric_successes_indicate_failure(successful: Any) -> bool | None:
+    if isinstance(successful, bool):
+        return False
+    if isinstance(successful, (int, float)):
+        return not successful > 0
+    return None
 
 
 # ---------------------------------------------------------------------------

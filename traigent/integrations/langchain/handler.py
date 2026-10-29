@@ -370,36 +370,38 @@ class TraigentHandlerMetrics:
         else:
             measures[f"{prefix}total_cost"] = self.total_cost
 
-        if include_per_node:
-            # Aggregate by node
-            node_costs: dict[str, float] = {}
-            node_cost_unmeasured: set[str] = set()
-            node_latencies: dict[str, float] = {}
-            node_tokens: dict[str, int] = {}
+        if not include_per_node:
+            return measures
 
-            for call in self.llm_calls:
-                node = call.node_name or "unknown"
-                node_costs[node] = node_costs.get(node, 0.0) + call.cost
-                if call.cost_unmeasured:
-                    node_cost_unmeasured.add(node)
-                node_latencies[node] = node_latencies.get(node, 0.0) + call.latency_ms
-                node_tokens[node] = node_tokens.get(node, 0) + call.total_tokens
+        # Aggregate by node
+        node_costs: dict[str, float] = {}
+        node_cost_unmeasured: set[str] = set()
+        node_latencies: dict[str, float] = {}
+        node_tokens: dict[str, int] = {}
 
-            # Sanitize node names for MeasuresDict
-            def sanitize(name: str) -> str:
-                return re.sub(r"\W", "_", name, flags=re.ASCII)
+        for call in self.llm_calls:
+            node = call.node_name or "unknown"
+            node_costs[node] = node_costs.get(node, 0.0) + call.cost
+            if call.cost_unmeasured:
+                node_cost_unmeasured.add(node)
+            node_latencies[node] = node_latencies.get(node, 0.0) + call.latency_ms
+            node_tokens[node] = node_tokens.get(node, 0) + call.total_tokens
 
-            for node, cost in node_costs.items():
-                if node in node_cost_unmeasured:
-                    continue  # a node with an unmeasured call has no cost
-                safe_node = sanitize(node)
-                measures[f"{prefix}{safe_node}_cost"] = cost
-            for node, latency in node_latencies.items():
-                safe_node = sanitize(node)
-                measures[f"{prefix}{safe_node}_latency_ms"] = latency
-            for node, tokens in node_tokens.items():
-                safe_node = sanitize(node)
-                measures[f"{prefix}{safe_node}_tokens"] = tokens
+        # Sanitize node names for MeasuresDict
+        def sanitize(name: str) -> str:
+            return re.sub(r"\W", "_", name, flags=re.ASCII)
+
+        for node, cost in node_costs.items():
+            if node in node_cost_unmeasured:
+                continue  # a node with an unmeasured call has no cost
+            safe_node = sanitize(node)
+            measures[f"{prefix}{safe_node}_cost"] = cost
+        for node, latency in node_latencies.items():
+            safe_node = sanitize(node)
+            measures[f"{prefix}{safe_node}_latency_ms"] = latency
+        for node, tokens in node_tokens.items():
+            safe_node = sanitize(node)
+            measures[f"{prefix}{safe_node}_tokens"] = tokens
 
         return measures
 

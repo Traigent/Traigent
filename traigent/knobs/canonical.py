@@ -49,15 +49,7 @@ def _normalize(value: Any) -> Any:
             return int(value)
         return value
     if isinstance(value, Mapping):
-        normalized: dict[str, Any] = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise CanonicalizationError("mapping keys must be strings")
-            norm_key = unicodedata.normalize("NFC", key)
-            if norm_key in normalized:
-                raise CanonicalizationError(f"duplicate key after NFC: {norm_key!r}")
-            normalized[norm_key] = _normalize(item)
-        return normalized
+        return _normalize_mapping(value)
     if isinstance(value, (bytes, bytearray, memoryview)):
         raise CanonicalizationError("bytes-like values are outside the JSON profile")
     if isinstance(value, (list, tuple)):
@@ -65,6 +57,18 @@ def _normalize(value: Any) -> Any:
     raise CanonicalizationError(
         f"unsupported type for canonical hashing: {type(value).__name__}"
     )
+
+
+def _normalize_mapping(value: Mapping[Any, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    for key, item in value.items():
+        if not isinstance(key, str):
+            raise CanonicalizationError("mapping keys must be strings")
+        norm_key = unicodedata.normalize("NFC", key)
+        if norm_key in normalized:
+            raise CanonicalizationError(f"duplicate key after NFC: {norm_key!r}")
+        normalized[norm_key] = _normalize(item)
+    return normalized
 
 
 def canonical_hash(value: Any) -> str:

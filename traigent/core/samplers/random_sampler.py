@@ -429,27 +429,26 @@ class RandomSampler[T]:
                 raise ValueError("Plan contains duplicate indices while replace=False.")
 
         if strict:
-            if plan.population_size != self._population_size:
-                raise ValueError(
-                    "Plan population size does not match sampler population."
-                )
-            if (
-                plan.sample_limit is not None
-                and self._sample_limit is not None
-                and plan.sample_limit > self._sample_limit
-            ):
-                raise ValueError(
-                    "Plan sample_limit exceeds sampler sample_limit configuration."
-                )
-            if plan.fingerprint:
-                fingerprint = self._ensure_fingerprint()
-                if fingerprint != plan.fingerprint:
-                    raise ValueError(
-                        "Plan fingerprint does not match sampler population."
-                    )
+            RandomSampler._validate_strict_plan(self, plan)
 
         for idx in plan.indices:
             if not 0 <= idx < self._population_size:
                 raise ValueError(
                     f"Plan index {idx} out of range for population size {self._population_size}"
                 )
+
+    def _validate_strict_plan(self, plan: RandomSamplerPlan) -> None:
+        if plan.population_size != self._population_size:
+            raise ValueError("Plan population size does not match sampler population.")
+        if (
+            plan.sample_limit is not None
+            and self._sample_limit is not None
+            and plan.sample_limit > self._sample_limit
+        ):
+            raise ValueError(
+                "Plan sample_limit exceeds sampler sample_limit configuration."
+            )
+        if plan.fingerprint:
+            fingerprint = self._ensure_fingerprint()
+            if fingerprint != plan.fingerprint:
+                raise ValueError("Plan fingerprint does not match sampler population.")

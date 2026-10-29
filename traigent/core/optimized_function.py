@@ -4110,40 +4110,11 @@ class OptimizedFunction[**P, R]:
         """Try cloud-brain execution, returning None for allowed local fallback."""
 
         policy = policy_from_config(traigent_config)
-        if (
-            policy is None
-            or getattr(self, "external_service_evaluator", None) is not None
-            or self.execution_mode == ExecutionMode.HYBRID_API.value
-            or is_offline_requested(policy)
-        ):
-            if policy_is_cloud_required(policy) and is_offline_requested(policy):
-                requested = getattr(policy, "algorithm", None) or "smart"
-                raise ConfigurationError(
-                    f"Smart optimization ('{requested}') requires the Traigent "
-                    "managed cloud service, but offline mode is set "
-                    "(offline=True or TRAIGENT_OFFLINE/TRAIGENT_OFFLINE_MODE). "
-                    "The local SDK runs only 'grid' and 'random'. Either drop "
-                    "offline mode and connect to a Traigent backend that "
-                    "provides smart optimization, or use algorithm='grid' / "
-                    "algorithm='random' to run locally."
-                )
+        should_execute, backend_optimization_strategy = (
+            OptimizedFunction._cloud_execution_strategy(self, policy, max_trials)
+        )
+        if not should_execute:
             return None
-
-        if not (policy_is_cloud_brain(policy) or policy_is_cloud_required(policy)):
-            return None
-
-        if max_trials is not None and max_trials <= 0:
-            return None
-
-        backend_optimization_strategy = None
-        if policy_is_cloud_required(policy):
-            backend_optimization_strategy = backend_optimization_strategy_for_algorithm(
-                policy.algorithm
-            )
-            if backend_optimization_strategy is None:
-                raise ConfigurationError(
-                    unsupported_backend_smart_algorithm_message(policy.algorithm)
-                )
 
         try:
             from traigent.cloud.client import TraigentCloudClient
@@ -4181,7 +4152,9 @@ class OptimizedFunction[**P, R]:
                 },
                 optimization_strategy=backend_optimization_strategy
                 or {
-                    "algorithm": policy.algorithm,
+                    # policy is non-None here: _cloud_execution_strategy
+                    # returns should_execute=False for a None policy.
+                    "algorithm": cast(Any, policy).algorithm,
                     "source": SOURCE_CLOUD_BRAIN,
                 },
                 artifact_fingerprints=artifact_fingerprint_payload.get(
@@ -4253,18 +4226,61 @@ class OptimizedFunction[**P, R]:
                 e.failure_reason if isinstance(e, CloudBrainUnavailableError) else None
             )
             mark_local_fallback(traigent_config, reason, failure_reason=failure_reason)
-            if not (
-                isinstance(e, CloudBrainUnavailableError)
-                and e.stage == "session-create"
-            ):
-                logger.warning(
-                    "⚠️  %s traigent.cloud_brain_fallback source=%s "
-                    "fallback_reason=%s stage=next-trial",
-                    local_fallback_notice(reason, failure_reason),
-                    SOURCE_LOCAL_FALLBACK,
-                    reason,
-                )
+            OptimizedFunction._log_cloud_fallback(e, reason, failure_reason)
             return None
+
+    @staticmethod
+    def _log_cloud_fallback(e: Exception, reason: str, failure_reason: Any) -> None:
+        if not (
+            isinstance(e, CloudBrainUnavailableError) and e.stage == "session-create"
+        ):
+            logger.warning(
+                "⚠️  %s traigent.cloud_brain_fallback source=%s "
+                "fallback_reason=%s stage=next-trial",
+                local_fallback_notice(reason, failure_reason),
+                SOURCE_LOCAL_FALLBACK,
+                reason,
+            )
+
+    def _cloud_execution_strategy(
+        self, policy: Any, max_trials: int | None
+    ) -> tuple[bool, Any]:
+        if (
+            policy is None
+            or getattr(self, "external_service_evaluator", None) is not None
+            or self.execution_mode == ExecutionMode.HYBRID_API.value
+            or is_offline_requested(policy)
+        ):
+            if policy_is_cloud_required(policy) and is_offline_requested(policy):
+                requested = getattr(policy, "algorithm", None) or "smart"
+                raise ConfigurationError(
+                    f"Smart optimization ('{requested}') requires the Traigent "
+                    "managed cloud service, but offline mode is set "
+                    "(offline=True or TRAIGENT_OFFLINE/TRAIGENT_OFFLINE_MODE). "
+                    "The local SDK runs only 'grid' and 'random'. Either drop "
+                    "offline mode and connect to a Traigent backend that "
+                    "provides smart optimization, or use algorithm='grid' / "
+                    "algorithm='random' to run locally."
+                )
+            return False, None
+
+        if not (policy_is_cloud_brain(policy) or policy_is_cloud_required(policy)):
+            return False, None
+
+        if max_trials is not None and max_trials <= 0:
+            return False, None
+
+        backend_optimization_strategy = None
+        if policy_is_cloud_required(policy):
+            backend_optimization_strategy = backend_optimization_strategy_for_algorithm(
+                policy.algorithm
+            )
+            if backend_optimization_strategy is None:
+                raise ConfigurationError(
+                    unsupported_backend_smart_algorithm_message(policy.algorithm)
+                )
+
+        return True, backend_optimization_strategy
 
     def _preflight_model_cost_coverage(
         self,
@@ -4553,50 +4569,26 @@ Remediation:
         custom_evaluator = self._resolve_effective_custom_evaluator(custom_evaluator)
         hybrid_auto_discovery_enabled = self._allows_empty_configuration_space()
         effective_privacy_enabled = bool(getattr(self, "privacy_enabled", False))
-        hybrid_discovery_state: dict[str, Any] | None = None
-        precreated_evaluator: BaseEvaluator | None = None
-
-        if hybrid_auto_discovery_enabled:
-            # Discovery must happen before we resolve parallel settings because
-            # the remote config-space can override optimizer/runtime parameters.
-            # Use neutral worker settings for this bootstrap evaluator instance.
-            precreated_evaluator = self._create_effective_evaluator(
-                timeout=timeout,
-                custom_evaluator=custom_evaluator,
-                effective_batch_size=None,
-                effective_thread_workers=None,
-                effective_privacy_enabled=effective_privacy_enabled,
-                surrogate_evaluator=surrogate_evaluator,
-                surrogate_evaluator_name=surrogate_evaluator_name,
-                force_auto_discover_tvars=True,
-            )
-
-            pre_discovery_space = (
-                configuration_space
-                if configuration_space is not None
-                else self.configuration_space
-            )
-            try:
-                (
-                    algorithm,
-                    max_trials,
-                    timeout,
-                    discovered_config_space,
-                    hybrid_discovery_state,
-                ) = await self._apply_hybrid_discovery_overrides(
-                    evaluator=precreated_evaluator,
-                    algorithm=algorithm,
-                    max_trials=max_trials,
-                    evaluation_timeout=timeout,
-                    effective_config_space=pre_discovery_space or {},
-                    algorithm_kwargs=algorithm_kwargs,
-                )
-            except Exception:
-                close = getattr(precreated_evaluator, "close", None)
-                if callable(close):
-                    await close()
-                raise
-            configuration_space = discovered_config_space
+        (
+            algorithm,
+            max_trials,
+            timeout,
+            configuration_space,
+            hybrid_discovery_state,
+            precreated_evaluator,
+        ) = await OptimizedFunction._discover_execution_overrides(
+            self,
+            hybrid_auto_discovery_enabled,
+            timeout,
+            custom_evaluator,
+            surrogate_evaluator,
+            surrogate_evaluator_name,
+            effective_privacy_enabled,
+            configuration_space,
+            algorithm,
+            max_trials,
+            algorithm_kwargs,
+        )
 
         # Phase 1: Resolve and validate parameters
         requested_max_trials = max_trials
@@ -4614,50 +4606,13 @@ Remediation:
             and getattr(self, "_max_trials_uses_sdk_default", False)
             and max_trials == DEFAULT_MAX_TRIALS
         )
-        grid_size = (
-            _finite_grid_size(effective_config_space)
-            if used_implicit_default_max_trials and algorithm == "grid"
-            else None
+        OptimizedFunction._log_default_max_trials_notice(
+            self,
+            effective_config_space,
+            algorithm,
+            max_trials,
+            used_implicit_default_max_trials,
         )
-        if grid_size is not None and max_trials is not None and grid_size > max_trials:
-            # Issue #2058: the implicit cap silently truncates an exhaustive
-            # grid. Counts only; no user content is echoed.
-            if grid_size >= _GRID_SIZE_COUNT_CAP:
-                # Counting saturated: the true size is unknown beyond the cap,
-                # so never present it as exact or recommend it as max_trials.
-                logger.warning(
-                    "max_trials was not set, so the SDK default cap of %d applies: "
-                    "only %d of at least %d grid combinations will be evaluated "
-                    "and the reported best configuration is the best of those, "
-                    "not of the whole space. The grid is too large to evaluate "
-                    "exhaustively; narrow the configuration space or set "
-                    "max_trials explicitly.",
-                    max_trials,
-                    max_trials,
-                    grid_size,
-                )
-            else:
-                logger.warning(
-                    "max_trials was not set, so the SDK default cap of %d applies: "
-                    "only %d of %d grid combinations will be evaluated and the "
-                    "reported best configuration is the best of those, not of the "
-                    "whole space. Pass max_trials=%d (or higher) to evaluate the "
-                    "full grid.",
-                    max_trials,
-                    max_trials,
-                    grid_size,
-                    grid_size,
-                )
-            self._max_trials_default_notice_logged = True
-        elif (
-            used_implicit_default_max_trials
-            and not self._max_trials_default_notice_logged
-        ):
-            logger.info(
-                "Using default max_trials=%d; pass max_trials=... to change.",
-                max_trials,
-            )
-            self._max_trials_default_notice_logged = True
 
         stored_policy = getattr(self, "execution_policy", None)
         if not isinstance(stored_policy, ResolvedExecutionPolicy):
@@ -4795,11 +4750,9 @@ Remediation:
             )
 
         # Phase 7: Create optimizer
-        optimizer_kwargs = algorithm_kwargs.copy()
-        if max_trials:
-            optimizer_kwargs["max_trials"] = max_trials
-        if self.objective_schema is not None:
-            optimizer_kwargs["objective_schema"] = self.objective_schema
+        optimizer_kwargs = OptimizedFunction._local_optimizer_kwargs(
+            self, algorithm_kwargs, max_trials
+        )
 
         optimizer = get_optimizer(
             algorithm, effective_config_space, self.objectives, **optimizer_kwargs
@@ -4829,6 +4782,44 @@ Remediation:
             snapshot_g1_pending=g1_pending,
         )
 
+        OptimizedFunction._prepare_orchestrator_run(
+            self,
+            orchestrator,
+            resume_source,
+            requested_max_trials,
+            max_total_examples_value,
+            used_implicit_default_max_trials,
+        )
+
+        return await OptimizedFunction._run_prepared_optimization(
+            self,
+            orchestrator,
+            dataset,
+            effective_config_space,
+            save_to,
+            hybrid_discovery_state,
+            evaluator,
+        )
+
+    def _local_optimizer_kwargs(
+        self, algorithm_kwargs: dict[str, Any], max_trials: int | None
+    ) -> dict[str, Any]:
+        optimizer_kwargs = algorithm_kwargs.copy()
+        if max_trials:
+            optimizer_kwargs["max_trials"] = max_trials
+        if self.objective_schema is not None:
+            optimizer_kwargs["objective_schema"] = self.objective_schema
+
+        return optimizer_kwargs
+
+    def _prepare_orchestrator_run(
+        self,
+        orchestrator: OptimizationOrchestrator,
+        resume_source: OptimizationResult | None,
+        requested_max_trials: int | None,
+        max_total_examples_value: int | None,
+        used_implicit_default_max_trials: bool,
+    ) -> None:
         if resume_source is not None:
             orchestrator.set_resume_source(resume_source)
 
@@ -4850,6 +4841,15 @@ Remediation:
         if used_implicit_default_max_trials:
             orchestrator.mark_max_trials_sdk_default()
 
+    async def _run_prepared_optimization(
+        self,
+        orchestrator: OptimizationOrchestrator,
+        dataset: Dataset,
+        effective_config_space: dict[str, Any],
+        save_to: str | None,
+        hybrid_discovery_state: dict[str, Any] | None,
+        evaluator: BaseEvaluator,
+    ) -> OptimizationResult:
         # Phase 9: Run optimization and finalize
         from traigent.cloud.client import SessionContractError
 
@@ -4905,6 +4905,132 @@ Remediation:
             raise wrapped from e
         finally:
             self._restore_hybrid_discovery_state(hybrid_discovery_state, evaluator)
+
+    async def _discover_execution_overrides(
+        self,
+        hybrid_auto_discovery_enabled: bool,
+        timeout: float | None,
+        custom_evaluator: Callable[..., Any] | None,
+        surrogate_evaluator: Callable[..., Any] | None,
+        surrogate_evaluator_name: str | None,
+        effective_privacy_enabled: bool,
+        configuration_space: dict[str, Any] | None,
+        algorithm: str | None,
+        max_trials: int | None,
+        algorithm_kwargs: dict[str, Any],
+    ) -> tuple[
+        str | None,
+        int | None,
+        float | None,
+        dict[str, Any] | None,
+        dict[str, Any] | None,
+        BaseEvaluator | None,
+    ]:
+        hybrid_discovery_state: dict[str, Any] | None = None
+        precreated_evaluator: BaseEvaluator | None = None
+
+        if hybrid_auto_discovery_enabled:
+            # Discovery must happen before we resolve parallel settings because
+            # the remote config-space can override optimizer/runtime parameters.
+            # Use neutral worker settings for this bootstrap evaluator instance.
+            precreated_evaluator = self._create_effective_evaluator(
+                timeout=timeout,
+                custom_evaluator=custom_evaluator,
+                effective_batch_size=None,
+                effective_thread_workers=None,
+                effective_privacy_enabled=effective_privacy_enabled,
+                surrogate_evaluator=surrogate_evaluator,
+                surrogate_evaluator_name=surrogate_evaluator_name,
+                force_auto_discover_tvars=True,
+            )
+
+            pre_discovery_space = (
+                configuration_space
+                if configuration_space is not None
+                else self.configuration_space
+            )
+            try:
+                (
+                    algorithm,
+                    max_trials,
+                    timeout,
+                    discovered_config_space,
+                    hybrid_discovery_state,
+                ) = await self._apply_hybrid_discovery_overrides(
+                    evaluator=precreated_evaluator,
+                    algorithm=algorithm,
+                    max_trials=max_trials,
+                    evaluation_timeout=timeout,
+                    effective_config_space=pre_discovery_space or {},
+                    algorithm_kwargs=algorithm_kwargs,
+                )
+            except Exception:
+                close = getattr(precreated_evaluator, "close", None)
+                if callable(close):
+                    await close()
+                raise
+            configuration_space = discovered_config_space
+
+        return (
+            algorithm,
+            max_trials,
+            timeout,
+            configuration_space,
+            hybrid_discovery_state,
+            precreated_evaluator,
+        )
+
+    def _log_default_max_trials_notice(
+        self,
+        effective_config_space: dict[str, Any],
+        algorithm: str,
+        max_trials: int | None,
+        used_implicit_default_max_trials: bool,
+    ) -> None:
+        grid_size = (
+            _finite_grid_size(effective_config_space)
+            if used_implicit_default_max_trials and algorithm == "grid"
+            else None
+        )
+        if grid_size is not None and max_trials is not None and grid_size > max_trials:
+            # Issue #2058: the implicit cap silently truncates an exhaustive
+            # grid. Counts only; no user content is echoed.
+            if grid_size >= _GRID_SIZE_COUNT_CAP:
+                # Counting saturated: the true size is unknown beyond the cap,
+                # so never present it as exact or recommend it as max_trials.
+                logger.warning(
+                    "max_trials was not set, so the SDK default cap of %d applies: "
+                    "only %d of at least %d grid combinations will be evaluated "
+                    "and the reported best configuration is the best of those, "
+                    "not of the whole space. The grid is too large to evaluate "
+                    "exhaustively; narrow the configuration space or set "
+                    "max_trials explicitly.",
+                    max_trials,
+                    max_trials,
+                    grid_size,
+                )
+            else:
+                logger.warning(
+                    "max_trials was not set, so the SDK default cap of %d applies: "
+                    "only %d of %d grid combinations will be evaluated and the "
+                    "reported best configuration is the best of those, not of the "
+                    "whole space. Pass max_trials=%d (or higher) to evaluate the "
+                    "full grid.",
+                    max_trials,
+                    max_trials,
+                    grid_size,
+                    grid_size,
+                )
+            self._max_trials_default_notice_logged = True
+        elif (
+            used_implicit_default_max_trials
+            and not self._max_trials_default_notice_logged
+        ):
+            logger.info(
+                "Using default max_trials=%d; pass max_trials=... to change.",
+                max_trials,
+            )
+            self._max_trials_default_notice_logged = True
 
     def optimize_with_guidance(
         self,
@@ -5191,31 +5317,9 @@ Remediation:
         for name, spec in config_space.items():
             if name == doc_param:
                 continue
-            if name in fixed_config:
-                pinned[name] = fixed_config[name]
-                continue
-            if name in default_config:
-                pinned[name] = default_config[name]
-                continue
-
-            default_getter = getattr(spec, "get_default", None)
-            if callable(default_getter):
-                default_value = default_getter()
-                if default_value is not None:
-                    pinned[name] = default_value
-                    continue
-
-            values = getattr(spec, "values", None)
-            if values is not None and len(values) == 1:
-                pinned[name] = next(iter(values))
-                continue
-            if isinstance(spec, (list, tuple)) and len(spec) == 1:
-                pinned[name] = spec[0]
-                continue
-            if not isinstance(spec, (list, tuple, dict)) and values is None:
-                pinned[name] = spec
-                continue
-            unpinned.append(name)
+            OptimizedFunction._pin_skill_parameter(
+                name, spec, fixed_config, default_config, pinned, unpinned
+            )
 
         if unpinned:
             raise ValueError(
@@ -5224,6 +5328,41 @@ Remediation:
                 + ", ".join(sorted(unpinned))
             )
         return pinned
+
+    @staticmethod
+    def _pin_skill_parameter(
+        name: str,
+        spec: Any,
+        fixed_config: dict[str, Any],
+        default_config: dict[str, Any],
+        pinned: dict[str, Any],
+        unpinned: list[str],
+    ) -> None:
+        if name in fixed_config:
+            pinned[name] = fixed_config[name]
+            return
+        if name in default_config:
+            pinned[name] = default_config[name]
+            return
+
+        default_getter = getattr(spec, "get_default", None)
+        if callable(default_getter):
+            default_value = default_getter()
+            if default_value is not None:
+                pinned[name] = default_value
+                return
+
+        values = getattr(spec, "values", None)
+        if values is not None and len(values) == 1:
+            pinned[name] = next(iter(values))
+            return
+        if isinstance(spec, (list, tuple)) and len(spec) == 1:
+            pinned[name] = spec[0]
+            return
+        if not isinstance(spec, (list, tuple, dict)) and values is None:
+            pinned[name] = spec
+            return
+        unpinned.append(name)
 
     def _skill_result_to_rollouts(
         self, result: Any, options: Any
@@ -5260,6 +5399,19 @@ Remediation:
             return float(best_score)
 
         objective_names = list(getattr(result, "objectives", []) or [])
+        fallback_score = OptimizedFunction._skill_fallback_score(
+            metrics, result_metrics, objective_names
+        )
+        if fallback_score is not None:
+            return fallback_score
+        raise RuntimeError("train_skill could not resolve a numeric trial score")
+
+    @staticmethod
+    def _skill_fallback_score(
+        metrics: dict[str, Any],
+        result_metrics: dict[str, Any],
+        objective_names: list[Any],
+    ) -> float | None:
         for name in [*(objective_names[:1]), "accuracy", "score"]:
             value = metrics.get(name, result_metrics.get(name))
             if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -5269,7 +5421,7 @@ Remediation:
             for value in source.values():
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     return float(value)
-        raise RuntimeError("train_skill could not resolve a numeric trial score")
+        return None
 
     def _skill_entry_to_rollout(
         self,
