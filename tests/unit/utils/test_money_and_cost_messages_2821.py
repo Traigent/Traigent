@@ -125,3 +125,43 @@ def test_estimate_above_limit_never_prints_equal_to_it(estimate, limit) -> None:
 
 def test_negative_amount_keeps_the_sign_in_front() -> None:
     assert format_usd(-0.004) == "-$0.004"
+
+
+@pytest.mark.parametrize(
+    ("metric", "value", "expected"),
+    [
+        ("response_time", 1.5, "1.50s"),
+        ("duration_seconds", 12.0, "12.00s"),
+        ("p95_latency", 900.0, "900ms"),
+        ("latency_p95", 900.0, "900ms"),
+        ("accuracy_per_cost", 12.0, "12.0%"),
+        ("cost_efficiency", 0.8, "80.0%"),
+    ],
+)
+def test_more_time_and_ratio_metric_names_keep_their_units(
+    metric: str, value: float, expected: str
+) -> None:
+    assert _render_metric_cell(metric, value) == expected
+
+
+def test_missing_response_time_renders_n_a() -> None:
+    assert _render_metric_cell("response_time", None) == "n/a"
+
+
+def test_budget_exhausted_message_keeps_sub_cent_budget() -> None:
+    from traigent.config_generator.llm_backend import BudgetExhausted, LiteLLMBackend
+
+    backend = LiteLLMBackend(budget_usd=0.004)
+    backend._spent_usd = 0.0051
+    with pytest.raises(BudgetExhausted, match=r"\$0\.004 exceeded"):
+        backend.complete("hi")
+
+
+def test_cost_alert_warning_keeps_sub_cent_threshold(caplog) -> None:
+    from traigent.cloud.billing import CostTracker, CostTrackingConfig
+
+    tracker = CostTracker(CostTrackingConfig(cost_alert_threshold=0.004))
+    tracker._total_cost = 0.0051
+    with caplog.at_level("WARNING"):
+        tracker._check_cost_alerts()
+    assert "$0.0051" in caplog.text and "$0.004)" in caplog.text

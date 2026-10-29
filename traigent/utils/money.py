@@ -12,7 +12,10 @@ def format_usd(amount: float | None) -> str:
     decimals (``$14.12``, ``$0.01``, ``$0.50``). Any other amount below one
     dollar keeps three significant digits (``$0.0051``, ``$0.0104``) and never
     switches to scientific notation, so a limit of ``$0.004`` is not printed
-    as ``$0.00`` and an estimate above a limit never prints equal to it.
+    as ``$0.00``. Amounts at or above one dollar are rounded to cents, so two
+    different amounts within half a cent of each other print identically; the
+    formatter does not guarantee that an estimate above a limit prints
+    differently from it.
     """
     if amount is None:
         return "unknown"

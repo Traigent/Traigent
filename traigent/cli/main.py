@@ -245,7 +245,9 @@ def _display_failed_optimization_result(
     max_trials: int,
 ) -> None:
     """Report a run whose trials all failed, without the success tick."""
-    console.print(f"❌ [red]Error optimizing {func_name}: {escape(reason)}[/red]")
+    console.print(
+        f"❌ [red]Error optimizing {escape(func_name)}: {escape(reason)}[/red]"
+    )
     result_name = f"{func_name}_{algorithm}_{max_trials}"
     persistence.save_result(result, result_name)
     console.print(f"   Results saved as: {result_name}")

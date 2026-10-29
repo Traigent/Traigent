@@ -163,7 +163,9 @@ def _render_metric_cell(metric: str, raw_value: Any, trial: Any = None) -> str:
     return _format_metric_value(metric, value or 0.0)
 
 
-_SECONDS_METRICS = frozenset({"duration", "avg_response_time"})
+_SECONDS_METRICS = frozenset({"duration", "avg_response_time", "response_time"})
+_MS_METRICS = frozenset({"latency"})
+_RATIO_COST_MARKERS = ("_per_cost", "cost_efficiency", "cost_ratio", "per_dollar")
 
 
 def _metric_unit(metric: str) -> str:
@@ -175,11 +177,13 @@ def _metric_unit(metric: str) -> str:
     ``avg_response_time`` are seconds.
     """
     name = metric.lower()
-    if "cost" in name:
+    if "cost" in name and not any(m in name for m in _RATIO_COST_MARKERS):
         return "usd"
-    if name == "latency" or name.endswith("_ms"):
+    if name in _MS_METRICS or name.endswith("_ms") or name.startswith("latency_"):
         return "ms"
-    if name in _SECONDS_METRICS:
+    if name.endswith("_latency"):
+        return "ms"
+    if name in _SECONDS_METRICS or name.endswith("_seconds"):
         return "s"
     return "fraction"
 

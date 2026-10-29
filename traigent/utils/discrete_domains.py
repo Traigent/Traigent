@@ -107,9 +107,9 @@ def stepped_float_cardinality(low: float, high: float, step: float) -> int:
 
     if step <= 0 or low > high:
         return 0
-    digits = (
-        _grid_round_digits(step) if math.isfinite(step) else FLOAT_GRID_ROUND_DIGITS
-    )
+    if not (math.isfinite(low) and math.isfinite(high) and math.isfinite(step)):
+        return 0
+    digits = _grid_round_digits(step)
 
     epsilon = _FLOAT_STEP_TOLERANCE * max(1.0, abs(high - low), abs(step))
     interval_count = (high - low + epsilon) / step
