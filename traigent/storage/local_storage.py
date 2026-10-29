@@ -623,33 +623,57 @@ class LocalStorageManager:
         optimization_config: dict[str, Any | None] | None,
         primary_objective: str,
     ) -> tuple[float, float]:
-        if isinstance(optimization_config, dict):
-            schema = optimization_config.get("objective_schema")
-            if isinstance(schema, dict):
-                definitions = schema.get("objectives")
-                if isinstance(definitions, list):
-                    for definition in definitions:
-                        if not (
-                            isinstance(definition, dict)
-                            and definition.get("name") == primary_objective
-                        ):
-                            continue
-                        band = definition.get("band")
-                        target = band.get("target") if isinstance(band, dict) else None
-                        if isinstance(target, list) and len(target) == 2:
-                            low, high = target
-                            if (
-                                isinstance(low, (int, float))
-                                and not isinstance(low, bool)
-                                and isinstance(high, (int, float))
-                                and not isinstance(high, bool)
-                                and math.isfinite(low)
-                                and math.isfinite(high)
-                                and low <= high
-                            ):
-                                return float(low), float(high)
+        band = LocalStorageManager._banded_target_from_config(
+            optimization_config, primary_objective
+        )
+        if band is not None:
+            return band
         # the objective name is stored caller config: not quoted
         raise ValueError("Banded objective requires a complete target band")
+
+    @staticmethod
+    def _banded_target_from_config(
+        optimization_config: dict[str, Any | None] | None,
+        primary_objective: str,
+    ) -> tuple[float, float] | None:
+        """Valid ``(low, high)`` target of the primary objective, else None."""
+        if not isinstance(optimization_config, dict):
+            return None
+        schema = optimization_config.get("objective_schema")
+        if not isinstance(schema, dict):
+            return None
+        definitions = schema.get("objectives")
+        if not isinstance(definitions, list):
+            return None
+        for definition in definitions:
+            if not (
+                isinstance(definition, dict)
+                and definition.get("name") == primary_objective
+            ):
+                continue
+            band = definition.get("band")
+            target = band.get("target") if isinstance(band, dict) else None
+            valid = LocalStorageManager._valid_target(target)
+            if valid is not None:
+                return valid
+        return None
+
+    @staticmethod
+    def _valid_target(target: Any) -> tuple[float, float] | None:
+        if not (isinstance(target, list) and len(target) == 2):
+            return None
+        low, high = target
+        if (
+            isinstance(low, (int, float))
+            and not isinstance(low, bool)
+            and isinstance(high, (int, float))
+            and not isinstance(high, bool)
+            and math.isfinite(low)
+            and math.isfinite(high)
+            and low <= high
+        ):
+            return float(low), float(high)
+        return None
 
     def finalize_session(
         self,
