@@ -172,34 +172,42 @@ class TokenManager:
             except ValueError:
                 logger.debug("Skipping secure storage for invalid access token format")
 
-        if refresh_token:
-            refresh_expires = token_data.get("refresh_expires_in")
-            if not refresh_expires:
-                refresh_expires = expires_in * 24
-            try:
-                self._refresh_token_secure = SecureToken(
-                    _value=refresh_token,
-                    _expires_at=time.time() + refresh_expires,
-                )
-            except ValueError:
-                # S3 fix: If SecureToken creation fails and we had a valid existing
-                # refresh token, restore it instead of losing it entirely
-                logger.debug("Skipping secure storage for invalid refresh token format")
-                if existing_refresh_token and refresh_token != existing_refresh_token:
-                    try:
-                        self._refresh_token_secure = SecureToken(
-                            _value=existing_refresh_token,
-                            _expires_at=time.time() + expires_in * 24,
-                        )
-                        logger.debug(
-                            "Restored existing refresh token after new token failed"
-                        )
-                    except ValueError:
-                        logger.warning(
-                            "Could not restore existing refresh token either"
-                        )
-        else:
+        if not refresh_token:
             self._refresh_token_secure = None
+            return
+
+        refresh_expires = token_data.get("refresh_expires_in")
+        if not refresh_expires:
+            refresh_expires = expires_in * 24
+        try:
+            self._refresh_token_secure = SecureToken(
+                _value=refresh_token,
+                _expires_at=time.time() + refresh_expires,
+            )
+        except ValueError:
+            # S3 fix: If SecureToken creation fails and we had a valid existing
+            # refresh token, restore it instead of losing it entirely
+            logger.debug("Skipping secure storage for invalid refresh token format")
+            if TokenManager._should_restore_refresh_token(
+                existing_refresh_token, refresh_token
+            ):
+                try:
+                    # Non-None: checked by _should_restore_refresh_token.
+                    self._refresh_token_secure = SecureToken(
+                        _value=cast(str, existing_refresh_token),
+                        _expires_at=time.time() + expires_in * 24,
+                    )
+                    logger.debug(
+                        "Restored existing refresh token after new token failed"
+                    )
+                except ValueError:
+                    logger.warning("Could not restore existing refresh token either")
+
+    @staticmethod
+    def _should_restore_refresh_token(
+        existing_refresh_token: str | None, refresh_token: Any
+    ) -> bool:
+        return bool(existing_refresh_token and refresh_token != existing_refresh_token)
 
     def clear_tokens(self) -> None:
         """Clear secure token storage."""
@@ -380,36 +388,10 @@ class TokenManager:
             jitter_factor=0.1,
         )
 
-        async def perform_refresh():
-            async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
-                async with session.post(
-                    refresh_url,
-                    json={"refresh_token": refresh_token_value},
-                    headers={"Content-Type": "application/json"},
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as response:
-                    if response.status == 401:
-                        raise ValueError("Refresh token invalid or expired")
-                    if response.status == 429:
-                        await (
-                            response.text()
-                        )  # drain body; do not propagate upstream content
-                        raise RuntimeError("Token refresh failed with HTTP 429")
-                    if response.status != 200:
-                        await (
-                            response.text()
-                        )  # drain body; do not propagate upstream content
-                        raise RuntimeError(
-                            f"Token refresh failed with HTTP {response.status}"
-                        )
-                    data = await response.json()
-                    if not data.get("success"):
-                        raise ValueError(_GENERIC_REFRESH_ERROR)
-
-                    payload = data.get("data", {})
-                    if "refresh_token" not in payload or not payload["refresh_token"]:
-                        payload["refresh_token"] = refresh_token_value
-                    return payload
+        async def perform_refresh() -> dict[str, Any]:
+            return await TokenManager._perform_jwt_refresh(
+                refresh_url, refresh_token_value
+            )
 
         try:
             token_data = await client.execute_with_retry(
@@ -465,6 +447,40 @@ class TokenManager:
                 status=AuthStatus.INVALID,
                 error_message=_GENERIC_REFRESH_ERROR,
             )
+
+    @staticmethod
+    async def _perform_jwt_refresh(
+        refresh_url: str, refresh_token_value: str
+    ) -> dict[str, Any]:
+        async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
+            async with session.post(
+                refresh_url,
+                json={"refresh_token": refresh_token_value},
+                headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as response:
+                if response.status == 401:
+                    raise ValueError("Refresh token invalid or expired")
+                if response.status == 429:
+                    await (
+                        response.text()
+                    )  # drain body; do not propagate upstream content
+                    raise RuntimeError("Token refresh failed with HTTP 429")
+                if response.status != 200:
+                    await (
+                        response.text()
+                    )  # drain body; do not propagate upstream content
+                    raise RuntimeError(
+                        f"Token refresh failed with HTTP {response.status}"
+                    )
+                data = await response.json()
+                if not data.get("success"):
+                    raise ValueError(_GENERIC_REFRESH_ERROR)
+
+                payload: dict[str, Any] = data.get("data", {})
+                if "refresh_token" not in payload or not payload["refresh_token"]:
+                    payload["refresh_token"] = refresh_token_value
+                return payload
 
     async def _build_oauth2_token_url(self) -> str:
         from traigent.config.backend_config import BackendConfig
@@ -631,12 +647,7 @@ class TokenManager:
                 # handed out inside AuthCredentials: latch it like the guarded getter does
                 self.read_guard({"Authorization": f"Bearer {refresh_token}"})
 
-        metadata: dict[str, Any] = {}
-        credentials = self._get_credentials_fn() if self._get_credentials_fn else None
-        if credentials and credentials.metadata:
-            metadata.update(credentials.metadata)
-        if token_data.get("user") is not None:
-            metadata["user"] = token_data.get("user", {})
+        metadata = TokenManager._token_metadata(self, token_data)
 
         api_key = token_data.get("api_key") or token_data.get("apiKey")
         expires_at_dt = datetime.fromtimestamp(expires_at, UTC) if expires_at else None
@@ -654,6 +665,16 @@ class TokenManager:
             metadata=metadata,
             api_key=api_key,
         )
+
+    def _token_metadata(self, token_data: dict[str, Any]) -> dict[str, Any]:
+        metadata: dict[str, Any] = {}
+        credentials = self._get_credentials_fn() if self._get_credentials_fn else None
+        if credentials and credentials.metadata:
+            metadata.update(credentials.metadata)
+        if token_data.get("user") is not None:
+            metadata["user"] = token_data.get("user", {})
+
+        return metadata
 
     def get_authorization_header(self) -> dict[str, str]:
         """Get authorization header from current token.
