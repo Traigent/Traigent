@@ -58,3 +58,24 @@ def relative_change_with_reason(
 def relative_change(baseline: Any, best: Any, orientation: str | None) -> float | None:
     """Relative improvement of ``best`` over ``baseline``, or ``None`` if undefined."""
     return relative_change_with_reason(baseline, best, orientation)[0]
+
+
+# A baseline of exactly zero has no relative scale. Comparisons against it use
+# this floor as the denominator (the same scale as a 0.01 baseline), so a move
+# from 0 to a materially non-zero value is reported with a finite, large change
+# instead of being skipped (#2847).
+ZERO_BASELINE_DENOMINATOR = 0.01
+
+
+def signed_relative_delta(baseline: float, current: float) -> float:
+    """Signed change of ``current`` from ``baseline`` as a fraction of the baseline.
+
+    The denominator is ``abs(baseline)``, so the sign always says whether the
+    value went up (positive) or down (negative), also for negative baselines.
+    A zero baseline uses :data:`ZERO_BASELINE_DENOMINATOR`; ``0 -> 0`` is 0.0.
+    """
+    delta = current - baseline
+    if delta == 0:
+        return 0.0
+    denominator = abs(baseline) if baseline != 0 else ZERO_BASELINE_DENOMINATOR
+    return delta / denominator

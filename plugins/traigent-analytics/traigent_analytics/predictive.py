@@ -18,6 +18,7 @@ from traigent.core.constants import (
     MAX_USAGE_HISTORY_SIZE,
 )
 from traigent.utils.logging import get_logger
+from traigent.utils.relative_change import signed_relative_delta
 
 logger = get_logger(__name__)
 
@@ -1024,7 +1025,7 @@ class TrendAnalyzer:
     ) -> tuple[TrendDirection, float]:
         """Determine trend direction and change strength."""
 
-        trend_change = (second_avg - first_avg) / first_avg if first_avg != 0 else 0
+        trend_change = signed_relative_delta(first_avg, second_avg)
 
         if abs(trend_change) < 0.05:
             direction = TrendDirection.STABLE
