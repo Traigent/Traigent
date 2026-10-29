@@ -316,7 +316,7 @@ def _typed_configuration_entry(entry: Any) -> Any:
 
 #: HTTP statuses of a typed session create that mean "the typed shape was not
 #: accepted" and so justify one legacy-contract retry (#2818).
-_TYPED_SHAPE_RETRY_STATUSES = frozenset({400, 404, 405, 426})
+_TYPED_SHAPE_RETRY_STATUSES = frozenset({400, 404, 405, 415, 422, 426})
 
 
 class ApiOperations:

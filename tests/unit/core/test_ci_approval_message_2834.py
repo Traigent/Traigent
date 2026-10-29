@@ -40,7 +40,7 @@ def _message(storage: Path) -> str:
 
 def test_example_token_in_message_validates_when_used(tmp_path: Path) -> None:
     message = _message(tmp_path)
-    match = re.search(r"echo '(\{.*\})' > (\S+)", message)
+    match = re.search(r"echo '(\{.*\})' > (\S+)", message)  # path has no spaces here
     assert match, message
     token = json.loads(match.group(1))
     expires = datetime.strptime(token["expires_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
@@ -95,3 +95,21 @@ def test_over_ttl_legacy_token_logs_the_cap(
     with caplog.at_level(logging.WARNING):
         _message(tmp_path)
     assert any("24 hours" in r.getMessage() for r in caplog.records)
+
+
+def test_message_quotes_a_path_with_spaces(tmp_path: Path) -> None:
+    spaced = tmp_path / "my results"
+    spaced.mkdir()
+    message = _message(spaced)
+    assert f"> '{spaced / 'approval.token'}'" in message
+
+
+def test_legacy_token_without_expiry_is_logged_as_missing(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    (tmp_path / "approval.token").write_text(
+        json.dumps({"approved_by": "me", "expires_at": "not-a-date"}), encoding="utf-8"
+    )
+    with caplog.at_level(logging.WARNING):
+        _message(tmp_path)
+    assert any("missing or not a valid" in r.getMessage() for r in caplog.records)

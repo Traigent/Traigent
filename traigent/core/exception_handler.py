@@ -217,7 +217,7 @@ def classify_vendor_error(exc: Exception) -> VendorErrorCategory | None:
     if isinstance(exc, ServiceUnavailableError):
         return VendorErrorCategory.SERVICE_UNAVAILABLE
 
-    status = http_status_of(exc)
+    status = http_status_of(exc) if _is_provider_sdk_exception(exc) else None
     if status is not None and status in _STATUS_CATEGORIES:
         return _STATUS_CATEGORIES[status]
 
@@ -270,7 +270,15 @@ _AUTH_EXCEPTION_NAMES = frozenset(
         "CredentialError",
     }
 )
+_MISSING_KEY_RE = re.compile(
+    r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_API_KEY\b.{0,40}?"
+    r"(?:not set|must be set|is missing|missing|is required|required)",
+)
 _API_KEY_TEXT_TOKENS = ("api key", "api_key", "authentication", "openai_api_key")
+
+
+def _is_provider_sdk_exception(exc: BaseException) -> bool:
+    return type(exc).__module__.split(".")[0] in _PROVIDER_SDK_ROOTS
 
 
 def is_provider_api_key_failure(exc: BaseException) -> bool:
@@ -282,16 +290,23 @@ def is_provider_api_key_failure(exc: BaseException) -> bool:
     ``authentication`` table or a ``KeyError('api_key')`` from the user's agent
     is an ordinary per-example failure and must not abort the run (#2842).
     """
-    if http_status_of(exc) in (401, 403):
+    provider_sdk = _is_provider_sdk_exception(exc)
+    # A 401/403 from the user's own service (requests/httpx to an internal API,
+    # a custom exception with ``.code = 403``) is not a verdict on the provider
+    # key: the status is only trusted from provider SDK exceptions.
+    if provider_sdk and http_status_of(exc) in (401, 403):
         return True
     if any(base.__name__ in _AUTH_EXCEPTION_NAMES for base in type(exc).__mro__):
         return True
     if _is_local_exception(exc):
         return False
-    if type(exc).__module__.split(".")[0] not in _PROVIDER_SDK_ROOTS:
-        return False
     text = str(exc).lower()
-    return any(token in text for token in _API_KEY_TEXT_TOKENS)
+    if provider_sdk:
+        return any(token in text for token in _API_KEY_TEXT_TOKENS)
+    # A missing provider key surfaces from wrappers/agents as a plain
+    # ValueError/RuntimeError naming the env var ("OPENAI_API_KEY is not set").
+    # That is a run-level setup error, not per-example domain text, so abort.
+    return _MISSING_KEY_RE.search(str(exc)) is not None
 
 
 def classify_systematic_provider_failure(

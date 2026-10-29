@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import os
+import shlex
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -116,8 +117,8 @@ def _validate_legacy_token(token_data: dict[str, Any]) -> bool:
         )
     except (ValueError, KeyError):
         logger.warning(
-            "Legacy CI approval token rejected: expires_at is not a valid "
-            "ISO-8601 timestamp."
+            "Legacy CI approval token rejected: expires_at is missing or not a "
+            "valid ISO-8601 timestamp."
         )
     return False
 
@@ -215,7 +216,7 @@ To approve, use one of these methods:
 
 2. Approval token file (timestamps are interpreted as UTC; expires_at must be
    in the future and at most {max_hours} hours ahead):
-   echo '{{"approved_by": "your_name", "expires_at": "{example_expiry}"}}' > {token_file}
+   echo '{{"approved_by": "your_name", "expires_at": "{example_expiry}"}}' > {shlex.quote(str(token_file))}
 
 3. GitHub Actions with environment protection: protection only holds the job
    until reviewers approve. The job must still export TRAIGENT_RUN_APPROVED=1

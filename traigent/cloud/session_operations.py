@@ -85,6 +85,11 @@ def _get_session_creation_failure_detail(
     return None
 
 
+#: Answered statuses that say nothing about the request body: auth verdicts and
+#: "try again later" replies.
+_NOT_REQUEST_PROBLEM_STATUSES = frozenset({401, 403, 408, 425, 429})
+
+
 def _answered_refusal_status(
     failure_response: SessionCreationFailureDetail | None,
 ) -> int | None:
@@ -118,10 +123,13 @@ def _log_session_create_failure(
         assert failure_response is not None
         logger.warning(
             "Managed session creation was refused by the backend (%s) for '%s'; "
-            "no managed session was created. The backend was reachable, so this "
-            "is a problem with the request, not the network or the key.",
+            "no managed session was created.%s",
             failure_response.one_line_summary(),
             function_name,
+            ""
+            if failure_response.status_code in _NOT_REQUEST_PROBLEM_STATUSES
+            else " The backend was reachable, so this is a problem with the "
+            "request, not the network.",
         )
         return
     logger.warning(

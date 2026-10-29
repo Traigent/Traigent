@@ -2694,7 +2694,7 @@ class TestLegacyRetryEligibility:
         assert post.await_count == 1
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("status", [400, 404, 405, 426])
+    @pytest.mark.parametrize("status", [400, 404, 405, 415, 422, 426])
     async def test_typed_shape_failures_still_retry_once(self, monkeypatch, status):
         ops, request, exc, post = self._run(
             monkeypatch, status, '{"error_code": "validation_error"}'

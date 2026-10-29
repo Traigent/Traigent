@@ -17,9 +17,22 @@ from traigent.utils.error_handler import APIKeyError
 
 
 class _HttpError(Exception):
+    """Stand-in for a provider SDK status error (module root is a provider SDK)."""
+
+    __module__ = "openai"
+
     def __init__(self, status: int, text: str = "failure") -> None:
         super().__init__(text)
         self.status_code = status
+
+
+class _UserServiceError(Exception):
+    """An error from the user's own tool/service: not a provider verdict."""
+
+    def __init__(self, status: int) -> None:
+        super().__init__("internal service said no")
+        self.status_code = status
+        self.code = status
 
 
 @pytest.mark.parametrize(
@@ -117,3 +130,25 @@ def test_local_invoker_still_aborts_on_provider_auth_failure() -> None:
 
     with pytest.raises(APIKeyError):
         asyncio.run(LocalInvoker().invoke(agent, {}, {"text": "x"}))
+
+
+@pytest.mark.parametrize("status", [401, 403, 429])
+def test_status_from_users_own_service_is_not_a_provider_verdict(status: int) -> None:
+    from traigent.core.exception_handler import is_provider_api_key_failure
+
+    exc = _UserServiceError(status)
+    assert is_provider_api_key_failure(exc) is False
+    assert classify_vendor_error(exc) is None
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        ValueError("OPENAI_API_KEY is not set"),
+        RuntimeError("The ANTHROPIC_API_KEY environment variable must be set"),
+    ],
+)
+def test_missing_provider_key_env_var_still_aborts(exc: Exception) -> None:
+    from traigent.core.exception_handler import is_provider_api_key_failure
+
+    assert is_provider_api_key_failure(exc) is True

@@ -861,3 +861,27 @@ def test_create_session_5xx_keeps_unreachable_wording(monkeypatch, caplog):
         )
 
     assert any("degrading to LOCAL" in r.getMessage() for r in caplog.records)
+
+
+def test_create_session_429_refusal_does_not_blame_the_request(monkeypatch, caplog):
+    client = FakeClient()
+    ops = SessionOperations(client)
+
+    async def create_via_api(_request):
+        exc = CloudServiceError("Session creation failed: HTTP 429")
+        exc.session_creation_failure = SessionCreationFailureDetail.from_http_response(
+            429, '{"error_code": "rate_limited"}'
+        )
+        raise exc
+
+    monkeypatch.setattr(ops.client, "_create_traigent_session_via_api", create_via_api)
+    with caplog.at_level(logging.WARNING, logger="traigent.cloud.session_operations"):
+        ops.create_session(
+            "demo-function",
+            {"model": ["gpt-4o"]},
+            metadata={"max_trials": 3, "dataset_size": 4},
+        )
+    joined = "\n".join(r.getMessage() for r in caplog.records)
+    assert "HTTP 429 | rate_limited" in joined
+    assert "problem with the request" not in joined
+    assert "unreachable" not in joined
