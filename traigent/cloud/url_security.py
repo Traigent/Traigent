@@ -494,6 +494,12 @@ def _reject_unsafe_hostname(
             "Cloud base URL host could not be resolved"
         ) from None
 
+    _reject_unsafe_resolved_addresses(addr_infos, allow_private=allow_private)
+
+
+def _reject_unsafe_resolved_addresses(
+    addr_infos: list[tuple[Any, Any, int, str, Any]], *, allow_private: bool
+) -> None:
     for _family, _socktype, _proto, _canonname, sockaddr in addr_infos:
         resolved_ip = _parse_resolved_ip(sockaddr[0])
         if resolved_ip is None:
@@ -542,20 +548,7 @@ def validate_cloud_base_url(base_url: str, *, purpose: str = _CLOUD_REQUEST) -> 
         raise ValueError(f"{purpose} base URL contains unsafe whitespace") from None
 
     parsed = urlparse(candidate)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError(f"{purpose} base URL must be http(s) with a host") from None
-    if _has_invalid_port(parsed):
-        raise ValueError(f"{purpose} base URL has an invalid port") from None
-    if parsed.username or parsed.password:
-        raise ValueError(f"{purpose} base URL must not include credentials") from None
-    if parsed.params or parsed.query or parsed.fragment:
-        raise ValueError(
-            f"{purpose} base URL must not include params, query, or fragment"
-        ) from None
-
-    hostname = parsed.hostname
-    if hostname is None:
-        raise ValueError(f"{purpose} base URL must include a hostname") from None
+    hostname = _validate_cloud_url_parts(parsed, purpose=purpose)
     _reject_always_blocked_hostname(hostname, purpose=purpose)
 
     allow_local = _is_development_environment()
@@ -565,26 +558,7 @@ def validate_cloud_base_url(base_url: str, *, purpose: str = _CLOUD_REQUEST) -> 
             f"{_production_assumed_hint()}"
         ) from None
 
-    # Decode to a fixed point (bounded) so multiply-encoded traversal
-    # (e.g. %25252e) cannot survive a fixed two-pass decode. Mirrors the
-    # explicit-api_base_url guard in backend_client.py.
-    decoded_path = parsed.path
-    for _ in range(8):
-        next_path = unquote(decoded_path)
-        if next_path == decoded_path:
-            break
-        decoded_path = next_path
-    else:
-        # Still changing after 8 decodes — pathologically encoded; reject.
-        raise ValueError(
-            f"{purpose} base URL must not contain path traversal"
-        ) from None
-
-    path_segments = [part for part in decoded_path.split("/") if part]
-    if any(part in {".", ".."} for part in path_segments):
-        raise ValueError(
-            f"{purpose} base URL must not contain path traversal"
-        ) from None
+    _reject_cloud_path_traversal(parsed.path, purpose=purpose)
 
     allow_private = allow_local or _private_backend_opt_in(candidate)
     try:
@@ -602,6 +576,47 @@ def validate_cloud_base_url(base_url: str, *, purpose: str = _CLOUD_REQUEST) -> 
     return urlunparse(
         parsed._replace(path=clean_path, params="", query="", fragment="")
     )
+
+
+def _validate_cloud_url_parts(parsed: ParseResult, *, purpose: str) -> str:
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"{purpose} base URL must be http(s) with a host") from None
+    if _has_invalid_port(parsed):
+        raise ValueError(f"{purpose} base URL has an invalid port") from None
+    if parsed.username or parsed.password:
+        raise ValueError(f"{purpose} base URL must not include credentials") from None
+    if parsed.params or parsed.query or parsed.fragment:
+        raise ValueError(
+            f"{purpose} base URL must not include params, query, or fragment"
+        ) from None
+
+    hostname = parsed.hostname
+    if hostname is None:
+        raise ValueError(f"{purpose} base URL must include a hostname") from None
+    return hostname
+
+
+def _reject_cloud_path_traversal(path: str, *, purpose: str) -> None:
+    # Decode to a fixed point (bounded) so multiply-encoded traversal
+    # (e.g. %25252e) cannot survive a fixed two-pass decode. Mirrors the
+    # explicit-api_base_url guard in backend_client.py.
+    decoded_path = path
+    for _ in range(8):
+        next_path = unquote(decoded_path)
+        if next_path == decoded_path:
+            break
+        decoded_path = next_path
+    else:
+        # Still changing after 8 decodes — pathologically encoded; reject.
+        raise ValueError(
+            f"{purpose} base URL must not contain path traversal"
+        ) from None
+
+    path_segments = [part for part in decoded_path.split("/") if part]
+    if any(part in {".", ".."} for part in path_segments):
+        raise ValueError(
+            f"{purpose} base URL must not contain path traversal"
+        ) from None
 
 
 def validate_always_blocked_cloud_url(
