@@ -86,6 +86,9 @@ class BackendClientConfig:
                 get_no_credentials_hint(),
             )
 
+        BackendClientConfig._resolve_api_url(self, api_env, BackendConfig)
+
+    def _resolve_api_url(self, api_env: str | None, BackendConfig: Any) -> None:
         if self.api_base_url is not None:
             if "://" not in self.api_base_url.strip():
                 origin = BackendConfig.normalize_backend_origin(self.api_base_url)
