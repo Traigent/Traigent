@@ -383,6 +383,33 @@ def capture_owner(owner: int) -> Iterator[None]:
 _MAX_THREAD_LOCAL_RESPONSES = 64
 
 
+def _capture_response_in_bucket(
+    bucket: _CaptureBucket, response: Any, requested_model: Any, key: Any
+) -> None:
+    with bucket.lock:
+        if bucket.sealed:
+            if not bucket.finished:
+                bucket.late.append(
+                    (
+                        response,
+                        requested_model if isinstance(requested_model, str) else None,
+                    )
+                )
+            # Captures after evaluate's final handoff cannot update its
+            # returned result. Live timed-out workers already make that
+            # trial unmeasured; never assume their remaining spend is $0.
+            return
+        bucket.responses.append(response)
+        bucket.owners.append(_capture_owner.get())
+        bucket.requested.append(
+            requested_model
+            if isinstance(requested_model, str) and requested_model
+            else None
+        )
+        if key is not None:
+            bucket.by_key[key] = response
+
+
 class LangChainMetadataCapture:
     """Thread-safe storage for LangChain response metadata."""
 
@@ -421,30 +448,7 @@ class LangChainMetadataCapture:
         # the historical behaviour for callers outside a trial.
         bucket = _capture_scope.get()
         if bucket is not None:
-            with bucket.lock:
-                if bucket.sealed:
-                    if not bucket.finished:
-                        bucket.late.append(
-                            (
-                                response,
-                                requested_model
-                                if isinstance(requested_model, str)
-                                else None,
-                            )
-                        )
-                    # Captures after evaluate's final handoff cannot update its
-                    # returned result. Live timed-out workers already make that
-                    # trial unmeasured; never assume their remaining spend is $0.
-                    return
-                bucket.responses.append(response)
-                bucket.owners.append(_capture_owner.get())
-                bucket.requested.append(
-                    requested_model
-                    if isinstance(requested_model, str) and requested_model
-                    else None
-                )
-                if key is not None:
-                    bucket.by_key[key] = response
+            _capture_response_in_bucket(bucket, response, requested_model, key)
             return
 
         with self._response_lock:
@@ -999,6 +1003,14 @@ def _patch_langchain_bedrock_model(model_cls: Any, class_name: str) -> bool:
     if _patch_ainvoke(model_cls, class_name, "bedrock"):
         patched_any = True
 
+    if _patch_bedrock_streams(model_cls, class_name):
+        patched_any = True
+
+    return patched_any
+
+
+def _patch_bedrock_streams(model_cls: Any, class_name: str) -> bool:
+    patched_any = False
     for meth_name, flag in [
         ("stream", "_traigent_patched_stream"),
         ("astream", "_traigent_patched_astream"),
