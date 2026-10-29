@@ -4,13 +4,10 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
-import importlib.util
-import inspect
 import io
 import json
 import logging
 import os
-import sys
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,6 +26,7 @@ from traigent.tuned_variables.detection_types import DetectionResult
 from traigent.tuned_variables.detector import TunedVariableDetector
 from traigent.utils.exceptions import ValidationError as TraigentValidationError
 from traigent.utils.function_identity import sanitize_identifier
+from traigent.utils.module_loading import find_optimized_functions, load_user_module
 from traigent.utils.persistence import PersistenceManager
 from traigent.utils.secure_path import PathTraversalError, validate_path
 from traigent.utils.validation import ValidationResult, Validators
@@ -675,48 +673,23 @@ async def get_optimization_plan_tool(
         )
 
 
-def _is_optimizable_function(obj: Any) -> bool:
-    if inspect.isfunction(obj) and hasattr(obj, "optimize"):
-        return True
-    if hasattr(obj, "__class__") and obj.__class__.__name__ == "OptimizedFunction":
-        return True
-    optimize_method = getattr(obj, "optimize", None)
-    return callable(optimize_method) and (hasattr(obj, "func") or callable(obj))
-
-
 def _load_user_module(script_path: Path) -> ModuleType:
     module_name = (
         f"_traigent_mcp_{sanitize_identifier(script_path.stem)}_"
         f"{abs(hash(str(script_path)))}"
     )
-    spec = importlib.util.spec_from_file_location(module_name, script_path)
-    if spec is None or spec.loader is None:
-        raise ToolInputError(f"Could not load Python module from {script_path}")
-
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    parent = str(script_path.parent)
-    inserted = False
-    if parent not in sys.path:
-        sys.path.insert(0, parent)
-        inserted = True
     try:
-        spec.loader.exec_module(module)
-    finally:
-        if inserted:
-            with contextlib.suppress(ValueError):
-                sys.path.remove(parent)
-    return module
+        return load_user_module(script_path, module_name)
+    except ImportError as exc:
+        if "Failed to load module spec" in str(exc):
+            raise ToolInputError(
+                f"Could not load Python module from {script_path}"
+            ) from exc
+        raise
 
 
 def _find_optimizable_functions(module: ModuleType) -> list[tuple[str, Any]]:
-    functions: list[tuple[str, Any]] = []
-    for name, obj in inspect.getmembers(module):
-        if name.startswith("_") or inspect.ismodule(obj):
-            continue
-        if _is_optimizable_function(obj):
-            functions.append((name, obj))
-    return functions
+    return find_optimized_functions(module)
 
 
 @contextlib.contextmanager

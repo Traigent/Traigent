@@ -4,9 +4,7 @@
 
 from __future__ import annotations
 
-import importlib.util
 import inspect
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +12,12 @@ from rich.console import Console
 
 from traigent.cli.validation_types import OptimizedFunction
 from traigent.utils.logging import get_logger
+from traigent.utils.module_loading import (
+    find_optimized_functions,
+    load_user_module,
+    looks_like_dotted_module,
+    resolve_dotted_module,
+)
 from traigent.utils.secure_path import PathTraversalError, validate_path
 
 logger = get_logger(__name__)
@@ -26,16 +30,19 @@ def _resolve_module_path(module_path: str, workspace_root: str | Path | None) ->
         if workspace_root is not None
         else Path.cwd().resolve()
     )
+    candidate = Path(module_path).expanduser()
+    if looks_like_dotted_module(str(module_path)) and not candidate.exists():
+        # ``pkg.mod``: locate the source file, then apply the same workspace
+        # containment rule as for a path.
+        candidate = resolve_dotted_module(str(module_path), workspace_base)
     try:
         module_path_obj = validate_path(
-            Path(module_path).expanduser(),
+            candidate,
             workspace_base,
             must_exist=True,
         )
     except FileNotFoundError:
-        raise FileNotFoundError(
-            f"Module file not found: {Path(module_path).expanduser()}"
-        ) from None
+        raise FileNotFoundError(f"Module file not found: {candidate}") from None
     except (PathTraversalError, ValueError) as exc:
         raise ValueError(
             f"Module path must reside inside the current workspace ({workspace_base}): {module_path}"
@@ -44,30 +51,6 @@ def _resolve_module_path(module_path: str, workspace_root: str | Path | None) ->
     if module_path_obj.suffix != ".py":
         raise ValueError(f"Module must be a Python file (.py): {module_path_obj}")
     return module_path_obj
-
-
-def _load_user_module(module_path_obj: Path) -> Any:
-    # Import the module
-    spec = importlib.util.spec_from_file_location("user_module", module_path_obj)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Failed to load module spec from {module_path_obj}")
-
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def _is_optimized_function(obj: Any) -> bool:
-    """Check if it's a regular function with optimize method OR an OptimizedFunction instance."""
-    if inspect.isfunction(obj) and hasattr(obj, "optimize"):
-        return True
-    if hasattr(obj, "__class__") and obj.__class__.__name__ == "OptimizedFunction":
-        return True
-    if hasattr(obj, "optimize") and callable(getattr(obj, "optimize", None)):
-        # Additional check to ensure this isn't just a module or other object
-        if hasattr(obj, "func") or callable(obj):
-            return True
-    return False
 
 
 def discover_optimized_functions(
@@ -93,43 +76,17 @@ def discover_optimized_functions(
 
     module_path_obj = _resolve_module_path(module_path, workspace_root)
 
-    # Load the Python file as a module
-    parent_dir = module_path_obj.parent
-    sys.path.insert(0, str(parent_dir))
-
+    module = load_user_module(module_path_obj)
     discovered_functions = []
 
-    try:
-        # Import the module
-        module = _load_user_module(module_path_obj)
-
-        # Find functions with optimize method (decorated with @traigent.optimize)
-        for name, obj in inspect.getmembers(module):
-            # Skip private/internal attributes and modules
-            if name.startswith("_") or inspect.ismodule(obj):
-                continue
-
-            if not _is_optimized_function(obj):
-                continue
-
-            # Apply function filter if provided
-            if function_filter is not None and name not in function_filter:
-                continue
-
-            try:
-                # Extract function information
-                func_info = _extract_function_info(name, obj)
-                discovered_functions.append(func_info)
-                logger.debug(f"Discovered optimized function: {func_info}")
-
-            except Exception as e:
-                logger.warning(f"Failed to extract info from function {name}: {e}")
-                continue
-
-    finally:
-        # Remove from Python path
-        if str(parent_dir) in sys.path:
-            sys.path.remove(str(parent_dir))
+    for name, obj in find_optimized_functions(module, function_filter):
+        try:
+            func_info = _extract_function_info(name, obj)
+            discovered_functions.append(func_info)
+            logger.debug(f"Discovered optimized function: {func_info}")
+        except Exception as e:
+            logger.warning(f"Failed to extract info from function {name}: {e}")
+            continue
 
     logger.info(f"Discovered {len(discovered_functions)} optimized function(s)")
     return discovered_functions
@@ -218,6 +175,32 @@ def _extract_default_parameters(func: Any) -> dict[str, Any]:
         return {}
 
 
+def classify_discovered_functions(
+    functions: list[OptimizedFunction],
+) -> tuple[list[str], list[str]]:
+    """Split discovery findings into ``(blocking, notes)``.
+
+    ``blocking`` holds exactly what the real run turns into a BLOCKED verdict
+    (``check_prerequisites``); ``notes`` are advisory and never block.
+    """
+    from traigent.cli.optimization_validator import check_prerequisites
+
+    blocking: list[str] = []
+    notes: list[str] = []
+    for func_info in functions:
+        blocking.extend(
+            f"{func_info.name}: {issue}" for issue in check_prerequisites(func_info)
+        )
+        if func_info.baseline_source == "none":
+            notes.append(
+                f"{func_info.name}: Note - no default_config and no signature "
+                "defaults, so the baseline runs with an empty config. That is "
+                "fine if the function handles an empty traigent.get_config(); "
+                "add default_config={...} to the decorator to pin the baseline."
+            )
+    return blocking, notes
+
+
 def validate_discovered_functions(functions: list[OptimizedFunction]) -> list[str]:
     """Validate discovered functions and return any issues found.
 
@@ -225,41 +208,23 @@ def validate_discovered_functions(functions: list[OptimizedFunction]) -> list[st
         functions: List of discovered functions to validate
 
     Returns:
-        List of validation issue messages (empty if all valid)
+        Blocking issues followed by advisory notes (empty if all valid)
     """
-    issues = []
-
-    for func_info in functions:
-        # Check for evaluation dataset
-        if not func_info.has_dataset:
-            issues.append(f"{func_info.name}: Missing evaluation dataset")
-
-        # Check for objectives
-        if not func_info.objectives:
-            issues.append(f"{func_info.name}: No objectives specified")
-
-        # Check for configuration space
-        config_space = func_info.decorator_config.get("configuration_space", {})
-        if not config_space:
-            issues.append(f"{func_info.name}: No configuration space specified")
-
-        # Warn about missing defaults (not blocking)
-        if not func_info.has_defaults:
-            issues.append(
-                f"{func_info.name}: Warning - No default parameters found in function signature"
-            )
-
-    return issues
+    blocking, notes = classify_discovered_functions(functions)
+    return blocking + notes
 
 
 def print_discovery_summary(
-    functions: list[OptimizedFunction], issues: list[str]
+    functions: list[OptimizedFunction],
+    issues: list[str],
+    notes: list[str] | None = None,
 ) -> None:
     """Print a summary of function discovery results.
 
     Args:
         functions: List of discovered functions
-        issues: List of validation issues
+        issues: Blocking validation issues
+        notes: Advisory, non-blocking notes
     """
     if not functions:
         console.print("[red]No functions with @traigent.optimize decorator found[/red]")
@@ -275,12 +240,14 @@ def print_discovery_summary(
         else:
             status_indicators.append("[red]❌ no dataset[/red]")
 
-        if func_info.has_defaults:
+        if func_info.baseline_source == "default_config":
+            status_indicators.append("[green]⚙️  default_config[/green]")
+        elif func_info.baseline_source == "signature":
             status_indicators.append(
                 f"[green]⚙️  {len(func_info.default_params)} defaults[/green]"
             )
         else:
-            status_indicators.append("[yellow]⚠️  no defaults[/yellow]")
+            status_indicators.append("[dim]⚙️  empty baseline[/dim]")
 
         objectives_str = ", ".join(func_info.objectives)
         status_indicators.append(f"[cyan]🎯 {objectives_str}[/cyan]")
@@ -292,3 +259,7 @@ def print_discovery_summary(
         console.print(f"\n[yellow]Validation Issues ({len(issues)}):[/yellow]")
         for issue in issues:
             console.print(f"  ⚠️  {issue}")
+    if notes:
+        console.print("\n[dim]Notes:[/dim]")
+        for note in notes:
+            console.print(f"  [dim]ℹ️  {note}[/dim]")
