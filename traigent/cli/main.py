@@ -168,15 +168,9 @@ def _display_optimization_result(
     console.print(f"   Successful trials: {len(result.successful_trials)}")
 
     # Save result
-    result_name = f"{func_name}_{algorithm}_{max_trials}"
-    if persistence.result_exists(result_name):
-        console.print(
-            f"   [yellow]Replacing the earlier saved result '{result_name}' "
-            "(results are keyed by function name, algorithm and trial count)."
-            "[/yellow]"
-        )
-    persistence.save_result(result, result_name)
-    console.print(f"   Results saved as: {result_name}")
+    _save_result_announcing_replace(
+        persistence, result, f"{func_name}_{algorithm}_{max_trials}"
+    )
 
 
 def _failed_run_reason(result: Any) -> str | None:
@@ -224,6 +218,20 @@ def _failed_run_reason(result: Any) -> str | None:
     return None
 
 
+def _save_result_announcing_replace(
+    persistence: PersistenceManager, result: Any, result_name: str
+) -> None:
+    """Save ``result``; say so when it replaces an earlier result of that name."""
+    if persistence.result_exists(result_name):
+        console.print(
+            f"   [yellow]Replacing the earlier saved result '{result_name}' "
+            "(results are keyed by function name, algorithm and trial count)."
+            "[/yellow]"
+        )
+    persistence.save_result(result, result_name)
+    console.print(f"   Results saved as: {result_name}")
+
+
 _MAX_ERROR_CHARS = 500
 _CONTROL_CHARS = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
 
@@ -248,9 +256,11 @@ def _display_failed_optimization_result(
     console.print(
         f"❌ [red]Error optimizing {escape(func_name)}: {_safe_error_text(reason)}[/red]"
     )
-    result_name = f"{func_name}_{algorithm}_{max_trials}"
-    persistence.save_result(result, result_name)
-    console.print(f"   Results saved as: {result_name}")
+    for warning in getattr(result, "warnings", None) or []:
+        console.print(f"   [yellow]{_safe_error_text(warning, limit=None)}[/yellow]")
+    _save_result_announcing_replace(
+        persistence, result, f"{func_name}_{algorithm}_{max_trials}"
+    )
 
 
 def _display_optimization_summary(
@@ -2984,7 +2994,10 @@ async def _run_validations(
                 console.print(f"[green]{result.get_summary()}[/green]")
                 passed += 1
         except Exception as e:
-            console.print(f"[red]❌ Error validating {func_info.name}: {e}[/red]")
+            console.print(
+                f"[red]❌ Error validating {escape(func_info.name)}: "
+                f"{_safe_error_text(e)}[/red]"
+            )
             # Keep the error as a result so the closing verdict can tell it
             # apart from a genuine no-improvement outcome.
             results.append(
@@ -2994,7 +3007,7 @@ async def _run_validations(
                     optimized_metrics={},
                     is_superior=False,
                     improvement_details={},
-                    blocking_issues=[f"Validation error: {e}"],
+                    blocking_issues=[f"Validation error: {_safe_error_text(e)}"],
                 )
             )
             failed += 1
@@ -3145,7 +3158,7 @@ def check(
         _handle_check_exit(results)
 
     except Exception as e:
-        console.print(f"[red]Error during validation: {e}[/red]")
+        console.print(f"[red]Error during validation: {_safe_error_text(e)}[/red]")
         exit(1)
 
 
