@@ -28,8 +28,8 @@ from traigent.config.types import (
 )
 from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
 from traigent.core.execution_policy_runtime import backend_egress_disabled
-from traigent.core.trace_env import is_trace_enabled
 from traigent.core.objective_preflight import warn_unproducible_objectives
+from traigent.core.trace_env import is_trace_enabled
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.evaluators.local import LocalEvaluator
 from traigent.utils.env_config import is_mock_llm
@@ -558,6 +558,54 @@ def validate_metric_function_keys(
             )
 
 
+def _positional_fill_stray(
+    metric_func: Callable[..., Any],
+    binding: Any,
+    usage_probe: dict[str, Any],
+    recognized_set: set[str],
+) -> int | None:
+    """1-based position of a required, non-alias parameter fed the usage dict.
+
+    Derived from the real runtime binder: ``binding`` came from
+    ``resolve_metric_call_binding`` called with ``usage_probe`` as the LLM usage
+    payload, so applying its exact args/kwargs to the signature shows which
+    parameter would receive the usage dict (by identity), with no re-derivation
+    of the binder's mode selection. A parameter is a stray only when it is
+    REQUIRED (no default), receives the usage dict, and is not a known
+    llm-metrics alias -- and only when another REQUIRED parameter has a
+    recognized name (the user is clearly naming parameters, so a stray name is
+    a mistake). Fully positional scorers (``def m(a, b, c)``) and optional
+    recognized names (``*, config=None``) are intentional and left alone.
+    Parameter names are never returned.
+    """
+    import inspect
+
+    from traigent.evaluators.local import _LLM_METRIC_PARAM_NAMES
+
+    signature = inspect.signature(metric_func)
+    try:
+        bound = signature.bind(*binding.args, **binding.kwargs)
+    except TypeError:
+        return None
+    required = [
+        (position, p)
+        for position, p in enumerate(signature.parameters.values(), start=1)
+        if p.default is inspect.Parameter.empty
+        and p.kind
+        not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+    ]
+    for position, param in required:
+        if bound.arguments.get(param.name) is not usage_probe:
+            continue
+        if param.name in _LLM_METRIC_PARAM_NAMES:
+            continue
+        if any(
+            other.name in recognized_set for _, other in required if other is not param
+        ):
+            return position
+    return None
+
+
 def validate_metric_function_bindability(
     effective_metric_functions: dict[str, Callable[..., Any]],
     objectives: Sequence[str],
@@ -600,6 +648,7 @@ def validate_metric_function_bindability(
     from traigent.utils.exceptions import ValidationError
 
     synthetic_example = EvaluationExample(input_data={}, expected_output=None)
+    usage_probe: dict[str, Any] = {}
     recognized_names = sorted(
         _OUTPUT_METRIC_PARAM_NAMES
         | _EXPECTED_METRIC_PARAM_NAMES
@@ -610,7 +659,9 @@ def validate_metric_function_bindability(
     objective_names = set(objectives)
     recognized_set = set(recognized_names)
 
-    for metric_name, metric_func in effective_metric_functions.items():
+    for ordinal, (metric_name, metric_func) in enumerate(
+        effective_metric_functions.items(), start=1
+    ):
         # An OBJECTIVE defines the search signal, so production's LocalEvaluator
         # refuses to substitute a fabricated 0.0 for it and raises
         # (traigent/evaluators/local.py:851). An auxiliary/informational metric
@@ -625,7 +676,7 @@ def validate_metric_function_bindability(
 
         try:
             binding = resolve_metric_call_binding(
-                metric_func, None, synthetic_example, {}, {}, 0
+                metric_func, None, synthetic_example, {}, usage_probe, 0
             )
         except (TypeError, ValueError) as exc:
             message = (
@@ -642,6 +693,24 @@ def validate_metric_function_bindability(
             continue
 
         if binding.bind_ok:
+            stray = _positional_fill_stray(
+                metric_func, binding, usage_probe, recognized_set
+            )
+            if stray is None:
+                continue
+            kind = "an objective metric" if is_objective else "an auxiliary metric"
+            message = (
+                f"metric/scoring function #{ordinal} of {len(effective_metric_functions)} "
+                f"({kind}) has positional parameter {stray} that the runtime "
+                "would fill with the per-example LLM usage dict, not a value you "
+                "control. Give it a default, accept **kwargs, or name parameters "
+                f"from the recognized set: {', '.join(recognized_names)}."
+            )
+            if is_objective:
+                raise ValidationError(message)
+            logger.warning(
+                "%s Continuing: it is not an optimization objective.", message
+            )
             continue
 
         # `unmatched_parameters` is every bindable name when nothing bound, so
