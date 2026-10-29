@@ -11,9 +11,10 @@ import time
 import uuid
 import weakref
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from importlib import import_module
+from types import ModuleType
 from typing import Any, NoReturn, cast
 from urllib.parse import urlparse
 
@@ -250,15 +251,8 @@ def _iter_connector_protocols(connector: Any) -> list[Any]:
         seen.add(identifier)
         protocols.append(protocol)
 
-    conns = getattr(connector, "_conns", None)
-    values = getattr(conns, "values", None)
-    if callable(values):
-        for pooled_connections in list(values()):
-            for connection_entry in list(pooled_connections):
-                protocol = connection_entry
-                if isinstance(connection_entry, (tuple, list)) and connection_entry:
-                    protocol = connection_entry[0]
-                add(getattr(protocol, "protocol", protocol))
+    for protocol in _iter_pooled_protocols(connector):
+        add(getattr(protocol, "protocol", protocol))
 
     for protocol in list(getattr(connector, "_acquired", ()) or ()):
         add(getattr(protocol, "protocol", protocol))
@@ -278,6 +272,32 @@ def _raw_socket_from_transport(transport: Any) -> Any:
     return getattr(transport, "_sock", None)
 
 
+def _iter_pooled_protocols(connector: Any) -> Iterator[Any]:
+    conns = getattr(connector, "_conns", None)
+    values = getattr(conns, "values", None)
+    if callable(values):
+        for pooled_connections in list(values()):
+            for connection_entry in list(pooled_connections):
+                protocol = connection_entry
+                if isinstance(connection_entry, (tuple, list)) and connection_entry:
+                    protocol = connection_entry[0]
+                yield protocol
+
+
+def _transport_close_methods(transport: Any) -> Iterator[Callable[[], Any]]:
+    for method_name in ("abort", "close"):
+        method = getattr(transport, method_name, None)
+        if callable(method):
+            yield method
+
+
+def _close_nested_transports(transport: Any, seen: set[int]) -> None:
+    for nested_attr in ("_transport",):
+        nested_transport = getattr(transport, nested_attr, None)
+        if nested_transport is not None:
+            _close_transport_sync(nested_transport, seen)
+
+
 def _close_transport_sync(transport: Any, seen: set[int] | None = None) -> None:
     if transport is None:
         return
@@ -289,13 +309,11 @@ def _close_transport_sync(transport: Any, seen: set[int] | None = None) -> None:
         return
     seen.add(identifier)
 
-    for method_name in ("abort", "close"):
-        method = getattr(transport, method_name, None)
-        if callable(method):
-            try:
-                method()
-            except Exception:
-                pass
+    for method in _transport_close_methods(transport):
+        try:
+            method()
+        except Exception:
+            pass
 
     call_connection_lost = getattr(transport, "_call_connection_lost", None)
     if callable(call_connection_lost):
@@ -305,18 +323,16 @@ def _close_transport_sync(transport: Any, seen: set[int] | None = None) -> None:
             pass
 
     raw_socket = _raw_socket_from_transport(transport)
-    if raw_socket is not None:
-        close_socket = getattr(raw_socket, "close", None)
-        if callable(close_socket):
-            try:
-                close_socket()
-            except Exception:
-                pass
+    close_socket = (
+        getattr(raw_socket, "close", None) if raw_socket is not None else None
+    )
+    if callable(close_socket):
+        try:
+            close_socket()
+        except Exception:
+            pass
 
-    for nested_attr in ("_transport",):
-        nested_transport = getattr(transport, nested_attr, None)
-        if nested_transport is not None:
-            _close_transport_sync(nested_transport, seen)
+    _close_nested_transports(transport, seen)
 
     ssl_protocol = getattr(transport, "_ssl_protocol", None)
     nested_transport = getattr(ssl_protocol, "_transport", None)
@@ -354,18 +370,23 @@ def _cancel_connector_handle(connector: Any, name: str) -> None:
             pass
 
 
-def _clear_connector_waiters(connector: Any) -> None:
-    waiters = getattr(connector, "_waiters", None)
+def _waiter_cancel_methods(waiters: Any) -> Iterator[Callable[[], Any]]:
     values = getattr(waiters, "values", None)
     if callable(values):
         for keyed_waiters in list(values()):
             for waiter in list(keyed_waiters):
                 cancel = getattr(waiter, "cancel", None)
                 if callable(cancel):
-                    try:
-                        cancel()
-                    except Exception:
-                        pass
+                    yield cancel
+
+
+def _clear_connector_waiters(connector: Any) -> None:
+    waiters = getattr(connector, "_waiters", None)
+    for cancel in _waiter_cancel_methods(waiters):
+        try:
+            cancel()
+        except Exception:
+            pass
     clear = getattr(waiters, "clear", None)
     if callable(clear):
         try:
@@ -790,6 +811,74 @@ def _best_metrics_from_score(objective: str, best_score_raw: Any) -> dict[str, f
     return metrics
 
 
+def _resolve_cloud_urls(base_url: str | None) -> tuple[str, str]:
+    if base_url:
+        validate_or_raise(CoreValidators.validate_type(base_url, str, "base_url"))
+        if not base_url.strip():
+            raise ValidationException("base_url must be a non-empty string")
+
+        origin, path = BackendConfig.split_api_url(base_url)
+        if not origin:
+            origin = BackendConfig.normalize_backend_origin(base_url)
+            if not origin:
+                raise ValidationException("Invalid base_url provided")
+
+        parsed_origin = urlparse(origin)
+        if parsed_origin.hostname is None:
+            raise ValidationException("Invalid base_url provided")
+
+        resolved_origin = origin
+        api_base_candidate = f"{origin}{path or BackendConfig.get_default_api_path()}"
+    else:
+        resolved_origin = BackendConfig.get_cloud_backend_url()
+        api_base_candidate = BackendConfig.get_cloud_api_url()
+    return resolved_origin, api_base_candidate
+
+
+def _session_owner_info(
+    response_metadata: dict[str, Any] | None, request_metadata: dict[str, Any] | None
+) -> dict[str, Any]:
+    owner_info: dict[str, Any] = {}
+    for source in (response_metadata or {}, request_metadata or {}):
+        if not source:
+            continue
+        for key in (
+            "owner_user_id",
+            "owner_api_key_id",
+            "created_by",
+            "owner_scope",
+            "credential_source",
+            "owner_api_key_preview",
+        ):
+            value = source.get(key)
+            if value and key not in owner_info:
+                owner_info[key] = value
+    return owner_info
+
+
+def _prepare_content_less_context(
+    client: TraigentCloudClient,
+    content_less: ModuleType,
+    request_data: dict[str, Any],
+    request: SessionCreationRequest,
+    headers: dict[str, str],
+) -> tuple[Any, ...] | None:
+    content_less_ctx = None
+    if content_less.is_enabled(content_less.options_of(request)):
+        # Same content-less builder as the optimize() route: no legacy identity,
+        # capability required in the 201, never a legacy-shape retry. The scope
+        # is derived from the headers aiohttp actually sends (session defaults
+        # merged with these), so a stale session header cannot scope the cache.
+        content_less_ctx = content_less.prepare_payload(
+            request_data,
+            request,
+            content_less.principal_for_headers(
+                client.api_base_url, client._effective_request_headers(headers)
+            ),
+        )
+    return cast(tuple[Any, ...] | None, content_less_ctx)
+
+
 class TraigentCloudClient(BaseTraigentClient):
     """Client for backend integration APIs and reserved cloud APIs.
 
@@ -835,28 +924,7 @@ class TraigentCloudClient(BaseTraigentClient):
             if not api_key.strip():
                 raise ValidationException("api_key must be a non-empty string")
 
-        if base_url:
-            validate_or_raise(CoreValidators.validate_type(base_url, str, "base_url"))
-            if not base_url.strip():
-                raise ValidationException("base_url must be a non-empty string")
-
-            origin, path = BackendConfig.split_api_url(base_url)
-            if not origin:
-                origin = BackendConfig.normalize_backend_origin(base_url)
-                if not origin:
-                    raise ValidationException("Invalid base_url provided")
-
-            parsed_origin = urlparse(origin)
-            if parsed_origin.hostname is None:
-                raise ValidationException("Invalid base_url provided")
-
-            resolved_origin = origin
-            api_base_candidate = (
-                f"{origin}{path or BackendConfig.get_default_api_path()}"
-            )
-        else:
-            resolved_origin = BackendConfig.get_cloud_backend_url()
-            api_base_candidate = BackendConfig.get_cloud_api_url()
+        resolved_origin, api_base_candidate = _resolve_cloud_urls(base_url)
 
         self.base_url = validate_cloud_base_url(
             resolved_origin.rstrip("/"), purpose="cloud client"
@@ -1146,21 +1214,7 @@ class TraigentCloudClient(BaseTraigentClient):
     ) -> None:
         """Cache ownership metadata for diagnostics and remediation hints."""
 
-        owner_info: dict[str, Any] = {}
-        for source in (response_metadata or {}, request_metadata or {}):
-            if not source:
-                continue
-            for key in (
-                "owner_user_id",
-                "owner_api_key_id",
-                "created_by",
-                "owner_scope",
-                "credential_source",
-                "owner_api_key_preview",
-            ):
-                value = source.get(key)
-                if value and key not in owner_info:
-                    owner_info[key] = value
+        owner_info = _session_owner_info(response_metadata, request_metadata)
 
         if not owner_info:
             fingerprint = self._safe_owner_fingerprint()
@@ -1520,10 +1574,6 @@ class TraigentCloudClient(BaseTraigentClient):
                 # result is None means retry (continue loop)
             except CloudEgressBlockedError:
                 raise
-            except CloudServiceError as exc:
-                last_error = exc
-                if attempt == attempts:
-                    return {"status": "unavailable", "error": str(exc)}
             except Exception as exc:
                 last_error = exc
                 if attempt == attempts:
@@ -1812,19 +1862,9 @@ class TraigentCloudClient(BaseTraigentClient):
             # Resolve the outgoing headers once. The cache scope is derived from
             # exactly these headers, and the request is sent with them.
             headers = await self._get_headers()
-            content_less_ctx = None
-            if _content_less.is_enabled(_content_less.options_of(request)):
-                # Same content-less builder as the optimize() route: no legacy identity,
-                # capability required in the 201, never a legacy-shape retry. The scope
-                # is derived from the headers aiohttp actually sends (session defaults
-                # merged with these), so a stale session header cannot scope the cache.
-                content_less_ctx = _content_less.prepare_payload(
-                    request_data,
-                    request,
-                    _content_less.principal_for_headers(
-                        self.api_base_url, self._effective_request_headers(headers)
-                    ),
-                )
+            content_less_ctx = _prepare_content_less_context(
+                self, _content_less, request_data, request, headers
+            )
 
             declared_metrics = oo_egress.declared_from_session_payload(request_data)
             request_data = oo_egress.project_for_send(
@@ -1865,36 +1905,40 @@ class TraigentCloudClient(BaseTraigentClient):
                 else:
                     if content_less_ctx is not None and response.status == 404:
                         _content_less.forget_refused(content_less_ctx)
-                    error_text = await response.text()
-                    detail = SessionCreationFailureDetail.from_http_response(
-                        response.status, error_text
-                    )
-                    if detail.is_quota_refusal:
-                        safe = SessionQuotaRefusedError(
-                            response.status, detail.safe_quota_error_code
-                        )
-                        safe.session_creation_failure = SessionCreationFailureDetail(
-                            status_code=response.status,
-                            error_code=detail.safe_quota_error_code,
-                        )
-                        raise safe from None
-                    if detail.is_closed_refusal:
-                        refused = SessionBackendRefusedError(
-                            response.status, detail.safe_error_code
-                        )
-                        refused.session_creation_failure = SessionCreationFailureDetail(
-                            status_code=response.status,
-                            error_code=detail.safe_error_code,
-                        )
-                        raise refused from None
-                    # Status only: never embed the backend body (customer text).
-                    raise CloudServiceError(
-                        f"Failed to create session: HTTP {response.status}"
+                    await TraigentCloudClient._raise_session_creation_response_error(
+                        response
                     )
 
         except aiohttp.ClientError as e:
             await self._reset_http_session("create_session network error")
             raise CloudServiceError(f"Network error creating session: {e}") from None
+
+    @staticmethod
+    async def _raise_session_creation_response_error(response: Any) -> NoReturn:
+        error_text = await response.text()
+        detail = SessionCreationFailureDetail.from_http_response(
+            response.status, error_text
+        )
+        if detail.is_quota_refusal:
+            safe = SessionQuotaRefusedError(
+                response.status, detail.safe_quota_error_code
+            )
+            safe.session_creation_failure = SessionCreationFailureDetail(
+                status_code=response.status,
+                error_code=detail.safe_quota_error_code,
+            )
+            raise safe from None
+        if detail.is_closed_refusal:
+            refused = SessionBackendRefusedError(
+                response.status, detail.safe_error_code
+            )
+            refused.session_creation_failure = SessionCreationFailureDetail(
+                status_code=response.status,
+                error_code=detail.safe_error_code,
+            )
+            raise refused from None
+        # Status only: never embed the backend body (customer text).
+        raise CloudServiceError(f"Failed to create session: HTTP {response.status}")
 
     async def get_next_trial(
         self,
