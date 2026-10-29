@@ -139,7 +139,7 @@ from traigent.utils.callbacks import CallbackManager, OptimizationCallback, Prog
 from traigent.utils.env_config import (
     cost_preflight_mock_exempt,
 )
-from traigent.utils.env_config import is_backend_offline as is_backend_offline  # noqa: F401
+from traigent.utils.env_config import is_backend_offline as is_backend_offline
 from traigent.utils.env_config import is_mock_llm, skip_provider_validation
 from traigent.utils.example_id import LOCAL_MARKER_KEY
 from traigent.utils.exceptions import (
@@ -3353,6 +3353,10 @@ class OptimizationOrchestrator:
             self._stop_reason = "vendor_error"
             return trial_count, "break"
 
+        if getattr(self, "_execution_debit_denied", False):
+            self._stop_reason = "execution_budget"
+            return trial_count, "break"
+
         # Phase 10: Checkpoint logging
         self._maybe_log_checkpoint(trial_count)
 
@@ -4080,6 +4084,7 @@ class OptimizationOrchestrator:
             return
 
         budget.begin_run()
+        self._execution_debit_denied = False
 
         # Cost: intentionally NOT clamped (issue #1980, finding #1). Clamping the
         # enforcer's per-run limit down to the budget remaining also drove the
@@ -4172,6 +4177,8 @@ class OptimizationOrchestrator:
 
         if snapshot.exhausted_dimension is not None:
             blocked_dimension = snapshot.exhausted_dimension
+        elif budget.debit_exhausted:
+            blocked_dimension = "budget_debit"
         else:
             # "Can't fund the next BATCH" on cost. In PARALLEL mode a batch of up
             # to ``parallel_trials`` trials is dispatched together before the loop

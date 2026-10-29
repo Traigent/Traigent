@@ -5958,7 +5958,7 @@ requires-dist = [
     { name = "defusedxml", marker = "extra == 'security'", specifier = ">=0.7.1" },
     { name = "faiss-cpu", marker = "sys_platform != 'win32' and extra == 'integrations'", specifier = ">=1.7.0" },
     { name = "fastapi", marker = "extra == 'security'", specifier = ">=0.95.0" },
-    { name = "filelock", specifier = ">=4.0.9,<5" },
+    { name = "filelock", specifier = ">=4.2.1,<5" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=5.0.0" },
     { name = "google-cloud-storage", marker = "extra == 'snapshot-gcs'", specifier = ">=3.10.0" },
     { name = "google-genai", marker = "extra == 'integrations'", specifier = ">=0.8.0" },

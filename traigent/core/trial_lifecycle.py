@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.config.context import TrialContext, WorkflowTraceContext
+from traigent.core.execution_budget import BudgetDebitExceeded
 from traigent.core.optimization_pipeline import (
     build_surrogate_descriptor,
     get_surrogate_evaluator,
@@ -473,6 +474,9 @@ class TrialLifecycle:
                 )
             raise
 
+        if getattr(orchestrator, "_execution_debit_denied", False):
+            orchestrator._stop_reason = "execution_budget"
+            return trial_count, "break"
         return trial_count, "continue"
 
     def _terminal_optimizer_stop_reason(self, error: OptimizationError) -> str | None:
@@ -651,8 +655,7 @@ class TrialLifecycle:
             closure = self._finalize_budget_lease(lease)
             if closure:
                 examples_attempted = closure.consumed
-                if closure.exhausted:
-                    budget_exhausted = True
+                budget_exhausted = budget_exhausted or bool(closure.exhausted)
 
             # Surrogate (pre-screen) scoring: cheap second scorer over the
             # already-captured outputs. Runs after constraint enforcement so it
@@ -711,6 +714,8 @@ class TrialLifecycle:
             return result
 
         except TrialPrunedError as prune_error:
+            if self._record_run_local_debit_denial(prune_error):
+                raise
             result = self._build_trial_error_result(
                 trial_id,
                 evaluation_config,
@@ -815,6 +820,22 @@ class TrialLifecycle:
         finally:
             if lease is not None and closure is None:
                 closure = self._finalize_budget_lease(lease)
+
+    def _record_run_local_debit_denial(self, prune_error: TrialPrunedError) -> bool:
+        """Flag a refusal by this run's own budget; True means it is foreign.
+
+        The caller re-raises a foreign refusal from its own ``except`` frame so
+        the original exception and traceback propagate untouched.
+        """
+        if not isinstance(prune_error, BudgetDebitExceeded):
+            return False
+        orchestrator = self._orchestrator
+        if prune_error.budget is not getattr(orchestrator, "execution_budget", None):
+            return True
+        # Run-local refusal only: do not poison the shared budget when
+        # another phase can still afford a smaller reservation.
+        orchestrator._execution_debit_denied = True
+        return False
 
     def _build_vendor_pause(
         self, vendor_exc: Exception, trial_id: str, capture_bucket: Any
