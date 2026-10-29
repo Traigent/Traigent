@@ -13,7 +13,7 @@ import click
 
 from ..cloud.sync_manager import SyncManager
 from ..config.types import TraigentConfig
-from ..storage.local_storage import LocalStorageManager
+from ..storage.local_storage import TERMINAL_SESSION_STATUSES, LocalStorageManager
 from ..utils.incentives import show_upgrade_hint
 from ..utils.local_analytics import collect_and_submit_analytics
 from ..utils.logging import get_logger
@@ -104,7 +104,12 @@ def _echo_sessions_table(storage: LocalStorageManager, sessions: list[Any]) -> N
     type=click.Choice(["pending", "running", "completed", "failed"]),
     help="Filter sessions by status",
 )
-@click.option("--limit", default=10, help="Maximum number of sessions to show")
+@click.option(
+    "--limit",
+    default=10,
+    type=click.IntRange(min=1),
+    help="Maximum number of sessions to show (>= 1)",
+)
 @click.option(
     "--format",
     "output_format",
@@ -377,6 +382,9 @@ def _echo_sessions_older_than(storage: LocalStorageManager, days: int) -> None:
         # Normalize to timezone-aware for safe comparison
         if session_date.tzinfo is None:
             session_date = session_date.replace(tzinfo=UTC)
+        # Same rule as the real cleanup: only finished sessions are deletable.
+        if getattr(session, "status", None) not in TERMINAL_SESSION_STATUSES:
+            continue
         if session_date < cutoff_date:
             old_sessions.append(session)
 
@@ -389,12 +397,23 @@ def _echo_sessions_older_than(storage: LocalStorageManager, days: int) -> None:
 
 
 @local_commands.command(name="cleanup")
-@click.option("--days", default=30, help="Delete sessions older than N days")
+@click.option(
+    "--days",
+    default=30,
+    type=click.IntRange(min=1),
+    help="Delete sessions older than N days (>= 1)",
+)
 @click.option(
     "--dry-run", is_flag=True, help="Show what would be deleted without deleting"
 )
-def cleanup_sessions(days: int, dry_run: bool) -> None:
-    """Clean up old optimization sessions."""
+@click.option("--yes", "-y", is_flag=True, help="Skip the confirmation prompt")
+def cleanup_sessions(days: int, dry_run: bool, yes: bool) -> None:
+    """Clean up old optimization sessions.
+
+    Permanently deletes finished (completed, failed, cancelled) sessions older
+    than ``--days``. Pending and running sessions are never deleted. Use
+    ``--dry-run`` to preview.
+    """
     try:
         config = TraigentConfig.from_environment()
         storage = LocalStorageManager(config.get_local_storage_path())
@@ -402,12 +421,32 @@ def cleanup_sessions(days: int, dry_run: bool) -> None:
         if dry_run:
             _echo_sessions_older_than(storage, days)
         else:
+            if not yes and not _confirm_cleanup(days):
+                raise click.ClickException(
+                    "Cleanup cancelled; nothing was deleted. "
+                    "Pass --yes to skip the prompt (non-interactive use)."
+                )
             deleted_count = storage.cleanup_old_sessions(days)
             click.echo(f"✅ Cleaned up {deleted_count} sessions older than {days} days")
 
+    except click.ClickException:
+        raise
     except Exception as e:
         click.echo(f"Error cleaning up sessions: {e}", err=True)
         sys.exit(1)
+
+
+def _confirm_cleanup(days: int) -> bool:
+    """Ask before deleting; no answer available (EOF, no TTY) means no."""
+    try:
+        return bool(
+            click.confirm(
+                f"Permanently delete finished sessions older than {days} days? "
+                "(use --dry-run to preview)"
+            )
+        )
+    except click.Abort:  # silent-ok: no answer (EOF/no TTY) means "do not delete"; the caller reports the cancel and names --yes
+        return False
 
 
 @local_commands.command(name="info")
@@ -530,18 +569,24 @@ def _echo_sync_status(status: dict[str, Any]) -> None:
 
 def _sync_single_session(
     sync_manager: SyncManager, session_id: str, dry_run: bool
-) -> None:
+) -> bool:
+    """Sync one session; return False when the sync failed."""
     click.echo(f"\n🔄 Syncing session: {session_id}")
     result = sync_manager.sync_session_to_cloud(session_id, dry_run)
 
+    if result["status"] == "already_synced":
+        # Idempotent no-op: an unchanged session that is already in the portal.
+        click.echo("✅ Session already synced; nothing to do.")
+        return True
     if result["status"] != "success":
         click.echo("❌ Sync failed:")
         for error in result["errors"]:
             click.echo(f"   • {error}")
-        return
+        return False
     click.echo("✅ Session synced successfully!")
     if not dry_run:
         click.echo(f"   Portal URL: {result.get('cloud_url', 'N/A')}")
+    return True
 
 
 def _sync_all_sessions(
@@ -549,13 +594,17 @@ def _sync_all_sessions(
     status: dict[str, Any],
     dry_run: bool,
     cleanup: bool,
-) -> bool:
-    """Sync every eligible session; return False when the user cancelled."""
+) -> tuple[bool, bool]:
+    """Sync every eligible session.
+
+    Returns ``(proceeded, all_ok)``: ``proceeded`` is False when the user
+    cancelled; ``all_ok`` is False when any session failed to sync.
+    """
     click.echo(f"\n🔄 Syncing all {status['sync_eligible']} eligible sessions...")
 
     if not dry_run and not click.confirm("Continue with portal sync?"):
         click.echo("Sync cancelled.")
-        return False
+        return False, True
 
     result = sync_manager.sync_all_sessions(dry_run)
 
@@ -567,7 +616,7 @@ def _sync_all_sessions(
     if result["sync_errors"] > 0:
         click.echo("\n❌ Sessions with errors:")
         for session_result in result["session_results"]:
-            if session_result["status"] != "success":
+            if session_result["status"] not in ("success", "already_synced"):
                 click.echo(
                     f"   • {session_result['session_id']}: {session_result.get('errors', ['Unknown error'])}"
                 )
@@ -575,7 +624,7 @@ def _sync_all_sessions(
     # Cleanup if requested and successful
     if cleanup and not dry_run and result["synced_successfully"] > 0:
         _cleanup_synced_sessions(sync_manager, result)
-    return True
+    return True, result["sync_errors"] == 0
 
 
 def _cleanup_synced_sessions(sync_manager: SyncManager, result: dict[str, Any]) -> None:
@@ -605,6 +654,11 @@ def sync_to_cloud(
     api_key: str | None, session_id: str | None, dry_run: bool, cleanup: bool
 ) -> None:
     """Sync local optimization sessions to the Traigent portal."""
+    if cleanup and session_id:
+        raise click.UsageError(
+            "--cleanup applies only when syncing all sessions; "
+            "it cannot be combined with --session-id."
+        )
     try:
         config = TraigentConfig.from_environment()
         if _offline_requested(config):
@@ -634,7 +688,7 @@ def sync_to_cloud(
         status = sync_manager.get_sync_status()
         _echo_sync_status(status)
 
-        if status["sync_eligible"] == 0:
+        if status["sync_eligible"] == 0 and not session_id:
             click.echo(
                 "\n💡 No completed sessions to sync. Complete some optimizations first!"
             )
@@ -645,9 +699,16 @@ def sync_to_cloud(
 
         # Sync sessions
         if session_id:
-            _sync_single_session(sync_manager, session_id, dry_run)
-        elif not _sync_all_sessions(sync_manager, status, dry_run, cleanup):
-            return
+            sync_ok = _sync_single_session(sync_manager, session_id, dry_run)
+        else:
+            proceeded, sync_ok = _sync_all_sessions(
+                sync_manager, status, dry_run, cleanup
+            )
+            if not proceeded:
+                return
+        if not sync_ok:
+            # Scripts and CI must see a failed sync as a failure.
+            sys.exit(1)
 
         # Show portal analytics preview
         if not dry_run and status["sync_eligible"] > 0:

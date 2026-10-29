@@ -155,16 +155,6 @@ CASES = {
         [],
         True,
     ),
-    "one_cleanup_ignored": (
-        ["--api-key", "k", "--cleanup", "--session-id", "s"],
-        STATUS,
-        ONE_OK,
-        None,
-        False,
-        None,
-        [],
-        True,
-    ),
 }
 
 
@@ -321,7 +311,7 @@ GOLDEN: dict = {
         "'all': [], 'cleanup': [], 'preview': 0, 'confirm': 0}",
     },
     "one_fail": {
-        "exit": 0,
+        "exit": 1,
         "output": "\n"
         "📊 Sync Status\n"
         "==============================\n"
@@ -333,15 +323,9 @@ GOLDEN: dict = {
         "🔄 Syncing session: s\n"
         "❌ Sync failed:\n"
         "   • e1\n"
-        "   • e2\n"
-        "\n"
-        "🎯 Available in the Traigent portal:\n"
-        "   • Cross-function optimization insights\n"
-        "   • Performance trend analysis\n"
-        "   • Team collaboration features\n"
-        "   • Advanced visualization dashboard\n",
+        "   • e2\n",
         "calls": "{'sm_args': call('CFG', 'k'), 'status': 1, 'one': [call('s', False)], "
-        "'all': [], 'cleanup': [], 'preview': 1, 'confirm': 0}",
+        "'all': [], 'cleanup': [], 'preview': 0, 'confirm': 0}",
     },
     "all_cancel": {
         "exit": 0,
@@ -384,7 +368,7 @@ GOLDEN: dict = {
         "'cleanup': [], 'preview': 1, 'confirm': 1}",
     },
     "all_mixed": {
-        "exit": 0,
+        "exit": 1,
         "output": "\n"
         "📊 Sync Status\n"
         "==============================\n"
@@ -402,15 +386,9 @@ GOLDEN: dict = {
         "\n"
         "❌ Sessions with errors:\n"
         "   • b: ['bad']\n"
-        "   • c: ['Unknown error']\n"
-        "\n"
-        "🎯 Available in the Traigent portal:\n"
-        "   • Cross-function optimization insights\n"
-        "   • Performance trend analysis\n"
-        "   • Team collaboration features\n"
-        "   • Advanced visualization dashboard\n",
+        "   • c: ['Unknown error']\n",
         "calls": "{'sm_args': call('CFG', 'k'), 'status': 1, 'one': [], 'all': "
-        "[call(False)], 'cleanup': [], 'preview': 1, 'confirm': 1}",
+        "[call(False)], 'cleanup': [], 'preview': 0, 'confirm': 1}",
     },
     "all_cleanup_yes": {
         "exit": 0,
@@ -465,7 +443,7 @@ GOLDEN: dict = {
         "[call(False)], 'cleanup': [], 'preview': 1, 'confirm': 2}",
     },
     "all_cleanup_none_ok": {
-        "exit": 0,
+        "exit": 1,
         "output": "\n"
         "📊 Sync Status\n"
         "==============================\n"
@@ -482,15 +460,9 @@ GOLDEN: dict = {
         "   Errors: 1\n"
         "\n"
         "❌ Sessions with errors:\n"
-        "   • b: ['x']\n"
-        "\n"
-        "🎯 Available in the Traigent portal:\n"
-        "   • Cross-function optimization insights\n"
-        "   • Performance trend analysis\n"
-        "   • Team collaboration features\n"
-        "   • Advanced visualization dashboard\n",
+        "   • b: ['x']\n",
         "calls": "{'sm_args': call('CFG', 'k'), 'status': 1, 'one': [], 'all': "
-        "[call(False)], 'cleanup': [], 'preview': 1, 'confirm': 1}",
+        "[call(False)], 'cleanup': [], 'preview': 0, 'confirm': 1}",
     },
     "all_cleanup_dry": {
         "exit": 0,
@@ -512,28 +484,6 @@ GOLDEN: dict = {
         "   Errors: 0\n",
         "calls": "{'sm_args': call('CFG', None), 'status': 1, 'one': [], 'all': "
         "[call(True)], 'cleanup': [], 'preview': 0, 'confirm': 0}",
-    },
-    "one_cleanup_ignored": {
-        "exit": 0,
-        "output": "\n"
-        "📊 Sync Status\n"
-        "==============================\n"
-        "Total sessions: 3\n"
-        "Completed sessions: 2\n"
-        "Sync eligible: 2\n"
-        "Total trials: 5\n"
-        "\n"
-        "🔄 Syncing session: s\n"
-        "✅ Session synced successfully!\n"
-        "   Portal URL: https://portal/x\n"
-        "\n"
-        "🎯 Available in the Traigent portal:\n"
-        "   • Cross-function optimization insights\n"
-        "   • Performance trend analysis\n"
-        "   • Team collaboration features\n"
-        "   • Advanced visualization dashboard\n",
-        "calls": "{'sm_args': call('CFG', 'k'), 'status': 1, 'one': [call('s', "
-        "False)], 'all': [], 'cleanup': [], 'preview': 1, 'confirm': 0}",
     },
 }
 

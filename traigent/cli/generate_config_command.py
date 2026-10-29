@@ -106,6 +106,9 @@ def generate_config(
     from traigent.config_generator import generate_config as gen_config
 
     subsystems = _parse_subsystems(subsystems_str)
+    if apply_decorator:
+        # Validate option combination before any generation (or LLM spend).
+        _require_function_for_apply(function_name)
 
     try:
         result = gen_config(
@@ -157,9 +160,10 @@ def _parse_subsystems(subsystems_str: str | None) -> frozenset[str] | None:
     return requested
 
 
-def _apply_generated_config(
-    path: Path, result: Any, function_name: str | None, no_backup: bool
-) -> None:
+_PYTHON_OUTPUT_HINT = "Or use --only tvars,objectives."
+
+
+def _require_function_for_apply(function_name: str | None) -> None:
     if not function_name:
         click.echo(
             "Error: --apply requires --function/-f to specify which function "
@@ -167,14 +171,27 @@ def _apply_generated_config(
             err=True,
         )
         raise SystemExit(1)
+
+
+def _apply_generated_config(
+    path: Path, result: Any, function_name: str | None, no_backup: bool
+) -> None:
+    _require_function_for_apply(function_name)
+    assert function_name is not None  # nosec B101 - narrowed by the check above
     from traigent.config_generator.apply import apply_config
 
-    modified = apply_config(
-        path,
-        result,
-        function_name,
-        backup=not no_backup,
-    )
+    # Render first: a refused render (structural constraints) is a user-facing
+    # option problem, distinct from apply_config's own file/function errors.
+    _render_python(result)
+    try:
+        modified = apply_config(
+            path,
+            result,
+            function_name,
+            backup=not no_backup,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
     click.echo(f"Applied @traigent.optimize() to {function_name} in {modified}")
     if not no_backup:
         click.echo(f"Backup saved to {path.with_suffix('.py.bak')}")
@@ -196,9 +213,16 @@ def _display_result(result: Any, path: Path, output_format: str) -> None:
         _output_table(result)
 
 
+def _render_python(result: Any) -> str:
+    try:
+        return str(result.to_python_code())
+    except ValueError as exc:
+        raise click.ClickException(f"{exc} {_PYTHON_OUTPUT_HINT}") from exc
+
+
 def _output_python(result):
     """Print copy-pasteable Python decorator code."""
-    click.echo(result.to_python_code())
+    click.echo(_render_python(result))
 
 
 def _output_json(result, *, detailed: bool = False):

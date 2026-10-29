@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import tempfile
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -336,15 +337,17 @@ class TestLocalCommands:
 
     def test_cleanup_sessions_dry_run(self):
         """Test cleanup sessions in dry run mode."""
+        # Backdate the finished session so it is "old" (--days must be >= 1, #2830)
+        old = self.storage.load_session(self.completed_session_id)
+        old.created_at = (datetime.now(UTC) - timedelta(days=40)).isoformat()
+        self.storage._save_session(old)
+
         with patch.dict(os.environ, self.env_vars):
-            result = self.runner.invoke(
-                cleanup_sessions,
-                ["--days", "0", "--dry-run"],  # All sessions should be "old"
-            )
+            result = self.runner.invoke(cleanup_sessions, ["--days", "30", "--dry-run"])
 
         assert result.exit_code == 0
         assert "Would delete" in result.output
-        assert "sessions older than 0 days" in result.output
+        assert "sessions older than 30 days" in result.output
 
         # Sessions should still exist
         assert self.storage.load_session(self.completed_session_id) is not None
@@ -359,7 +362,7 @@ class TestLocalCommands:
                 mock_storage.cleanup_old_sessions.return_value = 2
                 mock_storage_class.return_value = mock_storage
 
-                result = self.runner.invoke(cleanup_sessions, ["--days", "30"])
+                result = self.runner.invoke(cleanup_sessions, ["--days", "30", "--yes"])
 
         assert result.exit_code == 0
         assert "✅ Cleaned up 2 sessions older than 30 days" in result.output
@@ -377,7 +380,7 @@ class TestLocalCommands:
                 )
                 mock_storage_class.return_value = mock_storage
 
-                result = self.runner.invoke(cleanup_sessions, ["--days", "30"])
+                result = self.runner.invoke(cleanup_sessions, ["--days", "30", "--yes"])
 
         assert result.exit_code == 1
         assert "Error cleaning up sessions" in result.output
@@ -598,7 +601,7 @@ class TestLocalCommands:
                     ],
                 )
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1  # a failed sync must fail the command (#2830)
         assert "Sync failed:" in result.output
         assert "Network timeout" in result.output
 
@@ -632,7 +635,7 @@ class TestLocalCommands:
                     sync_to_cloud, ["--api-key", "test_key"], input="y\n"
                 )  # Confirm sync
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1  # one session failed to sync (#2830)
         assert "Sync Results:" in result.output
         assert "Synced successfully: 1" in result.output
         assert "Errors: 1" in result.output
@@ -934,9 +937,9 @@ class TestLocalCommands:
         )
         summary = self.storage.get_session_summary(no_trial_session_id)
         assert summary is not None, "Expected a summary dict, got None"
-        assert "created_at" in summary, (
-            "created_at missing from no-trial session summary"
-        )
+        assert (
+            "created_at" in summary
+        ), "created_at missing from no-trial session summary"
         assert "function_name" in summary
         assert "completed_trials" in summary
         assert summary["completed_trials"] == 0

@@ -232,6 +232,9 @@ def _llm_classify(
     except json.JSONDecodeError:
         return None
 
+    if not isinstance(data, dict):
+        return None
+
     agent_type = data.get("agent_type", "")
     if agent_type not in AGENT_TYPES:
         return None
