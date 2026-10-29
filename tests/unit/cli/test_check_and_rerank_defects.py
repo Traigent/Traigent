@@ -804,3 +804,29 @@ def test_baseline_metrics_do_not_fall_back_to_unrequested_ones() -> None:
     for mock_mode in (True, False):
         out = v._filter_metrics_to_objectives({"cost": 0.5}, func, mock_mode)
         assert "cost" not in out
+
+
+def test_shadowing_submodule_does_not_evict_the_real_module(tmp_path: Path) -> None:
+    """The leaf shape of the shadow case: ``collections/abc.py`` vs stdlib."""
+    import collections.abc as real
+
+    from traigent.utils.module_loading import load_user_module
+
+    _write(tmp_path, "collections/__init__.py", "")
+    leaf = _write(tmp_path, "collections/abc.py", "X = 1\n")
+    with pytest.raises(ImportError):
+        load_user_module(leaf)
+    assert sys.modules.get("collections.abc") is real
+
+
+def test_dotted_name_found_through_a_src_layout_sys_path_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from traigent.utils.module_loading import resolve_dotted_module
+
+    _write(tmp_path, "src/srcpkg/__init__.py", "")
+    mod = _write(tmp_path, "src/srcpkg/mod.py", "X = 1\n")
+    monkeypatch.syspath_prepend(str(tmp_path / "src"))
+    assert resolve_dotted_module("srcpkg.mod", tmp_path) == mod.resolve()
+    with pytest.raises(FileNotFoundError):
+        resolve_dotted_module("json.tool", tmp_path)

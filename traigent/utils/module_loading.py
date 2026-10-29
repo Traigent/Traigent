@@ -121,7 +121,8 @@ def _explain_relative_import(
             f"{path.name} uses a relative import, but {untrusted} is writable by "
             "other users or owned by another user, so its __init__.py was not "
             "executed and the file was loaded outside its package. Make that "
-            "directory private (for example chmod go-w), or use absolute imports."
+            "directory private and owned by you (for example chmod go-w, "
+            "chown), or use absolute imports."
         )
     return ImportError(
         f"{path.name} uses a relative import but is not inside a Python package "
@@ -140,10 +141,20 @@ def resolve_dotted_module(name: str, search_dir: Path | None = None) -> Path:
     """
     base = (search_dir or Path.cwd()).resolve()
     parts = name.split(".")
-    leaf = base.joinpath(*parts[:-1])
-    for candidate in (leaf / f"{parts[-1]}.py", leaf / parts[-1] / "__init__.py"):
-        if candidate.is_file():
-            return candidate
+    # The directory itself, then any ``sys.path`` entry inside it (a ``src/``
+    # layout); entries outside the directory are never searched.
+    roots = [base]
+    for entry in sys.path:
+        if not entry:
+            continue
+        resolved = Path(entry).resolve()
+        if resolved != base and resolved.is_relative_to(base):
+            roots.append(resolved)
+    for root in roots:
+        leaf = root.joinpath(*parts[:-1])
+        for candidate in (leaf / f"{parts[-1]}.py", leaf / parts[-1] / "__init__.py"):
+            if candidate.is_file():
+                return candidate
     raise FileNotFoundError(
         f"Module not found: {name}. Pass a path to a .py file, or a dotted "
         f"module path under {base}."
@@ -190,7 +201,11 @@ def _import_packaged(path: Path, qualified_name: str, root: Path) -> ModuleType:
     # Drop a stale copy of the leaf so the file is executed afresh (a package
     # ``__init__`` is left alone: its submodules are registered under it).
     if path.name != "__init__.py":
-        sys.modules.pop(qualified_name, None)
+        existing = getattr(sys.modules.get(qualified_name), "__file__", None)
+        # Only forget a copy of this very file; a different module registered
+        # under the name (stdlib, installed) is left for the shadow check below.
+        if existing is not None and Path(existing).resolve() == path:
+            sys.modules.pop(qualified_name, None)
     top_level = qualified_name.split(".")[0]
     _evict_stale_user_package(top_level, root)
     if top_level not in sys.modules:
