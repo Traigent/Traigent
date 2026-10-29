@@ -216,7 +216,7 @@ To approve, use one of these methods:
 
 2. Approval token file (timestamps are interpreted as UTC; expires_at must be
    in the future and at most {max_hours} hours ahead):
-   echo '{{"approved_by": "your_name", "expires_at": "{example_expiry}"}}' > {shlex.quote(str(token_file))}
+   mkdir -p {shlex.quote(str(token_file.parent))} && echo '{{"approved_by": "your_name", "expires_at": "{example_expiry}"}}' > {shlex.quote(str(token_file))}
 
 3. GitHub Actions with environment protection: protection only holds the job
    until reviewers approve. The job must still export TRAIGENT_RUN_APPROVED=1

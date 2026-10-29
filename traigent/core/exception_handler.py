@@ -120,7 +120,11 @@ _BARE_WORD_PATTERNS = frozenset(
     }
 )
 _BARE_WORD_REGEX = {
-    word: re.compile(rf"(?<![a-z0-9_]){word}(?![a-z0-9_])")
+    # An exception-type suffix ("AuthenticationError", "authentication_error",
+    # "QuotaExceededError") still counts: it is the vendor's own class name.
+    word: re.compile(
+        rf"(?<![a-z0-9_]){word}(?:_?(?:exceeded_?)?(?:error|exception))?(?![a-z0-9_])"
+    )
     for word in _BARE_WORD_PATTERNS
 }
 
@@ -142,6 +146,12 @@ _LOCAL_ERROR_TEXT_RE = re.compile(
 )
 
 
+#: Structured provider wording. When present, a stray "ValueError:" elsewhere
+#: in the string (a wrapper chain, echoed dataset text) must not hide it.
+_PROVIDER_MARKER_RE = re.compile(
+    r"(?:error code|status(?: code)?)[: ]+[45]\d\d|invalid_api_key|insufficient_quota"
+)
+
 _HTTP_LIBRARY_ROOTS = frozenset({"requests", "urllib3", "httpx", "aiohttp", "httpcore"})
 
 
@@ -159,6 +169,14 @@ def _is_local_exception(exc: BaseException) -> bool:
 def http_status_of(exc: BaseException) -> int | None:
     """Structured HTTP status carried by ``exc`` or its ``response``, if any."""
     response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        # botocore ClientError: response["ResponseMetadata"]["HTTPStatusCode"]
+        meta = response.get("ResponseMetadata")
+        value = meta.get("HTTPStatusCode") if isinstance(meta, dict) else None
+        if isinstance(value, int) and not isinstance(value, bool):
+            if 100 <= value <= 599:
+                return value
+        response = None
     for source in (exc, response):
         if source is None:
             continue
@@ -184,6 +202,32 @@ def _matches_pattern(pattern: str, msg: str) -> bool:
     if regex is not None:
         return regex.search(msg) is not None
     return pattern in msg
+
+
+_QUOTA_CATEGORIES = frozenset(
+    {VendorErrorCategory.QUOTA_EXHAUSTED, VendorErrorCategory.INSUFFICIENT_FUNDS}
+)
+
+
+def _quota_category_from_text(msg: str) -> VendorErrorCategory | None:
+    # Per-window limits ("Quota exceeded ... per minute", "Rate limit reached")
+    # recover on their own; only an exhausted account/plan is fatal.
+    if any(
+        w in msg
+        for w in (
+            "rate limit",
+            "rate_limit",
+            "per minute",
+            "per second",
+            "per min",
+            "retry",
+        )
+    ):
+        return None
+    for pattern, category in _VENDOR_ERROR_PATTERNS:
+        if category in _QUOTA_CATEGORIES and _matches_pattern(pattern, msg):
+            return category
+    return None
 
 
 def classify_vendor_error(exc: Exception) -> VendorErrorCategory | None:
@@ -225,6 +269,13 @@ def classify_vendor_error(exc: Exception) -> VendorErrorCategory | None:
         # verdict on the provider key; 402/429/503 are transport-level facts.
         and (status not in (401, 403) or _is_provider_sdk_exception(exc))
     ):
+        if status in (402, 429):
+            # A 429/402 can be a plain rate limit or an exhausted account; the
+            # latter is fatal for the whole run, so wording decides first.
+            return (
+                _quota_category_from_text(str(exc).lower())
+                or _STATUS_CATEGORIES[status]
+            )
         return _STATUS_CATEGORIES[status]
 
     if _is_local_exception(exc):
@@ -232,7 +283,7 @@ def classify_vendor_error(exc: Exception) -> VendorErrorCategory | None:
 
     # Fallback: pattern-match the error message
     msg = str(exc).lower()
-    if _LOCAL_ERROR_TEXT_RE.search(msg):
+    if _LOCAL_ERROR_TEXT_RE.search(msg) and not _PROVIDER_MARKER_RE.search(msg):
         return None
     for pattern, category in _VENDOR_ERROR_PATTERNS:
         if _matches_pattern(pattern, msg):
@@ -294,6 +345,23 @@ _MISSING_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 _API_KEY_TEXT_TOKENS = ("api key", "api_key", "authentication", "openai_api_key")
+#: Wording that is a provider's own verdict on a key, whatever wrapper re-raised it.
+_EXPLICIT_KEY_VERDICTS = (
+    "incorrect api key",
+    "invalid api key",
+    "invalid_api_key",
+    "invalid x-api-key",
+    "api key not valid",
+)
+_PROVIDER_HOSTS = (
+    "api.openai.com",
+    "api.anthropic.com",
+    "generativelanguage.googleapis.com",
+    "api.cohere",
+    "api.mistral.ai",
+    "api.groq.com",
+    "openrouter.ai",
+)
 
 
 def _is_provider_sdk_exception(exc: BaseException) -> bool:
@@ -320,7 +388,17 @@ def is_provider_api_key_failure(exc: BaseException) -> bool:
     if _is_local_exception(exc):
         return False
     text = str(exc).lower()
+    status = http_status_of(exc)
+    if status in (401, 403) and any(host in text for host in _PROVIDER_HOSTS):
+        # requests/httpx status error against a provider endpoint.
+        return True
+    if any(verdict in text for verdict in _EXPLICIT_KEY_VERDICTS):
+        return True
     if provider_sdk:
+        # A structured non-auth status (400 content filter echoing the prompt,
+        # 429, 5xx) is not a verdict on the key whatever the text says.
+        if status is not None:
+            return False
         return any(token in text for token in _API_KEY_TEXT_TOKENS)
     # A missing provider key surfaces from wrappers/agents as a plain
     # ValueError/RuntimeError naming the env var ("OPENAI_API_KEY is not set").

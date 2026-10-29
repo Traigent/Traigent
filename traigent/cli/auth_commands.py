@@ -1655,7 +1655,9 @@ class TraigentAuthCLI:
         # Check if we have stored credentials
         creds = self._load_stored_credentials()
         locked = not creds and self._secure_store_locked()
-        if not creds and not locked:
+        # An ignored legacy plaintext file is still stored credentials to clear.
+        has_plaintext_file = self.credentials_file.exists()
+        if not creds and not locked and not has_plaintext_file:
             console.print("[yellow]No stored credentials found[/yellow]")
             return True
 
@@ -2455,15 +2457,23 @@ def _key_check_from_response(
                 KeyCheckState.INDETERMINATE, reason="unreadable reply"
             )
         if isinstance(data, dict):
-            if data.get("valid"):
-                return KeyCheckResult(
-                    KeyCheckState.VALID, metadata=dict(data.get("data", {}))
-                )
+            if data.get("valid") is True:
+                payload = data.get("data")
+                if not isinstance(payload, dict):
+                    return KeyCheckResult(
+                        KeyCheckState.INDETERMINATE, reason="unexpected reply"
+                    )
+                return KeyCheckResult(KeyCheckState.VALID, metadata=dict(payload))
             if data.get("valid") is False:
                 return KeyCheckResult(KeyCheckState.REJECTED)
         return KeyCheckResult(KeyCheckState.INDETERMINATE, reason="unexpected reply")
     if status == 401:
-        return KeyCheckResult(KeyCheckState.REJECTED)
+        # Deleting stored credentials needs evidence that Traigent itself said
+        # no: a proxy/SSO/captive-portal 401 (HTML, edge headers) says nothing
+        # about the key.
+        if _classify_403(body, headers) == "authorization":
+            return KeyCheckResult(KeyCheckState.REJECTED)
+        return KeyCheckResult(KeyCheckState.INDETERMINATE, reason="HTTP 401")
     if status == 403 and _classify_403(body, headers) == "authorization":
         return KeyCheckResult(KeyCheckState.REJECTED)
     # 429, 5xx, edge-blocked/indeterminate 403, 400/404 ...: not a verdict on the key.

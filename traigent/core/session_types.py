@@ -286,8 +286,12 @@ def normalize_next_trial_payload(data: Any) -> Any:
     if "should_continue" in data or "suggestion" in data or "has_next" not in data:
         return data
 
+    # Anything but a real boolean (None, "false", an error body) is a malformed
+    # reply, not "optimization complete": leave it for the loud paths.
+    if not isinstance(data["has_next"], bool) or "error" in data:
+        return data
     out = dict(data)
-    has_next = bool(data.get("has_next"))
+    has_next = data["has_next"]
     trial = data.get("trial")
     trial_id: Any = None
     if has_next and isinstance(trial, dict):

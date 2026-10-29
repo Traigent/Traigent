@@ -47,7 +47,9 @@ class _Response:
         return None
 
 
-def _fake_session_class(status: int | None, body: str = "", error: Exception | None = None):
+def _fake_session_class(
+    status: int | None, body: str = "", error: Exception | None = None
+):
     class _Session:
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             pass
@@ -97,7 +99,9 @@ def test_unanswered_validation_keeps_stored_credentials(
 
     store = _FakeStore({"api_key": FAKE_KEY})
     cli = _cli(tmp_path, monkeypatch, store)
-    monkeypatch.setattr("aiohttp.ClientSession", _fake_session_class(status, body, error))
+    monkeypatch.setattr(
+        "aiohttp.ClientSession", _fake_session_class(status, body, error)
+    )
 
     assert asyncio.run(cli._check_stored_api_key()) is False
 
@@ -237,3 +241,18 @@ def test_credential_manager_clear_fails_when_locked_file_remains(
 
     assert CredentialManager.clear_credentials() is False
     assert enc.exists()
+
+
+def test_logout_removes_ignored_plaintext_credentials_file(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    import asyncio
+
+    monkeypatch.delenv("TRAIGENT_ALLOW_PLAINTEXT_CREDENTIALS", raising=False)
+    cli = _cli(tmp_path, monkeypatch, _FakeStore({}))
+    cli._load_stored_credentials = lambda: None  # type: ignore[method-assign]
+    cli._secure_store_locked = lambda: False  # type: ignore[method-assign]
+    cli.credentials_file.write_text(json.dumps({"api_key": FAKE_KEY}))
+    assert asyncio.run(cli.logout()) is True
+    assert not cli.credentials_file.exists()
+    assert "No stored credentials found" not in capsys.readouterr().out
