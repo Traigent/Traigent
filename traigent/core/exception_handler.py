@@ -217,8 +217,14 @@ def classify_vendor_error(exc: Exception) -> VendorErrorCategory | None:
     if isinstance(exc, ServiceUnavailableError):
         return VendorErrorCategory.SERVICE_UNAVAILABLE
 
-    status = http_status_of(exc) if _is_provider_sdk_exception(exc) else None
-    if status is not None and status in _STATUS_CATEGORIES:
+    status = http_status_of(exc)
+    if (
+        status is not None
+        and status in _STATUS_CATEGORIES
+        # 401/403 from a non-provider library are the user's own service, not a
+        # verdict on the provider key; 402/429/503 are transport-level facts.
+        and (status not in (401, 403) or _is_provider_sdk_exception(exc))
+    ):
         return _STATUS_CATEGORIES[status]
 
     if _is_local_exception(exc):
@@ -270,9 +276,22 @@ _AUTH_EXCEPTION_NAMES = frozenset(
         "CredentialError",
     }
 )
+_PROVIDER_KEY_VARS = (
+    r"(?:OPENAI|ANTHROPIC|GOOGLE|GEMINI|COHERE|MISTRAL|GROQ|OPENROUTER|TOGETHER|"
+    r"AZURE_OPENAI|HUGGINGFACE|HF|DEEPSEEK|XAI|PERPLEXITY|FIREWORKS)_API_KEY"
+)
+_MISSING_WORDS = (
+    r"(?:not set|must be set|is missing|missing|not found|not configured|unset|"
+    r"is required|required|not provided)"
+)
+#: A provider key env var reported missing, in either word order
+#: ("OPENAI_API_KEY is not set" / "missing OPENAI_API_KEY"). Restricted to
+#: known provider variables so a domain error quoting some other ``*_API_KEY``
+#: token stays a per-example failure.
 _MISSING_KEY_RE = re.compile(
-    r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_API_KEY\b.{0,40}?"
-    r"(?:not set|must be set|is missing|missing|is required|required)",
+    rf"\b{_PROVIDER_KEY_VARS}\b.{{0,60}}?{_MISSING_WORDS}"
+    rf"|{_MISSING_WORDS}.{{0,60}}?\b{_PROVIDER_KEY_VARS}\b",
+    re.IGNORECASE,
 )
 _API_KEY_TEXT_TOKENS = ("api key", "api_key", "authentication", "openai_api_key")
 

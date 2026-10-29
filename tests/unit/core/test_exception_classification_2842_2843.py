@@ -132,7 +132,7 @@ def test_local_invoker_still_aborts_on_provider_auth_failure() -> None:
         asyncio.run(LocalInvoker().invoke(agent, {}, {"text": "x"}))
 
 
-@pytest.mark.parametrize("status", [401, 403, 429])
+@pytest.mark.parametrize("status", [401, 403])
 def test_status_from_users_own_service_is_not_a_provider_verdict(status: int) -> None:
     from traigent.core.exception_handler import is_provider_api_key_failure
 
@@ -146,9 +146,28 @@ def test_status_from_users_own_service_is_not_a_provider_verdict(status: int) ->
     [
         ValueError("OPENAI_API_KEY is not set"),
         RuntimeError("The ANTHROPIC_API_KEY environment variable must be set"),
+        ValueError("missing OPENAI_API_KEY"),
+        ValueError("environment variable OPENAI_API_KEY not found"),
     ],
 )
 def test_missing_provider_key_env_var_still_aborts(exc: Exception) -> None:
     from traigent.core.exception_handler import is_provider_api_key_failure
 
     assert is_provider_api_key_failure(exc) is True
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        ValueError("column STRIPE_API_KEY missing in table"),
+        ValueError("WEATHER_API_KEY is required by the tool"),
+    ],
+)
+def test_non_provider_key_tokens_stay_per_example(exc: Exception) -> None:
+    from traigent.core.exception_handler import is_provider_api_key_failure
+
+    assert is_provider_api_key_failure(exc) is False
+
+
+def test_rate_limit_status_from_non_sdk_client_still_classifies() -> None:
+    assert classify_vendor_error(_UserServiceError(429)) is VendorErrorCategory.RATE_LIMIT
