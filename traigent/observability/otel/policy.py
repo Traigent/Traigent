@@ -84,51 +84,65 @@ def coerce_clean(value: Any, spec: C.AttrSpec) -> Any | None:
     return coerced
 
 
+def _within_bounds(number: Any, spec: C.AttrSpec) -> bool:
+    if spec.lo is not None and number < spec.lo:
+        return False
+    return not (spec.hi is not None and number > spec.hi)
+
+
+def _coerce_text(value: Any, spec: C.AttrSpec) -> str | None:
+    if not isinstance(value, str) or _has_control(value):
+        return None
+    if len(value) > spec.max_len or not value:
+        return None
+    if spec.kind == "enum" and (spec.choices is None or value not in spec.choices):
+        return None
+    return value
+
+
+def _coerce_int(value: Any, spec: C.AttrSpec) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if _within_bounds(value, spec) else None
+
+
+def _coerce_float(value: Any, spec: C.AttrSpec) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number):
+        return None
+    return number if _within_bounds(number, spec) else None
+
+
+def _coerce_str_seq(value: Any, spec: C.AttrSpec) -> tuple[str, ...] | None:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        return None
+    if len(value) > spec.max_items:
+        return None
+    out = []
+    for item in value:
+        if not isinstance(item, str) or _has_control(item):
+            return None
+        if not item or len(item) > spec.max_len:
+            return None
+        out.append(item)
+    return tuple(out)
+
+
 def coerce_value(value: Any, spec: C.AttrSpec) -> Any | None:
     """Return ``value`` if it satisfies ``spec`` exactly, else ``None`` (drop)."""
     kind = spec.kind
     if kind in ("str", "enum"):
-        if not isinstance(value, str) or _has_control(value):
-            return None
-        if len(value) > spec.max_len or not value:
-            return None
-        if kind == "enum" and (spec.choices is None or value not in spec.choices):
-            return None
-        return value
+        return _coerce_text(value, spec)
     if kind == "int":
-        if isinstance(value, bool) or not isinstance(value, int):
-            return None
-        if spec.lo is not None and value < spec.lo:
-            return None
-        if spec.hi is not None and value > spec.hi:
-            return None
-        return value
+        return _coerce_int(value, spec)
     if kind == "float":
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return None
-        number = float(value)
-        if not math.isfinite(number):
-            return None
-        if spec.lo is not None and number < spec.lo:
-            return None
-        if spec.hi is not None and number > spec.hi:
-            return None
-        return number
+        return _coerce_float(value, spec)
     if kind == "bool":
         return value if isinstance(value, bool) else None
     if kind == "str_seq":
-        if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
-            return None
-        if len(value) > spec.max_items:
-            return None
-        out = []
-        for item in value:
-            if not isinstance(item, str) or _has_control(item):
-                return None
-            if not item or len(item) > spec.max_len:
-                return None
-            out.append(item)
-        return tuple(out)
+        return _coerce_str_seq(value, spec)
     return None
 
 
