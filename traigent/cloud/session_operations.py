@@ -85,6 +85,55 @@ def _get_session_creation_failure_detail(
     return None
 
 
+def _answered_refusal_status(
+    failure_response: SessionCreationFailureDetail | None,
+) -> int | None:
+    """The 4xx status when the backend ANSWERED the create with a refusal.
+
+    Mirrors ``_classify_by_failure_reason``: a 4xx reply is a reachable
+    backend's verdict on the request, never a connectivity failure, and the
+    run is not degraded to LOCAL because of it (#2806).
+    """
+    status = failure_response.status_code if failure_response else None
+    if isinstance(status, int) and 400 <= status < 500:
+        return status
+    return None
+
+
+def _log_session_create_failure(
+    function_name: str,
+    exc: Exception,
+    failure_response: SessionCreationFailureDetail | None,
+    *,
+    context: str = "backend unreachable",
+) -> None:
+    """Log a failed managed session create with wording that matches the cause.
+
+    A 4xx answer is reported with its HTTP status and closed error code only
+    (never the backend text) and without any claim of a LOCAL degrade. Only a
+    non-answer (transport failure, timeout, 5xx) keeps the "unreachable ...
+    degrading to LOCAL" wording.
+    """
+    if _answered_refusal_status(failure_response) is not None:
+        assert failure_response is not None
+        logger.warning(
+            "Managed session creation was refused by the backend (%s) for '%s'; "
+            "no managed session was created. The backend was reachable, so this "
+            "is a problem with the request, not the network or the key.",
+            failure_response.one_line_summary(),
+            function_name,
+        )
+        return
+    logger.warning(
+        "Managed session creation failed (%s) for '%s'; degrading to LOCAL "
+        "execution — results are NOT tracked on the backend (set offline=True "
+        "to make this explicit): %s",
+        context,
+        function_name,
+        exc,
+    )
+
+
 # Transient signals: the SDK could not REACH/validate the backend (the auth
 # layer fails closed on these for safety, but the run should still degrade
 # gracefully as it did before, not hard-fail).
@@ -482,13 +531,11 @@ class SessionOperations:
         execution, NOT a downgrade (#1421).
         """
         if intends_cloud_egress:
-            logger.warning(
-                "Managed session creation failed (could not validate credentials "
-                "— backend unreachable) for '%s'; degrading to LOCAL execution — "
-                "results are NOT tracked on the backend (set offline=True to make "
-                "this explicit): %s",
+            _log_session_create_failure(
                 function_name,
                 exc,
+                failure_response,
+                context="could not validate credentials — backend unreachable",
             )
             return SessionCreationResult.fallback(
                 session_id=fallback_id,
@@ -930,14 +977,8 @@ class SessionOperations:
                 # but this is a DOWNGRADE (managed search/tracking is lost), so
                 # surface it at WARNING and flag degraded=True on the result so a
                 # caller never mistakes the local run for a managed one.
-                logger.warning(
-                    "Managed session creation failed (backend unreachable) for "
-                    "'%s'; degrading to LOCAL execution — results are NOT tracked "
-                    "on the backend (set offline=True to make this explicit): %s",
-                    function_name,
-                    e,
-                )
                 failure_response = _get_session_creation_failure_detail(e)
+                _log_session_create_failure(function_name, e, failure_response)
                 fallback_id = self._create_local_fallback_session(
                     function_name,
                     search_space,
@@ -1025,14 +1066,8 @@ class SessionOperations:
             # Backend unreachable on the outer path — same downgrade semantics as
             # the inner sibling: WARN + flag degraded so the local run is never
             # mistaken for a managed one.
-            logger.warning(
-                "Managed session creation failed (backend unreachable) for '%s'; "
-                "degrading to LOCAL execution — results are NOT tracked on the "
-                "backend (set offline=True to make this explicit): %s",
-                function_name,
-                exc,
-            )
             failure_response = _get_session_creation_failure_detail(exc)
+            _log_session_create_failure(function_name, exc, failure_response)
             fallback_id = self._create_local_fallback_session(
                 function_name, search_space, optimization_goal, local_record_metadata
             )

@@ -1994,3 +1994,80 @@ class TestHandle400NotFound:
         all_log_text = " ".join(r.getMessage() for r in caplog.records)
         assertion_message = f"Backend response body detail must appear in logs. All log text: {all_log_text!r}"
         assert "Session sess_edge not found" in all_log_text, assertion_message
+
+
+class TestTransientSubmitStatuses2818:
+    """#2818: 408/425/429 on trial submit are 'try again', never 'permanent'."""
+
+    @staticmethod
+    def _ops_and_session(responses):
+        mock_client = Mock()
+        mock_client.backend_config.api_base_url = "https://api.example.com/api/v1"
+        mock_client.auth_manager = AsyncMock()
+        mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
+        mock_client._map_to_backend_status = Mock(return_value="COMPLETED")
+        mock_client._sanitize_error_message = Mock(return_value="")
+        ops = TrialOperations(mock_client)
+        ops._handle_trial_success_response = AsyncMock(return_value=True)
+
+        ctxs = []
+        for response in responses:
+            ctx = AsyncMock()
+            ctx.__aenter__ = AsyncMock(return_value=response)
+            ctx.__aexit__ = AsyncMock(return_value=False)
+            ctxs.append(ctx)
+        session = AsyncMock()
+        session.post = Mock(side_effect=ctxs)
+        ops.client._ensure_session = AsyncMock(return_value=session)
+        return ops, session
+
+    @staticmethod
+    def _response(status, headers=None):
+        response = Mock()
+        response.status = status
+        response.headers = headers or {}
+        response.text = AsyncMock(return_value="")
+        return response
+
+    async def _submit(self, ops):
+        with (
+            patch("traigent.cloud.trial_operations.is_backend_offline", return_value=False),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch("traigent.cloud.trial_operations.validate_configuration_run_submission"),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+            patch("traigent.cloud.trial_operations.asyncio.sleep", new=AsyncMock()),
+        ):
+            mock_aiohttp.ClientTimeout = Mock()
+            return await ops.submit_trial_result_via_session(
+                session_id="session_123",
+                trial_id="trial_001",
+                config={"temperature": 0.2},
+                metrics={"accuracy": 0.95},
+                status="completed",
+            )
+
+    @pytest.mark.asyncio
+    async def test_429_then_201_submits_the_trial(self):
+        ops, session = self._ops_and_session(
+            [self._response(429, {"Retry-After": "0"}), self._response(201)]
+        )
+        assert await self._submit(ops) is True
+        assert session.post.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_429_forever_is_unacknowledged_not_permanent(self):
+        ops, session = self._ops_and_session([self._response(429) for _ in range(3)])
+        result = await self._submit(ops)
+        assert result is False  # not a TrialSubmissionResult.rejected(...)
+        assert session.post.call_count == 3
+
+    @pytest.mark.parametrize("status", [408, 425, 429])
+    def test_transient_statuses_are_not_permanent(self, status):
+        ops = TrialOperations(Mock())
+        assert ops._handle_trial_error_response(status, "t", "s", "u", "") is False
+
+    @pytest.mark.parametrize("status", [400, 404, 413, 422])
+    def test_other_4xx_stay_permanent(self, status):
+        ops = TrialOperations(Mock())
+        result = ops._handle_trial_error_response(status, "t", "s", "u", "")
+        assert getattr(result, "permanent_rejection", False) is True
