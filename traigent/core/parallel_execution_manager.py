@@ -406,6 +406,8 @@ class ParallelExecutionManager:
                     type(e).__name__,
                 )
 
+        interrupts: list[BaseException] = []
+
         async def execute_with_permit(coro: Any, index: int) -> tuple[int, Any, Permit]:
             """Execute coroutine if permit acquired, return (index, result, permit).
 
@@ -445,10 +447,15 @@ class ParallelExecutionManager:
                 )
                 raise
             except (KeyboardInterrupt, SystemExit) as e:
-                # Interpreter-level interrupts must reach the caller: release
-                # the reservation exactly as for any failure, then re-raise.
+                # Interpreter-level interrupts must reach the caller, but a raise
+                # here would run inside a gather-scheduled Task, where CPython
+                # re-raises KeyboardInterrupt/SystemExit out of the event loop
+                # itself (see BaseEvaluator._execute_async_with_timeout).  Release
+                # the reservation, record the interrupt, and re-raise it below in
+                # the awaiting caller's frame.
                 await release_after_exception(permit, index, e)
-                raise
+                interrupts.append(e)
+                return (index, e, denied_permit)
             except BaseException as e:
                 await release_after_exception(permit, index, e)
                 # Return exception with denied permit (already released)
@@ -459,6 +466,11 @@ class ParallelExecutionManager:
 
         # Run all tasks and collect results
         indexed_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        if interrupts:
+            # Every sibling task has settled and released its permit; deliver
+            # the interrupt in the caller's frame (not a Task boundary).
+            raise interrupts[0]
 
         # Sort by index to preserve original order
         indexed_results = sorted(
