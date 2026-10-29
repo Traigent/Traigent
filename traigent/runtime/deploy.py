@@ -221,6 +221,24 @@ class DeployController:
             else self.retry_delay * (2 ** (attempts - 1))
         )
 
+    def _publish_once(
+        self, attempt_ref: str, key: str, best_config_id: str, version: int
+    ) -> tuple[DeployOutcome | None, bool, float | None]:
+        """One write attempt: ``(terminal outcome, cancelled, retry_after)``."""
+        try:
+            result = self.client.publish_deploy(
+                key=key, best_config_id=best_config_id, version=version
+            )
+        except ReactiveError as exc:
+            action, retry_after = _publish_error_action(exc)
+            if action == "refused":
+                return DeployOutcome(REFUSED, attempt_ref, None), False, None
+            return None, action == "cancelled", retry_after
+        if result.state == "succeeded":
+            return _deployed(attempt_ref, result), False, None
+        # an unexpected success shape is treated as ambiguity
+        return None, False, None
+
     async def _decide(
         self,
         reservation: ReservationHandle,
@@ -229,38 +247,33 @@ class DeployController:
         version: int,
     ) -> DeployOutcome:
         """The terminal outcome of the write, or :class:`DeployHold` when it is unknown."""
-        api = self.client
         attempt_ref = reservation.attempt_ref
         deadline = self.clock() + self.window
         attempts = 0
         while True:
             attempts += 1
-            try:
-                result = api.publish_deploy(
-                    key=key, best_config_id=best_config_id, version=version
-                )
-            except ReactiveError as exc:
-                action, retry_after = _publish_error_action(exc)
-                if action == "refused":
-                    return DeployOutcome(REFUSED, attempt_ref, None)
-                if action == "cancelled":
-                    return await self._finalize(attempt_ref, key)
-            else:
-                if result.state == "succeeded":
-                    return _deployed(attempt_ref, result)
-                retry_after = (
-                    None  # an unexpected success shape is treated as ambiguity
-                )
+            outcome, cancelled, retry_after = self._publish_once(
+                attempt_ref, key, best_config_id, version
+            )
+            if outcome is not None:
+                return outcome
+            if cancelled:
+                return await self._finalize(attempt_ref, key)
             # Ambiguity: the write may have committed.  The same key replays the stored
             # result, so retry it; only finalize (under the head lock) decides failure.
             delay = DeployController._retry_wait(self, retry_after, attempts)
-            if (
-                attempts >= self.max_attempts
-                or self.clock() + timedelta(seconds=delay) > deadline
-            ):
+            if self._retries_exhausted(attempts, delay, deadline):
                 return await self._finalize(attempt_ref, key)
             await self.sleep(delay)
             self._renew(reservation)
+
+    def _retries_exhausted(
+        self, attempts: int, delay: float, deadline: datetime
+    ) -> bool:
+        return (
+            attempts >= self.max_attempts
+            or self.clock() + timedelta(seconds=delay) > deadline
+        )
 
     def _renew(self, reservation: ReservationHandle) -> None:
         """Keep the lease across the retry window; a refusal means it is not ours any more."""
