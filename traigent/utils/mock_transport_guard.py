@@ -371,11 +371,17 @@ def _grpc_target_host(target: Any) -> str | None:
     # ``xds:///h``, ``dns://authority/h:443`` or ``ipv4:h``. A bare ``host:443``
     # has a numeric "scheme" and is left alone.
     scheme, sep, rest = text.partition(":")
-    if sep and scheme.isalpha() and not scheme.isdigit() and not rest[:1].isdigit():
+    is_scheme = bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9+.-]*", scheme))
+    ip_literal = scheme.lower() in {"ipv4", "ipv6"}
+    if sep and is_scheme and (ip_literal or not rest[:1].isdigit()):
         text = rest
         if text.startswith("//"):
-            # ``//authority/host:port`` (empty authority for ``///``).
-            text = text[2:].split("/", 1)[1] if "/" in text[2:] else text[2:]
+            text = text[2:]
+            # gRPC resolver targets are ``scheme://authority/endpoint``: the
+            # endpoint is the host. For any other scheme (a URL-style target)
+            # the authority is the host.
+            if scheme.lower() in {"dns", "xds", "passthrough"} and "/" in text:
+                text = text.split("/", 1)[1]
     text = text.rsplit("@", 1)[-1]
     text = text.split("/", 1)[0]
     if text.startswith("["):

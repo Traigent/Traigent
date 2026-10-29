@@ -223,6 +223,10 @@ def test_banner_names_exact_mocked_classes_and_guarded_transports_2813(
         ("xds:///api.openai.com", "api.openai.com"),
         ("user@api.openai.com:443", "api.openai.com"),
         ("[::1]:443", "::1"),
+        ("ipv4:1.2.3.4:443", "1.2.3.4"),
+        ("ipv6:[::1]:443", "::1"),
+        ("https://api.openai.com/v1", "api.openai.com"),
+        ("https://u:p@api.openai.com:443/x", "api.openai.com"),
         ("localhost:50051", "localhost"),
     ],
 )
