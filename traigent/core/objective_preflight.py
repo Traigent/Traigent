@@ -37,6 +37,60 @@ _EXTRA_BUILTIN_METRICS = frozenset(
 )
 
 
+def _is_near_miss(key: str, objective: str) -> bool:
+    """Whether ``key`` looks like a misspelt or abbreviated ``objective``."""
+    key, objective = key.lower(), objective.lower()
+    if not key or not objective:
+        return False
+    return (
+        objective.startswith(key)
+        or key.startswith(objective)
+        or bool(get_close_matches(key, [objective], n=1, cutoff=0.6))
+    )
+
+
+def _warn_misnamed_metric_keys(
+    metric_functions: Mapping[str, Callable[..., Any]] | None,
+    objectives: Sequence[str],
+) -> list[str]:
+    """Warn when a metric_functions key is a near-miss for an uncovered objective.
+
+    ``metric_functions={"acc": f}`` with ``objectives=["accuracy"]`` silently
+    leaves the objective to the built-in metric, so the user's scorer is never
+    the optimization signal. Only an objective with no key of its own is
+    considered, and only keys that are not themselves objectives, so a legitimate
+    informational metric next to an objective never warns. Names are
+    customer-chosen text and are never echoed; an objective is named only when it
+    is an SDK-owned built-in. Returns the offending keys.
+    """
+    if not metric_functions:
+        return []
+    keys = [str(k) for k in metric_functions]
+    objective_names = {str(o) for o in objectives}
+    uncovered = [o for o in objectives if str(o) not in keys]
+    known = set(CANONICAL_OBJECTIVE_ORIENTATIONS) | _EXTRA_BUILTIN_METRICS
+    flagged: list[str] = []
+    for ordinal, key in enumerate(keys, start=1):
+        if key in objective_names:
+            continue
+        match = next((str(o) for o in uncovered if _is_near_miss(key, str(o))), None)
+        if match is None:
+            continue
+        flagged.append(key)
+        target = f"built-in objective '{match}'" if match in known else "an objective"
+        logger.warning(
+            "metric_functions key #%d of %d matches no objective but looks like a "
+            "near-miss for %s, which has no metric_functions entry. That objective "
+            "will NOT be scored by your function (the built-in metric or no metric "
+            "is used instead). Rename the key to the objective name to use your "
+            "scorer.",
+            ordinal,
+            len(keys),
+            target,
+        )
+    return flagged
+
+
 def warn_unproducible_objectives(
     metric_functions: Mapping[str, Callable[..., Any]] | None,
     objectives: Sequence[str],
@@ -44,6 +98,7 @@ def warn_unproducible_objectives(
 ) -> list[str]:
     """Warn for objectives no built-in metric can produce; return their names."""
     if metric_functions or scoring_function is not None:
+        _warn_misnamed_metric_keys(metric_functions, objectives)
         return []
     known = sorted(set(CANONICAL_OBJECTIVE_ORIENTATIONS) | _EXTRA_BUILTIN_METRICS)
     unmatched = [str(o) for o in objectives if str(o) not in known]

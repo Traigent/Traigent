@@ -28,8 +28,8 @@ from traigent.config.types import (
 )
 from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
 from traigent.core.execution_policy_runtime import backend_egress_disabled
-from traigent.core.trace_env import is_trace_enabled
 from traigent.core.objective_preflight import warn_unproducible_objectives
+from traigent.core.trace_env import is_trace_enabled
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.evaluators.local import LocalEvaluator
 from traigent.utils.env_config import is_mock_llm
@@ -558,6 +558,36 @@ def validate_metric_function_keys(
             )
 
 
+def _positional_fill_strays(
+    metric_func: Callable[..., Any],
+    binding: Any,
+    recognized_set: set[str],
+) -> list[str]:
+    """Required, unrecognized parameters that only bind by positional accident.
+
+    ``def accuracy(output, expected, threshold)`` binds through the 3-positional
+    fallback, which hands ``threshold`` the LLM usage dict -- the scorer then
+    returns garbage or 0.0 on every row with no error. A signature with NO
+    recognized names at all (``def m(a, b, c)``) is an intentional positional
+    scorer and is left alone (reported by the contract inspector instead).
+    """
+    import inspect
+
+    if binding.binding_mode != "positional_3":
+        return []
+    params = list(inspect.signature(metric_func).parameters.values())
+    if not any(p.name in recognized_set for p in params):
+        return []
+    return [
+        p.name
+        for p in params
+        if p.name not in recognized_set
+        and p.default is inspect.Parameter.empty
+        and p.kind
+        in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    ]
+
+
 def validate_metric_function_bindability(
     effective_metric_functions: dict[str, Callable[..., Any]],
     objectives: Sequence[str],
@@ -642,6 +672,22 @@ def validate_metric_function_bindability(
             continue
 
         if binding.bind_ok:
+            stray = _positional_fill_strays(metric_func, binding, recognized_set)
+            if not stray:
+                continue
+            message = (
+                f"metric/scoring function '{metric_name}' has required "
+                f"parameter(s) the runtime cannot supply by name: "
+                f"{', '.join(stray)}. They would be filled positionally with the "
+                "per-example LLM usage dict, not a value you control. Give them a "
+                "default, accept **kwargs, or name parameters from the recognized "
+                f"set: {', '.join(recognized_names)}."
+            )
+            if is_objective:
+                raise ValidationError(message)
+            logger.warning(
+                "%s Continuing: it is not an optimization objective.", message
+            )
             continue
 
         # `unmatched_parameters` is every bindable name when nothing bound, so

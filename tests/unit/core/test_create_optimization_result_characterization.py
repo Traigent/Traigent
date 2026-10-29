@@ -432,6 +432,40 @@ class TestAllTrialsFailed:
         assert kw["status"] == OptimizationStatus.FAILED
         assert o._status == OptimizationStatus.FAILED
 
+    def test_connection_failures_hint_mock_mode(self, env, monkeypatch):
+        monkeypatch.delenv("TRAIGENT_MOCK_LLM", raising=False)
+        monkeypatch.setattr(orch_mod, "is_mock_llm", lambda: False)
+        failed = _trial("a", False, TrialStatus.FAILED)
+        failed.error_message = "OpenAIException - Connection error."
+        _run(_make(_trials=[failed]), env)
+        (warning,) = env.kwargs["warnings"]
+        assert warning.startswith("All trials failed: 1 of 1 trial(s)")
+        assert "TRAIGENT_MOCK_LLM=true" in warning
+        assert "python -m traigent.examples.quickstart" in warning
+
+    def test_per_example_connection_failure_hints_mock_mode(self, env, monkeypatch):
+        monkeypatch.setattr(orch_mod, "is_mock_llm", lambda: False)
+        failed = _trial(
+            "a",
+            False,
+            TrialStatus.FAILED,
+            metadata={
+                "example_results": [
+                    {"error_message": "OpenAIException - Connection error."}
+                ]
+            },
+        )
+        failed.error_message = "No examples succeeded"
+        _run(_make(_trials=[failed]), env)
+        assert "TRAIGENT_MOCK_LLM=true" in env.kwargs["warnings"][0]
+
+    def test_non_connection_failure_has_no_mock_hint(self, env, monkeypatch):
+        monkeypatch.setattr(orch_mod, "is_mock_llm", lambda: False)
+        failed = _trial("a", False, TrialStatus.FAILED)
+        failed.error_message = "Objective metric 'accuracy' raised NameError"
+        _run(_make(_trials=[failed]), env)
+        assert "TRAIGENT_MOCK_LLM" not in env.kwargs["warnings"][0]
+
     def test_all_failed_keeps_cancelled_status(self, env):
         o = _make(
             _trials=[_trial("a", False, TrialStatus.FAILED)],

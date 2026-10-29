@@ -338,6 +338,34 @@ def _objective_metric_never_measured(
     return saw_any_metric
 
 
+_CONNECTION_FAILURE_MARKERS = (
+    "connection error",
+    "connectionerror",
+    "connecterror",
+    "connection refused",
+    "name resolution",
+    "network is unreachable",
+)
+
+
+def _trial_error_texts(trial: Any) -> list[object]:
+    """Trial-level and per-example error texts (the root cause is per example)."""
+    texts: list[object] = [getattr(trial, "error_message", None)]
+    metadata = getattr(trial, "metadata", None)
+    rows = metadata.get("example_results") if isinstance(metadata, dict) else None
+    if isinstance(rows, list):
+        texts.extend(r.get("error_message") for r in rows if isinstance(r, dict))
+    return texts
+
+
+def _is_connection_failure(error_message: object) -> bool:
+    """Whether a trial error text looks like a network/connection failure."""
+    if not isinstance(error_message, str):
+        return False
+    lowered = error_message.lower()
+    return any(marker in lowered for marker in _CONNECTION_FAILURE_MARKERS)
+
+
 def _format_unmatched_objective_warning(
     objective: str,
     available_metric_names: Sequence[str],
@@ -6685,11 +6713,24 @@ class OptimizationOrchestrator:
         ):
             return result_status
         failed_count = sum(1 for t in self._trials if t.status == TrialStatus.FAILED)
-        result_warnings.append(
+        warning = (
             f"All trials failed: {failed_count} of {len(self._trials)} trial(s) "
             "failed and none succeeded; no best_config was selected. See "
             "per-trial error messages."
         )
+        if not is_mock_llm() and any(
+            _is_connection_failure(text)
+            for t in self._trials
+            if t.status == TrialStatus.FAILED
+            for text in _trial_error_texts(t)
+        ):
+            warning += (
+                " The failures look like a network/connection problem. To try "
+                "Traigent without a provider or network, set "
+                "TRAIGENT_MOCK_LLM=true or run the offline quickstart "
+                "(python -m traigent.examples.quickstart)."
+            )
+        result_warnings.append(warning)
         result_warning_codes.append(_ALL_TRIALS_FAILED_WARNING_CODE)
         return self._fail_if_completed(result_status)
 

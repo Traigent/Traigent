@@ -208,3 +208,35 @@ def test_kwargs_scorer_passes() -> None:
 def test_no_metric_functions_is_a_noop() -> None:
     """No metric_functions/scoring_function configured -> nothing to validate."""
     validate_metric_function_bindability({}, objectives=["accuracy"])
+
+
+def test_extra_required_positional_param_raises_for_objective() -> None:
+    """``(output, expected, threshold)`` must not silently get the usage dict."""
+
+    def accuracy(output: str, expected: str, threshold: float) -> float:
+        raise AssertionError("must never be invoked by this test")
+
+    with pytest.raises(ValidationError, match="threshold") as excinfo:
+        validate_metric_function_bindability({"accuracy": accuracy}, ["accuracy"])
+    assert "'accuracy'" in str(excinfo.value)
+
+
+def test_extra_required_positional_param_warns_for_non_objective(caplog) -> None:
+    def helper(output: str, expected: str, threshold: float) -> float:
+        raise AssertionError("must never be invoked by this test")
+
+    with caplog.at_level(logging.WARNING):
+        validate_metric_function_bindability({"helper": helper}, ["accuracy"])
+    assert "threshold" in caplog.text
+
+
+def test_extra_param_with_default_and_all_positional_names_still_bind() -> None:
+    def with_default(output: str, expected: str, threshold: float = 0.5) -> float:
+        return 1.0
+
+    def all_positional(a: object, b: object, c: object) -> float:
+        return 1.0
+
+    validate_metric_function_bindability(
+        {"accuracy": with_default, "other": all_positional}, ["accuracy", "other"]
+    )
