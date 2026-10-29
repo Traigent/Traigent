@@ -1316,9 +1316,21 @@ def enroll_command(key_path: Path, pins_path: Path | None) -> None:
 @click.option("--run-id", required=True)
 @click.option(
     "--store-dir",
-    required=True,
+    default=None,
     type=click.Path(file_okay=False, path_type=Path),
     help="Local snapshot store holding the tes1 snapshot.",
+)
+@click.option(
+    "--store",
+    "store_locator",
+    default=None,
+    help=(
+        "Snapshot store locator: s3://bucket[/prefix], gs://bucket[/prefix], "
+        "azblob://host/container[/prefix], github://owner/repo@branch[/prefix] "
+        "or a local path. Credentials come from the vendor's standard "
+        "environment, never from this command. Use exactly one of --store or "
+        "--store-dir."
+    ),
 )
 @click.option(
     "--pins", "pins_path", type=click.Path(dir_okay=False, path_type=Path), default=None
@@ -1340,7 +1352,8 @@ def bind_command(
     root: str,
     key_path: Path,
     run_id: str,
-    store_dir: Path,
+    store_dir: Path | None,
+    store_locator: str | None,
     pins_path: Path | None,
     evidence_dir: Path | None,
     sdk_ref: str | None,
@@ -1356,13 +1369,29 @@ def bind_command(
     from traigent.certification.client_keys import ClientKeyError, load_client_key
     from traigent.certification.pins import PinError, load_pins
     from traigent.snapshot.backends import LocalDirStore
+    from traigent.snapshot.locator import (
+        SnapshotLocatorError,
+        open_store_from_locator,
+    )
 
+    if (store_dir is None) == (store_locator is None):
+        _g1_fail("BIND_REFUSED STORE_OPTION_EXACTLY_ONE_OF_STORE_OR_STORE_DIR")
+        return
+    try:
+        store = (
+            LocalDirStore(store_dir)
+            if store_dir is not None
+            else open_store_from_locator(str(store_locator))
+        )
+    except SnapshotLocatorError as err:
+        _g1_fail(f"BIND_REFUSED {err}")
+        return
     # Local reconstruction first: a failure here makes no network call.
     try:
         evidence = reconstruct_and_compare(
             root,
             custody=LocalFileCustody(evidence_dir),
-            store=LocalDirStore(store_dir),
+            store=store,
         )
     except ClientEvidenceError as err:
         _g1_fail(f"BIND_REFUSED {err.code}")
