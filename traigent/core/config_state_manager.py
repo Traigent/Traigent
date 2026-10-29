@@ -159,12 +159,16 @@ def _redact_example_content_for_disk_save(result_dict: dict[str, Any]) -> None:
         example_results = metadata.get("example_results")
         if not isinstance(example_results, list):
             continue
-        for example in example_results:
-            if not isinstance(example, dict):
-                continue
-            for field_name in _EXAMPLE_RESULT_CONTENT_FIELDS:
-                if field_name in example:
-                    example[field_name] = None
+        _redact_examples(example_results)
+
+
+def _redact_examples(example_results: list[Any]) -> None:
+    for example in example_results:
+        if not isinstance(example, dict):
+            continue
+        for field_name in _EXAMPLE_RESULT_CONTENT_FIELDS:
+            if field_name in example:
+                example[field_name] = None
 
 
 def _integrity_error(message: str) -> CloudBestConfigIntegrityError:
@@ -1503,20 +1507,30 @@ class ConfigStateManager:
                 reverse=True,
             )
 
-            for run_dir in run_dirs:
-                for config_file in [
-                    run_dir / "artifacts" / "best_config_v2.json",
-                    run_dir / "artifacts" / "best_config.json",
-                ]:
-                    if not config_file.exists():
-                        continue
-                    verdict = self._dev_log_candidate(config_file)
-                    if verdict == "match":
-                        return str(config_file)
-                    if verdict == "function" and fallback is None:
-                        fallback = str(config_file)
+            match, fallback = ConfigStateManager._find_in_run_dirs(
+                self, run_dirs, fallback
+            )
+            if match is not None:
+                return match
 
         return fallback
+
+    def _find_in_run_dirs(
+        self, run_dirs: list[Path], fallback: str | None
+    ) -> tuple[str | None, str | None]:
+        for run_dir in run_dirs:
+            for config_file in [
+                run_dir / "artifacts" / "best_config_v2.json",
+                run_dir / "artifacts" / "best_config.json",
+            ]:
+                if not config_file.exists():
+                    continue
+                verdict = self._dev_log_candidate(config_file)
+                if verdict == "match":
+                    return str(config_file), fallback
+                if verdict == "function" and fallback is None:
+                    fallback = str(config_file)
+        return None, fallback
 
     def _dev_log_candidate(self, config_file: Path) -> str | None:
         """Classify a dev-log artifact: ``match``, ``function`` (only) or ``None``."""
