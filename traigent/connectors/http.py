@@ -316,15 +316,6 @@ class HttpKernel:
     def _build_request_headers(
         self, headers: Mapping[str, str] | None
     ) -> dict[str, str]:
-        authority_headers = {
-            "host",
-            ":authority",
-            "forwarded",
-            "x-forwarded-host",
-            "x-original-host",
-        }
-        if any(name.lower() in authority_headers for name in (headers or {})):
-            raise ValueError("request headers must not override authority")
         request_headers = {
             name: value
             for name, value in (headers or {}).items()
@@ -384,16 +375,25 @@ class HttpKernel:
         else:
             self._sleep(delay)
 
-    def _prepare_request(
+    def _validate_request(
         self, path: str, headers: Mapping[str, str] | None, timeout: float | None
-    ) -> tuple[str, dict[str, str]]:
+    ) -> str:
         if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
             raise ValueError("request timeout must be finite and positive")
         url = urljoin(self._base_url, path.lstrip("/"))
         parsed = urlsplit(url)
         if self._origin_for(parsed) != self._origin:
             raise ValueError("request URL must remain on the configured host")
-        return url, self._build_request_headers(headers)
+        authority_headers = {
+            "host",
+            ":authority",
+            "forwarded",
+            "x-forwarded-host",
+            "x-original-host",
+        }
+        if any(name.lower() in authority_headers for name in (headers or {})):
+            raise ValueError("request headers must not override authority")
+        return url
 
     async def _request_with_retries(
         self,
@@ -403,8 +403,9 @@ class HttpKernel:
         headers: Mapping[str, str] | None,
         timeout: float | None,
     ) -> HttpResponse:
-        url, request_headers = self._prepare_request(path, headers, timeout)
+        url = self._validate_request(path, headers, timeout)
         end = self._clock() + self._deadline
+        request_headers = self._build_request_headers(headers)
         for attempt in range(self._max_retries + 1):
             remaining = end - self._clock()
             if remaining <= 0:
