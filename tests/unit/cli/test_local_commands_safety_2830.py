@@ -153,16 +153,24 @@ def test_cleanup_keeps_sessions_in_unrecognised_status(store, status):
     assert sid not in dry.output
 
 
-def test_cleanup_and_dry_run_agree_on_naive_timestamps(store):
-    """A zone-less created_at is read as UTC by both the preview and the delete."""
-    naive = _make(store, "naive", "completed", 400)
-    s = store.load_session(naive)
-    s.created_at = (
-        (datetime.now(UTC) - timedelta(days=400)).replace(tzinfo=None).isoformat()
-    )
-    store._save_session(s)
+def test_naive_created_at_is_read_as_utc_not_local_time(store, monkeypatch):
+    """Boundary case: 2h inside the 30-day window in UTC, but 12h outside it if the
+    zone-less value were read as local time in UTC+14."""
+    import time
 
-    dry = CliRunner().invoke(cleanup_sessions, ["--days", "30", "--dry-run"])
-    assert naive in dry.output
-    CliRunner().invoke(cleanup_sessions, ["--days", "30", "--yes"])
-    assert store.load_session(naive) is None
+    monkeypatch.setenv("TZ", "Pacific/Kiritimati")
+    time.tzset()
+    try:
+        sid = _make(store, "naive", "completed", 0)
+        s = store.load_session(sid)
+        young = datetime.now(UTC) - timedelta(days=30) + timedelta(hours=2)
+        s.created_at = young.replace(tzinfo=None).isoformat()
+        store._save_session(s)
+
+        dry = CliRunner().invoke(cleanup_sessions, ["--days", "30", "--dry-run"])
+        assert sid not in dry.output
+        CliRunner().invoke(cleanup_sessions, ["--days", "30", "--yes"])
+        assert store.load_session(sid) is not None
+    finally:
+        monkeypatch.undo()
+        time.tzset()

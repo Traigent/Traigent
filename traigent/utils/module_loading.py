@@ -56,6 +56,30 @@ def _is_trusted_package_dir(directory: Path) -> bool:
     return info.st_uid in (getuid(), 0)
 
 
+def _walk_package(path: Path) -> tuple[Path, list[str], Path | None]:
+    """Return ``(root, parts, untrusted_dir)``; see ``package_parts``.
+
+    ``untrusted_dir`` is the directory that holds an ``__init__.py`` but stopped
+    the walk because it is not trusted (None when the walk ended for another reason).
+    """
+    path = path.resolve()
+    parts: list[str] = []
+    directory = path.parent
+    untrusted: Path | None = None
+    while (directory / "__init__.py").is_file() and directory.parent != directory:
+        if not _is_trusted_package_dir(directory):
+            untrusted = directory
+            break
+        parts.append(directory.name)
+        directory = directory.parent
+    if not parts:
+        return path.parent, [], untrusted
+    parts.reverse()
+    if path.name != "__init__.py":
+        parts.append(path.stem)
+    return directory, parts, untrusted
+
+
 def package_parts(path: Path) -> tuple[Path, list[str]]:
     """Return ``(package_root_dir, [package, ..., submodule])`` for ``path``.
 
@@ -64,25 +88,14 @@ def package_parts(path: Path) -> tuple[Path, list[str]]:
     on its way down, so the walk never includes a world-writable directory
     (``/tmp``) or one owned by another non-root user: a planted
     ``/tmp/__init__.py`` must not run just because a file under ``/tmp/pkg`` was
-    checked. When ``path`` is not inside a package the list is empty and the root
-    is the file's directory.
+    checked. This limits which ``__init__.py`` files execute; it does not change
+    ``sys.path``: the root directory is still searched first for the duration of
+    the load, exactly as ``python script.py`` does for the script's directory.
+    When ``path`` is not inside a package the list is empty and the root is the
+    file's directory.
     """
-    path = path.resolve()
-    parts: list[str] = []
-    directory = path.parent
-    while (
-        (directory / "__init__.py").is_file()
-        and directory.parent != directory
-        and _is_trusted_package_dir(directory)
-    ):
-        parts.append(directory.name)
-        directory = directory.parent
-    if not parts:
-        return path.parent, []
-    parts.reverse()
-    if path.name != "__init__.py":
-        parts.append(path.stem)
-    return directory, parts
+    root, parts, _ = _walk_package(path)
+    return root, parts
 
 
 @contextlib.contextmanager
@@ -98,9 +111,18 @@ def _sys_path_entry(directory: Path, *, keep: bool) -> Iterator[None]:
             sys.path.remove(entry)
 
 
-def _explain_relative_import(path: Path, exc: ImportError) -> ImportError:
+def _explain_relative_import(
+    path: Path, exc: ImportError, untrusted: Path | None = None
+) -> ImportError:
     if _RELATIVE_IMPORT_MARKER not in str(exc):
         return exc
+    if untrusted is not None:
+        return ImportError(
+            f"{path.name} uses a relative import, but {untrusted} is writable by "
+            "other users or owned by another user, so its __init__.py was not "
+            "executed and the file was loaded outside its package. Make that "
+            "directory private (for example chmod go-w), or use absolute imports."
+        )
     return ImportError(
         f"{path.name} uses a relative import but is not inside a Python package "
         "(its directory has no __init__.py). Add an __init__.py next to it, or "
@@ -135,11 +157,11 @@ def load_user_module(
     stays registered in ``sys.modules`` when the module fails to execute.
     """
     path = path.resolve()
-    root, parts = package_parts(path)
+    root, parts, untrusted = _walk_package(path)
     with _sys_path_entry(root, keep=False):
         if parts:
             return _import_packaged(path, ".".join(parts), root)
-        return _import_from_path(path, module_name)
+        return _import_from_path(path, module_name, untrusted)
 
 
 _LOADED_PACKAGE_ROOTS: dict[str, Path] = {}
@@ -195,7 +217,9 @@ def _import_packaged(path: Path, qualified_name: str, root: Path) -> ModuleType:
     return module
 
 
-def _import_from_path(path: Path, module_name: str) -> ModuleType:
+def _import_from_path(
+    path: Path, module_name: str, untrusted: Path | None = None
+) -> ModuleType:
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise ImportError(f"Failed to load module spec from {path}")
@@ -206,7 +230,7 @@ def _import_from_path(path: Path, module_name: str) -> ModuleType:
         spec.loader.exec_module(module)
     except ImportError as exc:
         _restore_module(module_name, previous)
-        raise _explain_relative_import(path, exc) from exc
+        raise _explain_relative_import(path, exc, untrusted) from exc
     except BaseException:
         _restore_module(module_name, previous)
         raise

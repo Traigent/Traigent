@@ -392,7 +392,12 @@ class OptimizationValidator:
         )
         if trial.status == TrialStatus.FAILED:
             first_error = next(
-                (str(e) for e in (evaluation_result.errors or []) if e), None
+                (
+                    str(e).strip().splitlines()[0][:200]
+                    for e in (evaluation_result.errors or [])
+                    if e and str(e).strip()
+                ),
+                None,
             )
             raise RuntimeError(
                 f"Baseline run failed for {func_info.name}: no example succeeded "

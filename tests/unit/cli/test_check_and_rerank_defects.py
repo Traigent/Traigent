@@ -701,3 +701,46 @@ def test_package_walk_stops_at_world_writable_directory(tmp_path: Path) -> None:
     # control: the same layout with a private ancestor still walks up.
     _, parts = package_parts(mod)
     assert parts == ["shared", "pkg", "mod"]
+
+
+def test_package_walk_stops_at_foreign_owned_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A package directory owned by another (non-root) user is not climbed."""
+    import os
+
+    from traigent.utils import module_loading
+
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    mod = pkg / "mod.py"
+    mod.write_text("X = 1\n")
+
+    assert module_loading.package_parts(mod)[1] == ["pkg", "mod"]
+    monkeypatch.setattr(os, "getuid", lambda: os.stat(pkg).st_uid + 1)
+    assert module_loading.package_parts(mod)[1] == []
+
+
+def test_relative_import_in_untrusted_package_names_the_real_cause(
+    tmp_path: Path,
+) -> None:
+    """The error must not claim __init__.py is missing when it was refused."""
+    import os
+
+    from traigent.utils.module_loading import load_user_module
+
+    pkg = tmp_path / "pkgx"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "sib.py").write_text("Y = 1\n")
+    mod = pkg / "mod.py"
+    mod.write_text("from . import sib\n")
+    os.chmod(pkg, 0o777)
+    try:
+        with pytest.raises(ImportError) as err:
+            load_user_module(mod)
+    finally:
+        os.chmod(pkg, 0o755)
+    assert "writable by other users" in str(err.value)
+    assert "no __init__.py" not in str(err.value)
