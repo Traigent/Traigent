@@ -30,6 +30,9 @@ from ..utils.secure_path import PathTraversalError, safe_open, validate_path
 
 logger = get_logger(__name__)
 
+# Statuses of sessions that may still be written to; retention cleanup skips them.
+ACTIVE_SESSION_STATUSES = frozenset({"not_started", "pending", "running"})
+
 TRIAL_COST_FIELDS = ("cost", "total_cost", "input_cost", "output_cost")
 
 
@@ -1160,7 +1163,9 @@ class LocalStorageManager:
 
     def cleanup_old_sessions(self, days: int = 30) -> int:
         """
-        Clean up sessions older than specified days.
+        Clean up finished sessions older than specified days.
+
+        Sessions that are not_started, pending or running are never deleted.
 
         Args:
             days: Age threshold in days
@@ -1172,6 +1177,8 @@ class LocalStorageManager:
         deleted_count = 0
 
         for session in self.list_sessions():
+            if session.status in ACTIVE_SESSION_STATUSES:
+                continue  # never delete in-flight sessions
             session_date = datetime.fromisoformat(session.created_at).timestamp()
             if session_date < cutoff_date:
                 if self.delete_session(session.session_id):
