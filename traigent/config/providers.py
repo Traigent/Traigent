@@ -409,6 +409,34 @@ class SeamlessNoInjectableTargetsError(ConfigurationError):
     """
 
 
+class _UserFunctionError(Exception):
+    """Internal carrier for an exception raised by the USER's own callable.
+
+    ``_seamless_run`` treats any other exception as "the AST transform / shim
+    construction failed" and falls back to a second execution. An exception
+    raised while executing the user function is not that, so it is carried
+    out of the transform-and-fallback ladder in this wrapper and re-raised
+    unchanged by ``_seamless_run`` (#2841).
+    """
+
+    def __init__(self, error: BaseException) -> None:
+        super().__init__(str(error))
+        self.error = error
+
+
+# Provider SDKs raise a ``NotFoundError`` (HTTP 404) for an unknown model id.
+_PROVIDER_SDK_ROOTS = frozenset({"openai", "anthropic"})
+
+
+def _is_provider_model_not_found(exc: BaseException) -> bool:
+    """True for a provider SDK ``NotFoundError`` (typed, not message-sniffing)."""
+    return any(
+        cls.__name__ == "NotFoundError"
+        and cls.__module__.split(".", 1)[0] in _PROVIDER_SDK_ROOTS
+        for cls in type(exc).__mro__
+    )
+
+
 def _merge_context_config(
     active_config: dict[str, Any],
     current_config: TraigentConfig | dict[str, Any],
@@ -620,44 +648,67 @@ class SeamlessParameterProvider(ConfigurationProvider):
         """
 
         def _handle_injection_error(exc: Exception) -> None:
-            error_text = str(exc).lower()
+            # Only called for exceptions raised by the user's own callable.
+            # Re-raise them unchanged (wrapped in the internal carrier so the
+            # transform-failure fallback does not re-execute the function),
+            # except for a typed "unknown model" signal, which is a
+            # configuration problem rather than a bug in user code (#2841).
             model_value = active_config.get("model")
-            config_error_markers = [
-                "model_not_found",
-                "model not found",
-                "invalid model",
-                "does not exist",
-            ]
-            if isinstance(exc, ConfigurationError) or any(
-                marker in error_text for marker in config_error_markers
-            ):
-                raise ConfigurationError(
+            if isinstance(exc, ConfigurationError) or _is_provider_model_not_found(exc):
+                error: BaseException = ConfigurationError(
                     "Failed to execute with injected configuration"
                     + (f" (model='{model_value}')" if model_value is not None else "")
                     + f": {exc}"
-                ) from exc
-            raise
+                )
+                error.__cause__ = exc
+            else:
+                error = exc
+            raise _UserFunctionError(error)
 
         cache_key = self._get_cache_key(func, active_config)
 
         # Fast path: return cached transformation
-        cached_func = self._lookup_cached(cache_key, func.__name__)
-        if cached_func is not None:
-            return cached_func(*args, **kwargs)
-
-        # Transform the function
+        user_error: BaseException
         try:
-            return self._seamless_transform_and_run(
-                func, active_config, args, kwargs, cache_key, _handle_injection_error
-            )
-        except SeamlessNoInjectableTargetsError:
-            # Fail closed: do not fall back to a runtime shim, which would
-            # silently no-op the same way and defeat the point of this check.
-            raise
-        except Exception as e:  # noqa: BLE001
-            return self._seamless_fallback(
-                func, active_config, args, kwargs, cache_key, e, _handle_injection_error
-            )
+            cached_func = self._lookup_cached(cache_key, func.__name__)
+            if cached_func is not None:
+                try:
+                    return cached_func(*args, **kwargs)
+                except Exception as exc:  # noqa: BLE001
+                    _handle_injection_error(exc)
+                    raise  # pragma: no cover - handler always raises
+
+            # Transform the function
+            try:
+                return self._seamless_transform_and_run(
+                    func,
+                    active_config,
+                    args,
+                    kwargs,
+                    cache_key,
+                    _handle_injection_error,
+                )
+            except (SeamlessNoInjectableTargetsError, _UserFunctionError):
+                # SeamlessNoInjectableTargetsError: fail closed, do not fall
+                # back to a runtime shim, which would silently no-op the same
+                # way and defeat the point of this check. _UserFunctionError:
+                # the user's own function raised; it must not run twice.
+                raise
+            except Exception as e:  # noqa: BLE001
+                return self._seamless_fallback(
+                    func,
+                    active_config,
+                    args,
+                    kwargs,
+                    cache_key,
+                    e,
+                    _handle_injection_error,
+                )
+        except _UserFunctionError as carrier:
+            user_error = carrier.error
+        # Raised outside the ``except`` block so the carrier does not become
+        # the user error's implicit ``__context__``.
+        raise user_error
 
     def _seamless_transform_and_run(
         self,
