@@ -42,6 +42,8 @@ from traigent.labels.transport_gate import (
 from traigent.security.redaction import redact_sensitive_data
 from traigent.utils.exceptions import AuthenticationError as TraigentAuthenticationError
 
+APPLICATION_JSON = "application/json"
+
 logger = logging.getLogger(__name__)
 
 # Security constants
@@ -1208,7 +1210,7 @@ class AuthManager:
         """Add common headers to the request headers dict in-place."""
         headers["X-Client-Version"] = "0.1.0"
         headers["X-Integration-Mode"] = "unified"
-        headers.setdefault("Content-Type", "application/json")
+        headers.setdefault("Content-Type", APPLICATION_JSON)
 
         if target in ("cloud", "both"):
             headers["X-Traigent-Client"] = "sdk"
@@ -1790,8 +1792,8 @@ class AuthManager:
 
         validation_payload = {"api_key": api_key}
         headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
+            "Accept": APPLICATION_JSON,
+            "Content-Type": APPLICATION_JSON,
             "User-Agent": get_sdk_user_agent(),
             "X-API-Key": api_key,
         }
