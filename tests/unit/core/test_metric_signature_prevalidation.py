@@ -216,9 +216,13 @@ def test_extra_required_positional_param_raises_for_objective() -> None:
     def accuracy(output: str, expected: str, threshold: float) -> float:
         raise AssertionError("must never be invoked by this test")
 
-    with pytest.raises(ValidationError, match="threshold") as excinfo:
-        validate_metric_function_bindability({"accuracy": accuracy}, ["accuracy"])
-    assert "'accuracy'" in str(excinfo.value)
+    with pytest.raises(ValidationError, match="positional parameter 3") as excinfo:
+        validate_metric_function_bindability(
+            {"cust_metric_zq": accuracy}, ["cust_metric_zq"]
+        )
+    # Customer-chosen metric and parameter names are content: never echoed.
+    assert "cust_metric_zq" not in str(excinfo.value)
+    assert "threshold" not in str(excinfo.value)
 
 
 def test_extra_required_positional_param_warns_for_non_objective(caplog) -> None:
@@ -227,7 +231,9 @@ def test_extra_required_positional_param_warns_for_non_objective(caplog) -> None
 
     with caplog.at_level(logging.WARNING):
         validate_metric_function_bindability({"helper": helper}, ["accuracy"])
-    assert "threshold" in caplog.text
+    assert "positional parameter 3" in caplog.text
+    assert "threshold" not in caplog.text
+    assert "helper" not in caplog.text
 
 
 def test_extra_param_with_default_and_all_positional_names_still_bind() -> None:
@@ -240,3 +246,25 @@ def test_extra_param_with_default_and_all_positional_names_still_bind() -> None:
     validate_metric_function_bindability(
         {"accuracy": with_default, "other": all_positional}, ["accuracy", "other"]
     )
+
+
+def test_alias_named_third_param_with_custom_second_is_accepted() -> None:
+    """Runtime binds llm_metrics by position; this must not be rejected."""
+
+    def scorer(output: str, gold: str, llm_metrics: dict) -> float:
+        return 1.0
+
+    def scorer_kw(output: str, gold: str, llm_metrics: dict, **kwargs: object) -> float:
+        return 1.0
+
+    validate_metric_function_bindability(
+        {"accuracy": scorer, "other": scorer_kw}, ["accuracy", "other"]
+    )
+
+
+def test_stray_third_param_with_var_kwargs_is_flagged() -> None:
+    def scorer(output: str, gold: str, threshold: float, **kwargs: object) -> float:
+        return 1.0
+
+    with pytest.raises(ValidationError, match="positional parameter 3"):
+        validate_metric_function_bindability({"accuracy": scorer}, ["accuracy"])

@@ -920,3 +920,28 @@ class TestResultConstructionAndLogging:
             optimization_result=result,
             weighted_results=result.calculate_weighted_scores.return_value,
         )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "All connection attempts failed",
+        "Connection reset by peer",
+        "[Errno -2] Name or service not known",
+        "socket.gaierror: getaddrinfo failed",
+        "ECONNREFUSED 127.0.0.1:443",
+        "timed out connecting to host",
+    ],
+)
+def test_connection_failure_detection_variants(text):
+    assert orch_mod._is_connection_failure(text)
+
+
+def test_connection_failure_detection_httpx_and_negatives():
+    import httpx
+
+    assert orch_mod._is_connection_failure(
+        str(httpx.ConnectError("All connection attempts failed"))
+    )
+    assert not orch_mod._is_connection_failure("division by zero")
+    assert not orch_mod._is_connection_failure(None)

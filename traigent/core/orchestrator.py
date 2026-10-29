@@ -343,8 +343,19 @@ _CONNECTION_FAILURE_MARKERS = (
     "connectionerror",
     "connecterror",
     "connection refused",
+    "connection reset",
+    "connection attempts failed",
+    "connection aborted",
     "name resolution",
+    "name or service not known",
+    "nodename nor servname",
+    "getaddrinfo",
+    "econnrefused",
+    "econnreset",
     "network is unreachable",
+    "timed out connecting",
+    "connect timeout",
+    "connecttimeout",
 )
 
 
@@ -6726,8 +6737,9 @@ class OptimizationOrchestrator:
         ):
             warning += (
                 " The failures look like a network/connection problem. To try "
-                "Traigent without a provider or network, set "
-                "TRAIGENT_MOCK_LLM=true or run the offline quickstart "
+                "Traigent without calling a provider, set TRAIGENT_MOCK_LLM=true "
+                "(mock mode replaces provider calls only). For a run with no "
+                "backend communication, use the offline quickstart "
                 "(python -m traigent.examples.quickstart)."
             )
         result_warnings.append(warning)

@@ -13,6 +13,7 @@ rejection is a product decision.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Mapping, Sequence
 from difflib import get_close_matches
 from typing import Any
@@ -49,6 +50,25 @@ def _is_near_miss(key: str, objective: str) -> bool:
     )
 
 
+def _may_return_mapping(func: Callable[..., Any]) -> bool:
+    """Whether ``func`` could emit arbitrary metric keys (undecidable pre-run)."""
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):
+        return True
+    if any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values()
+    ):
+        return True
+    annotation = signature.return_annotation
+    return annotation is not inspect.Signature.empty and annotation not in (
+        float,
+        int,
+        "float",
+        "int",
+    )
+
+
 def _warn_misnamed_metric_keys(
     metric_functions: Mapping[str, Callable[..., Any]] | None,
     objectives: Sequence[str],
@@ -64,6 +84,10 @@ def _warn_misnamed_metric_keys(
     is an SDK-owned built-in. Returns the offending keys.
     """
     if not metric_functions:
+        return []
+    # A scorer that may return a mapping can supply any objective key, so the
+    # dict keys do not decide coverage: stay silent rather than guess.
+    if any(_may_return_mapping(f) for f in metric_functions.values()):
         return []
     keys = [str(k) for k in metric_functions]
     objective_names = {str(o) for o in objectives}
@@ -81,9 +105,9 @@ def _warn_misnamed_metric_keys(
         logger.warning(
             "metric_functions key #%d of %d matches no objective but looks like a "
             "near-miss for %s, which has no metric_functions entry. That objective "
-            "will NOT be scored by your function (the built-in metric or no metric "
-            "is used instead). Rename the key to the objective name to use your "
-            "scorer.",
+            "may not be scored by your function (the built-in metric or no metric "
+            "is used instead). If that is not intended, rename the key to the "
+            "objective name.",
             ordinal,
             len(keys),
             target,
@@ -98,7 +122,8 @@ def warn_unproducible_objectives(
 ) -> list[str]:
     """Warn for objectives no built-in metric can produce; return their names."""
     if metric_functions or scoring_function is not None:
-        _warn_misnamed_metric_keys(metric_functions, objectives)
+        if scoring_function is None:
+            _warn_misnamed_metric_keys(metric_functions, objectives)
         return []
     known = sorted(set(CANONICAL_OBJECTIVE_ORIENTATIONS) | _EXTRA_BUILTIN_METRICS)
     unmatched = [str(o) for o in objectives if str(o) not in known]
