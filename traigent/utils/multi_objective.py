@@ -444,20 +444,9 @@ class ParetoFrontCalculator:
                 (nadir, ideal) if maximize else (ideal, nadir)
             )
 
-        # Monte Carlo sampling
-        dominated_count = 0
-        for _ in range(self.num_samples):
-            # Generate random point in search space
-            sample_point = {
-                obj: self._rng.uniform(lower_bounds[obj], upper_bounds[obj])
-                for obj in objectives
-            }
-
-            # Check if any Pareto point dominates this sample
-            for pareto_point in pareto_front:
-                if self._point_dominates_sample(pareto_point, sample_point):
-                    dominated_count += 1
-                    break
+        dominated_count = ParetoFrontCalculator._count_dominated_samples(
+            self, pareto_front, objectives, lower_bounds, upper_bounds
+        )
 
         # Calculate volume of search space
         total_volume = 1.0
@@ -467,6 +456,25 @@ class ParetoFrontCalculator:
         # Approximate hypervolume
         hypervolume = (dominated_count / self.num_samples) * total_volume
         return hypervolume
+
+    def _count_dominated_samples(
+        self,
+        pareto_front: list[ParetoPoint],
+        objectives: list[str],
+        lower_bounds: dict[str, float],
+        upper_bounds: dict[str, float],
+    ) -> int:
+        dominated_count = 0
+        for _ in range(self.num_samples):
+            sample_point = {
+                obj: self._rng.uniform(lower_bounds[obj], upper_bounds[obj])
+                for obj in objectives
+            }
+            for pareto_point in pareto_front:
+                if self._point_dominates_sample(pareto_point, sample_point):
+                    dominated_count += 1
+                    break
+        return dominated_count
 
     def _point_dominates_sample(
         self, pareto_point: ParetoPoint, sample_point: dict[str, float]
