@@ -298,17 +298,7 @@ def _value_in_domain(value: Any, domain: Any, legacy: bool = False) -> bool | No
     choice set. A list is never read as an interval, whatever its length.
     """
     if isinstance(domain, dict):
-        if "low" in domain and "high" in domain:
-            lo, hi = domain["low"], domain["high"]
-            if not (_is_number(lo) and _is_number(hi)):
-                return None
-            if not _is_number(value):
-                return False  # type mismatch against numeric bounds
-            return bool(lo <= value <= hi)
-        for key in ("choices", "values"):
-            if isinstance(domain.get(key), list):
-                return value in domain[key]
-        return None
+        return _value_in_dict_domain(value, domain)
     if isinstance(domain, list):
         if value in domain:
             return True
@@ -319,6 +309,20 @@ def _value_in_domain(value: Any, domain: Any, legacy: bool = False) -> bool | No
         if legacy and len(domain) == 2 and all(_is_number(x) for x in (*domain, value)):
             return bool(min(domain) <= value <= max(domain))
         return False
+    return None
+
+
+def _value_in_dict_domain(value: Any, domain: dict[str, Any]) -> bool | None:
+    if "low" in domain and "high" in domain:
+        lo, hi = domain["low"], domain["high"]
+        if not (_is_number(lo) and _is_number(hi)):
+            return None
+        if not _is_number(value):
+            return False  # type mismatch against numeric bounds
+        return bool(lo <= value <= hi)
+    for key in ("choices", "values"):
+        if isinstance(domain.get(key), list):
+            return value in domain[key]
     return None
 
 
@@ -407,6 +411,55 @@ def _check_returned_best_config(
     _check_best_config_in_space(
         name, returned, metadata.get("configuration_space"), legacy
     )
+
+
+def _serialize_trial_for_persistence(
+    trial: Any, omit_example_content: bool
+) -> dict[str, Any]:
+    # Serialize metadata, converting objects with to_dict() methods
+    raw_metadata = trial.metadata if hasattr(trial, "metadata") else {}
+    serialized_metadata = _serialize_metadata(raw_metadata)
+    if omit_example_content:
+        serialized_metadata = _metadata_without_example_content(serialized_metadata)
+
+    trial_dict = {
+        # Persist the real id so the winning_trial_ids stamp (#1854)
+        # still matches after a round-trip (load already reads it).
+        # getattr: save tolerates duck-typed trials (CLI tests use
+        # bare stand-ins), matching the hasattr guards below.
+        "trial_id": getattr(trial, "trial_id", None),
+        "config": _safe_json_value(trial.config),
+        "metrics": _safe_json_value(trial.metrics if hasattr(trial, "metrics") else {}),
+        "duration": trial.duration if hasattr(trial, "duration") else 0.0,
+        "status": trial.status if hasattr(trial, "status") else "unknown",
+        "timestamp": (
+            trial.timestamp.isoformat()
+            if hasattr(trial, "timestamp") and trial.timestamp
+            else None
+        ),
+        # load_result has always read this key; nothing ever wrote it,
+        # so a failed trial's diagnosis was dropped by the round trip
+        # while its FAILED status survived. getattr for the same reason
+        # as trial_id above.
+        "error_message": getattr(trial, "error_message", None),
+        "metadata": serialized_metadata,
+        # #2047: this format's JSON sub-path wrote neither key, so a
+        # reloaded run could not tell a crashed trial from a
+        # badly-scoring one. (The pickle sub-path below always kept
+        # both, which is why the two disagreed.)
+        #
+        # Both go through _safe_json_value for the same reason the
+        # sibling `config` key above does: _atomic_write_gzip_json
+        # calls json.dump with no `default=`, so an un-hardened value
+        # raises mid-write and leaves the run with only metadata.json
+        # -- destroying a completed optimization instead of merely
+        # losing a field. _safe_json_value also routes TrialError
+        # through its own to_dict(), which applies the redaction that
+        # object already defines for itself.
+        "error": _safe_json_value(getattr(trial, "error", None)),
+        "score": _safe_json_value(getattr(trial, "score", None)),
+    }
+    return trial_dict
 
 
 class PersistenceManager:
@@ -625,53 +678,7 @@ class PersistenceManager:
         # Save trials as compressed JSON (secure and portable)
         trials_data = []
         for trial in result.trials:
-            # Serialize metadata, converting objects with to_dict() methods
-            raw_metadata = trial.metadata if hasattr(trial, "metadata") else {}
-            serialized_metadata = _serialize_metadata(raw_metadata)
-            if omit_example_content:
-                serialized_metadata = _metadata_without_example_content(
-                    serialized_metadata
-                )
-
-            trial_dict = {
-                # Persist the real id so the winning_trial_ids stamp (#1854)
-                # still matches after a round-trip (load already reads it).
-                # getattr: save tolerates duck-typed trials (CLI tests use
-                # bare stand-ins), matching the hasattr guards below.
-                "trial_id": getattr(trial, "trial_id", None),
-                "config": _safe_json_value(trial.config),
-                "metrics": _safe_json_value(
-                    trial.metrics if hasattr(trial, "metrics") else {}
-                ),
-                "duration": trial.duration if hasattr(trial, "duration") else 0.0,
-                "status": trial.status if hasattr(trial, "status") else "unknown",
-                "timestamp": (
-                    trial.timestamp.isoformat()
-                    if hasattr(trial, "timestamp") and trial.timestamp
-                    else None
-                ),
-                # load_result has always read this key; nothing ever wrote it,
-                # so a failed trial's diagnosis was dropped by the round trip
-                # while its FAILED status survived. getattr for the same reason
-                # as trial_id above.
-                "error_message": getattr(trial, "error_message", None),
-                "metadata": serialized_metadata,
-                # #2047: this format's JSON sub-path wrote neither key, so a
-                # reloaded run could not tell a crashed trial from a
-                # badly-scoring one. (The pickle sub-path below always kept
-                # both, which is why the two disagreed.)
-                #
-                # Both go through _safe_json_value for the same reason the
-                # sibling `config` key above does: _atomic_write_gzip_json
-                # calls json.dump with no `default=`, so an un-hardened value
-                # raises mid-write and leaves the run with only metadata.json
-                # -- destroying a completed optimization instead of merely
-                # losing a field. _safe_json_value also routes TrialError
-                # through its own to_dict(), which applies the redaction that
-                # object already defines for itself.
-                "error": _safe_json_value(getattr(trial, "error", None)),
-                "score": _safe_json_value(getattr(trial, "score", None)),
-            }
+            trial_dict = _serialize_trial_for_persistence(trial, omit_example_content)
             trials_data.append(trial_dict)
 
         self._atomic_write_gzip_json(result_dir / TRIALS_JSON_FILE, trials_data)
