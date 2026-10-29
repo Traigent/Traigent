@@ -110,14 +110,6 @@ from traigent.utils.logging import get_logger
 from traigent.utils.optimization_only_egress import parse_flag
 from traigent.utils.retry import RetryConfig, RetryHandler
 
-_BACKEND_CLIENT = "backend client"
-_REQUESTS_IS_UNAVAILABLE = "requests is unavailable"
-_AGENT_HEAD_FETCH = "Agent-head fetch"
-_BACKEND_BEST_CONFIG_URL_IS_INVALID = "Backend best-config URL is invalid"
-_BEST_CONFIG_PUBLISH = "Best-config publish"
-_BEST_CONFIG_FETCH = "Best-config fetch"
-_EXAMPLE_FEATURE_UPLOAD = "Example feature upload"
-
 # Type alias for aiohttp session, falling back to Any at runtime if unavailable
 if TYPE_CHECKING:
     from aiohttp import ClientSession as AioClientSession
@@ -1179,7 +1171,7 @@ class BackendIntegratedClient:
         self._url_invalid = False
         try:
             effective_base_url = validate_cloud_base_url(
-                effective_base_url, purpose=_BACKEND_CLIENT
+                effective_base_url, purpose="backend client"
             )
             self.base_url = self._api_ops.validate_and_sanitize_url(effective_base_url)
 
@@ -1187,7 +1179,7 @@ class BackendIntegratedClient:
             if not explicit_base_origin:
                 backend_base_url = self.backend_config.backend_base_url or self.base_url
             backend_base_url = validate_cloud_base_url(
-                backend_base_url, purpose=_BACKEND_CLIENT
+                backend_base_url, purpose="backend client"
             )
             self.backend_config.backend_base_url = (
                 self._api_ops.validate_and_sanitize_url(backend_base_url)
@@ -1207,7 +1199,7 @@ class BackendIntegratedClient:
             api_origin, api_path = BackendConfig.split_api_url(api_base_candidate)
             if api_origin is None:
                 raise ValueError("backend client API base URL must include an origin")
-            api_origin = validate_cloud_base_url(api_origin, purpose=_BACKEND_CLIENT)
+            api_origin = validate_cloud_base_url(api_origin, purpose="backend client")
             # validate_cloud_base_url only saw the origin; the API path is
             # reattached below, so re-check the (decoded) path for traversal
             # here — otherwise an explicit api_base_url like ".../../admin" would
@@ -2465,7 +2457,7 @@ class BackendIntegratedClient:
         try:
             import requests
         except ImportError as exc:  # pragma: no cover - requests is required
-            raise CloudServiceError(_REQUESTS_IS_UNAVAILABLE) from exc
+            raise CloudServiceError("requests is unavailable") from exc
 
         base = self._build_best_config_url()
         if not base:
@@ -2499,13 +2491,13 @@ class BackendIntegratedClient:
                 TimeoutError,
             ) as exc:
                 raise _SyncBackendTransientError(
-                    transport_failed_message(_AGENT_HEAD_FETCH, exc)
+                    transport_failed_message("Agent-head fetch", exc)
                 ) from None
-            _raise_for_transient_backend_response(response, _AGENT_HEAD_FETCH)
+            _raise_for_transient_backend_response(response, "Agent-head fetch")
             return response
 
-        response = _run_sync_backend_request_with_retry(_AGENT_HEAD_FETCH, _get_head)
-        _refuse_redirect_response(response, _AGENT_HEAD_FETCH)
+        response = _run_sync_backend_request_with_retry("Agent-head fetch", _get_head)
+        _refuse_redirect_response(response, "Agent-head fetch")
         if response.status_code >= 400:
             raise CloudServiceError(
                 f"Agent-head fetch rejected: "
@@ -2586,7 +2578,7 @@ class BackendIntegratedClient:
         try:
             import requests
         except ImportError as exc:  # pragma: no cover - requests is required
-            raise CloudServiceError(_REQUESTS_IS_UNAVAILABLE) from exc
+            raise CloudServiceError("requests is unavailable") from exc
 
         session = gate_session(requests.Session(), origins=[url], strict=True)
         try:
@@ -2637,7 +2629,7 @@ class BackendIntegratedClient:
             response = self._protected_request(
                 "GET",
                 url,
-                operation=_AGENT_HEAD_FETCH,
+                operation="Agent-head fetch",
                 params={"environment": environment},
                 headers=headers,
             )
@@ -2652,7 +2644,7 @@ class BackendIntegratedClient:
                 )
             return response
 
-        response = _run_sync_backend_request_with_retry(_AGENT_HEAD_FETCH, _get_head)
+        response = _run_sync_backend_request_with_retry("Agent-head fetch", _get_head)
         if response.status_code >= 400:
             raise self._head_refusal_from_response(response)
         try:
@@ -2795,7 +2787,7 @@ class BackendIntegratedClient:
         self._raise_if_backend_egress_disabled("publish best config")
         url = self._build_best_config_url()
         if not url:
-            raise CloudServiceError(_BACKEND_BEST_CONFIG_URL_IS_INVALID)
+            raise CloudServiceError("Backend best-config URL is invalid")
         headers = self._get_sync_auth_headers(target="backend")
         if if_match:
             headers["If-Match"] = if_match
@@ -2812,7 +2804,7 @@ class BackendIntegratedClient:
         response = self._protected_request(
             "POST",
             url,
-            operation=_BEST_CONFIG_PUBLISH,
+            operation="Best-config publish",
             json=payload,
             headers=headers,
         )
@@ -2868,11 +2860,11 @@ class BackendIntegratedClient:
         try:
             import requests
         except ImportError as exc:  # pragma: no cover - requests is required
-            raise CloudServiceError(_REQUESTS_IS_UNAVAILABLE) from exc
+            raise CloudServiceError("requests is unavailable") from exc
 
         url = self._build_best_config_url()
         if not url:
-            raise CloudServiceError(_BACKEND_BEST_CONFIG_URL_IS_INVALID)
+            raise CloudServiceError("Backend best-config URL is invalid")
 
         headers = self._get_sync_auth_headers(target="backend")
         if if_match:
@@ -2910,16 +2902,16 @@ class BackendIntegratedClient:
                 TimeoutError,
             ) as exc:
                 raise _SyncBackendTransientError(
-                    transport_failed_message(_BEST_CONFIG_PUBLISH, exc)
+                    transport_failed_message("Best-config publish", exc)
                 ) from None
-            _raise_for_transient_backend_response(response, _BEST_CONFIG_PUBLISH)
+            _raise_for_transient_backend_response(response, "Best-config publish")
             return response
 
         response = _run_sync_backend_request_with_retry(
-            _BEST_CONFIG_PUBLISH,
+            "Best-config publish",
             _post_best_config,
         )
-        _refuse_redirect_response(response, _BEST_CONFIG_PUBLISH)
+        _refuse_redirect_response(response, "Best-config publish")
 
         if response.status_code == 409 and expected_head_generation is not None:
             stale = self._stale_head_error_from_response(
@@ -3023,11 +3015,11 @@ class BackendIntegratedClient:
         try:
             import requests
         except ImportError as exc:  # pragma: no cover - requests is required
-            raise CloudServiceError(_REQUESTS_IS_UNAVAILABLE) from exc
+            raise CloudServiceError("requests is unavailable") from exc
 
         url = self._build_best_config_url(config_id)
         if not url:
-            raise CloudServiceError(_BACKEND_BEST_CONFIG_URL_IS_INVALID)
+            raise CloudServiceError("Backend best-config URL is invalid")
 
         headers = self._get_sync_auth_headers(target="backend")
         if etag:
@@ -3065,13 +3057,13 @@ class BackendIntegratedClient:
                 TimeoutError,
             ) as exc:
                 raise _SyncBackendTransientError(
-                    transport_failed_message(_BEST_CONFIG_FETCH, exc)
+                    transport_failed_message("Best-config fetch", exc)
                 ) from None
-            _raise_for_transient_backend_response(response, _BEST_CONFIG_FETCH)
+            _raise_for_transient_backend_response(response, "Best-config fetch")
             return response
 
         response = _run_sync_backend_request_with_retry(
-            _BEST_CONFIG_FETCH,
+            "Best-config fetch",
             _get_best_config,
         )
         if response.status_code == 304:
@@ -3079,7 +3071,7 @@ class BackendIntegratedClient:
             # redirect: nothing is followed and no Location is read, so it is answered
             # before the redirect guard (which refuses every other 3xx).
             return None
-        _refuse_redirect_response(response, _BEST_CONFIG_FETCH)
+        _refuse_redirect_response(response, "Best-config fetch")
 
         if response.status_code == 404:
             return None
@@ -3138,7 +3130,7 @@ class BackendIntegratedClient:
         try:
             import requests
         except ImportError as exc:  # pragma: no cover - requests is required
-            raise CloudServiceError(_REQUESTS_IS_UNAVAILABLE) from exc
+            raise CloudServiceError("requests is unavailable") from exc
 
         url = self._build_purpose_keys_url()
         if not url:
@@ -3334,17 +3326,17 @@ class BackendIntegratedClient:
                 TimeoutError,
             ) as exc:
                 raise _SyncBackendTransientError(
-                    transport_failed_message(_EXAMPLE_FEATURE_UPLOAD, exc)
+                    transport_failed_message("Example feature upload", exc)
                 ) from None
-            _raise_for_transient_backend_response(response, _EXAMPLE_FEATURE_UPLOAD)
+            _raise_for_transient_backend_response(response, "Example feature upload")
             return response
 
         try:
             response = _run_sync_backend_request_with_retry(
-                _EXAMPLE_FEATURE_UPLOAD,
+                "Example feature upload",
                 _post_example_features,
             )
-            _refuse_redirect_response(response, _EXAMPLE_FEATURE_UPLOAD)
+            _refuse_redirect_response(response, "Example feature upload")
         except Exception as exc:
             logger.debug(
                 "Example feature upload failed for run %s: %s",
