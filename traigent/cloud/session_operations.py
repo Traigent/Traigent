@@ -119,8 +119,10 @@ def _log_session_create_failure(
     non-answer (transport failure, timeout, 5xx) keeps the "unreachable ...
     degrading to LOCAL" wording.
     """
-    if _answered_refusal_status(failure_response) is not None:
-        assert failure_response is not None
+    if (
+        failure_response is not None
+        and _answered_refusal_status(failure_response) is not None
+    ):
         logger.warning(
             "Managed session creation was refused by the backend (%s) for '%s'; "
             "no managed session was created.%s",
